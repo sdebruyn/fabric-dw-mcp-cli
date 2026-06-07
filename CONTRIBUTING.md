@@ -9,7 +9,7 @@ Thank you for your interest in contributing to `fabric-dw-mcp-cli`!
 1. **Install dependencies**
 
    ```bash
-   uv sync --all-extras
+   uv sync
    ```
 
 2. **Install [just](https://github.com/casey/just#installation)** (optional, for convenient local checks)

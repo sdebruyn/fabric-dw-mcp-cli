@@ -47,7 +47,7 @@ jobs:
           rm src/fabric_dw/__init__.py.bak
           uv run python -c "import fabric_dw; print('Built version:', fabric_dw.__version__)"
 
-      - run: uv sync --all-extras
+      - run: uv sync --frozen --no-dev
 
       - run: uv build
 

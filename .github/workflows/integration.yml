@@ -73,7 +73,7 @@ jobs:
         with:
           python-version: "3.13"
 
-      - run: uv sync --all-extras --frozen
+      - run: uv sync --frozen
 
       - name: Run integration tests
         env:

@@ -25,7 +25,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-      - run: uv sync --all-extras --frozen
+      - run: uv sync --frozen
       - run: uv run ruff check .
       - run: uv run ruff format --check .
 
@@ -40,7 +40,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-      - run: uv sync --all-extras --frozen
+      - run: uv sync --frozen
       - run: uv run mypy src tests
 
   unit:
@@ -57,7 +57,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-      - run: uv sync --all-extras --frozen
+      - run: uv sync --frozen
       - run: uv run pytest tests/unit --cov=fabric_dw --cov-report=xml
       - name: Coverage report
         run: uv run coverage report

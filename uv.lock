@@ -507,7 +507,7 @@ dependencies = [
     { name = "tenacity" },
 ]
 
-[package.optional-dependencies]
+[package.dev-dependencies]
 dev = [
     { name = "anyio", extra = ["trio"] },
     { name = "freezegun" },
@@ -519,8 +519,6 @@ dev = [
     { name = "respx" },
     { name = "ruff" },
 ]
-
-[package.dev-dependencies]
 docs = [
     { name = "zensical" },
 ]
@@ -529,28 +527,29 @@ docs = [
 requires-dist = [
     { name = "aiolimiter", specifier = ">=1.2" },
     { name = "anyio", specifier = ">=4" },
-    { name = "anyio", extras = ["trio"], marker = "extra == 'dev'" },
     { name = "azure-identity", specifier = ">=1.19" },
     { name = "click", specifier = ">=8.2" },
     { name = "filelock", specifier = ">=3.16" },
-    { name = "freezegun", marker = "extra == 'dev'", specifier = ">=1.5" },
     { name = "httpx", extras = ["http2"], specifier = ">=0.27" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.0" },
     { name = "mssql-python", specifier = ">=0.13" },
-    { name = "mypy", marker = "extra == 'dev'" },
     { name = "pydantic", specifier = ">=2.9" },
-    { name = "pytest", marker = "extra == 'dev'" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'" },
-    { name = "pytest-cov", marker = "extra == 'dev'" },
-    { name = "pytest-randomly", marker = "extra == 'dev'" },
-    { name = "respx", marker = "extra == 'dev'", specifier = ">=0.21" },
     { name = "rich", specifier = ">=14" },
-    { name = "ruff", marker = "extra == 'dev'" },
     { name = "tenacity", specifier = ">=9" },
 ]
-provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
+dev = [
+    { name = "anyio", extras = ["trio"] },
+    { name = "freezegun", specifier = ">=1.5" },
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "pytest-randomly" },
+    { name = "respx", specifier = ">=0.21" },
+    { name = "ruff" },
+]
 docs = [{ name = "zensical", specifier = ">=0.0.42" }]
 
 [[package]]
