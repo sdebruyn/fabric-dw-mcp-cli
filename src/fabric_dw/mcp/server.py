@@ -27,7 +27,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw import auth as _auth
 from fabric_dw.cache import LookupCache
-from fabric_dw.exceptions import FabricError
+from fabric_dw.exceptions import ConfigError, FabricError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.resolver import Resolver
 from fabric_dw.services import audit, queries, snapshots, warehouses, workspaces
@@ -57,7 +57,13 @@ def _get_http() -> FabricHttpClient:
     global _http_client  # noqa: PLW0603
     if _http_client is None:
         raw_mode = os.environ.get("FABRIC_AUTH", "default")
-        mode = _auth.CredentialMode(raw_mode)
+        try:
+            mode = _auth.CredentialMode(raw_mode)
+        except ValueError as exc:
+            raise ConfigError(  # noqa: TRY003
+                f"invalid FABRIC_AUTH value {raw_mode!r}; "
+                f"expected one of {[m.value for m in _auth.CredentialMode]}"
+            ) from exc
         credential = _auth.get_credential(mode)
         _http_client = FabricHttpClient(credential=credential)
     return _http_client
@@ -68,7 +74,13 @@ def _get_sql() -> FabricSqlClient:
     global _sql_client  # noqa: PLW0603
     if _sql_client is None:
         raw_mode = os.environ.get("FABRIC_AUTH", "default")
-        mode = _auth.CredentialMode(raw_mode)
+        try:
+            mode = _auth.CredentialMode(raw_mode)
+        except ValueError as exc:
+            raise ConfigError(  # noqa: TRY003
+                f"invalid FABRIC_AUTH value {raw_mode!r}; "
+                f"expected one of {[m.value for m in _auth.CredentialMode]}"
+            ) from exc
         _sql_client = FabricSqlClient(mode=mode)
     return _sql_client
 
@@ -143,6 +155,8 @@ async def set_workspace_collation(workspace: str, collation: str) -> dict[str, A
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
         await workspaces.set_collation(_get_http(), ws_id, collation)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
     except FabricError as exc:
         raise _fabric_err(exc) from exc
     return {"workspace_id": str(ws_id), "collation": collation}
@@ -308,7 +322,7 @@ async def list_running_queries(workspace: str, warehouse: str) -> list[dict[str,
             raise FabricError(msg)  # noqa: TRY301
         target = SqlTarget(
             workspace_id=str(ws_id),
-            database=warehouse,
+            database=item.display_name,
             connection_string=item.connection_string,
         )
         result = await queries.list_running(_get_sql(), target)
@@ -328,7 +342,7 @@ async def kill_session(workspace: str, warehouse: str, session_id: int) -> dict[
             raise FabricError(msg)  # noqa: TRY301
         target = SqlTarget(
             workspace_id=str(ws_id),
-            database=warehouse,
+            database=item.display_name,
             connection_string=item.connection_string,
         )
         await queries.kill(_get_sql(), target, session_id)
@@ -461,7 +475,7 @@ async def roll_snapshot_timestamp(
             raise FabricError(msg)  # noqa: TRY301
         target = SqlTarget(
             workspace_id=str(ws_id),
-            database=warehouse,
+            database=item.display_name,
             connection_string=item.connection_string,
         )
         await snapshots.roll_timestamp(_get_sql(), target, snapshot_name, new_dt=parsed_dt)

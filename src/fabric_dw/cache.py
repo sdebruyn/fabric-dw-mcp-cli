@@ -72,6 +72,7 @@ class ItemEntry:
     kind: WarehouseKind
     connection_string: str | None
     fetched_at: datetime
+    display_name: str = ""
 
 
 class LookupCache:
@@ -205,11 +206,13 @@ class LookupCache:
             return None
         try:
             conn = record.get("connection_string")
+            dn = record.get("display_name", "")
             return ItemEntry(
                 id=UUID(record["id"]),
                 kind=WarehouseKind(record["kind"]),
                 connection_string=conn if isinstance(conn, str) else None,
                 fetched_at=datetime.fromisoformat(record["fetched_at"]),
+                display_name=dn if isinstance(dn, str) else "",
             )
         except (KeyError, ValueError, TypeError):
             return None
@@ -230,6 +233,7 @@ class LookupCache:
                 "kind": str(entry.kind),
                 "connection_string": entry.connection_string,
                 "fetched_at": entry.fetched_at.isoformat(),
+                "display_name": entry.display_name,
             }
             self._write(data)
 

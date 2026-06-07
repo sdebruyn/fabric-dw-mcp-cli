@@ -22,11 +22,13 @@ mcp==1.27.2), so we fall back to **unit-style mocking**:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
 
+from fabric_dw.cache import ItemEntry
 from fabric_dw.exceptions import NotFound
 from fabric_dw.models import (
     AuditSettings,
@@ -107,6 +109,21 @@ def _make_warehouse() -> Warehouse:
             "kind": WarehouseKind.WAREHOUSE,
             "connectionString": "wh.fabric.microsoft.com",
         }
+    )
+
+
+def _make_item_entry(
+    *,
+    item_id: UUID = _WH_ID,
+    connection_string: str | None = "wh.fabric.microsoft.com",
+    display_name: str = _WH_NAME,
+) -> ItemEntry:
+    return ItemEntry(
+        id=item_id,
+        kind=WarehouseKind.WAREHOUSE,
+        connection_string=connection_string,
+        fetched_at=datetime.now(tz=UTC),
+        display_name=display_name,
     )
 
 
@@ -377,10 +394,11 @@ async def test_get_audit_settings_happy_path() -> None:
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     settings = _make_audit_settings()
+    item = _make_item_entry()
 
     mock_resolver = AsyncMock()
     mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-    mock_resolver.item = AsyncMock()
+    mock_resolver.item = AsyncMock(return_value=item)
     mock_http = AsyncMock()
     mock_cache = MagicMock()
 
@@ -401,6 +419,7 @@ async def test_get_audit_settings_happy_path() -> None:
     assert isinstance(result, dict)
     assert result["state"] == "Enabled"
     assert result["retentionDays"] == 30
+    mock_resolver.item.assert_called_once_with(_WS_NAME, _WH_NAME)
 
 
 # ---------------------------------------------------------------------------
@@ -414,10 +433,11 @@ async def test_list_running_queries_happy_path() -> None:
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     query = _make_running_query()
+    item = _make_item_entry()
 
     mock_resolver = AsyncMock()
     mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-    mock_resolver.item = AsyncMock()
+    mock_resolver.item = AsyncMock(return_value=item)
     mock_http = AsyncMock()
     mock_cache = MagicMock()
     mock_sql = AsyncMock()
