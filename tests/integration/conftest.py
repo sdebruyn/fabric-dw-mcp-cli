@@ -7,8 +7,8 @@ import pytest_asyncio
 
 from fabric_dw.auth import get_credential
 from fabric_dw.http_client import FabricHttpClient
-from fabric_dw.models import Warehouse
-from fabric_dw.services import warehouses
+from fabric_dw.models import Warehouse, WarehouseSnapshot
+from fabric_dw.services import snapshots, warehouses
 from fabric_dw.sql_client import FabricSqlClient, SqlTarget
 
 
@@ -45,6 +45,20 @@ async def ephemeral_warehouse(
         yield wh
     finally:
         await warehouses.delete(http, workspace_id, wh.id)
+
+
+@pytest_asyncio.fixture
+async def ephemeral_snapshot(
+    http: FabricHttpClient,
+    workspace_id: UUID,
+    ephemeral_warehouse: Warehouse,
+) -> AsyncIterator[WarehouseSnapshot]:
+    name = f"pytest-{uuid.uuid4().hex[:8]}-snap"
+    snap = await snapshots.create(http, workspace_id, ephemeral_warehouse.id, name)
+    try:
+        yield snap
+    finally:
+        await snapshots.delete(http, workspace_id, snap.id)
 
 
 @pytest_asyncio.fixture
