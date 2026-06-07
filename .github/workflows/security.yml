@@ -28,5 +28,5 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v8.2.0
         with: { enable-cache: true }
-      - run: uv sync --all-extras --frozen
+      - run: uv sync --frozen
       - run: uvx --quiet pip-audit

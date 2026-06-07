@@ -33,7 +33,7 @@ dependencies = [
 fabric-dw = "fabric_dw.cli:main"
 fabric-dw-mcp = "fabric_dw.mcp.server:run"
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "pytest",
     "pytest-asyncio",
@@ -45,8 +45,6 @@ dev = [
     "mypy",
     "ruff",
 ]
-
-[dependency-groups]
 docs = ["zensical>=0.0.42"]
 
 [tool.hatch.version]
