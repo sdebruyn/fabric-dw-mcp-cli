@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import builtins
 from uuid import UUID
 
+from fabric_dw.exceptions import FabricServerError
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import Warehouse, WarehouseKind
 from fabric_dw.services.workspaces import SUPPORTED_COLLATIONS
@@ -12,20 +12,18 @@ from fabric_dw.services.workspaces import SUPPORTED_COLLATIONS
 __all__ = [
     "create",
     "delete",
-    "get",
-    "list",
+    "get_warehouse",
+    "list_warehouses",
     "rename",
 ]
 
-# Alias to allow return-type annotations after the `list` name is shadowed by the function below.
-_List = builtins.list
 
-
-async def list(http: FabricHttpClient, workspace_id: UUID) -> _List[Warehouse]:
+async def list_warehouses(http: FabricHttpClient, workspace_id: UUID) -> list[Warehouse]:
     """Return all warehouses and SQL analytics endpoints in a workspace.
 
     Combines results from ``GET /workspaces/{ws}/warehouses`` and
     ``GET /workspaces/{ws}/sqlEndpoints``, both followed through pagination.
+    Warehouses are listed first, followed by SQL analytics endpoints.
 
     Args:
         http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
@@ -35,25 +33,28 @@ async def list(http: FabricHttpClient, workspace_id: UUID) -> _List[Warehouse]:
         A list of :class:`~fabric_dw.models.Warehouse` instances with their
         respective :class:`~fabric_dw.models.WarehouseKind`.
     """
-    result: _List[Warehouse] = []
-
-    wh_path = f"/workspaces/{workspace_id}/warehouses"
-    async for item in http.iter_paginated(HttpBase.FABRIC, wh_path):
-        result.append(Warehouse.from_api(item, kind=WarehouseKind.WAREHOUSE))
-
-    async for item in http.iter_paginated(
-        HttpBase.FABRIC, f"/workspaces/{workspace_id}/sqlEndpoints"
-    ):
-        result.append(Warehouse.from_api(item, kind=WarehouseKind.SQL_ENDPOINT))
-
+    result: list[Warehouse] = [
+        Warehouse.from_api(item, kind=WarehouseKind.WAREHOUSE)
+        async for item in http.iter_paginated(
+            HttpBase.FABRIC, f"/workspaces/{workspace_id}/warehouses"
+        )
+    ]
+    result += [
+        Warehouse.from_api(item, kind=WarehouseKind.SQL_ENDPOINT)
+        async for item in http.iter_paginated(
+            HttpBase.FABRIC, f"/workspaces/{workspace_id}/sqlEndpoints"
+        )
+    ]
     return result
 
 
-async def get(http: FabricHttpClient, workspace_id: UUID, warehouse_id: UUID) -> Warehouse:
+async def get_warehouse(
+    http: FabricHttpClient, workspace_id: UUID, warehouse_id: UUID
+) -> Warehouse:
     """Fetch a single warehouse by ID.
 
     Uses the type-specific ``GET /workspaces/{ws}/warehouses/{wh}`` endpoint.
-    SQL analytics endpoints should be discovered via :func:`list`.
+    SQL analytics endpoints should be discovered via :func:`list_warehouses`.
 
     Args:
         http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
@@ -119,14 +120,16 @@ async def create(
     location = resp.headers["Location"]
     lro_result = await http.poll_operation(location)
 
-    # Extract the new warehouse ID from resourceLocation or Location URL
-    resource_location: str = str(lro_result.get("resourceLocation", ""))
-    if resource_location:
-        new_id = UUID(resource_location.rstrip("/").split("/")[-1])
+    # Extract the new warehouse ID from resourceLocation.
+    # str(None) == "None" (truthy) so we must use isinstance instead of truthiness.
+    resource_location = lro_result.get("resourceLocation")
+    if isinstance(resource_location, str) and resource_location:
+        new_id = UUID(resource_location.rsplit("/", 1)[-1])
     else:
-        new_id = UUID(location.rstrip("/").split("/")[-1])
+        msg = f"create warehouse LRO completed but no resourceLocation returned: {lro_result}"
+        raise FabricServerError(msg)
 
-    return await get(http, workspace_id, new_id)
+    return await get_warehouse(http, workspace_id, new_id)
 
 
 async def rename(

@@ -12,7 +12,7 @@ import pytest
 import respx
 from azure.core.credentials import AccessToken, TokenCredential
 
-from fabric_dw.exceptions import NotFound
+from fabric_dw.exceptions import FabricServerError, NotFound
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import Warehouse, WarehouseKind
 from fabric_dw.services import warehouses
@@ -22,7 +22,10 @@ from tests.fixtures.api_payloads import (
     WAREHOUSE_GET_PAYLOAD,
     WAREHOUSE_LIST_PAGE2_PAYLOAD,
     WAREHOUSE_LIST_PAYLOAD,
+    WAREHOUSE_OPERATION_SUCCEEDED_NO_LOCATION_PAYLOAD,
     WAREHOUSE_OPERATION_SUCCEEDED_PAYLOAD,
+    WAREHOUSE_SQL_ENDPOINTS_PAGE1_PAYLOAD,
+    WAREHOUSE_SQL_ENDPOINTS_PAGE2_PAYLOAD,
     WAREHOUSE_SQL_ENDPOINTS_PAYLOAD,
 )
 
@@ -61,8 +64,9 @@ async def _make_client(rps: int = 10) -> FabricHttpClient:
 
 @pytest.mark.asyncio
 async def test_list_merges_warehouses_and_sql_endpoints() -> None:
-    """list must combine items from both /warehouses and /sqlEndpoints with correct kind."""
+    """list_warehouses must combine items from /warehouses and /sqlEndpoints with correct kind."""
     wh_payload = json.loads(WAREHOUSE_LIST_PAYLOAD)
+    wh_payload.pop("continuationUri", None)  # single-page response
     ep_payload = json.loads(WAREHOUSE_SQL_ENDPOINTS_PAYLOAD)
 
     with respx.mock:
@@ -71,7 +75,7 @@ async def test_list_merges_warehouses_and_sql_endpoints() -> None:
 
         client = await _make_client()
         async with client:
-            result = await warehouses.list(client, _WORKSPACE_ID)
+            result = await warehouses.list_warehouses(client, _WORKSPACE_ID)
 
     assert len(result) == 3  # 2 warehouses + 1 sql endpoint
     kinds = {item.kind for item in result}
@@ -86,7 +90,7 @@ async def test_list_merges_warehouses_and_sql_endpoints() -> None:
 
 @pytest.mark.asyncio
 async def test_list_follows_continuation_uri_for_warehouses() -> None:
-    """list must follow continuationUri for the warehouses endpoint."""
+    """list_warehouses must follow continuationUri for the warehouses endpoint."""
     call_count = 0
 
     def side_effect(request: httpx.Request) -> httpx.Response:
@@ -107,15 +111,44 @@ async def test_list_follows_continuation_uri_for_warehouses() -> None:
 
         client = await _make_client()
         async with client:
-            result = await warehouses.list(client, _WORKSPACE_ID)
+            result = await warehouses.list_warehouses(client, _WORKSPACE_ID)
 
     assert call_count == 2
     assert len(result) == 3  # 2 from page 1 + 1 from page 2 (all warehouses, no endpoints)
 
 
 @pytest.mark.asyncio
+async def test_list_follows_continuation_uri_for_sql_endpoints() -> None:
+    """list_warehouses must follow continuationUri for the sqlEndpoints endpoint."""
+    ep_call_count = 0
+
+    def ep_side_effect(_request: httpx.Request) -> httpx.Response:
+        nonlocal ep_call_count
+        ep_call_count += 1
+        if ep_call_count == 1:
+            return httpx.Response(200, json=json.loads(WAREHOUSE_SQL_ENDPOINTS_PAGE1_PAYLOAD))
+        return httpx.Response(200, json=json.loads(WAREHOUSE_SQL_ENDPOINTS_PAGE2_PAYLOAD))
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(url__regex=r".*/workspaces/.*/warehouses.*").mock(
+            return_value=httpx.Response(200, json={"value": []})
+        )
+        mock_router.get(url__regex=r".*/workspaces/.*/sqlEndpoints.*").mock(
+            side_effect=ep_side_effect
+        )
+
+        client = await _make_client()
+        async with client:
+            result = await warehouses.list_warehouses(client, _WORKSPACE_ID)
+
+    assert ep_call_count == 2
+    ep_items = [i for i in result if i.kind == WarehouseKind.SQL_ENDPOINT]
+    assert len(ep_items) == 2  # 1 from page 1 + 1 from page 2
+
+
+@pytest.mark.asyncio
 async def test_list_all_items_are_warehouse_instances() -> None:
-    """list must return only Warehouse instances."""
+    """list_warehouses must return only Warehouse instances."""
     wh_payload = json.loads(WAREHOUSE_LIST_PAYLOAD)
     # Remove continuation for simplicity
     wh_payload.pop("continuationUri", None)
@@ -126,7 +159,7 @@ async def test_list_all_items_are_warehouse_instances() -> None:
 
         client = await _make_client()
         async with client:
-            result = await warehouses.list(client, _WORKSPACE_ID)
+            result = await warehouses.list_warehouses(client, _WORKSPACE_ID)
 
     assert all(isinstance(item, Warehouse) for item in result)
 
@@ -138,7 +171,7 @@ async def test_list_all_items_are_warehouse_instances() -> None:
 
 @pytest.mark.asyncio
 async def test_get_returns_populated_warehouse() -> None:
-    """get must return a single populated Warehouse with WAREHOUSE kind."""
+    """get_warehouse must return a single populated Warehouse with WAREHOUSE kind."""
     wh_payload = json.loads(WAREHOUSE_GET_PAYLOAD)
 
     with respx.mock:
@@ -146,7 +179,7 @@ async def test_get_returns_populated_warehouse() -> None:
 
         client = await _make_client()
         async with client:
-            result = await warehouses.get(client, _WORKSPACE_ID, _WAREHOUSE_ID)
+            result = await warehouses.get_warehouse(client, _WORKSPACE_ID, _WAREHOUSE_ID)
 
     assert isinstance(result, Warehouse)
     assert result.id == _WAREHOUSE_ID
@@ -158,7 +191,7 @@ async def test_get_returns_populated_warehouse() -> None:
 
 @pytest.mark.asyncio
 async def test_get_not_found_propagates() -> None:
-    """get must propagate NotFound on a 404 response."""
+    """get_warehouse must propagate NotFound on a 404 response."""
     with respx.mock:
         respx.get(_WAREHOUSE_URL).mock(
             return_value=httpx.Response(404, json={"error": {"code": "ItemNotFound"}})
@@ -167,7 +200,7 @@ async def test_get_not_found_propagates() -> None:
         client = await _make_client()
         async with client:
             with pytest.raises(NotFound):
-                await warehouses.get(client, _WORKSPACE_ID, _WAREHOUSE_ID)
+                await warehouses.get_warehouse(client, _WORKSPACE_ID, _WAREHOUSE_ID)
 
 
 # ---------------------------------------------------------------------------
@@ -284,33 +317,57 @@ async def test_create_with_description() -> None:
 @pytest.mark.asyncio
 async def test_create_invalid_collation_raises_value_error() -> None:
     """create must raise ValueError for unsupported collation before any HTTP call."""
-    client = await _make_client()
-    async with client:
-        with pytest.raises(ValueError, match="collation"):
-            await warehouses.create(
-                client,
-                _WORKSPACE_ID,
-                "SalesWarehouse",
-                collation="SQL_Latin1_General_CP1_CI_AS",
-            )
+    with respx.mock:  # any HTTP call here is a bug
+        client = await _make_client()
+        async with client:
+            with pytest.raises(ValueError, match="collation"):
+                await warehouses.create(
+                    client,
+                    _WORKSPACE_ID,
+                    "SalesWarehouse",
+                    collation="SQL_Latin1_General_CP1_CI_AS",
+                )
 
 
 @pytest.mark.asyncio
 async def test_create_empty_name_raises_value_error() -> None:
     """create must raise ValueError for an empty name before any HTTP call."""
-    client = await _make_client()
-    async with client:
-        with pytest.raises(ValueError, match="name"):
-            await warehouses.create(client, _WORKSPACE_ID, "")
+    with respx.mock:  # any HTTP call here is a bug
+        client = await _make_client()
+        async with client:
+            with pytest.raises(ValueError, match="name"):
+                await warehouses.create(client, _WORKSPACE_ID, "")
 
 
 @pytest.mark.asyncio
 async def test_create_whitespace_only_name_raises_value_error() -> None:
     """create must raise ValueError for a whitespace-only name before any HTTP call."""
-    client = await _make_client()
-    async with client:
-        with pytest.raises(ValueError, match="name"):
-            await warehouses.create(client, _WORKSPACE_ID, "   ")
+    with respx.mock:  # any HTTP call here is a bug
+        client = await _make_client()
+        async with client:
+            with pytest.raises(ValueError, match="name"):
+                await warehouses.create(client, _WORKSPACE_ID, "   ")
+
+
+@pytest.mark.asyncio
+async def test_create_missing_resource_location_raises_fabric_server_error() -> None:
+    """create must raise FabricServerError when LRO completes with null resourceLocation."""
+    op_no_location = json.loads(WAREHOUSE_OPERATION_SUCCEEDED_NO_LOCATION_PAYLOAD)
+
+    with respx.mock:
+        respx.post(_ITEMS_URL).mock(
+            return_value=httpx.Response(
+                202,
+                json={},
+                headers={"Location": _OPERATION_URL},
+            )
+        )
+        respx.get(_OPERATION_URL).mock(return_value=httpx.Response(200, json=op_no_location))
+
+        client = await _make_client()
+        async with client:
+            with pytest.raises(FabricServerError, match="resourceLocation"):
+                await warehouses.create(client, _WORKSPACE_ID, "SalesWarehouse")
 
 
 # ---------------------------------------------------------------------------
@@ -375,10 +432,11 @@ async def test_rename_with_description_includes_it_in_body() -> None:
 @pytest.mark.asyncio
 async def test_rename_empty_name_raises_value_error() -> None:
     """rename must raise ValueError for an empty new_name before any HTTP call."""
-    client = await _make_client()
-    async with client:
-        with pytest.raises(ValueError, match="name"):
-            await warehouses.rename(client, _WORKSPACE_ID, _WAREHOUSE_ID, "")
+    with respx.mock:  # any HTTP call here is a bug
+        client = await _make_client()
+        async with client:
+            with pytest.raises(ValueError, match="name"):
+                await warehouses.rename(client, _WORKSPACE_ID, _WAREHOUSE_ID, "")
 
 
 # ---------------------------------------------------------------------------
