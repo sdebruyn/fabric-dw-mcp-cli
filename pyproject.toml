@@ -24,7 +24,6 @@ dev = [
     "pytest",
     "pytest-asyncio",
     "anyio[trio]",
-    "pytest-anyio",
     "respx",
     "pytest-randomly",
     "pytest-cov",
