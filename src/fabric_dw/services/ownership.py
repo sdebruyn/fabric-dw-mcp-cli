@@ -34,7 +34,7 @@ async def takeover(http: FabricHttpClient, workspace_id: UUID, warehouse_id: UUI
 
     try:
         await http.request("POST", HttpBase.POWERBI, path, json=None)
-    except PermissionDenied:
+    except PermissionDenied as exc:
         raise PermissionDenied(  # noqa: TRY003
             "takeover requires Admin/Member/Contributor role on the workspace"
-        ) from None
+        ) from exc

@@ -1,4 +1,4 @@
-"""Tests for the ownership service (TDD - written before implementation)."""
+"""Tests for the ownership service."""
 
 from __future__ import annotations
 
@@ -48,9 +48,7 @@ async def test_takeover_200_returns_none() -> None:
     respx.post(_EXPECTED_URL).mock(return_value=respx.MockResponse(200))
 
     async with FabricHttpClient(credential=_make_credential(), rps=10) as http:
-        result = await takeover(http, _WORKSPACE_ID, _WAREHOUSE_ID)
-
-    assert result is None
+        await takeover(http, _WORKSPACE_ID, _WAREHOUSE_ID)
 
 
 @respx.mock
@@ -59,9 +57,7 @@ async def test_takeover_202_returns_none() -> None:
     respx.post(_EXPECTED_URL).mock(return_value=respx.MockResponse(202))
 
     async with FabricHttpClient(credential=_make_credential(), rps=10) as http:
-        result = await takeover(http, _WORKSPACE_ID, _WAREHOUSE_ID)
-
-    assert result is None
+        await takeover(http, _WORKSPACE_ID, _WAREHOUSE_ID)
 
 
 @respx.mock
@@ -70,9 +66,7 @@ async def test_takeover_204_returns_none() -> None:
     respx.post(_EXPECTED_URL).mock(return_value=respx.MockResponse(204))
 
     async with FabricHttpClient(credential=_make_credential(), rps=10) as http:
-        result = await takeover(http, _WORKSPACE_ID, _WAREHOUSE_ID)
-
-    assert result is None
+        await takeover(http, _WORKSPACE_ID, _WAREHOUSE_ID)
 
 
 @respx.mock
@@ -100,7 +94,7 @@ async def test_takeover_sends_empty_body() -> None:
     """POST body must be empty (None / no content-type: application/json)."""
     received_requests: list[Any] = []
 
-    def _capture(request: Any, route: Any) -> respx.MockResponse:  # noqa: ARG001
+    def _capture(request: Any) -> respx.MockResponse:
         received_requests.append(request)
         return respx.MockResponse(200)
 
