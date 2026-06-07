@@ -1,6 +1,6 @@
 [project]
 site_dir = "docs_build/site"
-site_name = "fabric-dw-mcp-cli"
+site_name = "fabric-dw"
 site_description = "Python CLI + MCP server for administering Microsoft Fabric Data Warehouses and SQL Analytics Endpoints."
 site_url = "https://fdw.debruyn.dev"
 site_author = "Sam Debruyn"

@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "fabric-dw-mcp-cli"
+name = "fabric-dw"
 dynamic = ["version"]
 requires-python = ">=3.11"
 description = "Microsoft Fabric Data Warehouse MCP CLI"
