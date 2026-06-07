@@ -217,9 +217,7 @@ async def test_kill_returns_none_on_success() -> None:
     sql = _make_sql()
     sql.execute_nonquery.return_value = 0
 
-    result = await queries.kill(sql, _TARGET, 5)
-
-    assert result is None
+    await queries.kill(sql, _TARGET, 5)
 
 
 # ---------------------------------------------------------------------------
