@@ -13,7 +13,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
 ]
-dependencies = []
+dependencies = ["azure-identity>=1.19"]
 
 [project.scripts]
 fabric-dw = "fabric_dw.cli:main"
