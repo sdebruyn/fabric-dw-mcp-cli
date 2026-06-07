@@ -25,9 +25,7 @@ from fabric_dw.services import audit
 _WS_ID = UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
 _WH_ID = UUID("d4e5f6a7-b8c9-0123-def0-123456789abc")
 
-_AUDIT_PATH = (
-    f"/workspaces/{_WS_ID}/warehouses/{_WH_ID}/settings/sqlAudit"
-)
+_AUDIT_PATH = f"/workspaces/{_WS_ID}/warehouses/{_WH_ID}/settings/sqlAudit"
 _AUDIT_URL = f"https://api.fabric.microsoft.com/v1{_AUDIT_PATH}"
 
 AUDIT_SETTINGS_PAYLOAD: dict[str, Any] = {
@@ -67,9 +65,7 @@ async def _make_client() -> FabricHttpClient:
 async def test_get_settings_returns_audit_settings() -> None:
     """get_settings should GET /settings/sqlAudit and return AuditSettings."""
     with respx.mock:
-        respx.get(_AUDIT_URL).mock(
-            return_value=httpx.Response(200, json=AUDIT_SETTINGS_PAYLOAD)
-        )
+        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=AUDIT_SETTINGS_PAYLOAD))
         client = await _make_client()
         async with client:
             result = await audit.get_settings(client, _WS_ID, _WH_ID)
@@ -87,9 +83,7 @@ async def test_get_settings_returns_audit_settings() -> None:
 async def test_get_settings_403_raises_permission_denied() -> None:
     """get_settings should propagate PermissionDenied on 403."""
     with respx.mock:
-        respx.get(_AUDIT_URL).mock(
-            return_value=httpx.Response(403, json={"error": "forbidden"})
-        )
+        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(403, json={"error": "forbidden"}))
         client = await _make_client()
         async with client:
             with pytest.raises(PermissionDenied):
@@ -108,12 +102,8 @@ async def test_enable_patches_with_enabled_state_and_retention() -> None:
     get_response["retentionDays"] = 7
 
     with respx.mock:
-        patch_route = respx.patch(_AUDIT_URL).mock(
-            return_value=httpx.Response(200, json={})
-        )
-        get_route = respx.get(_AUDIT_URL).mock(
-            return_value=httpx.Response(200, json=get_response)
-        )
+        patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        get_route = respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=get_response))
         client = await _make_client()
         async with client:
             result = await audit.enable(client, _WS_ID, _WH_ID, retention_days=7)
@@ -132,12 +122,8 @@ async def test_enable_patches_with_enabled_state_and_retention() -> None:
 async def test_enable_default_retention_is_zero() -> None:
     """enable with default retention_days=0 (unlimited) should send retentionDays=0."""
     with respx.mock:
-        patch_route = respx.patch(_AUDIT_URL).mock(
-            return_value=httpx.Response(200, json={})
-        )
-        respx.get(_AUDIT_URL).mock(
-            return_value=httpx.Response(200, json=AUDIT_SETTINGS_PAYLOAD)
-        )
+        patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=AUDIT_SETTINGS_PAYLOAD))
         client = await _make_client()
         async with client:
             await audit.enable(client, _WS_ID, _WH_ID)
@@ -159,9 +145,7 @@ async def test_enable_negative_retention_raises_value_error() -> None:
 async def test_enable_403_raises_permission_denied() -> None:
     """enable should propagate PermissionDenied on 403 from PATCH."""
     with respx.mock:
-        respx.patch(_AUDIT_URL).mock(
-            return_value=httpx.Response(403, json={"error": "forbidden"})
-        )
+        respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(403, json={"error": "forbidden"}))
         client = await _make_client()
         async with client:
             with pytest.raises(PermissionDenied):
@@ -177,9 +161,7 @@ async def test_enable_403_raises_permission_denied() -> None:
 async def test_disable_patches_with_disabled_state() -> None:
     """disable should PATCH with state=Disabled, then GET and return fresh state."""
     with respx.mock:
-        patch_route = respx.patch(_AUDIT_URL).mock(
-            return_value=httpx.Response(200, json={})
-        )
+        patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
         get_route = respx.get(_AUDIT_URL).mock(
             return_value=httpx.Response(200, json=AUDIT_SETTINGS_DISABLED_PAYLOAD)
         )
@@ -200,9 +182,7 @@ async def test_disable_patches_with_disabled_state() -> None:
 async def test_disable_403_raises_permission_denied() -> None:
     """disable should propagate PermissionDenied on 403 from PATCH."""
     with respx.mock:
-        respx.patch(_AUDIT_URL).mock(
-            return_value=httpx.Response(403, json={"error": "forbidden"})
-        )
+        respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(403, json={"error": "forbidden"}))
         client = await _make_client()
         async with client:
             with pytest.raises(PermissionDenied):
@@ -222,12 +202,8 @@ async def test_set_action_groups_posts_array_and_returns_fresh_state() -> None:
     updated["auditActionsAndGroups"] = groups
 
     with respx.mock:
-        post_route = respx.post(_AUDIT_URL).mock(
-            return_value=httpx.Response(200, json={})
-        )
-        get_route = respx.get(_AUDIT_URL).mock(
-            return_value=httpx.Response(200, json=updated)
-        )
+        post_route = respx.post(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        get_route = respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=updated))
         client = await _make_client()
         async with client:
             result = await audit.set_action_groups(client, _WS_ID, _WH_ID, groups)
@@ -260,12 +236,12 @@ async def test_set_action_groups_empty_list_is_valid() -> None:
 @pytest.mark.parametrize(
     "bad_group",
     [
-        "batch completed group",   # whitespace
-        "batch\tcompleted",        # tab
-        "lowercase_group",         # lower-case letters
-        "MIXED_Group",             # mixed case
-        "GROUP-NAME",              # hyphen
-        "GROUP123",                # digits not allowed by ^[A-Z_]+$
+        "batch completed group",  # whitespace
+        "batch\tcompleted",  # tab
+        "lowercase_group",  # lower-case letters
+        "MIXED_Group",  # mixed case
+        "GROUP-NAME",  # hyphen
+        "GROUP123",  # digits not allowed by ^[A-Z_]+$
     ],
 )
 async def test_set_action_groups_invalid_name_raises_value_error(bad_group: str) -> None:
@@ -280,9 +256,7 @@ async def test_set_action_groups_invalid_name_raises_value_error(bad_group: str)
 async def test_set_action_groups_403_raises_permission_denied() -> None:
     """set_action_groups should propagate PermissionDenied on 403 from POST."""
     with respx.mock:
-        respx.post(_AUDIT_URL).mock(
-            return_value=httpx.Response(403, json={"error": "forbidden"})
-        )
+        respx.post(_AUDIT_URL).mock(return_value=httpx.Response(403, json={"error": "forbidden"}))
         client = await _make_client()
         async with client:
             with pytest.raises(PermissionDenied):
