@@ -13,7 +13,13 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
 ]
-dependencies = ["azure-identity>=1.19", "pydantic>=2.9"]
+dependencies = [
+    "azure-identity>=1.19",
+    "pydantic>=2.9",
+    "httpx[http2]>=0.27",
+    "aiolimiter>=1.2",
+    "tenacity>=9",
+]
 
 [project.scripts]
 fabric-dw = "fabric_dw.cli:main"
@@ -24,7 +30,8 @@ dev = [
     "pytest",
     "pytest-asyncio",
     "anyio[trio]",
-    "respx",
+    "respx>=0.21",
+    "freezegun>=1.5",
     "pytest-randomly",
     "pytest-cov",
     "mypy",
