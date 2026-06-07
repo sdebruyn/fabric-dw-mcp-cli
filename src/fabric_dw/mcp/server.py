@@ -373,7 +373,12 @@ async def create_snapshot(
     """
     parsed_dt: datetime | None = None
     if snapshot_dt is not None:
-        parsed_dt = datetime.fromisoformat(snapshot_dt)
+        try:
+            parsed_dt = datetime.fromisoformat(snapshot_dt)
+        except ValueError as exc:
+            raise ToolError(  # noqa: TRY003
+                f"invalid snapshot_dt {snapshot_dt!r}: expected ISO-8601"
+            ) from exc
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
         item = await _get_resolver().item(workspace, warehouse)
@@ -442,7 +447,12 @@ async def roll_snapshot_timestamp(
     """
     parsed_dt: datetime | None = None
     if new_dt is not None:
-        parsed_dt = datetime.fromisoformat(new_dt)
+        try:
+            parsed_dt = datetime.fromisoformat(new_dt)
+        except ValueError as exc:
+            raise ToolError(  # noqa: TRY003
+                f"invalid new_dt {new_dt!r}: expected ISO-8601"
+            ) from exc
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
         item = await _get_resolver().item(workspace, warehouse)

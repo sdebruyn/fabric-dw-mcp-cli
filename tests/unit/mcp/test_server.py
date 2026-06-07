@@ -466,3 +466,68 @@ async def test_not_found_error_becomes_tool_error() -> None:
         pytest.raises(ToolError),
     ):
         await mcp._tool_manager.call_tool("get_workspace", {"workspace": "boom"})
+
+
+# ---------------------------------------------------------------------------
+# 13. Bad ISO-8601 input → ToolError (not raw ValueError)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_snapshot_bad_datetime_becomes_tool_error() -> None:
+    """create_snapshot raises ToolError when snapshot_dt is not ISO-8601."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_resolver = AsyncMock()
+    mock_http = AsyncMock()
+    mock_cache = MagicMock()
+
+    with (
+        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
+        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
+        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "create_snapshot",
+            {
+                "workspace": _WS_NAME,
+                "warehouse": _WH_NAME,
+                "name": "snap-bad",
+                "snapshot_dt": "not-a-date",
+            },
+        )
+
+    assert "ISO-8601" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_roll_snapshot_timestamp_bad_datetime_becomes_tool_error() -> None:
+    """roll_snapshot_timestamp raises ToolError when new_dt is not ISO-8601."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_resolver = AsyncMock()
+    mock_http = AsyncMock()
+    mock_cache = MagicMock()
+
+    with (
+        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
+        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
+        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "roll_snapshot_timestamp",
+            {
+                "workspace": _WS_NAME,
+                "warehouse": _WH_NAME,
+                "snapshot_name": "snap-1",
+                "new_dt": "not-a-date",
+            },
+        )
+
+    assert "ISO-8601" in str(exc_info.value)
