@@ -1,0 +1,28 @@
+name-template: 'v$RESOLVED_VERSION'
+tag-template: 'v$RESOLVED_VERSION'
+categories:
+  - title: 'Features'
+    labels: ['type:feature']
+    commitish:
+      - "feat"
+  - title: 'Fixes'
+    labels: ['type:fix', 'bug']
+    commitish:
+      - "fix"
+  - title: 'Documentation'
+    labels: ['area:docs', 'area:docs-site']
+    commitish:
+      - "docs"
+  - title: 'CI / Tooling'
+    labels: ['area:ci', 'area:bootstrap']
+    commitish:
+      - "ci"
+      - "chore"
+  - title: 'Other'
+change-template: '- $TITLE @$AUTHOR (#$NUMBER)'
+change-title-escapes: '\<*_&'
+version-resolver:
+  default: patch
+template: |
+  ## Changes
+  $CHANGES

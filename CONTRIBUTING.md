@@ -50,6 +50,8 @@ Example: `feat: add DROP TABLE command`
 
 Breaking changes must append `!` after the type, e.g. `feat!: rename CLI entrypoint`.
 
+These prefixes are also used by the **release-drafter** workflow: every PR merged to `main` updates a running GitHub release draft, categorised by type (`feat` → Features, `fix` → Fixes, `docs` → Documentation, `ci`/`chore` → CI / Tooling). When a version tag is pushed, the draft becomes the published release.
+
 ## Running Checks Locally
 
 ### Lint
