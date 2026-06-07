@@ -281,3 +281,13 @@ async def test_kill_permission_denied_message_contains_session_id() -> None:
 
     with pytest.raises(PermissionDenied, match="42"):
         await queries.kill(sql, _TARGET, 42)
+
+
+@pytest.mark.asyncio
+async def test_kill_maps_permission_denied_from_execute_nonquery_to_permission_denied() -> None:
+    """kill should re-raise PermissionDenied from execute_nonquery as PermissionDenied."""
+    sql = _make_sql()
+    sql.execute_nonquery.side_effect = PermissionDenied("permission was denied on the object KILL")
+
+    with pytest.raises(PermissionDenied):
+        await queries.kill(sql, _TARGET, 42)
