@@ -57,6 +57,10 @@ EXPECTED_TOOL_NAMES: frozenset[str] = frozenset(
         "rename_warehouse",
         "delete_warehouse",
         "takeover_warehouse",
+        # SQL Endpoints
+        "list_sql_endpoints",
+        "get_sql_endpoint",
+        "refresh_sql_endpoint_metadata",
         # Audit
         "get_audit_settings",
         "enable_audit",
@@ -551,3 +555,124 @@ async def test_roll_snapshot_timestamp_bad_datetime_becomes_tool_error() -> None
         )
 
     assert "ISO-8601" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# SQL Endpoint tools
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_sql_endpoints_happy_path() -> None:
+    """list_sql_endpoints resolves workspace and returns list of SQL endpoint dicts."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    _EP_ID = UUID("e5f6a7b8-c9d0-1234-ef01-234567890abc")
+    ep = Warehouse.model_validate(
+        {
+            "id": str(_EP_ID),
+            "displayName": "SalesLakehouse",
+            "workspaceId": str(_WS_ID),
+            "kind": WarehouseKind.SQL_ENDPOINT,
+            "connectionString": "lakehouse-sql-ep.datawarehouse.fabric.microsoft.com",
+        }
+    )
+
+    mock_resolver = AsyncMock()
+    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_http = AsyncMock()
+    mock_cache = MagicMock()
+
+    with (
+        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
+        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
+        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        patch(
+            "fabric_dw.services.sql_endpoints.list_endpoints",
+            new=AsyncMock(return_value=[ep]),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "list_sql_endpoints", {"workspace": _WS_NAME}
+        )
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0]["id"] == str(_EP_ID)
+    assert result[0]["kind"] == "SQLEndpoint"
+
+
+@pytest.mark.asyncio
+async def test_get_sql_endpoint_happy_path() -> None:
+    """get_sql_endpoint resolves workspace + endpoint and returns a dict."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    _EP_ID = UUID("e5f6a7b8-c9d0-1234-ef01-234567890abc")
+    ep = Warehouse.model_validate(
+        {
+            "id": str(_EP_ID),
+            "displayName": "SalesLakehouse",
+            "workspaceId": str(_WS_ID),
+            "kind": WarehouseKind.SQL_ENDPOINT,
+            "connectionString": "lakehouse-sql-ep.datawarehouse.fabric.microsoft.com",
+        }
+    )
+    item = _make_item_entry(item_id=_EP_ID, display_name="SalesLakehouse")
+
+    mock_resolver = AsyncMock()
+    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_resolver.item = AsyncMock(return_value=item)
+    mock_http = AsyncMock()
+    mock_cache = MagicMock()
+
+    with (
+        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
+        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
+        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        patch(
+            "fabric_dw.services.sql_endpoints.get_endpoint",
+            new=AsyncMock(return_value=ep),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "get_sql_endpoint",
+            {"workspace": _WS_NAME, "endpoint": "SalesLakehouse"},
+        )
+
+    assert isinstance(result, dict)
+    assert result["id"] == str(_EP_ID)
+    assert result["kind"] == "SQLEndpoint"
+
+
+@pytest.mark.asyncio
+async def test_refresh_sql_endpoint_metadata_happy_path() -> None:
+    """refresh_sql_endpoint_metadata resolves workspace + endpoint and returns a dict."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    _EP_ID = UUID("e5f6a7b8-c9d0-1234-ef01-234567890abc")
+    item = _make_item_entry(item_id=_EP_ID, display_name="SalesLakehouse")
+
+    mock_resolver = AsyncMock()
+    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_resolver.item = AsyncMock(return_value=item)
+    mock_http = AsyncMock()
+    mock_cache = MagicMock()
+
+    lro_result = {"status": "Succeeded", "percentComplete": 100}
+
+    with (
+        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
+        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
+        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        patch(
+            "fabric_dw.services.sql_endpoints.refresh_metadata",
+            new=AsyncMock(return_value=lro_result),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "refresh_sql_endpoint_metadata",
+            {"workspace": _WS_NAME, "endpoint": "SalesLakehouse"},
+        )
+
+    assert isinstance(result, dict)
+    assert result.get("status") == "Succeeded"
