@@ -1,0 +1,68 @@
+name: Integration tests
+
+on:
+  pull_request:
+    types: [labeled, synchronize]
+  schedule:
+    - cron: "0 3 * * *"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  integration:
+    if: ${{ github.event_name == 'schedule' || contains(github.event.pull_request.labels.*.name, 'integration') }}
+    runs-on: ubuntu-latest
+    environment: integration
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - uses: astral-sh/setup-uv@v8.2.0
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - run: uv sync --all-extras --frozen
+
+      - name: Run integration tests
+        env:
+          FABRIC_TEST_WORKSPACE_ID: ${{ vars.FABRIC_TEST_WORKSPACE_ID }}
+          FABRIC_AUTH: default
+        run: uv run pytest tests/integration -m integration -v
+
+      - name: Cleanup orphan items
+        if: always()
+        env:
+          FABRIC_TEST_WORKSPACE_ID: ${{ vars.FABRIC_TEST_WORKSPACE_ID }}
+          FABRIC_AUTH: default
+        run: |
+          # Fail the build if any pytest-* items remain after the run
+          uv run python -c "
+          import anyio, os
+          from fabric_dw.auth import get_credential
+          from fabric_dw.http_client import FabricHttpClient
+          from fabric_dw.services import warehouses
+
+          async def main() -> None:
+              ws = os.environ['FABRIC_TEST_WORKSPACE_ID']
+              cred = get_credential()
+              async with FabricHttpClient(cred) as http:
+                  items = await warehouses.list_warehouses(http, ws)
+                  orphans = [w for w in items if w.name.startswith('pytest-')]
+                  if orphans:
+                      names = [w.name for w in orphans]
+                      raise SystemExit(f'orphan test items remain: {names}')
+
+          anyio.run(main)
+          "
