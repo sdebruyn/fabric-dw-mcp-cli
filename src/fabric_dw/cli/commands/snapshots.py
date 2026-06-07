@@ -3,43 +3,22 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator, Callable, Coroutine
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from functools import wraps
-from typing import ParamSpec, TypeVar
-from uuid import UUID
 
-import anyio
 import click
 
 from fabric_dw import auth as _auth
-from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import confirm, render
+from fabric_dw.cli.commands._utils import _coro, _resolve_item
 from fabric_dw.exceptions import FabricError
 from fabric_dw.http_client import FabricHttpClient
-from fabric_dw.resolver import Resolver
 from fabric_dw.services import snapshots as _snapshots_svc
 from fabric_dw.sql_client import FabricSqlClient, SqlTarget
 
-_P = ParamSpec("_P")
-_R = TypeVar("_R")
-
 _log = logging.getLogger(__name__)
-
-
-def _coro(f: Callable[_P, Coroutine[None, None, _R]]) -> Callable[_P, _R]:
-    """Wrap an async Click command so it runs via anyio.run."""
-
-    @wraps(f)
-    def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
-        async def _inner() -> _R:
-            return await f(*args, **kwargs)
-
-        return anyio.run(_inner)
-
-    return wrapper
 
 
 @asynccontextmanager
@@ -48,22 +27,19 @@ async def _build_clients(
 ) -> AsyncIterator[tuple[FabricHttpClient, FabricSqlClient]]:
     """Build and yield HTTP and SQL clients for snapshot commands."""
     credential = _auth.get_credential(ctx.auth)
-    async with FabricHttpClient(credential) as http:
-        sql = FabricSqlClient(mode=ctx.auth)
+    async with FabricHttpClient(credential) as http, FabricSqlClient(mode=ctx.auth) as sql:
         yield http, sql
 
 
-async def _resolve_item(
-    http: FabricHttpClient,
-    workspace: str,
-    item: str,
-) -> tuple[UUID, ItemEntry]:
-    """Resolve workspace and item names/GUIDs to UUIDs + item entry."""
-    cache = LookupCache()
-    resolver = Resolver(http=http, cache=cache)
-    ws_id = await resolver.workspace_id(workspace)
-    entry = await resolver.item(workspace, item)
-    return ws_id, entry
+def _parse_utc_dt(value: str, flag: str) -> datetime:
+    """Parse an ISO 8601 datetime string and normalise to UTC."""
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise click.ClickException(  # noqa: TRY003
+            f"Invalid {flag} value {value!r}: {exc}"
+        ) from exc
+    return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
 
 
 @click.group("snapshots")
@@ -114,14 +90,7 @@ async def create_cmd(  # noqa: PLR0913
     """Create a new snapshot named NAME for WAREHOUSE in WORKSPACE."""
     parsed_dt: datetime | None = None
     if snapshot_dt is not None:
-        try:
-            parsed_dt = datetime.fromisoformat(snapshot_dt)
-            if parsed_dt.tzinfo is None:
-                parsed_dt = parsed_dt.replace(tzinfo=UTC)
-        except ValueError as exc:
-            raise click.ClickException(  # noqa: TRY003
-                f"Invalid --snapshot-dt value {snapshot_dt!r}: {exc}"
-            ) from exc
+        parsed_dt = _parse_utc_dt(snapshot_dt, "--snapshot-dt")
 
     try:
         async with _build_clients(ctx) as (http, _):
@@ -179,14 +148,16 @@ async def delete_cmd(ctx: CliContext, workspace: str, snapshot: str) -> None:
     try:
         async with _build_clients(ctx) as (http, _):
             ws_id, entry = await _resolve_item(http, workspace, snapshot)
-            if not confirm(
+            confirmed = confirm(
                 f"Delete snapshot {entry.display_name!r} ({entry.id})?",
                 yes=ctx.yes,
-            ):
-                click.echo("Aborted.")
-                return
+            )
+            if not confirmed:
+                raise click.Abort()  # noqa: TRY301
             await _snapshots_svc.delete(http, ws_id, entry.id)
             click.echo(f"Snapshot {entry.display_name!r} ({entry.id}) deleted.")
+    except click.Abort:
+        raise
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -196,7 +167,7 @@ async def delete_cmd(ctx: CliContext, workspace: str, snapshot: str) -> None:
 @click.argument("warehouse")
 @click.argument("snapshot_name")
 @click.option(
-    "--to",
+    "--at",
     "new_dt",
     default=None,
     help="Target datetime (ISO 8601, UTC). Defaults to CURRENT_TIMESTAMP.",
@@ -217,29 +188,22 @@ async def roll_cmd(
     """
     parsed_dt: datetime | None = None
     if new_dt is not None:
-        try:
-            parsed_dt = datetime.fromisoformat(new_dt)
-            if parsed_dt.tzinfo is None:
-                parsed_dt = parsed_dt.replace(tzinfo=UTC)
-        except ValueError as exc:
-            raise click.ClickException(  # noqa: TRY003
-                f"Invalid --to value {new_dt!r}: {exc}"
-            ) from exc
+        parsed_dt = _parse_utc_dt(new_dt, "--at")
 
     try:
         async with _build_clients(ctx) as (http, sql):
             ws_id, entry = await _resolve_item(http, workspace, warehouse)
-            if not confirm(
-                f"Roll snapshot {snapshot_name!r} on warehouse "
-                f"{entry.display_name!r} ({entry.id})?",
-                yes=ctx.yes,
-            ):
-                click.echo("Aborted.")
-                return
             if entry.connection_string is None:
                 raise click.ClickException(  # noqa: TRY003
                     f"Warehouse {entry.display_name!r} has no connection string."
                 )
+            confirmed = confirm(
+                f"Roll snapshot {snapshot_name!r} on warehouse "
+                f"{entry.display_name!r} ({entry.id})?",
+                yes=ctx.yes,
+            )
+            if not confirmed:
+                raise click.Abort()  # noqa: TRY301
             target = SqlTarget(
                 workspace_id=str(ws_id),
                 database=entry.display_name,
@@ -247,5 +211,7 @@ async def roll_cmd(
             )
             await _snapshots_svc.roll_timestamp(sql, target, snapshot_name, parsed_dt)
             click.echo(f"Snapshot {snapshot_name!r} rolled.")
+    except click.Abort:
+        raise
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc

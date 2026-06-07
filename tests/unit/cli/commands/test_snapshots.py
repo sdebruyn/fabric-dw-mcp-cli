@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -38,7 +39,7 @@ def cache_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def _make_cm(http: object, sql: object) -> object:
     @asynccontextmanager
-    async def _cm(_ctx: object) -> object:  # type: ignore[misc]
+    async def _cm(_ctx: object) -> AsyncIterator[tuple[object, object]]:
         yield http, sql
 
     return _cm
@@ -93,6 +94,25 @@ class TestSnapshotsList:
         ):
             result = runner.invoke(cli, ["snapshots", "list", WS_GUID, WH_GUID])
         assert result.exit_code == 0
+
+    def test_list_json_output(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_http.iter_paginated = MagicMock(return_value=_async_iter([]))
+        with (
+            patch(
+                "fabric_dw.cli.commands.snapshots._build_clients",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.snapshots._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_wh_entry())),
+            ),
+        ):
+            result = runner.invoke(cli, ["--json", "snapshots", "list", WS_GUID, WH_GUID])
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert isinstance(parsed, list)
 
     def test_list_not_found_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -208,8 +228,7 @@ class TestSnapshotsDelete:
             ),
         ):
             result = runner.invoke(cli, ["snapshots", "delete", WS_GUID, SNAP_GUID], input="n\n")
-        assert result.exit_code == 0
-        assert "Aborted" in result.output
+        assert result.exit_code != 0
 
 
 class TestSnapshotsRoll:
@@ -243,6 +262,36 @@ class TestSnapshotsRoll:
             )
         assert result.exit_code == 0
 
+    def test_roll_with_at_flag_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_sql = AsyncMock()
+        mock_sql.execute_nonquery = AsyncMock(return_value=None)
+        with (
+            patch(
+                "fabric_dw.cli.commands.snapshots._build_clients",
+                new=_make_cm(mock_http, mock_sql),
+            ),
+            patch(
+                "fabric_dw.cli.commands.snapshots._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_wh_entry())),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "--yes",
+                    "snapshots",
+                    "roll",
+                    WS_GUID,
+                    WH_GUID,
+                    "SalesWarehouse_Snapshot_20240315",
+                    "--at",
+                    "2024-03-15T12:00:00Z",
+                ],
+            )
+        assert result.exit_code == 0
+
     def test_roll_declined_aborts(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
@@ -268,8 +317,7 @@ class TestSnapshotsRoll:
                 ],
                 input="n\n",
             )
-        assert result.exit_code == 0
-        assert "Aborted" in result.output
+        assert result.exit_code != 0
 
     def test_roll_permission_denied_returns_nonzero(
         self, runner: CliRunner, cache_env: Path

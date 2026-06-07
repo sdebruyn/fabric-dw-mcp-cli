@@ -3,19 +3,16 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator, Callable, Coroutine
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from functools import wraps
-from typing import ParamSpec, TypeVar
-from uuid import UUID
 
-import anyio
 import click
 
 from fabric_dw import auth as _auth
-from fabric_dw.cache import ItemEntry, LookupCache
+from fabric_dw.cache import LookupCache
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import confirm, render
+from fabric_dw.cli.commands._utils import _coro, _resolve_item
 from fabric_dw.exceptions import FabricError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import WarehouseKind
@@ -23,23 +20,7 @@ from fabric_dw.resolver import Resolver
 from fabric_dw.services import ownership as _ownership_svc
 from fabric_dw.services import warehouses as _warehouses_svc
 
-_P = ParamSpec("_P")
-_R = TypeVar("_R")
-
 _log = logging.getLogger(__name__)
-
-
-def _coro(f: Callable[_P, Coroutine[None, None, _R]]) -> Callable[_P, _R]:
-    """Wrap an async Click command so it runs via anyio.run."""
-
-    @wraps(f)
-    def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
-        async def _inner() -> _R:
-            return await f(*args, **kwargs)
-
-        return anyio.run(_inner)
-
-    return wrapper
 
 
 @asynccontextmanager
@@ -50,19 +31,6 @@ async def _build_clients(
     credential = _auth.get_credential(ctx.auth)
     async with FabricHttpClient(credential) as http:
         yield http, None
-
-
-async def _resolve_item(
-    http: FabricHttpClient,
-    workspace: str,
-    warehouse: str,
-) -> tuple[UUID, ItemEntry]:
-    """Resolve workspace and warehouse names/GUIDs to UUIDs + item entry."""
-    cache = LookupCache()
-    resolver = Resolver(http=http, cache=cache)
-    ws_id = await resolver.workspace_id(workspace)
-    entry = await resolver.item(workspace, warehouse)
-    return ws_id, entry
 
 
 @click.group("warehouses")
@@ -157,12 +125,12 @@ async def rename_cmd(
     try:
         async with _build_clients(ctx) as (http, _):
             ws_id, entry = await _resolve_item(http, workspace, warehouse)
-            if not confirm(
+            confirmed = confirm(
                 f"Rename warehouse {entry.display_name!r} ({entry.id}) to {new_name!r}?",
                 yes=ctx.yes,
-            ):
-                click.echo("Aborted.")
-                return
+            )
+            if not confirmed:
+                raise click.Abort()  # noqa: TRY301
             obj = await _warehouses_svc.rename(
                 http,
                 ws_id,
@@ -171,6 +139,8 @@ async def rename_cmd(
                 description=description,
             )
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
+    except click.Abort:
+        raise
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -185,14 +155,16 @@ async def delete_cmd(ctx: CliContext, workspace: str, warehouse: str) -> None:
     try:
         async with _build_clients(ctx) as (http, _):
             ws_id, entry = await _resolve_item(http, workspace, warehouse)
-            if not confirm(
+            confirmed = confirm(
                 f"Delete warehouse {entry.display_name!r} ({entry.id})?",
                 yes=ctx.yes,
-            ):
-                click.echo("Aborted.")
-                return
+            )
+            if not confirmed:
+                raise click.Abort()  # noqa: TRY301
             await _warehouses_svc.delete(http, ws_id, entry.id)
             click.echo(f"Warehouse {entry.display_name!r} ({entry.id}) deleted.")
+    except click.Abort:
+        raise
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -214,14 +186,16 @@ async def takeover_cmd(ctx: CliContext, workspace: str, warehouse: str) -> None:
                 raise click.UsageError(  # noqa: TRY003, TRY301
                     "takeover is not supported for SQL Analytics Endpoints"
                 )
-            if not confirm(
+            confirmed = confirm(
                 f"Take over warehouse {entry.display_name!r} ({entry.id})?",
                 yes=ctx.yes,
-            ):
-                click.echo("Aborted.")
-                return
+            )
+            if not confirmed:
+                raise click.Abort()  # noqa: TRY301
             await _ownership_svc.takeover(http, ws_id, entry.id)
             click.echo(f"Ownership of warehouse {entry.display_name!r} ({entry.id}) taken.")
+    except click.Abort:
+        raise
     except click.UsageError:
         raise
     except FabricError as exc:

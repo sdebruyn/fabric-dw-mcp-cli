@@ -3,41 +3,23 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator, Callable, Coroutine
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from functools import wraps
-from typing import ParamSpec, TypeVar
 from uuid import UUID
 
-import anyio
 import click
 
 from fabric_dw import auth as _auth
 from fabric_dw.cache import LookupCache
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import confirm, render
+from fabric_dw.cli.commands._utils import _coro
 from fabric_dw.exceptions import FabricError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.resolver import Resolver
 from fabric_dw.services import workspaces as _workspaces_svc
 
-_P = ParamSpec("_P")
-_R = TypeVar("_R")
-
 _log = logging.getLogger(__name__)
-
-
-def _coro(f: Callable[_P, Coroutine[None, None, _R]]) -> Callable[_P, _R]:
-    """Wrap an async Click command so it runs via anyio.run."""
-
-    @wraps(f)
-    def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
-        async def _inner() -> _R:
-            return await f(*args, **kwargs)
-
-        return anyio.run(_inner)
-
-    return wrapper
 
 
 @asynccontextmanager
@@ -125,14 +107,16 @@ async def set_collation_cmd(ctx: CliContext, workspace: str, collation: str) -> 
     try:
         async with _build_clients(ctx) as (http, _):
             ws_id = await _resolve_workspace(http, workspace)
-            if not confirm(
+            confirmed = confirm(
                 f"Set collation to {collation!r} for workspace {ws_id}?",
                 yes=ctx.yes,
-            ):
-                click.echo("Aborted.")
-                return
+            )
+            if not confirmed:
+                raise click.Abort()  # noqa: TRY301
             await _workspaces_svc.set_collation(http, ws_id, collation)
             click.echo(f"Collation set to {collation!r}.")
+    except click.Abort:
+        raise
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
     except FabricError as exc:

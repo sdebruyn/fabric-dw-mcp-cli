@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -37,7 +38,7 @@ def cache_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def _make_cm(http: object, sql: object) -> object:
     @asynccontextmanager
-    async def _cm(_ctx: object) -> object:  # type: ignore[misc]
+    async def _cm(_ctx: object) -> AsyncIterator[tuple[object, object]]:
         yield http, sql
 
     return _cm
@@ -72,6 +73,25 @@ class TestAuditGet:
         ):
             result = runner.invoke(cli, ["audit", "get", WS_GUID, WH_GUID])
         assert result.exit_code == 0
+
+    def test_get_json_output(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_http.request = AsyncMock(return_value=_make_response(200, AUDIT_SETTINGS_PAYLOAD))
+        with (
+            patch(
+                "fabric_dw.cli.commands.audit._build_clients",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.audit._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+        ):
+            result = runner.invoke(cli, ["--json", "audit", "get", WS_GUID, WH_GUID])
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert isinstance(parsed, dict)
 
     def test_get_not_found_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -164,8 +184,7 @@ class TestAuditDisable:
             ),
         ):
             result = runner.invoke(cli, ["audit", "disable", WS_GUID, WH_GUID], input="n\n")
-        assert result.exit_code == 0
-        assert "Aborted" in result.output
+        assert result.exit_code != 0
 
 
 class TestAuditSetGroups:
@@ -192,7 +211,9 @@ class TestAuditSetGroups:
                     "set-groups",
                     WS_GUID,
                     WH_GUID,
+                    "--group",
                     "BATCH_COMPLETED_GROUP",
+                    "--group",
                     "SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP",
                 ],
             )
@@ -220,6 +241,7 @@ class TestAuditSetGroups:
                     "set-groups",
                     WS_GUID,
                     WH_GUID,
+                    "--group",
                     "invalid-lowercase-group",
                 ],
             )

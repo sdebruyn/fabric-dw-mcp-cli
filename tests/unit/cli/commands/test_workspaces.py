@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -35,7 +36,7 @@ def _make_cm(http: object, sql: object) -> object:
     """Return an async context manager that yields (http, sql)."""
 
     @asynccontextmanager
-    async def _cm(_ctx: object) -> object:  # type: ignore[misc]
+    async def _cm(_ctx: object) -> AsyncIterator[tuple[object, object]]:
         yield http, sql
 
     return _cm
@@ -218,8 +219,7 @@ class TestWorkspacesSetCollation:
                 ],
                 input="n\n",
             )
-        assert result.exit_code == 0
-        assert "Aborted" in result.output
+        assert result.exit_code != 0
 
 
 # ---------------------------------------------------------------------------

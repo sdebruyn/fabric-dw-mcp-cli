@@ -3,41 +3,20 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator, Callable, Coroutine
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from functools import wraps
-from typing import ParamSpec, TypeVar
-from uuid import UUID
 
-import anyio
 import click
 
 from fabric_dw import auth as _auth
-from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import confirm, render
+from fabric_dw.cli.commands._utils import _coro, _resolve_item
 from fabric_dw.exceptions import FabricError
 from fabric_dw.http_client import FabricHttpClient
-from fabric_dw.resolver import Resolver
 from fabric_dw.services import audit as _audit_svc
 
-_P = ParamSpec("_P")
-_R = TypeVar("_R")
-
 _log = logging.getLogger(__name__)
-
-
-def _coro(f: Callable[_P, Coroutine[None, None, _R]]) -> Callable[_P, _R]:
-    """Wrap an async Click command so it runs via anyio.run."""
-
-    @wraps(f)
-    def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
-        async def _inner() -> _R:
-            return await f(*args, **kwargs)
-
-        return anyio.run(_inner)
-
-    return wrapper
 
 
 @asynccontextmanager
@@ -48,19 +27,6 @@ async def _build_clients(
     credential = _auth.get_credential(ctx.auth)
     async with FabricHttpClient(credential) as http:
         yield http, None
-
-
-async def _resolve_item(
-    http: FabricHttpClient,
-    workspace: str,
-    warehouse: str,
-) -> tuple[UUID, ItemEntry]:
-    """Resolve workspace and warehouse names/GUIDs to UUIDs + item entry."""
-    cache = LookupCache()
-    resolver = Resolver(http=http, cache=cache)
-    ws_id = await resolver.workspace_id(workspace)
-    entry = await resolver.item(workspace, warehouse)
-    return ws_id, entry
 
 
 @click.group("audit")
@@ -121,14 +87,16 @@ async def disable_cmd(ctx: CliContext, workspace: str, warehouse: str) -> None:
     try:
         async with _build_clients(ctx) as (http, _):
             ws_id, entry = await _resolve_item(http, workspace, warehouse)
-            if not confirm(
+            confirmed = confirm(
                 f"Disable auditing on warehouse {entry.display_name!r} ({entry.id})?",
                 yes=ctx.yes,
-            ):
-                click.echo("Aborted.")
-                return
+            )
+            if not confirmed:
+                raise click.Abort()  # noqa: TRY301
             obj = await _audit_svc.disable(http, ws_id, entry.id)
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
+    except click.Abort:
+        raise
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -136,16 +104,23 @@ async def disable_cmd(ctx: CliContext, workspace: str, warehouse: str) -> None:
 @audit_group.command("set-groups")
 @click.argument("workspace")
 @click.argument("warehouse")
-@click.argument("groups", nargs=-1, required=True)
+@click.option(
+    "-g",
+    "--group",
+    "groups",
+    multiple=True,
+    required=True,
+    help="Audit action group name (repeat for multiple).",
+)
 @click.pass_obj
 @_coro
 async def set_groups_cmd(
     ctx: CliContext, workspace: str, warehouse: str, groups: tuple[str, ...]
 ) -> None:
-    """Set audit action GROUPS for WAREHOUSE in WORKSPACE.
+    """Set audit action groups for WAREHOUSE in WORKSPACE.
 
-    GROUPS is a space-separated list of action group names (e.g.
-    BATCH_COMPLETED_GROUP SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP).
+    Pass --group for each action group name, e.g.
+    --group BATCH_COMPLETED_GROUP --group SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP.
     """
     try:
         async with _build_clients(ctx) as (http, _):

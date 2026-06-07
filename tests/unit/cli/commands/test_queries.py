@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -36,7 +37,7 @@ def cache_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def _make_cm(http: object, sql: object) -> object:
     @asynccontextmanager
-    async def _cm(_ctx: object) -> object:  # type: ignore[misc]
+    async def _cm(_ctx: object) -> AsyncIterator[tuple[object, object]]:
         yield http, sql
 
     return _cm
@@ -159,8 +160,7 @@ class TestQueriesKill:
             ),
         ):
             result = runner.invoke(cli, ["queries", "kill", WS_GUID, WH_GUID, "42"], input="n\n")
-        assert result.exit_code == 0
-        assert "Aborted" in result.output
+        assert result.exit_code != 0
 
     def test_kill_permission_denied_returns_nonzero(
         self, runner: CliRunner, cache_env: Path

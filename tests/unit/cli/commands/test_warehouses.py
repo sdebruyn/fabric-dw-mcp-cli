@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -41,7 +42,7 @@ def cache_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def _make_cm(http: object, sql: object) -> object:
     @asynccontextmanager
-    async def _cm(_ctx: object) -> object:  # type: ignore[misc]
+    async def _cm(_ctx: object) -> AsyncIterator[tuple[object, object]]:
         yield http, sql
 
     return _cm
@@ -184,7 +185,7 @@ class TestWarehousesCreate:
 
 
 class TestWarehousesRename:
-    """warehouses rename — happy path."""
+    """warehouses rename — happy path and decline."""
 
     def test_rename_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -205,6 +206,26 @@ class TestWarehousesRename:
                 ["--yes", "warehouses", "rename", WS_GUID, WH_GUID, "NewName"],
             )
         assert result.exit_code == 0
+
+    def test_rename_declined_aborts(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.warehouses._build_clients",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.warehouses._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["warehouses", "rename", WS_GUID, WH_GUID, "NewName"],
+                input="n\n",
+            )
+        assert result.exit_code != 0
 
 
 class TestWarehousesDelete:
@@ -241,8 +262,7 @@ class TestWarehousesDelete:
             ),
         ):
             result = runner.invoke(cli, ["warehouses", "delete", WS_GUID, WH_GUID], input="n\n")
-        assert result.exit_code == 0
-        assert "Aborted" in result.output
+        assert result.exit_code != 0
 
 
 class TestWarehousesTakeover:
