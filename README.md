@@ -49,7 +49,7 @@ fabric-dw --help
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, branch flow, and how to run tests locally.
 
-📖 Docs: [CHANGE-ME.debruyn.dev](https://CHANGE-ME.debruyn.dev) (or run `uv run --only-group docs zensical serve` locally).
+📖 Docs: [fdw.debruyn.dev](https://fdw.debruyn.dev) (or run `uv run --only-group docs zensical serve` locally).
 
 ## Security
 
