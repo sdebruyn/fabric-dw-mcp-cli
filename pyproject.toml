@@ -44,7 +44,6 @@ dev = [
     "pytest-cov",
     "mypy",
     "ruff",
-    "pre-commit",
 ]
 
 [dependency-groups]

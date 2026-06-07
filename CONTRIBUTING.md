@@ -12,11 +12,7 @@ Thank you for your interest in contributing to `fabric-dw-mcp-cli`!
    uv sync --all-extras
    ```
 
-2. **Install pre-commit hooks**
-
-   ```bash
-   uv run pre-commit install
-   ```
+2. **Install [just](https://github.com/casey/just#installation)** (optional, for convenient local checks)
 
 3. **Authenticate with Azure** (required for integration tests)
 
@@ -56,22 +52,31 @@ These prefixes are also used by the **release-drafter** workflow: every PR merge
 
 ## Running Checks Locally
 
+Run all gates with [`just`](https://github.com/casey/just#installation) before pushing:
+
+```bash
+just check
+```
+
+Or run individual checks manually:
+
 ### Lint
 
 ```bash
-uv run pre-commit run --all-files
+uv run ruff check .
+uv run ruff format --check .
 ```
 
 ### Type checking
 
 ```bash
-uv run mypy src
+uv run mypy src tests
 ```
 
 ### Unit tests
 
 ```bash
-uv run pytest tests/unit
+uv run pytest tests/unit -q
 ```
 
 ### Integration tests
