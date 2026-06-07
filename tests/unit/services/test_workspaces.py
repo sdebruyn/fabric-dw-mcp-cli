@@ -15,6 +15,7 @@ from azure.core.credentials import AccessToken, TokenCredential
 from fabric_dw.exceptions import FabricError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import Workspace
+from fabric_dw.services import workspaces
 from tests.fixtures.api_payloads import (
     WORKSPACE_GET_PAYLOAD,
     WORKSPACE_LIST_PAGE2_PAYLOAD,
@@ -29,8 +30,7 @@ _FAKE_TOKEN = AccessToken(token="fake-token", expires_on=int(time.time()) + 3600
 
 _WORKSPACE_ID = UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
 _CONTINUATION_URL = (
-    "https://api.fabric.microsoft.com/v1/workspaces"
-    "?continuationToken=eyJ0b2tlbiI6InRlc3QifQ%3D%3D"
+    "https://api.fabric.microsoft.com/v1/workspaces?continuationToken=eyJ0b2tlbiI6InRlc3QifQ%3D%3D"
 )
 
 
@@ -52,11 +52,9 @@ async def _make_client(rps: int = 10) -> FabricHttpClient:
 @pytest.mark.asyncio
 async def test_list_all_follows_continuation_uri() -> None:
     """list_all must follow continuationUri for ≥2 pages and return all workspaces."""
-    from fabric_dw.services import workspaces
-
     call_count = 0
 
-    def side_effect(request: httpx.Request) -> httpx.Response:
+    def side_effect(_request: httpx.Request) -> httpx.Response:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -84,8 +82,6 @@ async def test_list_all_follows_continuation_uri() -> None:
 @pytest.mark.asyncio
 async def test_list_all_returns_workspace_instances() -> None:
     """list_all items must be validated Workspace model instances."""
-    from fabric_dw.services import workspaces
-
     payload = json.loads(WORKSPACE_LIST_PAYLOAD)
     # Remove continuation so only one page is returned
     payload.pop("continuationUri", None)
@@ -114,13 +110,12 @@ async def test_list_all_returns_workspace_instances() -> None:
 @pytest.mark.asyncio
 async def test_get_returns_populated_workspace() -> None:
     """get must return a single populated Workspace for the given workspace_id."""
-    from fabric_dw.services import workspaces
-
     ws_id = _WORKSPACE_ID
     url = f"https://api.fabric.microsoft.com/v1/workspaces/{ws_id}"
+    ws_payload = json.loads(WORKSPACE_GET_PAYLOAD)
 
     with respx.mock:
-        respx.get(url).mock(return_value=httpx.Response(200, json=json.loads(WORKSPACE_GET_PAYLOAD)))
+        respx.get(url).mock(return_value=httpx.Response(200, json=ws_payload))
 
         client = await _make_client()
         async with client:
@@ -141,14 +136,13 @@ async def test_get_returns_populated_workspace() -> None:
 @pytest.mark.asyncio
 async def test_get_collation_returns_none_when_absent() -> None:
     """get_collation must return None when the workspace payload has no collation field."""
-    from fabric_dw.services import workspaces
-
     ws_id = _WORKSPACE_ID
     url = f"https://api.fabric.microsoft.com/v1/workspaces/{ws_id}"
+    ws_payload = json.loads(WORKSPACE_GET_PAYLOAD)
 
     # WORKSPACE_GET_PAYLOAD has no defaultDataWarehouseCollation
     with respx.mock:
-        respx.get(url).mock(return_value=httpx.Response(200, json=json.loads(WORKSPACE_GET_PAYLOAD)))
+        respx.get(url).mock(return_value=httpx.Response(200, json=ws_payload))
 
         client = await _make_client()
         async with client:
@@ -160,8 +154,6 @@ async def test_get_collation_returns_none_when_absent() -> None:
 @pytest.mark.asyncio
 async def test_get_collation_returns_value_when_present() -> None:
     """get_collation must return the collation string when present in the workspace payload."""
-    from fabric_dw.services import workspaces
-
     ws_id = _WORKSPACE_ID
     url = f"https://api.fabric.microsoft.com/v1/workspaces/{ws_id}"
 
@@ -186,8 +178,6 @@ async def test_get_collation_returns_value_when_present() -> None:
 @pytest.mark.asyncio
 async def test_set_collation_happy_path_returns_none() -> None:
     """set_collation must return None on a successful PATCH (200/202)."""
-    from fabric_dw.services import workspaces
-
     ws_id = _WORKSPACE_ID
     url = f"https://api.fabric.microsoft.com/v1/workspaces/{ws_id}"
 
@@ -196,18 +186,14 @@ async def test_set_collation_happy_path_returns_none() -> None:
 
         client = await _make_client()
         async with client:
-            result = await workspaces.set_collation(
-                client, ws_id, "Latin1_General_100_BIN2_UTF8"
-            )
+            await workspaces.set_collation(client, ws_id, "Latin1_General_100_BIN2_UTF8")
 
-    assert result is None
+    # set_collation returns None implicitly on success; no assertion needed beyond no exception
 
 
 @pytest.mark.asyncio
 async def test_set_collation_202_happy_path() -> None:
     """set_collation must also return None on 202 (accepted)."""
-    from fabric_dw.services import workspaces
-
     ws_id = _WORKSPACE_ID
     url = f"https://api.fabric.microsoft.com/v1/workspaces/{ws_id}"
 
@@ -216,18 +202,14 @@ async def test_set_collation_202_happy_path() -> None:
 
         client = await _make_client()
         async with client:
-            result = await workspaces.set_collation(
-                client, ws_id, "Latin1_General_100_CI_AS_KS_WS_SC_UTF8"
-            )
+            await workspaces.set_collation(client, ws_id, "Latin1_General_100_CI_AS_KS_WS_SC_UTF8")
 
-    assert result is None
+    # set_collation returns None implicitly on success; no assertion needed beyond no exception
 
 
 @pytest.mark.asyncio
 async def test_set_collation_400_raises_fabric_error_with_portal_link() -> None:
     """set_collation must raise FabricError mentioning the portal on a 400 response."""
-    from fabric_dw.services import workspaces
-
     ws_id = _WORKSPACE_ID
     url = f"https://api.fabric.microsoft.com/v1/workspaces/{ws_id}"
 
@@ -239,16 +221,12 @@ async def test_set_collation_400_raises_fabric_error_with_portal_link() -> None:
         client = await _make_client()
         async with client:
             with pytest.raises(FabricError, match="portal"):
-                await workspaces.set_collation(
-                    client, ws_id, "Latin1_General_100_BIN2_UTF8"
-                )
+                await workspaces.set_collation(client, ws_id, "Latin1_General_100_BIN2_UTF8")
 
 
 @pytest.mark.asyncio
 async def test_set_collation_invalid_value_raises_value_error() -> None:
     """set_collation must raise ValueError for unsupported collation strings."""
-    from fabric_dw.services import workspaces
-
     ws_id = _WORKSPACE_ID
 
     client = await _make_client()
@@ -264,8 +242,6 @@ async def test_set_collation_invalid_value_raises_value_error() -> None:
 
 def test_supported_collations_constant() -> None:
     """SUPPORTED_COLLATIONS must be a frozenset with the two documented values."""
-    from fabric_dw.services import workspaces
-
     assert isinstance(workspaces.SUPPORTED_COLLATIONS, frozenset)
     assert "Latin1_General_100_BIN2_UTF8" in workspaces.SUPPORTED_COLLATIONS
     assert "Latin1_General_100_CI_AS_KS_WS_SC_UTF8" in workspaces.SUPPORTED_COLLATIONS
