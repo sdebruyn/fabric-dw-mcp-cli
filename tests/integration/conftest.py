@@ -9,7 +9,7 @@ from fabric_dw.auth import get_credential
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import Warehouse
 from fabric_dw.services import warehouses
-from fabric_dw.sql_client import FabricSqlClient
+from fabric_dw.sql_client import FabricSqlClient, SqlTarget
 
 
 @pytest_asyncio.fixture
@@ -45,3 +45,15 @@ async def ephemeral_warehouse(
         yield wh
     finally:
         await warehouses.delete(http, workspace_id, wh.id)
+
+
+@pytest_asyncio.fixture
+async def ephemeral_sql_target(
+    workspace_id: UUID, ephemeral_warehouse: Warehouse
+) -> AsyncIterator[SqlTarget]:
+    assert ephemeral_warehouse.connection_string
+    yield SqlTarget(
+        workspace_id=str(workspace_id),
+        database=ephemeral_warehouse.name,
+        connection_string=ephemeral_warehouse.connection_string,
+    )
