@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import logging
 import time as _time
 from collections.abc import AsyncIterator, Mapping
 from email.utils import parsedate_to_datetime
@@ -32,6 +33,9 @@ from fabric_dw.exceptions import (
     PermissionDenied,
     RateLimitedError,
 )
+from fabric_dw.logging import redact_auth_header
+
+_logger = logging.getLogger("fabric_dw.http")
 
 __all__ = [
     "FabricHttpClient",
@@ -196,12 +200,25 @@ class FabricHttpClient:
                 token = await self._get_token()
                 headers = {"Authorization": f"Bearer {token}"}
 
+                t0 = _time.monotonic()
                 resp = await self._http.request(
                     method,
                     url,
                     headers=headers,
                     json=json,
                     params=params,
+                )
+                elapsed_ms = (_time.monotonic() - t0) * 1000
+
+            if _logger.isEnabledFor(logging.DEBUG):
+                safe_headers = redact_auth_header(dict(headers))
+                _logger.debug(
+                    "%s %s -> %d elapsed_ms=%.1f headers=%r",
+                    method,
+                    url,
+                    resp.status_code,
+                    elapsed_ms,
+                    safe_headers,
                 )
 
             if resp.status_code == 429:  # noqa: PLR2004

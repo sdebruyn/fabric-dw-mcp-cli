@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import logging
 import re
 import types
 from collections.abc import Sequence
@@ -12,6 +13,9 @@ from typing import Any, Protocol
 
 from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import AuthError, PermissionDenied
+
+_logger = logging.getLogger("fabric_dw.sql")
+_SQL_LOG_MAX_BYTES = 4096
 
 # Thin indirection that lets tests monkeypatch ``_mssql`` without the native
 # extension being imported at module-load time (the .so may not be loadable in
@@ -226,6 +230,12 @@ class FabricSqlClient:
         Raises:
             AuthError: If the driver raises an Entra authentication error.
         """
+        if _logger.isEnabledFor(logging.DEBUG):
+            _logger.debug(
+                "execute sql=%r params_count=%d",
+                sql[:_SQL_LOG_MAX_BYTES],
+                len(params),
+            )
         conn = await self._get_connection(target)
 
         def _run() -> list[dict[str, Any]]:
@@ -265,6 +275,12 @@ class FabricSqlClient:
         Raises:
             AuthError: If the driver raises an Entra authentication error.
         """
+        if _logger.isEnabledFor(logging.DEBUG):
+            _logger.debug(
+                "execute_nonquery sql=%r params_count=%d",
+                sql[:_SQL_LOG_MAX_BYTES],
+                len(params),
+            )
         conn = await self._get_connection(target)
 
         def _run() -> int:

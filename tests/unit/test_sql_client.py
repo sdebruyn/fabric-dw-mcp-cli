@@ -586,9 +586,7 @@ class TestSqlDebugLogging:
 
         client = FabricSqlClient()
         with caplog.at_level(logging.DEBUG, logger="fabric_dw.sql"):
-            await client.execute_nonquery(
-                _make_target(), "DELETE FROM t WHERE id = ?", (99999,)
-            )
+            await client.execute_nonquery(_make_target(), "DELETE FROM t WHERE id = ?", (99999,))
         await client.close()
 
         record = caplog.records[0]
@@ -631,5 +629,4 @@ class TestSqlDebugLogging:
         record = caplog.records[0]
         msg = record.getMessage()
         # The logged SQL must not exceed 4096 chars (plus some overhead for the rest of the message)
-        assert len(long_sql) not in [len(msg)]  # message should be shorter than full SQL
         assert len(msg) < len(long_sql)

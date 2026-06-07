@@ -70,7 +70,8 @@ class TestCliVerboseFlag:
         """When -v is passed, setup_logging should be called with logging.DEBUG."""
         runner = CliRunner()
         with patch("fabric_dw.cli._main.setup_logging") as mock_setup:
-            result = runner.invoke(cli, ["-v", "--help"])
+            # Use cache --help to trigger the group callback without network calls
+            result = runner.invoke(cli, ["-v", "cache", "--help"])
             assert result.exit_code == 0
             mock_setup.assert_called_once_with(logging.DEBUG)
 
@@ -78,6 +79,7 @@ class TestCliVerboseFlag:
         """Without -v, setup_logging should be called with logging.INFO."""
         runner = CliRunner()
         with patch("fabric_dw.cli._main.setup_logging") as mock_setup:
-            result = runner.invoke(cli, ["--help"])
+            # Use cache --help to trigger the group callback without network calls
+            result = runner.invoke(cli, ["cache", "--help"])
             assert result.exit_code == 0
             mock_setup.assert_called_once_with(logging.INFO)

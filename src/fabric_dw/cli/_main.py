@@ -10,6 +10,7 @@ from fabric_dw.auth import CredentialMode
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli.commands.cache import cache_group
 from fabric_dw.cli.commands.completion import completion_group
+from fabric_dw.logging import setup_logging
 
 
 @click.group(invoke_without_command=False)
@@ -53,10 +54,7 @@ def cli(
     verbose: bool,
 ) -> None:
     """Microsoft Fabric Data Warehouse CLI."""
-    if verbose:
-        logging.basicConfig(level=logging.DEBUG)
-    else:
-        logging.basicConfig(level=logging.WARNING)
+    setup_logging(logging.DEBUG if verbose else logging.INFO)
 
     ctx.obj = CliContext(
         json_output=json_output,

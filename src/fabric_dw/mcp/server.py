@@ -17,6 +17,7 @@ Architecture
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 from collections.abc import Sequence
 from datetime import datetime
@@ -29,6 +30,7 @@ from fabric_dw import auth as _auth
 from fabric_dw.cache import LookupCache
 from fabric_dw.exceptions import ConfigError, FabricError
 from fabric_dw.http_client import FabricHttpClient
+from fabric_dw.logging import setup_logging
 from fabric_dw.resolver import Resolver
 from fabric_dw.services import audit, queries, snapshots, warehouses, workspaces
 from fabric_dw.services import ownership as ownership_svc
@@ -525,6 +527,11 @@ def run(argv: Sequence[str] | None = None) -> None:
     ``--transport http``
         Expose a streamable-HTTP endpoint.
     """
+    # Configure structured logging from env var (default INFO)
+    raw_level = os.environ.get("FABRIC_LOG_LEVEL", "INFO").upper()
+    log_level = getattr(logging, raw_level, logging.INFO)
+    setup_logging(log_level)
+
     parser = argparse.ArgumentParser(
         prog="fabric-dw-mcp",
         description="Microsoft Fabric Data Warehouse MCP server",

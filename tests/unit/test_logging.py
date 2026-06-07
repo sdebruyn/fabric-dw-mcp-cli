@@ -5,9 +5,7 @@ from __future__ import annotations
 import json
 import logging
 
-import pytest
-
-from fabric_dw.logging import redact_auth_header, setup_logging
+from fabric_dw.logging import _JsonFormatter, redact_auth_header, setup_logging
 
 
 class TestSetupLogging:
@@ -23,25 +21,28 @@ class TestSetupLogging:
         setup_logging()
         assert logging.getLogger().level == logging.INFO
 
-    def test_output_is_valid_json(self, caplog: pytest.LogCaptureFixture) -> None:
-        setup_logging(logging.DEBUG)
-        with caplog.at_level(logging.DEBUG, logger="fabric_dw.test_json"):
-            logger = logging.getLogger("fabric_dw.test_json")
-            logger.debug("hello json")
-
-        assert len(caplog.records) >= 1
-        record = caplog.records[-1]
-        # The formatter attached by setup_logging should produce JSON
-        # We get the handler to format the record
-        root = logging.getLogger()
-        handler = root.handlers[0] if root.handlers else None
-        if handler is not None:
-            formatted = handler.format(record)
-            parsed = json.loads(formatted)
-            assert "level" in parsed
-            assert "msg" in parsed
-            assert "name" in parsed
-            assert "time" in parsed
+    def test_output_is_valid_json(self) -> None:
+        """The JSON formatter must produce parseable JSON with required keys."""
+        formatter = _JsonFormatter()
+        logger = logging.getLogger("fabric_dw.test_json")
+        record = logger.makeRecord(
+            name="fabric_dw.test_json",
+            level=logging.DEBUG,
+            fn="test_file.py",
+            lno=1,
+            msg="hello json",
+            args=(),
+            exc_info=None,
+        )
+        formatted = formatter.format(record)
+        parsed = json.loads(formatted)
+        assert "level" in parsed
+        assert "msg" in parsed
+        assert "name" in parsed
+        assert "time" in parsed
+        assert parsed["msg"] == "hello json"
+        assert parsed["level"] == "DEBUG"
+        assert parsed["name"] == "fabric_dw.test_json"
 
 
 class TestRedactAuthHeader:

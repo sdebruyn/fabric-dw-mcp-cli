@@ -400,8 +400,10 @@ async def test_debug_log_emitted_on_request(caplog: pytest.LogCaptureFixture) ->
             with caplog.at_level(logging.DEBUG, logger="fabric_dw.http"):
                 await client.request("GET", HttpBase.FABRIC, "/items")
 
-    assert len(caplog.records) >= 1
-    record = caplog.records[0]
+    # Find the record from fabric_dw.http (there may also be httpx records)
+    fabric_records = [r for r in caplog.records if r.name == "fabric_dw.http"]
+    assert len(fabric_records) >= 1
+    record = fabric_records[0]
     assert record.name == "fabric_dw.http"
     assert record.levelno == logging.DEBUG
 
@@ -428,8 +430,10 @@ async def test_debug_log_contains_elapsed_ms(caplog: pytest.LogCaptureFixture) -
             with caplog.at_level(logging.DEBUG, logger="fabric_dw.http"):
                 await client.request("GET", HttpBase.FABRIC, "/items")
 
-    assert len(caplog.records) >= 1
-    record = caplog.records[0]
+    # Find the record from fabric_dw.http
+    fabric_records = [r for r in caplog.records if r.name == "fabric_dw.http"]
+    assert len(fabric_records) >= 1
+    record = fabric_records[0]
     # elapsed_ms may be in the message string or as an extra attribute
     has_elapsed = (
         "elapsed" in record.getMessage().lower()
