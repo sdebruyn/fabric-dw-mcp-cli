@@ -70,6 +70,8 @@ select = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["ANN", "S101", "PLR2004"]
 "src/fabric_dw/services/**" = ["PLR0913"]
+# Click injects bool flags via decorators; FBT001 is a false-positive for Click commands.
+"src/fabric_dw/cli/**" = ["FBT001"]
 
 [tool.ruff.format]
 

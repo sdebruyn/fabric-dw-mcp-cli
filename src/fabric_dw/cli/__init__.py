@@ -1,2 +1,10 @@
+"""CLI entrypoint for fabric-dw."""
+
+from __future__ import annotations
+
+from fabric_dw.cli._main import cli
+
+
 def main() -> None:
-    raise NotImplementedError
+    """Entrypoint registered in pyproject.toml [project.scripts]."""
+    cli()
