@@ -13,6 +13,7 @@ from azure.core.credentials import AccessToken, TokenCredential
 
 from fabric_dw.exceptions import NotFound, PermissionDenied
 from fabric_dw.http_client import FabricHttpClient
+from fabric_dw.services.ownership import takeover
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -44,8 +45,6 @@ def _make_credential(token: AccessToken = _FAKE_TOKEN) -> TokenCredential:
 @respx.mock
 async def test_takeover_200_returns_none() -> None:
     """A 200 response should result in None being returned."""
-    from fabric_dw.services.ownership import takeover
-
     respx.post(_EXPECTED_URL).mock(return_value=respx.MockResponse(200))
 
     async with FabricHttpClient(credential=_make_credential(), rps=10) as http:
@@ -57,8 +56,6 @@ async def test_takeover_200_returns_none() -> None:
 @respx.mock
 async def test_takeover_202_returns_none() -> None:
     """A 202 response should result in None being returned."""
-    from fabric_dw.services.ownership import takeover
-
     respx.post(_EXPECTED_URL).mock(return_value=respx.MockResponse(202))
 
     async with FabricHttpClient(credential=_make_credential(), rps=10) as http:
@@ -70,8 +67,6 @@ async def test_takeover_202_returns_none() -> None:
 @respx.mock
 async def test_takeover_204_returns_none() -> None:
     """A 204 response should result in None being returned."""
-    from fabric_dw.services.ownership import takeover
-
     respx.post(_EXPECTED_URL).mock(return_value=respx.MockResponse(204))
 
     async with FabricHttpClient(credential=_make_credential(), rps=10) as http:
@@ -83,8 +78,6 @@ async def test_takeover_204_returns_none() -> None:
 @respx.mock
 async def test_takeover_403_raises_permission_denied() -> None:
     """A 403 response should raise PermissionDenied with a helpful message."""
-    from fabric_dw.services.ownership import takeover
-
     respx.post(_EXPECTED_URL).mock(return_value=respx.MockResponse(403))
 
     async with FabricHttpClient(credential=_make_credential(), rps=10) as http:
@@ -95,8 +88,6 @@ async def test_takeover_403_raises_permission_denied() -> None:
 @respx.mock
 async def test_takeover_404_raises_not_found() -> None:
     """A 404 response should raise NotFound."""
-    from fabric_dw.services.ownership import takeover
-
     respx.post(_EXPECTED_URL).mock(return_value=respx.MockResponse(404))
 
     async with FabricHttpClient(credential=_make_credential(), rps=10) as http:
@@ -107,11 +98,9 @@ async def test_takeover_404_raises_not_found() -> None:
 @respx.mock
 async def test_takeover_sends_empty_body() -> None:
     """POST body must be empty (None / no content-type: application/json)."""
-    from fabric_dw.services.ownership import takeover
-
     received_requests: list[Any] = []
 
-    def _capture(request: Any, route: Any) -> Any:  # noqa: ANN401
+    def _capture(request: Any, route: Any) -> respx.MockResponse:  # noqa: ARG001
         received_requests.append(request)
         return respx.MockResponse(200)
 
