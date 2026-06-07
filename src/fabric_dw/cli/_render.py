@@ -85,7 +85,7 @@ def _render_table(rows: list[object], *, console: Console, title: str | None) ->
 def _render_panel(data: dict[str, object], *, console: Console, title: str | None) -> None:
     """Render a single dict as a Rich Panel with key: value lines."""
     lines = "\n".join(f"[bold]{k}[/bold]: {v}" for k, v in data.items())
-    panel = Panel(lines, title=title or "")
+    panel = Panel(lines, title=title)
     console.print(panel)
 
 
