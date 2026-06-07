@@ -8,7 +8,7 @@ from io import StringIO
 import pytest
 from rich.console import Console
 
-from fabric_dw.cli._render import render
+from fabric_dw.cli._render import confirm, render
 
 
 class TestRenderJson:
@@ -68,9 +68,11 @@ class TestRenderTable:
         assert "foo" in output
 
     def test_list_title_is_used_when_provided(self) -> None:
-        data = [{"x": "1"}]
+        data = [{"x": "1"}, {"x": "2"}, {"x": "3"}, {"x": "4"}, {"x": "5"}]
         output = self._render_to_string(data, table_title="My Table")
-        assert "My Table" in output
+        # Rich may wrap the title if the table is narrow; check each word appears
+        assert "My" in output
+        assert "Table" in output
 
     def test_single_dict_renders_panel(self) -> None:
         data = {"id": "abc", "name": "foo"}
@@ -94,7 +96,5 @@ class TestConfirm:
     """confirm() helper returns True when yes=True without prompting."""
 
     def test_yes_flag_skips_prompt(self) -> None:
-        from fabric_dw.cli._render import confirm
-
         result = confirm("Are you sure?", yes=True)
         assert result is True
