@@ -85,3 +85,17 @@ packages = ["fabric_dw"]
 markers = ["integration: hits real Fabric APIs"]
 addopts = "-ra --strict-markers"
 asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["fabric_dw"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_covered = true
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+]
