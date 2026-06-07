@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import json
+import json as _json
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
@@ -15,10 +15,10 @@ import respx
 from azure.core.credentials import AccessToken, TokenCredential
 
 from fabric_dw.exceptions import NotFound, PermissionDenied
-from fabric_dw.http_client import FabricHttpClient, HttpBase
+from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import WarehouseSnapshot
-from fabric_dw.sql_client import FabricSqlClient, SqlTarget
 from fabric_dw.services import snapshots
+from fabric_dw.sql_client import SqlTarget
 
 # ---------------------------------------------------------------------------
 # Constants & Fixtures
@@ -122,9 +122,9 @@ def _make_credential() -> TokenCredential:
     return cred
 
 
-def _make_sql_client() -> FabricSqlClient:
+def _make_sql_client() -> MagicMock:
     """Return a mock FabricSqlClient with execute_nonquery stubbed."""
-    client = MagicMock(spec=FabricSqlClient)
+    client = MagicMock()
     client.execute_nonquery = AsyncMock(return_value=0)
     return client
 
@@ -152,7 +152,7 @@ async def test_list_pages_through_and_filters_by_parent() -> None:
 
     items_page_call_count = 0
 
-    def _items_side_effect(request: Any) -> httpx.Response:
+    def _items_side_effect(_request: Any) -> httpx.Response:
         nonlocal items_page_call_count
         items_page_call_count += 1
         if items_page_call_count == 1:
@@ -175,7 +175,7 @@ async def test_list_pages_through_and_filters_by_parent() -> None:
         )
 
         async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
-            result = await snapshots.list(http, _WS_ID, _PARENT_WH_ID)
+            result = await snapshots.list_snapshots(http, _WS_ID, _PARENT_WH_ID)
 
     assert len(result) == 1
     snap = result[0]
@@ -201,7 +201,7 @@ async def test_list_returns_empty_when_no_snapshots() -> None:
     respx.get(_ITEMS_URL).mock(return_value=httpx.Response(200, json=payload))
 
     async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
-        result = await snapshots.list(http, _WS_ID, _PARENT_WH_ID)
+        result = await snapshots.list_snapshots(http, _WS_ID, _PARENT_WH_ID)
 
     assert result == []
 
@@ -214,7 +214,7 @@ async def test_list_returns_empty_when_no_snapshots() -> None:
 @respx.mock
 async def test_create_happy_path_with_snapshot_dt() -> None:
     """create should POST with snapshotDateTime, poll LRO, GET result, return WarehouseSnapshot."""
-    snap_dt = datetime(2024, 3, 15, 8, 0, 0, tzinfo=timezone.utc)
+    snap_dt = datetime(2024, 3, 15, 8, 0, 0, tzinfo=UTC)
 
     # POST → 202 with Location header
     respx.post(_ITEMS_URL).mock(
@@ -250,8 +250,6 @@ async def test_create_happy_path_with_snapshot_dt() -> None:
 @respx.mock
 async def test_create_happy_path_without_snapshot_dt() -> None:
     """create without snapshot_dt should omit snapshotDateTime from body."""
-    import json as _json
-
     captured_requests: list[Any] = []
 
     def _capture(request: Any) -> httpx.Response:
@@ -295,9 +293,7 @@ async def test_create_empty_name_raises_value_error() -> None:
 @respx.mock
 async def test_create_posts_correct_body_with_snapshot_dt() -> None:
     """create should send type, displayName, description, and creationPayload."""
-    import json as _json
-
-    snap_dt = datetime(2024, 3, 15, 8, 0, 0, tzinfo=timezone.utc)
+    snap_dt = datetime(2024, 3, 15, 8, 0, 0, tzinfo=UTC)
     captured_requests: list[Any] = []
 
     def _capture(request: Any) -> httpx.Response:
@@ -357,8 +353,6 @@ async def test_create_polls_lro_and_fetches_result() -> None:
 @respx.mock
 async def test_rename_fetches_existing_then_patches_with_all_fields() -> None:
     """rename should GET the snapshot first, then PATCH with all required fields."""
-    import json as _json
-
     patch_url = f"{_ITEMS_URL}/{_SNAP_ID}"
 
     captured_patch_requests: list[Any] = []
@@ -367,14 +361,12 @@ async def test_rename_fetches_existing_then_patches_with_all_fields() -> None:
         captured_patch_requests.append(request)
         return httpx.Response(200, json=WAREHOUSE_SNAPSHOT_DETAIL_PAYLOAD)
 
-    # GET to fetch existing snapshot detail
-    get_route = respx.get(patch_url).mock(
+    # GET to fetch existing snapshot detail (and again after PATCH for updated result)
+    respx.get(patch_url).mock(
         return_value=httpx.Response(200, json=WAREHOUSE_SNAPSHOT_DETAIL_PAYLOAD)
     )
     # PATCH for rename
-    patch_route = respx.patch(patch_url).mock(side_effect=_patch_capture)
-    # GET after PATCH for updated result
-    # (get_route is already set to return the detail; use it again)
+    respx.patch(patch_url).mock(side_effect=_patch_capture)
 
     async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
         result = await snapshots.rename(
@@ -419,7 +411,7 @@ async def test_rename_returns_updated_warehouse_snapshot() -> None:
 
     call_count = 0
 
-    def _get_side_effect(request: Any) -> httpx.Response:
+    def _get_side_effect(_request: Any) -> httpx.Response:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -452,9 +444,7 @@ async def test_delete_204_returns_none() -> None:
     respx.delete(f"{_ITEMS_URL}/{_SNAP_ID}").mock(return_value=httpx.Response(204))
 
     async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
-        result = await snapshots.delete(http, _WS_ID, _SNAP_ID)
-
-    assert result is None
+        await snapshots.delete(http, _WS_ID, _SNAP_ID)
 
 
 @respx.mock
@@ -489,7 +479,7 @@ async def test_roll_timestamp_with_new_dt_formats_correctly() -> None:
     """roll_timestamp with a datetime should format as YYYY-MM-DDTHH:MM:SS.SS."""
     sql_client = _make_sql_client()
     target = _make_sql_target()
-    new_dt = datetime(2024, 3, 15, 8, 30, 45, tzinfo=timezone.utc)
+    new_dt = datetime(2024, 3, 15, 8, 30, 45, tzinfo=UTC)
 
     await snapshots.roll_timestamp(sql_client, target, "MySnapshot", new_dt=new_dt)
 

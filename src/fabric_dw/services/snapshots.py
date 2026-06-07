@@ -13,7 +13,7 @@ from fabric_dw.sql_client import FabricSqlClient, SqlTarget
 __all__ = [
     "create",
     "delete",
-    "list",
+    "list_snapshots",
     "rename",
     "roll_timestamp",
 ]
@@ -50,7 +50,7 @@ def _snapshot_from_detail(detail: dict[str, object]) -> WarehouseSnapshot:
     return WarehouseSnapshot.model_validate(flat)
 
 
-async def list(  # noqa: A001
+async def list_snapshots(
     http: FabricHttpClient,
     workspace_id: UUID,
     parent_warehouse_id: UUID,
