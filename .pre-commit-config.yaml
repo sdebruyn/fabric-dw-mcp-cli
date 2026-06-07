@@ -29,4 +29,8 @@ repos:
           - "freezegun>=1.5"
           - "mssql-python>=0.13"
           - "filelock>=3.16"
+          - "click>=8.2"
+          - "rich>=14"
+          - "anyio>=4"
+          - "mcp[cli]>=1.0"
         args: ["--config-file", "pyproject.toml"]

@@ -22,15 +22,12 @@ mcp==1.27.2), so we fall back to **unit-style mocking**:
 
 from __future__ import annotations
 
-import asyncio
-from pathlib import Path
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
 
-from fabric_dw.exceptions import FabricError, NotFound
+from fabric_dw.exceptions import NotFound
 from fabric_dw.models import (
     AuditSettings,
     RunningQuery,
@@ -169,7 +166,7 @@ def test_tools_registered() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_workspaces_happy_path(tmp_path: Path) -> None:
+async def test_list_workspaces_happy_path() -> None:
     """list_workspaces returns a list of serialised workspace dicts."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -199,7 +196,7 @@ async def test_list_workspaces_happy_path(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_clear_cache_side_effect(tmp_path: Path) -> None:
+async def test_clear_cache_side_effect() -> None:
     """clear_cache must call LookupCache.clear() exactly once."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -238,9 +235,9 @@ async def test_fabric_error_becomes_tool_error() -> None:
             "fabric_dw.services.workspaces.list_all",
             new=AsyncMock(side_effect=not_found_error),
         ),
+        pytest.raises(ToolError) as exc_info,
     ):
-        with pytest.raises(ToolError) as exc_info:
-            await mcp._tool_manager.call_tool("list_workspaces", {})
+        await mcp._tool_manager.call_tool("list_workspaces", {})
 
     err = exc_info.value
     assert "NotFound" in str(err) or "not found" in str(err).lower()
@@ -269,9 +266,7 @@ async def test_get_workspace_happy_path() -> None:
         patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
         patch("fabric_dw.services.workspaces.get", new=AsyncMock(return_value=ws)),
     ):
-        result = await mcp._tool_manager.call_tool(
-            "get_workspace", {"workspace": _WS_NAME}
-        )
+        result = await mcp._tool_manager.call_tool("get_workspace", {"workspace": _WS_NAME})
 
     assert isinstance(result, dict)
     assert result["id"] == str(_WS_ID)
@@ -332,9 +327,7 @@ async def test_list_warehouses_happy_path() -> None:
             new=AsyncMock(return_value=[wh]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
-            "list_warehouses", {"workspace": _WS_NAME}
-        )
+        result = await mcp._tool_manager.call_tool("list_warehouses", {"workspace": _WS_NAME})
 
     assert isinstance(result, list)
     assert len(result) == 1
@@ -462,9 +455,7 @@ async def test_not_found_error_becomes_tool_error() -> None:
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     mock_resolver = AsyncMock()
-    mock_resolver.workspace_id = AsyncMock(
-        side_effect=NotFound("workspace 'boom' not found")
-    )
+    mock_resolver.workspace_id = AsyncMock(side_effect=NotFound("workspace 'boom' not found"))
     mock_http = AsyncMock()
     mock_cache = MagicMock()
 
@@ -472,8 +463,6 @@ async def test_not_found_error_becomes_tool_error() -> None:
         patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
         patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
         patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        pytest.raises(ToolError),
     ):
-        with pytest.raises(ToolError):
-            await mcp._tool_manager.call_tool(
-                "get_workspace", {"workspace": "boom"}
-            )
+        await mcp._tool_manager.call_tool("get_workspace", {"workspace": "boom"})
