@@ -1,12 +1,11 @@
-"""Tests for FabricHttpClient – written BEFORE the implementation (TDD)."""
+"""Tests for FabricHttpClient - written BEFORE the implementation (TDD)."""
 
 from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import AsyncIterator
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
@@ -27,7 +26,7 @@ from fabric_dw.http_client import FabricHttpClient, HttpBase, _parse_retry_after
 # Helpers
 # ---------------------------------------------------------------------------
 
-_FAKE_TOKEN = AccessToken(token="fake-token", expires_on=int(time.time()) + 3600)
+_FAKE_TOKEN = AccessToken(token="fake-token", expires_on=int(time.time()) + 3600)  # noqa: S106
 
 
 def _make_credential(token: AccessToken = _FAKE_TOKEN) -> TokenCredential:
@@ -68,6 +67,8 @@ def test_parse_retry_after_http_date() -> None:
 @pytest.mark.asyncio
 async def test_rps_limiter_timing() -> None:
     """6 concurrent requests at 2 RPS should complete in ~3 s (±0.5 s tolerance)."""
+    elapsed: float = 0.0
+
     with respx.mock:
         route = respx.get("https://api.fabric.microsoft.com/v1/items").mock(
             return_value=httpx.Response(200, json={"value": []})
@@ -81,11 +82,12 @@ async def test_rps_limiter_timing() -> None:
             )
             elapsed = time.monotonic() - start
 
-    assert route.call_count == 6
-    # With AsyncLimiter(2, 1): 6 requests / 2 rps = 3 s minimum (first 2 are free)
-    # Allow ±0.6 s tolerance for scheduling jitter
-    assert elapsed >= 2.4, f"Too fast: {elapsed:.2f}s — rate limiter not enforced"
-    assert elapsed <= 4.5, f"Too slow: {elapsed:.2f}s — unexpected delay"
+        assert route.call_count == 6
+    # With AsyncLimiter(2, 1): 6 requests at 2 RPS takes ~2 s
+    # (first 2 immediate, next 2 after 1 s, last 2 after 2 s)
+    # Allow ±0.5 s tolerance for scheduling jitter
+    assert elapsed >= 1.5, f"Too fast: {elapsed:.2f}s — rate limiter not enforced"
+    assert elapsed <= 4.0, f"Too slow: {elapsed:.2f}s — unexpected delay"
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +100,7 @@ async def test_429_retry_after_honored() -> None:
     """A 429 with Retry-After: 1 should retry once and succeed; elapsed >= ~0.9 s."""
     call_count = 0
 
-    def side_effect(request: httpx.Request) -> httpx.Response:
+    def side_effect(_request: httpx.Request) -> httpx.Response:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -114,8 +116,8 @@ async def test_429_retry_after_honored() -> None:
             resp = await client.request("GET", HttpBase.FABRIC, "/items")
             elapsed = time.monotonic() - start
 
-    assert resp.status_code == 200
-    assert call_count == 2
+        assert resp.status_code == 200
+        assert call_count == 2
     assert elapsed >= 0.9, f"Retry-After not honored: {elapsed:.2f}s"
 
 
@@ -213,15 +215,15 @@ async def test_iter_paginated_follows_continuation_uri() -> None:
 
     call_count = 0
 
-    def side_effect(request: httpx.Request) -> httpx.Response:
+    def side_effect(_request: httpx.Request) -> httpx.Response:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
             return httpx.Response(200, json=page1)
         return httpx.Response(200, json=page2)
 
-    with respx.mock(assert_all_called=False):
-        respx.get(url__regex=r"https://api\.fabric\.microsoft\.com/v1/items.*").mock(
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(url__regex=r"https://api\.fabric\.microsoft\.com/v1/items.*").mock(
             side_effect=side_effect
         )
 
@@ -229,8 +231,8 @@ async def test_iter_paginated_follows_continuation_uri() -> None:
         async with client:
             items = [item async for item in client.iter_paginated(HttpBase.FABRIC, "/items")]
 
-    assert items == [{"id": "a"}, {"id": "b"}, {"id": "c"}]
-    assert call_count == 2
+        assert items == [{"id": "a"}, {"id": "b"}, {"id": "c"}]
+        assert call_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +246,7 @@ async def test_poll_operation_succeeded() -> None:
     poll_count = 0
     final_body = {"status": "Succeeded", "result": {"id": "op-123"}}
 
-    def side_effect(request: httpx.Request) -> httpx.Response:
+    def side_effect(_request: httpx.Request) -> httpx.Response:
         nonlocal poll_count
         poll_count += 1
         if poll_count == 1:
@@ -266,8 +268,8 @@ async def test_poll_operation_succeeded() -> None:
                 "https://api.fabric.microsoft.com/v1/operations/op-123"
             )
 
-    assert result == final_body
-    assert poll_count == 2
+        assert result == final_body
+        assert poll_count == 2
 
 
 @pytest.mark.asyncio
@@ -281,6 +283,4 @@ async def test_poll_operation_failed_raises() -> None:
         client = await _get_client()
         async with client:
             with pytest.raises(FabricServerError):
-                await client.poll_operation(
-                    "https://api.fabric.microsoft.com/v1/operations/op-456"
-                )
+                await client.poll_operation("https://api.fabric.microsoft.com/v1/operations/op-456")
