@@ -77,3 +77,25 @@ RESTORE_POINT_PAYLOAD = """{
   "createdAt": "2024-03-15T06:00:00Z",
   "isSystemCreated": false
 }"""
+
+# Second page of workspace listing (no continuationUri → last page)
+WORKSPACE_LIST_PAGE2_PAYLOAD = """{
+  "value": [
+    {
+      "id": "c3d4e5f6-a7b8-9012-cdef-012345678901",
+      "displayName": "MLWorkspace",
+      "description": "Machine learning workspace",
+      "type": "Workspace",
+      "capacityId": "cafebabe-dead-beef-cafe-babe12345678"
+    }
+  ]
+}"""
+
+# Single workspace GET response (no collation-related field)
+WORKSPACE_GET_PAYLOAD = """{
+  "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "displayName": "AnalyticsWorkspace",
+  "description": "Primary analytics workspace for data engineering",
+  "type": "Workspace",
+  "capacityId": "cafebabe-dead-beef-cafe-babe12345678"
+}"""
