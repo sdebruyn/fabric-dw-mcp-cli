@@ -14,9 +14,10 @@ from __future__ import annotations
 import asyncio
 import datetime
 import time as _time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from email.utils import parsedate_to_datetime
 from enum import StrEnum
+from typing import Any
 
 import httpx
 from aiolimiter import AsyncLimiter
@@ -89,6 +90,7 @@ class FabricHttpClient:
         self._limiter = AsyncLimiter(max_rate=rps, time_period=1)
         self._http: httpx.AsyncClient | None = None
         self._token: AccessToken | None = None
+        self._token_lock = asyncio.Lock()
         # Pause gate: set when idle, clear when sleeping for a 429
         self._pause_event = asyncio.Event()
         self._pause_event.set()
@@ -107,9 +109,15 @@ class FabricHttpClient:
     # ------------------------------------------------------------------
 
     async def _get_token(self) -> str:
-        """Return a valid bearer token, refreshing if close to expiry."""
-        if self._token is None or self._token.expires_on - _time.time() < _TOKEN_REFRESH_BUFFER:
-            self._token = await auth.get_token(self._credential, auth.FABRIC_SCOPE)
+        """Return a valid bearer token, refreshing if close to expiry.
+
+        A lock ensures that under concurrent calls only one refresh is
+        performed even if multiple coroutines see the token as expired at
+        the same time.
+        """
+        async with self._token_lock:
+            if self._token is None or self._token.expires_on - _time.time() < _TOKEN_REFRESH_BUFFER:
+                self._token = await auth.get_token(self._credential, auth.FABRIC_SCOPE)
         return self._token.token
 
     # ------------------------------------------------------------------
@@ -123,7 +131,7 @@ class FabricHttpClient:
         path: str,
         *,
         json: object = None,
-        params: dict[str, str] | None = None,
+        params: Mapping[str, Any] | None = None,
     ) -> httpx.Response:
         """Send a single HTTP request, applying rate-limiting and error handling.
 
@@ -159,7 +167,7 @@ class FabricHttpClient:
         url: str,
         *,
         json: object = None,
-        params: dict[str, str] | None = None,
+        params: Mapping[str, Any] | None = None,
     ) -> httpx.Response:
         """Inner request method wrapped with tenacity 5xx retry."""
         return await self._do_request(method, url, json=json, params=params)
@@ -170,7 +178,7 @@ class FabricHttpClient:
         url: str,
         *,
         json: object = None,
-        params: dict[str, str] | None = None,
+        params: Mapping[str, Any] | None = None,
     ) -> httpx.Response:
         """Execute a request with rate limiting and 429 handling."""
         if self._http is None:

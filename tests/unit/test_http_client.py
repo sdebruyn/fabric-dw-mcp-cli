@@ -66,7 +66,11 @@ def test_parse_retry_after_http_date() -> None:
 
 @pytest.mark.asyncio
 async def test_rps_limiter_timing() -> None:
-    """6 concurrent requests at 2 RPS should complete in ~3 s (±0.5 s tolerance)."""
+    """6 requests at 2 RPS complete in ~2.0s.
+
+    AsyncLimiter(2, 1) drains at 2 tokens/s: first 2 fire immediately,
+    then 1 more every 0.5 s, so the 6th fires at ~2.0 s.
+    """
     elapsed: float = 0.0
 
     with respx.mock:
@@ -83,11 +87,8 @@ async def test_rps_limiter_timing() -> None:
             elapsed = time.monotonic() - start
 
         assert route.call_count == 6
-    # With AsyncLimiter(2, 1): 6 requests at 2 RPS takes ~2 s
-    # (first 2 immediate, next 2 after 1 s, last 2 after 2 s)
-    # Allow ±0.5 s tolerance for scheduling jitter
-    assert elapsed >= 1.5, f"Too fast: {elapsed:.2f}s — rate limiter not enforced"
-    assert elapsed <= 4.0, f"Too slow: {elapsed:.2f}s — unexpected delay"
+    assert elapsed >= 1.9, f"Too fast: {elapsed:.2f}s — rate limiter not enforced"
+    assert elapsed <= 3.0, f"Too slow: {elapsed:.2f}s — unexpected delay"
 
 
 # ---------------------------------------------------------------------------
@@ -122,17 +123,28 @@ async def test_429_retry_after_honored() -> None:
 
 
 @pytest.mark.asyncio
-async def test_429_five_consecutive_raises() -> None:
-    """Five consecutive 429 responses should raise RateLimitedError."""
+async def test_429_raises_after_five_in_a_row() -> None:
+    """Exactly 5 consecutive 429 responses must trigger RateLimitedError (_MAX_429_RETRIES = 5).
+
+    The implementation raises when consecutive_429 >= 5, so the 5th 429 response
+    is the one that causes the exception — meaning exactly 5 mocked 429s are consumed.
+    """
+    call_count = 0
+
+    def side_effect(_request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(429, headers={"Retry-After": "0"}, json={})
+
     with respx.mock:
-        respx.get("https://api.fabric.microsoft.com/v1/items").mock(
-            return_value=httpx.Response(429, headers={"Retry-After": "1"}, json={})
-        )
+        respx.get("https://api.fabric.microsoft.com/v1/items").mock(side_effect=side_effect)
 
         client = await _get_client(rps=10)
         async with client:
             with pytest.raises(RateLimitedError):
                 await client.request("GET", HttpBase.FABRIC, "/items")
+
+    assert call_count == 5, f"Expected exactly 5 429 responses before raising; got {call_count}"
 
 
 # ---------------------------------------------------------------------------
@@ -284,3 +296,82 @@ async def test_poll_operation_failed_raises() -> None:
         async with client:
             with pytest.raises(FabricServerError):
                 await client.poll_operation("https://api.fabric.microsoft.com/v1/operations/op-456")
+
+
+@pytest.mark.asyncio
+async def test_poll_operation_timeout_raises() -> None:
+    """poll_operation should raise FabricServerError when timeout_s is exceeded.
+
+    Uses timeout_s=0.1 so the deadline is always past by the first iteration.
+    The mock always returns "Running" so the operation never completes.
+    """
+    with respx.mock:
+        respx.get("https://api.fabric.microsoft.com/v1/operations/op-timeout").mock(
+            return_value=httpx.Response(200, json={"status": "Running"})
+        )
+
+        client = await _get_client()
+        async with client:
+            with pytest.raises(FabricServerError, match="timed out"):
+                await client.poll_operation(
+                    "https://api.fabric.microsoft.com/v1/operations/op-timeout",
+                    timeout_s=0.1,
+                )
+
+
+# ---------------------------------------------------------------------------
+# params type: Mapping[str, Any]
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_request_params_int_value_serialized() -> None:
+    """request() must accept int param values and serialize them correctly (e.g. ?top=100)."""
+    captured_url: str | None = None
+
+    def side_effect(request: httpx.Request) -> httpx.Response:
+        nonlocal captured_url
+        captured_url = str(request.url)
+        return httpx.Response(200, json={})
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(url__regex=r"https://api\.fabric\.microsoft\.com/v1/x.*").mock(
+            side_effect=side_effect
+        )
+
+        client = await _get_client()
+        async with client:
+            await client.request("GET", HttpBase.FABRIC, "/x", params={"top": 100})
+
+    assert captured_url is not None
+    assert "top=100" in captured_url, f"Expected 'top=100' in URL; got {captured_url}"
+
+
+# ---------------------------------------------------------------------------
+# Token refresh concurrency safety
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_concurrent_requests_fetch_token_once() -> None:
+    """Five concurrent requests before any token is fetched must call get_token exactly once."""
+    cred = MagicMock(spec=TokenCredential)
+    # get_token is synchronous; auth.get_token wraps it via asyncio.to_thread
+    cred.get_token = MagicMock(
+        return_value=AccessToken(token="tok", expires_on=int(time.time()) + 3600)  # noqa: S106
+    )
+
+    with respx.mock:
+        respx.get("https://api.fabric.microsoft.com/v1/items").mock(
+            return_value=httpx.Response(200, json={})
+        )
+
+        client = FabricHttpClient(credential=cred, rps=10)
+        async with client:
+            await asyncio.gather(
+                *[client.request("GET", HttpBase.FABRIC, "/items") for _ in range(5)]
+            )
+
+    assert cred.get_token.call_count == 1, (
+        f"Expected get_token called once; called {cred.get_token.call_count} times"
+    )
