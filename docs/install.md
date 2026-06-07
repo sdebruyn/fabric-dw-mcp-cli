@@ -12,7 +12,7 @@ title: Install
 ## Install
 
 ```bash
-pip install fabric-dw-mcp-cli
+pip install fabric-dw
 ```
 
 !!! note

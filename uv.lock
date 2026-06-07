@@ -509,7 +509,7 @@ wheels = [
 ]
 
 [[package]]
-name = "fabric-dw-mcp-cli"
+name = "fabric-dw"
 source = { editable = "." }
 dependencies = [
     { name = "aiolimiter" },

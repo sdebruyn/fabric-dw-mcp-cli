@@ -1,10 +1,10 @@
 <p align="center">
   <a href="https://fdw.debruyn.dev">
-    <img src="docs/assets/logo.svg" alt="fabric-dw-mcp-cli" width="140" />
+    <img src="docs/assets/logo.svg" alt="fabric-dw" width="140" />
   </a>
 </p>
 
-# fabric-dw-mcp-cli
+# fabric-dw
 
 > Python CLI and MCP server for administering Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
 
@@ -14,7 +14,7 @@
 
 ## Description
 
-`fabric-dw-mcp-cli` provides two interfaces for managing Microsoft Fabric Data Warehouses and SQL Analytics Endpoints:
+`fabric-dw` provides two interfaces for managing Microsoft Fabric Data Warehouses and SQL Analytics Endpoints:
 
 - **CLI** — a command-line tool for common DW administration tasks.
 - **MCP server** — a [Model Context Protocol](https://modelcontextprotocol.io) server that exposes DW operations as tools for AI assistants.
@@ -24,10 +24,10 @@ Authentication is handled via the Azure CLI (`az login`).
 ## Installation
 
 ```bash
-pip install fabric-dw-mcp-cli
+pip install fabric-dw
 ```
 
-> Note: package not yet published. Installation instructions will be updated on first release.
+> Note: placeholder release; CLI/MCP under active development. Installation instructions will be updated on first release.
 
 ## Quick Start
 
