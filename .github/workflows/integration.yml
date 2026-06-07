@@ -3,19 +3,23 @@ name: Integration tests
 on:
   pull_request:
     types: [labeled, synchronize]
-  schedule:
-    - cron: "0 3 * * *"
+  push:
+    branches: [main]
 
 permissions:
   id-token: write
   contents: read
 
+concurrency:
+  group: integration-tests
+  cancel-in-progress: false
+
 jobs:
   integration:
-    if: ${{ github.event_name == 'schedule' || contains(github.event.pull_request.labels.*.name, 'integration') }}
+    if: ${{ github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'integration') }}
     runs-on: ubuntu-latest
     environment: integration
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -23,7 +27,24 @@ jobs:
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          allow-no-subscriptions: true
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resume Fabric capacity
+        run: |
+          az resource invoke-action \
+            --ids "${{ vars.FABRIC_TEST_CAPACITY_ID }}" \
+            --action resume
+          # Poll until State=Active (max 5 min)
+          for i in {1..30}; do
+            STATE=$(az resource show --ids "${{ vars.FABRIC_TEST_CAPACITY_ID }}" --query 'properties.state' -o tsv)
+            echo "Capacity state: $STATE"
+            [[ "$STATE" == "Active" ]] && break
+            sleep 10
+          done
+          if [[ "$STATE" != "Active" ]]; then
+            echo "Capacity did not become Active within 5 minutes" >&2
+            exit 1
+          fi
 
       - uses: astral-sh/setup-uv@v8.2.0
         with:
@@ -47,13 +68,12 @@ jobs:
           FABRIC_TEST_WORKSPACE_ID: ${{ vars.FABRIC_TEST_WORKSPACE_ID }}
           FABRIC_AUTH: default
         run: |
-          # Fail the build if any pytest-* items remain after the run
+          # Fail the build if any pytest-* warehouses remain
           uv run python -c "
           import anyio, os
           from fabric_dw.auth import get_credential
           from fabric_dw.http_client import FabricHttpClient
           from fabric_dw.services import warehouses
-
           async def main() -> None:
               ws = os.environ['FABRIC_TEST_WORKSPACE_ID']
               cred = get_credential()
@@ -61,8 +81,13 @@ jobs:
                   items = await warehouses.list_warehouses(http, ws)
                   orphans = [w for w in items if w.name.startswith('pytest-')]
                   if orphans:
-                      names = [w.name for w in orphans]
-                      raise SystemExit(f'orphan test items remain: {names}')
-
+                      raise SystemExit(f'orphan test items remain: {[w.name for w in orphans]}')
           anyio.run(main)
           "
+
+      - name: Suspend Fabric capacity
+        if: always()
+        run: |
+          az resource invoke-action \
+            --ids "${{ vars.FABRIC_TEST_CAPACITY_ID }}" \
+            --action suspend
