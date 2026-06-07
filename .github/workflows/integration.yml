@@ -75,32 +75,77 @@ jobs:
 
       - run: uv sync --frozen
 
+      - name: Pre-test sweep of stale pytest-* items
+        env:
+          FABRIC_TEST_WORKSPACE_ID: ${{ secrets.FABRIC_TEST_WORKSPACE_ID }}
+          FABRIC_AUTH: default
+        run: |
+          uv run python -c "
+          import anyio, os
+          from datetime import datetime, timedelta, UTC
+          from fabric_dw.auth import get_credential
+          from fabric_dw.http_client import FabricHttpClient
+          from fabric_dw.services import warehouses, snapshots
+
+          async def main() -> None:
+              ws = os.environ['FABRIC_TEST_WORKSPACE_ID']
+              cutoff = datetime.now(UTC) - timedelta(hours=1)
+              cred = get_credential()
+              async with FabricHttpClient(cred) as http:
+                  items = await warehouses.list_warehouses(http, ws)
+                  for w in items:
+                      if w.name.startswith('pytest-') and (w.created_date is None or w.created_date < cutoff):
+                          print(f'Sweeping {w.kind} {w.name} ({w.id})')
+                          try:
+                              if w.kind == 'WarehouseSnapshot':
+                                  await snapshots.delete(http, ws, w.id)
+                              else:
+                                  await warehouses.delete(http, ws, w.id)
+                          except Exception as exc:
+                              print(f'  skip: {exc}')
+
+          anyio.run(main)
+          "
+
       - name: Run integration tests
         env:
           FABRIC_TEST_WORKSPACE_ID: ${{ secrets.FABRIC_TEST_WORKSPACE_ID }}
           FABRIC_AUTH: default
         run: uv run pytest tests/integration -m integration -v
 
-      - name: Cleanup orphan items
+      - name: Post-test sweep of pytest-* items
         if: always()
         env:
           FABRIC_TEST_WORKSPACE_ID: ${{ secrets.FABRIC_TEST_WORKSPACE_ID }}
           FABRIC_AUTH: default
         run: |
-          # Fail the build if any pytest-* warehouses remain
           uv run python -c "
           import anyio, os
           from fabric_dw.auth import get_credential
           from fabric_dw.http_client import FabricHttpClient
-          from fabric_dw.services import warehouses
+          from fabric_dw.services import warehouses, snapshots
+
           async def main() -> None:
               ws = os.environ['FABRIC_TEST_WORKSPACE_ID']
               cred = get_credential()
+              failures = []
               async with FabricHttpClient(cred) as http:
                   items = await warehouses.list_warehouses(http, ws)
-                  orphans = [w for w in items if w.name.startswith('pytest-')]
-                  if orphans:
-                      raise SystemExit(f'orphan test items remain: {[w.name for w in orphans]}')
+                  for w in items:
+                      if w.name.startswith('pytest-'):
+                          print(f'Deleting {w.kind} {w.name} ({w.id})')
+                          try:
+                              if w.kind == 'WarehouseSnapshot':
+                                  await snapshots.delete(http, ws, w.id)
+                              else:
+                                  await warehouses.delete(http, ws, w.id)
+                          except Exception as exc:
+                              failures.append((w.name, str(exc)))
+                  if failures:
+                      for name, err in failures:
+                          print(f'FAIL: {name}: {err}')
+                      raise SystemExit(1)
+
           anyio.run(main)
           "
 
