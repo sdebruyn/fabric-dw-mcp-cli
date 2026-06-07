@@ -11,7 +11,7 @@
 `fabric-dw-mcp-cli` provides two interfaces for managing Microsoft Fabric Data Warehouses and SQL Analytics Endpoints:
 
 - **CLI** — a command-line tool for common DW administration tasks.
-- **MCP server** — an [Model Context Protocol](https://modelcontextprotocol.io) server that exposes DW operations as tools for AI assistants.
+- **MCP server** — a [Model Context Protocol](https://modelcontextprotocol.io) server that exposes DW operations as tools for AI assistants.
 
 Authentication is handled via the Azure CLI (`az login`).
 

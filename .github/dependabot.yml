@@ -6,6 +6,8 @@ updates:
       interval: weekly
     groups:
       patch-and-minor:
+        patterns:
+          - "*"
         update-types:
           - minor
           - patch
@@ -16,6 +18,8 @@ updates:
       interval: weekly
     groups:
       patch-and-minor:
+        patterns:
+          - "*"
         update-types:
           - minor
           - patch
