@@ -1,0 +1,3 @@
+name = "fabric-dw-mcp-cli"
+pages_build_output_dir = "docs_build/site"
+compatibility_date = "2026-06-07"
