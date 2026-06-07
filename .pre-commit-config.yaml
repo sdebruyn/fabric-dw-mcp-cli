@@ -22,4 +22,9 @@ repos:
           - "azure-core>=1.30"
           - "pydantic>=2.9"
           - "pytest"
+          - "httpx[http2]>=0.27"
+          - "aiolimiter>=1.2"
+          - "tenacity>=9"
+          - "respx>=0.21"
+          - "freezegun>=1.5"
         args: ["--config-file", "pyproject.toml"]
