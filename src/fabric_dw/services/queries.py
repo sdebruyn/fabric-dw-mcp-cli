@@ -87,6 +87,6 @@ async def kill(sql: FabricSqlClient, target: SqlTarget, session_id: int) -> None
     stmt = _build_kill_sql(session_id)
     try:
         await sql.execute_nonquery(target, stmt)
-    except AuthError as exc:
+    except (AuthError, PermissionDenied) as exc:
         msg = f"Permission denied when trying to KILL session {session_id}: {exc}"
         raise PermissionDenied(msg) from exc

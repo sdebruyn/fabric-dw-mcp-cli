@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from fabric_dw.auth import CredentialMode
-from fabric_dw.exceptions import AuthError
+from fabric_dw.exceptions import AuthError, PermissionDenied
 
 # Thin indirection that lets tests monkeypatch ``_mssql`` without the native
 # extension being imported at module-load time (the .so may not be loadable in
@@ -28,9 +28,6 @@ def _get_mssql() -> types.ModuleType:
 
 
 # Sentinel strings that signal Entra auth failures in driver error messages.
-# NOTE: These fragments are only checked during connection-time failures
-# (_get_connection). Errors raised by cursor.execute() after a successful
-# connection (e.g. token expiry mid-session) propagate unwrapped.
 _AUTH_ERROR_FRAGMENTS = (
     "login failed",
     "token",
@@ -39,6 +36,13 @@ _AUTH_ERROR_FRAGMENTS = (
     "access denied",
     "invalid authorization",
     "28000",
+)
+
+# Sentinel strings that signal SQL permission-denial failures in driver error messages.
+_PERMISSION_DENIED_FRAGMENTS = (
+    "permission was denied",
+    "cannot grant",
+    "denied the right to",
 )
 
 # Mapping from CredentialMode to the ActiveDirectory auth type suffix.
@@ -116,6 +120,21 @@ def _is_auth_error(exc: BaseException) -> bool:
     return any(fragment in msg for fragment in _AUTH_ERROR_FRAGMENTS)
 
 
+def _classify_driver_error(exc: Exception) -> Exception | None:
+    """Return a mapped exception for known driver error categories, or ``None``.
+
+    Checks the error message against known fragment sets and returns the
+    appropriate high-level exception type.  Returns ``None`` when the error
+    does not match any known category (caller should re-raise unchanged).
+    """
+    msg = str(exc).lower()
+    if any(fragment in msg for fragment in _PERMISSION_DENIED_FRAGMENTS):
+        return PermissionDenied(str(exc))
+    if any(fragment in msg for fragment in _AUTH_ERROR_FRAGMENTS):
+        return AuthError(str(exc))
+    return None
+
+
 @dataclass(frozen=True)
 class SqlTarget:
     """Identifies a specific Fabric warehouse to connect to.
@@ -177,8 +196,9 @@ class FabricSqlClient:
                 try:
                     conn: _Connection = await asyncio.to_thread(_get_mssql().connect, cs)
                 except Exception as exc:
-                    if _is_auth_error(exc):
-                        raise AuthError(str(exc)) from exc
+                    mapped = _classify_driver_error(exc)
+                    if mapped is not None:
+                        raise mapped from exc
                     raise
                 self._cache[key] = conn
             return self._cache[key]
@@ -210,7 +230,13 @@ class FabricSqlClient:
 
         def _run() -> list[dict[str, Any]]:
             cursor = conn.cursor()
-            cursor.execute(sql, params)
+            try:
+                cursor.execute(sql, params)
+            except Exception as exc:
+                mapped = _classify_driver_error(exc)
+                if mapped is not None:
+                    raise mapped from exc
+                raise
             description: list[tuple[str, Any]] = cursor.description or []
             columns = [col[0] for col in description]
             rows: list[tuple[Any, ...]] = cursor.fetchall() or []
@@ -243,7 +269,13 @@ class FabricSqlClient:
 
         def _run() -> int:
             cursor = conn.cursor()
-            cursor.execute(sql, params)
+            try:
+                cursor.execute(sql, params)
+            except Exception as exc:
+                mapped = _classify_driver_error(exc)
+                if mapped is not None:
+                    raise mapped from exc
+                raise
             rowcount: int = cursor.rowcount
             conn.commit()
             return rowcount

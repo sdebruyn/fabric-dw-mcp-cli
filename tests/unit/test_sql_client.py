@@ -9,7 +9,7 @@ import pytest
 
 import fabric_dw.sql_client as _sql_client_module
 from fabric_dw.auth import CredentialMode
-from fabric_dw.exceptions import AuthError
+from fabric_dw.exceptions import AuthError, PermissionDenied
 from fabric_dw.sql_client import FabricSqlClient, SqlTarget
 
 # ---------------------------------------------------------------------------
@@ -497,10 +497,10 @@ class TestCursorExecuteErrorMapping:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """cursor.execute raising 'permission was denied' → PermissionDenied."""
-        from fabric_dw.exceptions import PermissionDenied
-
         mock_mssql, _conn, mock_cursor = _make_mock_mssql()
-        driver_exc = Exception("The server principal does not have permission was denied on the object")
+        driver_exc = Exception(
+            "The server principal does not have permission was denied on the object"
+        )
         mock_cursor.execute.side_effect = driver_exc
         _patch_mssql(monkeypatch, mock_mssql)
 
