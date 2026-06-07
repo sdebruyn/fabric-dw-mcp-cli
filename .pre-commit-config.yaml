@@ -27,4 +27,5 @@ repos:
           - "tenacity>=9"
           - "respx>=0.21"
           - "freezegun>=1.5"
+          - "mssql-python>=0.13"
         args: ["--config-file", "pyproject.toml"]
