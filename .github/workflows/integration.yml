@@ -25,8 +25,8 @@ jobs:
 
       - uses: azure/login@v2
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Resume Fabric capacity
@@ -58,14 +58,14 @@ jobs:
 
       - name: Run integration tests
         env:
-          FABRIC_TEST_WORKSPACE_ID: ${{ vars.FABRIC_TEST_WORKSPACE_ID }}
+          FABRIC_TEST_WORKSPACE_ID: ${{ secrets.FABRIC_TEST_WORKSPACE_ID }}
           FABRIC_AUTH: default
         run: uv run pytest tests/integration -m integration -v
 
       - name: Cleanup orphan items
         if: always()
         env:
-          FABRIC_TEST_WORKSPACE_ID: ${{ vars.FABRIC_TEST_WORKSPACE_ID }}
+          FABRIC_TEST_WORKSPACE_ID: ${{ secrets.FABRIC_TEST_WORKSPACE_ID }}
           FABRIC_AUTH: default
         run: |
           # Fail the build if any pytest-* warehouses remain
