@@ -281,3 +281,5 @@ After configuring your client, restart it and ask the assistant to list its avai
 - **Server hangs at startup**: the server is likely waiting for an Azure CLI token refresh. Run `az login` before starting your assistant.
 - **Tools not visible in Copilot Chat**: ensure you are in **Agent** mode, not Ask or Edit mode.
 - **Tools not visible in Continue**: ensure you are in **Agent** mode.
+
+For a more complete reference of error messages and resolutions, see the [Troubleshooting](troubleshooting.md) page.
