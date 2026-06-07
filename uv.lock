@@ -505,6 +505,7 @@ source = { editable = "." }
 dependencies = [
     { name = "aiolimiter" },
     { name = "azure-identity" },
+    { name = "filelock" },
     { name = "httpx", extra = ["http2"] },
     { name = "mssql-python" },
     { name = "pydantic" },
@@ -535,6 +536,7 @@ requires-dist = [
     { name = "aiolimiter", specifier = ">=1.2" },
     { name = "anyio", extras = ["trio"], marker = "extra == 'dev'" },
     { name = "azure-identity", specifier = ">=1.19" },
+    { name = "filelock", specifier = ">=3.16" },
     { name = "freezegun", marker = "extra == 'dev'", specifier = ">=1.5" },
     { name = "httpx", extras = ["http2"], specifier = ">=0.27" },
     { name = "mssql-python", specifier = ">=0.13" },

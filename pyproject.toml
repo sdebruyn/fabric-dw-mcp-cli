@@ -22,6 +22,7 @@ dependencies = [
     "aiolimiter>=1.2",
     "tenacity>=9",
     "mssql-python>=0.13",
+    "filelock>=3.16",
 ]
 
 [project.scripts]
