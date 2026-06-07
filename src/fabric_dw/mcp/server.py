@@ -32,7 +32,7 @@ from fabric_dw.exceptions import ConfigError, FabricError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.logging import setup_logging
 from fabric_dw.resolver import Resolver
-from fabric_dw.services import audit, queries, snapshots, warehouses, workspaces
+from fabric_dw.services import audit, queries, snapshots, sql_endpoints, warehouses, workspaces
 from fabric_dw.services import ownership as ownership_svc
 from fabric_dw.sql_client import FabricSqlClient, SqlTarget
 
@@ -251,6 +251,49 @@ async def takeover_warehouse(workspace: str, warehouse: str) -> dict[str, Any]:
     except FabricError as exc:
         raise _fabric_err(exc) from exc
     return {"taken_over": True, "warehouse_id": str(item.id)}
+
+
+# ---------------------------------------------------------------------------
+# SQL Endpoint tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def list_sql_endpoints(workspace: str) -> list[dict[str, Any]]:
+    """List all SQL analytics endpoints in a workspace."""
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        result = await sql_endpoints.list_endpoints(_get_http(), ws_id)
+    except FabricError as exc:
+        raise _fabric_err(exc) from exc
+    return [ep.model_dump(by_alias=True, mode="json") for ep in result]
+
+
+@mcp.tool()
+async def get_sql_endpoint(workspace: str, endpoint: str) -> dict[str, Any]:
+    """Return details for a single SQL analytics endpoint (name or GUID)."""
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        item = await _get_resolver().item(workspace, endpoint)
+        result = await sql_endpoints.get_endpoint(_get_http(), ws_id, item.id)
+    except FabricError as exc:
+        raise _fabric_err(exc) from exc
+    return result.model_dump(by_alias=True, mode="json")
+
+
+@mcp.tool()
+async def refresh_sql_endpoint_metadata(workspace: str, endpoint: str) -> dict[str, Any]:
+    """Refresh metadata for a SQL analytics endpoint (sync from the underlying Lakehouse).
+
+    This is a long-running operation (LRO) that is polled to completion.
+    """
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        item = await _get_resolver().item(workspace, endpoint)
+        result = await sql_endpoints.refresh_metadata(_get_http(), ws_id, item.id)
+    except FabricError as exc:
+        raise _fabric_err(exc) from exc
+    return result
 
 
 # ---------------------------------------------------------------------------
