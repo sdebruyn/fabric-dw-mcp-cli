@@ -31,20 +31,39 @@ jobs:
 
       - name: Resume Fabric capacity
         run: |
-          az resource invoke-action \
-            --ids "${{ vars.FABRIC_TEST_CAPACITY_ID }}" \
-            --action resume
-          # Poll until State=Active (max 5 min)
+          set -e
+          CAPACITY_ID="${{ vars.FABRIC_TEST_CAPACITY_ID }}"
+
+          # Wait for the capacity to leave any transitional state, up to 5 min
           for i in {1..30}; do
-            STATE=$(az resource show --ids "${{ vars.FABRIC_TEST_CAPACITY_ID }}" --query 'properties.state' -o tsv)
-            echo "Capacity state: $STATE"
-            [[ "$STATE" == "Active" ]] && break
+            STATE=$(az resource show --ids "$CAPACITY_ID" --query 'properties.state' -o tsv 2>/dev/null || echo "Unknown")
+            echo "Pre-resume state: $STATE"
+            case "$STATE" in
+              Active)  echo "Already Active, skipping resume"; exit 0 ;;
+              Paused)  break ;;
+              *)       sleep 10 ;;
+            esac
+          done
+
+          # Issue resume, but tolerate transient BadRequest
+          for attempt in {1..6}; do
+            if az resource invoke-action --ids "$CAPACITY_ID" --action resume; then
+              break
+            fi
+            echo "Resume attempt $attempt failed (likely transient), waiting 15s..."
+            sleep 15
+          done
+
+          # Poll until Active, max 5 min
+          for i in {1..30}; do
+            STATE=$(az resource show --ids "$CAPACITY_ID" --query 'properties.state' -o tsv)
+            echo "Post-resume state: $STATE"
+            [[ "$STATE" == "Active" ]] && exit 0
             sleep 10
           done
-          if [[ "$STATE" != "Active" ]]; then
-            echo "Capacity did not become Active within 5 minutes" >&2
-            exit 1
-          fi
+
+          echo "Capacity did not reach Active state within 5 minutes" >&2
+          exit 1
 
       - uses: astral-sh/setup-uv@v8.2.0
         with:
@@ -88,6 +107,36 @@ jobs:
       - name: Suspend Fabric capacity
         if: always()
         run: |
-          az resource invoke-action \
-            --ids "${{ vars.FABRIC_TEST_CAPACITY_ID }}" \
-            --action suspend
+          set -e
+          CAPACITY_ID="${{ vars.FABRIC_TEST_CAPACITY_ID }}"
+
+          # Wait for the capacity to leave any transitional state, up to 5 min
+          for i in {1..30}; do
+            STATE=$(az resource show --ids "$CAPACITY_ID" --query 'properties.state' -o tsv 2>/dev/null || echo "Unknown")
+            echo "Pre-suspend state: $STATE"
+            case "$STATE" in
+              Paused)  echo "Already Paused, skipping suspend"; exit 0 ;;
+              Active)  break ;;
+              *)       sleep 10 ;;
+            esac
+          done
+
+          # Issue suspend, but tolerate transient BadRequest
+          for attempt in {1..6}; do
+            if az resource invoke-action --ids "$CAPACITY_ID" --action suspend; then
+              break
+            fi
+            echo "Suspend attempt $attempt failed (likely transient), waiting 15s..."
+            sleep 15
+          done
+
+          # Poll until Paused, max 5 min
+          for i in {1..30}; do
+            STATE=$(az resource show --ids "$CAPACITY_ID" --query 'properties.state' -o tsv)
+            echo "Post-suspend state: $STATE"
+            [[ "$STATE" == "Paused" ]] && exit 0
+            sleep 10
+          done
+
+          echo "Capacity did not reach Paused state within 5 minutes" >&2
+          exit 1
