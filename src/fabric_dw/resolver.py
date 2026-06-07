@@ -232,6 +232,7 @@ class Resolver:
             kind=kind,
             connection_string=conn,
             fetched_at=datetime.now(tz=UTC),
+            display_name=display_name,
         )
         # Store under display name for name-based lookups
         self._cache.put_item(workspace_id, display_name, entry)

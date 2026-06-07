@@ -23,6 +23,10 @@ dependencies = [
     "tenacity>=9",
     "mssql-python>=0.13",
     "filelock>=3.16",
+    "mcp[cli]>=1.0",
+    "click>=8.2",
+    "rich>=14",
+    "anyio>=4",
 ]
 
 [project.scripts]
