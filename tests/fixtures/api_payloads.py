@@ -99,3 +99,37 @@ WORKSPACE_GET_PAYLOAD = """{
   "type": "Workspace",
   "capacityId": "cafebabe-dead-beef-cafe-babe12345678"
 }"""
+
+# Items list page containing two WarehouseSnapshot items + one non-snapshot item.
+# Used in snapshot service tests to verify pagination and type-filtering.
+ITEMS_LIST_WITH_SNAPSHOTS_PAYLOAD = """{
+  "value": [
+    {
+      "id": "f6a7b8c9-d0e1-2345-f012-34567890abcd",
+      "displayName": "SalesWarehouse_Snapshot_20240315",
+      "type": "WarehouseSnapshot",
+      "workspaceId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    },
+    {
+      "id": "22222222-3333-4444-5555-666666666666",
+      "displayName": "OtherWarehouse_Snapshot",
+      "type": "WarehouseSnapshot",
+      "workspaceId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    },
+    {
+      "id": "99999999-9999-9999-9999-999999999999",
+      "displayName": "SomeLakehouse",
+      "type": "Lakehouse",
+      "workspaceId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    }
+  ]
+}"""
+
+# LRO polling response for a WarehouseSnapshot creation operation (Succeeded).
+WAREHOUSE_SNAPSHOT_CREATE_OPERATION_PAYLOAD = """{
+  "status": "Succeeded",
+  "createdTimeUtc": "2024-03-15T10:00:00Z",
+  "lastUpdatedTimeUtc": "2024-03-15T10:01:00Z",
+  "percentComplete": 100,
+  "error": null
+}"""
