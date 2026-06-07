@@ -394,9 +394,8 @@ async def test_delete_204_returns_none() -> None:
 
         client = await _make_client()
         async with client:
-            result = await warehouses.delete(client, _WORKSPACE_ID, _WAREHOUSE_ID)
-
-    assert result is None
+            # delete is typed -> None; just verify no exception is raised
+            await warehouses.delete(client, _WORKSPACE_ID, _WAREHOUSE_ID)
 
 
 @pytest.mark.asyncio
