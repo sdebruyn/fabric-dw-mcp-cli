@@ -142,32 +142,40 @@ def _make_sql_target() -> SqlTarget:
 # ---------------------------------------------------------------------------
 
 
-@respx.mock
 async def test_list_pages_through_and_filters_by_parent() -> None:
     """list should page through items, filter WarehouseSnapshot, fetch detail, and match parent."""
-    # Page 1 returns two snapshots + one non-snapshot
-    # Page 2 has no items (end of pagination)
     page2_url = f"{_BASE_URL}/workspaces/{_WS_ID}/items?continuationToken=page2"
 
     page1_payload = dict(ITEMS_LIST_WITH_SNAPSHOTS_PAYLOAD)
     page1_payload["continuationUri"] = page2_url
-
     page2_payload: dict[str, Any] = {"value": []}
 
-    respx.get(_ITEMS_URL).mock(return_value=httpx.Response(200, json=page1_payload))
-    respx.get(page2_url).mock(return_value=httpx.Response(200, json=page2_payload))
+    items_page_call_count = 0
 
-    # Detail for matching snapshot
-    respx.get(f"{_ITEMS_URL}/{_SNAP_ID}").mock(
-        return_value=httpx.Response(200, json=WAREHOUSE_SNAPSHOT_DETAIL_PAYLOAD)
-    )
-    # Detail for non-matching snapshot
-    respx.get(f"{_ITEMS_URL}/{_OTHER_SNAP_ID}").mock(
-        return_value=httpx.Response(200, json=WAREHOUSE_SNAPSHOT_OTHER_PARENT_DETAIL_PAYLOAD)
-    )
+    def _items_side_effect(request: Any) -> httpx.Response:
+        nonlocal items_page_call_count
+        items_page_call_count += 1
+        if items_page_call_count == 1:
+            return httpx.Response(200, json=page1_payload)
+        return httpx.Response(200, json=page2_payload)
 
-    async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
-        result = await snapshots.list(http, _WS_ID, _PARENT_WH_ID)
+    with respx.mock(assert_all_called=False) as mock_router:
+        # Match both the base items URL and the continuation URL
+        mock_router.get(
+            url__regex=rf"https://api\.fabric\.microsoft\.com/v1/workspaces/{_WS_ID}/items(\?.*)?$"
+        ).mock(side_effect=_items_side_effect)
+
+        # Detail for matching snapshot
+        mock_router.get(f"{_ITEMS_URL}/{_SNAP_ID}").mock(
+            return_value=httpx.Response(200, json=WAREHOUSE_SNAPSHOT_DETAIL_PAYLOAD)
+        )
+        # Detail for non-matching snapshot
+        mock_router.get(f"{_ITEMS_URL}/{_OTHER_SNAP_ID}").mock(
+            return_value=httpx.Response(200, json=WAREHOUSE_SNAPSHOT_OTHER_PARENT_DETAIL_PAYLOAD)
+        )
+
+        async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
+            result = await snapshots.list(http, _WS_ID, _PARENT_WH_ID)
 
     assert len(result) == 1
     snap = result[0]
