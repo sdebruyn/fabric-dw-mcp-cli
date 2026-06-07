@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import time
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 from uuid import UUID
 
 import httpx
@@ -130,9 +130,7 @@ async def test_list_endpoints_empty_workspace_returns_empty_list() -> None:
     from fabric_dw.services.sql_endpoints import list_endpoints  # noqa: PLC0415
 
     with respx.mock:
-        respx.get(_SQL_ENDPOINTS_URL).mock(
-            return_value=httpx.Response(200, json={"value": []})
-        )
+        respx.get(_SQL_ENDPOINTS_URL).mock(return_value=httpx.Response(200, json={"value": []}))
 
         client = await _make_client()
         async with client:
@@ -152,9 +150,7 @@ async def test_get_endpoint_returns_populated_warehouse() -> None:
     from fabric_dw.services.sql_endpoints import get_endpoint  # noqa: PLC0415
 
     with respx.mock:
-        respx.get(_ENDPOINT_URL).mock(
-            return_value=httpx.Response(200, json=_ENDPOINT_GET_PAYLOAD)
-        )
+        respx.get(_ENDPOINT_URL).mock(return_value=httpx.Response(200, json=_ENDPOINT_GET_PAYLOAD))
 
         client = await _make_client()
         async with client:

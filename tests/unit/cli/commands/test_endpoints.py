@@ -53,12 +53,13 @@ def _make_item_entry(kind: WarehouseKind = WarehouseKind.SQL_ENDPOINT) -> ItemEn
     )
 
 
-def _async_iter(items: list[object]):  # type: ignore[no-untyped-def]
-    async def _gen():  # type: ignore[no-untyped-def]
-        for item in items:
-            yield item
+async def _async_iter_coro(items: list[object]):  # type: ignore[no-untyped-def]
+    for item in items:
+        yield item
 
-    return _gen()
+
+def _async_iter(items: list[object]):  # type: ignore[no-untyped-def]
+    return _async_iter_coro(items)
 
 
 def _make_response(status_code: int, text: str) -> MagicMock:

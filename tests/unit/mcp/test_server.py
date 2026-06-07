@@ -567,10 +567,10 @@ async def test_list_sql_endpoints_happy_path() -> None:
     """list_sql_endpoints resolves workspace and returns list of SQL endpoint dicts."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
-    _EP_ID = UUID("e5f6a7b8-c9d0-1234-ef01-234567890abc")
+    ep_id = UUID("e5f6a7b8-c9d0-1234-ef01-234567890abc")
     ep = Warehouse.model_validate(
         {
-            "id": str(_EP_ID),
+            "id": str(ep_id),
             "displayName": "SalesLakehouse",
             "workspaceId": str(_WS_ID),
             "kind": WarehouseKind.SQL_ENDPOINT,
@@ -592,13 +592,11 @@ async def test_list_sql_endpoints_happy_path() -> None:
             new=AsyncMock(return_value=[ep]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
-            "list_sql_endpoints", {"workspace": _WS_NAME}
-        )
+        result = await mcp._tool_manager.call_tool("list_sql_endpoints", {"workspace": _WS_NAME})
 
     assert isinstance(result, list)
     assert len(result) == 1
-    assert result[0]["id"] == str(_EP_ID)
+    assert result[0]["id"] == str(ep_id)
     assert result[0]["kind"] == "SQLEndpoint"
 
 
@@ -607,17 +605,17 @@ async def test_get_sql_endpoint_happy_path() -> None:
     """get_sql_endpoint resolves workspace + endpoint and returns a dict."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
-    _EP_ID = UUID("e5f6a7b8-c9d0-1234-ef01-234567890abc")
+    ep_id = UUID("e5f6a7b8-c9d0-1234-ef01-234567890abc")
     ep = Warehouse.model_validate(
         {
-            "id": str(_EP_ID),
+            "id": str(ep_id),
             "displayName": "SalesLakehouse",
             "workspaceId": str(_WS_ID),
             "kind": WarehouseKind.SQL_ENDPOINT,
             "connectionString": "lakehouse-sql-ep.datawarehouse.fabric.microsoft.com",
         }
     )
-    item = _make_item_entry(item_id=_EP_ID, display_name="SalesLakehouse")
+    item = _make_item_entry(item_id=ep_id, display_name="SalesLakehouse")
 
     mock_resolver = AsyncMock()
     mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
@@ -640,7 +638,7 @@ async def test_get_sql_endpoint_happy_path() -> None:
         )
 
     assert isinstance(result, dict)
-    assert result["id"] == str(_EP_ID)
+    assert result["id"] == str(ep_id)
     assert result["kind"] == "SQLEndpoint"
 
 
@@ -649,8 +647,8 @@ async def test_refresh_sql_endpoint_metadata_happy_path() -> None:
     """refresh_sql_endpoint_metadata resolves workspace + endpoint and returns a dict."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
-    _EP_ID = UUID("e5f6a7b8-c9d0-1234-ef01-234567890abc")
-    item = _make_item_entry(item_id=_EP_ID, display_name="SalesLakehouse")
+    ep_id = UUID("e5f6a7b8-c9d0-1234-ef01-234567890abc")
+    item = _make_item_entry(item_id=ep_id, display_name="SalesLakehouse")
 
     mock_resolver = AsyncMock()
     mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
