@@ -8,9 +8,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
-import pytest
-
-from fabric_dw.cache import ItemEntry, LookupCache, WorkspaceEntry
+from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.models import WarehouseKind
 
 # ---------------------------------------------------------------------------
@@ -127,7 +125,6 @@ def test_put_uppercase_get_lowercase(tmp_path: Path) -> None:
 def test_workspace_expired_returns_none(tmp_path: Path) -> None:
     cache = _make_cache(tmp_path, ttl=timedelta(hours=1))
     past = datetime.now(tz=UTC) - timedelta(hours=2)
-    expired_entry = WorkspaceEntry(id=WS_ID, fetched_at=past)
     # Write the entry directly with a past fetched_at via put then overwrite JSON
     cache_file = tmp_path / "lookup.json"
     cache.put_workspace("ws", WS_ID)
@@ -161,7 +158,7 @@ def test_item_within_ttl_returned(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# clear()
+# LookupCache.clear
 # ---------------------------------------------------------------------------
 
 
@@ -236,7 +233,7 @@ def test_concurrent_writes_produce_valid_json(tmp_path: Path) -> None:
             c = LookupCache(path=cache_file)
             for i in range(5):
                 c.put_workspace(f"ws_a_{i}", WS_ID)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             errors.append(exc)
 
     def writer_b() -> None:
@@ -244,7 +241,7 @@ def test_concurrent_writes_produce_valid_json(tmp_path: Path) -> None:
             c = LookupCache(path=cache_file)
             for i in range(5):
                 c.put_workspace(f"ws_b_{i}", WS_ID_2)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             errors.append(exc)
 
     t1 = threading.Thread(target=writer_a)

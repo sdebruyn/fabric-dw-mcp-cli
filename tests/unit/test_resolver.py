@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import time
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -157,7 +156,7 @@ async def test_workspace_id_name_hits_api(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_workspace_id_name_cached_after_first_call(tmp_path: Path) -> None:
-    resolver, client, cache = _make_resolver(tmp_path)
+    resolver, client, _cache = _make_resolver(tmp_path)
     with respx.mock:
         route = respx.get(_PBI_GROUPS_URL).mock(
             return_value=httpx.Response(

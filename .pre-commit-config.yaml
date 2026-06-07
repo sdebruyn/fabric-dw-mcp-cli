@@ -28,4 +28,5 @@ repos:
           - "respx>=0.21"
           - "freezegun>=1.5"
           - "mssql-python>=0.13"
+          - "filelock>=3.16"
         args: ["--config-file", "pyproject.toml"]
