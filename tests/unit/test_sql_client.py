@@ -1,5 +1,6 @@
 """Tests for fabric_dw.sql_client — written before implementation (TDD)."""
 
+import logging
 import threading
 from collections.abc import Sequence
 from typing import Any
@@ -533,3 +534,102 @@ class TestCursorExecuteErrorMapping:
         client = FabricSqlClient()
         with pytest.raises(RuntimeError, match="deadlock detected"):
             await client.execute(_make_target(), "SELECT 1")
+
+
+# ---------------------------------------------------------------------------
+# Debug-level logging
+# ---------------------------------------------------------------------------
+
+
+class TestSqlDebugLogging:
+    async def test_execute_nonquery_emits_debug_log(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """execute_nonquery at DEBUG must emit a log record from fabric_dw.sql."""
+        mock_mssql, _conn, _cursor = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        client = FabricSqlClient()
+        with caplog.at_level(logging.DEBUG, logger="fabric_dw.sql"):
+            await client.execute_nonquery(_make_target(), "DELETE FROM t WHERE id = ?", (42,))
+        await client.close()
+
+        assert len(caplog.records) >= 1
+        record = caplog.records[0]
+        assert record.name == "fabric_dw.sql"
+        assert record.levelno == logging.DEBUG
+
+    async def test_execute_nonquery_log_contains_sql_truncated(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Log message must contain the SQL (or first 4 KB of it)."""
+        mock_mssql, _conn, _cursor = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        sql = "DELETE FROM t WHERE id = ?"
+        client = FabricSqlClient()
+        with caplog.at_level(logging.DEBUG, logger="fabric_dw.sql"):
+            await client.execute_nonquery(_make_target(), sql, (42,))
+        await client.close()
+
+        record = caplog.records[0]
+        msg = record.getMessage()
+        # The SQL (up to 4 KB) should appear in the message
+        assert "DELETE FROM t" in msg
+
+    async def test_execute_nonquery_log_contains_params_count_not_values(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Log message must contain params count but NOT the actual param values."""
+        mock_mssql, _conn, _cursor = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        client = FabricSqlClient()
+        with caplog.at_level(logging.DEBUG, logger="fabric_dw.sql"):
+            await client.execute_nonquery(
+                _make_target(), "DELETE FROM t WHERE id = ?", (99999,)
+            )
+        await client.close()
+
+        record = caplog.records[0]
+        msg = record.getMessage()
+        # Should contain params count = 1
+        assert "1" in msg
+        # Must NOT contain the actual sensitive param value
+        assert "99999" not in msg
+
+    async def test_execute_log_contains_sql(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """execute() also emits a debug log containing the SQL."""
+        mock_mssql, _conn, _cursor = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        sql = "SELECT TOP 10 * FROM dbo.my_table"
+        client = FabricSqlClient()
+        with caplog.at_level(logging.DEBUG, logger="fabric_dw.sql"):
+            await client.execute(_make_target(), sql)
+        await client.close()
+
+        assert any("SELECT" in r.getMessage() for r in caplog.records)
+
+    async def test_sql_truncated_to_4kb(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """SQL longer than 4 KB must be truncated in the log record."""
+        mock_mssql, _conn, _cursor = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        long_sql = "SELECT " + "x, " * 2000 + "1 FROM t"
+        assert len(long_sql) > 4096
+
+        client = FabricSqlClient()
+        with caplog.at_level(logging.DEBUG, logger="fabric_dw.sql"):
+            await client.execute(_make_target(), long_sql)
+        await client.close()
+
+        record = caplog.records[0]
+        msg = record.getMessage()
+        # The logged SQL must not exceed 4096 chars (plus some overhead for the rest of the message)
+        assert len(long_sql) not in [len(msg)]  # message should be shorter than full SQL
+        assert len(msg) < len(long_sql)
