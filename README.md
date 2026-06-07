@@ -51,6 +51,12 @@ fabric-dw --help
 }
 ```
 
+## Develop in a container
+
+Open the repo in [GitHub Codespaces](https://github.com/codespaces) or VS Code's Remote-Containers extension — the devcontainer pre-installs Python 3.13, uv, Azure CLI, and the GitHub CLI.
+
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/sdebruyn/fabric-dw-mcp-cli)
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, branch flow, and how to run tests locally.

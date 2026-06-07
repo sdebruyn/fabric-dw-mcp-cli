@@ -4,6 +4,8 @@ Thank you for your interest in contributing to `fabric-dw-mcp-cli`!
 
 ## Dev Setup
 
+> **Recommended:** open the repo in [GitHub Codespaces](https://codespaces.new/sdebruyn/fabric-dw-mcp-cli) or VS Code with the Remote-Containers extension — the devcontainer handles all of steps 1–2 automatically.
+
 1. **Install dependencies**
 
    ```bash
