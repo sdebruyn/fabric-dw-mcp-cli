@@ -27,3 +27,7 @@ fabric-dw --help
 ```
 
 You should see the top-level help output listing available commands.
+
+---
+
+See also the [Troubleshooting](troubleshooting.md) page for common failure modes such as expired `az login` tokens and 403 permission errors.
