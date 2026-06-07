@@ -8,6 +8,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
+import pytest
+
 from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.models import WarehouseKind
 
@@ -302,3 +304,64 @@ def test_parent_directory_created_lazily(tmp_path: Path) -> None:
     cache = LookupCache(path=deep_path)
     cache.put_workspace("ws", WS_ID)
     assert deep_path.exists()
+
+
+# ---------------------------------------------------------------------------
+# XDG_CACHE_HOME path resolution (finding 5)
+# ---------------------------------------------------------------------------
+
+
+def test_xdg_cache_home_used_for_default_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """LookupCache without explicit path should place the file under XDG_CACHE_HOME."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    cache = LookupCache()
+    cache.put_workspace("ws", WS_ID)
+    expected = tmp_path / "fabric-dw" / "lookup.json"
+    assert expected.exists(), f"Expected cache file at {expected}"
+    assert cache.get_workspace("ws") is not None
+
+
+# ---------------------------------------------------------------------------
+# Name whitespace stripping (finding 6)
+# ---------------------------------------------------------------------------
+
+
+def test_put_workspace_strips_whitespace(tmp_path: Path) -> None:
+    """put_workspace should strip leading/trailing whitespace before storing."""
+    cache = _make_cache(tmp_path)
+    cache.put_workspace("  Foo  ", WS_ID)
+    # Lookup without whitespace should work
+    result = cache.get_workspace("foo")
+    assert result is not None
+    assert result.id == WS_ID
+
+
+def test_get_workspace_strips_whitespace(tmp_path: Path) -> None:
+    """get_workspace should strip whitespace in the query key."""
+    cache = _make_cache(tmp_path)
+    cache.put_workspace("Foo", WS_ID)
+    result = cache.get_workspace("  foo  ")
+    assert result is not None
+    assert result.id == WS_ID
+
+
+def test_put_item_strips_whitespace(tmp_path: Path) -> None:
+    """put_item should strip whitespace from name before storing."""
+    cache = _make_cache(tmp_path)
+    entry = _make_item_entry()
+    cache.put_item(WS_ID, "  SalesWarehouse  ", entry)
+    result = cache.get_item(WS_ID, "saleswarehouse")
+    assert result is not None
+    assert result.id == ITEM_ID
+
+
+def test_get_item_strips_whitespace(tmp_path: Path) -> None:
+    """get_item should strip whitespace in the query key."""
+    cache = _make_cache(tmp_path)
+    entry = _make_item_entry()
+    cache.put_item(WS_ID, "SalesWarehouse", entry)
+    result = cache.get_item(WS_ID, "  SalesWarehouse  ")
+    assert result is not None
+    assert result.id == ITEM_ID

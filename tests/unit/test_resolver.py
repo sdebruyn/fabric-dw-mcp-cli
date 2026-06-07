@@ -219,10 +219,15 @@ async def test_workspace_id_multiple_matches_error_mentions_all_ids(tmp_path: Pa
 @pytest.mark.asyncio
 async def test_item_guid_fetches_detail_endpoint(tmp_path: Path) -> None:
     resolver, client, _ = _make_resolver(tmp_path)
-    payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "SalesWarehouse")
+    generic_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "SalesWarehouse")
+    specific_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "SalesWarehouse")
     with respx.mock:
         # workspace_id will be a GUID too, so no PBI call needed
-        respx.get(_FABRIC_ITEM_URL).mock(return_value=httpx.Response(200, json=payload))
+        # Step 1: generic discovery; Step 2: warehouse-specific endpoint
+        respx.get(_FABRIC_ITEM_URL).mock(return_value=httpx.Response(200, json=generic_payload))
+        respx.get(
+            f"https://api.fabric.microsoft.com/v1/workspaces/{WS_GUID}/warehouses/{ITEM_GUID}"
+        ).mock(return_value=httpx.Response(200, json=specific_payload))
         async with client:
             result = await resolver.item(WS_GUID, ITEM_GUID)
     assert result.id == ITEM_UUID
@@ -233,9 +238,13 @@ async def test_item_guid_fetches_detail_endpoint(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_item_guid_sql_endpoint_connection_string(tmp_path: Path) -> None:
     resolver, client, _ = _make_resolver(tmp_path)
-    payload = _sql_endpoint_detail_payload(ITEM_GUID, WS_GUID, "MySQLEndpoint")
+    generic_payload = _sql_endpoint_detail_payload(ITEM_GUID, WS_GUID, "MySQLEndpoint")
+    specific_payload = _sql_endpoint_detail_payload(ITEM_GUID, WS_GUID, "MySQLEndpoint")
     with respx.mock:
-        respx.get(_FABRIC_ITEM_URL).mock(return_value=httpx.Response(200, json=payload))
+        respx.get(_FABRIC_ITEM_URL).mock(return_value=httpx.Response(200, json=generic_payload))
+        respx.get(
+            f"https://api.fabric.microsoft.com/v1/workspaces/{WS_GUID}/sqlEndpoints/{ITEM_GUID}"
+        ).mock(return_value=httpx.Response(200, json=specific_payload))
         async with client:
             result = await resolver.item(WS_GUID, ITEM_GUID)
     assert result.kind == WarehouseKind.SQL_ENDPOINT
@@ -253,10 +262,14 @@ async def test_item_name_pages_items_and_fetches_detail(tmp_path: Path) -> None:
     list_payload = _items_list_payload(
         _warehouse_list_item(ITEM_GUID, "SalesWarehouse"),
     )
-    detail_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "SalesWarehouse")
+    generic_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "SalesWarehouse")
+    specific_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "SalesWarehouse")
     with respx.mock:
         respx.get(_FABRIC_ITEMS_URL).mock(return_value=httpx.Response(200, json=list_payload))
-        respx.get(_FABRIC_ITEM_URL).mock(return_value=httpx.Response(200, json=detail_payload))
+        respx.get(_FABRIC_ITEM_URL).mock(return_value=httpx.Response(200, json=generic_payload))
+        respx.get(
+            f"https://api.fabric.microsoft.com/v1/workspaces/{WS_GUID}/warehouses/{ITEM_GUID}"
+        ).mock(return_value=httpx.Response(200, json=specific_payload))
         async with client:
             result = await resolver.item(WS_GUID, "SalesWarehouse")
     assert result.id == ITEM_UUID
@@ -270,10 +283,14 @@ async def test_item_name_case_insensitive_match(tmp_path: Path) -> None:
     list_payload = _items_list_payload(
         _warehouse_list_item(ITEM_GUID, "SalesWarehouse"),
     )
-    detail_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "SalesWarehouse")
+    generic_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "SalesWarehouse")
+    specific_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "SalesWarehouse")
     with respx.mock:
         respx.get(_FABRIC_ITEMS_URL).mock(return_value=httpx.Response(200, json=list_payload))
-        respx.get(_FABRIC_ITEM_URL).mock(return_value=httpx.Response(200, json=detail_payload))
+        respx.get(_FABRIC_ITEM_URL).mock(return_value=httpx.Response(200, json=generic_payload))
+        respx.get(
+            f"https://api.fabric.microsoft.com/v1/workspaces/{WS_GUID}/warehouses/{ITEM_GUID}"
+        ).mock(return_value=httpx.Response(200, json=specific_payload))
         async with client:
             result = await resolver.item(WS_GUID, "saleswarehouse")
     assert result.id == ITEM_UUID
@@ -299,14 +316,18 @@ async def test_item_name_cached_after_first_call(tmp_path: Path) -> None:
     list_payload = _items_list_payload(
         _warehouse_list_item(ITEM_GUID, "SalesWarehouse"),
     )
-    detail_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "SalesWarehouse")
+    generic_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "SalesWarehouse")
+    specific_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "SalesWarehouse")
     with respx.mock:
         list_route = respx.get(_FABRIC_ITEMS_URL).mock(
             return_value=httpx.Response(200, json=list_payload)
         )
         detail_route = respx.get(_FABRIC_ITEM_URL).mock(
-            return_value=httpx.Response(200, json=detail_payload)
+            return_value=httpx.Response(200, json=generic_payload)
         )
+        respx.get(
+            f"https://api.fabric.microsoft.com/v1/workspaces/{WS_GUID}/warehouses/{ITEM_GUID}"
+        ).mock(return_value=httpx.Response(200, json=specific_payload))
         async with client:
             first = await resolver.item(WS_GUID, "SalesWarehouse")
             # Second call should hit cache
@@ -322,10 +343,14 @@ async def test_item_name_sql_endpoint(tmp_path: Path) -> None:
     list_payload = _items_list_payload(
         _sql_endpoint_list_item(ITEM_GUID, "MySQLEndpoint"),
     )
-    detail_payload = _sql_endpoint_detail_payload(ITEM_GUID, WS_GUID, "MySQLEndpoint")
+    generic_payload = _sql_endpoint_detail_payload(ITEM_GUID, WS_GUID, "MySQLEndpoint")
+    specific_payload = _sql_endpoint_detail_payload(ITEM_GUID, WS_GUID, "MySQLEndpoint")
     with respx.mock:
         respx.get(_FABRIC_ITEMS_URL).mock(return_value=httpx.Response(200, json=list_payload))
-        respx.get(_FABRIC_ITEM_URL).mock(return_value=httpx.Response(200, json=detail_payload))
+        respx.get(_FABRIC_ITEM_URL).mock(return_value=httpx.Response(200, json=generic_payload))
+        respx.get(
+            f"https://api.fabric.microsoft.com/v1/workspaces/{WS_GUID}/sqlEndpoints/{ITEM_GUID}"
+        ).mock(return_value=httpx.Response(200, json=specific_payload))
         async with client:
             result = await resolver.item(WS_GUID, "MySQLEndpoint")
     assert result.kind == WarehouseKind.SQL_ENDPOINT
@@ -339,7 +364,8 @@ async def test_item_name_workspace_resolved_first(tmp_path: Path) -> None:
     list_payload = _items_list_payload(
         _warehouse_list_item(ITEM_GUID, "SalesWarehouse"),
     )
-    detail_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "SalesWarehouse")
+    generic_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "SalesWarehouse")
+    specific_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "SalesWarehouse")
     with respx.mock:
         respx.get(_PBI_GROUPS_URL).mock(
             return_value=httpx.Response(
@@ -347,7 +373,177 @@ async def test_item_name_workspace_resolved_first(tmp_path: Path) -> None:
             )
         )
         respx.get(_FABRIC_ITEMS_URL).mock(return_value=httpx.Response(200, json=list_payload))
-        respx.get(_FABRIC_ITEM_URL).mock(return_value=httpx.Response(200, json=detail_payload))
+        respx.get(_FABRIC_ITEM_URL).mock(return_value=httpx.Response(200, json=generic_payload))
+        respx.get(
+            f"https://api.fabric.microsoft.com/v1/workspaces/{WS_GUID}/warehouses/{ITEM_GUID}"
+        ).mock(return_value=httpx.Response(200, json=specific_payload))
         async with client:
             result = await resolver.item("AnalyticsWorkspace", "SalesWarehouse")
     assert result.id == ITEM_UUID
+
+
+# ---------------------------------------------------------------------------
+# Finding 1: OData single-quote escaping
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_workspace_id_name_with_single_quote_escaped(tmp_path: Path) -> None:
+    """Workspace names containing a single quote are properly OData-escaped."""
+    resolver, client, _ = _make_resolver(tmp_path)
+    name_with_apostrophe = "O'Brien Analytics"
+    with respx.mock:
+        route = respx.get(_PBI_GROUPS_URL).mock(
+            return_value=httpx.Response(
+                200, json=_pbi_group_response(WS_GUID, name_with_apostrophe)
+            )
+        )
+        async with client:
+            result = await resolver.workspace_id(name_with_apostrophe)
+    assert result == WS_UUID
+    # Verify the escaped value was sent in the OData filter.
+    # The query is percent-encoded, so single quotes appear as %27.
+    called_request = route.calls[0].request
+    # Decoded form: "O''Brien" → percent-encoded: "O%27%27Brien"
+    assert "O%27%27Brien" in called_request.url.query.decode()
+
+
+@pytest.mark.asyncio
+async def test_workspace_id_name_with_double_apostrophe_escaped(tmp_path: Path) -> None:
+    """Names with consecutive apostrophes are double-escaped correctly."""
+    resolver, client, _ = _make_resolver(tmp_path)
+    # "It's here" has one apostrophe → should escape to "It''s here"
+    name = "It's here"
+    with respx.mock:
+        respx.get(_PBI_GROUPS_URL).mock(
+            return_value=httpx.Response(200, json=_pbi_group_response(WS_GUID, name))
+        )
+        async with client:
+            result = await resolver.workspace_id(name)
+    assert result == WS_UUID
+
+
+# ---------------------------------------------------------------------------
+# Finding 2: GUID item cache — second call within TTL hits cache, not API
+# ---------------------------------------------------------------------------
+
+# Type-specific endpoint URLs for finding 3 tests
+_FABRIC_WAREHOUSE_URL = (
+    f"https://api.fabric.microsoft.com/v1/workspaces/{WS_GUID}/warehouses/{ITEM_GUID}"
+)
+_FABRIC_SQL_ENDPOINT_URL = (
+    f"https://api.fabric.microsoft.com/v1/workspaces/{WS_GUID}/sqlEndpoints/{ITEM_GUID}"
+)
+
+
+@pytest.mark.asyncio
+async def test_item_guid_second_call_hits_cache_not_api(tmp_path: Path) -> None:
+    """GUID input: first call hits API, second call within TTL hits cache (no extra HTTP)."""
+    resolver, client, _ = _make_resolver(tmp_path)
+    generic_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "SalesWarehouse")
+    specific_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "SalesWarehouse")
+    with respx.mock:
+        generic_route = respx.get(_FABRIC_ITEM_URL).mock(
+            return_value=httpx.Response(200, json=generic_payload)
+        )
+        respx.get(_FABRIC_WAREHOUSE_URL).mock(
+            return_value=httpx.Response(200, json=specific_payload)
+        )
+        async with client:
+            first = await resolver.item(WS_GUID, ITEM_GUID)
+            # Second call with same GUID — should use cache, not call API again
+            second = await resolver.item(WS_GUID, ITEM_GUID)
+        # Generic discovery endpoint called exactly once
+        assert generic_route.call_count == 1
+    assert first.id == second.id == ITEM_UUID
+
+
+# ---------------------------------------------------------------------------
+# Finding 3: type-specific endpoint dispatch
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_item_guid_warehouse_uses_type_specific_endpoint(tmp_path: Path) -> None:
+    """Warehouse items: detail fetch uses /warehouses/{id}, not generic /items/{id}."""
+    resolver, client, _ = _make_resolver(tmp_path)
+    generic_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "SalesWarehouse")
+    specific_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "SalesWarehouse")
+    with respx.mock:
+        generic_route = respx.get(_FABRIC_ITEM_URL).mock(
+            return_value=httpx.Response(200, json=generic_payload)
+        )
+        warehouse_route = respx.get(_FABRIC_WAREHOUSE_URL).mock(
+            return_value=httpx.Response(200, json=specific_payload)
+        )
+        async with client:
+            result = await resolver.item(WS_GUID, ITEM_GUID)
+    assert result.kind == WarehouseKind.WAREHOUSE
+    assert result.connection_string == "mywarehouse.datawarehouse.fabric.microsoft.com"
+    assert generic_route.call_count == 1
+    assert warehouse_route.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_item_guid_sql_endpoint_uses_type_specific_endpoint(tmp_path: Path) -> None:
+    """SQLEndpoint items: detail fetch uses /sqlEndpoints/{id}, not generic /items/{id}."""
+    resolver, client, _ = _make_resolver(tmp_path)
+    generic_payload = _sql_endpoint_detail_payload(ITEM_GUID, WS_GUID, "MySQLEndpoint")
+    specific_payload = _sql_endpoint_detail_payload(ITEM_GUID, WS_GUID, "MySQLEndpoint")
+    with respx.mock:
+        generic_route = respx.get(_FABRIC_ITEM_URL).mock(
+            return_value=httpx.Response(200, json=generic_payload)
+        )
+        sql_route = respx.get(_FABRIC_SQL_ENDPOINT_URL).mock(
+            return_value=httpx.Response(200, json=specific_payload)
+        )
+        async with client:
+            result = await resolver.item(WS_GUID, ITEM_GUID)
+    assert result.kind == WarehouseKind.SQL_ENDPOINT
+    assert result.connection_string == "mysqlep.datawarehouse.fabric.microsoft.com"
+    assert generic_route.call_count == 1
+    assert sql_route.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_item_guid_snapshot_uses_generic_endpoint_only(tmp_path: Path) -> None:
+    """WarehouseSnapshot: no type-specific endpoint; uses generic /items/{id} only."""
+    resolver, client, _ = _make_resolver(tmp_path)
+    snapshot_payload: dict[str, object] = {
+        "id": ITEM_GUID,
+        "displayName": "MySnapshot",
+        "type": "WarehouseSnapshot",
+        "workspaceId": WS_GUID,
+    }
+    with respx.mock:
+        generic_route = respx.get(_FABRIC_ITEM_URL).mock(
+            return_value=httpx.Response(200, json=snapshot_payload)
+        )
+        async with client:
+            result = await resolver.item(WS_GUID, ITEM_GUID)
+    assert result.kind == WarehouseKind.SNAPSHOT
+    assert result.connection_string is None
+    # Generic endpoint called exactly once; no additional type-specific call
+    assert generic_route.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Finding 4: unknown item type raises FabricError
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_item_guid_unknown_type_raises_fabric_error(tmp_path: Path) -> None:
+    """An unsupported item type (e.g. Lakehouse) must raise FabricError, not silently default."""
+    resolver, client, _ = _make_resolver(tmp_path)
+    lakehouse_payload: dict[str, object] = {
+        "id": ITEM_GUID,
+        "displayName": "MyLakehouse",
+        "type": "Lakehouse",
+        "workspaceId": WS_GUID,
+    }
+    with respx.mock:
+        respx.get(_FABRIC_ITEM_URL).mock(return_value=httpx.Response(200, json=lakehouse_payload))
+        async with client:
+            with pytest.raises(FabricError, match="unsupported type"):
+                await resolver.item(WS_GUID, ITEM_GUID)

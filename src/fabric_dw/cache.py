@@ -13,7 +13,7 @@ JSON shape::
         },
         "items": {
             "<ws_uuid>": {
-                "<name_lower>": {
+                "<name_lower_or_guid_lower>": {
                     "id": "<guid>",
                     "kind": "<WarehouseKind>",
                     "connection_string": "<str | null>",
@@ -22,13 +22,19 @@ JSON shape::
             }
         }
     }
+
+Names are stripped of leading/trailing whitespace and lower-cased at the
+cache boundary.  GUID keys are stored lower-cased (the canonical UUID
+string form is lower-case hex with hyphens).
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
+import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -114,9 +120,26 @@ class LookupCache:
             return data
 
     def _write(self, data: dict[str, Any]) -> None:
-        """Atomically write *data* to the cache file, creating parent dirs as needed."""
+        """Atomically write *data* to the cache file, creating parent dirs as needed.
+
+        Uses a temp file + os.replace() so readers always see either the old or
+        the new complete file — a crash during write can never leave a truncated
+        or partially-written JSON file on disk.
+        """
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(data, indent=None), encoding="utf-8")
+        fd, tmp_name = tempfile.mkstemp(
+            dir=self._path.parent,
+            prefix=".lookup_tmp_",
+            suffix=".json",
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(json.dumps(data, indent=None))
+            os.replace(tmp_name, self._path)
+        except Exception:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_name)
+            raise
 
     def _is_fresh(self, fetched_at_str: str) -> bool:
         """Return True when *fetched_at_str* is within the TTL window."""
@@ -139,19 +162,22 @@ class LookupCache:
         with self._lock:
             data = self._read()
         workspaces: dict[str, Any] = data.get("workspaces", {})
-        record = workspaces.get(name.lower())
-        if record is None:
+        record = workspaces.get(name.strip().lower())
+        if not isinstance(record, dict):
             return None
         if not self._is_fresh(record.get("fetched_at", "")):
             return None
-        return WorkspaceEntry(
-            id=UUID(record["id"]),
-            fetched_at=datetime.fromisoformat(record["fetched_at"]),
-        )
+        try:
+            return WorkspaceEntry(
+                id=UUID(record["id"]),
+                fetched_at=datetime.fromisoformat(record["fetched_at"]),
+            )
+        except (KeyError, ValueError, TypeError):
+            return None
 
     def put_workspace(self, name: str, id: UUID) -> None:
         """Store a workspace name→UUID mapping with the current timestamp."""
-        key = name.lower()
+        key = name.strip().lower()
         with self._lock:
             data = self._read()
             workspaces: dict[str, Any] = data.setdefault("workspaces", {})
@@ -162,27 +188,39 @@ class LookupCache:
             self._write(data)
 
     def get_item(self, workspace_id: UUID, name: str) -> ItemEntry | None:
-        """Return a fresh cached item entry or *None* on miss/expiry."""
+        """Return a fresh cached item entry or *None* on miss/expiry.
+
+        *name* may be a display name or a GUID string; both are normalised to
+        lower-case (and stripped) before lookup so the same key is found
+        regardless of how the entry was stored.
+        """
         with self._lock:
             data = self._read()
         items: dict[str, Any] = data.get("items", {})
         ws_items: dict[str, Any] = items.get(str(workspace_id), {})
-        record = ws_items.get(name.lower())
-        if record is None:
+        record = ws_items.get(name.strip().lower())
+        if not isinstance(record, dict):
             return None
         if not self._is_fresh(record.get("fetched_at", "")):
             return None
-        conn = record.get("connection_string")
-        return ItemEntry(
-            id=UUID(record["id"]),
-            kind=WarehouseKind(record["kind"]),
-            connection_string=conn if isinstance(conn, str) else None,
-            fetched_at=datetime.fromisoformat(record["fetched_at"]),
-        )
+        try:
+            conn = record.get("connection_string")
+            return ItemEntry(
+                id=UUID(record["id"]),
+                kind=WarehouseKind(record["kind"]),
+                connection_string=conn if isinstance(conn, str) else None,
+                fetched_at=datetime.fromisoformat(record["fetched_at"]),
+            )
+        except (KeyError, ValueError, TypeError):
+            return None
 
     def put_item(self, workspace_id: UUID, name: str, entry: ItemEntry) -> None:
-        """Store an item entry under *workspace_id* / *name*."""
-        key = name.lower()
+        """Store an item entry under *workspace_id* / *name*.
+
+        *name* is stripped and lower-cased.  Pass either the display name or
+        the GUID string to store an alias entry under the GUID key.
+        """
+        key = name.strip().lower()
         with self._lock:
             data = self._read()
             items: dict[str, Any] = data.setdefault("items", {})

@@ -39,6 +39,25 @@ _KIND_MAP: dict[str, WarehouseKind] = {
     "WarehouseSnapshot": WarehouseKind.SNAPSHOT,
 }
 
+# Type-specific Fabric REST endpoints for detail fetching.
+# The generic /items/{id} endpoint does not reliably return the `properties`
+# block for all item types; using the type-specific endpoints is required to
+# get `connectionString` for Warehouse and SQLEndpoint.
+_TYPE_ENDPOINT: dict[str, str] = {
+    "Warehouse": "warehouses",
+    "SQLEndpoint": "sqlEndpoints",
+    # WarehouseSnapshot has no type-specific detail endpoint; fall back to generic.
+}
+
+
+def _odata_escape(value: str) -> str:
+    """Escape a string value for use inside an OData single-quoted literal.
+
+    Per the OData specification, a single quote inside a single-quoted string
+    must be escaped by doubling it (e.g. ``O'Brien`` → ``O''Brien``).
+    """
+    return value.replace("'", "''")
+
 
 def _connection_string_from_detail(payload: dict[str, Any], kind: WarehouseKind) -> str | None:
     """Extract the connection string from a raw item detail payload."""
@@ -68,6 +87,8 @@ class Resolver:
     async def workspace_id(self, value: str) -> UUID:
         """Resolve *value* (name or GUID) to a workspace UUID.
 
+        Leading/trailing whitespace in *value* is stripped before lookup.
+
         Args:
             value: A workspace display name or a GUID string.
 
@@ -78,6 +99,8 @@ class Resolver:
             NotFound: If no workspace matches *value*.
             FabricError: If *value* matches more than one workspace.
         """
+        value = value.strip()
+
         # 1. GUID fast-path
         if GUID_RE.match(value):
             return UUID(value)
@@ -87,12 +110,12 @@ class Resolver:
         if cached is not None:
             return cached.id
 
-        # 3. Power BI OData filter
+        # 3. Power BI OData filter — escape single quotes per OData spec
         resp = await self._http.request(
             "GET",
             HttpBase.POWERBI,
             "/groups",
-            params={"$filter": f"name eq '{value}'"},
+            params={"$filter": f"name eq '{_odata_escape(value)}'"},
         )
         body: dict[str, Any] = resp.json()
         results: list[dict[str, Any]] = body.get("value", [])
@@ -117,6 +140,8 @@ class Resolver:
     async def item(self, workspace: str, value: str) -> ItemEntry:
         """Resolve *value* (name or GUID) to an ItemEntry within *workspace*.
 
+        Leading/trailing whitespace in *value* is stripped before lookup.
+
         Args:
             workspace: Workspace name or GUID.
             value: Item display name or GUID.
@@ -127,11 +152,16 @@ class Resolver:
         Raises:
             NotFound: If the item is not found in the workspace.
         """
+        value = value.strip()
         ws_id = await self.workspace_id(workspace)
 
-        # 1. GUID fast-path: fetch detail directly
+        # 1. GUID fast-path: check cache first, then fetch detail
         if GUID_RE.match(value):
-            return await self._fetch_item_detail(ws_id, UUID(value))
+            item_uuid = UUID(value)
+            cached_item = self._cache.get_item(ws_id, value)
+            if cached_item is not None:
+                return cached_item
+            return await self._fetch_item_detail(ws_id, item_uuid)
 
         # 2. Cache hit
         cached_item = self._cache.get_item(ws_id, value)
@@ -155,22 +185,56 @@ class Resolver:
         raise NotFound(f"item {value!r} not found in workspace {ws_id}")  # noqa: TRY003
 
     async def _fetch_item_detail(self, workspace_id: UUID, item_id: UUID) -> ItemEntry:
-        """Fetch a single item's full detail, build ItemEntry, cache and return it."""
+        """Fetch a single item's full detail, build ItemEntry, cache and return it.
+
+        Resolution strategy:
+        1. GET the generic ``/items/{id}`` endpoint to discover the item's type.
+        2. If the type has a dedicated endpoint (Warehouse → /warehouses/{id},
+           SQLEndpoint → /sqlEndpoints/{id}), fetch that endpoint for the full
+           ``properties`` payload including ``connectionString``.
+        3. Store the entry under both the display name and the GUID string so
+           subsequent GUID lookups also hit the cache.
+        4. Raise ``FabricError`` for any unsupported item type.
+        """
+        # Step 1 — generic discovery
         resp = await self._http.request(
             "GET",
             HttpBase.FABRIC,
             f"/workspaces/{workspace_id}/items/{item_id}",
         )
-        payload: dict[str, Any] = resp.json()
-        item_type = str(payload.get("type", ""))
-        kind = _KIND_MAP.get(item_type, WarehouseKind.WAREHOUSE)
+        generic_payload: dict[str, Any] = resp.json()
+        item_type = str(generic_payload.get("type", ""))
+
+        if item_type not in _KIND_MAP:
+            raise FabricError(  # noqa: TRY003
+                f"item {item_id} has unsupported type {item_type!r}; "
+                "expected Warehouse, SQLEndpoint or WarehouseSnapshot"
+            )
+
+        kind = _KIND_MAP[item_type]
+
+        # Step 2 — type-specific detail fetch (if available)
+        type_segment = _TYPE_ENDPOINT.get(item_type)
+        if type_segment is not None:
+            detail_resp = await self._http.request(
+                "GET",
+                HttpBase.FABRIC,
+                f"/workspaces/{workspace_id}/{type_segment}/{item_id}",
+            )
+            payload: dict[str, Any] = detail_resp.json()
+        else:
+            payload = generic_payload
+
         conn = _connection_string_from_detail(payload, kind)
-        display_name = str(payload.get("displayName", str(item_id)))
+        display_name = str(generic_payload.get("displayName", str(item_id)))
         entry = ItemEntry(
             id=item_id,
             kind=kind,
             connection_string=conn,
             fetched_at=datetime.now(tz=UTC),
         )
+        # Store under display name for name-based lookups
         self._cache.put_item(workspace_id, display_name, entry)
+        # Store under the GUID string (lower-cased) so future GUID lookups hit cache
+        self._cache.put_item(workspace_id, str(item_id), entry)
         return entry
