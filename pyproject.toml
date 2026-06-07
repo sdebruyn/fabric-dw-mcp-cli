@@ -39,6 +39,9 @@ dev = [
     "pre-commit",
 ]
 
+[dependency-groups]
+docs = ["zensical>=0.0.42"]
+
 [tool.hatch.version]
 path = "src/fabric_dw/__init__.py"
 

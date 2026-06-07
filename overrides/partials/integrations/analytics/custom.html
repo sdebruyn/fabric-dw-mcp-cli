@@ -1,0 +1,21 @@
+{# Umami analytics — fill in the data-website-id after creating the Umami site
+   for this project. Replace the empty string with the real UUID (UMAMI_SITE_UUID).
+   Until then this block silently no-ops (the script tag still loads but
+   website-id is empty, so Umami's loader skips reporting). #}
+<script defer
+  src="/t.js"
+  data-website-id=""
+  data-host-url="https://umami.debruyn.dev"
+  data-do-not-track="true">
+</script>
+<script type="text/javascript">
+  (() => {
+    const name = 'outbound-link-click';
+    document.querySelectorAll('a').forEach(a => {
+      if (a.host !== window.location.host && !a.getAttribute('data-umami-event')) {
+        a.setAttribute('data-umami-event', name);
+        a.setAttribute('data-umami-event-url', a.href);
+      }
+    });
+  })();
+</script>
