@@ -23,7 +23,9 @@ class Workspace(_FabricBase):
     name: str = Field(alias="displayName")
     description: str | None = None
     capacity_id: UUID | None = Field(default=None, alias="capacityId")
-    default_dataset_storage_format: str | None = None
+    default_dataset_storage_format: str | None = Field(
+        default=None, alias="defaultDatasetStorageFormat"
+    )
 
 
 class WarehouseKind(StrEnum):
@@ -61,7 +63,8 @@ class Warehouse(_FabricBase):
             sql_ep: dict[str, object] = props.get("sqlEndpointProperties") or {}  # type: ignore[assignment]
             conn_string = sql_ep.get("connectionString")
         else:
-            conn_string = None
+            msg = f"from_api does not support kind={kind}"
+            raise ValueError(msg)
 
         flat: dict[str, object] = {
             "id": payload.get("id"),
@@ -80,7 +83,7 @@ class WarehouseSnapshot(_FabricBase):
     """A point-in-time snapshot of a Warehouse."""
 
     id: UUID
-    name: str
+    name: str = Field(alias="displayName")
     parent_warehouse_id: UUID = Field(alias="parentWarehouseId")
     snapshot_dt: datetime | None = Field(default=None, alias="snapshotDateTime")
 
@@ -110,7 +113,7 @@ class RunningQuery(_FabricBase):
     request_id: str
     status: str
     start_time: datetime
-    total_elapsed_time_ms: int
+    total_elapsed_time_ms: int = Field(alias="total_elapsed_time")
     login_name: str | None = None
     command: str | None = None
     query_text: str | None = None

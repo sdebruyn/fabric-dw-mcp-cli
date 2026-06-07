@@ -65,7 +65,7 @@ AUDIT_SETTINGS_PAYLOAD = """{
 
 WAREHOUSE_SNAPSHOT_PAYLOAD = """{
   "id": "f6a7b8c9-d0e1-2345-f012-34567890abcd",
-  "name": "SalesWarehouse_Snapshot_20240315",
+  "displayName": "SalesWarehouse_Snapshot_20240315",
   "parentWarehouseId": "d4e5f6a7-b8c9-0123-def0-123456789abc",
   "snapshotDateTime": "2024-03-15T08:00:00Z"
 }"""

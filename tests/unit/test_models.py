@@ -1,10 +1,10 @@
-"""TDD tests for fabric_dw.models — written before the models exist."""
+"""Tests for fabric_dw.models — Pydantic v2 round-trip, alias handling, and frozen behaviour."""
 
 import json
 from copy import deepcopy
-from uuid import UUID
 
 import pytest
+from pydantic import ValidationError
 
 from fabric_dw.models import (
     AuditSettings,
@@ -30,10 +30,17 @@ class TestWorkspace:
         raw = json.loads(WORKSPACE_LIST_PAYLOAD)
         workspace_data = raw["value"][0]
         obj = Workspace.model_validate(workspace_data)
-        dumped = obj.model_dump(by_alias=True, exclude_none=True)
-        assert dumped["id"] == UUID(workspace_data["id"])
-        assert dumped["displayName"] == workspace_data["displayName"]
-        assert dumped["capacityId"] == UUID(workspace_data["capacityId"])
+        dumped = obj.model_dump(by_alias=True, mode="json", exclude_none=True)
+        # Strip extra fields not modelled (e.g. "type") before comparing.
+        modelled_keys = {
+            "id",
+            "displayName",
+            "description",
+            "capacityId",
+            "defaultDatasetStorageFormat",
+        }
+        expected = {k: v for k, v in workspace_data.items() if k in modelled_keys and v is not None}
+        assert dumped == expected
 
     def test_round_trip_no_capacity(self) -> None:
         raw = json.loads(WORKSPACE_LIST_PAYLOAD)
@@ -52,8 +59,8 @@ class TestWorkspace:
     def test_frozen(self) -> None:
         raw = json.loads(WORKSPACE_LIST_PAYLOAD)
         obj = Workspace.model_validate(raw["value"][0])
-        with pytest.raises((TypeError, Exception)):
-            obj.name = "changed"  # pydantic frozen raises ValidationError at runtime
+        with pytest.raises(ValidationError):
+            obj.name = "changed"
 
 
 class TestWarehouse:
@@ -71,6 +78,11 @@ class TestWarehouse:
         assert obj.connection_string == expected_conn
         assert obj.kind == WarehouseKind.SQL_ENDPOINT
 
+    def test_from_api_snapshot_kind_raises(self) -> None:
+        payload = json.loads(WAREHOUSE_GET_PAYLOAD)
+        with pytest.raises(ValueError, match="from_api does not support kind="):
+            Warehouse.from_api(payload, kind=WarehouseKind.SNAPSHOT)
+
     def test_from_api_warehouse_collation_and_created_date(self) -> None:
         payload = json.loads(WAREHOUSE_GET_PAYLOAD)
         obj = Warehouse.from_api(payload, kind=WarehouseKind.WAREHOUSE)
@@ -87,8 +99,8 @@ class TestWarehouse:
     def test_frozen(self) -> None:
         payload = json.loads(WAREHOUSE_GET_PAYLOAD)
         obj = Warehouse.from_api(payload, kind=WarehouseKind.WAREHOUSE)
-        with pytest.raises((TypeError, Exception)):
-            obj.name = "changed"  # pydantic frozen raises ValidationError at runtime
+        with pytest.raises(ValidationError):
+            obj.name = "changed"
 
     def test_workspace_id_field(self) -> None:
         payload = json.loads(WAREHOUSE_GET_PAYLOAD)
@@ -111,34 +123,29 @@ class TestWarehouseSnapshot:
     def test_round_trip(self) -> None:
         payload = json.loads(WAREHOUSE_SNAPSHOT_PAYLOAD)
         obj = WarehouseSnapshot.model_validate(payload)
-        assert str(obj.id) == payload["id"]
-        assert obj.name == payload["name"]
-        assert str(obj.parent_warehouse_id) == payload["parentWarehouseId"]
-        assert obj.snapshot_dt is not None
+        dumped = obj.model_dump(by_alias=True, mode="json", exclude_none=True)
+        assert dumped == payload
 
     def test_extra_fields_ignored(self) -> None:
         payload = json.loads(WAREHOUSE_SNAPSHOT_PAYLOAD)
         payload_copy = dict(payload)
         payload_copy["extraKey"] = "extraValue"
         obj = WarehouseSnapshot.model_validate(payload_copy)
-        assert obj.name == payload["name"]
+        assert obj.name == payload["displayName"]
 
     def test_frozen(self) -> None:
         payload = json.loads(WAREHOUSE_SNAPSHOT_PAYLOAD)
         obj = WarehouseSnapshot.model_validate(payload)
-        with pytest.raises((TypeError, Exception)):
-            obj.name = "changed"  # pydantic frozen raises ValidationError at runtime
+        with pytest.raises(ValidationError):
+            obj.name = "changed"
 
 
 class TestRestorePoint:
     def test_round_trip(self) -> None:
         payload = json.loads(RESTORE_POINT_PAYLOAD)
         obj = RestorePoint.model_validate(payload)
-        assert str(obj.id) == payload["id"]
-        assert obj.name == payload["name"]
-        assert obj.description == payload["description"]
-        assert obj.is_system_created == payload["isSystemCreated"]
-        assert obj.created_at is not None
+        dumped = obj.model_dump(by_alias=True, mode="json", exclude_none=True)
+        assert dumped == payload
 
     def test_extra_fields_ignored(self) -> None:
         payload = json.loads(RESTORE_POINT_PAYLOAD)
@@ -150,17 +157,16 @@ class TestRestorePoint:
     def test_frozen(self) -> None:
         payload = json.loads(RESTORE_POINT_PAYLOAD)
         obj = RestorePoint.model_validate(payload)
-        with pytest.raises((TypeError, Exception)):
-            obj.name = "changed"  # pydantic frozen raises ValidationError at runtime
+        with pytest.raises(ValidationError):
+            obj.name = "changed"
 
 
 class TestAuditSettings:
     def test_round_trip(self) -> None:
         payload = json.loads(AUDIT_SETTINGS_PAYLOAD)
         obj = AuditSettings.model_validate(payload)
-        assert obj.state == payload["state"]
-        assert obj.retention_days == payload["retentionDays"]
-        assert obj.action_groups == payload["auditActionsAndGroups"]
+        dumped = obj.model_dump(by_alias=True, mode="json", exclude_none=True)
+        assert dumped == payload
 
     def test_default_action_groups(self) -> None:
         obj = AuditSettings.model_validate({"state": "Disabled", "retentionDays": 7})
@@ -176,27 +182,26 @@ class TestAuditSettings:
     def test_frozen(self) -> None:
         payload = json.loads(AUDIT_SETTINGS_PAYLOAD)
         obj = AuditSettings.model_validate(payload)
-        with pytest.raises((TypeError, Exception)):
-            obj.state = "Disabled"  # pydantic frozen raises ValidationError at runtime
+        with pytest.raises(ValidationError):
+            obj.state = "Disabled"
 
 
 class TestRunningQuery:
     def test_round_trip(self) -> None:
+        # Keys use DMV column names (aliases); total_elapsed_time is already in milliseconds.
         payload = {
             "session_id": 12,
             "request_id": "request-abc-123",
             "status": "running",
             "start_time": "2024-03-15T10:30:00Z",
-            "total_elapsed_time_ms": 5432,
+            "total_elapsed_time": 5432,
             "login_name": "user@example.com",
             "command": "SELECT",
             "query_text": "SELECT * FROM sales.orders",
         }
         obj = RunningQuery.model_validate(payload)
-        assert obj.session_id == payload["session_id"]
-        assert obj.request_id == payload["request_id"]
-        assert obj.login_name == payload["login_name"]
-        assert obj.query_text == payload["query_text"]
+        dumped = obj.model_dump(by_alias=True, mode="json", exclude_none=True)
+        assert dumped == payload
 
     def test_nullable_fields(self) -> None:
         payload = {
@@ -204,7 +209,7 @@ class TestRunningQuery:
             "request_id": "req-xyz",
             "status": "completed",
             "start_time": "2024-03-15T10:00:00Z",
-            "total_elapsed_time_ms": 100,
+            "total_elapsed_time": 100,
             "login_name": None,
             "command": None,
             "query_text": None,
@@ -220,7 +225,7 @@ class TestRunningQuery:
             "request_id": "req-1",
             "status": "running",
             "start_time": "2024-03-15T10:00:00Z",
-            "total_elapsed_time_ms": 200,
+            "total_elapsed_time": 200,
             "login_name": "admin",
             "command": "SELECT",
             "query_text": "SELECT 1",
@@ -235,11 +240,11 @@ class TestRunningQuery:
             "request_id": "req-1",
             "status": "running",
             "start_time": "2024-03-15T10:00:00Z",
-            "total_elapsed_time_ms": 200,
+            "total_elapsed_time": 200,
             "login_name": None,
             "command": None,
             "query_text": None,
         }
         obj = RunningQuery.model_validate(payload)
-        with pytest.raises((TypeError, Exception)):
-            obj.status = "completed"  # pydantic frozen raises ValidationError at runtime
+        with pytest.raises(ValidationError):
+            obj.status = "completed"
