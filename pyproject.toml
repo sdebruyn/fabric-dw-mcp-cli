@@ -65,6 +65,7 @@ select = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["ANN", "S101", "PLR2004"]
+"src/fabric_dw/services/**" = ["PLR0913"]
 
 [tool.ruff.format]
 
