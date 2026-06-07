@@ -5,7 +5,11 @@ from unittest.mock import MagicMock
 
 import pytest
 from azure.core.credentials import AccessToken
-from azure.identity import ClientSecretCredential, DefaultAzureCredential, InteractiveBrowserCredential
+from azure.identity import (
+    ClientSecretCredential,
+    DefaultAzureCredential,
+    InteractiveBrowserCredential,
+)
 
 from fabric_dw.auth import (
     FABRIC_SCOPE,
@@ -81,7 +85,7 @@ def test_get_credential_interactive_returns_interactive_browser_credential() -> 
 
 
 async def test_get_token_calls_credential_get_token_once() -> None:
-    mock_token = AccessToken(token="test-token", expires_on=9999999999)
+    mock_token = AccessToken(token="test-token", expires_on=9999999999)  # noqa: S106
     mock_credential = MagicMock()
     mock_credential.get_token.return_value = mock_token
 
@@ -92,13 +96,13 @@ async def test_get_token_calls_credential_get_token_once() -> None:
 
 
 async def test_get_token_returns_access_token_unchanged() -> None:
-    mock_token = AccessToken(token="my-access-token", expires_on=1234567890)
+    mock_token = AccessToken(token="my-access-token", expires_on=1234567890)  # noqa: S106
     mock_credential = MagicMock()
     mock_credential.get_token.return_value = mock_token
 
     result = await get_token(mock_credential, SQL_SCOPE)
 
-    assert result.token == "my-access-token"
+    assert result.token == "my-access-token"  # noqa: S105
     assert result.expires_on == 1234567890
 
 
@@ -106,9 +110,9 @@ async def test_get_token_runs_on_non_main_thread() -> None:
     main_thread_id = threading.get_ident()
     captured_thread_ids: list[int] = []
 
-    def side_effect(scope: str) -> AccessToken:
+    def side_effect(_scope: str) -> AccessToken:
         captured_thread_ids.append(threading.get_ident())
-        return AccessToken(token="tok", expires_on=9999)
+        return AccessToken(token="tok", expires_on=9999)  # noqa: S106
 
     mock_credential = MagicMock()
     mock_credential.get_token.side_effect = side_effect

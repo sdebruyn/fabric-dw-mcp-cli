@@ -17,5 +17,8 @@ repos:
     rev: v2.1.0
     hooks:
       - id: mypy
-        additional_dependencies: []
+        additional_dependencies:
+          - "azure-identity>=1.19"
+          - "azure-core>=1.30"
+          - "pytest"
         args: ["--config-file", "pyproject.toml"]
