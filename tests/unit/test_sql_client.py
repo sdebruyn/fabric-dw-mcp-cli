@@ -485,3 +485,51 @@ class TestAuthErrorMapping:
         client = FabricSqlClient()
         with pytest.raises(RuntimeError):
             await client.execute(_make_target(), "SELECT 1")
+
+
+# ---------------------------------------------------------------------------
+# execute / execute_nonquery — cursor.execute error mapping
+# ---------------------------------------------------------------------------
+
+
+class TestCursorExecuteErrorMapping:
+    async def test_execute_nonquery_permission_denied_from_cursor_execute(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """cursor.execute raising 'permission was denied' → PermissionDenied."""
+        from fabric_dw.exceptions import PermissionDenied
+
+        mock_mssql, _conn, mock_cursor = _make_mock_mssql()
+        driver_exc = Exception("The server principal does not have permission was denied on the object")
+        mock_cursor.execute.side_effect = driver_exc
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        client = FabricSqlClient()
+        with pytest.raises(PermissionDenied):
+            await client.execute_nonquery(_make_target(), "KILL '42'")
+
+    async def test_execute_cursor_auth_error_raises_auth_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """cursor.execute raising 'authentication failed' → AuthError."""
+        mock_mssql, _conn, mock_cursor = _make_mock_mssql()
+        driver_exc = Exception("Authentication failed for user '' (token-based)")
+        mock_cursor.execute.side_effect = driver_exc
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        client = FabricSqlClient()
+        with pytest.raises(AuthError):
+            await client.execute(_make_target(), "SELECT 1")
+
+    async def test_cursor_execute_unrelated_error_propagates_unchanged(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A driver exception that doesn't match any fragments propagates as-is."""
+        mock_mssql, _conn, mock_cursor = _make_mock_mssql()
+        driver_exc = RuntimeError("deadlock detected")
+        mock_cursor.execute.side_effect = driver_exc
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        client = FabricSqlClient()
+        with pytest.raises(RuntimeError, match="deadlock detected"):
+            await client.execute(_make_target(), "SELECT 1")
