@@ -19,6 +19,7 @@ dependencies = [
     "httpx[http2]>=0.27",
     "aiolimiter>=1.2",
     "tenacity>=9",
+    "mssql-python>=0.13",
 ]
 
 [project.scripts]
