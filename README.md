@@ -1,3 +1,9 @@
+<p align="center">
+  <a href="https://fdw.debruyn.dev">
+    <img src="docs/assets/logo.svg" alt="fabric-dw-mcp-cli" width="140" />
+  </a>
+</p>
+
 # fabric-dw-mcp-cli
 
 > Python CLI and MCP server for administering Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.

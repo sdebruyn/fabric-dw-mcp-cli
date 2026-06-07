@@ -24,6 +24,8 @@ nav = [
 [project.theme]
 custom_dir = "overrides"
 language = "en"
+logo = "assets/logo.svg"
+favicon = "assets/logo.svg"
 features = [
   "content.action.edit",
   "content.code.annotate",
@@ -46,7 +48,6 @@ features = [
 ]
 
 [project.theme.icon]
-logo = "material/cloud-outline"
 repo = "fontawesome/brands/github"
 
 [[project.theme.palette]]
