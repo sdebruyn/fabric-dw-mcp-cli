@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import logging
+from unittest.mock import patch
+
 from click.testing import CliRunner
 
 from fabric_dw.cli._main import cli
@@ -58,3 +61,25 @@ class TestCliVersion:
         result = runner.invoke(cli, [])
         # With invoke_without_command=False, missing subcommand should show usage
         assert result.exit_code != 0 or "Usage" in result.output or "cache" in result.output
+
+
+class TestCliVerboseFlag:
+    """The -v / --verbose flag must wire setup_logging with DEBUG level."""
+
+    def test_verbose_flag_calls_setup_logging_with_debug(self) -> None:
+        """When -v is passed, setup_logging should be called with logging.DEBUG."""
+        runner = CliRunner()
+        with patch("fabric_dw.cli._main.setup_logging") as mock_setup:
+            # Use cache --help to trigger the group callback without network calls
+            result = runner.invoke(cli, ["-v", "cache", "--help"])
+            assert result.exit_code == 0
+            mock_setup.assert_called_once_with(logging.DEBUG)
+
+    def test_no_verbose_flag_calls_setup_logging_with_info(self) -> None:
+        """Without -v, setup_logging should be called with logging.INFO."""
+        runner = CliRunner()
+        with patch("fabric_dw.cli._main.setup_logging") as mock_setup:
+            # Use cache --help to trigger the group callback without network calls
+            result = runner.invoke(cli, ["cache", "--help"])
+            assert result.exit_code == 0
+            mock_setup.assert_called_once_with(logging.INFO)

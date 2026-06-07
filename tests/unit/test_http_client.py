@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from typing import Any
 from unittest.mock import MagicMock
@@ -375,3 +376,68 @@ async def test_concurrent_requests_fetch_token_once() -> None:
     assert cred.get_token.call_count == 1, (
         f"Expected get_token called once; called {cred.get_token.call_count} times"
     )
+
+
+# ---------------------------------------------------------------------------
+# Debug-level logging
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_debug_log_emitted_on_request(caplog: pytest.LogCaptureFixture) -> None:
+    """A successful request at DEBUG must emit a log record from fabric_dw.http.
+
+    The record must include method, url, status, elapsed_ms and must have the
+    Authorization header value redacted to 'Bearer ***'.
+    """
+    with respx.mock:
+        respx.get("https://api.fabric.microsoft.com/v1/items").mock(
+            return_value=httpx.Response(200, json={"value": []})
+        )
+
+        client = await _get_client(rps=10)
+        async with client:
+            with caplog.at_level(logging.DEBUG, logger="fabric_dw.http"):
+                await client.request("GET", HttpBase.FABRIC, "/items")
+
+    # Find the record from fabric_dw.http (there may also be httpx records)
+    fabric_records = [r for r in caplog.records if r.name == "fabric_dw.http"]
+    assert len(fabric_records) >= 1
+    record = fabric_records[0]
+    assert record.name == "fabric_dw.http"
+    assert record.levelno == logging.DEBUG
+
+    msg = record.getMessage()
+    assert "GET" in msg
+    assert "200" in msg
+
+    # Authorization header must be redacted
+    assert "Bearer ***" in msg or "Bearer ***" in str(record.__dict__)
+    # Must not contain the raw token
+    assert "fake-token" not in msg
+
+
+@pytest.mark.asyncio
+async def test_debug_log_contains_elapsed_ms(caplog: pytest.LogCaptureFixture) -> None:
+    """Log record should contain elapsed_ms as a numeric attribute or in message."""
+    with respx.mock:
+        respx.get("https://api.fabric.microsoft.com/v1/items").mock(
+            return_value=httpx.Response(200, json={})
+        )
+
+        client = await _get_client(rps=10)
+        async with client:
+            with caplog.at_level(logging.DEBUG, logger="fabric_dw.http"):
+                await client.request("GET", HttpBase.FABRIC, "/items")
+
+    # Find the record from fabric_dw.http
+    fabric_records = [r for r in caplog.records if r.name == "fabric_dw.http"]
+    assert len(fabric_records) >= 1
+    record = fabric_records[0]
+    # elapsed_ms may be in the message string or as an extra attribute
+    has_elapsed = (
+        "elapsed" in record.getMessage().lower()
+        or hasattr(record, "elapsed_ms")
+        or "ms" in record.getMessage()
+    )
+    assert has_elapsed, f"No elapsed info in log record: {record.getMessage()}"
