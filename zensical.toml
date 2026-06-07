@@ -16,7 +16,8 @@ nav = [
   { "Install" = "install.md" },
   { "Reference" = [
     { "CLI" = "cli.md" },
-    { "MCP" = "mcp.md" }
+    { "MCP" = "mcp.md" },
+    { "Shell Completion" = "completion.md" }
   ] },
   { "Contributing" = "contributing.md" }
 ]

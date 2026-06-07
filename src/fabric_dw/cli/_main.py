@@ -9,6 +9,7 @@ import click
 from fabric_dw.auth import CredentialMode
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli.commands.cache import cache_group
+from fabric_dw.cli.commands.completion import completion_group
 
 
 @click.group(invoke_without_command=False)
@@ -66,3 +67,4 @@ def cli(
 
 
 cli.add_command(cache_group)
+cli.add_command(completion_group)
