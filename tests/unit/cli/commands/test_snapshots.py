@@ -1,0 +1,326 @@
+"""Tests for snapshots CLI sub-commands — written BEFORE the implementation (TDD)."""
+
+from __future__ import annotations
+
+import json
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
+
+import pytest
+from click.testing import CliRunner
+
+from fabric_dw.cache import ItemEntry
+from fabric_dw.cli._main import cli
+from fabric_dw.exceptions import NotFound, PermissionDenied
+from fabric_dw.models import WarehouseKind
+
+WS_GUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+WH_GUID = "d4e5f6a7-b8c9-0123-def0-123456789abc"
+SNAP_GUID = "f6a7b8c9-d0e1-2345-f012-34567890abcd"
+WS_UUID = UUID(WS_GUID)
+WH_UUID = UUID(WH_GUID)
+SNAP_UUID = UUID(SNAP_GUID)
+
+
+@pytest.fixture
+def runner() -> CliRunner:
+    return CliRunner()
+
+
+@pytest.fixture
+def cache_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    return tmp_path
+
+
+def _make_cm(http: object, sql: object) -> object:
+    @asynccontextmanager
+    async def _cm(_ctx: object) -> object:  # type: ignore[misc]
+        yield http, sql
+
+    return _cm
+
+
+def _make_wh_entry() -> ItemEntry:
+    return ItemEntry(
+        id=WH_UUID,
+        kind=WarehouseKind.WAREHOUSE,
+        connection_string="wh.datawarehouse.fabric.microsoft.com",
+        fetched_at=datetime.now(tz=UTC),
+        display_name="SalesWarehouse",
+    )
+
+
+def _make_snap_entry() -> ItemEntry:
+    return ItemEntry(
+        id=SNAP_UUID,
+        kind=WarehouseKind.SNAPSHOT,
+        connection_string=None,
+        fetched_at=datetime.now(tz=UTC),
+        display_name="SalesWarehouse_Snapshot_20240315",
+    )
+
+
+_SNAPSHOT_DETAIL = {
+    "id": SNAP_GUID,
+    "displayName": "SalesWarehouse_Snapshot_20240315",
+    "creationPayload": {
+        "parentWarehouseId": WH_GUID,
+        "snapshotDateTime": "2024-03-15T08:00:00Z",
+    },
+}
+
+
+class TestSnapshotsList:
+    """snapshots list — happy path and error path."""
+
+    def test_list_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_http.iter_paginated = MagicMock(return_value=_async_iter([]))
+        with (
+            patch(
+                "fabric_dw.cli.commands.snapshots._build_clients",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.snapshots._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_wh_entry())),
+            ),
+        ):
+            result = runner.invoke(cli, ["snapshots", "list", WS_GUID, WH_GUID])
+        assert result.exit_code == 0
+
+    def test_list_not_found_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.snapshots._build_clients",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.snapshots._resolve_item",
+                new=AsyncMock(side_effect=NotFound("not found")),
+            ),
+        ):
+            result = runner.invoke(cli, ["snapshots", "list", WS_GUID, WH_GUID])
+        assert result.exit_code != 0
+
+
+class TestSnapshotsCreate:
+    """snapshots create — happy path."""
+
+    def test_create_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        create_resp = _make_response(202, "{}")
+        create_resp.headers = {"Location": "https://api.fabric.microsoft.com/v1/operations/op-123"}
+        mock_http.request = AsyncMock(
+            side_effect=[
+                create_resp,
+                _make_response(200, json.dumps(_SNAPSHOT_DETAIL)),
+            ]
+        )
+        mock_http.poll_operation = AsyncMock(
+            return_value={
+                "status": "Succeeded",
+                "resourceId": SNAP_GUID,
+            }
+        )
+        with (
+            patch(
+                "fabric_dw.cli.commands.snapshots._build_clients",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.snapshots._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_wh_entry())),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["snapshots", "create", WS_GUID, WH_GUID, "MySnapshot"],
+            )
+        assert result.exit_code == 0
+
+
+class TestSnapshotsRename:
+    """snapshots rename — happy path."""
+
+    def test_rename_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_http.request = AsyncMock(
+            return_value=_make_response(200, json.dumps(_SNAPSHOT_DETAIL))
+        )
+        with (
+            patch(
+                "fabric_dw.cli.commands.snapshots._build_clients",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.snapshots._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_snap_entry())),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["snapshots", "rename", WS_GUID, SNAP_GUID, "NewSnapshotName"],
+            )
+        assert result.exit_code == 0
+
+
+class TestSnapshotsDelete:
+    """snapshots delete — happy path and decline."""
+
+    def test_delete_with_yes_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_http.request = AsyncMock(return_value=_make_response(204, ""))
+        with (
+            patch(
+                "fabric_dw.cli.commands.snapshots._build_clients",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.snapshots._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_snap_entry())),
+            ),
+        ):
+            result = runner.invoke(cli, ["--yes", "snapshots", "delete", WS_GUID, SNAP_GUID])
+        assert result.exit_code == 0
+
+    def test_delete_declined_aborts(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.snapshots._build_clients",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.snapshots._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_snap_entry())),
+            ),
+        ):
+            result = runner.invoke(cli, ["snapshots", "delete", WS_GUID, SNAP_GUID], input="n\n")
+        assert result.exit_code == 0
+        assert "Aborted" in result.output
+
+
+class TestSnapshotsRoll:
+    """snapshots roll — happy path, confirmation, and error."""
+
+    def test_roll_with_yes_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_sql = AsyncMock()
+        mock_sql.execute_nonquery = AsyncMock(return_value=None)
+        with (
+            patch(
+                "fabric_dw.cli.commands.snapshots._build_clients",
+                new=_make_cm(mock_http, mock_sql),
+            ),
+            patch(
+                "fabric_dw.cli.commands.snapshots._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_wh_entry())),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "--yes",
+                    "snapshots",
+                    "roll",
+                    WS_GUID,
+                    WH_GUID,
+                    "SalesWarehouse_Snapshot_20240315",
+                ],
+            )
+        assert result.exit_code == 0
+
+    def test_roll_declined_aborts(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_sql = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.snapshots._build_clients",
+                new=_make_cm(mock_http, mock_sql),
+            ),
+            patch(
+                "fabric_dw.cli.commands.snapshots._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_wh_entry())),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "snapshots",
+                    "roll",
+                    WS_GUID,
+                    WH_GUID,
+                    "SalesWarehouse_Snapshot_20240315",
+                ],
+                input="n\n",
+            )
+        assert result.exit_code == 0
+        assert "Aborted" in result.output
+
+    def test_roll_permission_denied_returns_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_sql = AsyncMock()
+        mock_sql.execute_nonquery = AsyncMock(side_effect=PermissionDenied("no permission"))
+        with (
+            patch(
+                "fabric_dw.cli.commands.snapshots._build_clients",
+                new=_make_cm(mock_http, mock_sql),
+            ),
+            patch(
+                "fabric_dw.cli.commands.snapshots._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_wh_entry())),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "--yes",
+                    "snapshots",
+                    "roll",
+                    WS_GUID,
+                    WH_GUID,
+                    "SalesWarehouse_Snapshot_20240315",
+                ],
+            )
+        assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+async def _async_iter_coro(items: list[object]):  # type: ignore[no-untyped-def]
+    for item in items:
+        yield item
+
+
+def _async_iter(items: list[object]):  # type: ignore[no-untyped-def]
+    return _async_iter_coro(items)
+
+
+def _make_response(status_code: int, text: str) -> MagicMock:
+    mock_resp = MagicMock()
+    mock_resp.status_code = status_code
+    mock_resp.json = MagicMock(
+        return_value=json.loads(text) if text and text.strip() and text.strip() != "" else {}
+    )
+    mock_resp.headers = {}
+    return mock_resp
