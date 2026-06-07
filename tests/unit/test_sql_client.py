@@ -1,18 +1,16 @@
 """Tests for fabric_dw.sql_client — written before implementation (TDD)."""
 
-import asyncio
 import threading
-import types
 from collections.abc import Sequence
 from typing import Any
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
 
+import fabric_dw.sql_client as _sql_client_module
 from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import AuthError
 from fabric_dw.sql_client import FabricSqlClient, SqlTarget
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -49,9 +47,7 @@ def _make_mock_mssql() -> tuple[MagicMock, MagicMock, MagicMock]:
 
 def _patch_mssql(monkeypatch: pytest.MonkeyPatch, mock_mssql: MagicMock) -> None:
     """Replace the _mssql attribute on sql_client with the mock."""
-    import fabric_dw.sql_client as sql_client_module
-
-    monkeypatch.setattr(sql_client_module, "_mssql", mock_mssql)
+    monkeypatch.setattr(_sql_client_module, "_mssql", mock_mssql)
 
 
 # ---------------------------------------------------------------------------
@@ -73,7 +69,7 @@ class TestSqlTarget:
     def test_hashable(self) -> None:
         target = _make_target()
         assert hash(target) is not None
-        {target}  # usable as dict key / set member
+        _ = {target}  # usable as dict key / set member
 
 
 # ---------------------------------------------------------------------------
@@ -85,9 +81,7 @@ class TestConnectionStringAugmenter:
     """Test _augment_connection_string (accessed indirectly via client behaviour)."""
 
     def _get_augment_fn(self) -> Any:
-        import fabric_dw.sql_client as m
-
-        return m._augment_connection_string  # noqa: SLF001
+        return _sql_client_module._augment_connection_string  # noqa: SLF001,RUF100
 
     def test_default_mode_adds_active_directory_default(self) -> None:
         augment = self._get_augment_fn()
@@ -147,7 +141,7 @@ class TestConnectionStringAugmenter:
 
 class TestExecute:
     async def test_returns_list_of_dicts(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        mock_mssql, _conn, mock_cursor = _make_mock_mssql()
+        mock_mssql, _conn, _cursor = _make_mock_mssql()
         _patch_mssql(monkeypatch, mock_mssql)
 
         client = FabricSqlClient()
@@ -170,9 +164,7 @@ class TestExecute:
 
         assert rows == [{"name": "alice", "value": 42}]
 
-    async def test_passes_params_to_cursor_execute(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_passes_params_to_cursor_execute(self, monkeypatch: pytest.MonkeyPatch) -> None:
         mock_mssql, _conn, mock_cursor = _make_mock_mssql()
         mock_cursor.description = [("id", None)]
         mock_cursor.fetchall.return_value = [(7,)]
@@ -182,9 +174,7 @@ class TestExecute:
         await client.execute(_make_target(), "SELECT id FROM t WHERE id = ?", (7,))
         await client.close()
 
-        mock_cursor.execute.assert_called_once_with(
-            "SELECT id FROM t WHERE id = ?", (7,)
-        )
+        mock_cursor.execute.assert_called_once_with("SELECT id FROM t WHERE id = ?", (7,))
 
     async def test_empty_result_set_returns_empty_list(
         self, monkeypatch: pytest.MonkeyPatch
@@ -207,20 +197,18 @@ class TestExecute:
 
 class TestExecuteNonQuery:
     async def test_returns_rowcount(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        mock_mssql, mock_conn, mock_cursor = _make_mock_mssql()
+        mock_mssql, _conn, mock_cursor = _make_mock_mssql()
         mock_cursor.rowcount = 5
         _patch_mssql(monkeypatch, mock_mssql)
 
         client = FabricSqlClient()
-        count = await client.execute_nonquery(
-            _make_target(), "DELETE FROM t WHERE id > 0"
-        )
+        count = await client.execute_nonquery(_make_target(), "DELETE FROM t WHERE id > 0")
         await client.close()
 
         assert count == 5
 
     async def test_commits_after_execute(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        mock_mssql, mock_conn, mock_cursor = _make_mock_mssql()
+        mock_mssql, mock_conn, _cursor = _make_mock_mssql()
         _patch_mssql(monkeypatch, mock_mssql)
 
         client = FabricSqlClient()
@@ -229,16 +217,12 @@ class TestExecuteNonQuery:
 
         mock_conn.commit.assert_called_once()
 
-    async def test_passes_params_to_cursor_execute(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_passes_params_to_cursor_execute(self, monkeypatch: pytest.MonkeyPatch) -> None:
         mock_mssql, _conn, mock_cursor = _make_mock_mssql()
         _patch_mssql(monkeypatch, mock_mssql)
 
         client = FabricSqlClient()
-        await client.execute_nonquery(
-            _make_target(), "DELETE FROM t WHERE id = ?", (42,)
-        )
+        await client.execute_nonquery(_make_target(), "DELETE FROM t WHERE id = ?", (42,))
         await client.close()
 
         mock_cursor.execute.assert_called_once_with("DELETE FROM t WHERE id = ?", (42,))
@@ -258,11 +242,8 @@ class TestAsyncThreadIsolation:
 
         mock_mssql, _conn, mock_cursor = _make_mock_mssql()
 
-        original_execute = mock_cursor.execute
-
-        def capturing_execute(sql: str, params: Sequence[Any] = ()) -> None:
+        def capturing_execute(_sql: str, _params: Sequence[Any] = ()) -> None:
             captured_ids.append(threading.get_ident())
-            return original_execute(sql, params)
 
         mock_cursor.execute.side_effect = capturing_execute
         _patch_mssql(monkeypatch, mock_mssql)
@@ -282,11 +263,8 @@ class TestAsyncThreadIsolation:
 
         mock_mssql, _conn, mock_cursor = _make_mock_mssql()
 
-        original_execute = mock_cursor.execute
-
-        def capturing_execute(sql: str, params: Sequence[Any] = ()) -> None:
+        def capturing_execute(_sql: str, _params: Sequence[Any] = ()) -> None:
             captured_ids.append(threading.get_ident())
-            return original_execute(sql, params)
 
         mock_cursor.execute.side_effect = capturing_execute
         _patch_mssql(monkeypatch, mock_mssql)
@@ -351,7 +329,7 @@ class TestConnectionCaching:
 
 
 # ---------------------------------------------------------------------------
-# close()
+# close()  # noqa: ERA001
 # ---------------------------------------------------------------------------
 
 
@@ -405,9 +383,7 @@ class TestClose:
 
 
 class TestAsyncContextManager:
-    async def test_aenter_returns_self(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_aenter_returns_self(self, monkeypatch: pytest.MonkeyPatch) -> None:
         mock_mssql, _conn, _cursor = _make_mock_mssql()
         _patch_mssql(monkeypatch, mock_mssql)
 
@@ -436,7 +412,7 @@ class TestAuthErrorMapping:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """An exception from the driver that looks like an auth error → AuthError."""
-        mock_mssql, _conn, mock_cursor = _make_mock_mssql()
+        mock_mssql, _conn, _cursor = _make_mock_mssql()
 
         # Simulate a driver-level exception on connect
         driver_exc = Exception("Login failed for user '' (token-based)")
@@ -447,11 +423,9 @@ class TestAuthErrorMapping:
         with pytest.raises(AuthError):
             await client.execute(_make_target(), "SELECT 1")
 
-    async def test_non_auth_error_not_wrapped(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_non_auth_error_not_wrapped(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Generic driver errors are not silently swallowed or re-wrapped."""
-        mock_mssql, _conn, mock_cursor = _make_mock_mssql()
+        mock_mssql, _conn, _cursor = _make_mock_mssql()
 
         driver_exc = RuntimeError("connection timed out")
         mock_mssql.connect.side_effect = driver_exc
