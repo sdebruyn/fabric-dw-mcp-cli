@@ -20,5 +20,6 @@ repos:
         additional_dependencies:
           - "azure-identity>=1.19"
           - "azure-core>=1.30"
+          - "pydantic>=2.9"
           - "pytest"
         args: ["--config-file", "pyproject.toml"]
