@@ -1,0 +1,66 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fabric-dw-mcp-cli"
+dynamic = ["version"]
+requires-python = ">=3.11"
+description = "Microsoft Fabric Data Warehouse MCP CLI"
+license = { text = "MIT" }
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+]
+dependencies = []
+
+[project.scripts]
+fabric-dw = "fabric_dw.cli:main"
+fabric-dw-mcp = "fabric_dw.mcp.server:run"
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "anyio[trio]",
+    "respx",
+    "pytest-randomly",
+    "pytest-cov",
+    "mypy",
+    "ruff",
+    "pre-commit",
+]
+
+[tool.hatch.version]
+path = "src/fabric_dw/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fabric_dw"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F", "I", "N", "UP", "B", "SIM", "ANN", "RUF", "PL",
+    "C4", "DTZ", "ARG", "PT", "TRY", "LOG", "S", "FBT", "RET", "PIE",
+    "TID", "ICN", "T20", "ERA", "PERF", "FURB",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ANN", "S101", "PLR2004"]
+
+[tool.ruff.format]
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+mypy_path = "src"
+packages = ["fabric_dw"]
+
+[tool.pytest.ini_options]
+markers = ["integration: hits real Fabric APIs"]
+addopts = "-ra --strict-markers"
+asyncio_mode = "auto"
