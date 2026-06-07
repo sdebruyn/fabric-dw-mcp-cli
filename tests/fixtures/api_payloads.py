@@ -133,3 +133,141 @@ WAREHOUSE_SNAPSHOT_CREATE_OPERATION_PAYLOAD = """{
   "percentComplete": 100,
   "error": null
 }"""
+
+# First page of warehouse listing (with continuationUri for pagination tests)
+WAREHOUSE_LIST_PAYLOAD = """{
+  "value": [
+    {
+      "id": "d4e5f6a7-b8c9-0123-def0-123456789abc",
+      "displayName": "SalesWarehouse",
+      "description": "Data warehouse for sales analytics",
+      "type": "Warehouse",
+      "workspaceId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "properties": {
+        "connectionString": "saleswarehouse.datawarehouse.fabric.microsoft.com",
+        "defaultCollation": "Latin1_General_100_BIN2_UTF8",
+        "createdDate": "2024-03-15T10:30:00Z"
+      }
+    },
+    {
+      "id": "a7b8c9d0-e1f2-3456-a012-345678901234",
+      "displayName": "FinanceWarehouse",
+      "description": "Data warehouse for finance analytics",
+      "type": "Warehouse",
+      "workspaceId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "properties": {
+        "connectionString": "financewarehouse.datawarehouse.fabric.microsoft.com",
+        "defaultCollation": "Latin1_General_100_CI_AS_KS_WS_SC_UTF8",
+        "createdDate": "2024-04-01T09:00:00Z"
+      }
+    }
+  ],
+  "continuationUri": "https://api.fabric.microsoft.com/v1/workspaces/a1b2c3d4-e5f6-7890-abcd-ef1234567890/warehouses?continuationToken=eyJ3aCI6InBhZ2UyIn0%3D"
+}"""
+
+# Second page of warehouse listing (no continuationUri → last page)
+WAREHOUSE_LIST_PAGE2_PAYLOAD = """{
+  "value": [
+    {
+      "id": "b8c9d0e1-f2a3-4567-b012-456789012345",
+      "displayName": "HRWarehouse",
+      "description": "Data warehouse for HR analytics",
+      "type": "Warehouse",
+      "workspaceId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "properties": {
+        "connectionString": "hrwarehouse.datawarehouse.fabric.microsoft.com",
+        "defaultCollation": "Latin1_General_100_BIN2_UTF8",
+        "createdDate": "2024-05-10T12:00:00Z"
+      }
+    }
+  ]
+}"""
+
+# SQL analytics endpoints listing for a workspace
+WAREHOUSE_SQL_ENDPOINTS_PAYLOAD = """{
+  "value": [
+    {
+      "id": "e5f6a7b8-c9d0-1234-ef01-234567890abc",
+      "displayName": "SalesLakehouse",
+      "description": "SQL endpoint for sales lakehouse",
+      "type": "SQLEndpoint",
+      "workspaceId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "properties": {
+        "sqlEndpointProperties": {
+          "connectionString": "lakehouse-sql-ep.datawarehouse.fabric.microsoft.com",
+          "id": "f6a7b8c9-d0e1-2345-f012-34567890abcd",
+          "provisioningStatus": "Success"
+        }
+      }
+    }
+  ]
+}"""
+
+# 202 response body for warehouse create (LRO initiated)
+WAREHOUSE_CREATE_202_PAYLOAD = """{
+  "id": "d4e5f6a7-b8c9-0123-def0-123456789abc",
+  "displayName": "SalesWarehouse",
+  "type": "Warehouse",
+  "workspaceId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+}"""
+
+# SQL analytics endpoints first page with continuationUri (for pagination tests)
+WAREHOUSE_SQL_ENDPOINTS_PAGE1_PAYLOAD = """{
+  "value": [
+    {
+      "id": "e5f6a7b8-c9d0-1234-ef01-234567890abc",
+      "displayName": "SalesLakehouse",
+      "description": "SQL endpoint for sales lakehouse",
+      "type": "SQLEndpoint",
+      "workspaceId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "properties": {
+        "sqlEndpointProperties": {
+          "connectionString": "lakehouse-sql-ep.datawarehouse.fabric.microsoft.com",
+          "id": "f6a7b8c9-d0e1-2345-f012-34567890abcd",
+          "provisioningStatus": "Success"
+        }
+      }
+    }
+  ],
+  "continuationUri": "https://api.fabric.microsoft.com/v1/workspaces/a1b2c3d4-e5f6-7890-abcd-ef1234567890/sqlEndpoints?continuationToken=eyJzcWwiOiJwYWdlMiJ9"
+}"""
+
+# Second page of SQL endpoints listing (no continuationUri → last page)
+WAREHOUSE_SQL_ENDPOINTS_PAGE2_PAYLOAD = """{
+  "value": [
+    {
+      "id": "a1b2c3d4-0000-1111-2222-ef1234567890",
+      "displayName": "HRLakehouse",
+      "description": "SQL endpoint for HR lakehouse",
+      "type": "SQLEndpoint",
+      "workspaceId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "properties": {
+        "sqlEndpointProperties": {
+          "connectionString": "hr-sql-ep.datawarehouse.fabric.microsoft.com",
+          "id": "b2c3d4e5-f6a7-8901-bcde-f01234567891",
+          "provisioningStatus": "Success"
+        }
+      }
+    }
+  ]
+}"""
+
+# LRO poll result when the operation has succeeded
+WAREHOUSE_OPERATION_SUCCEEDED_PAYLOAD = """{
+  "status": "Succeeded",
+  "createdTimeUtc": "2024-03-15T10:29:50Z",
+  "lastUpdatedTimeUtc": "2024-03-15T10:30:00Z",
+  "percentComplete": 100,
+  "error": null,
+  "resourceLocation": "https://api.fabric.microsoft.com/v1/workspaces/a1b2c3d4-e5f6-7890-abcd-ef1234567890/warehouses/d4e5f6a7-b8c9-0123-def0-123456789abc"
+}"""
+
+# LRO poll result when resourceLocation is null (missing)
+WAREHOUSE_OPERATION_SUCCEEDED_NO_LOCATION_PAYLOAD = """{
+  "status": "Succeeded",
+  "createdTimeUtc": "2024-03-15T10:29:50Z",
+  "lastUpdatedTimeUtc": "2024-03-15T10:30:00Z",
+  "percentComplete": 100,
+  "error": null,
+  "resourceLocation": null
+}"""
