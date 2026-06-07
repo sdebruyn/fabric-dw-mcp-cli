@@ -87,31 +87,37 @@ class TestConnectionStringAugmenter:
         augment = self._get_augment_fn()
         result = augment("Server=srv", "mydb", CredentialMode.DEFAULT)
         assert "Authentication=ActiveDirectoryDefault" in result
+        assert ";;" not in result
 
     def test_sp_mode_adds_active_directory_service_principal(self) -> None:
         augment = self._get_augment_fn()
         result = augment("Server=srv", "mydb", CredentialMode.SERVICE_PRINCIPAL)
         assert "Authentication=ActiveDirectoryServicePrincipal" in result
+        assert ";;" not in result
 
     def test_interactive_mode_adds_active_directory_interactive(self) -> None:
         augment = self._get_augment_fn()
         result = augment("Server=srv", "mydb", CredentialMode.INTERACTIVE)
         assert "Authentication=ActiveDirectoryInteractive" in result
+        assert ";;" not in result
 
     def test_adds_encrypt_yes(self) -> None:
         augment = self._get_augment_fn()
         result = augment("Server=srv", "mydb", CredentialMode.DEFAULT)
         assert "Encrypt=yes" in result
+        assert ";;" not in result
 
     def test_adds_trust_server_certificate_no(self) -> None:
         augment = self._get_augment_fn()
         result = augment("Server=srv", "mydb", CredentialMode.DEFAULT)
         assert "TrustServerCertificate=no" in result
+        assert ";;" not in result
 
     def test_adds_database_when_not_present(self) -> None:
         augment = self._get_augment_fn()
         result = augment("Server=srv", "mydb", CredentialMode.DEFAULT)
         assert "Database=mydb" in result
+        assert ";;" not in result
 
     def test_does_not_double_add_database_when_already_present(self) -> None:
         augment = self._get_augment_fn()
@@ -119,12 +125,21 @@ class TestConnectionStringAugmenter:
         result = augment(cs, "different-db", CredentialMode.DEFAULT)
         # Database= must appear exactly once in the string
         assert result.count("Database=") == 1
+        assert ";;" not in result
+
+    def test_no_double_semicolons_in_full_augmented_string(self) -> None:
+        augment = self._get_augment_fn()
+        result = augment(
+            "Server=myserver.database.fabric.microsoft.com", "mydb", CredentialMode.DEFAULT
+        )
+        assert ";;" not in result
 
     def test_idempotent_same_output_on_second_call(self) -> None:
         augment = self._get_augment_fn()
         first = augment("Server=srv", "mydb", CredentialMode.DEFAULT)
         second = augment(first, "mydb", CredentialMode.DEFAULT)
         assert first == second
+        assert ";;" not in first
 
     def test_idempotent_all_modes(self) -> None:
         augment = self._get_augment_fn()
@@ -132,6 +147,7 @@ class TestConnectionStringAugmenter:
             first = augment("Server=srv", "mydb", mode)
             second = augment(first, "mydb", mode)
             assert first == second, f"Not idempotent for mode={mode}"
+            assert ";;" not in first, f"Double semicolons for mode={mode}"
 
 
 # ---------------------------------------------------------------------------
@@ -361,6 +377,40 @@ class TestClose:
         conn1.close.assert_called_once()
         conn2.close.assert_called_once()
 
+    async def test_close_still_closes_second_connection_when_first_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If one conn.close() raises, the other connection is still closed."""
+        conn1 = MagicMock()
+        conn2 = MagicMock()
+        cursor = MagicMock()
+        cursor.description = [("x", None)]
+        cursor.fetchall.return_value = [(1,)]
+        cursor.rowcount = 1
+        conn1.cursor.return_value = cursor
+        conn2.cursor.return_value = cursor
+        first_error = RuntimeError("close failed on conn1")
+        conn1.close.side_effect = first_error
+
+        mock_mssql = MagicMock()
+        mock_mssql.connect.side_effect = [conn1, conn2]
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        target1 = _make_target(workspace_id="ws-1", database="db-1")
+        target2 = _make_target(workspace_id="ws-1", database="db-2")
+
+        client = FabricSqlClient()
+        await client.execute(target1, "SELECT 1")
+        await client.execute(target2, "SELECT 1")
+
+        with pytest.raises(ExceptionGroup) as exc_info:
+            await client.close()
+
+        # second connection must have been closed regardless
+        conn2.close.assert_called_once()
+        # the error from conn1 is wrapped in ExceptionGroup
+        assert exc_info.value.exceptions[0] is first_error
+
     async def test_close_clears_cache_so_next_execute_reopens(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -414,8 +464,9 @@ class TestAuthErrorMapping:
         """An exception from the driver that looks like an auth error → AuthError."""
         mock_mssql, _conn, _cursor = _make_mock_mssql()
 
-        # Simulate a driver-level exception on connect
-        driver_exc = Exception("Login failed for user '' (token-based)")
+        # Simulate a driver-level exception on connect; use "authentication failed"
+        # which is the exact phrase real Entra-token errors use.
+        driver_exc = Exception("Authentication failed for user '' (token-based)")
         mock_mssql.connect.side_effect = driver_exc
         _patch_mssql(monkeypatch, mock_mssql)
 

@@ -8,7 +8,7 @@ import re
 import types
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol
 
 from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import AuthError
@@ -28,10 +28,13 @@ def _get_mssql() -> types.ModuleType:
 
 
 # Sentinel strings that signal Entra auth failures in driver error messages.
+# NOTE: These fragments are only checked during connection-time failures
+# (_get_connection). Errors raised by cursor.execute() after a successful
+# connection (e.g. token expiry mid-session) propagate unwrapped.
 _AUTH_ERROR_FRAGMENTS = (
     "login failed",
     "token",
-    "authentication",
+    "authentication failed",
     "unauthorized",
     "access denied",
     "invalid authorization",
@@ -56,8 +59,9 @@ def _set_key(connection_string: str, key: str, value: str) -> str:
     """Append *key=value* to *connection_string* if *key* is not already set."""
     if _has_key(connection_string, key):
         return connection_string
-    sep = ";" if connection_string.rstrip().rstrip(";").strip() else ""
-    return f"{connection_string.rstrip().rstrip(';')}{sep};{key}={value}".lstrip(";")
+    stripped = connection_string.rstrip().rstrip(";")
+    sep = ";" if stripped else ""
+    return f"{stripped}{sep}{key}={value}"
 
 
 def _augment_connection_string(
@@ -87,7 +91,7 @@ def _augment_connection_string(
 class _Cursor(Protocol):
     """Minimal DB-API 2.0 cursor protocol."""
 
-    description: list[tuple[str, Any]]
+    description: list[tuple[str, Any]] | None
 
     def execute(self, sql: str, params: Sequence[Any] = ...) -> None: ...
 
@@ -96,7 +100,6 @@ class _Cursor(Protocol):
     rowcount: int
 
 
-@runtime_checkable
 class _Connection(Protocol):
     """Minimal DB-API 2.0 connection protocol."""
 
@@ -248,16 +251,26 @@ class FabricSqlClient:
         return await asyncio.to_thread(_run)
 
     async def close(self) -> None:
-        """Close all cached connections and clear the cache."""
+        """Close all cached connections and clear the cache.
+
+        All connections are closed even if some raise. Any exceptions are
+        collected and re-raised together as an ``ExceptionGroup``.
+        """
         async with self._meta_lock:
             keys = list(self._cache.keys())
 
+        errors: list[Exception] = []
         for key in keys:
             lock = await self._get_lock(key)
             async with lock:
                 conn = self._cache.pop(key, None)
                 if conn is not None:
-                    await asyncio.to_thread(conn.close)
+                    try:
+                        await asyncio.to_thread(conn.close)
+                    except Exception as exc:
+                        errors.append(exc)
+        if errors:
+            raise ExceptionGroup("errors closing SQL connections", errors)  # noqa: TRY003
 
     async def __aenter__(self) -> FabricSqlClient:
         return self
