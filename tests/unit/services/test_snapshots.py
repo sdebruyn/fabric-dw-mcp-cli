@@ -214,6 +214,50 @@ async def test_list_returns_empty_when_no_snapshots() -> None:
     assert result == []
 
 
+async def test_list_retries_when_items_index_initially_empty() -> None:
+    """list_snapshots retries when the items-list API returns no WarehouseSnapshot entries.
+
+    Regression: after create() the Fabric items-list index can lag by tens of seconds.
+    list_snapshots() must retry a small number of times so callers who list immediately
+    after create still see the newly-created snapshot.
+    """
+    empty_payload: dict[str, Any] = {"value": []}
+    with_snapshot_payload: dict[str, Any] = {
+        "value": [
+            {
+                "id": str(_SNAP_ID),
+                "displayName": "SalesWarehouse_Snapshot_20240315",
+                "type": "WarehouseSnapshot",
+                "workspaceId": str(_WS_ID),
+            },
+        ]
+    }
+
+    call_count = 0
+
+    def _items_side_effect(_request: Any) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return httpx.Response(200, json=empty_payload)
+        return httpx.Response(200, json=with_snapshot_payload)
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(
+            url__regex=rf"https://api\.fabric\.microsoft\.com/v1/workspaces/{_WS_ID}/items(\?.*)?$"
+        ).mock(side_effect=_items_side_effect)
+        mock_router.get(f"{_ITEMS_URL}/{_SNAP_ID}").mock(
+            return_value=httpx.Response(200, json=WAREHOUSE_SNAPSHOT_DETAIL_PAYLOAD)
+        )
+
+        async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
+            result = await snapshots.list_snapshots(http, _WS_ID, _PARENT_WH_ID)
+
+    assert call_count >= 2, "expected at least one retry when first call returns empty"
+    assert len(result) == 1
+    assert result[0].id == _SNAP_ID
+
+
 # ---------------------------------------------------------------------------
 # create
 # ---------------------------------------------------------------------------

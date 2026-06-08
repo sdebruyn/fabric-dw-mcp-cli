@@ -77,28 +77,41 @@ async def list_snapshots(
     Returns:
         A list of :class:`~fabric_dw.models.WarehouseSnapshot` instances.
     """
-    snapshot_ids: list[UUID] = []
 
-    async for item in http.iter_paginated(HttpBase.FABRIC, f"/workspaces/{workspace_id}/items"):
-        if item.get("type") == "WarehouseSnapshot":
-            raw_id = item.get("id")
-            if raw_id:
-                snapshot_ids.append(UUID(str(raw_id)))
+    async def _fetch_once() -> list[WarehouseSnapshot]:
+        snapshot_ids: list[UUID] = []
+        async for item in http.iter_paginated(HttpBase.FABRIC, f"/workspaces/{workspace_id}/items"):
+            if item.get("type") == "WarehouseSnapshot":
+                raw_id = item.get("id")
+                if raw_id:
+                    snapshot_ids.append(UUID(str(raw_id)))
 
-    results: list[WarehouseSnapshot] = []
-    for snap_id in snapshot_ids:
-        resp = await http.request(
-            "GET", HttpBase.FABRIC, f"/workspaces/{workspace_id}/items/{snap_id}"
-        )
-        detail: dict[str, object] = resp.json()
-        _raw_cp = detail.get("creationPayload")
-        creation_payload: dict[str, object] = (
-            cast("dict[str, object]", _raw_cp) if isinstance(_raw_cp, dict) else {}
-        )
-        raw_parent_id = creation_payload.get("parentWarehouseId")
-        if raw_parent_id and UUID(str(raw_parent_id)) == parent_warehouse_id:
-            results.append(_snapshot_from_detail(detail))
+        out: list[WarehouseSnapshot] = []
+        for snap_id in snapshot_ids:
+            resp = await http.request(
+                "GET", HttpBase.FABRIC, f"/workspaces/{workspace_id}/items/{snap_id}"
+            )
+            detail: dict[str, object] = resp.json()
+            _raw_cp = detail.get("creationPayload")
+            creation_payload: dict[str, object] = (
+                cast("dict[str, object]", _raw_cp) if isinstance(_raw_cp, dict) else {}
+            )
+            raw_parent_id = creation_payload.get("parentWarehouseId")
+            if raw_parent_id and UUID(str(raw_parent_id)) == parent_warehouse_id:
+                out.append(_snapshot_from_detail(detail))
+        return out
 
+    # The Fabric items-list index can lag by tens of seconds after a snapshot is
+    # created.  Retry a small number of times so that callers who list immediately
+    # after create still get accurate results.
+    _max_list_retries = 3
+    _list_wait_s = 15.0
+    results = await _fetch_once()
+    for _ in range(_max_list_retries - 1):
+        if results:
+            break
+        await asyncio.sleep(_list_wait_s)
+        results = await _fetch_once()
     return results
 
 
