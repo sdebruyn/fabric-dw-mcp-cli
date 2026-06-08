@@ -34,6 +34,7 @@ from fabric_dw.logging import setup_logging
 from fabric_dw.resolver import Resolver
 from fabric_dw.services import audit, queries, snapshots, sql_endpoints, warehouses, workspaces
 from fabric_dw.services import ownership as ownership_svc
+from fabric_dw.services import query_insights as _qi_svc
 from fabric_dw.services import restore as restore_svc
 from fabric_dw.sql import SqlTarget
 
@@ -425,6 +426,182 @@ async def kill_session(workspace: str, warehouse: str, session_id: int) -> dict[
     except FabricError as exc:
         raise _fabric_err(exc) from exc
     return {"killed": True, "session_id": session_id}
+
+
+# ---------------------------------------------------------------------------
+# Query Insights tools
+# ---------------------------------------------------------------------------
+
+
+async def _resolve_qi_target(workspace: str, warehouse: str) -> SqlTarget:
+    """Resolve workspace + warehouse to a SqlTarget for Query Insights views."""
+    ws_id = await _get_resolver().workspace_id(workspace)
+    item = await _get_resolver().item(workspace, warehouse)
+    if item.connection_string is None:
+        msg = f"item {warehouse!r} has no connection string; cannot query Query Insights DMVs"
+        raise FabricError(msg)
+    return SqlTarget(
+        workspace_id=str(ws_id),
+        database=item.display_name,
+        connection_string=item.connection_string,
+    )
+
+
+def _parse_dt(value: str | None, param: str) -> datetime | None:
+    """Parse an ISO-8601 string to datetime, raising ToolError on bad input."""
+    if value is None:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ToolError(  # noqa: TRY003
+            f"invalid {param} {value!r}: expected ISO-8601"
+        ) from exc
+
+
+@mcp.tool()
+async def list_request_history(
+    workspace: str,
+    warehouse: str,
+    limit: int = 100,
+    since: str | None = None,
+    until: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return completed SQL requests from queryinsights.exec_requests_history.
+
+    Args:
+        workspace: Workspace name or GUID.
+        warehouse: Warehouse or SQL Analytics Endpoint name or GUID.
+        limit: Maximum rows to return (default 100, cap 10 000).
+        since: Optional ISO-8601 lower bound on submit_time.
+        until: Optional ISO-8601 upper bound on submit_time.
+    """
+    since_dt = _parse_dt(since, "since")
+    until_dt = _parse_dt(until, "until")
+    try:
+        target = await _resolve_qi_target(workspace, warehouse)
+        result = await _qi_svc.list_request_history(
+            target, limit=limit, since=since_dt, until=until_dt, mode=_get_auth_mode()
+        )
+    except FabricError as exc:
+        raise _fabric_err(exc) from exc
+    return [q.model_dump(by_alias=True, mode="json") for q in result]
+
+
+@mcp.tool()
+async def list_session_history(
+    workspace: str,
+    warehouse: str,
+    limit: int = 100,
+    since: str | None = None,
+    until: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return completed sessions from queryinsights.exec_sessions_history.
+
+    Args:
+        workspace: Workspace name or GUID.
+        warehouse: Warehouse or SQL Analytics Endpoint name or GUID.
+        limit: Maximum rows to return (default 100, cap 10 000).
+        since: Optional ISO-8601 lower bound on session_start_time.
+        until: Optional ISO-8601 upper bound on session_start_time.
+    """
+    since_dt = _parse_dt(since, "since")
+    until_dt = _parse_dt(until, "until")
+    try:
+        target = await _resolve_qi_target(workspace, warehouse)
+        result = await _qi_svc.list_session_history(
+            target, limit=limit, since=since_dt, until=until_dt, mode=_get_auth_mode()
+        )
+    except FabricError as exc:
+        raise _fabric_err(exc) from exc
+    return [q.model_dump(by_alias=True, mode="json") for q in result]
+
+
+@mcp.tool()
+async def list_frequent_queries(
+    workspace: str,
+    warehouse: str,
+    limit: int = 100,
+    since: str | None = None,
+    until: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return frequently-run queries from queryinsights.frequently_run_queries.
+
+    Args:
+        workspace: Workspace name or GUID.
+        warehouse: Warehouse or SQL Analytics Endpoint name or GUID.
+        limit: Maximum rows to return (default 100, cap 10 000).
+        since: Optional ISO-8601 lower bound on last_run_start_time.
+        until: Optional ISO-8601 upper bound on last_run_start_time.
+    """
+    since_dt = _parse_dt(since, "since")
+    until_dt = _parse_dt(until, "until")
+    try:
+        target = await _resolve_qi_target(workspace, warehouse)
+        result = await _qi_svc.list_frequent_queries(
+            target, limit=limit, since=since_dt, until=until_dt, mode=_get_auth_mode()
+        )
+    except FabricError as exc:
+        raise _fabric_err(exc) from exc
+    return [q.model_dump(by_alias=True, mode="json") for q in result]
+
+
+@mcp.tool()
+async def list_long_running_queries(
+    workspace: str,
+    warehouse: str,
+    limit: int = 100,
+    since: str | None = None,
+    until: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return long-running queries from queryinsights.long_running_queries.
+
+    Args:
+        workspace: Workspace name or GUID.
+        warehouse: Warehouse or SQL Analytics Endpoint name or GUID.
+        limit: Maximum rows to return (default 100, cap 10 000).
+        since: Optional ISO-8601 lower bound on last_run_start_time.
+        until: Optional ISO-8601 upper bound on last_run_start_time.
+    """
+    since_dt = _parse_dt(since, "since")
+    until_dt = _parse_dt(until, "until")
+    try:
+        target = await _resolve_qi_target(workspace, warehouse)
+        result = await _qi_svc.list_long_running_queries(
+            target, limit=limit, since=since_dt, until=until_dt, mode=_get_auth_mode()
+        )
+    except FabricError as exc:
+        raise _fabric_err(exc) from exc
+    return [q.model_dump(by_alias=True, mode="json") for q in result]
+
+
+@mcp.tool()
+async def list_sql_pool_insights(
+    workspace: str,
+    warehouse: str,
+    limit: int = 100,
+    since: str | None = None,
+    until: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return SQL pool insight events from queryinsights.sql_pool_insights.
+
+    Args:
+        workspace: Workspace name or GUID.
+        warehouse: Warehouse or SQL Analytics Endpoint name or GUID.
+        limit: Maximum rows to return (default 100, cap 10 000).
+        since: Optional ISO-8601 lower bound on timestamp.
+        until: Optional ISO-8601 upper bound on timestamp.
+    """
+    since_dt = _parse_dt(since, "since")
+    until_dt = _parse_dt(until, "until")
+    try:
+        target = await _resolve_qi_target(workspace, warehouse)
+        result = await _qi_svc.list_sql_pool_insights(
+            target, limit=limit, since=since_dt, until=until_dt, mode=_get_auth_mode()
+        )
+    except FabricError as exc:
+        raise _fabric_err(exc) from exc
+    return [q.model_dump(by_alias=True, mode="json") for q in result]
 
 
 # ---------------------------------------------------------------------------

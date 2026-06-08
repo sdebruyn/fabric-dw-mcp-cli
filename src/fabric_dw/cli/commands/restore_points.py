@@ -126,7 +126,7 @@ async def create_cmd(
 @click.option("--description", default=None, help="Optional new description.")
 @click.pass_obj
 @_coro
-async def rename_cmd(  # noqa: PLR0913
+async def rename_cmd(
     ctx: CliContext,
     workspace: str,
     warehouse: str,

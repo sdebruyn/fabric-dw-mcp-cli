@@ -68,6 +68,12 @@ EXPECTED_TOOL_NAMES: frozenset[str] = frozenset(
         # Queries
         "list_running_queries",
         "kill_session",
+        # Query Insights
+        "list_request_history",
+        "list_session_history",
+        "list_frequent_queries",
+        "list_long_running_queries",
+        "list_sql_pool_insights",
         # Snapshots
         "list_snapshots",
         "create_snapshot",

@@ -186,3 +186,115 @@ class Connection(_FabricBase):
     encrypt_option: str | None = None
     net_transport: str
     most_recent_session_id: int | None = None
+
+
+class ExecRequestHistory(_FabricBase):
+    """A completed SQL request from ``queryinsights.exec_requests_history``."""
+
+    distributed_statement_id: UUID | None = None
+    database_name: str | None = None
+    submit_time: datetime | None = None
+    start_time: datetime | None = None
+    end_time: datetime | None = None
+    is_distributed: int | None = None
+    statement_type: str | None = None
+    total_elapsed_time_ms: int | None = None
+    login_name: str | None = None
+    row_count: int
+    status: str | None = None
+    session_id: int | None = None
+    connection_id: UUID | None = None
+    program_name: str | None = None
+    batch_id: UUID | None = None
+    root_batch_id: UUID | None = None
+    query_hash: str | None = None
+    label: str | None = None
+    result_cache_hit: int | None = None
+    sql_pool_name: str | None = None
+    allocated_cpu_time_ms: int | None = None
+    data_scanned_remote_storage_mb: float | None = None
+    data_scanned_memory_mb: float | None = None
+    data_scanned_disk_mb: float | None = None
+    command: str | None = None
+    error_code: int | None = None
+
+
+class ExecSessionHistory(_FabricBase):
+    """A completed session from ``queryinsights.exec_sessions_history``."""
+
+    session_id: int
+    connection_id: UUID
+    session_start_time: datetime
+    session_end_time: datetime | None = None
+    program_name: str | None = None
+    login_name: str
+    status: str
+    context_info: bytes | None = None
+    total_query_elapsed_time_ms: int
+    last_request_start_time: datetime
+    last_request_end_time: datetime | None = None
+    is_user_process: bool
+    prev_error: int
+    group_id: int
+    database_id: int | None = None
+    authenticating_database_id: int | None = None
+    open_transaction_count: int | None = None
+    text_size: int
+    language: str | None = None
+    date_format: str | None = None
+    date_first: int
+    quoted_identifier: bool
+    arithabort: bool
+    ansi_null_dflt_on: bool
+    ansi_defaults: bool
+    ansi_warnings: bool
+    ansi_padding: bool
+    ansi_nulls: bool
+    concat_null_yields_null: bool
+    transaction_isolation_level: int
+    lock_timeout: int
+    deadlock_priority: int
+    original_security_id: bytes
+    database_name: str | None = None
+
+
+class FrequentlyRunQuery(_FabricBase):
+    """A frequently-run query from ``queryinsights.frequently_run_queries``."""
+
+    last_run_start_time: datetime | None = None
+    last_run_command: str | None = None
+    number_of_runs: int
+    avg_total_elapsed_time_ms: int
+    last_run_total_elapsed_time_ms: int
+    last_dist_statement_id: UUID | None = None
+    last_run_session_id: int | None = None
+    min_run_total_elapsed_time_ms: int
+    max_run_total_elapsed_time_ms: int
+    number_of_successful_runs: int
+    number_of_failed_runs: int
+    number_of_cancelled_runs: int
+    query_hash: str | None = None
+
+
+class LongRunningQuery(_FabricBase):
+    """A long-running query from ``queryinsights.long_running_queries``."""
+
+    last_run_start_time: datetime | None = None
+    last_run_command: str | None = None
+    median_total_elapsed_time_ms: int
+    number_of_runs: int
+    last_run_total_elapsed_time_ms: int
+    last_dist_statement_id: UUID | None = None
+    last_run_session_id: int | None = None
+    query_hash: str | None = None
+
+
+class SqlPoolInsight(_FabricBase):
+    """A SQL pool insight event from ``queryinsights.sql_pool_insights``."""
+
+    sql_pool_name: str | None = None
+    timestamp: datetime | None = None
+    max_resource_percentage: int | None = None
+    is_optimized_for_reads: bool | None = None
+    current_workspace_capacity: str | None = None
+    is_pool_under_pressure: bool | None = None

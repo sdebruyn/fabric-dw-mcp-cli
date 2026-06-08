@@ -87,7 +87,7 @@ async def list_cmd(ctx: CliContext, workspace: str | None, warehouse: str | None
 )
 @click.pass_obj
 @_coro
-async def create_cmd(  # noqa: PLR0913
+async def create_cmd(
     ctx: CliContext,
     workspace: str | None,
     warehouse: str | None,
