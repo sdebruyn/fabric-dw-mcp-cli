@@ -100,7 +100,7 @@ fabric_dw.exceptions.AuthError: authentication failed for server ...
 
 or a raw driver message containing `Login failed` or `28000`.
 
-**What happened:** The SQL driver is configured with `Authentication=ActiveDirectory{Default,ServicePrincipal,Interactive}` to match the `FABRIC_AUTH` mode you are using (see [`sql.py:_MODE_TO_AD_AUTH`](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/src/fabric_dw/sql.py)). In the default mode (`FABRIC_AUTH=default`) the driver runs its own [`ActiveDirectoryDefault`](https://learn.microsoft.com/sql/connect/odbc/using-azure-active-directory?WT.mc_id=MVP_310840) credential chain — environment variables → Managed Identity → Azure CLI → Azure PowerShell → interactive browser — and is **not** limited to the Azure CLI cache. A token that was valid at connection-open time can still expire mid-session, causing the driver to fail on the next query. See [Authentication](authentication.md) for the full credential-chain reference.
+**What happened:** The SQL driver is configured with `Authentication=ActiveDirectory{Default,ServicePrincipal,Interactive}` to match the `FABRIC_AUTH` mode you are using (see [`sql.py:_MODE_TO_AD_AUTH`](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/9a1436618112224b3e86085a9f2231b22e0c827b/src/fabric_dw/sql.py#L50)). In the default mode (`FABRIC_AUTH=default`) the driver runs its own [`ActiveDirectoryDefault`](https://learn.microsoft.com/sql/connect/odbc/using-azure-active-directory?WT.mc_id=MVP_310840) credential chain — environment variables → Managed Identity → Azure CLI → Visual Studio (Windows only) → Azure PowerShell → interactive browser — and is **not** limited to the Azure CLI cache. A token that was valid at connection-open time can still expire mid-session, causing the driver to fail on the next query. See [Authentication](authentication.md) for the full credential-chain reference.
 
 **Resolution:**
 
@@ -125,7 +125,11 @@ Re-authenticate via whichever credential source your chain ended up using:
   Connect-AzAccount
   ```
 
-- **Service principal** (`FABRIC_AUTH=sp`) — rotate or re-export `AZURE_CLIENT_SECRET` and restart the process.
+- **Service principal** (`FABRIC_AUTH=sp`) — `FABRIC_AUTH=sp` uses `ActiveDirectoryServicePrincipal` (`ClientSecretCredential`) and bypasses the `ActiveDirectoryDefault` chain described in "What happened" above. Rotate or re-export `AZURE_CLIENT_SECRET` and restart the process:
+
+  ```bash
+  export AZURE_CLIENT_SECRET="<new-secret>"
+  ```
 
 - **Interactive browser** (`FABRIC_AUTH=interactive`) — re-run your `fabric-dw` command; a new browser sign-in prompt will appear.
 
