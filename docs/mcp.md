@@ -20,7 +20,7 @@ You will also need:
 
 - Azure CLI logged in (`az login`) so the server can call the Fabric REST and SQL APIs as you.
 - Optionally, environment variables to switch auth modes:
-    - `FABRIC_AUTH=default` (default — uses your `az login` session).
+    - `FABRIC_AUTH=default` (default) — delegates to [`azure-identity` `DefaultAzureCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.defaultazurecredential?WT.mc_id=MVP_310840), which tries environment variables, Workload/Managed Identity, and the Azure CLI in order. See [Authentication](install.md#authentication) for the full chain.
     - `FABRIC_AUTH=sp` plus `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` for service-principal auth.
     - `FABRIC_AUTH=interactive` to force browser sign-in.
 
@@ -75,7 +75,7 @@ After adding, verify with `/mcp` inside a Claude Code session. You should see 23
 
 ## Cursor
 
-Source: <https://learn.microsoft.com/microsoft-cloud/dev/dev-proxy/how-to/use-mcp-server#configure-the-mcp-server>
+Source: <https://learn.microsoft.com/microsoft-cloud/dev/dev-proxy/how-to/use-mcp-server?WT.mc_id=MVP_310840#configure-the-mcp-server>
 
 Add this snippet to `~/.cursor/mcp.json` (global, all projects) or `.cursor/mcp.json` in a specific project root:
 

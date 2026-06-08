@@ -22,7 +22,7 @@ or
 CredentialUnavailableError: Please run 'az login' to set up an account.
 ```
 
-**What happened:** `fabric-dw` authenticates through the `DefaultAzureCredential` chain, which relies on the Azure CLI token cache. The cached token has expired or you have not logged in yet.
+**What happened:** `fabric-dw` authenticates through the [`DefaultAzureCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.defaultazurecredential?WT.mc_id=MVP_310840) chain (used by `FABRIC_AUTH=default`). The chain walks several sources — environment variables, Workload Identity, Managed Identity, shared token cache, Azure CLI, Azure Developer CLI, Azure PowerShell — and stops at the first that returns a token. The error above means every source was exhausted without finding one, which usually means the Azure CLI session has expired or you have not run `az login` yet. See [Authentication](install.md#authentication) for the full credential chain.
 
 **Resolution:**
 
