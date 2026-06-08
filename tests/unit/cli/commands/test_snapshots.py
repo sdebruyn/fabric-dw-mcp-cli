@@ -358,6 +358,49 @@ class TestSnapshotsRoll:
 
 
 # ---------------------------------------------------------------------------
+# Default fallback tests
+# ---------------------------------------------------------------------------
+
+
+class TestSnapshotsDefaultFallback:
+    """Verify workspace default from config is used when arg is omitted."""
+
+    def test_list_uses_config_default_workspace(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.delenv("FABRIC_DW_DEFAULT_WORKSPACE", raising=False)
+        monkeypatch.delenv("FABRIC_DW_DEFAULT_WAREHOUSE", raising=False)
+        runner.invoke(cli, ["config", "set", "workspace", WS_GUID])
+        runner.invoke(cli, ["config", "set", "warehouse", WH_GUID])
+        mock_http = AsyncMock()
+        mock_http.iter_paginated = MagicMock(return_value=_async_iter([]))
+        with (
+            patch(
+                "fabric_dw.cli.commands.snapshots._build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.snapshots._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_wh_entry())),
+            ),
+        ):
+            result = runner.invoke(cli, ["snapshots", "list"])
+        assert result.exit_code == 0
+
+    def test_list_missing_workspace_raises_usage_error(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.delenv("FABRIC_DW_DEFAULT_WORKSPACE", raising=False)
+        monkeypatch.delenv("FABRIC_DW_DEFAULT_WAREHOUSE", raising=False)
+        result = runner.invoke(cli, ["snapshots", "list"])
+        assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 

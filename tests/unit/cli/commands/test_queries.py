@@ -192,3 +192,49 @@ class TestQueriesKill:
         ):
             result = runner.invoke(cli, ["--yes", "queries", "kill", WS_GUID, WH_GUID, "42"])
         assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# Default fallback tests
+# ---------------------------------------------------------------------------
+
+
+class TestQueriesDefaultFallback:
+    """Verify workspace/warehouse defaults from config are used when arg is omitted."""
+
+    def test_list_uses_config_defaults(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.delenv("FABRIC_DW_DEFAULT_WORKSPACE", raising=False)
+        monkeypatch.delenv("FABRIC_DW_DEFAULT_WAREHOUSE", raising=False)
+        runner.invoke(cli, ["config", "set", "workspace", WS_GUID])
+        runner.invoke(cli, ["config", "set", "warehouse", WH_GUID])
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.queries._build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.queries._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.queries.list_running",
+                new=AsyncMock(return_value=[_make_running_query()]),
+            ),
+        ):
+            result = runner.invoke(cli, ["queries", "list"])
+        assert result.exit_code == 0
+
+    def test_list_missing_workspace_raises_usage_error(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.delenv("FABRIC_DW_DEFAULT_WORKSPACE", raising=False)
+        monkeypatch.delenv("FABRIC_DW_DEFAULT_WAREHOUSE", raising=False)
+        result = runner.invoke(cli, ["queries", "list"])
+        assert result.exit_code != 0

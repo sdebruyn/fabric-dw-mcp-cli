@@ -223,6 +223,46 @@ class TestWorkspacesSetCollation:
 
 
 # ---------------------------------------------------------------------------
+# Default fallback tests
+# ---------------------------------------------------------------------------
+
+
+class TestWorkspacesDefaultFallback:
+    """Verify workspace default from config is used when arg is omitted."""
+
+    def test_get_uses_config_default_workspace(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.delenv("FABRIC_DW_DEFAULT_WORKSPACE", raising=False)
+        runner.invoke(cli, ["config", "set", "workspace", WS_GUID])
+        mock_http = AsyncMock()
+        mock_http.request = AsyncMock(return_value=_make_response(200, WORKSPACE_GET_PAYLOAD))
+        with (
+            patch(
+                "fabric_dw.cli.commands.workspaces._build_clients",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.workspaces.Resolver.workspace_id",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+        ):
+            result = runner.invoke(cli, ["workspaces", "get"])
+        assert result.exit_code == 0
+
+    def test_get_missing_workspace_raises_usage_error(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.delenv("FABRIC_DW_DEFAULT_WORKSPACE", raising=False)
+        result = runner.invoke(cli, ["workspaces", "get"])
+        assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 

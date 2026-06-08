@@ -12,7 +12,12 @@ from fabric_dw import auth as _auth
 from fabric_dw.cache import LookupCache
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import confirm, render
-from fabric_dw.cli.commands._utils import _coro, _resolve_item
+from fabric_dw.cli.commands._utils import (
+    _coro,
+    _resolve_item,
+    resolve_warehouse_arg,
+    resolve_workspace_arg,
+)
 from fabric_dw.exceptions import FabricError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import WarehouseKind
@@ -55,19 +60,20 @@ async def list_cmd(ctx: CliContext, workspace: str | None, all_workspaces: bool)
 
     Pass -A / --all-workspaces to scan every visible workspace instead.
     WORKSPACE and --all-workspaces are mutually exclusive.
+    WORKSPACE may be omitted when a default is set via
+    ``fabric-dw config set workspace`` or ``FABRIC_DW_DEFAULT_WORKSPACE``.
     """
     if workspace and all_workspaces:
         raise click.UsageError("WORKSPACE and --all-workspaces are mutually exclusive.")  # noqa: TRY003
-    if not workspace and not all_workspaces:
-        raise click.UsageError("Provide WORKSPACE or pass --all-workspaces / -A.")  # noqa: TRY003
     try:
         async with _build_clients(ctx) as (http, _):
             if all_workspaces:
                 items = await _warehouses_svc.list_all_workspaces(http)
             else:
+                ws = resolve_workspace_arg(ctx, workspace)
                 cache = LookupCache()
                 resolver = Resolver(http=http, cache=cache)
-                ws_id = await resolver.workspace_id(workspace)  # type: ignore[arg-type]
+                ws_id = await resolver.workspace_id(ws)
                 items = await _warehouses_svc.list_warehouses(http, ws_id)
             render(
                 [w.model_dump(by_alias=True, mode="json") for w in items],
@@ -79,15 +85,17 @@ async def list_cmd(ctx: CliContext, workspace: str | None, all_workspaces: bool)
 
 
 @warehouses_group.command("get")
-@click.argument("workspace")
-@click.argument("warehouse")
+@click.argument("workspace", required=False, default=None)
+@click.argument("warehouse", required=False, default=None)
 @click.pass_obj
 @_coro
-async def get_cmd(ctx: CliContext, workspace: str, warehouse: str) -> None:
+async def get_cmd(ctx: CliContext, workspace: str | None, warehouse: str | None) -> None:
     """Get details for WAREHOUSE in WORKSPACE (both accept name or GUID)."""
+    ws = resolve_workspace_arg(ctx, workspace)
+    wh = resolve_warehouse_arg(ctx, warehouse)
     try:
         async with _build_clients(ctx) as (http, _):
-            ws_id, entry = await _resolve_item(http, workspace, warehouse)
+            ws_id, entry = await _resolve_item(http, ws, wh)
             obj = await _warehouses_svc.get_warehouse(http, ws_id, entry.id)
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except FabricError as exc:
@@ -95,7 +103,7 @@ async def get_cmd(ctx: CliContext, workspace: str, warehouse: str) -> None:
 
 
 @warehouses_group.command("create")
-@click.argument("workspace")
+@click.argument("workspace", required=False, default=None)
 @click.argument("name")
 @click.option("--collation", default=None, help="Default collation for the warehouse.")
 @click.option("--description", default=None, help="Description for the warehouse.")
@@ -103,17 +111,18 @@ async def get_cmd(ctx: CliContext, workspace: str, warehouse: str) -> None:
 @_coro
 async def create_cmd(
     ctx: CliContext,
-    workspace: str,
+    workspace: str | None,
     name: str,
     collation: str | None,
     description: str | None,
 ) -> None:
     """Create a new warehouse named NAME in WORKSPACE (name or GUID)."""
+    ws = resolve_workspace_arg(ctx, workspace)
     try:
         async with _build_clients(ctx) as (http, _):
             cache = LookupCache()
             resolver = Resolver(http=http, cache=cache)
-            ws_id = await resolver.workspace_id(workspace)
+            ws_id = await resolver.workspace_id(ws)
             obj = await _warehouses_svc.create(
                 http,
                 ws_id,
@@ -127,23 +136,25 @@ async def create_cmd(
 
 
 @warehouses_group.command("rename")
-@click.argument("workspace")
-@click.argument("warehouse")
+@click.argument("workspace", required=False, default=None)
+@click.argument("warehouse", required=False, default=None)
 @click.argument("new_name")
 @click.option("--description", default=None, help="Optional new description.")
 @click.pass_obj
 @_coro
 async def rename_cmd(
     ctx: CliContext,
-    workspace: str,
-    warehouse: str,
+    workspace: str | None,
+    warehouse: str | None,
     new_name: str,
     description: str | None,
 ) -> None:
     """Rename WAREHOUSE in WORKSPACE to NEW_NAME (workspace and warehouse accept name or GUID)."""
+    ws = resolve_workspace_arg(ctx, workspace)
+    wh = resolve_warehouse_arg(ctx, warehouse)
     try:
         async with _build_clients(ctx) as (http, _):
-            ws_id, entry = await _resolve_item(http, workspace, warehouse)
+            ws_id, entry = await _resolve_item(http, ws, wh)
             confirmed = confirm(
                 f"Rename warehouse {entry.display_name!r} ({entry.id}) to {new_name!r}?",
                 yes=ctx.yes,
@@ -165,15 +176,17 @@ async def rename_cmd(
 
 
 @warehouses_group.command("delete")
-@click.argument("workspace")
-@click.argument("warehouse")
+@click.argument("workspace", required=False, default=None)
+@click.argument("warehouse", required=False, default=None)
 @click.pass_obj
 @_coro
-async def delete_cmd(ctx: CliContext, workspace: str, warehouse: str) -> None:
+async def delete_cmd(ctx: CliContext, workspace: str | None, warehouse: str | None) -> None:
     """Delete WAREHOUSE from WORKSPACE (both accept name or GUID)."""
+    ws = resolve_workspace_arg(ctx, workspace)
+    wh = resolve_warehouse_arg(ctx, warehouse)
     try:
         async with _build_clients(ctx) as (http, _):
-            ws_id, entry = await _resolve_item(http, workspace, warehouse)
+            ws_id, entry = await _resolve_item(http, ws, wh)
             confirmed = confirm(
                 f"Delete warehouse {entry.display_name!r} ({entry.id})?",
                 yes=ctx.yes,
@@ -189,18 +202,20 @@ async def delete_cmd(ctx: CliContext, workspace: str, warehouse: str) -> None:
 
 
 @warehouses_group.command("takeover")
-@click.argument("workspace")
-@click.argument("warehouse")
+@click.argument("workspace", required=False, default=None)
+@click.argument("warehouse", required=False, default=None)
 @click.pass_obj
 @_coro
-async def takeover_cmd(ctx: CliContext, workspace: str, warehouse: str) -> None:
+async def takeover_cmd(ctx: CliContext, workspace: str | None, warehouse: str | None) -> None:
     """Take ownership of WAREHOUSE in WORKSPACE (both accept name or GUID).
 
     Not supported for SQL Analytics Endpoints.
     """
+    ws = resolve_workspace_arg(ctx, workspace)
+    wh = resolve_warehouse_arg(ctx, warehouse)
     try:
         async with _build_clients(ctx) as (http, _):
-            ws_id, entry = await _resolve_item(http, workspace, warehouse)
+            ws_id, entry = await _resolve_item(http, ws, wh)
             if entry.kind == WarehouseKind.SQL_ENDPOINT:
                 raise click.UsageError(  # noqa: TRY003, TRY301
                     "takeover is not supported for SQL Analytics Endpoints"

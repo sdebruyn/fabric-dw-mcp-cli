@@ -351,6 +351,47 @@ class TestWarehousesTakeover:
 
 
 # ---------------------------------------------------------------------------
+# Default fallback tests
+# ---------------------------------------------------------------------------
+
+
+class TestWarehousesDefaultFallback:
+    """Verify that workspace/warehouse defaults from config are used when arg is omitted."""
+
+    def test_list_uses_config_default_workspace(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.delenv("FABRIC_DW_DEFAULT_WORKSPACE", raising=False)
+        # Write workspace default to config
+        runner.invoke(cli, ["config", "set", "workspace", WS_GUID])
+        mock_http = AsyncMock()
+        mock_http.iter_paginated = MagicMock(return_value=_async_iter([]))
+        with (
+            patch(
+                "fabric_dw.cli.commands.warehouses._build_clients",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.warehouses.Resolver.workspace_id",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+        ):
+            result = runner.invoke(cli, ["warehouses", "list"])
+        assert result.exit_code == 0
+
+    def test_list_missing_workspace_raises_usage_error(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.delenv("FABRIC_DW_DEFAULT_WORKSPACE", raising=False)
+        result = runner.invoke(cli, ["warehouses", "list"])
+        assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
