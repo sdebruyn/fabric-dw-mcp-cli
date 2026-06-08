@@ -94,15 +94,15 @@ class TestEndpointsList:
         mock_http.iter_paginated = MagicMock(return_value=_async_iter([]))
         with (
             patch(
-                "fabric_dw.cli.commands.endpoints._build_clients",
+                "fabric_dw.cli.commands.sql_endpoints._build_clients",
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.endpoints.Resolver.workspace_id",
+                "fabric_dw.cli.commands.sql_endpoints.Resolver.workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
         ):
-            result = runner.invoke(cli, ["endpoints", "list", WS_GUID])
+            result = runner.invoke(cli, ["sql-endpoints", "list", WS_GUID])
         assert result.exit_code == 0
 
     def test_list_json_output(self, runner: CliRunner, cache_env: Path) -> None:
@@ -125,15 +125,15 @@ class TestEndpointsList:
         mock_http.iter_paginated = MagicMock(return_value=_async_iter([ep_item]))
         with (
             patch(
-                "fabric_dw.cli.commands.endpoints._build_clients",
+                "fabric_dw.cli.commands.sql_endpoints._build_clients",
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.endpoints.Resolver.workspace_id",
+                "fabric_dw.cli.commands.sql_endpoints.Resolver.workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "endpoints", "list", WS_GUID])
+            result = runner.invoke(cli, ["--json", "sql-endpoints", "list", WS_GUID])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert isinstance(parsed, list)
@@ -158,7 +158,7 @@ class TestEndpointsListAllWorkspaces:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.endpoints._build_clients",
+                "fabric_dw.cli.commands.sql_endpoints._build_clients",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -166,7 +166,7 @@ class TestEndpointsListAllWorkspaces:
                 new=AsyncMock(return_value=[ep]),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "endpoints", "list", "-A"])
+            result = runner.invoke(cli, ["--json", "sql-endpoints", "list", "-A"])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert isinstance(parsed, list)
@@ -179,10 +179,10 @@ class TestEndpointsListAllWorkspaces:
         _ = cache_env
         mock_http = AsyncMock()
         with patch(
-            "fabric_dw.cli.commands.endpoints._build_clients",
+            "fabric_dw.cli.commands.sql_endpoints._build_clients",
             new=_make_cm(mock_http, None),
         ):
-            result = runner.invoke(cli, ["endpoints", "list", WS_GUID, "-A"])
+            result = runner.invoke(cli, ["sql-endpoints", "list", WS_GUID, "-A"])
         assert result.exit_code != 0
 
 
@@ -195,15 +195,15 @@ class TestEndpointsGet:
         mock_http.request = AsyncMock(return_value=_make_response(200, _ENDPOINT_JSON))
         with (
             patch(
-                "fabric_dw.cli.commands.endpoints._build_clients",
+                "fabric_dw.cli.commands.sql_endpoints._build_clients",
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.endpoints._resolve_item",
+                "fabric_dw.cli.commands.sql_endpoints._resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
         ):
-            result = runner.invoke(cli, ["endpoints", "get", WS_GUID, EP_GUID])
+            result = runner.invoke(cli, ["sql-endpoints", "get", WS_GUID, EP_GUID])
         assert result.exit_code == 0
 
     def test_get_not_found_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
@@ -211,15 +211,15 @@ class TestEndpointsGet:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.endpoints._build_clients",
+                "fabric_dw.cli.commands.sql_endpoints._build_clients",
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.endpoints._resolve_item",
+                "fabric_dw.cli.commands.sql_endpoints._resolve_item",
                 new=AsyncMock(side_effect=NotFound("endpoint not found")),
             ),
         ):
-            result = runner.invoke(cli, ["endpoints", "get", WS_GUID, EP_GUID])
+            result = runner.invoke(cli, ["sql-endpoints", "get", WS_GUID, EP_GUID])
         assert result.exit_code != 0
 
 
@@ -250,15 +250,15 @@ class TestEndpointsRefresh:
 
         with (
             patch(
-                "fabric_dw.cli.commands.endpoints._build_clients",
+                "fabric_dw.cli.commands.sql_endpoints._build_clients",
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.endpoints._resolve_item",
+                "fabric_dw.cli.commands.sql_endpoints._resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
         ):
-            result = runner.invoke(cli, ["endpoints", "refresh", WS_GUID, EP_GUID])
+            result = runner.invoke(cli, ["sql-endpoints", "refresh", WS_GUID, EP_GUID])
         assert result.exit_code == 0
 
     def test_refresh_not_found_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
@@ -266,13 +266,13 @@ class TestEndpointsRefresh:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.endpoints._build_clients",
+                "fabric_dw.cli.commands.sql_endpoints._build_clients",
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.endpoints._resolve_item",
+                "fabric_dw.cli.commands.sql_endpoints._resolve_item",
                 new=AsyncMock(side_effect=NotFound("endpoint not found")),
             ),
         ):
-            result = runner.invoke(cli, ["endpoints", "refresh", WS_GUID, EP_GUID])
+            result = runner.invoke(cli, ["sql-endpoints", "refresh", WS_GUID, EP_GUID])
         assert result.exit_code != 0

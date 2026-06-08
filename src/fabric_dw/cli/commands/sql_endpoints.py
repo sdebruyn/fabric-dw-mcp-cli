@@ -31,12 +31,12 @@ async def _build_clients(
         yield http, None
 
 
-@click.group("endpoints")
-def endpoints_group() -> None:
+@click.group("sql-endpoints")
+def sql_endpoints_group() -> None:
     """Manage Microsoft Fabric SQL Analytics Endpoints."""
 
 
-@endpoints_group.command("list")
+@sql_endpoints_group.command("list")
 @click.argument("workspace", required=False, default=None)
 @click.option(
     "-A",
@@ -77,7 +77,7 @@ async def list_cmd(ctx: CliContext, workspace: str | None, all_workspaces: bool)
         raise click.ClickException(str(exc)) from exc
 
 
-@endpoints_group.command("get")
+@sql_endpoints_group.command("get")
 @click.argument("workspace")
 @click.argument("endpoint")
 @click.pass_obj
@@ -93,7 +93,7 @@ async def get_cmd(ctx: CliContext, workspace: str, endpoint: str) -> None:
         raise click.ClickException(str(exc)) from exc
 
 
-@endpoints_group.command("refresh")
+@sql_endpoints_group.command("refresh")
 @click.argument("workspace")
 @click.argument("endpoint")
 @click.pass_obj
