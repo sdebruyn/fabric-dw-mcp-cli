@@ -1,10 +1,9 @@
 <p align="center">
   <a href="https://fdw.debruyn.dev">
-    <img src="docs/assets/logo.svg" alt="fabric-dw" width="140" />
+    <img src="docs/assets/logo.svg" alt="fabric-dw logo" width="200" />
   </a>
 </p>
-
-# fabric-dw
+<h1 align="center">fabric-dw</h1>
 
 > Python CLI and MCP server for administering Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
 
