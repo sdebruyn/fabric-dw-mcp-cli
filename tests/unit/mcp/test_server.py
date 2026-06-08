@@ -444,13 +444,11 @@ async def test_list_running_queries_happy_path() -> None:
     mock_resolver.item = AsyncMock(return_value=item)
     mock_http = AsyncMock()
     mock_cache = MagicMock()
-    mock_sql = AsyncMock()
 
     with (
         patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
         patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
         patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
-        patch("fabric_dw.mcp.server._get_sql", return_value=mock_sql),
         patch(
             "fabric_dw.services.queries.list_running",
             new=AsyncMock(return_value=[query]),

@@ -34,7 +34,7 @@ from fabric_dw.logging import setup_logging
 from fabric_dw.resolver import Resolver
 from fabric_dw.services import audit, queries, snapshots, sql_endpoints, warehouses, workspaces
 from fabric_dw.services import ownership as ownership_svc
-from fabric_dw.sql_client import FabricSqlClient, SqlTarget
+from fabric_dw.sql import SqlTarget
 
 __all__ = ["mcp", "run"]
 
@@ -49,7 +49,6 @@ mcp: FastMCP = FastMCP("fabric-dw")
 # ---------------------------------------------------------------------------
 
 _http_client: FabricHttpClient | None = None
-_sql_client: FabricSqlClient | None = None
 _cache_singleton: LookupCache | None = None
 _resolver_singleton: Resolver | None = None
 
@@ -71,20 +70,16 @@ def _get_http() -> FabricHttpClient:
     return _http_client
 
 
-def _get_sql() -> FabricSqlClient:
-    """Return the shared :class:`FabricSqlClient`, creating it on first call."""
-    global _sql_client  # noqa: PLW0603
-    if _sql_client is None:
-        raw_mode = os.environ.get("FABRIC_AUTH", "default")
-        try:
-            mode = _auth.CredentialMode(raw_mode)
-        except ValueError as exc:
-            raise ConfigError(  # noqa: TRY003
-                f"invalid FABRIC_AUTH value {raw_mode!r}; "
-                f"expected one of {[m.value for m in _auth.CredentialMode]}"
-            ) from exc
-        _sql_client = FabricSqlClient(mode=mode)
-    return _sql_client
+def _get_auth_mode() -> _auth.CredentialMode:
+    """Return the configured :class:`CredentialMode` from the environment."""
+    raw_mode = os.environ.get("FABRIC_AUTH", "default")
+    try:
+        return _auth.CredentialMode(raw_mode)
+    except ValueError as exc:
+        raise ConfigError(  # noqa: TRY003
+            f"invalid FABRIC_AUTH value {raw_mode!r}; "
+            f"expected one of {[m.value for m in _auth.CredentialMode]}"
+        ) from exc
 
 
 def _get_cache() -> LookupCache:
@@ -370,7 +365,7 @@ async def list_running_queries(workspace: str, warehouse: str) -> list[dict[str,
             database=item.display_name,
             connection_string=item.connection_string,
         )
-        result = await queries.list_running(_get_sql(), target)
+        result = await queries.list_running(target, mode=_get_auth_mode())
     except FabricError as exc:
         raise _fabric_err(exc) from exc
     return [q.model_dump(by_alias=True, mode="json") for q in result]
@@ -390,7 +385,7 @@ async def kill_session(workspace: str, warehouse: str, session_id: int) -> dict[
             database=item.display_name,
             connection_string=item.connection_string,
         )
-        await queries.kill(_get_sql(), target, session_id)
+        await queries.kill(target, session_id, mode=_get_auth_mode())
     except FabricError as exc:
         raise _fabric_err(exc) from exc
     return {"killed": True, "session_id": session_id}
@@ -523,7 +518,7 @@ async def roll_snapshot_timestamp(
             database=item.display_name,
             connection_string=item.connection_string,
         )
-        await snapshots.roll_timestamp(_get_sql(), target, snapshot_name, new_dt=parsed_dt)
+        await snapshots.roll_timestamp(target, snapshot_name, parsed_dt, mode=_get_auth_mode())
     except FabricError as exc:
         raise _fabric_err(exc) from exc
     return {"rolled": True, "snapshot_name": snapshot_name, "new_dt": new_dt}

@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import closing
 from datetime import datetime
 from uuid import UUID
 
-from fabric_dw.exceptions import PermissionDenied
+from fabric_dw import sql
+from fabric_dw.auth import CredentialMode
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import WarehouseSnapshot
-from fabric_dw.sql_client import FabricSqlClient, SqlTarget
+from fabric_dw.sql import SqlTarget
 
 __all__ = [
     "create",
@@ -260,10 +263,11 @@ async def delete(
 
 
 async def roll_timestamp(
-    sql: FabricSqlClient,
     parent_target: SqlTarget,
     snapshot_name: str,
     new_dt: datetime | None = None,
+    *,
+    mode: CredentialMode = CredentialMode.DEFAULT,
 ) -> None:
     """Advance or reset the timestamp of a warehouse snapshot via T-SQL.
 
@@ -271,14 +275,14 @@ async def roll_timestamp(
     *parent_target*.
 
     Args:
-        sql: A :class:`~fabric_dw.sql_client.FabricSqlClient` instance.
-        parent_target: The :class:`~fabric_dw.sql_client.SqlTarget` for the
-            parent warehouse (the snapshot lives in the same SQL endpoint).
+        parent_target: The :class:`~fabric_dw.sql.SqlTarget` for the parent
+            warehouse (the snapshot lives in the same SQL endpoint).
         snapshot_name: The name of the snapshot database. Must not contain
             ``]``, ``;``, ``\\``, ``'``, ``"``, ``--``, or newlines.
         new_dt: If supplied, the snapshot is rolled to this UTC datetime,
             formatted as ``YYYY-MM-DDTHH:MM:SS.SS``. If ``None``, the
             snapshot rolls forward to ``CURRENT_TIMESTAMP``.
+        mode: The credential mode for Entra authentication.
 
     Raises:
         ValueError: If *snapshot_name* contains any forbidden character.
@@ -292,15 +296,16 @@ async def roll_timestamp(
         formatted = new_dt.strftime("%Y-%m-%dT%H:%M:%S.00")
         sql_str = f"ALTER DATABASE [{snapshot_name}] SET TIMESTAMP = '{formatted}';"
 
-    try:
-        await sql.execute_nonquery(parent_target, sql_str)
-    except PermissionDenied:
-        raise
-    except Exception as exc:
-        msg = str(exc).lower()
-        if any(
-            fragment in msg
-            for fragment in ("permission", "access denied", "unauthorized", "403", "forbidden")
-        ):
-            raise PermissionDenied(str(exc)) from exc
-        raise
+    def _run() -> None:
+        with closing(sql.open_connection(parent_target, mode=mode)) as conn:
+            cursor = conn.cursor()
+            try:
+                cursor.execute(sql_str)
+                conn.commit()
+            except Exception as exc:
+                mapped = sql.map_driver_error(exc)
+                if mapped:
+                    raise mapped from exc
+                raise
+
+    await asyncio.to_thread(_run)

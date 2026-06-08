@@ -1,9 +1,9 @@
-"""Tests for services.queries — written BEFORE the implementation (TDD)."""
+"""Tests for services.queries — stateless SQL helper (TDD, written before implementation)."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -15,15 +15,20 @@ from fabric_dw.services import queries
 # Helpers
 # ---------------------------------------------------------------------------
 
-_TARGET = MagicMock()  # SqlTarget — shape doesn't matter for mocked tests
+
+def _make_target() -> MagicMock:
+    """Return a mock SqlTarget."""
+    return MagicMock()
 
 
-def _make_sql() -> AsyncMock:
-    """Return a fully mocked FabricSqlClient."""
-    client = AsyncMock()
-    client.execute = AsyncMock()
-    client.execute_nonquery = AsyncMock()
-    return client
+def _make_conn(rows: list[tuple[object, ...]], columns: list[str]) -> MagicMock:
+    """Return a mock connection whose cursor returns the given rows."""
+    cursor = MagicMock()
+    cursor.description = [(c, None) for c in columns]
+    cursor.fetchall.return_value = rows
+    conn = MagicMock()
+    conn.cursor.return_value = cursor
+    return conn
 
 
 # ---------------------------------------------------------------------------
@@ -32,106 +37,63 @@ def _make_sql() -> AsyncMock:
 
 _NOW = datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC)
 
-_ROW_1: dict[str, object] = {
-    "session_id": 42,
-    "request_id": "0x0000000000000001",
-    "status": "running",
-    "start_time": _NOW,
-    "total_elapsed_time": 1500,
-    "login_name": "user@example.com",
-    "command": "SELECT",
-    "query_text": "SELECT TOP 10 * FROM dbo.sales",
-}
+_COLS = [
+    "session_id",
+    "request_id",
+    "status",
+    "start_time",
+    "total_elapsed_time",
+    "login_name",
+    "command",
+    "query_text",
+]
 
-_ROW_2: dict[str, object] = {
-    "session_id": 99,
-    "request_id": "0x0000000000000002",
-    "status": "suspended",
-    "start_time": _NOW,
-    "total_elapsed_time": 3000,
-    "login_name": "admin@example.com",
-    "command": "UPDATE",
-    "query_text": None,
-}
+_ROW_1_TUPLE = (
+    42,
+    "0x0000000000000001",
+    "running",
+    _NOW,
+    1500,
+    "user@example.com",
+    "SELECT",
+    "SELECT TOP 10 * FROM dbo.sales",
+)
 
-
-# ---------------------------------------------------------------------------
-# list_running — SQL shape
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_list_running_sql_references_dm_exec_sessions() -> None:
-    """list_running should query sys.dm_exec_sessions."""
-    sql = _make_sql()
-    sql.execute.return_value = []
-
-    await queries.list_running(sql, _TARGET)
-
-    sql.execute.assert_called_once()
-    call_sql: str = sql.execute.call_args[0][1]
-    assert "sys.dm_exec_sessions" in call_sql
-
-
-@pytest.mark.asyncio
-async def test_list_running_sql_references_dm_exec_requests() -> None:
-    """list_running should query sys.dm_exec_requests."""
-    sql = _make_sql()
-    sql.execute.return_value = []
-
-    await queries.list_running(sql, _TARGET)
-
-    call_sql: str = sql.execute.call_args[0][1]
-    assert "sys.dm_exec_requests" in call_sql
-
-
-@pytest.mark.asyncio
-async def test_list_running_sql_filters_by_status() -> None:
-    """list_running SQL must include a status filter with the three relevant states."""
-    sql = _make_sql()
-    sql.execute.return_value = []
-
-    await queries.list_running(sql, _TARGET)
-
-    call_sql: str = sql.execute.call_args[0][1]
-    assert "r.status IN" in call_sql
-
-
-@pytest.mark.asyncio
-async def test_list_running_passes_target_to_execute() -> None:
-    """list_running should forward the target to sql.execute."""
-    sql = _make_sql()
-    sql.execute.return_value = []
-
-    await queries.list_running(sql, _TARGET)
-
-    call_target = sql.execute.call_args[0][0]
-    assert call_target is _TARGET
+_ROW_2_TUPLE = (
+    99,
+    "0x0000000000000002",
+    "suspended",
+    _NOW,
+    3000,
+    "admin@example.com",
+    "UPDATE",
+    None,
+)
 
 
 # ---------------------------------------------------------------------------
-# list_running — parsing
+# list_running
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_list_running_returns_empty_list_when_no_rows() -> None:
-    """list_running returns [] when the DMV returns no rows."""
-    sql = _make_sql()
-    sql.execute.return_value = []
+async def test_list_running_returns_empty_when_no_rows() -> None:
+    target = _make_target()
+    conn = _make_conn([], _COLS)
 
-    result = await queries.list_running(sql, _TARGET)
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await queries.list_running(target)
 
     assert result == []
 
 
 @pytest.mark.asyncio
 async def test_list_running_returns_running_query_instances() -> None:
-    """list_running should return a list of RunningQuery objects."""
-    sql = _make_sql()
-    sql.execute.return_value = [_ROW_1]
+    target = _make_target()
+    conn = _make_conn([_ROW_1_TUPLE], _COLS)
 
-    result = await queries.list_running(sql, _TARGET)
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await queries.list_running(target)
 
     assert len(result) == 1
     assert isinstance(result[0], RunningQuery)
@@ -139,13 +101,13 @@ async def test_list_running_returns_running_query_instances() -> None:
 
 @pytest.mark.asyncio
 async def test_list_running_parses_fields_correctly() -> None:
-    """list_running should map all DMV columns to RunningQuery fields."""
-    sql = _make_sql()
-    sql.execute.return_value = [_ROW_1]
+    target = _make_target()
+    conn = _make_conn([_ROW_1_TUPLE], _COLS)
 
-    result = await queries.list_running(sql, _TARGET)
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await queries.list_running(target)
+
     q = result[0]
-
     assert q.session_id == 42
     assert q.request_id == "0x0000000000000001"
     assert q.status == "running"
@@ -158,26 +120,124 @@ async def test_list_running_parses_fields_correctly() -> None:
 
 @pytest.mark.asyncio
 async def test_list_running_handles_null_query_text() -> None:
-    """list_running should accept rows where query_text is None."""
-    sql = _make_sql()
-    sql.execute.return_value = [_ROW_2]
+    target = _make_target()
+    conn = _make_conn([_ROW_2_TUPLE], _COLS)
 
-    result = await queries.list_running(sql, _TARGET)
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await queries.list_running(target)
 
     assert result[0].query_text is None
 
 
 @pytest.mark.asyncio
 async def test_list_running_returns_all_rows() -> None:
-    """list_running should return one RunningQuery per result row."""
-    sql = _make_sql()
-    sql.execute.return_value = [_ROW_1, _ROW_2]
+    target = _make_target()
+    conn = _make_conn([_ROW_1_TUPLE, _ROW_2_TUPLE], _COLS)
 
-    result = await queries.list_running(sql, _TARGET)
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await queries.list_running(target)
 
     assert len(result) == 2
     assert result[0].session_id == 42
     assert result[1].session_id == 99
+
+
+@pytest.mark.asyncio
+async def test_list_running_sql_references_dm_exec_sessions() -> None:
+    target = _make_target()
+    conn = _make_conn([], _COLS)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await queries.list_running(target)
+
+    cursor = conn.cursor.return_value
+    call_sql: str = cursor.execute.call_args[0][0]
+    assert "sys.dm_exec_sessions" in call_sql
+
+
+@pytest.mark.asyncio
+async def test_list_running_sql_references_dm_exec_requests() -> None:
+    target = _make_target()
+    conn = _make_conn([], _COLS)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await queries.list_running(target)
+
+    cursor = conn.cursor.return_value
+    call_sql: str = cursor.execute.call_args[0][0]
+    assert "sys.dm_exec_requests" in call_sql
+
+
+@pytest.mark.asyncio
+async def test_list_running_sql_filters_by_status() -> None:
+    target = _make_target()
+    conn = _make_conn([], _COLS)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await queries.list_running(target)
+
+    cursor = conn.cursor.return_value
+    call_sql: str = cursor.execute.call_args[0][0]
+    assert "r.status IN" in call_sql
+
+
+@pytest.mark.asyncio
+async def test_list_running_closes_connection_after_success() -> None:
+    target = _make_target()
+    conn = _make_conn([_ROW_1_TUPLE], _COLS)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await queries.list_running(target)
+
+    conn.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_list_running_maps_permission_denied() -> None:
+    """cursor.execute raising a 'permission was denied' fragment → PermissionDenied."""
+    target = _make_target()
+    conn = MagicMock()
+    cursor = MagicMock()
+    cursor.execute.side_effect = Exception("permission was denied on object X")
+    conn.cursor.return_value = cursor
+
+    with (
+        patch("fabric_dw.sql.open_connection", return_value=conn),
+        pytest.raises(PermissionDenied),
+    ):
+        await queries.list_running(target)
+
+
+@pytest.mark.asyncio
+async def test_list_running_maps_auth_error() -> None:
+    """cursor.execute raising an auth fragment → AuthError."""
+    target = _make_target()
+    conn = MagicMock()
+    cursor = MagicMock()
+    cursor.execute.side_effect = Exception("Authentication failed for user '' (token)")
+    conn.cursor.return_value = cursor
+
+    with (
+        patch("fabric_dw.sql.open_connection", return_value=conn),
+        pytest.raises(AuthError),
+    ):
+        await queries.list_running(target)
+
+
+@pytest.mark.asyncio
+async def test_list_running_unrelated_error_propagates() -> None:
+    """Non-mapped driver errors propagate unchanged."""
+    target = _make_target()
+    conn = MagicMock()
+    cursor = MagicMock()
+    cursor.execute.side_effect = RuntimeError("deadlock detected")
+    conn.cursor.return_value = cursor
+
+    with (
+        patch("fabric_dw.sql.open_connection", return_value=conn),
+        pytest.raises(RuntimeError, match="deadlock detected"),
+    ):
+        await queries.list_running(target)
 
 
 # ---------------------------------------------------------------------------
@@ -186,38 +246,55 @@ async def test_list_running_returns_all_rows() -> None:
 
 
 @pytest.mark.asyncio
-async def test_kill_calls_execute_nonquery_with_kill_statement() -> None:
-    """kill should execute KILL '<id>' via execute_nonquery."""
-    sql = _make_sql()
-    sql.execute_nonquery.return_value = 0
+async def test_kill_issues_kill_statement() -> None:
+    target = _make_target()
+    conn = MagicMock()
+    cursor = MagicMock()
+    conn.cursor.return_value = cursor
 
-    await queries.kill(sql, _TARGET, 42)
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await queries.kill(target, 42)
 
-    sql.execute_nonquery.assert_called_once()
-    call_sql: str = sql.execute_nonquery.call_args[0][1]
+    call_sql: str = cursor.execute.call_args[0][0]
     assert "KILL" in call_sql
     assert "42" in call_sql
 
 
 @pytest.mark.asyncio
-async def test_kill_passes_target_to_execute_nonquery() -> None:
-    """kill should forward the target to sql.execute_nonquery."""
-    sql = _make_sql()
-    sql.execute_nonquery.return_value = 0
+async def test_kill_commits_after_execute() -> None:
+    target = _make_target()
+    conn = MagicMock()
+    cursor = MagicMock()
+    conn.cursor.return_value = cursor
 
-    await queries.kill(sql, _TARGET, 1)
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await queries.kill(target, 42)
 
-    call_target = sql.execute_nonquery.call_args[0][0]
-    assert call_target is _TARGET
+    conn.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_kill_closes_connection_after_success() -> None:
+    target = _make_target()
+    conn = MagicMock()
+    cursor = MagicMock()
+    conn.cursor.return_value = cursor
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await queries.kill(target, 42)
+
+    conn.close.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_kill_returns_none_on_success() -> None:
-    """kill should return None on a successful KILL."""
-    sql = _make_sql()
-    sql.execute_nonquery.return_value = 0
+    target = _make_target()
+    conn = MagicMock()
+    cursor = MagicMock()
+    conn.cursor.return_value = cursor
 
-    await queries.kill(sql, _TARGET, 5)
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await queries.kill(target, 5)  # should not raise
 
 
 # ---------------------------------------------------------------------------
@@ -227,35 +304,44 @@ async def test_kill_returns_none_on_success() -> None:
 
 @pytest.mark.asyncio
 async def test_kill_raises_value_error_for_zero() -> None:
-    """kill(0) should raise ValueError before any SQL is executed."""
-    sql = _make_sql()
+    target = _make_target()
+    conn = MagicMock()
 
-    with pytest.raises(ValueError, match="session_id"):
-        await queries.kill(sql, _TARGET, 0)
+    with (
+        patch("fabric_dw.sql.open_connection", return_value=conn),
+        pytest.raises(ValueError, match="session_id"),
+    ):
+        await queries.kill(target, 0)
 
-    sql.execute_nonquery.assert_not_called()
+    conn.cursor.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_kill_raises_value_error_for_negative() -> None:
-    """kill(-1) should raise ValueError before any SQL is executed."""
-    sql = _make_sql()
+    target = _make_target()
+    conn = MagicMock()
 
-    with pytest.raises(ValueError, match="session_id"):
-        await queries.kill(sql, _TARGET, -1)
+    with (
+        patch("fabric_dw.sql.open_connection", return_value=conn),
+        pytest.raises(ValueError, match="session_id"),
+    ):
+        await queries.kill(target, -1)
 
-    sql.execute_nonquery.assert_not_called()
+    conn.cursor.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_kill_raises_value_error_for_large_negative() -> None:
-    """kill(-999) should raise ValueError."""
-    sql = _make_sql()
+    target = _make_target()
+    conn = MagicMock()
 
-    with pytest.raises(ValueError, match="session_id"):
-        await queries.kill(sql, _TARGET, -999)
+    with (
+        patch("fabric_dw.sql.open_connection", return_value=conn),
+        pytest.raises(ValueError, match="session_id"),
+    ):
+        await queries.kill(target, -999)
 
-    sql.execute_nonquery.assert_not_called()
+    conn.cursor.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -264,30 +350,46 @@ async def test_kill_raises_value_error_for_large_negative() -> None:
 
 
 @pytest.mark.asyncio
-async def test_kill_maps_auth_error_to_permission_denied() -> None:
-    """kill should map AuthError from execute_nonquery to PermissionDenied."""
-    sql = _make_sql()
-    sql.execute_nonquery.side_effect = AuthError("login failed for user")
+async def test_kill_maps_permission_denied_from_cursor() -> None:
+    target = _make_target()
+    conn = MagicMock()
+    cursor = MagicMock()
+    cursor.execute.side_effect = Exception("permission was denied on KILL")
+    conn.cursor.return_value = cursor
 
-    with pytest.raises(PermissionDenied):
-        await queries.kill(sql, _TARGET, 42)
+    with (
+        patch("fabric_dw.sql.open_connection", return_value=conn),
+        pytest.raises(PermissionDenied),
+    ):
+        await queries.kill(target, 42)
+
+
+@pytest.mark.asyncio
+async def test_kill_maps_auth_error_to_permission_denied() -> None:
+    """kill should map AuthError → PermissionDenied."""
+    target = _make_target()
+    conn = MagicMock()
+    cursor = MagicMock()
+    cursor.execute.side_effect = Exception("Authentication failed for user ''")
+    conn.cursor.return_value = cursor
+
+    with (
+        patch("fabric_dw.sql.open_connection", return_value=conn),
+        pytest.raises(PermissionDenied),
+    ):
+        await queries.kill(target, 42)
 
 
 @pytest.mark.asyncio
 async def test_kill_permission_denied_message_contains_session_id() -> None:
-    """The PermissionDenied raised by kill should mention the session_id."""
-    sql = _make_sql()
-    sql.execute_nonquery.side_effect = AuthError("access denied")
+    target = _make_target()
+    conn = MagicMock()
+    cursor = MagicMock()
+    cursor.execute.side_effect = Exception("Authentication failed for user ''")
+    conn.cursor.return_value = cursor
 
-    with pytest.raises(PermissionDenied, match="42"):
-        await queries.kill(sql, _TARGET, 42)
-
-
-@pytest.mark.asyncio
-async def test_kill_maps_permission_denied_from_execute_nonquery_to_permission_denied() -> None:
-    """kill should re-raise PermissionDenied from execute_nonquery as PermissionDenied."""
-    sql = _make_sql()
-    sql.execute_nonquery.side_effect = PermissionDenied("permission was denied on the object KILL")
-
-    with pytest.raises(PermissionDenied):
-        await queries.kill(sql, _TARGET, 42)
+    with (
+        patch("fabric_dw.sql.open_connection", return_value=conn),
+        pytest.raises(PermissionDenied, match="42"),
+    ):
+        await queries.kill(target, 42)
