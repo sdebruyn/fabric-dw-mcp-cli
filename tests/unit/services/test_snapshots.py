@@ -18,7 +18,7 @@ from fabric_dw.exceptions import NotFound, PermissionDenied
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import WarehouseSnapshot
 from fabric_dw.services import snapshots
-from fabric_dw.sql_client import SqlTarget
+from fabric_dw.sql import SqlTarget
 
 # ---------------------------------------------------------------------------
 # Constants & Fixtures
@@ -122,19 +122,20 @@ def _make_credential() -> TokenCredential:
     return cred
 
 
-def _make_sql_client() -> MagicMock:
-    """Return a mock FabricSqlClient with execute_nonquery stubbed."""
-    client = MagicMock()
-    client.execute_nonquery = AsyncMock(return_value=0)
-    return client
-
-
 def _make_sql_target() -> SqlTarget:
     return SqlTarget(
         workspace_id=str(_WS_ID),
         database="SalesWarehouse",
         connection_string="Server=saleswarehouse.datawarehouse.fabric.microsoft.com",
     )
+
+
+def _make_mock_conn() -> MagicMock:
+    """Return a mock connection with execute_nonquery-like behaviour."""
+    cursor = MagicMock()
+    conn = MagicMock()
+    conn.cursor.return_value = cursor
+    return conn
 
 
 # ---------------------------------------------------------------------------
@@ -464,109 +465,137 @@ async def test_delete_404_raises_not_found() -> None:
 
 async def test_roll_timestamp_without_new_dt_uses_current_timestamp() -> None:
     """roll_timestamp with new_dt=None should use CURRENT_TIMESTAMP."""
-    sql_client = _make_sql_client()
     target = _make_sql_target()
+    conn = _make_mock_conn()
 
-    await snapshots.roll_timestamp(sql_client, target, "MySnapshot")
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await snapshots.roll_timestamp(target, "MySnapshot")
 
-    sql_client.execute_nonquery.assert_awaited_once()
-    call_args = sql_client.execute_nonquery.call_args
-    sql_str = call_args[0][1]
+    cursor = conn.cursor.return_value
+    cursor.execute.assert_called_once()
+    sql_str: str = cursor.execute.call_args[0][0]
     assert "ALTER DATABASE [MySnapshot] SET TIMESTAMP = CURRENT_TIMESTAMP;" in sql_str
 
 
 async def test_roll_timestamp_with_new_dt_formats_correctly() -> None:
     """roll_timestamp with a datetime should format as YYYY-MM-DDTHH:MM:SS.SS."""
-    sql_client = _make_sql_client()
     target = _make_sql_target()
+    conn = _make_mock_conn()
     new_dt = datetime(2024, 3, 15, 8, 30, 45, tzinfo=UTC)
 
-    await snapshots.roll_timestamp(sql_client, target, "MySnapshot", new_dt=new_dt)
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await snapshots.roll_timestamp(target, "MySnapshot", new_dt=new_dt)
 
-    call_args = sql_client.execute_nonquery.call_args
-    sql_str = call_args[0][1]
+    cursor = conn.cursor.return_value
+    sql_str: str = cursor.execute.call_args[0][0]
     assert "ALTER DATABASE [MySnapshot] SET TIMESTAMP = '2024-03-15T08:30:45.00';" in sql_str
 
 
 async def test_roll_timestamp_name_injection_bracket() -> None:
     """snapshot_name containing ] should raise ValueError."""
-    sql_client = _make_sql_client()
     target = _make_sql_target()
+    conn = _make_mock_conn()
 
-    with pytest.raises(ValueError, match="snapshot_name"):
-        await snapshots.roll_timestamp(sql_client, target, "My]Snapshot")
+    with (
+        patch("fabric_dw.sql.open_connection", return_value=conn),
+        pytest.raises(ValueError, match="snapshot_name"),
+    ):
+        await snapshots.roll_timestamp(target, "My]Snapshot")
 
 
 async def test_roll_timestamp_name_injection_semicolon() -> None:
     """snapshot_name containing ; should raise ValueError."""
-    sql_client = _make_sql_client()
     target = _make_sql_target()
+    conn = _make_mock_conn()
 
-    with pytest.raises(ValueError, match="snapshot_name"):
-        await snapshots.roll_timestamp(sql_client, target, "My;Snapshot")
+    with (
+        patch("fabric_dw.sql.open_connection", return_value=conn),
+        pytest.raises(ValueError, match="snapshot_name"),
+    ):
+        await snapshots.roll_timestamp(target, "My;Snapshot")
 
 
 async def test_roll_timestamp_name_injection_backslash() -> None:
     """snapshot_name containing \\ should raise ValueError."""
-    sql_client = _make_sql_client()
     target = _make_sql_target()
+    conn = _make_mock_conn()
 
-    with pytest.raises(ValueError, match="snapshot_name"):
-        await snapshots.roll_timestamp(sql_client, target, "My\\Snapshot")
+    with (
+        patch("fabric_dw.sql.open_connection", return_value=conn),
+        pytest.raises(ValueError, match="snapshot_name"),
+    ):
+        await snapshots.roll_timestamp(target, "My\\Snapshot")
 
 
 async def test_roll_timestamp_name_injection_single_quote() -> None:
     """snapshot_name containing ' should raise ValueError."""
-    sql_client = _make_sql_client()
     target = _make_sql_target()
+    conn = _make_mock_conn()
 
-    with pytest.raises(ValueError, match="snapshot_name"):
-        await snapshots.roll_timestamp(sql_client, target, "My'Snapshot")
+    with (
+        patch("fabric_dw.sql.open_connection", return_value=conn),
+        pytest.raises(ValueError, match="snapshot_name"),
+    ):
+        await snapshots.roll_timestamp(target, "My'Snapshot")
 
 
 async def test_roll_timestamp_name_injection_double_quote() -> None:
     """snapshot_name containing \" should raise ValueError."""
-    sql_client = _make_sql_client()
     target = _make_sql_target()
+    conn = _make_mock_conn()
 
-    with pytest.raises(ValueError, match="snapshot_name"):
-        await snapshots.roll_timestamp(sql_client, target, 'My"Snapshot')
+    with (
+        patch("fabric_dw.sql.open_connection", return_value=conn),
+        pytest.raises(ValueError, match="snapshot_name"),
+    ):
+        await snapshots.roll_timestamp(target, 'My"Snapshot')
 
 
 async def test_roll_timestamp_name_injection_double_dash() -> None:
     """snapshot_name containing -- should raise ValueError."""
-    sql_client = _make_sql_client()
     target = _make_sql_target()
+    conn = _make_mock_conn()
 
-    with pytest.raises(ValueError, match="snapshot_name"):
-        await snapshots.roll_timestamp(sql_client, target, "My--Snapshot")
+    with (
+        patch("fabric_dw.sql.open_connection", return_value=conn),
+        pytest.raises(ValueError, match="snapshot_name"),
+    ):
+        await snapshots.roll_timestamp(target, "My--Snapshot")
 
 
 async def test_roll_timestamp_name_injection_newline() -> None:
     """snapshot_name containing newline should raise ValueError."""
-    sql_client = _make_sql_client()
     target = _make_sql_target()
+    conn = _make_mock_conn()
 
-    with pytest.raises(ValueError, match="snapshot_name"):
-        await snapshots.roll_timestamp(sql_client, target, "My\nSnapshot")
+    with (
+        patch("fabric_dw.sql.open_connection", return_value=conn),
+        pytest.raises(ValueError, match="snapshot_name"),
+    ):
+        await snapshots.roll_timestamp(target, "My\nSnapshot")
 
 
 async def test_roll_timestamp_maps_permission_error() -> None:
     """roll_timestamp should map driver permission failures to PermissionDenied."""
-    sql_client = _make_sql_client()
     target = _make_sql_target()
-    sql_client.execute_nonquery = AsyncMock(side_effect=PermissionDenied("access denied"))
+    conn = MagicMock()
+    cursor = MagicMock()
+    cursor.execute.side_effect = Exception("permission was denied on ALTER DATABASE")
+    conn.cursor.return_value = cursor
 
-    with pytest.raises(PermissionDenied):
-        await snapshots.roll_timestamp(sql_client, target, "MySnapshot")
+    with (
+        patch("fabric_dw.sql.open_connection", return_value=conn),
+        pytest.raises(PermissionDenied),
+    ):
+        await snapshots.roll_timestamp(target, "MySnapshot")
 
 
-async def test_roll_timestamp_passes_target_to_sql_client() -> None:
-    """roll_timestamp should pass the parent_target to execute_nonquery."""
-    sql_client = _make_sql_client()
+async def test_roll_timestamp_closes_connection() -> None:
+    """roll_timestamp should close the connection after use."""
     target = _make_sql_target()
+    conn = _make_mock_conn()
 
-    await snapshots.roll_timestamp(sql_client, target, "MySnapshot")
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await snapshots.roll_timestamp(target, "MySnapshot")
 
-    call_args = sql_client.execute_nonquery.call_args
-    assert call_args[0][0] is target
+    conn.close.assert_called_once()
