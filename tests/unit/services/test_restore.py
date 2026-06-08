@@ -372,9 +372,15 @@ async def test_create_point_lro_202_last_resort_list() -> None:
 
 @respx.mock
 async def test_update_point_returns_updated_restore_point() -> None:
-    """update_point should PATCH and return the updated RestorePoint."""
+    """update_point should PATCH then GET and return the updated RestorePoint.
+
+    Fabric PATCH returns a minimal body (often just the ID), so the service
+    always follows up with a GET to return the full RestorePoint.
+    """
     updated_payload = {**RP_PAYLOAD, "displayName": "Renamed RP"}
-    respx.patch(_RP_URL).mock(return_value=httpx.Response(200, json=updated_payload))
+    # Minimal PATCH response (mirrors real Fabric API behaviour)
+    respx.patch(_RP_URL).mock(return_value=httpx.Response(200, json={"id": _RP_ID}))
+    respx.get(_RP_URL).mock(return_value=httpx.Response(200, json=updated_payload))
 
     async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
         result = await restore.update_point(http, _WS_ID, _WH_ID, _RP_ID, name="Renamed RP")
@@ -390,9 +396,10 @@ async def test_update_point_sends_correct_body() -> None:
 
     def _capture(request: Any) -> httpx.Response:
         captured.append(request)
-        return httpx.Response(200, json=RP_PAYLOAD)
+        return httpx.Response(200, json={"id": _RP_ID})
 
     respx.patch(_RP_URL).mock(side_effect=_capture)
+    respx.get(_RP_URL).mock(return_value=httpx.Response(200, json=RP_PAYLOAD))
 
     async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
         await restore.update_point(
@@ -411,9 +418,10 @@ async def test_update_point_description_only() -> None:
 
     def _capture(request: Any) -> httpx.Response:
         captured.append(request)
-        return httpx.Response(200, json=RP_PAYLOAD)
+        return httpx.Response(200, json={"id": _RP_ID})
 
     respx.patch(_RP_URL).mock(side_effect=_capture)
+    respx.get(_RP_URL).mock(return_value=httpx.Response(200, json=RP_PAYLOAD))
 
     async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
         await restore.update_point(http, _WS_ID, _WH_ID, _RP_ID, description="New desc")

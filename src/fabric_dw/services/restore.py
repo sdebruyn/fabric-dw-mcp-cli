@@ -199,13 +199,15 @@ async def update_point(
     if description is not None:
         body["description"] = description
 
-    resp = await http.request(
+    await http.request(
         "PATCH",
         HttpBase.FABRIC,
         f"{_rp_base(workspace_id, warehouse_id)}/{point_id}",
         json=body,
     )
-    return RestorePoint.from_api(resp.json())
+    # Fabric returns a minimal body on PATCH (often just the ID); GET the full
+    # resource to ensure we return a correctly-populated RestorePoint.
+    return await get_point(http, workspace_id, warehouse_id, point_id)
 
 
 async def delete_point(
