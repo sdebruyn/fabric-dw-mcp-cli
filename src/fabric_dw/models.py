@@ -132,3 +132,18 @@ class RunningQuery(_FabricBase):
         if v is None:
             return None
         return str(v)
+
+
+class Connection(_FabricBase):
+    """An active SQL connection on a Fabric Data Warehouse or SQL Analytics Endpoint.
+
+    Sourced from ``sys.dm_exec_connections``.
+    """
+
+    session_id: int | None = None
+    connect_time: datetime
+    client_net_address: str | None = None
+    auth_scheme: str | None = None
+    encrypt_option: str | None = None
+    net_transport: str
+    most_recent_session_id: int | None = None

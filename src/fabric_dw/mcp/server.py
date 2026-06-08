@@ -375,6 +375,26 @@ async def list_running_queries(workspace: str, warehouse: str) -> list[dict[str,
 
 
 @mcp.tool()
+async def list_connections(workspace: str, warehouse: str) -> list[dict[str, Any]]:
+    """Return all active SQL connections on a warehouse or SQL Analytics Endpoint."""
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        item = await _get_resolver().item(workspace, warehouse)
+        if item.connection_string is None:
+            msg = f"warehouse {warehouse!r} has no connection string; cannot query DMVs"
+            raise FabricError(msg)  # noqa: TRY301
+        target = SqlTarget(
+            workspace_id=str(ws_id),
+            database=item.display_name,
+            connection_string=item.connection_string,
+        )
+        result = await queries.list_connections(target, mode=_get_auth_mode())
+    except FabricError as exc:
+        raise _fabric_err(exc) from exc
+    return [c.model_dump(by_alias=True, mode="json") for c in result]
+
+
+@mcp.tool()
 async def kill_session(workspace: str, warehouse: str, session_id: int) -> dict[str, Any]:
     """Terminate a session on a warehouse by session_id."""
     try:

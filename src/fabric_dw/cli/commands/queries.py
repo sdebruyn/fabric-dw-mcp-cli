@@ -71,6 +71,39 @@ async def list_cmd(ctx: CliContext, workspace: str | None, warehouse: str | None
         raise click.ClickException(str(exc)) from exc
 
 
+@queries_group.command("list-connections")
+@click.argument("workspace", required=False, default=None)
+@click.argument("warehouse", required=False, default=None)
+@click.pass_obj
+@_coro
+async def list_connections_cmd(
+    ctx: CliContext, workspace: str | None, warehouse: str | None
+) -> None:
+    """List active SQL connections on WAREHOUSE_OR_ENDPOINT in WORKSPACE."""
+    ws = resolve_workspace_arg(ctx, workspace)
+    wh = resolve_warehouse_arg(ctx, warehouse)
+    try:
+        async with _build_http_client(ctx) as http:
+            ws_id, entry = await _resolve_item(http, ws, wh)
+            if entry.connection_string is None:
+                raise click.ClickException(  # noqa: TRY003
+                    f"Warehouse {entry.display_name!r} has no connection string."
+                )
+            target = SqlTarget(
+                workspace_id=str(ws_id),
+                database=entry.display_name,
+                connection_string=entry.connection_string,
+            )
+            items = await _queries_svc.list_connections(target, mode=ctx.auth)
+            render(
+                [c.model_dump(by_alias=True, mode="json") for c in items],
+                json_output=ctx.json_output,
+                table_title="SQL Connections",
+            )
+    except FabricError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
 @queries_group.command("kill")
 @click.argument("workspace", required=False, default=None)
 @click.argument("warehouse", required=False, default=None)
