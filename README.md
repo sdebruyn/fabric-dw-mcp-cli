@@ -4,7 +4,6 @@
   </a>
 </p>
 <h1 align="center">fabric-dw</h1>
-<p align="center">Python CLI + MCP server for administering Microsoft Fabric Data Warehouses</p>
 
 > Python CLI and MCP server for administering Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
 
