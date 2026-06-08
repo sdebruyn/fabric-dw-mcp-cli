@@ -6,15 +6,18 @@ import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from io import StringIO
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
 from click.testing import CliRunner
+from rich.console import Console
 
 from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._main import cli
+from fabric_dw.cli.commands.sql_endpoints import _render_refresh_table
 from fabric_dw.exceptions import NotFound
 from fabric_dw.models import TableSyncStatus, WarehouseKind
 
@@ -401,3 +404,16 @@ class TestEndpointsRefresh:
         ):
             result = runner.invoke(cli, ["sql-endpoints", "refresh", WS_GUID, EP_GUID])
         assert result.exit_code != 0
+
+
+class TestRenderRefreshTable:
+    """Unit tests for the _render_refresh_table helper."""
+
+    def test_empty_list_does_not_crash(self) -> None:
+        """_render_refresh_table([]) must not raise and must render an empty table."""
+        buf = StringIO()
+        con = Console(file=buf, width=120)
+        _render_refresh_table([], console=con)
+        output = buf.getvalue()
+        # The title must still appear even with no rows.
+        assert "Metadata Refresh Results" in output

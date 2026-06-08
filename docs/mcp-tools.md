@@ -165,8 +165,9 @@ Refresh metadata for a SQL analytics endpoint by syncing from the underlying Lak
 
 - `workspace` (`str`) — workspace name or GUID.
 - `endpoint` (`str`) — endpoint name or GUID.
+- `recreate_tables` (`bool`, default `False`) — drop and recreate all tables during the refresh. Use to resolve inconsistencies or force a clean rebuild. DESTRUCTIVE — use with caution.
 
-**Returns:** `dict` — the raw LRO completion payload from the Fabric API.
+**Returns:** `list[TableSyncStatus]` — array of per-table sync results, each with `tableName`, `status`, `startDateTime`, `endDateTime`, `lastSuccessfulSyncDateTime`, and `error`.
 
 ---
 

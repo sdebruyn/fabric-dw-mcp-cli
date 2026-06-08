@@ -130,8 +130,6 @@ def _render_refresh_table(
             if s.error.message:
                 parts.append(s.error.message)
             error_text = ": ".join(parts)
-            if len(error_text) > _ERROR_MAX_LEN:
-                error_text = error_text[: _ERROR_MAX_LEN - 1] + "…"
 
         table.add_row(
             s.table_name,
