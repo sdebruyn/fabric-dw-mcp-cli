@@ -422,9 +422,10 @@ async def test_create_no_location_header_and_empty_body_raises_fabric_server_err
 
         client = await _make_client()
         async with client:
-            with patch("asyncio.sleep"):  # skip actual sleeps in unit tests
+            with patch("fabric_dw.services.warehouses.asyncio.sleep") as mock_sleep:
                 with pytest.raises(FabricServerError, match="204"):
                     await warehouses.create(client, _WORKSPACE_ID, "SalesWarehouse")
+        mock_sleep.assert_called()  # retries must have slept
 
     # 1 original + 3 retries = 4 total POST calls
     assert post_route.call_count == 4
@@ -460,8 +461,9 @@ async def test_create_empty_2xx_retries_then_succeeds() -> None:
 
         client = await _make_client()
         async with client:
-            with patch("asyncio.sleep"):  # skip actual sleeps in unit tests
+            with patch("fabric_dw.services.warehouses.asyncio.sleep") as mock_sleep:
                 result = await warehouses.create(client, _WORKSPACE_ID, "SalesWarehouse")
+        mock_sleep.assert_called()  # retries must have slept
 
     assert isinstance(result, Warehouse)
     assert result.id == new_wh_id
@@ -491,7 +493,7 @@ async def test_create_4xx_is_not_retried() -> None:
             # The http_client only raises for 401, 403, 404, 5xx — a bare 400 is returned.
             # warehouses.create will try to parse the body (no Location, no id), but since
             # the status is 4xx the retry must NOT fire.
-            with patch("asyncio.sleep") as mock_sleep:
+            with patch("fabric_dw.services.warehouses.asyncio.sleep") as mock_sleep:
                 with pytest.raises(FabricServerError):
                     await warehouses.create(client, _WORKSPACE_ID, "SalesWarehouse")
 
