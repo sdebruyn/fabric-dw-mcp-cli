@@ -508,13 +508,33 @@ async def test_set_retention_patches_with_retention_days_only() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("days", [0, -1, 3654, -100])
+@pytest.mark.parametrize("days", [0, -1, -100])
 async def test_set_retention_out_of_range_raises_value_error(days: int) -> None:
-    """set_retention should raise ValueError when days is outside 1..3653."""
+    """set_retention should raise ValueError when days < 1."""
     client = await _make_client()
     async with client:
         with pytest.raises(ValueError, match="days"):
             await audit.set_retention(client, _WS_ID, _WH_ID, days=days)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("days", [1, 3650])
+async def test_set_retention_boundary_values_are_accepted(days: int) -> None:
+    """set_retention should accept boundary values: 1 (minimum) and 3650 (large plausible value).
+
+    The API does not document an upper bound, so any value >= 1 is valid client-side.
+    """
+    updated = AUDIT_SETTINGS_PAYLOAD.copy()
+    updated["retentionDays"] = days
+
+    with respx.mock:
+        respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=updated))
+        client = await _make_client()
+        async with client:
+            result = await audit.set_retention(client, _WS_ID, _WH_ID, days=days)
+
+    assert result.retention_days == days
 
 
 @pytest.mark.asyncio

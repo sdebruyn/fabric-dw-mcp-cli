@@ -427,7 +427,7 @@ async def set_audit_retention(workspace: str, warehouse: str, days: int) -> dict
     Args:
         workspace: Workspace name or GUID.
         warehouse: Warehouse name or GUID.
-        days: Retention period in days (1-3653; 3653 is approximately 10 years).
+        days: Retention period in days (>= 1). The API enforces its own upper bound.
     """
     try:
         ws_id = await _get_resolver().workspace_id(workspace)

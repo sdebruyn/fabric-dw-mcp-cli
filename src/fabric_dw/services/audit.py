@@ -120,9 +120,6 @@ async def disable(
     return await get_settings(http, workspace_id, warehouse_id)
 
 
-_MAX_RETENTION_DAYS = 3653  # ~10 years — Fabric documented upper bound
-
-
 async def set_retention(
     http: FabricHttpClient,
     workspace_id: UUID,
@@ -135,22 +132,26 @@ async def set_retention(
     Audit must already be enabled.  If it is disabled, this function raises
     :class:`ValueError` with a hint to run ``audit enable`` first.
 
+    The Fabric REST API does not document an upper bound for ``retentionDays``.
+    Only the lower bound (>= 1) is enforced here; the API will reject any value
+    it considers out of range and surface an appropriate error.
+
     Args:
         http: Authenticated Fabric HTTP client.
         workspace_id: GUID of the Fabric workspace.
         warehouse_id: GUID of the Data Warehouse.
-        days: Retention period in days.  Must be between 1 and 3653 (inclusive).
+        days: Retention period in days.  Must be >= 1.
 
     Returns:
         The fresh :class:`~fabric_dw.models.AuditSettings` after the update.
 
     Raises:
-        ValueError: If *days* is outside ``1..3653``, or if audit is currently
+        ValueError: If *days* is less than 1, or if audit is currently
             disabled (enable it first with :func:`enable`).
         PermissionDenied: If the caller lacks the required permission (HTTP 403).
     """
-    if not (1 <= days <= _MAX_RETENTION_DAYS):
-        msg = f"days must be between 1 and {_MAX_RETENTION_DAYS}; got {days}"
+    if days < 1:
+        msg = f"days must be >= 1; got {days}"
         raise ValueError(msg)
 
     # Pre-check: refuse silently-no-op PATCH when audit is disabled.

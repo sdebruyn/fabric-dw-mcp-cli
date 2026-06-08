@@ -119,7 +119,7 @@ async def disable_cmd(ctx: CliContext, workspace: str | None, warehouse: str | N
     "--days",
     required=True,
     type=int,
-    help="Retention period in days (1-3653). Does not change the audit enabled/disabled state.",
+    help="Retention period in days (>= 1). Does not change the audit enabled/disabled state.",
 )
 @click.pass_obj
 @_coro
