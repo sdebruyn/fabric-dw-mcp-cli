@@ -279,7 +279,7 @@ async def test_refresh_metadata_lro_failed_raises_fabric_server_error() -> None:
 
 
 # ---------------------------------------------------------------------------
-# list_all_workspaces (sql_endpoints)
+# list_all_workspaces for sql_endpoints
 # ---------------------------------------------------------------------------
 
 
@@ -335,11 +335,13 @@ async def test_list_all_workspaces_endpoints_aggregates_across_workspaces() -> N
         ),
         patch(
             "fabric_dw.services.sql_endpoints.list_endpoints",
-            new=AsyncMock(side_effect=[
-                [ep_a],
-                [ep_b],
-                [ep_c],
-            ]),
+            new=AsyncMock(
+                side_effect=[
+                    [ep_a],
+                    [ep_b],
+                    [ep_c],
+                ]
+            ),
         ),
     ):
         result = await list_all_workspaces(mock_http)
@@ -369,11 +371,13 @@ async def test_list_all_workspaces_endpoints_skips_permission_denied() -> None:
         ),
         patch(
             "fabric_dw.services.sql_endpoints.list_endpoints",
-            new=AsyncMock(side_effect=[
-                [ep_a],
-                PermissionDenied("no access"),
-                [ep_c],
-            ]),
+            new=AsyncMock(
+                side_effect=[
+                    [ep_a],
+                    PermissionDenied("no access"),
+                    [ep_c],
+                ]
+            ),
         ),
     ):
         result = await list_all_workspaces(mock_http)
@@ -403,11 +407,13 @@ async def test_list_all_workspaces_endpoints_skips_not_found() -> None:
         ),
         patch(
             "fabric_dw.services.sql_endpoints.list_endpoints",
-            new=AsyncMock(side_effect=[
-                [ep_a],
-                NotFound("workspace gone"),
-                [ep_c],
-            ]),
+            new=AsyncMock(
+                side_effect=[
+                    [ep_a],
+                    NotFound("workspace gone"),
+                    [ep_c],
+                ]
+            ),
         ),
     ):
         result = await list_all_workspaces(mock_http)

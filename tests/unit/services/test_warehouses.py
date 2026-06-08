@@ -539,11 +539,13 @@ async def test_list_all_workspaces_aggregates_across_workspaces() -> None:
         ),
         patch(
             "fabric_dw.services.warehouses.list_warehouses",
-            new=AsyncMock(side_effect=[
-                [wh_a],
-                [wh_b],
-                [wh_c],
-            ]),
+            new=AsyncMock(
+                side_effect=[
+                    [wh_a],
+                    [wh_b],
+                    [wh_c],
+                ]
+            ),
         ),
     ):
         result = await warehouses.list_all_workspaces(mock_http)
@@ -571,11 +573,13 @@ async def test_list_all_workspaces_skips_permission_denied() -> None:
         ),
         patch(
             "fabric_dw.services.warehouses.list_warehouses",
-            new=AsyncMock(side_effect=[
-                [wh_a],
-                PermissionDenied("no access"),
-                [wh_c],
-            ]),
+            new=AsyncMock(
+                side_effect=[
+                    [wh_a],
+                    PermissionDenied("no access"),
+                    [wh_c],
+                ]
+            ),
         ),
     ):
         result = await warehouses.list_all_workspaces(mock_http)
@@ -603,11 +607,13 @@ async def test_list_all_workspaces_skips_not_found() -> None:
         ),
         patch(
             "fabric_dw.services.warehouses.list_warehouses",
-            new=AsyncMock(side_effect=[
-                [wh_a],
-                NotFound("workspace gone"),
-                [wh_c],
-            ]),
+            new=AsyncMock(
+                side_effect=[
+                    [wh_a],
+                    NotFound("workspace gone"),
+                    [wh_c],
+                ]
+            ),
         ),
     ):
         result = await warehouses.list_all_workspaces(mock_http)

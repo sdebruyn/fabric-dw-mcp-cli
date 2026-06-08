@@ -170,11 +170,18 @@ async def set_workspace_collation(workspace: str, collation: str) -> dict[str, A
 
 
 @mcp.tool()
-async def list_warehouses(workspace: str) -> list[dict[str, Any]]:
-    """List all warehouses and SQL analytics endpoints in a workspace."""
+async def list_warehouses(workspace: str, all_workspaces: bool = False) -> list[dict[str, Any]]:  # noqa: FBT001, FBT002
+    """List all warehouses and SQL analytics endpoints in a workspace.
+
+    When *all_workspaces* is ``True``, ignore *workspace* and aggregate results
+    across every workspace the caller can see.
+    """
     try:
-        ws_id = await _get_resolver().workspace_id(workspace)
-        result = await warehouses.list_warehouses(_get_http(), ws_id)
+        if all_workspaces:
+            result = await warehouses.list_all_workspaces(_get_http())
+        else:
+            ws_id = await _get_resolver().workspace_id(workspace)
+            result = await warehouses.list_warehouses(_get_http(), ws_id)
     except FabricError as exc:
         raise _fabric_err(exc) from exc
     return [wh.model_dump(by_alias=True, mode="json") for wh in result]
@@ -259,11 +266,18 @@ async def takeover_warehouse(workspace: str, warehouse: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def list_sql_endpoints(workspace: str) -> list[dict[str, Any]]:
-    """List all SQL analytics endpoints in a workspace."""
+async def list_sql_endpoints(workspace: str, all_workspaces: bool = False) -> list[dict[str, Any]]:  # noqa: FBT001, FBT002
+    """List all SQL analytics endpoints in a workspace.
+
+    When *all_workspaces* is ``True``, ignore *workspace* and aggregate results
+    across every workspace the caller can see.
+    """
     try:
-        ws_id = await _get_resolver().workspace_id(workspace)
-        result = await sql_endpoints.list_endpoints(_get_http(), ws_id)
+        if all_workspaces:
+            result = await sql_endpoints.list_all_workspaces(_get_http())
+        else:
+            ws_id = await _get_resolver().workspace_id(workspace)
+            result = await sql_endpoints.list_endpoints(_get_http(), ws_id)
     except FabricError as exc:
         raise _fabric_err(exc) from exc
     return [ep.model_dump(by_alias=True, mode="json") for ep in result]

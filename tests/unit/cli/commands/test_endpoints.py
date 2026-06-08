@@ -145,13 +145,16 @@ class TestEndpointsListAllWorkspaces:
     def test_list_with_all_workspaces_flag(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         from fabric_dw.models import Warehouse, WarehouseKind  # noqa: PLC0415
-        ep = Warehouse.model_validate({
-            "id": EP_GUID,
-            "displayName": "SalesLakehouse",
-            "workspaceId": WS_GUID,
-            "kind": WarehouseKind.SQL_ENDPOINT,
-            "connectionString": "lakehouse-sql-ep.datawarehouse.fabric.microsoft.com",
-        })
+
+        ep = Warehouse.model_validate(
+            {
+                "id": EP_GUID,
+                "displayName": "SalesLakehouse",
+                "workspaceId": WS_GUID,
+                "kind": WarehouseKind.SQL_ENDPOINT,
+                "connectionString": "lakehouse-sql-ep.datawarehouse.fabric.microsoft.com",
+            }
+        )
         mock_http = AsyncMock()
         with (
             patch(
@@ -163,9 +166,12 @@ class TestEndpointsListAllWorkspaces:
                 new=AsyncMock(return_value=[ep]),
             ),
         ):
-            result = runner.invoke(cli, ["endpoints", "list", "-A"])
+            result = runner.invoke(cli, ["--json", "endpoints", "list", "-A"])
         assert result.exit_code == 0
-        assert "workspaceId" in result.output
+        parsed = json.loads(result.output)
+        assert isinstance(parsed, list)
+        assert len(parsed) == 1
+        assert parsed[0]["workspaceId"] == WS_GUID
 
     def test_list_both_workspace_and_all_workspaces_errors(
         self, runner: CliRunner, cache_env: Path

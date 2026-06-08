@@ -270,25 +270,17 @@ class TestWarehousesListAllWorkspaces:
 
     def test_list_with_all_workspaces_flag(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
-        wh_item = {
-            "id": WH_GUID,
-            "displayName": "SalesWarehouse",
-            "description": "desc",
-            "type": "Warehouse",
-            "workspaceId": WS_GUID,
-            "kind": "Warehouse",
-            "connectionString": "srv.datawarehouse.fabric.microsoft.com",
-            "defaultCollation": None,
-            "createdDate": None,
-        }
         from fabric_dw.models import Warehouse, WarehouseKind  # noqa: PLC0415
-        wh = Warehouse.model_validate({
-            "id": WH_GUID,
-            "displayName": "SalesWarehouse",
-            "workspaceId": WS_GUID,
-            "kind": WarehouseKind.WAREHOUSE,
-            "connectionString": "srv.datawarehouse.fabric.microsoft.com",
-        })
+
+        wh = Warehouse.model_validate(
+            {
+                "id": WH_GUID,
+                "displayName": "SalesWarehouse",
+                "workspaceId": WS_GUID,
+                "kind": WarehouseKind.WAREHOUSE,
+                "connectionString": "srv.datawarehouse.fabric.microsoft.com",
+            }
+        )
         mock_http = AsyncMock()
         with (
             patch(
@@ -300,9 +292,12 @@ class TestWarehousesListAllWorkspaces:
                 new=AsyncMock(return_value=[wh]),
             ),
         ):
-            result = runner.invoke(cli, ["warehouses", "list", "-A"])
+            result = runner.invoke(cli, ["--json", "warehouses", "list", "-A"])
         assert result.exit_code == 0
-        assert "workspaceId" in result.output
+        parsed = json.loads(result.output)
+        assert isinstance(parsed, list)
+        assert len(parsed) == 1
+        assert parsed[0]["workspaceId"] == WS_GUID
 
     def test_list_both_workspace_and_all_workspaces_errors(
         self, runner: CliRunner, cache_env: Path
