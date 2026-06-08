@@ -70,9 +70,7 @@ def _tag_binary_columns(
         f"{col}{_BINARY_SUFFIX}" if i in binary_indices else col
         for i, col in enumerate(raw_columns)
     ]
-    serialised_rows: list[list[object]] = [
-        [_serialize_value(v) for v in row] for row in rows
-    ]
+    serialised_rows: list[list[object]] = [[_serialize_value(v) for v in row] for row in rows]
     return tagged_cols, serialised_rows
 
 

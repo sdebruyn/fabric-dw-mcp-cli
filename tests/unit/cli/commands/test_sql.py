@@ -211,9 +211,7 @@ class TestSqlExec:
 class TestSqlExecErrors:
     """sql exec — error paths."""
 
-    def test_exec_no_query_or_file_is_error(
-        self, runner: CliRunner, cache_env: Path
-    ) -> None:
+    def test_exec_no_query_or_file_is_error(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         result = runner.invoke(cli, ["sql", "exec", WS_GUID, WH_GUID])
         assert result.exit_code != 0
@@ -255,9 +253,7 @@ class TestSqlExecErrors:
             )
         assert result.exit_code != 0
 
-    def test_exec_not_found_returns_nonzero(
-        self, runner: CliRunner, cache_env: Path
-    ) -> None:
+    def test_exec_not_found_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
         with (
