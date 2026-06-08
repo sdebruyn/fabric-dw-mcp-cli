@@ -8,7 +8,7 @@ from io import StringIO
 import pytest
 from rich.console import Console
 
-from fabric_dw.cli._render import confirm, render
+from fabric_dw.cli._render import _cell, confirm, render
 
 
 class TestRenderJson:
@@ -90,6 +90,59 @@ class TestRenderTable:
         output = self._render_to_string([])
         # Should produce something (empty table) without crashing
         assert output is not None
+
+
+class TestCellHelper:
+    """_cell() converts values to Rich-markup strings for table cells."""
+
+    def test_none_renders_as_dim_null(self) -> None:
+        assert _cell(None) == "[dim]NULL[/dim]"
+
+    def test_string_value_is_unchanged(self) -> None:
+        assert _cell("hello") == "hello"
+
+    def test_integer_value_is_stringified(self) -> None:
+        assert _cell(42) == "42"
+
+    def test_literal_string_none_is_not_affected(self) -> None:
+        # The actual string "None" must NOT be changed — only Python None
+        assert _cell("None") == "None"
+
+
+class TestNullRendering:
+    """NULL values in table and panel output are rendered as dim 'NULL', not 'None'."""
+
+    def _render_to_string(self, data: object) -> str:
+        sio = StringIO()
+        console = Console(file=sio, width=120, highlight=False, no_color=True)
+        render(data, json_output=False, console=console)
+        return sio.getvalue()
+
+    def test_none_in_table_cell_renders_null(self) -> None:
+        data = [{"id": "abc", "score": None}]
+        output = self._render_to_string(data)
+        assert "NULL" in output
+        assert "None" not in output
+
+    def test_none_in_panel_value_renders_null(self) -> None:
+        data = {"id": "abc", "score": None}
+        output = self._render_to_string(data)
+        assert "NULL" in output
+        assert "None" not in output
+
+    def test_none_in_json_output_stays_null(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """JSON serialisation must NOT be affected — null stays null."""
+        data = [{"id": "abc", "score": None}]
+        render(data, json_output=True)
+        captured = capsys.readouterr()
+        parsed = json.loads(captured.out)
+        assert parsed[0]["score"] is None
+
+    def test_literal_string_none_not_changed_in_table(self) -> None:
+        """A real string value 'None' must pass through unchanged."""
+        data = [{"label": "None"}]
+        output = self._render_to_string(data)
+        assert "None" in output
 
 
 class TestConfirm:
