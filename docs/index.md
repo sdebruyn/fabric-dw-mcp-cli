@@ -2,6 +2,10 @@
 title: Home
 ---
 
+<p align="center">
+  <img src="assets/logo.svg" alt="fabric-dw" width="180" />
+</p>
+
 # fabric-dw
 
 > Python CLI + MCP server for Microsoft Fabric Data Warehouse administration.
