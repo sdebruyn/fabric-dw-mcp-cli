@@ -691,8 +691,8 @@ async def test_update_pool_toggle_is_default() -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_pool_classifier_values_only() -> None:
-    """update_pool replaces classifier values while preserving classifier type."""
+async def test_update_pool_classifier_both_fields() -> None:
+    """update_pool replaces classifier type and values when both are supplied."""
     with respx.mock:
         respx.get(_CONFIG_URL).mock(
             side_effect=[
@@ -703,7 +703,13 @@ async def test_update_pool_classifier_values_only() -> None:
         patch_route = respx.patch(_CONFIG_URL).mock(return_value=httpx.Response(200))
         client = await _make_client()
         async with client:
-            await sql_pools.update_pool(client, _WS_ID, "ETL", classifier_values=["NewApp"])
+            await sql_pools.update_pool(
+                client,
+                _WS_ID,
+                "ETL",
+                classifier_type="Application Name",
+                classifier_values=["NewApp"],
+            )
 
     sent_body = json.loads(patch_route.calls[0].request.content)
     etl = next(p for p in sent_body["customSQLPools"] if p["name"] == "ETL")
@@ -791,3 +797,51 @@ async def test_reset_pools_preserves_disabled_state() -> None:
     sent_body = json.loads(patch_route.calls[0].request.content)
     assert sent_body["customSQLPools"] == []
     assert sent_body["customSQLPoolsEnabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_reset_pools_404_returns_sentinel_without_patch() -> None:
+    """reset_pools returns an empty sentinel config when the workspace 404s (never provisioned)."""
+    with respx.mock:
+        get_route = respx.get(_CONFIG_URL).mock(
+            return_value=httpx.Response(404, json={"error": "not found"})
+        )
+        patch_route = respx.patch(_CONFIG_URL).mock(return_value=httpx.Response(200))
+        client = await _make_client()
+        async with client:
+            result = await sql_pools.reset_pools(client, _WS_ID)
+
+    assert get_route.call_count == 1
+    assert not patch_route.called
+    assert isinstance(result, SqlPoolsConfiguration)
+    assert result.custom_sql_pools_enabled is False
+    assert result.custom_sql_pools == []
+
+
+# ---------------------------------------------------------------------------
+# update_pool — classifier partial validation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_update_pool_classifier_type_without_values_raises() -> None:
+    """update_pool raises ValueError when classifier_type is given but classifier_values is not."""
+    with respx.mock:
+        respx.get(_CONFIG_URL).mock(return_value=httpx.Response(200, json=POOLS_ENABLED_PAYLOAD))
+        client = await _make_client()
+        async with client:
+            with pytest.raises(ValueError, match="classifier_type and classifier_values"):
+                await sql_pools.update_pool(
+                    client, _WS_ID, "ETL", classifier_type="Application Name"
+                )
+
+
+@pytest.mark.asyncio
+async def test_update_pool_classifier_values_without_type_raises() -> None:
+    """update_pool raises ValueError when classifier_values is given but classifier_type is not."""
+    with respx.mock:
+        respx.get(_CONFIG_URL).mock(return_value=httpx.Response(200, json=POOLS_ENABLED_PAYLOAD))
+        client = await _make_client()
+        async with client:
+            with pytest.raises(ValueError, match="classifier_type and classifier_values"):
+                await sql_pools.update_pool(client, _WS_ID, "ETL", classifier_values=["App1"])

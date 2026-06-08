@@ -198,6 +198,10 @@ async def create_pool(
     list back.  Raises :class:`~fabric_dw.exceptions.AlreadyExists` if a pool
     with the same name already exists.
 
+    Note: not locked. Two simultaneous create_pool calls with the same name
+    will both pass the duplicate check and the second's PATCH will overwrite
+    the first.
+
     Args:
         http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
         workspace_id: The Fabric workspace UUID.
@@ -241,6 +245,10 @@ async def update_pool(
     provided field overrides, then PATCHes the full list back.  Fields not
     supplied are left unchanged.
 
+    Note: setting is_default=True does NOT automatically clear is_default on
+    other pools. The caller must explicitly unset it on the previous default
+    if the API rejects multiple defaults.
+
     Args:
         http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
         workspace_id: The Fabric workspace UUID.
@@ -255,9 +263,15 @@ async def update_pool(
         The updated :class:`~fabric_dw.models.SqlPoolsConfiguration`.
 
     Raises:
+        ValueError: If exactly one of ``classifier_type`` / ``classifier_values``
+            is supplied without the other (both must be provided together, or
+            neither).
         NotFound: If no pool named ``name`` exists.
         PermissionDenied: If the caller does not have the workspace admin role.
     """
+    if (classifier_type is None) != (classifier_values is None):
+        msg = "classifier_type and classifier_values must be provided together (or neither)"
+        raise ValueError(msg)
     current = await get_configuration(http, workspace_id)
     existing = next((p for p in current.custom_sql_pools if p.name == name), None)
     if existing is None:
@@ -342,17 +356,28 @@ async def reset_pools(
     Fetches the current configuration, replaces ``customSQLPools`` with an
     empty list, and PATCHes.  ``customSQLPoolsEnabled`` is left unchanged.
 
+    If the workspace has never been provisioned (GET returns 404), the
+    endpoint is already in the desired empty state.  A sentinel
+    ``SqlPoolsConfiguration(custom_sql_pools_enabled=False, custom_sql_pools=[])``
+    is returned without making a PATCH request.
+
     Args:
         http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
         workspace_id: The Fabric workspace UUID.
 
     Returns:
-        The updated :class:`~fabric_dw.models.SqlPoolsConfiguration`.
+        The updated :class:`~fabric_dw.models.SqlPoolsConfiguration` (or the
+        sentinel configuration when the workspace was not provisioned).
 
     Raises:
         PermissionDenied: If the caller does not have the workspace admin role.
     """
-    current = await get_configuration(http, workspace_id)
+    try:
+        current = await get_configuration(http, workspace_id)
+    except NotFound:
+        return SqlPoolsConfiguration.model_validate(
+            {"customSQLPoolsEnabled": False, "customSQLPools": []}
+        )
     new_config = SqlPoolsConfiguration.model_validate(
         {
             "customSQLPoolsEnabled": current.custom_sql_pools_enabled,

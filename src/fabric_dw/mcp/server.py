@@ -1474,6 +1474,10 @@ async def reset_sql_pools(workspace: str) -> dict[str, Any]:
     """Clear all SQL pools for a workspace, preserving the enabled/disabled state.
 
     Requires workspace admin role.  This tool targets a **beta / preview** API.
+
+    CAUTION: this permanently removes ALL pool definitions in the workspace. The
+    configuration's enabled-state is preserved, but every pool is wiped. Use only
+    when the user explicitly requests a reset.
     """
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
