@@ -69,6 +69,7 @@ def _make_request_history_row() -> ExecRequestHistory:
             "session_id": 42,
             "total_elapsed_time_ms": 1500,
             "submit_time": _NOW.isoformat(),
+            "row_count": 0,
         }
     )
 
@@ -99,6 +100,7 @@ def _make_session_history_row() -> ExecSessionHistory:
             "transaction_isolation_level": 2,
             "lock_timeout": -1,
             "deadlock_priority": 0,
+            "original_security_id": b"\x01\x00",
         }
     )
 

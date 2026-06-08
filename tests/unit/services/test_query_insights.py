@@ -327,7 +327,7 @@ _SESS_HIST_ROW = (
     2,  # transaction_isolation_level
     -1,  # lock_timeout
     0,  # deadlock_priority
-    None,  # original_security_id
+    b"\x01\x00",  # original_security_id
     "MyWarehouse",  # database_name
 )
 
