@@ -139,6 +139,47 @@ class TestEndpointsList:
         assert isinstance(parsed, list)
 
 
+class TestEndpointsListAllWorkspaces:
+    """endpoints list --all-workspaces / -A."""
+
+    def test_list_with_all_workspaces_flag(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        from fabric_dw.models import Warehouse, WarehouseKind  # noqa: PLC0415
+        ep = Warehouse.model_validate({
+            "id": EP_GUID,
+            "displayName": "SalesLakehouse",
+            "workspaceId": WS_GUID,
+            "kind": WarehouseKind.SQL_ENDPOINT,
+            "connectionString": "lakehouse-sql-ep.datawarehouse.fabric.microsoft.com",
+        })
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.endpoints._build_clients",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.services.sql_endpoints.list_all_workspaces",
+                new=AsyncMock(return_value=[ep]),
+            ),
+        ):
+            result = runner.invoke(cli, ["endpoints", "list", "-A"])
+        assert result.exit_code == 0
+        assert "workspaceId" in result.output
+
+    def test_list_both_workspace_and_all_workspaces_errors(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with patch(
+            "fabric_dw.cli.commands.endpoints._build_clients",
+            new=_make_cm(mock_http, None),
+        ):
+            result = runner.invoke(cli, ["endpoints", "list", WS_GUID, "-A"])
+        assert result.exit_code != 0
+
+
 class TestEndpointsGet:
     """endpoints get — happy path and 404."""
 
