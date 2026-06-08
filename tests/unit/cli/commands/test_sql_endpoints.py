@@ -6,17 +6,20 @@ import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from io import StringIO
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
 from click.testing import CliRunner
+from rich.console import Console
 
 from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._main import cli
+from fabric_dw.cli.commands.sql_endpoints import _render_refresh_table
 from fabric_dw.exceptions import NotFound
-from fabric_dw.models import WarehouseKind
+from fabric_dw.models import TableSyncStatus, WarehouseKind
 
 WS_GUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 EP_GUID = "e5f6a7b8-c9d0-1234-ef01-234567890abc"
@@ -223,30 +226,36 @@ class TestEndpointsGet:
         assert result.exit_code != 0
 
 
+def _make_table_sync_statuses() -> list[TableSyncStatus]:
+    return [
+        TableSyncStatus.model_validate(
+            {
+                "tableName": "Table1",
+                "status": "Success",
+                "startDateTime": "2025-08-08T10:31:22.270Z",
+                "endDateTime": "2025-08-08T10:36:54.965Z",
+                "lastSuccessfulSyncDateTime": "2025-08-08T10:36:54.965Z",
+            }
+        ),
+        TableSyncStatus.model_validate(
+            {
+                "tableName": "Table2",
+                "status": "Failure",
+                "startDateTime": "2025-08-08T10:31:22.270Z",
+                "endDateTime": "2025-08-08T10:43:02.532Z",
+                "error": {"errorCode": "TokenError", "message": "Auth failed"},
+                "lastSuccessfulSyncDateTime": "2025-08-07T10:44:27.263Z",
+            }
+        ),
+    ]
+
+
 class TestEndpointsRefresh:
-    """endpoints refresh — happy path (LRO)."""
+    """endpoints refresh — happy path and error cases."""
 
     def test_refresh_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
-        mock_http.request = AsyncMock(
-            return_value=_make_response(
-                202,
-                json.dumps({}),
-            )
-        )
-        mock_http.poll_operation = AsyncMock(
-            return_value={"status": "Succeeded", "percentComplete": 100}
-        )
-
-        _make_response_with_location = MagicMock()
-        _make_response_with_location.status_code = 202
-        _make_response_with_location.json = MagicMock(return_value={})
-        _make_response_with_location.headers = {
-            "Location": "https://api.fabric.microsoft.com/v1/operations/op-123"
-        }
-        _make_response_with_location.text = "{}"
-        mock_http.request = AsyncMock(return_value=_make_response_with_location)
 
         with (
             patch(
@@ -257,9 +266,128 @@ class TestEndpointsRefresh:
                 "fabric_dw.cli.commands.sql_endpoints._resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
+            patch(
+                "fabric_dw.services.sql_endpoints.refresh_metadata",
+                new=AsyncMock(return_value=_make_table_sync_statuses()),
+            ),
         ):
             result = runner.invoke(cli, ["sql-endpoints", "refresh", WS_GUID, EP_GUID])
         assert result.exit_code == 0
+
+    def test_refresh_default_renders_rich_table(self, runner: CliRunner, cache_env: Path) -> None:
+        """Without --json, the output must contain the table name columns."""
+        _ = cache_env
+        mock_http = AsyncMock()
+
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_endpoints._build_clients",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_endpoints._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.sql_endpoints.refresh_metadata",
+                new=AsyncMock(return_value=_make_table_sync_statuses()),
+            ),
+        ):
+            result = runner.invoke(cli, ["sql-endpoints", "refresh", WS_GUID, EP_GUID])
+        assert result.exit_code == 0
+        # Rich table output must not be valid JSON
+        try:
+            json.loads(result.output)
+            is_json = True
+        except (json.JSONDecodeError, ValueError):
+            is_json = False
+        assert not is_json, "Expected Rich table output, got JSON"
+
+    def test_refresh_json_flag_emits_json(self, runner: CliRunner, cache_env: Path) -> None:
+        """With --json, output must be a valid JSON array."""
+        _ = cache_env
+        mock_http = AsyncMock()
+
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_endpoints._build_clients",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_endpoints._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.sql_endpoints.refresh_metadata",
+                new=AsyncMock(return_value=_make_table_sync_statuses()),
+            ),
+        ):
+            result = runner.invoke(cli, ["--json", "sql-endpoints", "refresh", WS_GUID, EP_GUID])
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert isinstance(parsed, list)
+        assert len(parsed) == 2
+        assert parsed[0]["tableName"] == "Table1"
+        assert parsed[0]["status"] == "Success"
+
+    def test_refresh_recreate_tables_flag_passed_to_service(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """--recreate-tables must call refresh_metadata with recreate_tables=True."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_refresh = AsyncMock(return_value=_make_table_sync_statuses())
+
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_endpoints._build_clients",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_endpoints._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.sql_endpoints.refresh_metadata",
+                new=mock_refresh,
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["sql-endpoints", "refresh", "--recreate-tables", WS_GUID, EP_GUID],
+            )
+        assert result.exit_code == 0
+        mock_refresh.assert_called_once()
+        _, kwargs = mock_refresh.call_args
+        assert kwargs.get("recreate_tables") is True
+
+    def test_refresh_no_recreate_tables_default_false(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """Without --recreate-tables, service must be called with recreate_tables=False."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_refresh = AsyncMock(return_value=_make_table_sync_statuses())
+
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_endpoints._build_clients",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_endpoints._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.sql_endpoints.refresh_metadata",
+                new=mock_refresh,
+            ),
+        ):
+            result = runner.invoke(cli, ["sql-endpoints", "refresh", WS_GUID, EP_GUID])
+        assert result.exit_code == 0
+        mock_refresh.assert_called_once()
+        _, kwargs = mock_refresh.call_args
+        assert kwargs.get("recreate_tables") is False
 
     def test_refresh_not_found_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -276,3 +404,16 @@ class TestEndpointsRefresh:
         ):
             result = runner.invoke(cli, ["sql-endpoints", "refresh", WS_GUID, EP_GUID])
         assert result.exit_code != 0
+
+
+class TestRenderRefreshTable:
+    """Unit tests for the _render_refresh_table helper."""
+
+    def test_empty_list_does_not_crash(self) -> None:
+        """_render_refresh_table([]) must not raise and must render an empty table."""
+        buf = StringIO()
+        con = Console(file=buf, width=120)
+        _render_refresh_table([], console=con)
+        output = buf.getvalue()
+        # The title must still appear even with no rows.
+        assert "Metadata Refresh Results" in output

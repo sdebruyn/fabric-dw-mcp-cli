@@ -33,6 +33,7 @@ from fabric_dw.exceptions import NotFound
 from fabric_dw.models import (
     AuditSettings,
     RunningQuery,
+    TableSyncStatus,
     Warehouse,
     WarehouseKind,
     WarehouseSnapshot,
@@ -621,9 +622,33 @@ async def test_get_sql_endpoint_happy_path() -> None:
     assert result["kind"] == "SQLEndpoint"
 
 
+def _make_table_sync_statuses() -> list[TableSyncStatus]:
+    return [
+        TableSyncStatus.model_validate(
+            {
+                "tableName": "Table1",
+                "status": "Success",
+                "startDateTime": "2025-08-08T10:31:22.270Z",
+                "endDateTime": "2025-08-08T10:36:54.965Z",
+                "lastSuccessfulSyncDateTime": "2025-08-08T10:36:54.965Z",
+            }
+        ),
+        TableSyncStatus.model_validate(
+            {
+                "tableName": "Table2",
+                "status": "Failure",
+                "startDateTime": "2025-08-08T10:31:22.270Z",
+                "endDateTime": "2025-08-08T10:43:02.532Z",
+                "error": {"errorCode": "TokenError", "message": "Auth failed"},
+                "lastSuccessfulSyncDateTime": "2025-08-07T10:44:27.263Z",
+            }
+        ),
+    ]
+
+
 @pytest.mark.asyncio
 async def test_refresh_sql_endpoint_metadata_happy_path() -> None:
-    """refresh_sql_endpoint_metadata resolves workspace + endpoint and returns a dict."""
+    """refresh_sql_endpoint_metadata resolves workspace + endpoint and returns a list of dicts."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     ep_id = UUID("e5f6a7b8-c9d0-1234-ef01-234567890abc")
@@ -635,15 +660,13 @@ async def test_refresh_sql_endpoint_metadata_happy_path() -> None:
     mock_http = AsyncMock()
     mock_cache = MagicMock()
 
-    lro_result = {"status": "Succeeded", "percentComplete": 100}
-
     with (
         patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
         patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
         patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
         patch(
             "fabric_dw.services.sql_endpoints.refresh_metadata",
-            new=AsyncMock(return_value=lro_result),
+            new=AsyncMock(return_value=_make_table_sync_statuses()),
         ),
     ):
         result = await mcp._tool_manager.call_tool(
@@ -651,8 +674,46 @@ async def test_refresh_sql_endpoint_metadata_happy_path() -> None:
             {"workspace": _WS_NAME, "endpoint": "SalesLakehouse"},
         )
 
-    assert isinstance(result, dict)
-    assert result.get("status") == "Succeeded"
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert result[0]["tableName"] == "Table1"
+    assert result[0]["status"] == "Success"
+    assert result[1]["status"] == "Failure"
+
+
+@pytest.mark.asyncio
+async def test_refresh_sql_endpoint_metadata_recreate_tables() -> None:
+    """refresh_sql_endpoint_metadata passes recreate_tables=True to the service."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    ep_id = UUID("e5f6a7b8-c9d0-1234-ef01-234567890abc")
+    item = _make_item_entry(item_id=ep_id, display_name="SalesLakehouse")
+
+    mock_resolver = AsyncMock()
+    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_resolver.item = AsyncMock(return_value=item)
+    mock_http = AsyncMock()
+    mock_cache = MagicMock()
+    mock_refresh = AsyncMock(return_value=_make_table_sync_statuses())
+
+    with (
+        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
+        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
+        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        patch(
+            "fabric_dw.services.sql_endpoints.refresh_metadata",
+            new=mock_refresh,
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "refresh_sql_endpoint_metadata",
+            {"workspace": _WS_NAME, "endpoint": "SalesLakehouse", "recreate_tables": True},
+        )
+
+    assert isinstance(result, list)
+    mock_refresh.assert_called_once()
+    _, kwargs = mock_refresh.call_args
+    assert kwargs.get("recreate_tables") is True
 
 
 # ---------------------------------------------------------------------------

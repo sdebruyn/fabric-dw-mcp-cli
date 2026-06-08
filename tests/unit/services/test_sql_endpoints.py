@@ -16,7 +16,7 @@ from azure.core.credentials_async import AsyncTokenCredential
 
 from fabric_dw.exceptions import FabricServerError, NotFound, PermissionDenied
 from fabric_dw.http_client import FabricHttpClient
-from fabric_dw.models import Warehouse, WarehouseKind, Workspace
+from fabric_dw.models import TableSyncStatus, Warehouse, WarehouseKind, Workspace
 from tests.fixtures.api_payloads import (
     WAREHOUSE_SQL_ENDPOINTS_PAGE1_PAYLOAD,
     WAREHOUSE_SQL_ENDPOINTS_PAGE2_PAYLOAD,
@@ -65,12 +65,31 @@ _ENDPOINT_GET_PAYLOAD: dict[str, Any] = {
     },
 }
 
+_REFRESH_TABLE_RESULTS: list[dict[str, Any]] = [
+    {
+        "tableName": "Table1",
+        "startDateTime": "2025-08-08T10:31:22.270Z",
+        "endDateTime": "2025-08-08T10:36:54.965Z",
+        "status": "Success",
+        "lastSuccessfulSyncDateTime": "2025-08-08T10:36:54.965Z",
+    },
+    {
+        "tableName": "Table2",
+        "startDateTime": "2025-08-08T10:31:22.270Z",
+        "endDateTime": "2025-08-08T10:43:02.532Z",
+        "status": "Failure",
+        "error": {
+            "errorCode": "AdalRetryException",
+            "message": "Token error",
+        },
+        "lastSuccessfulSyncDateTime": "2025-08-07T10:44:27.263Z",
+    },
+]
+
+# The LRO operation GET response wraps results in status/value envelope
 _REFRESH_LRO_SUCCEEDED: dict[str, Any] = {
     "status": "Succeeded",
-    "createdTimeUtc": "2024-03-15T10:29:50Z",
-    "lastUpdatedTimeUtc": "2024-03-15T10:30:00Z",
-    "percentComplete": 100,
-    "error": None,
+    "value": _REFRESH_TABLE_RESULTS,
 }
 
 
@@ -210,8 +229,69 @@ async def test_refresh_metadata_posts_and_polls_lro() -> None:
             result = await refresh_metadata(client, _WORKSPACE_ID, _ENDPOINT_ID)
 
     assert post_route.called
-    assert isinstance(result, dict)
-    assert result.get("status") == "Succeeded"
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert all(isinstance(s, TableSyncStatus) for s in result)
+    assert result[0].table_name == "Table1"
+    assert result[0].status == "Success"
+    assert result[1].status == "Failure"
+    assert result[1].error is not None
+    assert result[1].error.error_code == "AdalRetryException"
+
+
+@pytest.mark.asyncio
+async def test_refresh_metadata_no_recreate_tables_sends_no_body() -> None:
+    """refresh_metadata without recreate_tables must not send a JSON body."""
+    from fabric_dw.services.sql_endpoints import refresh_metadata  # noqa: PLC0415
+
+    captured_requests: list[httpx.Request] = []
+
+    def post_side_effect(request: httpx.Request) -> httpx.Response:
+        captured_requests.append(request)
+        return httpx.Response(202, json={}, headers={"Location": _OPERATION_URL})
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.post(_REFRESH_URL).mock(side_effect=post_side_effect)
+        mock_router.get(_OPERATION_URL).mock(
+            return_value=httpx.Response(200, json=_REFRESH_LRO_SUCCEEDED)
+        )
+
+        client = await _make_client()
+        async with client:
+            await refresh_metadata(client, _WORKSPACE_ID, _ENDPOINT_ID)
+
+    assert len(captured_requests) == 1
+    # No body was sent — content should be empty
+    assert captured_requests[0].content in (b"", b"null")
+
+
+@pytest.mark.asyncio
+async def test_refresh_metadata_recreate_tables_sends_body() -> None:
+    """refresh_metadata with recreate_tables=True must send {recreateTables: true} in the body."""
+    from fabric_dw.services.sql_endpoints import refresh_metadata  # noqa: PLC0415
+
+    captured_requests: list[httpx.Request] = []
+
+    def post_side_effect(request: httpx.Request) -> httpx.Response:
+        captured_requests.append(request)
+        return httpx.Response(202, json={}, headers={"Location": _OPERATION_URL})
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.post(_REFRESH_URL).mock(side_effect=post_side_effect)
+        mock_router.get(_OPERATION_URL).mock(
+            return_value=httpx.Response(200, json=_REFRESH_LRO_SUCCEEDED)
+        )
+
+        client = await _make_client()
+        async with client:
+            result = await refresh_metadata(
+                client, _WORKSPACE_ID, _ENDPOINT_ID, recreate_tables=True
+            )
+
+    assert len(captured_requests) == 1
+    body = json.loads(captured_requests[0].content)
+    assert body == {"recreateTables": True}
+    assert isinstance(result, list)
 
 
 @pytest.mark.asyncio
@@ -247,7 +327,8 @@ async def test_refresh_metadata_lro_poll_multiple_times() -> None:
             result = await refresh_metadata(client, _WORKSPACE_ID, _ENDPOINT_ID)
 
     assert poll_count == 3
-    assert result.get("status") == "Succeeded"
+    assert isinstance(result, list)
+    assert len(result) == 2
 
 
 @pytest.mark.asyncio
