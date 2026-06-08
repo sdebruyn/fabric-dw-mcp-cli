@@ -101,8 +101,9 @@ class CreationModeType:
 
     MS Learn notes that additional creation mode types may be added over time,
     so this is an **open** set of constants rather than a closed ``StrEnum``.
-    The ``creation_mode`` field on :class:`RestorePoint` is typed as ``str``
-    so that future unknown values pass Pydantic validation without error.
+    The ``creation_mode`` field on :class:`RestorePoint` is typed as ``str | None``
+    so that future unknown values and API responses with null fields pass
+    Pydantic validation without error.
     """
 
     USER_DEFINED: str = "UserDefined"
@@ -113,12 +114,14 @@ class RestorePoint(_FabricBase):
     """A restore point for a Warehouse.
 
     Note: ``id`` is a string timestamp (e.g. ``"1726617378000"``), *not* a UUID.
+    The Fabric API may return ``None`` for ``displayName`` and ``creationMode``
+    on system-created restore points; both fields are therefore optional.
     """
 
     id: str
-    name: str = Field(alias="displayName")
+    name: str | None = Field(default=None, alias="displayName")
     description: str | None = None
-    creation_mode: str = Field(alias="creationMode")
+    creation_mode: str | None = Field(default=None, alias="creationMode")
     event_date_time: datetime | None = Field(default=None, alias="eventDateTime")
 
     @classmethod
