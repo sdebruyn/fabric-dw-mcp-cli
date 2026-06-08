@@ -130,45 +130,19 @@ async def test_reset_pools(http: FabricHttpClient, workspace_id: UUID) -> None:
     try:
         await sql_pools.update_configuration(http, workspace_id, seed_config)
 
-        after_reset = await sql_pools.reset_pools(http, workspace_id)
-        assert after_reset.custom_sql_pools == []
-        assert after_reset.custom_sql_pools_enabled is True
-    finally:
-        await sql_pools.update_configuration(http, workspace_id, original)
-
-
-async def test_reset_pools(http: FabricHttpClient, workspace_id: UUID) -> None:
-    """reset_pools clears all pools while preserving the enabled flag."""
-    original = await sql_pools.get_configuration(http, workspace_id)
-
-    seed_config = SqlPoolsConfiguration.model_validate(
-        {
-            "customSQLPoolsEnabled": True,
-            "customSQLPools": [
-                {
-                    "name": "pytest-reset-pool",
-                    "isDefault": True,
-                    "maxResourcePercentage": 100,
-                    "optimizeForReads": False,
-                }
-            ],
-        }
-    )
-
-    try:
-        await sql_pools.update_configuration(http, workspace_id, seed_config)
-
         await sql_pools.reset_pools(http, workspace_id)
 
         # Beta API has eventual-consistency between PATCH and GET. See issue #205.
         # Poll up to 10 s for the reset to be reflected by the GET endpoint.
+        # Fetch once before the loop so cfg is always bound even if the
+        # deadline has already elapsed on the first monotonic() check.
+        cfg = await sql_pools.get_configuration(http, workspace_id)
         deadline = time.monotonic() + 10.0
-        while time.monotonic() < deadline:
-            cfg = await sql_pools.get_configuration(http, workspace_id)
-            if not cfg.custom_sql_pools:
-                break
+        while cfg.custom_sql_pools and time.monotonic() < deadline:
             await asyncio.sleep(1.0)
-        else:
+            cfg = await sql_pools.get_configuration(http, workspace_id)
+
+        if cfg.custom_sql_pools:
             pytest.fail(
                 "reset_pools did not clear the configuration within 10s (eventual consistency)"
             )
