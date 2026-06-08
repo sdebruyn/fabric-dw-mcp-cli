@@ -4,11 +4,11 @@ ARG PYTHON_VERSION=3.13
 # Build stage uses Astral's official uv + python image
 FROM ghcr.io/astral-sh/uv:python${PYTHON_VERSION}-trixie-slim AS build
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+ARG SETUPTOOLS_SCM_PRETEND_VERSION_FOR_FABRIC_DW
+ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_FABRIC_DW=${SETUPTOOLS_SCM_PRETEND_VERSION_FOR_FABRIC_DW}
 COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY src/ src/
-COPY .git .git
-RUN uv sync --frozen --no-dev && uv build --wheel && rm -rf .git
+RUN uv sync --frozen --no-dev && uv build --wheel
 
 # Runtime stage stays minimal — slim Python, pip-install the wheel
 FROM python:${PYTHON_VERSION}-slim AS runtime

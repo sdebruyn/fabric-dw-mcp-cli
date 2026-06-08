@@ -28,10 +28,11 @@ jobs:
 
       - run: uv sync --frozen --no-dev
 
-      - name: Compute Docker tags
+      - name: Compute Docker tags and version
         id: docker_tags
         run: |
           VERSION=$(uv run python -c "import fabric_dw; print(fabric_dw.__version__)")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             echo "tags=ghcr.io/sdebruyn/fabric-dw:$VERSION,ghcr.io/sdebruyn/fabric-dw:latest" >> $GITHUB_OUTPUT
           else
@@ -54,5 +55,6 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.docker_tags.outputs.tags }}
+          build-args: SETUPTOOLS_SCM_PRETEND_VERSION_FOR_FABRIC_DW=${{ steps.docker_tags.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
