@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import httpx
@@ -12,9 +12,9 @@ import pytest
 import respx
 from azure.core.credentials import AccessToken, TokenCredential
 
-from fabric_dw.exceptions import FabricServerError, NotFound
+from fabric_dw.exceptions import FabricServerError, NotFound, PermissionDenied
 from fabric_dw.http_client import FabricHttpClient
-from fabric_dw.models import Warehouse, WarehouseKind
+from fabric_dw.models import Warehouse, WarehouseKind, Workspace
 from fabric_dw.services import warehouses
 from tests.fixtures.api_payloads import (
     LAKEHOUSE_GET_PAYLOAD,
@@ -482,3 +482,142 @@ def test_lakehouse_fixture_has_sql_endpoint() -> None:
     assert "sqlEndpointProperties" in props
     conn = props["sqlEndpointProperties"]["connectionString"]
     assert conn == "lakehouse-sql-ep.datawarehouse.fabric.microsoft.com"
+
+
+# ---------------------------------------------------------------------------
+# list_all_workspaces
+# ---------------------------------------------------------------------------
+
+
+def _make_workspace(ws_id: UUID) -> Workspace:
+    return Workspace.model_validate(
+        {
+            "id": str(ws_id),
+            "displayName": f"WS-{ws_id}",
+            "description": None,
+            "capacityId": None,
+        }
+    )
+
+
+def _make_wh(ws_id: UUID, wh_id: UUID) -> Warehouse:
+    return Warehouse.model_validate(
+        {
+            "id": str(wh_id),
+            "displayName": "WH",
+            "workspaceId": str(ws_id),
+            "kind": WarehouseKind.WAREHOUSE,
+            "connectionString": "wh.fabric.microsoft.com",
+        }
+    )
+
+
+_WS_A = UUID("aaaaaaaa-0000-0000-0000-000000000001")
+_WS_B = UUID("bbbbbbbb-0000-0000-0000-000000000002")
+_WS_C = UUID("cccccccc-0000-0000-0000-000000000003")
+_WH_A = UUID("aaaaaaaa-1111-0000-0000-000000000001")
+_WH_B = UUID("bbbbbbbb-1111-0000-0000-000000000002")
+_WH_C = UUID("cccccccc-1111-0000-0000-000000000003")
+
+
+@pytest.mark.asyncio
+async def test_list_all_workspaces_aggregates_across_workspaces() -> None:
+    """list_all_workspaces must collect warehouses from every visible workspace."""
+    ws_a = _make_workspace(_WS_A)
+    ws_b = _make_workspace(_WS_B)
+    ws_c = _make_workspace(_WS_C)
+    wh_a = _make_wh(_WS_A, _WH_A)
+    wh_b = _make_wh(_WS_B, _WH_B)
+    wh_c = _make_wh(_WS_C, _WH_C)
+
+    mock_http = AsyncMock()
+
+    with (
+        patch(
+            "fabric_dw.services.workspaces.list_all",
+            new=AsyncMock(return_value=[ws_a, ws_b, ws_c]),
+        ),
+        patch(
+            "fabric_dw.services.warehouses.list_warehouses",
+            new=AsyncMock(
+                side_effect=[
+                    [wh_a],
+                    [wh_b],
+                    [wh_c],
+                ]
+            ),
+        ),
+    ):
+        result = await warehouses.list_all_workspaces(mock_http)
+
+    assert len(result) == 3
+    ids = {w.id for w in result}
+    assert ids == {_WH_A, _WH_B, _WH_C}
+
+
+@pytest.mark.asyncio
+async def test_list_all_workspaces_skips_permission_denied() -> None:
+    """list_all_workspaces must skip workspaces where PermissionDenied is raised."""
+    ws_a = _make_workspace(_WS_A)
+    ws_b = _make_workspace(_WS_B)
+    ws_c = _make_workspace(_WS_C)
+    wh_a = _make_wh(_WS_A, _WH_A)
+    wh_c = _make_wh(_WS_C, _WH_C)
+
+    mock_http = AsyncMock()
+
+    with (
+        patch(
+            "fabric_dw.services.workspaces.list_all",
+            new=AsyncMock(return_value=[ws_a, ws_b, ws_c]),
+        ),
+        patch(
+            "fabric_dw.services.warehouses.list_warehouses",
+            new=AsyncMock(
+                side_effect=[
+                    [wh_a],
+                    PermissionDenied("no access"),
+                    [wh_c],
+                ]
+            ),
+        ),
+    ):
+        result = await warehouses.list_all_workspaces(mock_http)
+
+    assert len(result) == 2
+    ids = {w.id for w in result}
+    assert ids == {_WH_A, _WH_C}
+
+
+@pytest.mark.asyncio
+async def test_list_all_workspaces_skips_not_found() -> None:
+    """list_all_workspaces must skip workspaces where NotFound is raised."""
+    ws_a = _make_workspace(_WS_A)
+    ws_b = _make_workspace(_WS_B)
+    ws_c = _make_workspace(_WS_C)
+    wh_a = _make_wh(_WS_A, _WH_A)
+    wh_c = _make_wh(_WS_C, _WH_C)
+
+    mock_http = AsyncMock()
+
+    with (
+        patch(
+            "fabric_dw.services.workspaces.list_all",
+            new=AsyncMock(return_value=[ws_a, ws_b, ws_c]),
+        ),
+        patch(
+            "fabric_dw.services.warehouses.list_warehouses",
+            new=AsyncMock(
+                side_effect=[
+                    [wh_a],
+                    NotFound("workspace gone"),
+                    [wh_c],
+                ]
+            ),
+        ),
+    ):
+        result = await warehouses.list_all_workspaces(mock_http)
+
+    assert len(result) == 2
+    ids = {w.id for w in result}
+    assert ids == {_WH_A, _WH_C}

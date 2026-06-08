@@ -37,17 +37,36 @@ def endpoints_group() -> None:
 
 
 @endpoints_group.command("list")
-@click.argument("workspace")
+@click.argument("workspace", required=False, default=None)
+@click.option(
+    "-A",
+    "--all-workspaces",
+    "all_workspaces",
+    is_flag=True,
+    default=False,
+    help="Scan all visible workspaces and aggregate results.",
+)
 @click.pass_obj
 @_coro
-async def list_cmd(ctx: CliContext, workspace: str) -> None:
-    """List all SQL analytics endpoints in WORKSPACE (name or GUID)."""
+async def list_cmd(ctx: CliContext, workspace: str | None, all_workspaces: bool) -> None:
+    """List all SQL analytics endpoints in WORKSPACE (name or GUID).
+
+    Pass -A / --all-workspaces to scan every visible workspace instead.
+    WORKSPACE and --all-workspaces are mutually exclusive.
+    """
+    if workspace and all_workspaces:
+        raise click.UsageError("WORKSPACE and --all-workspaces are mutually exclusive.")  # noqa: TRY003
+    if not workspace and not all_workspaces:
+        raise click.UsageError("Provide WORKSPACE or pass --all-workspaces / -A.")  # noqa: TRY003
     try:
         async with _build_clients(ctx) as (http, _):
-            cache = LookupCache()
-            resolver = Resolver(http=http, cache=cache)
-            ws_id = await resolver.workspace_id(workspace)
-            items = await _sql_endpoints_svc.list_endpoints(http, ws_id)
+            if all_workspaces:
+                items = await _sql_endpoints_svc.list_all_workspaces(http)
+            else:
+                cache = LookupCache()
+                resolver = Resolver(http=http, cache=cache)
+                ws_id = await resolver.workspace_id(workspace)  # type: ignore[arg-type]
+                items = await _sql_endpoints_svc.list_endpoints(http, ws_id)
             render(
                 [ep.model_dump(by_alias=True, mode="json") for ep in items],
                 json_output=ctx.json_output,

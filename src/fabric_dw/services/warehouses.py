@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fabric_dw.exceptions import FabricServerError
+from fabric_dw.exceptions import FabricServerError, NotFound, PermissionDenied
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import Warehouse, WarehouseKind
 from fabric_dw.services.workspaces import SUPPORTED_COLLATIONS
@@ -13,6 +13,7 @@ __all__ = [
     "create",
     "delete",
     "get_warehouse",
+    "list_all_workspaces",
     "list_warehouses",
     "rename",
 ]
@@ -46,6 +47,34 @@ async def list_warehouses(http: FabricHttpClient, workspace_id: UUID) -> list[Wa
         )
     ]
     return result
+
+
+async def list_all_workspaces(http: FabricHttpClient) -> list[Warehouse]:
+    """Scan every visible workspace and collect its warehouses.
+
+    Iterates all workspaces returned by :func:`~fabric_dw.services.workspaces.list_all`
+    and aggregates their warehouses. Workspaces that raise
+    :class:`~fabric_dw.exceptions.PermissionDenied` or
+    :class:`~fabric_dw.exceptions.NotFound` are silently skipped.
+
+    Args:
+        http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
+
+    Returns:
+        A flat list of :class:`~fabric_dw.models.Warehouse` instances from all
+        accessible workspaces.
+    """
+    from fabric_dw.services import (  # noqa: PLC0415
+        workspaces as _ws,  # avoid circular at module level
+    )
+
+    out: list[Warehouse] = []
+    for ws in await _ws.list_all(http):
+        try:
+            out.extend(await list_warehouses(http, ws.id))
+        except (PermissionDenied, NotFound):
+            continue
+    return out
 
 
 async def get_warehouse(

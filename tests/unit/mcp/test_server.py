@@ -672,3 +672,83 @@ async def test_refresh_sql_endpoint_metadata_happy_path() -> None:
 
     assert isinstance(result, dict)
     assert result.get("status") == "Succeeded"
+
+
+# ---------------------------------------------------------------------------
+# list_warehouses with all_workspaces=True
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_warehouses_all_workspaces() -> None:
+    """list_warehouses with all_workspaces=True dispatches to list_all_workspaces."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    wh = _make_warehouse()
+
+    mock_resolver = AsyncMock()
+    mock_http = AsyncMock()
+    mock_cache = MagicMock()
+
+    with (
+        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
+        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
+        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        patch(
+            "fabric_dw.services.warehouses.list_all_workspaces",
+            new=AsyncMock(return_value=[wh]),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "list_warehouses",
+            {"workspace": "", "all_workspaces": True},
+        )
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0]["id"] == str(_WH_ID)
+
+
+# ---------------------------------------------------------------------------
+# list_sql_endpoints with all_workspaces=True
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_sql_endpoints_all_workspaces() -> None:
+    """list_sql_endpoints with all_workspaces=True dispatches to list_all_workspaces."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    ep_id = UUID("e5f6a7b8-c9d0-1234-ef01-234567890abc")
+    ep = Warehouse.model_validate(
+        {
+            "id": str(ep_id),
+            "displayName": "SalesLakehouse",
+            "workspaceId": str(_WS_ID),
+            "kind": WarehouseKind.SQL_ENDPOINT,
+            "connectionString": "lakehouse-sql-ep.datawarehouse.fabric.microsoft.com",
+        }
+    )
+
+    mock_resolver = AsyncMock()
+    mock_http = AsyncMock()
+    mock_cache = MagicMock()
+
+    with (
+        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
+        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
+        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        patch(
+            "fabric_dw.services.sql_endpoints.list_all_workspaces",
+            new=AsyncMock(return_value=[ep]),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "list_sql_endpoints",
+            {"workspace": "", "all_workspaces": True},
+        )
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0]["id"] == str(ep_id)
+    assert result[0]["kind"] == "SQLEndpoint"
