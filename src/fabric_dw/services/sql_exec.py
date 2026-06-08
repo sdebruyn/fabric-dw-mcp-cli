@@ -60,11 +60,10 @@ def _tag_binary_columns(
 
     # Determine which column indices are binary by inspecting the first row.
     binary_indices: set[int] = set()
-    for row in rows:
-        for i, val in enumerate(row):
-            if isinstance(val, (bytes, bytearray)):
-                binary_indices.add(i)
-        break  # Only inspect first row for type discovery
+    first_row = next(iter(rows))
+    for i, val in enumerate(first_row):
+        if isinstance(val, (bytes, bytearray)):
+            binary_indices.add(i)
 
     tagged_cols = [
         f"{col}{_BINARY_SUFFIX}" if i in binary_indices else col
@@ -103,7 +102,9 @@ async def execute(
         and ``rowcount``.
 
     Raises:
-        PermissionDenied: If the driver raises a permission or auth error.
+        AuthError: If the driver raises an authentication failure (expired or
+            missing token).
+        PermissionDenied: If the driver raises a SQL permission-denial error.
             The exception message contains a hint pointing to the
             documentation for the required permissions.
         Exception: Any other driver error is propagated unchanged.
@@ -112,33 +113,42 @@ async def execute(
     def _run() -> SqlResult:
         with closing(sql.open_connection(target, mode=mode)) as conn:
             cursor = conn.cursor()
-            try:
-                cursor.execute(query)
-            except Exception as exc:
-                mapped = sql.map_driver_error(exc)
-                if mapped:
-                    msg = (
-                        f"{mapped}  "
-                        "Hint: the caller must have at least READ permission on the "
-                        "warehouse/SQL endpoint. See "
-                        "https://learn.microsoft.com/fabric/data-warehouse/sql-permissions"
-                    )
-                    raise PermissionDenied(msg) from exc
-                raise
+            with closing(cursor):
+                try:
+                    cursor.execute(query)
+                except Exception as exc:
+                    mapped = sql.map_driver_error(exc)
+                    if mapped is not None:
+                        if isinstance(mapped, PermissionDenied):
+                            msg = (
+                                f"{mapped}  "
+                                "Hint: the caller must have at least READ permission on the "
+                                "warehouse/SQL endpoint. See "
+                                "https://learn.microsoft.com/fabric/data-warehouse/sql-permissions"
+                            )
+                            raise PermissionDenied(msg) from exc
+                        raise mapped from exc
+                    raise
 
-            rowcount: int = getattr(cursor, "rowcount", -1)
-            if rowcount is None:
-                rowcount = -1
+                # Advance to the last result set so that multi-statement batches
+                # return the result of the final statement (DB-API 2.0 cursors
+                # position on the *first* result set after execute()).
+                while cursor.nextset():
+                    pass
 
-            if cursor.description is None:
-                # DDL / DML — no result set.
-                return SqlResult(columns=[], rows=[], rowcount=rowcount)
+                rowcount: int = getattr(cursor, "rowcount", -1)
+                if rowcount is None:
+                    rowcount = -1
 
-            raw_cols = [col[0] for col in cursor.description]
-            raw_rows: list[tuple[object, ...]] = cursor.fetchall()
-            tagged_cols, serialised_rows = _tag_binary_columns(raw_cols, raw_rows)
-            if rowcount == -1:
-                rowcount = len(serialised_rows)
-            return SqlResult(columns=tagged_cols, rows=serialised_rows, rowcount=rowcount)
+                if cursor.description is None:
+                    # DDL / DML — no result set.
+                    return SqlResult(columns=[], rows=[], rowcount=rowcount)
+
+                raw_cols = [col[0] for col in cursor.description]
+                raw_rows: list[tuple[object, ...]] = cursor.fetchall()
+                tagged_cols, serialised_rows = _tag_binary_columns(raw_cols, raw_rows)
+                if rowcount == -1:
+                    rowcount = len(serialised_rows)
+                return SqlResult(columns=tagged_cols, rows=serialised_rows, rowcount=rowcount)
 
     return await asyncio.to_thread(_run)

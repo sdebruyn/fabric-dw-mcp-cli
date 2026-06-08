@@ -354,6 +354,44 @@ fabric-dw sql-endpoints refresh MyWorkspace MyLakehouseEP
 
 ---
 
+## fabric-dw sql
+
+Execute SQL against a Fabric Data Warehouse or SQL Analytics Endpoint.
+
+### sql exec
+
+Execute a SQL statement or file against a warehouse or SQL Analytics Endpoint. Provide the query via `-q`/`--query` or `-f`/`--file` (not both). Multi-statement batches are supported; only the last result set is returned. DDL/DML statements return empty columns and rows.
+
+> **Warning:** This command executes arbitrary SQL, including DDL and DML. Ensure you have the correct target before running destructive statements.
+
+**Synopsis**
+
+```
+fabric-dw sql exec [OPTIONS] [WORKSPACE] [ITEM]
+```
+
+| Option | Description |
+| --- | --- |
+| `-q` / `--query TEXT` | SQL statement or batch to execute inline. |
+| `-f` / `--file PATH` | Path to a `.sql` file to execute. UTF-8 and UTF-8 BOM files are both supported. |
+| `--table` | Render results as a Rich table instead of JSON. |
+
+**Example**
+
+```shell
+# Inline query, JSON output (default)
+fabric-dw sql exec MyWorkspace SalesWH -q "SELECT TOP 5 * FROM dbo.Sales"
+
+# File input, table output
+fabric-dw sql exec MyWorkspace SalesWH -f ./queries/report.sql --table
+```
+
+```json
+{"columns": ["id", "name"], "rows": [[1, "Alice"], [2, "Bob"]], "rowcount": 2}
+```
+
+---
+
 ## fabric-dw audit
 
 Manage SQL audit settings for Microsoft Fabric Data Warehouses.

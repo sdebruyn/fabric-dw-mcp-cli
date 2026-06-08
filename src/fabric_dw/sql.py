@@ -61,10 +61,15 @@ _MODE_TO_AD_AUTH: dict[CredentialMode, str] = {
 
 class _Cursor(Protocol):
     description: list[tuple[str, Any]] | None
+    rowcount: int
 
     def execute(self, sql: str) -> None: ...
 
     def fetchall(self) -> list[tuple[Any, ...]]: ...
+
+    def nextset(self) -> bool | None: ...
+
+    def close(self) -> None: ...
 
 
 class _Connection(Protocol):

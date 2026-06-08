@@ -498,6 +498,11 @@ async def kill_session(workspace: str, warehouse: str, session_id: int) -> dict[
 async def execute_sql(workspace: str, item: str, query: str) -> dict[str, Any]:
     """Execute an arbitrary SQL statement or batch against a warehouse or SQL Analytics Endpoint.
 
+    WARNING: this tool executes arbitrary SQL against the target. DDL (DROP,
+    ALTER, TRUNCATE) and DML (DELETE, UPDATE) are permitted. Use only when the
+    user explicitly requests data modification. Default to SELECT when the
+    user's intent is read-only investigation.
+
     Supports both Warehouse and SQL Analytics Endpoint items.  Multi-statement
     batches are allowed; only the **last** result set is returned.  DDL/DML
     statements that produce no result set return ``columns=[]`` and ``rows=[]``.

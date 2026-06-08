@@ -148,6 +148,44 @@ class TestSqlExec:
         assert result.exit_code == 0
         assert captured_query[0] == "SELECT 1 AS n"
 
+    def test_exec_file_flag_strips_utf8_bom(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        """Files saved with UTF-8 BOM (e.g. from SSMS/ADS) must not pass the BOM to execute."""
+        _ = cache_env
+        sql_file = tmp_path / "query_bom.sql"
+        # Write with explicit UTF-8 BOM prefix (U+FEFF)
+        sql_file.write_bytes(b"\xef\xbb\xbfSELECT 1 AS n")
+        mock_http = AsyncMock()
+        captured_query: list[str] = []
+
+        async def _capture_execute(_target: object, query: str, **_kwargs: object) -> SqlResult:
+            captured_query.append(query)
+            return _make_sql_result()
+
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql._build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.sql_exec.execute",
+                new=_capture_execute,
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["sql", "exec", WS_GUID, WH_GUID, "-f", str(sql_file)],
+            )
+        assert result.exit_code == 0
+        assert captured_query[0][0] == "S", (
+            f"BOM not stripped: first char is {captured_query[0][0]!r}"
+        )
+
     def test_exec_table_flag_renders_table(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()

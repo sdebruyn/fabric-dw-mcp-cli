@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from fabric_dw.exceptions import PermissionDenied
+from fabric_dw.exceptions import AuthError, PermissionDenied
 from fabric_dw.models import SqlResult
 from fabric_dw.services import sql_exec
 
@@ -32,6 +32,8 @@ def _make_conn(
     cursor.description = [(c, None) for c in columns] if columns else None
     cursor.fetchall.return_value = rows
     cursor.rowcount = rowcount
+    # nextset() returns False by default — single result set
+    cursor.nextset.return_value = False
     conn = MagicMock()
     conn.cursor.return_value = cursor
     return conn
@@ -42,6 +44,7 @@ def _make_no_result_conn(*, rowcount: int = 1) -> MagicMock:
     cursor = MagicMock()
     cursor.description = None
     cursor.rowcount = rowcount
+    cursor.nextset.return_value = False
     conn = MagicMock()
     conn.cursor.return_value = cursor
     return conn
@@ -273,8 +276,8 @@ async def test_execute_permission_denied_message_contains_hint() -> None:
 
 
 @pytest.mark.asyncio
-async def test_execute_auth_error_raises_permission_denied() -> None:
-    """Authentication failures are re-raised as PermissionDenied (same hint path)."""
+async def test_execute_auth_error_raises_auth_error() -> None:
+    """Authentication failures (expired/missing token) are re-raised as AuthError."""
     target = _make_target()
     conn = MagicMock()
     cursor = MagicMock()
@@ -283,9 +286,55 @@ async def test_execute_auth_error_raises_permission_denied() -> None:
 
     with (
         patch("fabric_dw.sql.open_connection", return_value=conn),
-        pytest.raises(PermissionDenied),
+        pytest.raises(AuthError),
     ):
         await sql_exec.execute(target, "SELECT 1")
+
+
+@pytest.mark.asyncio
+async def test_execute_perm_denied_driver_raises_permission_denied() -> None:
+    """SQL permission-denial errors are re-raised as PermissionDenied."""
+    target = _make_target()
+    conn = MagicMock()
+    cursor = MagicMock()
+    cursor.execute.side_effect = Exception("permission was denied on object SensitiveTable")
+    conn.cursor.return_value = cursor
+
+    with (
+        patch("fabric_dw.sql.open_connection", return_value=conn),
+        pytest.raises(PermissionDenied),
+    ):
+        await sql_exec.execute(target, "SELECT * FROM SensitiveTable")
+
+
+# ---------------------------------------------------------------------------
+# Multi-statement: nextset() — last result set returned
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_execute_multi_statement_returns_last_result_set() -> None:
+    """When the cursor has multiple result sets, the last one is returned."""
+    target = _make_target()
+    conn = MagicMock()
+    cursor = MagicMock()
+    cursor.rowcount = -1
+
+    # First call to nextset() → True (advance to result set 2)
+    # Second call to nextset() → False (no more result sets)
+    cursor.nextset.side_effect = [True, False]
+
+    # After advancing, description and fetchall reflect the second result set.
+    cursor.description = [("last_col", None)]
+    cursor.fetchall.return_value = [("last_value",)]
+
+    conn.cursor.return_value = cursor
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await sql_exec.execute(target, "SELECT 1; SELECT 'last_value' AS last_col")
+
+    assert result.columns == ["last_col"]
+    assert result.rows == [["last_value"]]
 
 
 # ---------------------------------------------------------------------------

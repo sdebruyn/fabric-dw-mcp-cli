@@ -96,7 +96,7 @@ async def exec_cmd(  # noqa: PLR0913
         raise click.UsageError("Provide a query via -q/--query or -f/--file.")  # noqa: TRY003
 
     if query_file is not None:
-        query_text = Path(query_file).read_text(encoding="utf-8")
+        query_text = Path(query_file).read_text(encoding="utf-8-sig")
 
     assert query_text is not None  # noqa: S101 — satisfied by guards above
 
