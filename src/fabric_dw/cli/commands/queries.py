@@ -37,7 +37,7 @@ async def _build_http_client(
 
 @click.group("queries")
 def queries_group() -> None:
-    """Inspect and manage running queries on Microsoft Fabric Data Warehouses."""
+    """Inspect and manage running queries on Fabric warehouses and SQL Analytics Endpoints."""
 
 
 @queries_group.command("list")
@@ -46,7 +46,7 @@ def queries_group() -> None:
 @click.pass_obj
 @_coro
 async def list_cmd(ctx: CliContext, workspace: str | None, warehouse: str | None) -> None:
-    """List currently running queries on WAREHOUSE in WORKSPACE."""
+    """List currently running queries on WAREHOUSE_OR_ENDPOINT in WORKSPACE."""
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, warehouse)
     try:
@@ -80,7 +80,7 @@ async def list_cmd(ctx: CliContext, workspace: str | None, warehouse: str | None
 async def kill_cmd(
     ctx: CliContext, workspace: str | None, warehouse: str | None, session_id: int
 ) -> None:
-    """Kill the session SESSION_ID on WAREHOUSE in WORKSPACE."""
+    """Kill the session SESSION_ID on WAREHOUSE_OR_ENDPOINT in WORKSPACE."""
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, warehouse)
     try:
@@ -91,7 +91,7 @@ async def kill_cmd(
                     f"Warehouse {entry.display_name!r} has no connection string."
                 )
             confirmed = confirm(
-                f"Kill session {session_id} on warehouse {entry.display_name!r} ({entry.id})?",
+                f"Kill session {session_id} on {entry.display_name!r} ({entry.id})?",
                 yes=ctx.yes,
             )
             if not confirmed:

@@ -377,11 +377,11 @@ fabric-dw endpoints refresh MyWorkspace MyLakehouseEP
 
 ## fabric-dw audit
 
-Manage SQL audit settings for Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
+Manage SQL audit settings for Microsoft Fabric Data Warehouses.
 
 ### audit get
 
-Get the current audit settings for a warehouse or SQL Analytics Endpoint.
+Get the current audit settings for a warehouse.
 
 **Synopsis**
 
@@ -405,7 +405,7 @@ actionGroups     BATCH_COMPLETED_GROUP
 
 ### audit enable
 
-Enable SQL auditing on a warehouse or SQL Analytics Endpoint.
+Enable SQL auditing on a warehouse.
 
 **Synopsis**
 
@@ -427,7 +427,7 @@ fabric-dw audit enable --retention-days 90 MyWorkspace SalesWH
 
 ### audit disable
 
-Disable SQL auditing on a warehouse or SQL Analytics Endpoint.
+Disable SQL auditing on a warehouse.
 
 **Synopsis**
 
@@ -445,7 +445,7 @@ fabric-dw audit disable MyWorkspace SalesWH
 
 ### audit set-groups
 
-Set the audit action groups for a warehouse or SQL Analytics Endpoint. Pass `--group` / `-g` once per action group. This replaces the existing list of groups.
+Set the audit action groups for a warehouse. Pass `--group` / `-g` once per action group. This replaces the existing list of groups.
 
 **Synopsis**
 
