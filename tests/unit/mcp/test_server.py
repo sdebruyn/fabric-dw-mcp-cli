@@ -77,7 +77,6 @@ EXPECTED_TOOL_NAMES: frozenset[str] = frozenset(
         "roll_snapshot_timestamp",
         # Cache
         "clear_cache",
-        "invalidate_workspace_cache",
     }
 )
 
@@ -292,34 +291,6 @@ async def test_get_workspace_happy_path() -> None:
     assert isinstance(result, dict)
     assert result["id"] == str(_WS_ID)
     mock_resolver.workspace_id.assert_called_once_with(_WS_NAME)
-
-
-# ---------------------------------------------------------------------------
-# 6. invalidate_workspace_cache
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_invalidate_workspace_cache() -> None:
-    """invalidate_workspace_cache resolves the workspace and calls cache.invalidate_workspace."""
-    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
-
-    mock_resolver = AsyncMock()
-    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
-
-    with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
-    ):
-        result = await mcp._tool_manager.call_tool(
-            "invalidate_workspace_cache", {"workspace": _WS_NAME}
-        )
-
-    mock_cache.invalidate_workspace.assert_called_once_with(_WS_ID)
-    assert result == {"invalidated": True, "workspace_id": str(_WS_ID)}
 
 
 # ---------------------------------------------------------------------------

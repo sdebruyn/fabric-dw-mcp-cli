@@ -181,46 +181,6 @@ def test_clear_then_get_returns_none(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# invalidate_workspace
-# ---------------------------------------------------------------------------
-
-
-def test_invalidate_workspace_removes_entry(tmp_path: Path) -> None:
-    cache = _make_cache(tmp_path)
-    cache.put_workspace("ws", WS_ID)
-    cache.invalidate_workspace(WS_ID)
-    assert cache.get_workspace("ws") is None
-
-
-def test_invalidate_workspace_removes_items_under_it(tmp_path: Path) -> None:
-    cache = _make_cache(tmp_path)
-    cache.put_workspace("ws", WS_ID)
-    cache.put_item(WS_ID, "item1", _make_item_entry())
-    cache.invalidate_workspace(WS_ID)
-    assert cache.get_item(WS_ID, "item1") is None
-
-
-def test_invalidate_workspace_leaves_other_workspaces(tmp_path: Path) -> None:
-    cache = _make_cache(tmp_path)
-    cache.put_workspace("ws1", WS_ID)
-    cache.put_workspace("ws2", WS_ID_2)
-    cache.put_item(WS_ID_2, "item2", _make_item_entry())
-    cache.invalidate_workspace(WS_ID)
-    # ws2 and its items should still be reachable
-    assert cache.get_workspace("ws2") is not None
-    assert cache.get_item(WS_ID_2, "item2") is not None
-
-
-def test_invalidate_workspace_only_targets_matching_uuid(tmp_path: Path) -> None:
-    cache = _make_cache(tmp_path)
-    cache.put_workspace("ws1", WS_ID)
-    cache.put_workspace("ws2", WS_ID_2)
-    cache.invalidate_workspace(WS_ID)
-    # ws2 survives
-    assert cache.get_workspace("ws2") is not None
-
-
-# ---------------------------------------------------------------------------
 # Concurrent writes (file locking)
 # ---------------------------------------------------------------------------
 
