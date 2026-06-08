@@ -16,19 +16,19 @@ from fabric_dw.cli.commands._utils import _coro, _resolve_item
 from fabric_dw.exceptions import FabricError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.services import snapshots as _snapshots_svc
-from fabric_dw.sql_client import FabricSqlClient, SqlTarget
+from fabric_dw.sql import SqlTarget
 
 _log = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def _build_clients(
+async def _build_http_client(
     ctx: CliContext,
-) -> AsyncIterator[tuple[FabricHttpClient, FabricSqlClient]]:
-    """Build and yield HTTP and SQL clients for snapshot commands."""
+) -> AsyncIterator[FabricHttpClient]:
+    """Build and yield an HTTP client for snapshot commands."""
     credential = _auth.get_credential(ctx.auth)
-    async with FabricHttpClient(credential) as http, FabricSqlClient(mode=ctx.auth) as sql:
-        yield http, sql
+    async with FabricHttpClient(credential) as http:
+        yield http
 
 
 def _parse_utc_dt(value: str, flag: str) -> datetime:
@@ -55,7 +55,7 @@ def snapshots_group() -> None:
 async def list_cmd(ctx: CliContext, workspace: str, warehouse: str) -> None:
     """List all snapshots for WAREHOUSE in WORKSPACE."""
     try:
-        async with _build_clients(ctx) as (http, _):
+        async with _build_http_client(ctx) as http:
             ws_id, entry = await _resolve_item(http, workspace, warehouse)
             items = await _snapshots_svc.list_snapshots(http, ws_id, entry.id)
             render(
@@ -93,7 +93,7 @@ async def create_cmd(  # noqa: PLR0913
         parsed_dt = _parse_utc_dt(snapshot_dt, "--snapshot-dt")
 
     try:
-        async with _build_clients(ctx) as (http, _):
+        async with _build_http_client(ctx) as http:
             ws_id, entry = await _resolve_item(http, workspace, warehouse)
             obj = await _snapshots_svc.create(
                 http,
@@ -124,7 +124,7 @@ async def rename_cmd(
 ) -> None:
     """Rename SNAPSHOT in WORKSPACE to NEW_NAME (workspace and snapshot accept name or GUID)."""
     try:
-        async with _build_clients(ctx) as (http, _):
+        async with _build_http_client(ctx) as http:
             ws_id, entry = await _resolve_item(http, workspace, snapshot)
             obj = await _snapshots_svc.rename(
                 http,
@@ -146,7 +146,7 @@ async def rename_cmd(
 async def delete_cmd(ctx: CliContext, workspace: str, snapshot: str) -> None:
     """Delete SNAPSHOT from WORKSPACE (both accept name or GUID)."""
     try:
-        async with _build_clients(ctx) as (http, _):
+        async with _build_http_client(ctx) as http:
             ws_id, entry = await _resolve_item(http, workspace, snapshot)
             confirmed = confirm(
                 f"Delete snapshot {entry.display_name!r} ({entry.id})?",
@@ -191,7 +191,7 @@ async def roll_cmd(
         parsed_dt = _parse_utc_dt(new_dt, "--at")
 
     try:
-        async with _build_clients(ctx) as (http, sql):
+        async with _build_http_client(ctx) as http:
             ws_id, entry = await _resolve_item(http, workspace, warehouse)
             if entry.connection_string is None:
                 raise click.ClickException(  # noqa: TRY003
@@ -209,7 +209,7 @@ async def roll_cmd(
                 database=entry.display_name,
                 connection_string=entry.connection_string,
             )
-            await _snapshots_svc.roll_timestamp(sql, target, snapshot_name, parsed_dt)
+            await _snapshots_svc.roll_timestamp(target, snapshot_name, parsed_dt, mode=ctx.auth)
             click.echo(f"Snapshot {snapshot_name!r} rolled.")
     except click.Abort:
         raise

@@ -15,19 +15,19 @@ from fabric_dw.cli.commands._utils import _coro, _resolve_item
 from fabric_dw.exceptions import FabricError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.services import queries as _queries_svc
-from fabric_dw.sql_client import FabricSqlClient, SqlTarget
+from fabric_dw.sql import SqlTarget
 
 _log = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def _build_clients(
+async def _build_http_client(
     ctx: CliContext,
-) -> AsyncIterator[tuple[FabricHttpClient, FabricSqlClient]]:
-    """Build and yield HTTP and SQL clients for query commands."""
+) -> AsyncIterator[FabricHttpClient]:
+    """Build and yield an HTTP client for query commands."""
     credential = _auth.get_credential(ctx.auth)
-    async with FabricHttpClient(credential) as http, FabricSqlClient(mode=ctx.auth) as sql:
-        yield http, sql
+    async with FabricHttpClient(credential) as http:
+        yield http
 
 
 @click.group("queries")
@@ -43,7 +43,7 @@ def queries_group() -> None:
 async def list_cmd(ctx: CliContext, workspace: str, warehouse: str) -> None:
     """List currently running queries on WAREHOUSE in WORKSPACE."""
     try:
-        async with _build_clients(ctx) as (http, sql):
+        async with _build_http_client(ctx) as http:
             ws_id, entry = await _resolve_item(http, workspace, warehouse)
             if entry.connection_string is None:
                 raise click.ClickException(  # noqa: TRY003
@@ -54,7 +54,7 @@ async def list_cmd(ctx: CliContext, workspace: str, warehouse: str) -> None:
                 database=entry.display_name,
                 connection_string=entry.connection_string,
             )
-            items = await _queries_svc.list_running(sql, target)
+            items = await _queries_svc.list_running(target, mode=ctx.auth)
             render(
                 [q.model_dump(by_alias=True, mode="json") for q in items],
                 json_output=ctx.json_output,
@@ -73,7 +73,7 @@ async def list_cmd(ctx: CliContext, workspace: str, warehouse: str) -> None:
 async def kill_cmd(ctx: CliContext, workspace: str, warehouse: str, session_id: int) -> None:
     """Kill the session SESSION_ID on WAREHOUSE in WORKSPACE."""
     try:
-        async with _build_clients(ctx) as (http, sql):
+        async with _build_http_client(ctx) as http:
             ws_id, entry = await _resolve_item(http, workspace, warehouse)
             if entry.connection_string is None:
                 raise click.ClickException(  # noqa: TRY003
@@ -90,7 +90,7 @@ async def kill_cmd(ctx: CliContext, workspace: str, warehouse: str, session_id: 
                 database=entry.display_name,
                 connection_string=entry.connection_string,
             )
-            await _queries_svc.kill(sql, target, session_id)
+            await _queries_svc.kill(target, session_id, mode=ctx.auth)
             click.echo(f"Session {session_id} killed.")
     except click.Abort:
         raise

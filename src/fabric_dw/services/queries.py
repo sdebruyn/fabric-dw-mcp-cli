@@ -8,9 +8,14 @@ Public API
 
 from __future__ import annotations
 
-from fabric_dw.exceptions import AuthError, PermissionDenied
+import asyncio
+from contextlib import closing
+
+from fabric_dw import sql
+from fabric_dw.auth import CredentialMode
+from fabric_dw.exceptions import PermissionDenied
 from fabric_dw.models import RunningQuery
-from fabric_dw.sql_client import FabricSqlClient, SqlTarget
+from fabric_dw.sql import SqlTarget
 
 __all__ = [
     "kill",
@@ -38,17 +43,11 @@ ORDER BY r.total_elapsed_time DESC;
 """
 
 
-def _build_kill_sql(session_id: int) -> str:
-    """Return a safe KILL statement for the given session id.
-
-    The ``session_id`` is cast to ``int`` explicitly so no arbitrary string
-    can be injected through this path.
-    """
-    safe_id = int(session_id)
-    return f"KILL '{safe_id}'"
-
-
-async def list_running(sql: FabricSqlClient, target: SqlTarget) -> list[RunningQuery]:
+async def list_running(
+    target: SqlTarget,
+    *,
+    mode: CredentialMode = CredentialMode.DEFAULT,
+) -> list[RunningQuery]:
     """Return all currently-executing or runnable queries on *target*.
 
     Queries the ``sys.dm_exec_sessions`` / ``sys.dm_exec_requests`` DMVs,
@@ -56,37 +55,67 @@ async def list_running(sql: FabricSqlClient, target: SqlTarget) -> list[RunningQ
     or ``suspended``, ordered by elapsed time descending.
 
     Args:
-        sql: An authenticated :class:`~fabric_dw.sql_client.FabricSqlClient`.
         target: The warehouse to query.
+        mode: The credential mode for Entra authentication.
 
     Returns:
         A (possibly empty) list of :class:`~fabric_dw.models.RunningQuery`
         instances, one per result row.
     """
-    rows = await sql.execute(target, _LIST_RUNNING_SQL)
-    return [RunningQuery.model_validate(row) for row in rows]
+
+    def _run() -> list[RunningQuery]:
+        with closing(sql.open_connection(target, mode=mode)) as conn:
+            cursor = conn.cursor()
+            try:
+                cursor.execute(_LIST_RUNNING_SQL)
+                cols = [c[0] for c in (cursor.description or [])]
+                rows = cursor.fetchall()
+            except Exception as exc:
+                mapped = sql.map_driver_error(exc)
+                if mapped:
+                    raise mapped from exc
+                raise
+            return [RunningQuery.model_validate(dict(zip(cols, r, strict=True))) for r in rows]
+
+    return await asyncio.to_thread(_run)
 
 
-async def kill(sql: FabricSqlClient, target: SqlTarget, session_id: int) -> None:
+async def kill(
+    target: SqlTarget,
+    session_id: int,
+    *,
+    mode: CredentialMode = CredentialMode.DEFAULT,
+) -> None:
     """Terminate the session identified by *session_id* on *target*.
 
     Args:
-        sql: An authenticated :class:`~fabric_dw.sql_client.FabricSqlClient`.
         target: The warehouse to connect to.
         session_id: A positive integer identifying the session to kill.
+        mode: The credential mode for Entra authentication.
 
     Raises:
         ValueError: If *session_id* is not a positive integer (i.e. <= 0).
-        PermissionDenied: If the driver raises an :class:`~fabric_dw.exceptions.AuthError`
+        PermissionDenied: If the driver raises a permission or auth error
             (KILL requires Monitor or Admin permission on Fabric DW).
     """
     if session_id <= 0:
         msg = f"session_id must be a positive integer; got {session_id}"
         raise ValueError(msg)
 
-    stmt = _build_kill_sql(session_id)
-    try:
-        await sql.execute_nonquery(target, stmt)
-    except (AuthError, PermissionDenied) as exc:
-        msg = f"Permission denied when trying to KILL session {session_id}: {exc}"
-        raise PermissionDenied(msg) from exc
+    safe_id = int(session_id)
+    kill_sql = f"KILL '{safe_id}'"
+
+    def _run() -> None:
+        with closing(sql.open_connection(target, mode=mode)) as conn:
+            cursor = conn.cursor()
+            try:
+                cursor.execute(kill_sql)
+                conn.commit()
+            except Exception as exc:
+                mapped = sql.map_driver_error(exc)
+                if mapped:
+                    msg = f"Permission denied when trying to KILL session {session_id}: {mapped}"
+                    raise PermissionDenied(msg) from exc
+                raise
+
+    await asyncio.to_thread(_run)

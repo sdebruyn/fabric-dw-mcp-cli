@@ -9,7 +9,7 @@ from fabric_dw.auth import get_credential
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import Warehouse, WarehouseSnapshot
 from fabric_dw.services import snapshots, warehouses
-from fabric_dw.sql_client import FabricSqlClient, SqlTarget
+from fabric_dw.sql import SqlTarget
 
 
 @pytest_asyncio.fixture
@@ -25,12 +25,6 @@ async def workspace_id() -> UUID:
 async def http() -> AsyncIterator[FabricHttpClient]:
     cred = get_credential()
     async with FabricHttpClient(cred) as client:
-        yield client
-
-
-@pytest_asyncio.fixture
-async def sql() -> AsyncIterator[FabricSqlClient]:
-    async with FabricSqlClient() as client:
         yield client
 
 

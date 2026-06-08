@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 from contextlib import closing
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -226,9 +226,8 @@ class TestOpenConnection:
         from fabric_dw.sql import open_connection  # noqa: PLC0415
 
         thread_ids: list[int] = []
-        orig_connect = mock_mssql.connect.side_effect
 
-        def _capture_connect(cs: str) -> MagicMock:
+        def _capture_connect(_cs: str) -> MagicMock:
             thread_ids.append(threading.get_ident())
             return MagicMock()
 

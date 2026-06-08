@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from contextlib import closing
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
@@ -295,9 +294,7 @@ async def test_kill_returns_none_on_success() -> None:
     conn.cursor.return_value = cursor
 
     with patch("fabric_dw.sql.open_connection", return_value=conn):
-        result = await queries.kill(target, 5)
-
-    assert result is None
+        await queries.kill(target, 5)  # should not raise
 
 
 # ---------------------------------------------------------------------------
