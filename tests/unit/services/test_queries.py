@@ -406,6 +406,7 @@ _CONN_COLS = [
     "auth_scheme",
     "encrypt_option",
     "net_transport",
+    "most_recent_session_id",
 ]
 
 _CONN_ROW_1 = (
@@ -415,6 +416,7 @@ _CONN_ROW_1 = (
     "NTLM",
     "TRUE",
     "TCP",
+    10,
 )
 
 _CONN_ROW_2 = (
@@ -424,6 +426,18 @@ _CONN_ROW_2 = (
     "KERBEROS",
     "FALSE",
     "TCP",
+    20,
+)
+
+# Pre-login pooled connection: session_id is NULL (IS NULLABLE per MS docs)
+_CONN_ROW_NULL_SESSION = (
+    None,
+    _NOW,
+    "10.0.0.5",
+    "NTLM",
+    "TRUE",
+    "TCP",
+    99,
 )
 
 
@@ -465,6 +479,7 @@ async def test_list_connections_parses_fields_correctly() -> None:
     assert c.auth_scheme == "NTLM"
     assert c.encrypt_option == "TRUE"
     assert c.net_transport == "TCP"
+    assert c.most_recent_session_id == 10
 
 
 @pytest.mark.asyncio
@@ -521,6 +536,7 @@ async def test_list_connections_sql_selects_expected_columns() -> None:
         "auth_scheme",
         "encrypt_option",
         "net_transport",
+        "most_recent_session_id",
     )
     for col in expected_cols:
         assert col in call_sql
@@ -582,3 +598,45 @@ async def test_list_connections_unrelated_error_propagates() -> None:
         pytest.raises(RuntimeError, match="network timeout"),
     ):
         await queries.list_connections(target)
+
+
+@pytest.mark.asyncio
+async def test_list_connections_handles_null_session_id() -> None:
+    """Pre-login pooled connections return NULL for session_id (IS NULLABLE per MS docs)."""
+    target = _make_target()
+    conn = _make_conn([_CONN_ROW_NULL_SESSION], _CONN_COLS)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await queries.list_connections(target)
+
+    assert len(result) == 1
+    assert result[0].session_id is None
+    assert result[0].most_recent_session_id == 99
+
+
+@pytest.mark.asyncio
+async def test_list_connections_parses_most_recent_session_id() -> None:
+    """most_recent_session_id is parsed from the DMV result (disambiguates pooled connections)."""
+    target = _make_target()
+    conn = _make_conn([_CONN_ROW_1, _CONN_ROW_2], _CONN_COLS)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await queries.list_connections(target)
+
+    assert result[0].most_recent_session_id == 10
+    assert result[1].most_recent_session_id == 20
+
+
+@pytest.mark.asyncio
+async def test_list_connections_most_recent_session_id_can_be_none() -> None:
+    """most_recent_session_id defaults to None when not present in result row."""
+    target = _make_target()
+    # Use a row without most_recent_session_id to confirm None default
+    cols_without = _CONN_COLS[:-1]  # drop most_recent_session_id
+    row_without = _CONN_ROW_1[:-1]
+    conn = _make_conn([row_without], cols_without)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await queries.list_connections(target)
+
+    assert result[0].most_recent_session_id is None

@@ -492,10 +492,10 @@ fabric-dw queries list-connections MyWorkspace SalesWH
 ```
 
 ```
- session_id  connect_time          client_net_address  auth_scheme  encrypt_option  net_transport
- ----------  --------------------  ------------------  -----------  --------------  -------------
- 10          2026-06-08T10:00:00Z  192.168.1.100       NTLM         TRUE            TCP
- 20          2026-06-08T10:01:00Z  192.168.1.101       KERBEROS     TRUE            TCP
+ session_id  connect_time          client_net_address  auth_scheme  encrypt_option  net_transport  most_recent_session_id
+ ----------  --------------------  ------------------  -----------  --------------  -------------  ----------------------
+ 10          2026-06-08T10:00:00Z  192.168.1.100       NTLM         TRUE            TCP            10
+ 20          2026-06-08T10:01:00Z  192.168.1.101       KERBEROS     FALSE           TCP            20
 ```
 
 ---

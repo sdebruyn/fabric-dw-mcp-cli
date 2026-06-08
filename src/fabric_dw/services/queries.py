@@ -2,8 +2,9 @@
 
 Public API
 ----------
-- :func:`list_running` — return all currently active queries via DMV JOIN.
-- :func:`kill`         — terminate a session by session_id via KILL.
+- :func:`list_running`     — return all currently active queries via DMV JOIN.
+- :func:`list_connections` — return all active SQL connections via sys.dm_exec_connections.
+- :func:`kill`             — terminate a session by session_id via KILL.
 """
 
 from __future__ import annotations
@@ -88,7 +89,8 @@ SELECT
     client_net_address,
     auth_scheme,
     encrypt_option,
-    net_transport
+    net_transport,
+    most_recent_session_id
 FROM sys.dm_exec_connections
 ORDER BY connect_time;
 """
