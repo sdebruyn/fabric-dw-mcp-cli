@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import time
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import httpx
@@ -14,7 +14,7 @@ import respx
 from azure.core.credentials import AccessToken
 from azure.core.credentials_async import AsyncTokenCredential
 
-from fabric_dw.exceptions import NotFound, PermissionDenied
+from fabric_dw.exceptions import PermissionDenied
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import AuditSettings
 from fabric_dw.services import audit
@@ -196,22 +196,22 @@ async def test_disable_403_raises_permission_denied() -> None:
 
 
 @pytest.mark.asyncio
-async def test_set_action_groups_posts_array_and_returns_fresh_state() -> None:
-    """set_action_groups should POST the action groups array, then GET and return fresh state."""
+async def test_set_action_groups_patches_with_enabled_state_and_groups() -> None:
+    """set_action_groups should PATCH with state=Enabled + auditActionsAndGroups, then GET."""
     groups = ["BATCH_COMPLETED_GROUP", "FAILED_DATABASE_AUTHENTICATION_GROUP"]
     updated = AUDIT_SETTINGS_PAYLOAD.copy()
     updated["auditActionsAndGroups"] = groups
 
     with respx.mock:
-        post_route = respx.post(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
         get_route = respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=updated))
         client = await _make_client()
         async with client:
             result = await audit.set_action_groups(client, _WS_ID, _WH_ID, groups)
 
-    assert post_route.called
-    sent_body = json.loads(post_route.calls[0].request.content)
-    assert sent_body == groups
+    assert patch_route.called
+    sent_body = json.loads(patch_route.calls[0].request.content)
+    assert sent_body == {"state": "Enabled", "auditActionsAndGroups": groups}
 
     assert get_route.called
     assert isinstance(result, AuditSettings)
@@ -222,7 +222,7 @@ async def test_set_action_groups_posts_array_and_returns_fresh_state() -> None:
 async def test_set_action_groups_empty_list_is_valid() -> None:
     """set_action_groups with an empty list should be accepted (clears all groups)."""
     with respx.mock:
-        respx.post(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
         respx.get(_AUDIT_URL).mock(
             return_value=httpx.Response(200, json=AUDIT_SETTINGS_DISABLED_PAYLOAD)
         )
@@ -255,9 +255,9 @@ async def test_set_action_groups_invalid_name_raises_value_error(bad_group: str)
 
 @pytest.mark.asyncio
 async def test_set_action_groups_403_raises_permission_denied() -> None:
-    """set_action_groups should propagate PermissionDenied on 403 from POST."""
+    """set_action_groups should propagate PermissionDenied on 403 from PATCH."""
     with respx.mock:
-        respx.post(_AUDIT_URL).mock(return_value=httpx.Response(403, json={"error": "forbidden"}))
+        respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(403, json={"error": "forbidden"}))
         client = await _make_client()
         async with client:
             with pytest.raises(PermissionDenied):
@@ -265,109 +265,26 @@ async def test_set_action_groups_403_raises_permission_denied() -> None:
 
 
 @pytest.mark.asyncio
-async def test_set_action_groups_retries_on_not_found_then_succeeds() -> None:
-    """set_action_groups enables audit and retries when sqlAudit is not yet provisioned.
+async def test_set_action_groups_works_on_fresh_warehouse() -> None:
+    """set_action_groups via PATCH works on freshly-created warehouses without a prior enable().
 
-    Regression test: Fabric returns EntityNotFound (404) briefly after a warehouse is
-    created or audit is enabled.  On the first 404, set_action_groups must call enable()
-    to provision the sqlAudit resource, then retry the POST.  Subsequent 404s are
-    retried with a back-off.  Overall the POST should succeed within 3 attempts.
+    Regression: the previous implementation used POST which returned EntityNotFound (404)
+    on fresh warehouses.  PATCH with state=Enabled is idempotent and always works.
     """
     groups = ["BATCH_COMPLETED_GROUP"]
     updated = AUDIT_SETTINGS_PAYLOAD.copy()
     updated["auditActionsAndGroups"] = groups
 
-    post_call_count = 0
-
-    def _post_side_effect(_request: httpx.Request) -> httpx.Response:
-        nonlocal post_call_count
-        post_call_count += 1
-        if post_call_count < 3:
-            # First two calls return 404 EntityNotFound
-            return httpx.Response(
-                404,
-                json={"errorCode": "EntityNotFound", "message": "not found", "isRetriable": False},
-            )
-        # Third call succeeds
-        return httpx.Response(200, json={})
-
     with respx.mock:
-        respx.post(_AUDIT_URL).mock(side_effect=_post_side_effect)
-        # enable() is triggered on first 404: PATCH + GET
-        respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
         respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=updated))
         client = await _make_client()
         async with client:
-            with patch("asyncio.sleep", new=AsyncMock()):
-                result = await audit.set_action_groups(client, _WS_ID, _WH_ID, groups)
+            result = await audit.set_action_groups(client, _WS_ID, _WH_ID, groups)
 
-    assert post_call_count == 3
-    assert isinstance(result, AuditSettings)
-    assert result.action_groups == groups
-
-
-@pytest.mark.asyncio
-async def test_set_action_groups_raises_not_found_after_max_retries() -> None:
-    """set_action_groups raises NotFound after exhausting all retries."""
-    with respx.mock:
-        respx.post(_AUDIT_URL).mock(
-            return_value=httpx.Response(
-                404,
-                json={"errorCode": "EntityNotFound", "message": "not found", "isRetriable": False},
-            )
-        )
-        respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
-        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=AUDIT_SETTINGS_PAYLOAD))
-        client = await _make_client()
-        async with client:
-            with patch("asyncio.sleep", new=AsyncMock()):
-                with pytest.raises(NotFound):
-                    await audit.set_action_groups(client, _WS_ID, _WH_ID, ["BATCH_COMPLETED_GROUP"])
-
-
-@pytest.mark.asyncio
-async def test_set_action_groups_enables_on_first_404_then_succeeds() -> None:
-    """set_action_groups enables audit on first 404, then retries POST successfully.
-
-    Regression: a freshly-created warehouse has no sqlAudit resource until audit
-    is enabled.  set_action_groups must call enable() on the first 404 and then
-    retry the POST instead of sleeping and retrying the same failing call.
-    """
-    groups = ["BATCH_COMPLETED_GROUP"]
-    updated = AUDIT_SETTINGS_PAYLOAD.copy()
-    updated["auditActionsAndGroups"] = groups
-
-    post_call_count = 0
-
-    def _post_side_effect(_request: httpx.Request) -> httpx.Response:
-        nonlocal post_call_count
-        post_call_count += 1
-        if post_call_count == 1:
-            return httpx.Response(
-                404,
-                json={"errorCode": "EntityNotFound", "message": "not found", "isRetriable": False},
-            )
-        return httpx.Response(200, json={})
-
-    patch_call_count = 0
-
-    def _patch_side_effect(_request: httpx.Request) -> httpx.Response:
-        nonlocal patch_call_count
-        patch_call_count += 1
-        return httpx.Response(200, json={})
-
-    with respx.mock:
-        respx.post(_AUDIT_URL).mock(side_effect=_post_side_effect)
-        respx.patch(_AUDIT_URL).mock(side_effect=_patch_side_effect)
-        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=updated))
-        client = await _make_client()
-        async with client:
-            with patch("asyncio.sleep", new=AsyncMock()):
-                result = await audit.set_action_groups(client, _WS_ID, _WH_ID, groups)
-
-    # POST called twice: once (404) + once (success after enable)
-    assert post_call_count == 2
-    # enable() called once via PATCH
-    assert patch_call_count == 1
+    assert patch_route.called
+    sent_body = json.loads(patch_route.calls[0].request.content)
+    assert sent_body["state"] == "Enabled"
+    assert sent_body["auditActionsAndGroups"] == groups
     assert isinstance(result, AuditSettings)
     assert result.action_groups == groups

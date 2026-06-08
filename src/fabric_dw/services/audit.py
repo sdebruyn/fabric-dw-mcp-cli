@@ -10,11 +10,9 @@ Wraps the warehouse-scoped ``/settings/sqlAudit`` endpoint:
 
 from __future__ import annotations
 
-import asyncio
 import re
 from uuid import UUID
 
-from fabric_dw.exceptions import NotFound
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import AuditSettings
 
@@ -153,28 +151,15 @@ async def set_action_groups(
 
     path = _audit_path(workspace_id, warehouse_id)
 
-    # Fabric returns 404 (EntityNotFound) when the sqlAudit resource does not yet
-    # exist — this happens on freshly-created warehouses where audit has never been
-    # enabled.  Strategy: on the first 404, call enable() to provision the resource,
-    # then retry the POST with back-off.  The sqlAudit resource can take up to ~2 min
-    # to become available after enable(); we allow 8 attempts at 15 s intervals.
-    max_provision_retries = 8
-    provision_wait_s = 15.0
-    _enabled_once = False
-    last_exc: NotFound | None = None
-    for attempt in range(max_provision_retries):
-        try:
-            await http.request("POST", HttpBase.FABRIC, path, json=action_groups)
-            break
-        except NotFound as exc:
-            last_exc = exc
-            if not _enabled_once:
-                # Provision the audit resource by enabling it, then wait and retry.
-                _enabled_once = True
-                await enable(http, workspace_id, warehouse_id)
-            if attempt < max_provision_retries - 1:
-                await asyncio.sleep(provision_wait_s)
-    else:
-        raise last_exc or RuntimeError("unreachable")
+    # Fabric's PATCH /settings/sqlAudit accepts an ``auditActionsAndGroups`` field
+    # alongside ``state`` and ``retentionDays``.  Using PATCH to set the action groups
+    # avoids the EntityNotFound (404) that the POST method returns on freshly-created
+    # warehouses, since PATCH will also enable auditing if it is not yet active.
+    await http.request(
+        "PATCH",
+        HttpBase.FABRIC,
+        path,
+        json={"state": "Enabled", "auditActionsAndGroups": action_groups},
+    )
 
     return await get_settings(http, workspace_id, warehouse_id)
