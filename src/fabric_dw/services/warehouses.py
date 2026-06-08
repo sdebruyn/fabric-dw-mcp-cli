@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -10,6 +12,11 @@ from fabric_dw.exceptions import FabricServerError, NotFound, PermissionDenied
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import Warehouse, WarehouseKind
 from fabric_dw.services.workspaces import SUPPORTED_COLLATIONS
+
+_logger = logging.getLogger("fabric_dw.warehouses")
+
+# Backoff schedule for transient empty-2xx responses (seconds).
+_EMPTY_2XX_BACKOFF = (2, 6, 18)
 
 __all__ = [
     "create",
@@ -143,23 +150,57 @@ async def create(
     if collation is not None:
         body["creationPayload"] = {"defaultCollation": collation}
 
-    resp = await http.request(
-        "POST", HttpBase.FABRIC, f"/workspaces/{workspace_id}/items", json=body
-    )
+    for attempt, backoff in enumerate(
+        [None, *_EMPTY_2XX_BACKOFF], start=0
+    ):  # attempt 0 = initial; attempts 1-3 = retries
+        if backoff is not None:
+            _logger.warning(
+                "create warehouse: 2xx response had no Location header and no usable body "
+                "(attempt %d/3) — waiting %ss before retry (see issue #204)",
+                attempt,
+                backoff,
+            )
+            await asyncio.sleep(backoff)
 
-    location = resp.headers.get("Location")
+        resp = await http.request(
+            "POST", HttpBase.FABRIC, f"/workspaces/{workspace_id}/items", json=body
+        )
 
-    if location is None:
-        # Fabric occasionally returns 201 with the new warehouse directly in the body
-        # (no LRO / no Location header). The body does NOT include properties.connectionString,
-        # so we must do a follow-up GET to return a fully-populated Warehouse.
-        resp_body = resp.json()
-        resp_id = resp_body.get("id")
-        resp_name = resp_body.get("displayName") or resp_body.get("name")
-        if resp_id and resp_name:
-            new_id = UUID(str(resp_id))
-            return await get_warehouse(http, workspace_id, new_id)
-        msg = "create warehouse: response had no Location header and no usable body"
+        location = resp.headers.get("Location")
+
+        if location is None:
+            # Fabric occasionally returns 201 with the new warehouse directly in the body
+            # (no LRO / no Location header). The body does NOT include properties.connectionString,
+            # so we must do a follow-up GET to return a fully-populated Warehouse.
+            resp_body = resp.json()
+            resp_id = resp_body.get("id")
+            resp_name = resp_body.get("displayName") or resp_body.get("name")
+            if resp_id and resp_name:
+                new_id = UUID(str(resp_id))
+                return await get_warehouse(http, workspace_id, new_id)
+
+            # Do not retry on 4xx — those are definitive client errors.
+            if resp.status_code >= 400 and resp.status_code < 500:  # noqa: PLR2004
+                msg = (
+                    f"create warehouse: {resp.status_code} error response "
+                    f"with no Location header and no usable body"
+                )
+                raise FabricServerError(msg)
+
+            # 2xx + no Location + no usable body: transient Fabric data-plane not ready.
+            # Continue the retry loop (will raise below if exhausted).
+            continue
+
+        # Location header present → poll the LRO then fetch the new warehouse.
+        break
+
+    else:
+        # Exhausted all attempts (initial + 3 retries) without a usable response.
+        msg = (
+            "create warehouse: Fabric returned 2xx with no Location header and no usable body "
+            "after 4 attempts. The capacity data plane may not be ready yet. "
+            "See issue #204 for tracking frequency."
+        )
         raise FabricServerError(msg)
 
     # 202 = LRO initiated; poll the operation then fetch the new warehouse

@@ -410,16 +410,94 @@ async def test_create_no_location_header_but_body_present_returns_warehouse() ->
 
 @pytest.mark.asyncio
 async def test_create_no_location_header_and_empty_body_raises_fabric_server_error() -> None:
-    """create must raise FabricServerError when no Location header and body is empty."""
+    """create must raise FabricServerError (after exhausting retries) when body is always empty.
+
+    This test mocks 4 consecutive empty-2xx responses (> max 3 retries) and verifies
+    that FabricServerError is raised with a reference to issue #204.
+    """
     with respx.mock:
-        respx.post(_ITEMS_URL).mock(
-            return_value=httpx.Response(202, json={})  # no Location header, empty body
+        post_route = respx.post(_ITEMS_URL).mock(
+            return_value=httpx.Response(202, json={})  # no Location header, empty body, always
         )
 
         client = await _make_client()
         async with client:
-            with pytest.raises(FabricServerError, match="no Location header and no usable body"):
-                await warehouses.create(client, _WORKSPACE_ID, "SalesWarehouse")
+            with patch("asyncio.sleep"):  # skip actual sleeps in unit tests
+                with pytest.raises(FabricServerError, match="204"):
+                    await warehouses.create(client, _WORKSPACE_ID, "SalesWarehouse")
+
+    # 1 original + 3 retries = 4 total POST calls
+    assert post_route.call_count == 4
+
+
+@pytest.mark.asyncio
+async def test_create_empty_2xx_retries_then_succeeds() -> None:
+    """create must retry up to 3 times on 2xx + no Location + no usable body, then succeed.
+
+    Mocks 3 consecutive empty-2xx responses followed by a normal 202+Location response.
+    Verifies 4 total POST attempts and that the returned Warehouse is fully populated.
+    """
+    op_succeeded = json.loads(WAREHOUSE_OPERATION_SUCCEEDED_PAYLOAD)
+    wh_payload = json.loads(WAREHOUSE_GET_PAYLOAD)
+    new_wh_id = UUID("d4e5f6a7-b8c9-0123-def0-123456789abc")
+    new_wh_url = f"{_WAREHOUSES_URL}/{new_wh_id}"
+
+    call_count = 0
+
+    def post_side_effect(_request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count <= 3:
+            # Empty-2xx: no Location header, no usable body
+            return httpx.Response(202, json={})
+        # 4th attempt: normal LRO response
+        return httpx.Response(202, json={}, headers={"Location": _OPERATION_URL})
+
+    with respx.mock:
+        respx.post(_ITEMS_URL).mock(side_effect=post_side_effect)
+        respx.get(_OPERATION_URL).mock(return_value=httpx.Response(200, json=op_succeeded))
+        respx.get(new_wh_url).mock(return_value=httpx.Response(200, json=wh_payload))
+
+        client = await _make_client()
+        async with client:
+            with patch("asyncio.sleep"):  # skip actual sleeps in unit tests
+                result = await warehouses.create(client, _WORKSPACE_ID, "SalesWarehouse")
+
+    assert isinstance(result, Warehouse)
+    assert result.id == new_wh_id
+    assert result.kind == WarehouseKind.WAREHOUSE
+    assert call_count == 4  # 3 empty retries + 1 successful
+
+
+@pytest.mark.asyncio
+async def test_create_4xx_is_not_retried() -> None:
+    """create must NOT retry on 4xx errors — they propagate immediately.
+
+    Mocks a single 400 response and verifies that only 1 POST is made and
+    the exception is raised without any retry.
+    """
+    with respx.mock:
+        post_route = respx.post(_ITEMS_URL).mock(
+            return_value=httpx.Response(
+                400, json={"error": {"code": "InvalidRequest", "message": "bad input"}}
+            )
+        )
+
+        client = await _make_client()
+        async with client:
+            # 400 falls through http_client without raising (no mapping) — the response is returned
+            # and warehouses.create will see an empty/useless body; but the key assertion
+            # is that the retry loop only fires for 2xx+empty-body, not for 4xx.
+            # The http_client only raises for 401, 403, 404, 5xx — a bare 400 is returned.
+            # warehouses.create will try to parse the body (no Location, no id), but since
+            # the status is 4xx the retry must NOT fire.
+            with patch("asyncio.sleep") as mock_sleep:
+                with pytest.raises(FabricServerError):
+                    await warehouses.create(client, _WORKSPACE_ID, "SalesWarehouse")
+
+    # Only 1 POST attempt — no retries
+    assert post_route.call_count == 1
+    mock_sleep.assert_not_called()
 
 
 @pytest.mark.asyncio
