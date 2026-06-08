@@ -9,7 +9,7 @@ repo_name = "sdebruyn/fabric-dw-mcp-cli"
 edit_uri = "edit/main/docs/"
 copyright = "Copyright &copy; 2026 Sam Debruyn"
 
-watch = ["README.md", "CONTRIBUTING.md", "LICENSE", "SECURITY.md"]
+watch = ["README.md", "CONTRIBUTING.md", "LICENSE", "SECURITY.md", "CODE_OF_CONDUCT.md"]
 
 nav = [
   { "Home" = "index.md" },
@@ -22,6 +22,7 @@ nav = [
   ] },
   { "About" = [
     { "Contributing" = "contributing.md" },
+    { "Code of Conduct" = "code-of-conduct.md" },
     { "License" = "license.md" },
     { "Security" = "security.md" }
   ] }
