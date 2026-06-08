@@ -282,7 +282,7 @@ class FabricHttpClient:
             if isinstance(value, list):
                 for item in value:
                     if isinstance(item, dict):
-                        yield item
+                        yield {str(k): v for k, v in item.items()}
 
             cont = data.get("continuationUri")
             url = cont if isinstance(cont, str) else None

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json as _json
+from collections.abc import Sequence
 
 import click
 from rich.console import Console
@@ -47,12 +48,12 @@ def render(
     if isinstance(data, list):
         _render_table(data, console=con, title=table_title)
     elif isinstance(data, dict):
-        _render_panel(data, console=con, title=table_title)
+        _render_panel({str(k): v for k, v in data.items()}, console=con, title=table_title)
     else:
         click.echo(repr(data))
 
 
-def _render_table(rows: list[object], *, console: Console, title: str | None) -> None:
+def _render_table(rows: Sequence[object], *, console: Console, title: str | None) -> None:
     """Render a list of dicts as a Rich Table."""
     table = Table(title=title, show_header=True, header_style="bold")
 
@@ -65,9 +66,10 @@ def _render_table(rows: list[object], *, console: Console, title: str | None) ->
     seen: set[str] = set()
     for row in rows:
         if isinstance(row, dict):
-            for key in row:
+            row_dict: dict[str, object] = {str(k): v for k, v in row.items()}
+            for key in row_dict:
                 if key not in seen:
-                    columns.append(str(key))
+                    columns.append(key)
                     seen.add(key)
 
     for col in columns:
@@ -75,7 +77,8 @@ def _render_table(rows: list[object], *, console: Console, title: str | None) ->
 
     for row in rows:
         if isinstance(row, dict):
-            table.add_row(*[str(row.get(col, "")) for col in columns])
+            row_dict = {str(k): v for k, v in row.items()}
+            table.add_row(*[str(row_dict.get(col, "")) for col in columns])
         else:
             table.add_row(str(row))
 

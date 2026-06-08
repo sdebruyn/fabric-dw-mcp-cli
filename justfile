@@ -8,7 +8,7 @@ fmt:
     uv run ruff format .
 
 type:
-    uv run mypy src tests
+    uvx ty check src tests
 
 test:
     uv run pytest tests/unit -q

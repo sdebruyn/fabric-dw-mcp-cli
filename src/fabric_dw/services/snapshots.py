@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import closing
 from datetime import datetime
+from typing import cast
 from uuid import UUID
 
 from fabric_dw import sql
@@ -43,7 +44,10 @@ def _snapshot_from_detail(detail: dict[str, object]) -> WarehouseSnapshot:
     ``creationPayload.snapshotDateTime`` nested under ``creationPayload``.
     We flatten them to match the ``WarehouseSnapshot`` model's field aliases.
     """
-    creation_payload: dict[str, object] = detail.get("creationPayload") or {}  # type: ignore[assignment]
+    _raw_cp = detail.get("creationPayload")
+    creation_payload: dict[str, object] = (
+        cast("dict[str, object]", _raw_cp) if isinstance(_raw_cp, dict) else {}
+    )
     flat: dict[str, object] = {
         "id": detail.get("id"),
         "displayName": detail.get("displayName"),
@@ -87,7 +91,10 @@ async def list_snapshots(
             "GET", HttpBase.FABRIC, f"/workspaces/{workspace_id}/items/{snap_id}"
         )
         detail: dict[str, object] = resp.json()
-        creation_payload: dict[str, object] = detail.get("creationPayload") or {}  # type: ignore[assignment]
+        _raw_cp = detail.get("creationPayload")
+        creation_payload: dict[str, object] = (
+            cast("dict[str, object]", _raw_cp) if isinstance(_raw_cp, dict) else {}
+        )
         raw_parent_id = creation_payload.get("parentWarehouseId")
         if raw_parent_id and UUID(str(raw_parent_id)) == parent_warehouse_id:
             results.append(_snapshot_from_detail(detail))
@@ -211,7 +218,10 @@ async def rename(
         f"/workspaces/{workspace_id}/items/{snapshot_id}",
     )
     detail: dict[str, object] = detail_resp.json()
-    creation_payload: dict[str, object] = detail.get("creationPayload") or {}  # type: ignore[assignment]
+    _raw_cp = detail.get("creationPayload")
+    creation_payload: dict[str, object] = (
+        cast("dict[str, object]", _raw_cp) if isinstance(_raw_cp, dict) else {}
+    )
     parent_wh_id = creation_payload.get("parentWarehouseId")
 
     patch_body: dict[str, object] = {

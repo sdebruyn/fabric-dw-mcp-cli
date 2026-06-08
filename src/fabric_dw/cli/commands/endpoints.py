@@ -65,7 +65,7 @@ async def list_cmd(ctx: CliContext, workspace: str | None, all_workspaces: bool)
             else:
                 cache = LookupCache()
                 resolver = Resolver(http=http, cache=cache)
-                ws_id = await resolver.workspace_id(workspace)  # type: ignore[arg-type]
+                ws_id = await resolver.workspace_id(workspace or "")
                 items = await _sql_endpoints_svc.list_endpoints(http, ws_id)
             render(
                 [ep.model_dump(by_alias=True, mode="json") for ep in items],

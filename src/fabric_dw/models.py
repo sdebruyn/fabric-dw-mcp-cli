@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Literal
+from typing import Literal, cast
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -55,12 +55,18 @@ class Warehouse(_FabricBase):
         Picks up the connection string from the correct nested properties path
         depending on whether the item is a WAREHOUSE or SQL_ENDPOINT.
         """
-        props: dict[str, object] = payload.get("properties") or {}  # type: ignore[assignment]
+        _raw_props = payload.get("properties")
+        props: dict[str, object] = (
+            cast("dict[str, object]", _raw_props) if isinstance(_raw_props, dict) else {}
+        )
 
         if kind == WarehouseKind.WAREHOUSE:
             conn_string = props.get("connectionString")
         elif kind == WarehouseKind.SQL_ENDPOINT:
-            sql_ep: dict[str, object] = props.get("sqlEndpointProperties") or {}  # type: ignore[assignment]
+            _raw_sql_ep = props.get("sqlEndpointProperties")
+            sql_ep: dict[str, object] = (
+                cast("dict[str, object]", _raw_sql_ep) if isinstance(_raw_sql_ep, dict) else {}
+            )
             conn_string = sql_ep.get("connectionString")
         else:
             msg = f"from_api does not support kind={kind}"
