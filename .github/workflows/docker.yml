@@ -14,7 +14,9 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - uses: astral-sh/setup-uv@v8.2.0
         with:
@@ -24,28 +26,17 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Compute version
-        id: ver
-        run: |
-          BASE=$(uv run python -c "import fabric_dw; print(fabric_dw.__version__)")
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            TAG_VER="${GITHUB_REF_NAME#v}"
-            if [[ "$TAG_VER" != "$BASE" ]]; then
-              echo "Tag $TAG_VER does not match fabric_dw.__version__ $BASE" >&2; exit 1
-            fi
-            VERSION="$TAG_VER"
-            CHANNEL="stable"
-          else
-            VERSION="${BASE}.dev${GITHUB_RUN_NUMBER}"
-            CHANNEL="dev"
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "channel=$CHANNEL" >> $GITHUB_OUTPUT
+      - run: uv sync --frozen --no-dev
 
-      - name: Override package version
+      - name: Compute Docker tags
+        id: docker_tags
         run: |
-          sed -i.bak 's|^__version__ = .*|__version__ = "${{ steps.ver.outputs.version }}"|' src/fabric_dw/__init__.py
-          rm src/fabric_dw/__init__.py.bak
+          VERSION=$(uv run python -c "import fabric_dw; print(fabric_dw.__version__)")
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            echo "tags=ghcr.io/sdebruyn/fabric-dw:$VERSION,ghcr.io/sdebruyn/fabric-dw:latest" >> $GITHUB_OUTPUT
+          else
+            echo "tags=ghcr.io/sdebruyn/fabric-dw:$VERSION,ghcr.io/sdebruyn/fabric-dw:main" >> $GITHUB_OUTPUT
+          fi
 
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
@@ -56,28 +47,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build & push (stable)
-        if: steps.ver.outputs.channel == 'stable'
+      - name: Build & push
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ghcr.io/sdebruyn/fabric-dw:${{ steps.ver.outputs.version }}
-            ghcr.io/sdebruyn/fabric-dw:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build & push (dev)
-        if: steps.ver.outputs.channel == 'dev'
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            ghcr.io/sdebruyn/fabric-dw:${{ steps.ver.outputs.version }}
-            ghcr.io/sdebruyn/fabric-dw:main
+          tags: ${{ steps.docker_tags.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
