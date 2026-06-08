@@ -162,6 +162,7 @@ class TestSnapshotsCreate:
                 "fabric_dw.cli.commands.snapshots._resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_wh_entry())),
             ),
+            patch("asyncio.sleep", new=AsyncMock()),
         ):
             result = runner.invoke(
                 cli,

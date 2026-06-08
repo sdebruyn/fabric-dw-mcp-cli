@@ -362,7 +362,8 @@ async def test_set_action_groups_enables_on_first_404_then_succeeds() -> None:
         respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=updated))
         client = await _make_client()
         async with client:
-            result = await audit.set_action_groups(client, _WS_ID, _WH_ID, groups)
+            with patch("asyncio.sleep", new=AsyncMock()):
+                result = await audit.set_action_groups(client, _WS_ID, _WH_ID, groups)
 
     # POST called twice: once (404) + once (success after enable)
     assert post_call_count == 2

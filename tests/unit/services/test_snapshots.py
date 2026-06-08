@@ -139,6 +139,12 @@ def _make_mock_conn() -> MagicMock:
     return conn
 
 
+@pytest.fixture(autouse=True)
+def _no_real_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Suppress asyncio.sleep for all snapshot unit tests to keep the suite fast."""
+    monkeypatch.setattr("asyncio.sleep", AsyncMock())
+
+
 # ---------------------------------------------------------------------------
 # list
 # ---------------------------------------------------------------------------
@@ -389,8 +395,7 @@ async def test_create_retries_detail_when_creation_payload_missing() -> None:
     async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
         with patch.object(http, "poll_operation", new_callable=AsyncMock) as mock_poll:
             mock_poll.return_value = {"status": "Succeeded", "resourceId": str(_SNAP_ID)}
-            with patch("asyncio.sleep", new=AsyncMock()):
-                result = await snapshots.create(http, _WS_ID, _PARENT_WH_ID, "NewSnapshot")
+            result = await snapshots.create(http, _WS_ID, _PARENT_WH_ID, "NewSnapshot")
 
     assert detail_call_count == 2
     assert isinstance(result, WarehouseSnapshot)
