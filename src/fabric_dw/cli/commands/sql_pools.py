@@ -3,38 +3,25 @@
 .. warning::
    SQL Pools is a **beta / preview** feature.  The underlying API may change
    before general availability.
-
-.. warning::
-   ``sql-pools set`` and ``sql-pools edit`` use a **destructive PATCH** — any
-   pool *not* listed in the payload will be permanently deleted by the service.
-   Both commands surface this risk explicitly before applying changes.
 """
 
 from __future__ import annotations
 
-import difflib
-import json
 import logging
-import os
-import subprocess
-import sys
-import tempfile
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from pathlib import Path
 from uuid import UUID
 
 import click
-from pydantic import ValidationError
 
 from fabric_dw import auth as _auth
 from fabric_dw.cache import LookupCache
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import confirm, render
 from fabric_dw.cli.commands._utils import _coro, resolve_workspace_arg
-from fabric_dw.exceptions import FabricError, PermissionDenied
+from fabric_dw.exceptions import AlreadyExists, FabricError, NotFound, PermissionDenied
 from fabric_dw.http_client import FabricHttpClient
-from fabric_dw.models import SqlPoolsConfiguration
+from fabric_dw.models import SqlPool, SqlPoolClassifier
 from fabric_dw.resolver import Resolver
 from fabric_dw.services import sql_pools as _svc
 
@@ -63,6 +50,11 @@ def sql_pools_group() -> None:
     """Manage workspace SQL Pools configuration (beta API)."""
 
 
+# ---------------------------------------------------------------------------
+# get
+# ---------------------------------------------------------------------------
+
+
 @sql_pools_group.command("get")
 @click.argument("workspace", required=False, default=None)
 @click.pass_obj
@@ -84,142 +76,259 @@ async def get_cmd(ctx: CliContext, workspace: str | None) -> None:
         raise click.ClickException(str(exc)) from exc
 
 
-@sql_pools_group.command("set")
+# ---------------------------------------------------------------------------
+# list
+# ---------------------------------------------------------------------------
+
+
+@sql_pools_group.command("list")
 @click.argument("workspace", required=False, default=None)
+@click.pass_obj
+@_coro
+async def list_cmd(ctx: CliContext, workspace: str | None) -> None:
+    """List all SQL pools in WORKSPACE."""
+    ws = resolve_workspace_arg(ctx, workspace)
+    try:
+        async with _build_http_client(ctx) as http:
+            ws_id = await _resolve_workspace(http, ws)
+            config = await _svc.get_configuration(http, ws_id)
+            pools = [p.model_dump(by_alias=True, mode="json") for p in config.custom_sql_pools]
+            render(pools, json_output=ctx.json_output)
+    except PermissionDenied as exc:
+        raise _permission_hint(exc) from exc
+    except FabricError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# show
+# ---------------------------------------------------------------------------
+
+
+@sql_pools_group.command("show")
+@click.argument("workspace", required=False, default=None)
+@click.option("--name", required=True, help="Name of the pool to show.")
+@click.pass_obj
+@_coro
+async def show_cmd(ctx: CliContext, workspace: str | None, name: str) -> None:
+    """Show details for a single SQL pool in WORKSPACE."""
+    ws = resolve_workspace_arg(ctx, workspace)
+    try:
+        async with _build_http_client(ctx) as http:
+            ws_id = await _resolve_workspace(http, ws)
+            config = await _svc.get_configuration(http, ws_id)
+            pool = next((p for p in config.custom_sql_pools if p.name == name), None)
+            if pool is None:
+                raise click.ClickException(f"pool {name!r} not found")  # noqa: TRY003, TRY301
+            render(pool.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
+    except click.ClickException:
+        raise
+    except PermissionDenied as exc:
+        raise _permission_hint(exc) from exc
+    except FabricError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# create
+# ---------------------------------------------------------------------------
+
+
+@sql_pools_group.command("create")
+@click.argument("workspace", required=False, default=None)
+@click.option("--name", required=True, help="Pool name.")
 @click.option(
-    "--from-file",
-    "from_file",
+    "--max-percent",
+    "max_percent",
     required=True,
-    type=click.Path(exists=True, dir_okay=False, readable=True),
-    help="Path to a JSON file containing the full SqlPoolsConfiguration payload.",
+    type=int,
+    help="Max resource percentage (1-100).",
+)
+@click.option(
+    "--default/--no-default",
+    "is_default",
+    default=False,
+    show_default=True,
+    help="Mark pool as default.",
+)
+@click.option(
+    "--optimize-for-reads/--no-optimize-for-reads",
+    "optimize_for_reads",
+    default=True,
+    show_default=True,
+    help="Enable read optimisation.",
+)
+@click.option(
+    "--classifier-type",
+    "classifier_type",
+    default=None,
+    help="Classifier type (e.g. 'Application Name').",
+)
+@click.option(
+    "--classifier-value",
+    "classifier_values",
+    multiple=True,
+    help="Classifier value(s). Repeat for multiple values.",
 )
 @click.pass_obj
 @_coro
-async def set_cmd(ctx: CliContext, workspace: str | None, from_file: str) -> None:
-    """Replace the SQL Pools configuration for WORKSPACE from a JSON file.
-
-    \b
-    WARNING: This is a destructive PATCH — any pool NOT listed in the file
-    will be permanently deleted by the Fabric service.
-    """
+async def create_cmd(
+    ctx: CliContext,
+    workspace: str | None,
+    name: str,
+    max_percent: int,
+    is_default: bool,
+    optimize_for_reads: bool,
+    classifier_type: str | None,
+    classifier_values: tuple[str, ...],
+) -> None:
+    """Add a new SQL pool to WORKSPACE."""
     ws = resolve_workspace_arg(ctx, workspace)
-    raw_path = Path(from_file)
-    try:
-        payload = json.loads(raw_path.read_text())
-    except (OSError, json.JSONDecodeError) as exc:
-        raise click.ClickException(f"Cannot read {from_file}: {exc}") from exc  # noqa: TRY003
 
-    try:
-        config = SqlPoolsConfiguration.model_validate(payload)
-    except ValidationError as exc:
-        raise click.ClickException(f"Invalid configuration: {exc}") from exc  # noqa: TRY003
+    classifier: SqlPoolClassifier | None = None
+    if classifier_type is not None:
+        classifier = SqlPoolClassifier.model_validate(
+            {"type": classifier_type, "value": list(classifier_values)}
+        )
 
-    click.echo(
-        "WARNING: This is a destructive PATCH. Pools not in the file will be deleted.",
-        err=True,
+    pool = SqlPool.model_validate(
+        {
+            "name": name,
+            "isDefault": is_default,
+            "maxResourcePercentage": max_percent,
+            "optimizeForReads": optimize_for_reads,
+            "classifier": classifier.model_dump(by_alias=True, mode="json") if classifier else None,
+        }
     )
-    if not confirm("Apply configuration?", yes=ctx.yes):
-        raise click.Abort()
 
     try:
         async with _build_http_client(ctx) as http:
             ws_id = await _resolve_workspace(http, ws)
-            result = await _svc.update_configuration(http, ws_id, config)
-            render(
-                result.model_dump(by_alias=True, mode="json"),
-                json_output=ctx.json_output,
-            )
+            result = await _svc.create_pool(http, ws_id, pool)
+            render(result.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
+    except AlreadyExists as exc:
+        raise click.ClickException(str(exc)) from exc
     except ValueError as exc:
-        raise click.ClickException(f"Invalid configuration: {exc}") from exc  # noqa: TRY003
+        raise click.ClickException(f"Invalid pool configuration: {exc}") from exc  # noqa: TRY003
     except PermissionDenied as exc:
         raise _permission_hint(exc) from exc
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc
 
 
-@sql_pools_group.command("edit")
+# ---------------------------------------------------------------------------
+# update
+# ---------------------------------------------------------------------------
+
+
+@sql_pools_group.command("update")
 @click.argument("workspace", required=False, default=None)
+@click.option("--name", required=True, help="Name of the pool to update.")
+@click.option(
+    "--max-percent",
+    "max_percent",
+    default=None,
+    type=int,
+    help="New max resource percentage (1-100).",
+)
+@click.option(
+    "--default/--no-default",
+    "is_default",
+    default=None,
+    help="Set or clear the default flag.",
+)
+@click.option(
+    "--optimize-for-reads/--no-optimize-for-reads",
+    "optimize_for_reads",
+    default=None,
+    help="Enable or disable read optimisation.",
+)
+@click.option(
+    "--classifier-type",
+    "classifier_type",
+    default=None,
+    help="New classifier type.",
+)
+@click.option(
+    "--classifier-value",
+    "classifier_values",
+    multiple=True,
+    help="New classifier value(s). Repeat for multiple values. Replaces all existing values.",
+)
 @click.pass_obj
 @_coro
-async def edit_cmd(ctx: CliContext, workspace: str | None) -> None:
-    """Open the current SQL Pools config in $EDITOR, then apply on save.
+async def update_cmd(
+    ctx: CliContext,
+    workspace: str | None,
+    name: str,
+    max_percent: int | None,
+    is_default: bool | None,
+    optimize_for_reads: bool | None,
+    classifier_type: str | None,
+    classifier_values: tuple[str, ...],
+) -> None:
+    """Update an existing SQL pool in WORKSPACE.
 
-    Shows a diff and asks for confirmation before applying if any pool
-    would be deleted (destructive PATCH semantics).
+    Only the flags you provide are changed; all other fields are preserved.
     """
     ws = resolve_workspace_arg(ctx, workspace)
+    cv: list[str] | None = list(classifier_values) if classifier_values else None
     try:
         async with _build_http_client(ctx) as http:
-            # Resolve the workspace ID once and reuse it for both GET and PATCH
-            # to avoid a TOCTOU issue if the workspace is renamed mid-edit.
             ws_id = await _resolve_workspace(http, ws)
-            current = await _svc.get_configuration(http, ws_id)
-
-            current_json = json.dumps(current.model_dump(by_alias=True, mode="json"), indent=2)
-
-            editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or _default_editor()
-
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".json", delete=False, prefix="fabric-dw-sql-pools-"
-            ) as tmp:
-                tmp.write(current_json)
-                tmp_path = tmp.name
-
-            try:
-                subprocess.run([editor, tmp_path], check=True)  # noqa: S603
-                edited_text = Path(tmp_path).read_text()
-            finally:
-                Path(tmp_path).unlink(missing_ok=True)
-
-            if edited_text.strip() == current_json.strip():
-                click.echo("No changes detected. Aborting.")
-                return
-
-            try:
-                new_payload = json.loads(edited_text)
-                new_config = SqlPoolsConfiguration.model_validate(new_payload)
-            except (json.JSONDecodeError, ValidationError) as exc:
-                raise click.ClickException(f"Invalid configuration after editing: {exc}") from exc  # noqa: TRY003
-
-            current_names = {p.name for p in current.custom_sql_pools}
-            new_names = {p.name for p in new_config.custom_sql_pools}
-            deleted_names = current_names - new_names
-
-            diff_lines = list(
-                difflib.unified_diff(
-                    current_json.splitlines(keepends=True),
-                    edited_text.splitlines(keepends=True),
-                    fromfile="current",
-                    tofile="new",
-                )
+            result = await _svc.update_pool(
+                http,
+                ws_id,
+                name,
+                max_resource_percentage=max_percent,
+                is_default=is_default,
+                optimize_for_reads=optimize_for_reads,
+                classifier_type=classifier_type,
+                classifier_values=cv,
             )
-            if diff_lines:
-                click.echo("".join(diff_lines))
-
-            if deleted_names:
-                click.echo(
-                    f"\nWARNING: The following pools will be DELETED: "
-                    f"{', '.join(sorted(deleted_names))}",
-                    err=True,
-                )
-
-            if not confirm("Apply configuration?", yes=ctx.yes):
-                raise click.Abort()  # noqa: TRY301
-
-            result = await _svc.update_configuration(http, ws_id, new_config)
-            render(
-                result.model_dump(by_alias=True, mode="json"),
-                json_output=ctx.json_output,
-            )
-
-    except click.Abort:
-        raise
+            render(result.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
+    except NotFound as exc:
+        raise click.ClickException(str(exc)) from exc
     except ValueError as exc:
-        raise click.ClickException(f"Invalid configuration: {exc}") from exc  # noqa: TRY003
+        raise click.ClickException(f"Invalid pool configuration: {exc}") from exc  # noqa: TRY003
     except PermissionDenied as exc:
         raise _permission_hint(exc) from exc
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# delete
+# ---------------------------------------------------------------------------
+
+
+@sql_pools_group.command("delete")
+@click.argument("workspace", required=False, default=None)
+@click.option("--name", required=True, help="Name of the pool to delete.")
+@click.option("--yes", "yes", is_flag=True, default=False, help="Skip confirmation prompt.")
+@click.pass_obj
+@_coro
+async def delete_cmd(ctx: CliContext, workspace: str | None, name: str, yes: bool) -> None:
+    """Remove an SQL pool from WORKSPACE."""
+    ws = resolve_workspace_arg(ctx, workspace)
+    if not yes and not ctx.yes and not confirm(f"Delete pool {name!r}?", yes=False):
+        raise click.Abort()
+    try:
+        async with _build_http_client(ctx) as http:
+            ws_id = await _resolve_workspace(http, ws)
+            result = await _svc.delete_pool(http, ws_id, name)
+            render(result.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
+    except NotFound as exc:
+        raise click.ClickException(str(exc)) from exc
+    except PermissionDenied as exc:
+        raise _permission_hint(exc) from exc
+    except FabricError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# enable / disable
+# ---------------------------------------------------------------------------
 
 
 @sql_pools_group.command("enable")
@@ -267,8 +376,27 @@ async def disable_cmd(ctx: CliContext, workspace: str | None) -> None:
         raise click.ClickException(str(exc)) from exc
 
 
-def _default_editor() -> str:
-    """Return a sensible default editor when neither $VISUAL nor $EDITOR is set."""
-    if sys.platform == "win32":
-        return "notepad"
-    return "vi"
+# ---------------------------------------------------------------------------
+# reset
+# ---------------------------------------------------------------------------
+
+
+@sql_pools_group.command("reset")
+@click.argument("workspace", required=False, default=None)
+@click.option("--yes", "yes", is_flag=True, default=False, help="Skip confirmation prompt.")
+@click.pass_obj
+@_coro
+async def reset_cmd(ctx: CliContext, workspace: str | None, yes: bool) -> None:
+    """Clear all SQL pools for WORKSPACE (preserves enabled/disabled state)."""
+    ws = resolve_workspace_arg(ctx, workspace)
+    if not yes and not ctx.yes and not confirm("Clear all SQL pools?", yes=False):
+        raise click.Abort()
+    try:
+        async with _build_http_client(ctx) as http:
+            ws_id = await _resolve_workspace(http, ws)
+            result = await _svc.reset_pools(http, ws_id)
+            render(result.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
+    except PermissionDenied as exc:
+        raise _permission_hint(exc) from exc
+    except FabricError as exc:
+        raise click.ClickException(str(exc)) from exc

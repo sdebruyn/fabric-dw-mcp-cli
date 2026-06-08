@@ -1,4 +1,4 @@
-"""Tests for sql-pools CLI sub-commands."""
+"""Tests for sql-pools CLI sub-commands (Azure-CLI-style sub-resource interface)."""
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ import pytest
 from click.testing import CliRunner
 
 from fabric_dw.cli._main import cli
-from fabric_dw.exceptions import PermissionDenied
-from fabric_dw.models import SqlPoolsConfiguration
+from fabric_dw.exceptions import AlreadyExists, NotFound, PermissionDenied
+from fabric_dw.models import SqlPool, SqlPoolsConfiguration
 
 WS_GUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 WS_UUID = UUID(WS_GUID)
@@ -43,8 +43,35 @@ POOLS_DISABLED_PAYLOAD = {
     ],
 }
 
+POOLS_EMPTY_PAYLOAD = {
+    "customSQLPoolsEnabled": True,
+    "customSQLPools": [],
+}
+
+MULTI_POOL_PAYLOAD = {
+    "customSQLPoolsEnabled": True,
+    "customSQLPools": [
+        {
+            "name": "ETL",
+            "isDefault": False,
+            "maxResourcePercentage": 40,
+            "optimizeForReads": False,
+            "classifier": {"type": "Application Name", "value": ["ETL"]},
+        },
+        {
+            "name": "Reporting",
+            "isDefault": True,
+            "maxResourcePercentage": 60,
+            "optimizeForReads": True,
+            "classifier": {"type": "Application Name", "value": ["Reports"]},
+        },
+    ],
+}
+
 _CONFIG = SqlPoolsConfiguration.model_validate(POOLS_PAYLOAD)
 _CONFIG_DISABLED = SqlPoolsConfiguration.model_validate(POOLS_DISABLED_PAYLOAD)
+_CONFIG_EMPTY = SqlPoolsConfiguration.model_validate(POOLS_EMPTY_PAYLOAD)
+_CONFIG_MULTI = SqlPoolsConfiguration.model_validate(MULTI_POOL_PAYLOAD)
 
 
 @pytest.fixture
@@ -129,20 +156,242 @@ class TestSqlPoolsGet:
         assert "admin" in result.output.lower()
 
 
-class TestSqlPoolsSet:
-    def test_set_requires_from_file(self, runner: CliRunner, cache_env: Path) -> None:
+class TestSqlPoolsList:
+    def test_list_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
-        result = runner.invoke(cli, ["sql-pools", "set", WS_GUID])
-        assert result.exit_code != 0
-        assert "from-file" in result.output.lower() or "missing" in result.output.lower()
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._svc.get_configuration",
+                new=AsyncMock(return_value=_CONFIG_MULTI),
+            ),
+        ):
+            result = runner.invoke(cli, ["sql-pools", "list", WS_GUID])
+        assert result.exit_code == 0
 
-    def test_set_applies_from_file_with_yes(
-        self, runner: CliRunner, tmp_path: Path, cache_env: Path
+    def test_list_json_shows_pool_array(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._svc.get_configuration",
+                new=AsyncMock(return_value=_CONFIG_MULTI),
+            ),
+        ):
+            result = runner.invoke(cli, ["--json", "sql-pools", "list", WS_GUID])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert isinstance(data, list)
+        assert len(data) == 2
+        names = [p["name"] for p in data]
+        assert "ETL" in names
+        assert "Reporting" in names
+
+
+class TestSqlPoolsShow:
+    def test_show_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._svc.get_configuration",
+                new=AsyncMock(return_value=_CONFIG_MULTI),
+            ),
+        ):
+            result = runner.invoke(cli, ["sql-pools", "show", WS_GUID, "--name", "ETL"])
+        assert result.exit_code == 0
+
+    def test_show_missing_pool_exits_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._svc.get_configuration",
+                new=AsyncMock(return_value=_CONFIG_MULTI),
+            ),
+        ):
+            result = runner.invoke(cli, ["sql-pools", "show", WS_GUID, "--name", "DoesNotExist"])
+        assert result.exit_code != 0
+
+
+class TestSqlPoolsCreate:
+    def test_create_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_create = AsyncMock(return_value=_CONFIG)
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._svc.create_pool",
+                new=mock_create,
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "sql-pools",
+                    "create",
+                    WS_GUID,
+                    "--name",
+                    "NewPool",
+                    "--max-percent",
+                    "30",
+                    "--classifier-type",
+                    "Application Name",
+                    "--classifier-value",
+                    "App1",
+                ],
+            )
+        assert result.exit_code == 0
+        mock_create.assert_awaited_once()
+
+    def test_create_with_multiple_classifier_values(
+        self, runner: CliRunner, cache_env: Path
     ) -> None:
         _ = cache_env
-        pool_file = tmp_path / "pools.json"
-        pool_file.write_text(json.dumps(POOLS_PAYLOAD))
+        mock_create = AsyncMock(return_value=_CONFIG)
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._svc.create_pool",
+                new=mock_create,
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "sql-pools",
+                    "create",
+                    WS_GUID,
+                    "--name",
+                    "NewPool",
+                    "--max-percent",
+                    "30",
+                    "--classifier-type",
+                    "Application Name",
+                    "--classifier-value",
+                    "App1",
+                    "--classifier-value",
+                    "App2",
+                ],
+            )
+        assert result.exit_code == 0
+        call_args = mock_create.call_args
+        pool: SqlPool = call_args.args[2]
+        assert pool.classifier is not None
+        assert pool.classifier.value == ["App1", "App2"]
 
+    def test_create_already_exists_exits_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._svc.create_pool",
+                new=AsyncMock(side_effect=AlreadyExists("pool 'Default' already exists")),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "sql-pools",
+                    "create",
+                    WS_GUID,
+                    "--name",
+                    "Default",
+                    "--max-percent",
+                    "100",
+                ],
+            )
+        assert result.exit_code != 0
+        assert "already exists" in result.output.lower() or "Default" in result.output
+
+    def test_create_with_default_flag(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_create = AsyncMock(return_value=_CONFIG)
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._svc.create_pool",
+                new=mock_create,
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "sql-pools",
+                    "create",
+                    WS_GUID,
+                    "--name",
+                    "Defaults",
+                    "--max-percent",
+                    "100",
+                    "--default",
+                ],
+            )
+        assert result.exit_code == 0
+        call_args = mock_create.call_args
+        pool: SqlPool = call_args.args[2]
+        assert pool.is_default is True
+
+
+class TestSqlPoolsUpdate:
+    def test_update_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
         mock_update = AsyncMock(return_value=_CONFIG)
         with (
             patch(
@@ -154,43 +403,192 @@ class TestSqlPoolsSet:
                 new=AsyncMock(return_value=WS_UUID),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_pools._svc.update_configuration",
+                "fabric_dw.cli.commands.sql_pools._svc.update_pool",
                 new=mock_update,
             ),
         ):
             result = runner.invoke(
-                cli, ["-y", "sql-pools", "set", WS_GUID, "--from-file", str(pool_file)]
+                cli,
+                [
+                    "sql-pools",
+                    "update",
+                    WS_GUID,
+                    "--name",
+                    "Default",
+                    "--max-percent",
+                    "50",
+                ],
             )
         assert result.exit_code == 0
         mock_update.assert_awaited_once()
 
-    def test_set_invalid_json_file_exits_nonzero(
-        self, runner: CliRunner, tmp_path: Path, cache_env: Path
-    ) -> None:
+    def test_update_not_found_exits_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
-        bad_file = tmp_path / "bad.json"
-        bad_file.write_text("{not valid json}")
-        result = runner.invoke(
-            cli, ["-y", "sql-pools", "set", WS_GUID, "--from-file", str(bad_file)]
-        )
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._svc.update_pool",
+                new=AsyncMock(side_effect=NotFound("pool 'NoPool' not found")),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "sql-pools",
+                    "update",
+                    WS_GUID,
+                    "--name",
+                    "NoPool",
+                    "--max-percent",
+                    "50",
+                ],
+            )
         assert result.exit_code != 0
 
-    def test_set_invalid_config_exits_nonzero(
-        self, runner: CliRunner, tmp_path: Path, cache_env: Path
+    def test_update_partial_flags_passed_correctly(
+        self, runner: CliRunner, cache_env: Path
     ) -> None:
         _ = cache_env
-        bad_payload = {
-            "customSQLPoolsEnabled": True,
-            "customSQLPools": [
-                {"name": "A", "isDefault": True, "maxResourcePercentage": 101},
-            ],
-        }
-        bad_file = tmp_path / "bad_config.json"
-        bad_file.write_text(json.dumps(bad_payload))
-        result = runner.invoke(
-            cli, ["-y", "sql-pools", "set", WS_GUID, "--from-file", str(bad_file)]
-        )
+        mock_update = AsyncMock(return_value=_CONFIG)
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._svc.update_pool",
+                new=mock_update,
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "sql-pools",
+                    "update",
+                    WS_GUID,
+                    "--name",
+                    "Default",
+                    "--no-optimize-for-reads",
+                ],
+            )
+        assert result.exit_code == 0
+        _, kwargs = mock_update.call_args
+        assert kwargs.get("optimize_for_reads") is False
+        assert kwargs.get("max_resource_percentage") is None
+
+    def test_update_with_is_default_toggle(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_update = AsyncMock(return_value=_CONFIG)
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._svc.update_pool",
+                new=mock_update,
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "sql-pools",
+                    "update",
+                    WS_GUID,
+                    "--name",
+                    "Default",
+                    "--no-default",
+                ],
+            )
+        assert result.exit_code == 0
+        _, kwargs = mock_update.call_args
+        assert kwargs.get("is_default") is False
+
+
+class TestSqlPoolsDelete:
+    def test_delete_exits_zero_with_yes(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_delete = AsyncMock(return_value=_CONFIG_EMPTY)
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._svc.delete_pool",
+                new=mock_delete,
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-y", "sql-pools", "delete", WS_GUID, "--name", "Default"],
+            )
+        assert result.exit_code == 0
+        mock_delete.assert_awaited_once()
+
+    def test_delete_not_found_exits_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._svc.delete_pool",
+                new=AsyncMock(side_effect=NotFound("pool 'NoPool' not found")),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-y", "sql-pools", "delete", WS_GUID, "--name", "NoPool"],
+            )
         assert result.exit_code != 0
+
+    def test_delete_403_shows_permission_hint(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._svc.delete_pool",
+                new=AsyncMock(side_effect=PermissionDenied("403")),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-y", "sql-pools", "delete", WS_GUID, "--name", "Default"],
+            )
+        assert result.exit_code != 0
+        assert "admin" in result.output.lower()
 
 
 class TestSqlPoolsEnable:
@@ -253,3 +651,46 @@ class TestSqlPoolsDisable:
         ):
             result = runner.invoke(cli, ["sql-pools", "disable", WS_GUID])
         assert result.exit_code == 0
+
+
+class TestSqlPoolsReset:
+    def test_reset_exits_zero_with_yes(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_reset = AsyncMock(return_value=_CONFIG_EMPTY)
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._svc.reset_pools",
+                new=mock_reset,
+            ),
+        ):
+            result = runner.invoke(cli, ["-y", "sql-pools", "reset", WS_GUID])
+        assert result.exit_code == 0
+        mock_reset.assert_awaited_once()
+
+    def test_reset_403_shows_permission_hint(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._svc.reset_pools",
+                new=AsyncMock(side_effect=PermissionDenied("403")),
+            ),
+        ):
+            result = runner.invoke(cli, ["-y", "sql-pools", "reset", WS_GUID])
+        assert result.exit_code != 0
+        assert "admin" in result.output.lower()

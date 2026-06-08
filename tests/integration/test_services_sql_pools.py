@@ -8,8 +8,9 @@ from uuid import UUID
 
 import pytest
 
+from fabric_dw.exceptions import AlreadyExists, NotFound
 from fabric_dw.http_client import FabricHttpClient
-from fabric_dw.models import SqlPoolsConfiguration
+from fabric_dw.models import SqlPool, SqlPoolsConfiguration
 from fabric_dw.services import sql_pools
 
 pytestmark = pytest.mark.integration
@@ -53,15 +54,69 @@ async def test_enable_disable_roundtrip(http: FabricHttpClient, workspace_id: UU
         await sql_pools.update_configuration(http, workspace_id, original)
 
 
-async def test_update_configuration_roundtrip(http: FabricHttpClient, workspace_id: UUID) -> None:
+async def test_create_update_delete_roundtrip(http: FabricHttpClient, workspace_id: UUID) -> None:
+    """Integration test: create → update → delete roundtrip for a single pool."""
     original = await sql_pools.get_configuration(http, workspace_id)
 
-    test_config = SqlPoolsConfiguration.model_validate(
+    pool_name = "pytest-integration-pool"
+
+    try:
+        # Create
+        new_pool = SqlPool.model_validate(
+            {
+                "name": pool_name,
+                "isDefault": False,
+                "maxResourcePercentage": 10,
+                "optimizeForReads": True,
+                "classifier": {
+                    "type": "Application Name",
+                    "value": ["pytest-app"],
+                },
+            }
+        )
+        after_create = await sql_pools.create_pool(http, workspace_id, new_pool)
+        created = next((p for p in after_create.custom_sql_pools if p.name == pool_name), None)
+        assert created is not None
+        assert created.max_resource_percentage == 10
+        assert created.optimize_for_reads is True
+
+        # Duplicate name must raise AlreadyExists
+        with pytest.raises(AlreadyExists):
+            await sql_pools.create_pool(http, workspace_id, new_pool)
+
+        # Update
+        after_update = await sql_pools.update_pool(
+            http, workspace_id, pool_name, max_resource_percentage=20, optimize_for_reads=False
+        )
+        updated = next((p for p in after_update.custom_sql_pools if p.name == pool_name), None)
+        assert updated is not None
+        assert updated.max_resource_percentage == 20
+        assert updated.optimize_for_reads is False
+        assert updated.classifier is not None
+        assert updated.classifier.value == ["pytest-app"]
+
+        # Delete
+        after_delete = await sql_pools.delete_pool(http, workspace_id, pool_name)
+        assert not any(p.name == pool_name for p in after_delete.custom_sql_pools)
+
+        # Missing name must raise NotFound
+        with pytest.raises(NotFound):
+            await sql_pools.delete_pool(http, workspace_id, pool_name)
+
+    finally:
+        await sql_pools.update_configuration(http, workspace_id, original)
+
+
+async def test_reset_pools(http: FabricHttpClient, workspace_id: UUID) -> None:
+    """reset_pools clears all pools while preserving the enabled flag."""
+    original = await sql_pools.get_configuration(http, workspace_id)
+
+    seed_config = SqlPoolsConfiguration.model_validate(
         {
             "customSQLPoolsEnabled": True,
             "customSQLPools": [
                 {
-                    "name": "pytest-pool",
+                    "name": "pytest-reset-pool",
                     "isDefault": True,
                     "maxResourcePercentage": 100,
                     "optimizeForReads": False,
@@ -71,9 +126,10 @@ async def test_update_configuration_roundtrip(http: FabricHttpClient, workspace_
     )
 
     try:
-        result = await sql_pools.update_configuration(http, workspace_id, test_config)
-        assert isinstance(result, SqlPoolsConfiguration)
-        pool_names = [p.name for p in result.custom_sql_pools]
-        assert "pytest-pool" in pool_names
+        await sql_pools.update_configuration(http, workspace_id, seed_config)
+
+        after_reset = await sql_pools.reset_pools(http, workspace_id)
+        assert after_reset.custom_sql_pools == []
+        assert after_reset.custom_sql_pools_enabled is True
     finally:
         await sql_pools.update_configuration(http, workspace_id, original)
