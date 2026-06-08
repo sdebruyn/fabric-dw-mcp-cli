@@ -129,9 +129,7 @@ class TestViewsList:
             ),
             patch("fabric_dw.services.views.list_views", new=mock_list),
         ):
-            result = runner.invoke(
-                cli, ["views", "list", WS_GUID, WH_GUID, "--schema", "dbo"]
-            )
+            result = runner.invoke(cli, ["views", "list", WS_GUID, WH_GUID, "--schema", "dbo"])
         assert result.exit_code == 0
         mock_list.assert_awaited_once()
 
@@ -202,9 +200,7 @@ class TestViewsGet:
         parsed = json.loads(result.output)
         assert parsed["name"] == "vw_sales"
 
-    def test_get_bad_qualified_name_exits_nonzero(
-        self, runner: CliRunner, cache_env: Path
-    ) -> None:
+    def test_get_bad_qualified_name_exits_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         result = runner.invoke(cli, ["views", "get", WS_GUID, WH_GUID, "no_dot_here"])
         assert result.exit_code != 0
@@ -268,9 +264,7 @@ class TestViewsCreate:
             )
         assert result.exit_code == 0
 
-    def test_create_with_file(
-        self, runner: CliRunner, cache_env: Path, tmp_path: Path
-    ) -> None:
+    def test_create_with_file(self, runner: CliRunner, cache_env: Path, tmp_path: Path) -> None:
         _ = cache_env
         sql_file = tmp_path / "view.sql"
         sql_file.write_text("SELECT id FROM dbo.sales")
