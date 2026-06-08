@@ -515,8 +515,12 @@ async def test_list_connections_sql_selects_expected_columns() -> None:
     cursor = conn.cursor.return_value
     call_sql: str = cursor.execute.call_args[0][0]
     expected_cols = (
-        "session_id", "connect_time", "client_net_address",
-        "auth_scheme", "encrypt_option", "net_transport",
+        "session_id",
+        "connect_time",
+        "client_net_address",
+        "auth_scheme",
+        "encrypt_option",
+        "net_transport",
     )
     for col in expected_cols:
         assert col in call_sql
