@@ -422,6 +422,28 @@ fabric-dw audit disable MyWorkspace SalesWH
 
 ---
 
+### audit set-retention
+
+Update the audit log retention period without changing the audit enabled/disabled state. Audit must already be enabled; if it is disabled, run `audit enable` first.
+
+**Synopsis**
+
+```
+fabric-dw audit set-retention --days INTEGER [WORKSPACE] [WAREHOUSE]
+```
+
+| Option | Description |
+| --- | --- |
+| `--days INTEGER` | Retention period in days (1–3653; 3653 ≈ 10 years). (required) |
+
+**Example**
+
+```shell
+fabric-dw audit set-retention --days 90 MyWorkspace SalesWH
+```
+
+---
+
 ### audit set-groups
 
 Set the audit action groups for a warehouse. Pass `--group` / `-g` once per action group. This replaces the existing list of groups.

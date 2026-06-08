@@ -418,6 +418,28 @@ async def remove_audit_group(workspace: str, warehouse: str, group: str) -> dict
     return result.model_dump(by_alias=True, mode="json")
 
 
+@mcp.tool()
+async def set_audit_retention(workspace: str, warehouse: str, days: int) -> dict[str, Any]:
+    """Update the audit log retention period without changing the audit enabled/disabled state.
+
+    Audit must already be enabled; if disabled, enable it first with ``enable_audit``.
+
+    Args:
+        workspace: Workspace name or GUID.
+        warehouse: Warehouse name or GUID.
+        days: Retention period in days (>= 1). The API enforces its own upper bound.
+    """
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        item = await _get_resolver().item(workspace, warehouse)
+        result = await audit.set_retention(_get_http(), ws_id, item.id, days=days)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+    except FabricError as exc:
+        raise _fabric_err(exc) from exc
+    return result.model_dump(by_alias=True, mode="json")
+
+
 # ---------------------------------------------------------------------------
 # Query tools
 # ---------------------------------------------------------------------------

@@ -187,6 +187,92 @@ class TestAuditDisable:
         assert result.exit_code != 0
 
 
+class TestAuditSetRetention:
+    """audit set-retention — happy path, out-of-range, disabled-audit."""
+
+    def test_set_retention_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_http.request = AsyncMock(return_value=_make_response(200, AUDIT_SETTINGS_PAYLOAD))
+        with (
+            patch(
+                "fabric_dw.cli.commands.audit._build_clients",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.audit._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+        ):
+            result = runner.invoke(
+                cli, ["audit", "set-retention", WS_GUID, WH_GUID, "--days", "90"]
+            )
+        assert result.exit_code == 0
+
+    def test_set_retention_json_output(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_http.request = AsyncMock(return_value=_make_response(200, AUDIT_SETTINGS_PAYLOAD))
+        with (
+            patch(
+                "fabric_dw.cli.commands.audit._build_clients",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.audit._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+        ):
+            result = runner.invoke(
+                cli, ["--json", "audit", "set-retention", WS_GUID, WH_GUID, "--days", "30"]
+            )
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert isinstance(parsed, dict)
+
+    def test_set_retention_out_of_range_returns_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.audit._build_clients",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.audit._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+        ):
+            result = runner.invoke(
+                cli, ["audit", "set-retention", WS_GUID, WH_GUID, "--days", "9999"]
+            )
+        assert result.exit_code != 0
+
+    def test_set_retention_disabled_audit_returns_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        disabled_payload = '{"state": "Disabled", "retentionDays": 0, "auditActionsAndGroups": []}'
+        mock_http.request = AsyncMock(return_value=_make_response(200, disabled_payload))
+        with (
+            patch(
+                "fabric_dw.cli.commands.audit._build_clients",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.audit._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+        ):
+            result = runner.invoke(
+                cli, ["audit", "set-retention", WS_GUID, WH_GUID, "--days", "30"]
+            )
+        assert result.exit_code != 0
+
+
 class TestAuditSetGroups:
     """audit set-groups — happy path."""
 

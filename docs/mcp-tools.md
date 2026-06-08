@@ -254,6 +254,20 @@ Remove a single audit action group without overwriting the others. Idempotent �
 
 ---
 
+### set_audit_retention
+
+Update the audit log retention period without changing the audit enabled/disabled state. Audit must already be enabled; if it is disabled, enable it first with `enable_audit`.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `warehouse` (`str`) — warehouse name or GUID.
+- `days` (`int`) — retention period in days (1–3653; 3653 ≈ 10 years).
+
+**Returns:** `AuditSettings` — the updated audit settings.
+
+---
+
 ## Queries
 
 ### list_running_queries
