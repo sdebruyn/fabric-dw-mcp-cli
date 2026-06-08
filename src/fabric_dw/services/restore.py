@@ -132,10 +132,7 @@ async def create_point(
     # As a simpler heuristic, use GET .../restorePoints?continuationToken=… is
     # not needed — the LRO operation result endpoint returns the created point.
     op_id = location.rsplit("/", 1)[-1]
-    resource_id_raw = (
-        operation_result.get("resourceId")
-        or operation_result.get("id")
-    )
+    resource_id_raw = operation_result.get("resourceId") or operation_result.get("id")
     if resource_id_raw:
         # Fetch the freshly created restore point.
         return await get_point(http, workspace_id, warehouse_id, str(resource_id_raw))

@@ -177,9 +177,9 @@ async def test_list_points_follows_pagination() -> None:
         call_count += 1
         return httpx.Response(200, json=page1 if call_count == 1 else page2)
 
-    respx.get(url__regex=rf"https://api\.fabric\.microsoft\.com/v1/workspaces/{_WS_ID}/warehouses/{_WH_ID}/restorePoints(\?.*)?$").mock(
-        side_effect=_side_effect
-    )
+    respx.get(
+        url__regex=rf"https://api\.fabric\.microsoft\.com/v1/workspaces/{_WS_ID}/warehouses/{_WH_ID}/restorePoints(\?.*)?$"
+    ).mock(side_effect=_side_effect)
 
     async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
         result = await restore.list_points(http, _WS_ID, _WH_ID)
@@ -191,9 +191,7 @@ async def test_list_points_follows_pagination() -> None:
 @respx.mock
 async def test_list_points_403_raises_permission_denied() -> None:
     """list_points should propagate PermissionDenied on 403."""
-    respx.get(url__regex=rf"{_RP_LIST_URL}(\?.*)?$").mock(
-        return_value=httpx.Response(403)
-    )
+    respx.get(url__regex=rf"{_RP_LIST_URL}(\?.*)?$").mock(return_value=httpx.Response(403))
 
     async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
         with pytest.raises(PermissionDenied):
@@ -269,9 +267,7 @@ async def test_create_point_sends_correct_body() -> None:
     respx.post(_RP_LIST_URL).mock(side_effect=_capture)
 
     async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
-        await restore.create_point(
-            http, _WS_ID, _WH_ID, name="My RP", description="My desc"
-        )
+        await restore.create_point(http, _WS_ID, _WH_ID, name="My RP", description="My desc")
 
     assert len(captured) == 1
     body = _json.loads(captured[0].content)
@@ -331,9 +327,7 @@ async def test_create_point_lro_202_falls_back_to_result_endpoint() -> None:
         with patch.object(http, "poll_operation", new_callable=AsyncMock) as mock_poll:
             mock_poll.return_value = LRO_SUCCEEDED  # no id in status body
 
-            with patch.object(
-                http, "get_operation_result", new_callable=AsyncMock
-            ) as mock_result:
+            with patch.object(http, "get_operation_result", new_callable=AsyncMock) as mock_result:
                 mock_result.return_value = {"id": _RP_ID}
                 result = await restore.create_point(http, _WS_ID, _WH_ID, name="My RP")
 
@@ -355,9 +349,7 @@ async def test_create_point_lro_202_last_resort_list() -> None:
         with patch.object(http, "poll_operation", new_callable=AsyncMock) as mock_poll:
             mock_poll.return_value = LRO_SUCCEEDED  # no id
 
-            with patch.object(
-                http, "get_operation_result", new_callable=AsyncMock
-            ) as mock_result:
+            with patch.object(http, "get_operation_result", new_callable=AsyncMock) as mock_result:
                 mock_result.return_value = {}  # also no id
                 result = await restore.create_point(http, _WS_ID, _WH_ID)
 
@@ -376,9 +368,7 @@ async def test_update_point_returns_updated_restore_point() -> None:
     respx.patch(_RP_URL).mock(return_value=httpx.Response(200, json=updated_payload))
 
     async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
-        result = await restore.update_point(
-            http, _WS_ID, _WH_ID, _RP_ID, name="Renamed RP"
-        )
+        result = await restore.update_point(http, _WS_ID, _WH_ID, _RP_ID, name="Renamed RP")
 
     assert isinstance(result, RestorePoint)
     assert result.name == "Renamed RP"
@@ -426,6 +416,7 @@ async def test_update_point_description_only() -> None:
 
 def test_update_point_no_args_raises_value_error() -> None:
     """update_point with neither name nor description should raise ValueError."""
+
     async def _run() -> None:
         async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
             with pytest.raises(ValueError, match="At least one"):

@@ -124,9 +124,7 @@ class RestorePoint(_FabricBase):
         """
         _raw_details = payload.get("creationDetails")
         details: dict[str, object] = (
-            cast("dict[str, object]", _raw_details)
-            if isinstance(_raw_details, dict)
-            else {}
+            cast("dict[str, object]", _raw_details) if isinstance(_raw_details, dict) else {}
         )
         flat: dict[str, object] = {
             "id": payload.get("id"),

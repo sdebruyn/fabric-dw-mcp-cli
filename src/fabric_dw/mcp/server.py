@@ -668,9 +668,7 @@ async def restore_warehouse_in_place(
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
         item = await _get_resolver().item(workspace, warehouse)
-        await restore_svc.restore_in_place(
-            _get_http(), ws_id, item.id, restore_point_id
-        )
+        await restore_svc.restore_in_place(_get_http(), ws_id, item.id, restore_point_id)
     except FabricError as exc:
         raise _fabric_err(exc) from exc
     return {"restored": True, "restore_point_id": restore_point_id}

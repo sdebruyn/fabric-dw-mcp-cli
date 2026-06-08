@@ -39,9 +39,7 @@ async def _resolve_ws(http: FabricHttpClient, workspace: str) -> UUID:
     return await resolver.workspace_id(workspace)
 
 
-async def _resolve_wh(
-    http: FabricHttpClient, workspace: str, warehouse: str
-) -> tuple[UUID, UUID]:
+async def _resolve_wh(http: FabricHttpClient, workspace: str, warehouse: str) -> tuple[UUID, UUID]:
     cache = LookupCache()
     resolver = Resolver(http=http, cache=cache)
     ws_id = await resolver.workspace_id(workspace)
@@ -224,9 +222,7 @@ async def restore_cmd(
             if not confirmed:
                 raise click.Abort()  # noqa: TRY301
             await _restore_svc.restore_in_place(http, ws_id, wh_id, restore_point_id)
-            click.echo(
-                f"Warehouse restored to restore point {restore_point_id!r} successfully."
-            )
+            click.echo(f"Warehouse restored to restore point {restore_point_id!r} successfully.")
     except click.Abort:
         raise
     except FabricError as exc:

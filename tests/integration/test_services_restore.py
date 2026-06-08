@@ -50,9 +50,7 @@ async def test_create_list_rename_delete_roundtrip(
         assert any(r.id == rp.id for r in listed)
 
         # get — individual fetch
-        fetched = await restore.get_point(
-            http, workspace_id, ephemeral_warehouse.id, rp.id
-        )
+        fetched = await restore.get_point(http, workspace_id, ephemeral_warehouse.id, rp.id)
         assert fetched.id == rp.id
         assert fetched.name == name
 
@@ -69,6 +67,4 @@ async def test_create_list_rename_delete_roundtrip(
 
     finally:
         if rp is not None:
-            await restore.delete_point(
-                http, workspace_id, ephemeral_warehouse.id, rp.id
-            )
+            await restore.delete_point(http, workspace_id, ephemeral_warehouse.id, rp.id)
