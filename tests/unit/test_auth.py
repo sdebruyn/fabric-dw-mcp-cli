@@ -1,7 +1,7 @@
 """Tests for fabric_dw.auth — written before implementation (TDD)."""
 
 import threading
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from azure.core.credentials import AccessToken
@@ -37,6 +37,14 @@ def test_get_credential_default_returns_default_azure_credential() -> None:
 def test_get_credential_default_is_default_argument() -> None:
     credential = get_credential()
     assert isinstance(credential, DefaultAzureCredential)
+
+
+def test_get_credential_default_includes_interactive_browser() -> None:
+    """DefaultAzureCredential must NOT exclude the interactive browser credential."""
+    with patch("fabric_dw.auth.DefaultAzureCredential") as mock_dac:
+        get_credential(CredentialMode.DEFAULT)
+        _, kwargs = mock_dac.call_args
+        assert kwargs.get("exclude_interactive_browser_credential") is False
 
 
 def test_get_credential_service_principal_returns_client_secret_credential(
