@@ -745,6 +745,9 @@ async def test_rename_evicts_old_name_and_inserts_new_name(tmp_path: Path) -> No
 
     assert cache.get_item(_WORKSPACE_ID, "SalesWarehouse") is None
     assert cache.get_item(_WORKSPACE_ID, "RenamedWarehouse") is not None
+    renamed_entry = cache.get_item(_WORKSPACE_ID, str(_WAREHOUSE_ID))
+    assert renamed_entry is not None
+    assert renamed_entry.display_name == "RenamedWarehouse"
 
 
 @pytest.mark.asyncio

@@ -733,9 +733,7 @@ async def test_rename_evicts_old_name_and_inserts_new_name(tmp_path: Path) -> No
 
     with respx.mock:
         # GET current snapshot (to read parentWarehouseId)
-        respx.get(_TYPED_SNAP_URL).mock(
-            return_value=httpx.Response(200, json=_RENAME_TYPED_RESP)
-        )
+        respx.get(_TYPED_SNAP_URL).mock(return_value=httpx.Response(200, json=_RENAME_TYPED_RESP))
         # PATCH rename
         respx.patch(f"{_BASE_URL}/workspaces/{_WS_ID}/items/{_SNAP_ID}").mock(
             return_value=httpx.Response(200, json={})
@@ -754,6 +752,9 @@ async def test_rename_evicts_old_name_and_inserts_new_name(tmp_path: Path) -> No
 
     assert cache.get_item(_WS_ID, "MySnapshot") is None
     assert cache.get_item(_WS_ID, "RenamedSnapshot") is not None
+    renamed_entry = cache.get_item(_WS_ID, str(_SNAP_ID))
+    assert renamed_entry is not None
+    assert renamed_entry.display_name == "RenamedSnapshot"
 
 
 @pytest.mark.asyncio
@@ -762,9 +763,7 @@ async def test_rename_without_cache_does_not_raise(tmp_path: Path) -> None:
     _ = tmp_path
 
     with respx.mock:
-        respx.get(_TYPED_SNAP_URL).mock(
-            return_value=httpx.Response(200, json=_RENAME_TYPED_RESP)
-        )
+        respx.get(_TYPED_SNAP_URL).mock(return_value=httpx.Response(200, json=_RENAME_TYPED_RESP))
         respx.patch(f"{_BASE_URL}/workspaces/{_WS_ID}/items/{_SNAP_ID}").mock(
             return_value=httpx.Response(200, json={})
         )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fabric_dw.cache import ItemEntry, LookupCache
@@ -225,8 +226,6 @@ async def rename(
     if cache is not None:
         if old_name is not None:
             cache.evict_item(workspace_id, old_name)
-        from datetime import UTC, datetime  # noqa: PLC0415
-
         new_entry = ItemEntry(
             id=warehouse_id,
             kind=WarehouseKind.WAREHOUSE,
@@ -235,6 +234,7 @@ async def rename(
             display_name=new_name,
         )
         cache.put_item(workspace_id, new_name, new_entry)
+        cache.put_item(workspace_id, str(warehouse_id), new_entry)
 
     return result
 
