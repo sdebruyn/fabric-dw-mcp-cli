@@ -1,8 +1,10 @@
 """Tests for fabric_dw.auth — written before implementation (TDD)."""
 
-from unittest.mock import patch
+import threading
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from azure.core.credentials import AccessToken
 from azure.identity.aio import ClientSecretCredential as AsyncClientSecretCredential
 from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
 
@@ -86,6 +88,97 @@ def test_get_credential_service_principal_raises_config_error_when_all_env_missi
 def test_get_credential_interactive_returns_sync_adapter() -> None:
     credential = get_credential(CredentialMode.INTERACTIVE)
     assert isinstance(credential, _SyncCredentialAdapter)
+
+
+# ---------------------------------------------------------------------------
+# _SyncCredentialAdapter — get_token and close dispatch via asyncio.to_thread
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sync_adapter_get_token_returns_token_from_inner() -> None:
+    """get_token must return the token produced by the inner sync credential."""
+    expected_token = AccessToken("my-access-token", 9999999999)
+    inner = MagicMock()
+    inner.get_token.return_value = expected_token
+
+    adapter = _SyncCredentialAdapter(inner)
+    result = await adapter.get_token(FABRIC_SCOPE)
+
+    assert result == expected_token
+    inner.get_token.assert_called_once_with(
+        FABRIC_SCOPE, claims=None, tenant_id=None, enable_cae=False
+    )
+
+
+@pytest.mark.asyncio
+async def test_sync_adapter_get_token_runs_in_worker_thread() -> None:
+    """get_token must offload the inner call to a worker thread, not the test thread."""
+    test_thread = threading.current_thread()
+    inner_thread: list[threading.Thread] = []
+
+    def fake_get_token(*_args: object, **_kwargs: object) -> AccessToken:
+        inner_thread.append(threading.current_thread())
+        return AccessToken("tok", 9999999999)
+
+    inner = MagicMock()
+    inner.get_token.side_effect = fake_get_token
+
+    adapter = _SyncCredentialAdapter(inner)
+    await adapter.get_token(FABRIC_SCOPE)
+
+    assert inner_thread, "inner.get_token was never called"
+    assert inner_thread[0] is not test_thread, "get_token must run in a worker thread"
+
+
+@pytest.mark.asyncio
+async def test_sync_adapter_get_token_dispatches_via_to_thread() -> None:
+    """get_token must call asyncio.to_thread with the inner method."""
+    inner = MagicMock()
+    inner.get_token.return_value = AccessToken("tok", 9999999999)
+    adapter = _SyncCredentialAdapter(inner)
+
+    with patch("fabric_dw.auth.asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
+        mock_to_thread.return_value = AccessToken("tok", 9999999999)
+        await adapter.get_token(FABRIC_SCOPE)
+        mock_to_thread.assert_called_once_with(
+            inner.get_token,
+            FABRIC_SCOPE,
+            claims=None,
+            tenant_id=None,
+            enable_cae=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_sync_adapter_close_dispatches_via_to_thread() -> None:
+    """close() must offload the inner close call to a worker thread."""
+    inner = MagicMock()
+    adapter = _SyncCredentialAdapter(inner)
+
+    with patch("fabric_dw.auth.asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
+        mock_to_thread.return_value = None
+        await adapter.close()
+        mock_to_thread.assert_called_once_with(inner.close)
+
+
+@pytest.mark.asyncio
+async def test_sync_adapter_close_runs_in_worker_thread() -> None:
+    """close() must execute inner.close in a worker thread, not the test thread."""
+    test_thread = threading.current_thread()
+    inner_thread: list[threading.Thread] = []
+
+    def fake_close() -> None:
+        inner_thread.append(threading.current_thread())
+
+    inner = MagicMock()
+    inner.close.side_effect = fake_close
+
+    adapter = _SyncCredentialAdapter(inner)
+    await adapter.close()
+
+    assert inner_thread, "inner.close was never called"
+    assert inner_thread[0] is not test_thread, "close must run in a worker thread"
 
 
 # ---------------------------------------------------------------------------

@@ -36,9 +36,12 @@ class CredentialMode(StrEnum):
 class _SyncCredentialAdapter:
     """Adapts a synchronous TokenCredential to the AsyncTokenCredential protocol.
 
-    Used for credentials that have no async variant in azure-identity (e.g.
-    InteractiveBrowserCredential on older releases).  The synchronous
-    ``get_token`` is offloaded to a thread so the event loop is not blocked.
+    Used because ``azure.identity.aio.InteractiveBrowserCredential`` does not
+    exist in azure-identity 1.25.x.  Both ``get_token`` and ``close`` are
+    offloaded to a worker thread so the event loop is never blocked.
+
+    Remove this adapter and switch to ``azure.identity.aio.InteractiveBrowserCredential``
+    once that ships in a stable release.
     """
 
     def __init__(self, inner: InteractiveBrowserCredential) -> None:
@@ -61,7 +64,7 @@ class _SyncCredentialAdapter:
         )
 
     async def close(self) -> None:
-        self._inner.close()
+        await asyncio.to_thread(self._inner.close)
 
     async def __aenter__(self) -> "_SyncCredentialAdapter":
         return self
