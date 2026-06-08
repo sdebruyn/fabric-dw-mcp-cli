@@ -292,6 +292,28 @@ class FabricHttpClient:
     # LRO polling
     # ------------------------------------------------------------------
 
+    async def get_operation_result(self, operation_id: str) -> dict[str, object]:
+        """Fetch the result of a completed LRO via ``GET /v1/operations/{id}/result``.
+
+        Microsoft Fabric LRO status bodies (from :meth:`poll_operation`) only contain
+        status metadata — the created item ID is *not* included.  Once the operation has
+        reached ``Succeeded``, the created item is available at a separate result endpoint.
+
+        Args:
+            operation_id: The UUID string of the LRO (from the ``x-ms-operation-id`` header
+                or parsed from the ``Location`` header path).
+
+        Returns:
+            The result body, e.g. ``{"id": "...", "type": "WarehouseSnapshot", ...}``.
+
+        Raises:
+            NotFound: If the result is not available (404).
+            FabricServerError: On 5xx errors.
+        """
+        result_url = f"{HttpBase.FABRIC}/operations/{operation_id}/result"
+        resp = await self._request_with_retry("GET", result_url)
+        return resp.json()  # type: ignore[no-any-return]
+
     async def poll_operation(
         self,
         location: str,

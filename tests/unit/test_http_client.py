@@ -322,6 +322,52 @@ async def test_poll_operation_timeout_raises() -> None:
 
 
 # ---------------------------------------------------------------------------
+# get_operation_result
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_operation_result_returns_body() -> None:
+    """get_operation_result should GET /operations/{op_id}/result and return the body.
+
+    Regression test: Fabric LRO status bodies do not include the created item ID.
+    The result must be fetched separately via GET /v1/operations/{op_id}/result.
+    """
+    op_id = "b80e135a-adca-42e7-aaf0-59849af2ed78"
+    result_url = f"https://api.fabric.microsoft.com/v1/operations/{op_id}/result"
+    expected = {
+        "id": "221a6eea-0f27-41eb-bcc5-e4d7b216ed43",
+        "type": "WarehouseSnapshot",
+        "displayName": "MySnapshot",
+        "workspaceId": "a91e61ef-862e-4611-9d09-9c7cc07b2519",
+    }
+
+    with respx.mock:
+        respx.get(result_url).mock(return_value=httpx.Response(200, json=expected))
+
+        client = await _get_client()
+        async with client:
+            result = await client.get_operation_result(op_id)
+
+    assert result == expected
+
+
+@pytest.mark.asyncio
+async def test_get_operation_result_not_found_propagates() -> None:
+    """get_operation_result should propagate NotFound when the result endpoint returns 404."""
+    op_id = "no-such-op"
+    result_url = f"https://api.fabric.microsoft.com/v1/operations/{op_id}/result"
+
+    with respx.mock:
+        respx.get(result_url).mock(return_value=httpx.Response(404, json={"error": "not found"}))
+
+        client = await _get_client()
+        async with client:
+            with pytest.raises(NotFound):
+                await client.get_operation_result(op_id)
+
+
+# ---------------------------------------------------------------------------
 # params type: Mapping[str, Any]
 # ---------------------------------------------------------------------------
 

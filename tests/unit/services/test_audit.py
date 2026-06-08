@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import time
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import httpx
@@ -14,7 +14,7 @@ import respx
 from azure.core.credentials import AccessToken
 from azure.core.credentials_async import AsyncTokenCredential
 
-from fabric_dw.exceptions import PermissionDenied
+from fabric_dw.exceptions import NotFound, PermissionDenied
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import AuditSettings
 from fabric_dw.services import audit
@@ -262,3 +262,59 @@ async def test_set_action_groups_403_raises_permission_denied() -> None:
         async with client:
             with pytest.raises(PermissionDenied):
                 await audit.set_action_groups(client, _WS_ID, _WH_ID, ["BATCH_COMPLETED_GROUP"])
+
+
+@pytest.mark.asyncio
+async def test_set_action_groups_retries_on_not_found_then_succeeds() -> None:
+    """set_action_groups retries the POST when sqlAudit is not yet provisioned (404).
+
+    Regression test: Fabric returns EntityNotFound (404) briefly after a warehouse is
+    created or audit is enabled, before the audit resource is fully provisioned.
+    set_action_groups should retry the POST up to 3 times before giving up.
+    """
+    groups = ["BATCH_COMPLETED_GROUP"]
+    updated = AUDIT_SETTINGS_PAYLOAD.copy()
+    updated["auditActionsAndGroups"] = groups
+
+    post_call_count = 0
+
+    def _post_side_effect(_request: httpx.Request) -> httpx.Response:
+        nonlocal post_call_count
+        post_call_count += 1
+        if post_call_count < 3:
+            # First two calls return 404 EntityNotFound
+            return httpx.Response(
+                404,
+                json={"errorCode": "EntityNotFound", "message": "not found", "isRetriable": False},
+            )
+        # Third call succeeds
+        return httpx.Response(200, json={})
+
+    with respx.mock:
+        respx.post(_AUDIT_URL).mock(side_effect=_post_side_effect)
+        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=updated))
+        client = await _make_client()
+        async with client:
+            with patch("asyncio.sleep", new=AsyncMock()):
+                result = await audit.set_action_groups(client, _WS_ID, _WH_ID, groups)
+
+    assert post_call_count == 3
+    assert isinstance(result, AuditSettings)
+    assert result.action_groups == groups
+
+
+@pytest.mark.asyncio
+async def test_set_action_groups_raises_not_found_after_max_retries() -> None:
+    """set_action_groups raises NotFound after exhausting all retries."""
+    with respx.mock:
+        respx.post(_AUDIT_URL).mock(
+            return_value=httpx.Response(
+                404,
+                json={"errorCode": "EntityNotFound", "message": "not found", "isRetriable": False},
+            )
+        )
+        client = await _make_client()
+        async with client:
+            with patch("asyncio.sleep", new=AsyncMock()):
+                with pytest.raises(NotFound):
+                    await audit.set_action_groups(client, _WS_ID, _WH_ID, ["BATCH_COMPLETED_GROUP"])

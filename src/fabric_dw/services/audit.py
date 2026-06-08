@@ -10,9 +10,11 @@ Wraps the warehouse-scoped ``/settings/sqlAudit`` endpoint:
 
 from __future__ import annotations
 
+import asyncio
 import re
 from uuid import UUID
 
+from fabric_dw.exceptions import NotFound
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import AuditSettings
 
@@ -150,5 +152,22 @@ async def set_action_groups(
             raise ValueError(msg)
 
     path = _audit_path(workspace_id, warehouse_id)
-    await http.request("POST", HttpBase.FABRIC, path, json=action_groups)
+
+    # Fabric briefly returns 404 (EntityNotFound) after warehouse creation or after
+    # enabling auditing, before the sqlAudit resource is fully provisioned.
+    # Retry the POST up to 3 times with a short wait before giving up.
+    max_provision_retries = 3
+    provision_wait_s = 2.0
+    last_exc: NotFound | None = None
+    for attempt in range(max_provision_retries):
+        try:
+            await http.request("POST", HttpBase.FABRIC, path, json=action_groups)
+            break
+        except NotFound as exc:
+            last_exc = exc
+            if attempt < max_provision_retries - 1:
+                await asyncio.sleep(provision_wait_s)
+    else:
+        raise last_exc or RuntimeError("unreachable")
+
     return await get_settings(http, workspace_id, warehouse_id)

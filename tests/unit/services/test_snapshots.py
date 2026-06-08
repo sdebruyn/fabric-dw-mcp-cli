@@ -347,6 +347,52 @@ async def test_create_polls_lro_and_fetches_result() -> None:
         mock_poll.assert_awaited_once_with(_LRO_LOCATION)
 
 
+_LRO_OP_ID = "b80e135a-adca-42e7-aaf0-59849af2ed78"
+_LRO_RESULT_URL = f"{_BASE_URL}/operations/{_LRO_OP_ID}/result"
+_LRO_LOCATION_BY_OP_ID = f"{_BASE_URL}/operations/{_LRO_OP_ID}"
+
+
+@respx.mock
+async def test_create_uses_operation_result_endpoint_when_no_resource_id() -> None:
+    """create falls back to GET /operations/{id}/result when LRO status body has no resourceId.
+
+    Regression: Fabric LRO status bodies only contain status metadata; the created item
+    ID is available at GET /operations/{op_id}/result, not in the status body.
+    """
+    # Status body as Fabric actually returns — no resourceId, no createdItemId
+    lro_status_body = {
+        "status": "Succeeded",
+        "createdTimeUtc": "2026-06-08T06:33:58.6740792",
+        "lastUpdatedTimeUtc": "2026-06-08T06:34:09.4083015",
+        "percentComplete": 100,
+        "error": None,
+    }
+    # /result endpoint returns the newly created item
+    lro_result_body = {
+        "id": str(_SNAP_ID),
+        "type": "WarehouseSnapshot",
+        "displayName": "NewSnapshot",
+        "workspaceId": str(_WS_ID),
+    }
+
+    respx.post(_ITEMS_URL).mock(
+        return_value=httpx.Response(202, headers={"Location": _LRO_LOCATION_BY_OP_ID})
+    )
+    respx.get(_LRO_RESULT_URL).mock(return_value=httpx.Response(200, json=lro_result_body))
+    respx.get(f"{_ITEMS_URL}/{_SNAP_ID}").mock(
+        return_value=httpx.Response(200, json=WAREHOUSE_SNAPSHOT_DETAIL_PAYLOAD)
+    )
+
+    async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
+        with patch.object(http, "poll_operation", new_callable=AsyncMock) as mock_poll:
+            mock_poll.return_value = lro_status_body
+
+            result = await snapshots.create(http, _WS_ID, _PARENT_WH_ID, "NewSnapshot")
+
+    assert isinstance(result, WarehouseSnapshot)
+    assert result.id == _SNAP_ID
+
+
 # ---------------------------------------------------------------------------
 # rename
 # ---------------------------------------------------------------------------

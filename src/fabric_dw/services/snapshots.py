@@ -156,21 +156,29 @@ async def create(
     location: str = resp.headers.get("Location", "")
     operation_result = await http.poll_operation(location)
 
-    # Extract the new item's ID from the operation result or resourceId field
-    resource_id_raw = operation_result.get("resourceId")
+    # Extract the new item's ID.
+    # Fabric LRO status bodies only contain status metadata — the created item ID is NOT
+    # included in the status body.  Per Microsoft docs, once Succeeded, the item is
+    # available via GET /v1/operations/{op_id}/result.
+    # We try the status body first (some older responses include resourceId/createdItemId),
+    # then fall back to the /result endpoint using the operation ID parsed from the Location
+    # header (Location path format: .../operations/{op_id}).
+    resource_id_raw = (
+        operation_result.get("resourceId")
+        or operation_result.get("createdItemId")
+        or operation_result.get("itemId")
+    )
     if resource_id_raw:
         new_snap_id = UUID(str(resource_id_raw))
     else:
-        # Fall back: parse from the Location header path
-        # Location is like .../operations/op-id, but createdItemId may be in result
-        created_item = operation_result.get("createdItemId") or operation_result.get("itemId")
-        if created_item:
-            new_snap_id = UUID(str(created_item))
-        else:
-            # Last resort: try to find the new snapshot in the items list
-            # (This shouldn't happen in normal usage, but provides a safe fallback)
+        # Parse the operation ID from the Location header and call the /result endpoint.
+        op_id = location.rsplit("/", 1)[-1]
+        lro_result = await http.get_operation_result(op_id)
+        result_id_raw = lro_result.get("id")
+        if not result_id_raw:
             msg = f"Cannot determine new snapshot ID from LRO result: {operation_result}"
             raise ValueError(msg)
+        new_snap_id = UUID(str(result_id_raw))
 
     detail_resp = await http.request(
         "GET",
