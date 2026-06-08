@@ -129,6 +129,8 @@ async def set_cmd(ctx: CliContext, workspace: str | None, from_file: str) -> Non
                 result.model_dump(by_alias=True, mode="json"),
                 json_output=ctx.json_output,
             )
+    except ValueError as exc:
+        raise click.ClickException(f"Invalid configuration: {exc}") from exc  # noqa: TRY003
     except PermissionDenied as exc:
         raise _permission_hint(exc) from exc
     except FabricError as exc:
@@ -148,62 +150,62 @@ async def edit_cmd(ctx: CliContext, workspace: str | None) -> None:
     ws = resolve_workspace_arg(ctx, workspace)
     try:
         async with _build_http_client(ctx) as http:
+            # Resolve the workspace ID once and reuse it for both GET and PATCH
+            # to avoid a TOCTOU issue if the workspace is renamed mid-edit.
             ws_id = await _resolve_workspace(http, ws)
             current = await _svc.get_configuration(http, ws_id)
 
-        current_json = json.dumps(current.model_dump(by_alias=True, mode="json"), indent=2)
+            current_json = json.dumps(current.model_dump(by_alias=True, mode="json"), indent=2)
 
-        editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or _default_editor()
+            editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or _default_editor()
 
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False, prefix="fabric-dw-sql-pools-"
-        ) as tmp:
-            tmp.write(current_json)
-            tmp_path = tmp.name
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", delete=False, prefix="fabric-dw-sql-pools-"
+            ) as tmp:
+                tmp.write(current_json)
+                tmp_path = tmp.name
 
-        try:
-            subprocess.run([editor, tmp_path], check=True)  # noqa: S603
-            edited_text = Path(tmp_path).read_text()
-        finally:
-            Path(tmp_path).unlink(missing_ok=True)
+            try:
+                subprocess.run([editor, tmp_path], check=True)  # noqa: S603
+                edited_text = Path(tmp_path).read_text()
+            finally:
+                Path(tmp_path).unlink(missing_ok=True)
 
-        if edited_text.strip() == current_json.strip():
-            click.echo("No changes detected. Aborting.")
-            return
+            if edited_text.strip() == current_json.strip():
+                click.echo("No changes detected. Aborting.")
+                return
 
-        try:
-            new_payload = json.loads(edited_text)
-            new_config = SqlPoolsConfiguration.model_validate(new_payload)
-        except (json.JSONDecodeError, ValidationError) as exc:
-            raise click.ClickException(f"Invalid configuration after editing: {exc}") from exc  # noqa: TRY003
+            try:
+                new_payload = json.loads(edited_text)
+                new_config = SqlPoolsConfiguration.model_validate(new_payload)
+            except (json.JSONDecodeError, ValidationError) as exc:
+                raise click.ClickException(f"Invalid configuration after editing: {exc}") from exc  # noqa: TRY003
 
-        current_names = {p.name for p in current.custom_sql_pools}
-        new_names = {p.name for p in new_config.custom_sql_pools}
-        deleted_names = current_names - new_names
+            current_names = {p.name for p in current.custom_sql_pools}
+            new_names = {p.name for p in new_config.custom_sql_pools}
+            deleted_names = current_names - new_names
 
-        diff_lines = list(
-            difflib.unified_diff(
-                current_json.splitlines(keepends=True),
-                edited_text.splitlines(keepends=True),
-                fromfile="current",
-                tofile="new",
+            diff_lines = list(
+                difflib.unified_diff(
+                    current_json.splitlines(keepends=True),
+                    edited_text.splitlines(keepends=True),
+                    fromfile="current",
+                    tofile="new",
+                )
             )
-        )
-        if diff_lines:
-            click.echo("".join(diff_lines))
+            if diff_lines:
+                click.echo("".join(diff_lines))
 
-        if deleted_names:
-            click.echo(
-                f"\nWARNING: The following pools will be DELETED: "
-                f"{', '.join(sorted(deleted_names))}",
-                err=True,
-            )
+            if deleted_names:
+                click.echo(
+                    f"\nWARNING: The following pools will be DELETED: "
+                    f"{', '.join(sorted(deleted_names))}",
+                    err=True,
+                )
 
-        if not confirm("Apply configuration?", yes=ctx.yes):
-            raise click.Abort()  # noqa: TRY301
+            if not confirm("Apply configuration?", yes=ctx.yes):
+                raise click.Abort()  # noqa: TRY301
 
-        async with _build_http_client(ctx) as http:
-            ws_id = await _resolve_workspace(http, ws)
             result = await _svc.update_configuration(http, ws_id, new_config)
             render(
                 result.model_dump(by_alias=True, mode="json"),
@@ -212,6 +214,8 @@ async def edit_cmd(ctx: CliContext, workspace: str | None) -> None:
 
     except click.Abort:
         raise
+    except ValueError as exc:
+        raise click.ClickException(f"Invalid configuration: {exc}") from exc  # noqa: TRY003
     except PermissionDenied as exc:
         raise _permission_hint(exc) from exc
     except FabricError as exc:

@@ -15,7 +15,7 @@ from azure.core.credentials import AccessToken
 from azure.core.credentials_async import AsyncTokenCredential
 from pydantic import ValidationError
 
-from fabric_dw.exceptions import PermissionDenied
+from fabric_dw.exceptions import NotFound, PermissionDenied
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import SqlPoolsConfiguration
 from fabric_dw.services import sql_pools
@@ -101,7 +101,7 @@ async def _make_client() -> FabricHttpClient:
 
 @pytest.mark.asyncio
 async def test_get_configuration_returns_model() -> None:
-    """get_configuration should GET the endpoint with ?beta=true and return a model."""
+    """get_configuration should GET the endpoint with ?beta=True and return a model."""
     with respx.mock:
         route = respx.get(_CONFIG_URL).mock(
             return_value=httpx.Response(200, json=POOLS_ENABLED_PAYLOAD)
@@ -111,7 +111,7 @@ async def test_get_configuration_returns_model() -> None:
             result = await sql_pools.get_configuration(client, _WS_ID)
 
     assert route.called
-    assert "beta=true" in str(route.calls[0].request.url)
+    assert "beta=True" in str(route.calls[0].request.url)
     assert isinstance(result, SqlPoolsConfiguration)
     assert result.custom_sql_pools_enabled is True
     assert len(result.custom_sql_pools) == 3
@@ -166,7 +166,7 @@ async def test_update_configuration_patches_full_body() -> None:
             result = await sql_pools.update_configuration(client, _WS_ID, config)
 
     assert patch_route.called
-    assert "beta=true" in str(patch_route.calls[0].request.url)
+    assert "beta=True" in str(patch_route.calls[0].request.url)
 
     sent_body = json.loads(patch_route.calls[0].request.content)
     assert sent_body["customSQLPoolsEnabled"] is True
@@ -292,6 +292,36 @@ async def test_disable_patches_enabled_false_preserving_pools() -> None:
 
 
 @pytest.mark.asyncio
+async def test_enable_propagates_not_found_on_404() -> None:
+    """enable propagates NotFound when get_configuration returns 404.
+
+    There is no fallback that PATCHes an empty configuration — if the workspace
+    configuration endpoint is absent, the error surfaces to the caller.
+    """
+    with respx.mock:
+        respx.get(_CONFIG_URL).mock(return_value=httpx.Response(404, json={"error": "not found"}))
+        client = await _make_client()
+        async with client:
+            with pytest.raises(NotFound):
+                await sql_pools.enable(client, _WS_ID)
+
+
+@pytest.mark.asyncio
+async def test_disable_propagates_not_found_on_404() -> None:
+    """disable propagates NotFound when get_configuration returns 404.
+
+    There is no fallback that PATCHes an empty configuration — if the workspace
+    configuration endpoint is absent, the error surfaces to the caller.
+    """
+    with respx.mock:
+        respx.get(_CONFIG_URL).mock(return_value=httpx.Response(404, json={"error": "not found"}))
+        client = await _make_client()
+        async with client:
+            with pytest.raises(NotFound):
+                await sql_pools.disable(client, _WS_ID)
+
+
+@pytest.mark.asyncio
 async def test_disable_is_no_op_when_already_disabled() -> None:
     """disable should return current config without PATCH when already disabled."""
     with respx.mock:
@@ -309,36 +339,57 @@ async def test_disable_is_no_op_when_already_disabled() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Model validation (client-side constraints)
+# Model validation (client-side constraints via validate_for_patch)
 # ---------------------------------------------------------------------------
 
 
-def test_model_rejects_sum_over_100() -> None:
-    """SqlPoolsConfiguration should raise ValidationError when sum > 100."""
-    with pytest.raises(ValidationError, match="Sum of maxResourcePercentage"):
-        SqlPoolsConfiguration.model_validate(
-            {
-                "customSQLPoolsEnabled": True,
-                "customSQLPools": [
-                    {"name": "A", "isDefault": False, "maxResourcePercentage": 60},
-                    {"name": "B", "isDefault": True, "maxResourcePercentage": 60},
-                ],
-            }
-        )
+def test_validate_for_patch_rejects_sum_over_100() -> None:
+    """validate_for_patch should raise ValueError when sum > 100."""
+    config = SqlPoolsConfiguration.model_validate(
+        {
+            "customSQLPoolsEnabled": True,
+            "customSQLPools": [
+                {"name": "A", "isDefault": False, "maxResourcePercentage": 60},
+                {"name": "B", "isDefault": True, "maxResourcePercentage": 60},
+            ],
+        }
+    )
+    with pytest.raises(ValueError, match="Sum of maxResourcePercentage"):
+        config.validate_for_patch()
 
 
-def test_model_rejects_multiple_defaults() -> None:
-    """SqlPoolsConfiguration should raise ValidationError when > 1 pool is default."""
-    with pytest.raises(ValidationError, match="Exactly one SQL pool may be marked as default"):
-        SqlPoolsConfiguration.model_validate(
-            {
-                "customSQLPoolsEnabled": True,
-                "customSQLPools": [
-                    {"name": "A", "isDefault": True, "maxResourcePercentage": 40},
-                    {"name": "B", "isDefault": True, "maxResourcePercentage": 40},
-                ],
-            }
-        )
+def test_validate_for_patch_rejects_multiple_defaults() -> None:
+    """validate_for_patch should raise ValueError when > 1 pool is default."""
+    config = SqlPoolsConfiguration.model_validate(
+        {
+            "customSQLPoolsEnabled": True,
+            "customSQLPools": [
+                {"name": "A", "isDefault": True, "maxResourcePercentage": 40},
+                {"name": "B", "isDefault": True, "maxResourcePercentage": 40},
+            ],
+        }
+    )
+    with pytest.raises(ValueError, match="Exactly one SQL pool may be marked as default"):
+        config.validate_for_patch()
+
+
+def test_model_validate_does_not_raise_for_invalid_patch_state() -> None:
+    """model_validate should NOT raise for state that violates patch constraints.
+
+    GET responses may contain server-side state that violates client constraints
+    (beta API drift, race conditions).  Deserialisation must not fail.
+    """
+    # sum > 100 — should parse fine via model_validate
+    config = SqlPoolsConfiguration.model_validate(
+        {
+            "customSQLPoolsEnabled": True,
+            "customSQLPools": [
+                {"name": "A", "isDefault": False, "maxResourcePercentage": 60},
+                {"name": "B", "isDefault": True, "maxResourcePercentage": 60},
+            ],
+        }
+    )
+    assert len(config.custom_sql_pools) == 2
 
 
 def test_model_accepts_exactly_one_default() -> None:

@@ -34,7 +34,8 @@ __all__ = [
 ]
 
 # The beta query parameter — centralised so removing it later is a one-liner.
-_BETA_PARAMS: dict[str, str] = {"beta": "true"}
+# Microsoft Learn docs sample uses capital-T "True" for this query parameter.
+_BETA_PARAMS: dict[str, str] = {"beta": "True"}
 
 
 def _config_path(workspace_id: UUID) -> str:
@@ -99,6 +100,7 @@ async def update_configuration(
         ValueError: If ``config`` violates client-side constraints (sum > 100,
             multiple defaults, etc.).
     """
+    config.validate_for_patch()
     body = config.model_dump(by_alias=True, mode="json", exclude_none=True)
 
     await http.request(
