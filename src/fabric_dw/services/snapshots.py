@@ -37,26 +37,6 @@ def _validate_snapshot_name(name: str, param: str = "name") -> None:
             raise ValueError(msg)
 
 
-def _snapshot_from_detail(detail: dict[str, object]) -> WarehouseSnapshot:
-    """Build a WarehouseSnapshot from a generic item-detail API response.
-
-    The generic ``GET /workspaces/{ws}/items/{id}`` endpoint nests
-    ``parentWarehouseId`` and ``snapshotDateTime`` under ``creationPayload``.
-    We flatten them to match the ``WarehouseSnapshot`` model's field aliases.
-    """
-    _raw_cp = detail.get("creationPayload")
-    creation_payload: dict[str, object] = (
-        cast("dict[str, object]", _raw_cp) if isinstance(_raw_cp, dict) else {}
-    )
-    flat: dict[str, object] = {
-        "id": detail.get("id"),
-        "displayName": detail.get("displayName"),
-        "parentWarehouseId": creation_payload.get("parentWarehouseId"),
-        "snapshotDateTime": creation_payload.get("snapshotDateTime"),
-    }
-    return WarehouseSnapshot.model_validate(flat)
-
-
 def _snapshot_from_typed_api(item: dict[str, object]) -> WarehouseSnapshot:
     """Build a WarehouseSnapshot from the type-specific API response.
 
@@ -215,12 +195,11 @@ async def create(
         _props2: dict[str, object] = (
             cast("dict[str, object]", _raw_props2) if isinstance(_raw_props2, dict) else {}
         )
-        if _props2.get("parentWarehouseId") is None:
-            typed_body = dict(typed_body)
-            typed_body["properties"] = {
-                **_props2,
-                "parentWarehouseId": str(parent_warehouse_id),
-            }
+        typed_body = dict(typed_body)
+        typed_body["properties"] = {
+            **_props2,
+            "parentWarehouseId": str(parent_warehouse_id),
+        }
 
     return _snapshot_from_typed_api(typed_body)
 

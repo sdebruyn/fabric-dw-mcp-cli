@@ -137,6 +137,9 @@ async def set_action_groups(
     Returns:
         The fresh :class:`~fabric_dw.models.AuditSettings` after the update.
 
+    Note:
+        This also enables auditing if currently disabled.
+
     Raises:
         ValueError: If any name in *action_groups* does not match ``^[A-Z_]+$``.
         PermissionDenied: If the caller lacks the required permission (HTTP 403).
