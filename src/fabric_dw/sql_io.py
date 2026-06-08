@@ -21,6 +21,7 @@ import pyarrow.parquet as pq
 __all__ = [
     "OutputFormat",
     "columns_rows_to_arrow",
+    "json_safe",
     "write_arrow",
 ]
 
@@ -75,13 +76,24 @@ def columns_rows_to_arrow(
 def _arrow_to_json_records(table: pa.Table) -> list[dict[str, Any]]:
     """Serialise *table* to a list of JSON-safe dicts."""
     return [
-        {col: _json_safe(table.column(col)[i].as_py()) for col in table.column_names}
+        {col: json_safe(table.column(col)[i].as_py()) for col in table.column_names}
         for i in range(table.num_rows)
     ]
 
 
-def _json_safe(value: Any) -> Any:  # noqa: ANN401
-    """Coerce *value* to a JSON-serialisable type."""
+def json_safe(value: Any) -> Any:  # noqa: ANN401
+    """Coerce *value* to a JSON-serialisable type.
+
+    This is the canonical implementation shared between :mod:`sql_io` and
+    :mod:`fabric_dw.mcp.server`.  Bytes are rendered as lowercase hex strings.
+
+    Args:
+        value: Any Python value returned from a DBAPI cursor or Arrow column.
+
+    Returns:
+        A JSON-serialisable scalar (``None``, ``bool``, ``int``, ``float``,
+        ``str``).
+    """
     if value is None:
         return None
     if isinstance(value, (bool, int, float, str)):

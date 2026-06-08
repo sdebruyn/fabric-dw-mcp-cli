@@ -86,24 +86,41 @@ class TestRejectNonSelect:
     def test_select_case_insensitive(self) -> None:
         tables._reject_non_select("select id from dbo.foo")
 
+    def test_with_cte_select_passes(self) -> None:
+        tables._reject_non_select("WITH cte AS (SELECT 1 AS x) SELECT * FROM cte")
+
+    def test_with_cte_multiline_passes(self) -> None:
+        tables._reject_non_select(
+            "WITH cte AS (\n    SELECT id, name FROM dbo.source\n)\nSELECT * FROM cte"
+        )
+
+    def test_with_case_insensitive(self) -> None:
+        tables._reject_non_select("with cte as (select 1) select * from cte")
+
+    def test_with_leading_whitespace_passes(self) -> None:
+        tables._reject_non_select("   WITH cte AS (SELECT 1) SELECT * FROM cte")
+
+    def test_with_leading_comment_passes(self) -> None:
+        tables._reject_non_select("-- build cte\nWITH cte AS (SELECT 1) SELECT * FROM cte")
+
     def test_insert_rejected(self) -> None:
-        with pytest.raises(ValueError, match="must begin with SELECT"):
+        with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
             tables._reject_non_select("INSERT INTO dbo.bar SELECT 1")
 
     def test_drop_rejected(self) -> None:
-        with pytest.raises(ValueError, match="must begin with SELECT"):
+        with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
             tables._reject_non_select("DROP TABLE dbo.bar")
 
     def test_create_rejected(self) -> None:
-        with pytest.raises(ValueError, match="must begin with SELECT"):
+        with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
             tables._reject_non_select("CREATE TABLE dbo.t AS SELECT 1")
 
     def test_empty_body_rejected(self) -> None:
-        with pytest.raises(ValueError, match="must begin with SELECT"):
+        with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
             tables._reject_non_select("")
 
     def test_comment_only_rejected(self) -> None:
-        with pytest.raises(ValueError, match="must begin with SELECT"):
+        with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
             tables._reject_non_select("/* only a comment */")
 
     def test_multiple_block_comments_then_select(self) -> None:
@@ -383,8 +400,22 @@ class TestCreateTable:
     @pytest.mark.asyncio
     async def test_rejects_non_select_body(self) -> None:
         target = _make_target()
-        with pytest.raises(ValueError, match="must begin with SELECT"):
+        with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
             await tables.create_table(target, "dbo", "sales", "INSERT INTO foo SELECT 1")
+
+    @pytest.mark.asyncio
+    async def test_accepts_cte_body(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            result = await tables.create_table(
+                target,
+                "dbo",
+                "sales",
+                "WITH cte AS (SELECT 1 AS x) SELECT * FROM cte",
+            )
+        assert isinstance(result, Table)
 
     @pytest.mark.asyncio
     async def test_validates_schema_identifier(self) -> None:

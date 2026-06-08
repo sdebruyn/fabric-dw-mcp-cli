@@ -41,6 +41,7 @@ from fabric_dw.services import sql_pools as sql_pools_svc
 from fabric_dw.services import tables as tables_svc
 from fabric_dw.services import views as views_svc
 from fabric_dw.sql import SqlTarget
+from fabric_dw.sql_io import json_safe as _json_safe_value
 
 __all__ = ["mcp", "run"]
 
@@ -1134,15 +1135,6 @@ async def read_table(
         "columns": columns,
         "rows": [[_json_safe_value(v) for v in row] for row in rows],
     }
-
-
-def _json_safe_value(value: object) -> object:
-    """Coerce *value* to a JSON-serialisable type for MCP tool returns."""
-    if value is None or isinstance(value, (bool, int, float, str)):
-        return value
-    if isinstance(value, bytes):
-        return value.hex()
-    return str(value)
 
 
 @mcp.tool()

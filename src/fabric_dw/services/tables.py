@@ -64,25 +64,30 @@ _READ_TABLE_SQL = "SELECT TOP ({count}) * FROM [{schema}].[{table}];"
 # ---------------------------------------------------------------------------
 
 _SELECT_LEAD_RE = re.compile(
-    r"^(?:\s*(?:/\*.*?\*/|--[^\n]*\n))*\s*SELECT\b",
+    r"^(?:\s*(?:/\*.*?\*/|--[^\n]*\n))*\s*(?:WITH|SELECT)\b",
     re.IGNORECASE | re.DOTALL,
 )
 
 
 def _reject_non_select(body: str) -> None:
-    """Raise ValueError if *body* does not start with SELECT (after comments).
+    """Raise ValueError if *body* does not start with SELECT or WITH (after comments).
 
     Only the first non-comment keyword is checked.  Single-line (``--``) and
     block (``/* … */``) comments are stripped before the check.
+
+    ``WITH`` is allowed to support Common Table Expressions (CTEs) of the form
+    ``WITH cte AS (...) SELECT ...``.  A ``WITH … UPDATE`` body is *not* caught
+    here — the Fabric CTAS API will reject non-SELECT bodies at the server side.
+    This validator is an inexpensive first-line filter only.
 
     Args:
         body: The raw SQL supplied as the CTAS body.
 
     Raises:
-        ValueError: If the first keyword is not SELECT.
+        ValueError: If the first keyword is not SELECT or WITH (CTE).
     """
     if not _SELECT_LEAD_RE.match(body):
-        msg = "CTAS body must begin with SELECT (leading comments are allowed)"
+        msg = "CTAS body must begin with SELECT or WITH (CTE) (leading comments are allowed)"
         raise ValueError(msg)
 
 
@@ -221,9 +226,9 @@ async def create_table(
         target: The warehouse to connect to.
         schema: The schema name.  Must pass :func:`validate_identifier`.
         table_name: The table name.  Must pass :func:`validate_identifier`.
-        select_body: The SELECT statement used as the CTAS source.  The first
-            non-comment keyword **must** be ``SELECT``; anything else raises
-            :class:`ValueError`.
+        select_body: The SELECT statement (or CTE) used as the CTAS source.
+            The first non-comment keyword **must** be ``SELECT`` or ``WITH``
+            (for CTE-based queries); anything else raises :class:`ValueError`.
         mode: The credential mode for Entra authentication.
 
     Returns:
@@ -232,7 +237,7 @@ async def create_table(
 
     Raises:
         ValueError: If *schema* or *table_name* fails identifier validation, or
-            if *select_body* does not start with SELECT.
+            if *select_body* does not start with SELECT or WITH (CTE).
         PermissionDenied: If the driver reports a CREATE TABLE permission error.
     """
     validate_identifier(schema)
