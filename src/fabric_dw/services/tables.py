@@ -368,7 +368,7 @@ async def _fetch_table(
     """
     # Safe: schema and table_name pass validate_identifier() before this helper is called.
     fetch_sql = (
-        f"SELECT s.name AS schema_name, t.name, t.create_date AS created, "  # noqa: S608
+        f"SELECT s.name AS schema_name, t.name, t.create_date AS created, "  # noqa: S608  # nosec B608
         f"t.modify_date AS modified "
         f"FROM sys.tables t "
         f"JOIN sys.schemas s ON s.schema_id = t.schema_id "
