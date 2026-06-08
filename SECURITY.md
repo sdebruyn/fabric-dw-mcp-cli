@@ -1,24 +1,16 @@
-# Security Policy
+# Security
 
-## Supported Versions
+We use [GitHub Private Vulnerability Reporting](https://docs.github.com/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability?WT.mc_id=MVP_310840) for security disclosures.
 
-Only the latest minor release receives security fixes.
+**To report a vulnerability**: [open a private advisory](https://github.com/sdebruyn/fabric-dw-mcp-cli/security/advisories/new). GitHub will deliver it directly and privately to the maintainers — no public issue or email needed.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| latest  | :white_check_mark: |
-| older   | :x:                |
+## Supported versions
 
-## Reporting a Vulnerability
+| Version | Supported |
+| --- | --- |
+| Latest stable | yes |
+| Anything older | no |
 
-Please **do not** open a public GitHub issue for security vulnerabilities.
+## Scope
 
-Instead, report them by email to [claude.sam@debruyn.dev](mailto:claude.sam@debruyn.dev).
-
-Include as much detail as possible:
-
-- A description of the vulnerability and its potential impact
-- Steps to reproduce or proof-of-concept
-- Affected versions
-
-You can expect an acknowledgement within 72 hours. We will keep you informed as we work on a fix and coordinate disclosure.
+Bugs that put data, credentials, or workspace state at risk are in scope. Out of scope: bugs in third-party SDKs we depend on (file those upstream), denial-of-service against the Fabric API (file with Microsoft).

@@ -9,8 +9,8 @@ requires-python = ">=3.11"
 description = "Python CLI + MCP server for administering Microsoft Fabric Data Warehouses and SQL Analytics Endpoints"
 readme = "README.md"
 license = { text = "MIT" }
-authors = [{ name = "Sam Debruyn", email = "claude.sam@debruyn.dev" }]
-maintainers = [{ name = "Sam Debruyn", email = "claude.sam@debruyn.dev" }]
+authors = [{ name = "Sam Debruyn" }]
+maintainers = [{ name = "Sam Debruyn" }]
 keywords = [
     "microsoft-fabric",
     "fabric",
