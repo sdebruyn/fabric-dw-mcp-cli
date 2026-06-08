@@ -377,11 +377,11 @@ fabric-dw endpoints refresh MyWorkspace MyLakehouseEP
 
 ## fabric-dw audit
 
-Manage SQL audit settings for Microsoft Fabric Data Warehouses.
+Manage SQL audit settings for Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
 
 ### audit get
 
-Get the current audit settings for a warehouse.
+Get the current audit settings for a warehouse or SQL Analytics Endpoint.
 
 **Synopsis**
 
@@ -405,7 +405,7 @@ actionGroups     BATCH_COMPLETED_GROUP
 
 ### audit enable
 
-Enable SQL auditing on a warehouse.
+Enable SQL auditing on a warehouse or SQL Analytics Endpoint.
 
 **Synopsis**
 
@@ -427,7 +427,7 @@ fabric-dw audit enable --retention-days 90 MyWorkspace SalesWH
 
 ### audit disable
 
-Disable SQL auditing on a warehouse.
+Disable SQL auditing on a warehouse or SQL Analytics Endpoint.
 
 **Synopsis**
 
@@ -445,7 +445,7 @@ fabric-dw audit disable MyWorkspace SalesWH
 
 ### audit set-groups
 
-Set the audit action groups for a warehouse. Pass `--group` / `-g` once per action group. This replaces the existing list of groups.
+Set the audit action groups for a warehouse or SQL Analytics Endpoint. Pass `--group` / `-g` once per action group. This replaces the existing list of groups.
 
 **Synopsis**
 
@@ -470,11 +470,11 @@ fabric-dw audit set-groups \
 
 ## fabric-dw queries
 
-Inspect and manage running queries on Microsoft Fabric Data Warehouses.
+Inspect and manage running queries on Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
 
 ### queries list
 
-List all currently running queries on a warehouse.
+List all currently running queries on a warehouse or SQL Analytics Endpoint.
 
 **Synopsis**
 
@@ -498,7 +498,7 @@ fabric-dw queries list MyWorkspace SalesWH
 
 ### queries kill
 
-Kill a specific session on a warehouse. You will be asked to confirm unless `--yes` is passed.
+Kill a specific session on a warehouse or SQL Analytics Endpoint. You will be asked to confirm unless `--yes` is passed.
 
 **Synopsis**
 
