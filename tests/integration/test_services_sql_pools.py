@@ -25,7 +25,25 @@ async def test_get_configuration_returns_model(http: FabricHttpClient, workspace
 async def test_enable_disable_roundtrip(http: FabricHttpClient, workspace_id: UUID) -> None:
     original = await sql_pools.get_configuration(http, workspace_id)
 
+    # The API refuses to set customSQLPoolsEnabled=True when customSQLPools is
+    # empty.  Seed at least one pool so the enable call can succeed.
+    seed_config = SqlPoolsConfiguration.model_validate(
+        {
+            "customSQLPoolsEnabled": True,
+            "customSQLPools": [
+                {
+                    "name": "pytest-roundtrip-pool",
+                    "isDefault": True,
+                    "maxResourcePercentage": 100,
+                    "optimizeForReads": False,
+                }
+            ],
+        }
+    )
+
     try:
+        await sql_pools.update_configuration(http, workspace_id, seed_config)
+
         disabled = await sql_pools.disable(http, workspace_id)
         assert disabled.custom_sql_pools_enabled is False
 
