@@ -267,7 +267,6 @@ class FrequentlyRunQuery(_FabricBase):
     avg_total_elapsed_time_ms: int
     last_run_total_elapsed_time_ms: int
     last_dist_statement_id: UUID | None = None
-    last_run_session_id: int | None = None
     min_run_total_elapsed_time_ms: int
     max_run_total_elapsed_time_ms: int
     number_of_successful_runs: int
@@ -285,7 +284,6 @@ class LongRunningQuery(_FabricBase):
     number_of_runs: int
     last_run_total_elapsed_time_ms: int
     last_dist_statement_id: UUID | None = None
-    last_run_session_id: int | None = None
     query_hash: str | None = None
 
 
