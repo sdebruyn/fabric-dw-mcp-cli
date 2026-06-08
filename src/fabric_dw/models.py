@@ -96,14 +96,46 @@ class WarehouseSnapshot(_FabricBase):
     snapshot_dt: datetime | None = Field(default=None, alias="snapshotDateTime")
 
 
-class RestorePoint(_FabricBase):
-    """A restore point for a Warehouse."""
+class CreationModeType(StrEnum):
+    """Whether the restore point was created by a user or by the system."""
 
-    id: UUID
-    name: str
+    USER_DEFINED = "UserDefined"
+    SYSTEM_CREATED = "SystemCreated"
+
+
+class RestorePoint(_FabricBase):
+    """A restore point for a Warehouse.
+
+    Note: ``id`` is a string timestamp (e.g. ``"1726617378000"``), *not* a UUID.
+    """
+
+    id: str
+    name: str = Field(alias="displayName")
     description: str | None = None
-    created_at: datetime = Field(alias="createdAt")
-    is_system_created: bool = Field(alias="isSystemCreated")
+    creation_mode: CreationModeType = Field(alias="creationMode")
+    event_date_time: datetime | None = Field(default=None, alias="eventDateTime")
+
+    @classmethod
+    def from_api(cls, payload: dict[str, object]) -> RestorePoint:
+        """Build a RestorePoint from the raw API response dict.
+
+        Flattens ``creationDetails.eventDateTime`` to the top level so the
+        standard Pydantic ``model_validate`` path can handle it.
+        """
+        _raw_details = payload.get("creationDetails")
+        details: dict[str, object] = (
+            cast("dict[str, object]", _raw_details)
+            if isinstance(_raw_details, dict)
+            else {}
+        )
+        flat: dict[str, object] = {
+            "id": payload.get("id"),
+            "displayName": payload.get("displayName"),
+            "description": payload.get("description"),
+            "creationMode": payload.get("creationMode"),
+            "eventDateTime": details.get("eventDateTime"),
+        }
+        return cls.model_validate(flat)
 
 
 class AuditSettings(_FabricBase):

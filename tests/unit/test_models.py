@@ -143,22 +143,25 @@ class TestWarehouseSnapshot:
 class TestRestorePoint:
     def test_round_trip(self) -> None:
         payload = json.loads(RESTORE_POINT_PAYLOAD)
-        obj = RestorePoint.model_validate(payload)
-        dumped = obj.model_dump(by_alias=True, mode="json", exclude_none=True)
-        assert dumped == payload
+        obj = RestorePoint.from_api(payload)
+        assert obj.id == payload["id"]
+        assert obj.name == payload["displayName"]
+        assert obj.description == payload["description"]
+        assert obj.creation_mode.value == payload["creationMode"]
+        assert obj.event_date_time is not None
 
     def test_extra_fields_ignored(self) -> None:
         payload = json.loads(RESTORE_POINT_PAYLOAD)
         payload_copy = dict(payload)
         payload_copy["unknownProp"] = 42
-        obj = RestorePoint.model_validate(payload_copy)
-        assert obj.name == payload["name"]
+        obj = RestorePoint.from_api(payload_copy)
+        assert obj.name == payload["displayName"]
 
     def test_frozen(self) -> None:
         payload = json.loads(RESTORE_POINT_PAYLOAD)
-        obj = RestorePoint.model_validate(payload)
+        obj = RestorePoint.from_api(payload)
         with pytest.raises(ValidationError):
-            obj.name = "changed"
+            obj.name = "changed"  # type: ignore[misc]
 
 
 class TestAuditSettings:

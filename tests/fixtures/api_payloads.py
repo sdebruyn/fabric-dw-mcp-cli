@@ -71,11 +71,19 @@ WAREHOUSE_SNAPSHOT_PAYLOAD = """{
 }"""
 
 RESTORE_POINT_PAYLOAD = """{
-  "id": "07a8b9c0-d1e2-3456-0123-456789abcdef",
-  "name": "RestorePoint_20240315",
+  "id": "1726617378000",
+  "displayName": "RestorePoint_20240315",
   "description": "Automated restore point before schema migration",
-  "createdAt": "2024-03-15T06:00:00Z",
-  "isSystemCreated": false
+  "creationMode": "UserDefined",
+  "creationDetails": {
+    "eventDateTime": "2024-03-15T06:00:00Z",
+    "eventInitiator": {
+      "id": "f3052d1c-61a9-46fb-8df9-0d78916ae041",
+      "displayName": "Jacob Hancock",
+      "type": "User",
+      "userDetails": {"userPrincipalName": "jacob@contoso.com"}
+    }
+  }
 }"""
 
 # Second page of workspace listing (no continuationUri → last page)

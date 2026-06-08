@@ -1,0 +1,266 @@
+"""Service functions for Microsoft Fabric Warehouse Restore Point operations.
+
+API reference:
+    https://learn.microsoft.com/en-us/rest/api/fabric/warehouse/restore-points
+"""
+
+from __future__ import annotations
+
+from uuid import UUID
+
+from fabric_dw.http_client import FabricHttpClient, HttpBase
+from fabric_dw.models import RestorePoint
+
+__all__ = [
+    "create_point",
+    "delete_point",
+    "get_point",
+    "list_points",
+    "restore_in_place",
+    "update_point",
+]
+
+
+def _rp_base(workspace_id: UUID, warehouse_id: UUID) -> str:
+    """Return the base path for restore-point operations."""
+    return f"/workspaces/{workspace_id}/warehouses/{warehouse_id}/restorePoints"
+
+
+async def list_points(
+    http: FabricHttpClient,
+    workspace_id: UUID,
+    warehouse_id: UUID,
+) -> list[RestorePoint]:
+    """Return all restore points for *warehouse_id* in *workspace_id*.
+
+    Uses continuation-URI pagination until all pages are consumed.
+
+    Args:
+        http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
+        workspace_id: The Fabric workspace UUID.
+        warehouse_id: The Fabric warehouse UUID.
+
+    Returns:
+        A list of :class:`~fabric_dw.models.RestorePoint` instances.
+    """
+    return [
+        RestorePoint.from_api(item)
+        async for item in http.iter_paginated(
+            HttpBase.FABRIC,
+            _rp_base(workspace_id, warehouse_id),
+        )
+    ]
+
+
+async def get_point(
+    http: FabricHttpClient,
+    workspace_id: UUID,
+    warehouse_id: UUID,
+    point_id: str,
+) -> RestorePoint:
+    """Return a single restore point by ID.
+
+    Args:
+        http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
+        workspace_id: The Fabric workspace UUID.
+        warehouse_id: The Fabric warehouse UUID.
+        point_id: The restore point ID (string, e.g. ``"1726617378000"``).
+
+    Returns:
+        The :class:`~fabric_dw.models.RestorePoint`.
+
+    Raises:
+        NotFound: If the restore point does not exist or the caller has
+            insufficient permissions.
+    """
+    resp = await http.request(
+        "GET",
+        HttpBase.FABRIC,
+        f"{_rp_base(workspace_id, warehouse_id)}/{point_id}",
+    )
+    return RestorePoint.from_api(resp.json())
+
+
+async def create_point(
+    http: FabricHttpClient,
+    workspace_id: UUID,
+    warehouse_id: UUID,
+    *,
+    name: str | None = None,
+    description: str | None = None,
+) -> RestorePoint:
+    """Create a restore point for *warehouse_id* at the current timestamp.
+
+    The API may respond with 201 (synchronous) or 202 + LRO Location header.
+    Both paths are handled: when a 202 is returned the LRO is polled to
+    completion and the resulting restore point is fetched via GET.
+
+    Args:
+        http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
+        workspace_id: The Fabric workspace UUID.
+        warehouse_id: The Fabric warehouse UUID.
+        name: Optional display name for the restore point (max 128 chars).
+        description: Optional description (max 512 chars).
+
+    Returns:
+        The newly-created :class:`~fabric_dw.models.RestorePoint`.
+    """
+    body: dict[str, object] = {}
+    if name is not None:
+        body["displayName"] = name
+    if description is not None:
+        body["description"] = description
+
+    resp = await http.request(
+        "POST",
+        HttpBase.FABRIC,
+        _rp_base(workspace_id, warehouse_id),
+        json=body or None,
+    )
+
+    if resp.status_code == 201:  # noqa: PLR2004
+        # Synchronous success — body contains the RestorePoint directly.
+        return RestorePoint.from_api(resp.json())
+
+    # 202 Accepted — poll the LRO then fetch the created restore point.
+    location: str = resp.headers.get("Location", "")
+    operation_result = await http.poll_operation(location)
+
+    # Try to extract the restore point ID from the LRO result body.
+    # The LRO result body for restore point creation doesn't contain the
+    # restore point ID; fetch the first point from the list ordered by newest.
+    # As a simpler heuristic, use GET .../restorePoints?continuationToken=… is
+    # not needed — the LRO operation result endpoint returns the created point.
+    op_id = location.rsplit("/", 1)[-1]
+    resource_id_raw = (
+        operation_result.get("resourceId")
+        or operation_result.get("id")
+    )
+    if resource_id_raw:
+        # Fetch the freshly created restore point.
+        return await get_point(http, workspace_id, warehouse_id, str(resource_id_raw))
+
+    # Fall back: try the LRO /result endpoint.
+    lro_result = await http.get_operation_result(op_id)
+    result_id_raw = lro_result.get("id")
+    if result_id_raw:
+        return await get_point(http, workspace_id, warehouse_id, str(result_id_raw))
+
+    # Last resort: return the first UserDefined point by listing all points.
+    # This is safe because creation is serialised (API enforces single in-flight).
+    points = await list_points(http, workspace_id, warehouse_id)
+    if points:
+        return points[0]
+
+    msg = f"Cannot determine new restore point from LRO result: {operation_result}"
+    raise ValueError(msg)
+
+
+async def update_point(
+    http: FabricHttpClient,
+    workspace_id: UUID,
+    warehouse_id: UUID,
+    point_id: str,
+    *,
+    name: str | None = None,
+    description: str | None = None,
+) -> RestorePoint:
+    """Rename and/or re-describe an existing restore point.
+
+    At least one of *name* or *description* must be provided.
+
+    Args:
+        http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
+        workspace_id: The Fabric workspace UUID.
+        warehouse_id: The Fabric warehouse UUID.
+        point_id: The restore point ID string.
+        name: New display name (max 128 chars).
+        description: New description (max 512 chars).
+
+    Returns:
+        The updated :class:`~fabric_dw.models.RestorePoint`.
+
+    Raises:
+        ValueError: If neither *name* nor *description* is supplied.
+        NotFound: If the restore point does not exist.
+    """
+    if name is None and description is None:
+        msg = "At least one of name or description must be provided"
+        raise ValueError(msg)
+
+    body: dict[str, object] = {}
+    if name is not None:
+        body["displayName"] = name
+    if description is not None:
+        body["description"] = description
+
+    resp = await http.request(
+        "PATCH",
+        HttpBase.FABRIC,
+        f"{_rp_base(workspace_id, warehouse_id)}/{point_id}",
+        json=body,
+    )
+    return RestorePoint.from_api(resp.json())
+
+
+async def delete_point(
+    http: FabricHttpClient,
+    workspace_id: UUID,
+    warehouse_id: UUID,
+    point_id: str,
+) -> None:
+    """Delete a user-defined restore point.
+
+    System-created restore points cannot be deleted (the API will return an
+    error). Only user-defined restore points support deletion.
+
+    Args:
+        http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
+        workspace_id: The Fabric workspace UUID.
+        warehouse_id: The Fabric warehouse UUID.
+        point_id: The restore point ID string.
+
+    Raises:
+        NotFound: If the restore point does not exist or the caller has
+            insufficient permissions.
+    """
+    await http.request(
+        "DELETE",
+        HttpBase.FABRIC,
+        f"{_rp_base(workspace_id, warehouse_id)}/{point_id}",
+    )
+
+
+async def restore_in_place(
+    http: FabricHttpClient,
+    workspace_id: UUID,
+    warehouse_id: UUID,
+    point_id: str,
+) -> None:
+    """Restore *warehouse_id* in-place to the specified restore point.
+
+    This is a destructive, long-running operation (LRO). The warehouse will
+    be unavailable for approximately 10 minutes while the restore completes.
+    The API may respond synchronously (200) or with 202 + Location for polling.
+
+    Args:
+        http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
+        workspace_id: The Fabric workspace UUID.
+        warehouse_id: The Fabric warehouse UUID.
+        point_id: The restore point ID string.
+
+    Raises:
+        NotFound: If the restore point does not exist or the caller has
+            insufficient permissions.
+        FabricServerError: If the LRO fails or times out.
+    """
+    resp = await http.request(
+        "POST",
+        HttpBase.FABRIC,
+        f"{_rp_base(workspace_id, warehouse_id)}/{point_id}/restore",
+    )
+
+    if resp.status_code == 202:  # noqa: PLR2004
+        location: str = resp.headers.get("Location", "")
+        await http.poll_operation(location)
+    # 200 OK means synchronous success — nothing further to do.
