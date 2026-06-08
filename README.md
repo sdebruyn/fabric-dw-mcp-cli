@@ -29,6 +29,22 @@ pip install fabric-dw
 
 > Note: placeholder release; CLI/MCP under active development. Installation instructions will be updated on first release.
 
+## Run in Docker
+
+```bash
+docker pull ghcr.io/sdebruyn/fabric-dw:latest
+docker run --rm \
+  -e AZURE_CLIENT_ID=… \
+  -e AZURE_TENANT_ID=… \
+  -e AZURE_CLIENT_SECRET=… \
+  -e FABRIC_AUTH=sp \
+  ghcr.io/sdebruyn/fabric-dw --help
+```
+
+Dev images (built from every main merge): `ghcr.io/sdebruyn/fabric-dw:main` or `:<version>.dev<N>`.
+
+Package page: [ghcr.io/sdebruyn/fabric-dw](https://github.com/sdebruyn/fabric-dw-mcp-cli/pkgs/container/fabric-dw)
+
 ## Quick Start
 
 ### CLI
