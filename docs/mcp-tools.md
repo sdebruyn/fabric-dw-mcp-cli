@@ -253,6 +253,19 @@ Return all currently-executing queries on a warehouse.
 
 ---
 
+### list_connections
+
+Return all active SQL connections on a warehouse or SQL Analytics Endpoint. Queries `sys.dm_exec_connections`, which includes idle connections not visible via `list_running_queries`.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `warehouse` (`str`) — warehouse name or GUID.
+
+**Returns:** `list[Connection]` — array of connection objects, each with `session_id`, `connect_time`, `client_net_address`, `auth_scheme`, `encrypt_option`, and `net_transport`.
+
+---
+
 ### kill_session
 
 Terminate a session on a warehouse.

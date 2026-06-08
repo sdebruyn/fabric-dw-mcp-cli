@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from fabric_dw.exceptions import AuthError, PermissionDenied
-from fabric_dw.models import RunningQuery
+from fabric_dw.models import Connection, RunningQuery
 from fabric_dw.services import queries
 
 # ---------------------------------------------------------------------------
@@ -393,3 +393,188 @@ async def test_kill_permission_denied_message_contains_session_id() -> None:
         pytest.raises(PermissionDenied, match="42"),
     ):
         await queries.kill(target, 42)
+
+
+# ---------------------------------------------------------------------------
+# list_connections
+# ---------------------------------------------------------------------------
+
+_CONN_COLS = [
+    "session_id",
+    "connect_time",
+    "client_net_address",
+    "auth_scheme",
+    "encrypt_option",
+    "net_transport",
+]
+
+_CONN_ROW_1 = (
+    10,
+    _NOW,
+    "192.168.1.100",
+    "NTLM",
+    "TRUE",
+    "TCP",
+)
+
+_CONN_ROW_2 = (
+    20,
+    _NOW,
+    None,
+    "KERBEROS",
+    "FALSE",
+    "TCP",
+)
+
+
+@pytest.mark.asyncio
+async def test_list_connections_returns_empty_when_no_rows() -> None:
+    target = _make_target()
+    conn = _make_conn([], _CONN_COLS)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await queries.list_connections(target)
+
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_list_connections_returns_connection_instances() -> None:
+    target = _make_target()
+    conn = _make_conn([_CONN_ROW_1], _CONN_COLS)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await queries.list_connections(target)
+
+    assert len(result) == 1
+    assert isinstance(result[0], Connection)
+
+
+@pytest.mark.asyncio
+async def test_list_connections_parses_fields_correctly() -> None:
+    target = _make_target()
+    conn = _make_conn([_CONN_ROW_1], _CONN_COLS)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await queries.list_connections(target)
+
+    c = result[0]
+    assert c.session_id == 10
+    assert c.connect_time == _NOW
+    assert c.client_net_address == "192.168.1.100"
+    assert c.auth_scheme == "NTLM"
+    assert c.encrypt_option == "TRUE"
+    assert c.net_transport == "TCP"
+
+
+@pytest.mark.asyncio
+async def test_list_connections_handles_null_client_net_address() -> None:
+    target = _make_target()
+    conn = _make_conn([_CONN_ROW_2], _CONN_COLS)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await queries.list_connections(target)
+
+    assert result[0].client_net_address is None
+
+
+@pytest.mark.asyncio
+async def test_list_connections_returns_all_rows() -> None:
+    target = _make_target()
+    conn = _make_conn([_CONN_ROW_1, _CONN_ROW_2], _CONN_COLS)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await queries.list_connections(target)
+
+    assert len(result) == 2
+    assert result[0].session_id == 10
+    assert result[1].session_id == 20
+
+
+@pytest.mark.asyncio
+async def test_list_connections_sql_references_dm_exec_connections() -> None:
+    target = _make_target()
+    conn = _make_conn([], _CONN_COLS)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await queries.list_connections(target)
+
+    cursor = conn.cursor.return_value
+    call_sql: str = cursor.execute.call_args[0][0]
+    assert "sys.dm_exec_connections" in call_sql
+
+
+@pytest.mark.asyncio
+async def test_list_connections_sql_selects_expected_columns() -> None:
+    target = _make_target()
+    conn = _make_conn([], _CONN_COLS)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await queries.list_connections(target)
+
+    cursor = conn.cursor.return_value
+    call_sql: str = cursor.execute.call_args[0][0]
+    expected_cols = (
+        "session_id", "connect_time", "client_net_address",
+        "auth_scheme", "encrypt_option", "net_transport",
+    )
+    for col in expected_cols:
+        assert col in call_sql
+
+
+@pytest.mark.asyncio
+async def test_list_connections_closes_connection_after_success() -> None:
+    target = _make_target()
+    conn = _make_conn([_CONN_ROW_1], _CONN_COLS)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await queries.list_connections(target)
+
+    conn.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_list_connections_maps_permission_denied() -> None:
+    target = _make_target()
+    conn = MagicMock()
+    cursor = MagicMock()
+    cursor.execute.side_effect = Exception(
+        "permission was denied on object sys.dm_exec_connections"
+    )
+    conn.cursor.return_value = cursor
+
+    with (
+        patch("fabric_dw.sql.open_connection", return_value=conn),
+        pytest.raises(PermissionDenied),
+    ):
+        await queries.list_connections(target)
+
+
+@pytest.mark.asyncio
+async def test_list_connections_maps_auth_error() -> None:
+    target = _make_target()
+    conn = MagicMock()
+    cursor = MagicMock()
+    cursor.execute.side_effect = Exception("Authentication failed for user '' (token)")
+    conn.cursor.return_value = cursor
+
+    with (
+        patch("fabric_dw.sql.open_connection", return_value=conn),
+        pytest.raises(AuthError),
+    ):
+        await queries.list_connections(target)
+
+
+@pytest.mark.asyncio
+async def test_list_connections_unrelated_error_propagates() -> None:
+    target = _make_target()
+    conn = MagicMock()
+    cursor = MagicMock()
+    cursor.execute.side_effect = RuntimeError("network timeout")
+    conn.cursor.return_value = cursor
+
+    with (
+        patch("fabric_dw.sql.open_connection", return_value=conn),
+        pytest.raises(RuntimeError, match="network timeout"),
+    ):
+        await queries.list_connections(target)

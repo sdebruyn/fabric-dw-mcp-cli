@@ -475,6 +475,31 @@ fabric-dw queries list MyWorkspace SalesWH
 
 ---
 
+### queries list-connections
+
+List all active SQL connections on a warehouse or SQL Analytics Endpoint. This queries `sys.dm_exec_connections` and shows lower-level connection info (including idle connections) that is not visible in `queries list`.
+
+**Synopsis**
+
+```
+fabric-dw queries list-connections [WORKSPACE] [WAREHOUSE]
+```
+
+**Example**
+
+```shell
+fabric-dw queries list-connections MyWorkspace SalesWH
+```
+
+```
+ session_id  connect_time          client_net_address  auth_scheme  encrypt_option  net_transport
+ ----------  --------------------  ------------------  -----------  --------------  -------------
+ 10          2026-06-08T10:00:00Z  192.168.1.100       NTLM         TRUE            TCP
+ 20          2026-06-08T10:01:00Z  192.168.1.101       KERBEROS     TRUE            TCP
+```
+
+---
+
 ### queries kill
 
 Kill a specific session on a warehouse or SQL Analytics Endpoint. You will be asked to confirm unless `--yes` is passed.

@@ -14,11 +14,12 @@ from contextlib import closing
 from fabric_dw import sql
 from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import PermissionDenied
-from fabric_dw.models import RunningQuery
+from fabric_dw.models import Connection, RunningQuery
 from fabric_dw.sql import SqlTarget
 
 __all__ = [
     "kill",
+    "list_connections",
     "list_running",
 ]
 
@@ -76,6 +77,60 @@ async def list_running(
                     raise mapped from exc
                 raise
             return [RunningQuery.model_validate(dict(zip(cols, r, strict=True))) for r in rows]
+
+    return await asyncio.to_thread(_run)
+
+
+_LIST_CONNECTIONS_SQL = """\
+SELECT
+    session_id,
+    connect_time,
+    client_net_address,
+    auth_scheme,
+    encrypt_option,
+    net_transport
+FROM sys.dm_exec_connections
+ORDER BY connect_time;
+"""
+
+
+async def list_connections(
+    target: SqlTarget,
+    *,
+    mode: CredentialMode = CredentialMode.DEFAULT,
+) -> list[Connection]:
+    """Return all active SQL connections on *target*.
+
+    Queries the ``sys.dm_exec_connections`` DMV, which exposes lower-level
+    connection info (including idle connections) that is not visible in
+    ``sys.dm_exec_requests``.  Requires VIEW SERVER STATE permission on the
+    database (Fabric grants this automatically to workspace admins and owners).
+
+    Args:
+        target: The warehouse or SQL Analytics Endpoint to query.
+        mode: The credential mode for Entra authentication.
+
+    Returns:
+        A (possibly empty) list of :class:`~fabric_dw.models.Connection`
+        instances, one per result row.
+
+    Raises:
+        PermissionDenied: If the caller lacks VIEW SERVER STATE.
+    """
+
+    def _run() -> list[Connection]:
+        with closing(sql.open_connection(target, mode=mode)) as conn:
+            cursor = conn.cursor()
+            try:
+                cursor.execute(_LIST_CONNECTIONS_SQL)
+                cols = [c[0] for c in (cursor.description or [])]
+                rows = cursor.fetchall()
+            except Exception as exc:
+                mapped = sql.map_driver_error(exc)
+                if mapped:
+                    raise mapped from exc
+                raise
+            return [Connection.model_validate(dict(zip(cols, r, strict=True))) for r in rows]
 
     return await asyncio.to_thread(_run)
 
