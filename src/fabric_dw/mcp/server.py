@@ -366,6 +366,56 @@ async def set_audit_action_groups(
     return result.model_dump(by_alias=True, mode="json")
 
 
+@mcp.tool()
+async def add_audit_group(workspace: str, warehouse: str, group: str) -> dict[str, Any]:
+    """Add a single audit action group without overwriting the others.
+
+    Idempotent — if *group* is already present the current settings are
+    returned unchanged.  Auditing must already be enabled.
+
+    CAUTION: changes take effect immediately on the live audit policy.
+
+    Args:
+        workspace: Workspace name or GUID.
+        warehouse: Warehouse name or GUID.
+        group: Action group name, e.g. ``BATCH_COMPLETED_GROUP``.
+    """
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        item = await _get_resolver().item(workspace, warehouse)
+        result = await audit.add_action_group(_get_http(), ws_id, item.id, group)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+    except FabricError as exc:
+        raise _fabric_err(exc) from exc
+    return result.model_dump(by_alias=True, mode="json")
+
+
+@mcp.tool()
+async def remove_audit_group(workspace: str, warehouse: str, group: str) -> dict[str, Any]:
+    """Remove a single audit action group without overwriting the others.
+
+    Idempotent — if *group* is not present the current settings are returned
+    unchanged.  Auditing must already be enabled.
+
+    CAUTION: changes take effect immediately on the live audit policy.
+
+    Args:
+        workspace: Workspace name or GUID.
+        warehouse: Warehouse name or GUID.
+        group: Action group name, e.g. ``BATCH_COMPLETED_GROUP``.
+    """
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        item = await _get_resolver().item(workspace, warehouse)
+        result = await audit.remove_action_group(_get_http(), ws_id, item.id, group)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+    except FabricError as exc:
+        raise _fabric_err(exc) from exc
+    return result.model_dump(by_alias=True, mode="json")
+
+
 # ---------------------------------------------------------------------------
 # Query tools
 # ---------------------------------------------------------------------------

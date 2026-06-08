@@ -5,7 +5,9 @@ Wraps the warehouse-scoped ``/settings/sqlAudit`` endpoint:
 - :func:`get_settings` — fetch current audit configuration.
 - :func:`enable`       — enable auditing (optionally with a retention period).
 - :func:`disable`      — disable auditing.
-- :func:`set_action_groups` — replace the list of audited action groups.
+- :func:`set_action_groups`    — replace the list of audited action groups.
+- :func:`add_action_group`     — add a single action group (idempotent).
+- :func:`remove_action_group`  — remove a single action group (idempotent).
 """
 
 from __future__ import annotations
@@ -17,13 +19,15 @@ from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import AuditSettings
 
 __all__ = [
+    "add_action_group",
     "disable",
     "enable",
     "get_settings",
+    "remove_action_group",
     "set_action_groups",
 ]
 
-_ACTION_GROUP_RE = re.compile(r"^[A-Z_]+$")
+_ACTION_GROUP_RE = re.compile(r"^[A-Z0-9_]+$")
 
 
 def _audit_path(workspace_id: UUID, warehouse_id: UUID) -> str:
@@ -123,8 +127,8 @@ async def set_action_groups(
 ) -> AuditSettings:
     """Replace the audited action groups for a warehouse.
 
-    Action-group names must consist exclusively of upper-case ASCII letters and
-    underscores (``^[A-Z_]+$``).  Examples of valid names:
+    Action-group names must consist exclusively of upper-case ASCII letters,
+    digits, and underscores (``^[A-Z0-9_]+$``).  Examples of valid names:
     ``BATCH_COMPLETED_GROUP``, ``SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP``.
 
     Args:
@@ -141,14 +145,14 @@ async def set_action_groups(
         This also enables auditing if currently disabled.
 
     Raises:
-        ValueError: If any name in *action_groups* does not match ``^[A-Z_]+$``.
+        ValueError: If any name in *action_groups* does not match ``^[A-Z0-9_]+$``.
         PermissionDenied: If the caller lacks the required permission (HTTP 403).
     """
     for name in action_groups:
         if not _ACTION_GROUP_RE.match(name):
             msg = (
                 f"Invalid action_group name {name!r}: "
-                "names must match ^[A-Z_]+$ (upper-case letters and underscores only)"
+                "names must match ^[A-Z0-9_]+$ (upper-case letters, digits, and underscores only)"
             )
             raise ValueError(msg)
 
@@ -165,4 +169,130 @@ async def set_action_groups(
         json={"state": "Enabled", "auditActionsAndGroups": action_groups},
     )
 
+    return await get_settings(http, workspace_id, warehouse_id)
+
+
+async def add_action_group(
+    http: FabricHttpClient,
+    workspace_id: UUID,
+    warehouse_id: UUID,
+    group: str,
+) -> AuditSettings:
+    """Add a single audit action group without overwriting the others.
+
+    This is idempotent — if *group* is already present the current settings
+    are returned unchanged without making a PATCH request.
+
+    The group name must consist exclusively of upper-case ASCII letters,
+    digits, and underscores (``^[A-Z0-9_]+$``).  The Fabric API documents a
+    fixed set of valid group names (e.g. ``BATCH_COMPLETED_GROUP``,
+    ``SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP``); invalid names are accepted
+    by this client-side validation but will be rejected by the API.  The
+    broad ``^[A-Z0-9_]+$`` pattern is used rather than a closed enum because
+    Microsoft may extend the set of valid names without notice.
+
+    Args:
+        http: Authenticated Fabric HTTP client.
+        workspace_id: GUID of the Fabric workspace.
+        warehouse_id: GUID of the Data Warehouse.
+        group: Name of the action group to add.
+
+    Returns:
+        The fresh :class:`~fabric_dw.models.AuditSettings` after the update
+        (or the current settings when the group was already present).
+
+    Raises:
+        ValueError: If *group* does not match ``^[A-Z0-9_]+$``.
+        ValueError: If auditing is currently disabled (``state == "Disabled"``).
+            Enable auditing first with :func:`enable`.
+        PermissionDenied: If the caller lacks the required permission (HTTP 403).
+        NotFound: If the warehouse does not exist (HTTP 404).
+    """
+    if not _ACTION_GROUP_RE.match(group):
+        msg = (
+            f"Invalid action_group name {group!r}: "
+            "names must match ^[A-Z0-9_]+$ (upper-case letters, digits, and underscores only)"
+        )
+        raise ValueError(msg)
+
+    current = await get_settings(http, workspace_id, warehouse_id)
+
+    if current.state == "Disabled":
+        msg = "audit is disabled; enable first"
+        raise ValueError(msg)
+
+    if group in current.action_groups:
+        return current
+
+    new_groups = [*current.action_groups, group]
+    path = _audit_path(workspace_id, warehouse_id)
+    await http.request(
+        "PATCH",
+        HttpBase.FABRIC,
+        path,
+        json={"auditActionsAndGroups": new_groups},
+    )
+    return await get_settings(http, workspace_id, warehouse_id)
+
+
+async def remove_action_group(
+    http: FabricHttpClient,
+    workspace_id: UUID,
+    warehouse_id: UUID,
+    group: str,
+) -> AuditSettings:
+    """Remove a single audit action group without overwriting the others.
+
+    This is idempotent — if *group* is not present the current settings are
+    returned unchanged without making a PATCH request.
+
+    The group name must consist exclusively of upper-case ASCII letters,
+    digits, and underscores (``^[A-Z0-9_]+$``).  The Fabric API documents a
+    fixed set of valid group names (e.g. ``BATCH_COMPLETED_GROUP``,
+    ``SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP``); invalid names are accepted
+    by this client-side validation but will be rejected by the API.  The
+    broad ``^[A-Z0-9_]+$`` pattern is used rather than a closed enum because
+    Microsoft may extend the set of valid names without notice.
+
+    Args:
+        http: Authenticated Fabric HTTP client.
+        workspace_id: GUID of the Fabric workspace.
+        warehouse_id: GUID of the Data Warehouse.
+        group: Name of the action group to remove.
+
+    Returns:
+        The fresh :class:`~fabric_dw.models.AuditSettings` after the update
+        (or the current settings when the group was not present).
+
+    Raises:
+        ValueError: If *group* does not match ``^[A-Z0-9_]+$``.
+        ValueError: If auditing is currently disabled (``state == "Disabled"``).
+            Enable auditing first with :func:`enable`.
+        PermissionDenied: If the caller lacks the required permission (HTTP 403).
+        NotFound: If the warehouse does not exist (HTTP 404).
+    """
+    if not _ACTION_GROUP_RE.match(group):
+        msg = (
+            f"Invalid action_group name {group!r}: "
+            "names must match ^[A-Z0-9_]+$ (upper-case letters, digits, and underscores only)"
+        )
+        raise ValueError(msg)
+
+    current = await get_settings(http, workspace_id, warehouse_id)
+
+    if current.state == "Disabled":
+        msg = "audit is disabled; enable first"
+        raise ValueError(msg)
+
+    if group not in current.action_groups:
+        return current
+
+    new_groups = [g for g in current.action_groups if g != group]
+    path = _audit_path(workspace_id, warehouse_id)
+    await http.request(
+        "PATCH",
+        HttpBase.FABRIC,
+        path,
+        json={"auditActionsAndGroups": new_groups},
+    )
     return await get_settings(http, workspace_id, warehouse_id)

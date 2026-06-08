@@ -226,6 +226,34 @@ Replace the audited action groups for a warehouse. This overwrites the existing 
 
 ---
 
+### add_audit_group
+
+Add a single audit action group without overwriting the others. Idempotent — if the group is already present the current settings are returned unchanged. Auditing must already be enabled.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `warehouse` (`str`) — warehouse name or GUID.
+- `group` (`str`) — action group name (e.g. `"BATCH_COMPLETED_GROUP"`).
+
+**Returns:** `AuditSettings` — the updated audit settings.
+
+---
+
+### remove_audit_group
+
+Remove a single audit action group without overwriting the others. Idempotent — if the group is not present the current settings are returned unchanged. Auditing must already be enabled.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `warehouse` (`str`) — warehouse name or GUID.
+- `group` (`str`) — action group name (e.g. `"BATCH_COMPLETED_GROUP"`).
+
+**Returns:** `AuditSettings` — the updated audit settings.
+
+---
+
 ## Queries
 
 ### list_running_queries

@@ -242,11 +242,10 @@ async def test_set_action_groups_empty_list_is_valid() -> None:
         "lowercase_group",  # lower-case letters
         "MIXED_Group",  # mixed case
         "GROUP-NAME",  # hyphen
-        "GROUP123",  # digits not allowed by ^[A-Z_]+$
     ],
 )
 async def test_set_action_groups_invalid_name_raises_value_error(bad_group: str) -> None:
-    """set_action_groups should raise ValueError for names that don't match ^[A-Z_]+$."""
+    """set_action_groups should raise ValueError for names that don't match ^[A-Z0-9_]+$."""
     client = await _make_client()
     async with client:
         with pytest.raises(ValueError, match="action_group"):
@@ -288,3 +287,193 @@ async def test_set_action_groups_works_on_fresh_warehouse() -> None:
     assert sent_body["auditActionsAndGroups"] == groups
     assert isinstance(result, AuditSettings)
     assert result.action_groups == groups
+
+
+# ---------------------------------------------------------------------------
+# add_action_group
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_add_action_group_adds_missing_group() -> None:
+    """add_action_group should GET current groups, append the new one, then PATCH."""
+    new_group = "FAILED_DATABASE_AUTHENTICATION_GROUP"
+    existing = AUDIT_SETTINGS_PAYLOAD.copy()  # has BATCH_COMPLETED_GROUP + SUCCESSFUL_...
+    expected_groups = [
+        "BATCH_COMPLETED_GROUP",
+        "SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP",
+        new_group,
+    ]
+    updated = AUDIT_SETTINGS_PAYLOAD.copy()
+    updated["auditActionsAndGroups"] = expected_groups
+
+    with respx.mock:
+        get_route = respx.get(_AUDIT_URL).mock(
+            side_effect=[
+                httpx.Response(200, json=existing),  # first GET — read current state
+                httpx.Response(200, json=updated),  # second GET — after PATCH
+            ]
+        )
+        patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        client = await _make_client()
+        async with client:
+            result = await audit.add_action_group(client, _WS_ID, _WH_ID, new_group)
+
+    assert get_route.call_count == 2
+    assert patch_route.called
+    sent_body = json.loads(patch_route.calls[0].request.content)
+    assert sent_body["auditActionsAndGroups"] == expected_groups
+    assert isinstance(result, AuditSettings)
+    assert new_group in result.action_groups
+
+
+@pytest.mark.asyncio
+async def test_add_action_group_idempotent_when_already_present() -> None:
+    """add_action_group should not PATCH if the group is already present."""
+    existing_group = "BATCH_COMPLETED_GROUP"
+    existing = AUDIT_SETTINGS_PAYLOAD.copy()  # already contains BATCH_COMPLETED_GROUP
+
+    with respx.mock:
+        get_route = respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=existing))
+        patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        client = await _make_client()
+        async with client:
+            result = await audit.add_action_group(client, _WS_ID, _WH_ID, existing_group)
+
+    assert get_route.call_count == 1  # only one GET — no PATCH needed
+    assert not patch_route.called
+    assert isinstance(result, AuditSettings)
+    assert existing_group in result.action_groups
+
+
+@pytest.mark.asyncio
+async def test_add_action_group_disabled_raises_value_error() -> None:
+    """add_action_group should raise ValueError when audit is disabled."""
+    disabled = AUDIT_SETTINGS_DISABLED_PAYLOAD.copy()
+
+    with respx.mock:
+        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=disabled))
+        client = await _make_client()
+        async with client:
+            with pytest.raises(ValueError, match="audit is disabled"):
+                await audit.add_action_group(client, _WS_ID, _WH_ID, "BATCH_COMPLETED_GROUP")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad_group",
+    [
+        "batch completed group",  # whitespace
+        "lowercase_group",  # lower-case letters
+        "GROUP-NAME",  # hyphen
+    ],
+)
+async def test_add_action_group_invalid_name_raises_value_error(bad_group: str) -> None:
+    """add_action_group should raise ValueError for names that don't match ^[A-Z0-9_]+$."""
+    client = await _make_client()
+    async with client:
+        with pytest.raises(ValueError, match="action_group"):
+            await audit.add_action_group(client, _WS_ID, _WH_ID, bad_group)
+
+
+@pytest.mark.asyncio
+async def test_add_action_group_403_raises_permission_denied() -> None:
+    """add_action_group should propagate PermissionDenied on 403 from GET."""
+    with respx.mock:
+        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(403, json={"error": "forbidden"}))
+        client = await _make_client()
+        async with client:
+            with pytest.raises(PermissionDenied):
+                await audit.add_action_group(client, _WS_ID, _WH_ID, "BATCH_COMPLETED_GROUP")
+
+
+# ---------------------------------------------------------------------------
+# remove_action_group
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_remove_action_group_removes_present_group() -> None:
+    """remove_action_group should GET current groups, remove the target, then PATCH."""
+    group_to_remove = "SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP"
+    existing = AUDIT_SETTINGS_PAYLOAD.copy()  # has both groups
+    expected_groups = ["BATCH_COMPLETED_GROUP"]
+    updated = AUDIT_SETTINGS_PAYLOAD.copy()
+    updated["auditActionsAndGroups"] = expected_groups
+
+    with respx.mock:
+        get_route = respx.get(_AUDIT_URL).mock(
+            side_effect=[
+                httpx.Response(200, json=existing),  # first GET — read current state
+                httpx.Response(200, json=updated),  # second GET — after PATCH
+            ]
+        )
+        patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        client = await _make_client()
+        async with client:
+            result = await audit.remove_action_group(client, _WS_ID, _WH_ID, group_to_remove)
+
+    assert get_route.call_count == 2
+    assert patch_route.called
+    sent_body = json.loads(patch_route.calls[0].request.content)
+    assert group_to_remove not in sent_body["auditActionsAndGroups"]
+    assert isinstance(result, AuditSettings)
+
+
+@pytest.mark.asyncio
+async def test_remove_action_group_idempotent_when_not_present() -> None:
+    """remove_action_group should not PATCH if the group is not present."""
+    absent_group = "FAILED_DATABASE_AUTHENTICATION_GROUP"
+    existing = AUDIT_SETTINGS_PAYLOAD.copy()  # does NOT have FAILED_DATABASE_AUTHENTICATION_GROUP
+
+    with respx.mock:
+        get_route = respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=existing))
+        patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        client = await _make_client()
+        async with client:
+            result = await audit.remove_action_group(client, _WS_ID, _WH_ID, absent_group)
+
+    assert get_route.call_count == 1  # only one GET — no PATCH needed
+    assert not patch_route.called
+    assert isinstance(result, AuditSettings)
+
+
+@pytest.mark.asyncio
+async def test_remove_action_group_disabled_raises_value_error() -> None:
+    """remove_action_group should raise ValueError when audit is disabled."""
+    disabled = AUDIT_SETTINGS_DISABLED_PAYLOAD.copy()
+
+    with respx.mock:
+        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=disabled))
+        client = await _make_client()
+        async with client:
+            with pytest.raises(ValueError, match="audit is disabled"):
+                await audit.remove_action_group(client, _WS_ID, _WH_ID, "BATCH_COMPLETED_GROUP")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad_group",
+    [
+        "batch completed group",  # whitespace
+        "lowercase_group",  # lower-case letters
+        "GROUP-NAME",  # hyphen
+    ],
+)
+async def test_remove_action_group_invalid_name_raises_value_error(bad_group: str) -> None:
+    """remove_action_group should raise ValueError for names that don't match ^[A-Z0-9_]+$."""
+    client = await _make_client()
+    async with client:
+        with pytest.raises(ValueError, match="action_group"):
+            await audit.remove_action_group(client, _WS_ID, _WH_ID, bad_group)
+
+
+@pytest.mark.asyncio
+async def test_remove_action_group_403_raises_permission_denied() -> None:
+    """remove_action_group should propagate PermissionDenied on 403 from GET."""
+    with respx.mock:
+        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(403, json={"error": "forbidden"}))
+        client = await _make_client()
+        async with client:
+            with pytest.raises(PermissionDenied):
+                await audit.remove_action_group(client, _WS_ID, _WH_ID, "BATCH_COMPLETED_GROUP")
