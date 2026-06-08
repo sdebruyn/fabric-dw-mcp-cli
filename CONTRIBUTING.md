@@ -70,7 +70,7 @@ uv run ruff format --check .
 ### Type checking
 
 ```bash
-uv run mypy src tests
+uvx ty==0.0.44 check src tests
 ```
 
 ### Unit tests

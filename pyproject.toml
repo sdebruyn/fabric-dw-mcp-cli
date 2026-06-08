@@ -81,7 +81,6 @@ dev = [
     "freezegun>=1.5",
     "pytest-randomly",
     "pytest-cov",
-    "mypy",
     "ruff",
 ]
 docs = ["zensical>=0.0.42"]
@@ -118,11 +117,9 @@ select = [
 
 [tool.ruff.format]
 
-[tool.mypy]
-strict = true
-python_version = "3.11"
-mypy_path = "src"
-packages = ["fabric_dw"]
+[tool.ty]
+# ty is in alpha; configuration options may expand with future releases.
+# Run with: uvx ty check src tests
 
 [tool.pytest.ini_options]
 markers = ["integration: hits real Fabric APIs"]

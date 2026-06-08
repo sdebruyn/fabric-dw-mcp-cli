@@ -406,7 +406,9 @@ async def test_rename_returns_updated_warehouse_snapshot() -> None:
     """rename should return the refreshed WarehouseSnapshot after PATCH."""
     updated_detail = dict(WAREHOUSE_SNAPSHOT_DETAIL_PAYLOAD)
     updated_detail = {**updated_detail, "displayName": "RenamedSnapshot"}
-    updated_detail["creationPayload"] = dict(updated_detail["creationPayload"])
+    _raw_cp = updated_detail["creationPayload"]
+    assert isinstance(_raw_cp, dict)
+    updated_detail["creationPayload"] = dict(_raw_cp)
 
     snap_url = f"{_ITEMS_URL}/{_SNAP_ID}"
 

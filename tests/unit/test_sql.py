@@ -60,7 +60,7 @@ class TestSqlTarget:
     def test_is_frozen(self) -> None:
         target = _make_target()
         with pytest.raises((AttributeError, TypeError)):
-            target.workspace_id = "other"  # type: ignore[misc]
+            target.workspace_id = "other"  # ty: ignore[invalid-assignment]
 
     def test_equality_by_value(self) -> None:
         t1 = _make_target()

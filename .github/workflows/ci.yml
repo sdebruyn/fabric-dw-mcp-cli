@@ -45,7 +45,7 @@ jobs:
         with:
           python-version: "3.11"
       - run: uv sync --frozen
-      - run: uv run mypy src tests
+      - run: uvx ty==0.0.44 check src tests
 
   unit:
     name: Unit tests
