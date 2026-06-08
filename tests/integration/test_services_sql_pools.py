@@ -133,18 +133,18 @@ async def test_reset_pools(http: FabricHttpClient, workspace_id: UUID) -> None:
         await sql_pools.reset_pools(http, workspace_id)
 
         # Beta API has eventual-consistency between PATCH and GET. See issue #205.
-        # Poll up to 10 s for the reset to be reflected by the GET endpoint.
+        # Poll up to 30 s for the reset to be reflected by the GET endpoint.
         # Fetch once before the loop so cfg is always bound even if the
         # deadline has already elapsed on the first monotonic() check.
         cfg = await sql_pools.get_configuration(http, workspace_id)
-        deadline = time.monotonic() + 10.0
+        deadline = time.monotonic() + 30.0
         while cfg.custom_sql_pools and time.monotonic() < deadline:
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(2.0)
             cfg = await sql_pools.get_configuration(http, workspace_id)
 
         if cfg.custom_sql_pools:
             pytest.fail(
-                "reset_pools did not clear the configuration within 10s (eventual consistency)"
+                "reset_pools did not clear the configuration within 30s (eventual consistency)"
             )
 
         assert cfg.custom_sql_pools == []
