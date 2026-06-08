@@ -89,7 +89,7 @@ def _render_table(rows: Sequence[object], *, console: Console, title: str | None
     for row in rows:
         if isinstance(row, dict):
             row_dict = {str(k): v for k, v in row.items()}
-            table.add_row(*[_cell(row_dict.get(col)) for col in columns])
+            table.add_row(*[_cell(row_dict.get(col, "")) for col in columns])
         else:
             table.add_row(_cell(row))
 

@@ -143,6 +143,32 @@ class TestNullRendering:
         data = [{"label": "None"}]
         output = self._render_to_string(data)
         assert "None" in output
+        assert "NULL" not in output
+
+
+class TestSparseRowRendering:
+    """Rows missing a key render as blank; only explicit None renders as NULL."""
+
+    def _render_to_string(self, data: object) -> str:
+        sio = StringIO()
+        console = Console(file=sio, width=120, highlight=False, no_color=True)
+        render(data, json_output=False, console=console)
+        return sio.getvalue()
+
+    def test_missing_key_renders_as_blank_not_null(self) -> None:
+        """A row dict that has no entry for a column renders the cell blank, not NULL."""
+        # Row 1 has both keys; row 2 is missing 'score' → should be blank
+        data = [{"id": "abc", "score": 42}, {"id": "def"}]
+        output = self._render_to_string(data)
+        # The column exists (inferred from row 1) but row 2's cell must NOT say NULL
+        assert "NULL" not in output
+
+    def test_explicit_none_renders_as_null(self) -> None:
+        """A row dict with an explicit None value renders as NULL, not blank."""
+        data = [{"id": "abc", "score": None}]
+        output = self._render_to_string(data)
+        assert "NULL" in output
+        assert "None" not in output
 
 
 class TestConfirm:
