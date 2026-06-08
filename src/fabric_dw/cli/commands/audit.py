@@ -142,3 +142,53 @@ async def set_groups_cmd(
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
+
+
+@audit_group.command("add-group")
+@click.argument("workspace", required=False, default=None)
+@click.argument("warehouse", required=False, default=None)
+@click.argument("group")
+@click.pass_obj
+@_coro
+async def add_group_cmd(
+    ctx: CliContext, workspace: str | None, warehouse: str | None, group: str
+) -> None:
+    """Add GROUP to the audit action groups for WAREHOUSE in WORKSPACE.
+
+    Idempotent — if GROUP is already present the command succeeds without
+    modifying the configuration.  Auditing must already be enabled.
+    """
+    ws = resolve_workspace_arg(ctx, workspace)
+    wh = resolve_warehouse_arg(ctx, warehouse)
+    try:
+        async with _build_clients(ctx) as (http, _):
+            ws_id, entry = await _resolve_item(http, ws, wh)
+            obj = await _audit_svc.add_action_group(http, ws_id, entry.id, group)
+            render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
+    except (ValueError, FabricError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+@audit_group.command("remove-group")
+@click.argument("workspace", required=False, default=None)
+@click.argument("warehouse", required=False, default=None)
+@click.argument("group")
+@click.pass_obj
+@_coro
+async def remove_group_cmd(
+    ctx: CliContext, workspace: str | None, warehouse: str | None, group: str
+) -> None:
+    """Remove GROUP from the audit action groups for WAREHOUSE in WORKSPACE.
+
+    Idempotent — if GROUP is not present the command succeeds without
+    modifying the configuration.  Auditing must already be enabled.
+    """
+    ws = resolve_workspace_arg(ctx, workspace)
+    wh = resolve_warehouse_arg(ctx, warehouse)
+    try:
+        async with _build_clients(ctx) as (http, _):
+            ws_id, entry = await _resolve_item(http, ws, wh)
+            obj = await _audit_svc.remove_action_group(http, ws_id, entry.id, group)
+            render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
+    except (ValueError, FabricError) as exc:
+        raise click.ClickException(str(exc)) from exc

@@ -253,6 +253,152 @@ class TestAuditSetGroups:
 # ---------------------------------------------------------------------------
 
 
+class TestAuditAddGroup:
+    """audit add-group — happy path and error cases."""
+
+    def test_add_group_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_http.request = AsyncMock(return_value=_make_response(200, AUDIT_SETTINGS_PAYLOAD))
+        with (
+            patch(
+                "fabric_dw.cli.commands.audit._build_clients",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.audit._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "audit",
+                    "add-group",
+                    WS_GUID,
+                    WH_GUID,
+                    "BATCH_COMPLETED_GROUP",
+                ],
+            )
+        assert result.exit_code == 0
+
+    def test_add_group_json_output(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_http.request = AsyncMock(return_value=_make_response(200, AUDIT_SETTINGS_PAYLOAD))
+        with (
+            patch(
+                "fabric_dw.cli.commands.audit._build_clients",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.audit._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["--json", "audit", "add-group", WS_GUID, WH_GUID, "BATCH_COMPLETED_GROUP"],
+            )
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert isinstance(parsed, dict)
+
+    def test_add_group_invalid_name_returns_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.audit._build_clients",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.audit._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["audit", "add-group", WS_GUID, WH_GUID, "invalid-lowercase"],
+            )
+        assert result.exit_code != 0
+
+
+class TestAuditRemoveGroup:
+    """audit remove-group — happy path and error cases."""
+
+    def test_remove_group_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_http.request = AsyncMock(return_value=_make_response(200, AUDIT_SETTINGS_PAYLOAD))
+        with (
+            patch(
+                "fabric_dw.cli.commands.audit._build_clients",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.audit._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "audit",
+                    "remove-group",
+                    WS_GUID,
+                    WH_GUID,
+                    "BATCH_COMPLETED_GROUP",
+                ],
+            )
+        assert result.exit_code == 0
+
+    def test_remove_group_json_output(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_http.request = AsyncMock(return_value=_make_response(200, AUDIT_SETTINGS_PAYLOAD))
+        with (
+            patch(
+                "fabric_dw.cli.commands.audit._build_clients",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.audit._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["--json", "audit", "remove-group", WS_GUID, WH_GUID, "BATCH_COMPLETED_GROUP"],
+            )
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert isinstance(parsed, dict)
+
+    def test_remove_group_invalid_name_returns_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.audit._build_clients",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.audit._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["audit", "remove-group", WS_GUID, WH_GUID, "invalid-lowercase"],
+            )
+        assert result.exit_code != 0
+
+
 class TestAuditDefaultFallback:
     """Verify that workspace/warehouse defaults from config are used when arg is omitted."""
 

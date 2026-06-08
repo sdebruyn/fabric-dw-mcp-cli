@@ -447,6 +447,42 @@ fabric-dw audit set-groups \
 
 ---
 
+### audit add-group
+
+Add a single audit action group without overwriting the others. Idempotent — if the group is already present the command succeeds without modifying the configuration. Auditing must already be enabled.
+
+**Synopsis**
+
+```
+fabric-dw audit add-group [WORKSPACE] [WAREHOUSE] GROUP
+```
+
+**Example**
+
+```shell
+fabric-dw audit add-group MyWorkspace SalesWH BATCH_COMPLETED_GROUP
+```
+
+---
+
+### audit remove-group
+
+Remove a single audit action group without overwriting the others. Idempotent — if the group is not present the command succeeds without modifying the configuration. Auditing must already be enabled.
+
+**Synopsis**
+
+```
+fabric-dw audit remove-group [WORKSPACE] [WAREHOUSE] GROUP
+```
+
+**Example**
+
+```shell
+fabric-dw audit remove-group MyWorkspace SalesWH BATCH_COMPLETED_GROUP
+```
+
+---
+
 ## fabric-dw queries
 
 Inspect and manage running queries on Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.

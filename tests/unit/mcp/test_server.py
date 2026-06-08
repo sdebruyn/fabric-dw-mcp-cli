@@ -65,6 +65,8 @@ EXPECTED_TOOL_NAMES: frozenset[str] = frozenset(
         "enable_audit",
         "disable_audit",
         "set_audit_action_groups",
+        "add_audit_group",
+        "remove_audit_group",
         # Queries
         "list_running_queries",
         "kill_session",
@@ -728,3 +730,74 @@ async def test_list_sql_endpoints_all_workspaces() -> None:
     assert len(result) == 1
     assert result[0]["id"] == str(ep_id)
     assert result[0]["kind"] == "SQLEndpoint"
+
+
+# ---------------------------------------------------------------------------
+# add_audit_group / remove_audit_group happy paths
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_add_audit_group_happy_path() -> None:
+    """add_audit_group resolves workspace + warehouse and returns a dict."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    settings = _make_audit_settings()
+    item = _make_item_entry()
+
+    mock_resolver = AsyncMock()
+    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_resolver.item = AsyncMock(return_value=item)
+    mock_http = AsyncMock()
+    mock_cache = MagicMock()
+
+    with (
+        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
+        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
+        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        patch(
+            "fabric_dw.services.audit.add_action_group",
+            new=AsyncMock(return_value=settings),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "add_audit_group",
+            {"workspace": _WS_NAME, "warehouse": _WH_NAME, "group": "BATCH_COMPLETED_GROUP"},
+        )
+
+    assert isinstance(result, dict)
+    assert result["state"] == "Enabled"
+    mock_resolver.item.assert_called_once_with(_WS_NAME, _WH_NAME)
+
+
+@pytest.mark.asyncio
+async def test_remove_audit_group_happy_path() -> None:
+    """remove_audit_group resolves workspace + warehouse and returns a dict."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    settings = _make_audit_settings()
+    item = _make_item_entry()
+
+    mock_resolver = AsyncMock()
+    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_resolver.item = AsyncMock(return_value=item)
+    mock_http = AsyncMock()
+    mock_cache = MagicMock()
+
+    with (
+        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
+        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
+        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        patch(
+            "fabric_dw.services.audit.remove_action_group",
+            new=AsyncMock(return_value=settings),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "remove_audit_group",
+            {"workspace": _WS_NAME, "warehouse": _WH_NAME, "group": "BATCH_COMPLETED_GROUP"},
+        )
+
+    assert isinstance(result, dict)
+    assert result["state"] == "Enabled"
+    mock_resolver.item.assert_called_once_with(_WS_NAME, _WH_NAME)
