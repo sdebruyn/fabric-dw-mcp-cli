@@ -12,7 +12,12 @@ import click
 from fabric_dw import auth as _auth
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import confirm, render
-from fabric_dw.cli.commands._utils import _coro, _resolve_item
+from fabric_dw.cli.commands._utils import (
+    _coro,
+    _resolve_item,
+    resolve_warehouse_arg,
+    resolve_workspace_arg,
+)
 from fabric_dw.exceptions import FabricError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.services import snapshots as _snapshots_svc
@@ -48,15 +53,17 @@ def snapshots_group() -> None:
 
 
 @snapshots_group.command("list")
-@click.argument("workspace")
-@click.argument("warehouse")
+@click.argument("workspace", required=False, default=None)
+@click.argument("warehouse", required=False, default=None)
 @click.pass_obj
 @_coro
-async def list_cmd(ctx: CliContext, workspace: str, warehouse: str) -> None:
+async def list_cmd(ctx: CliContext, workspace: str | None, warehouse: str | None) -> None:
     """List all snapshots for WAREHOUSE in WORKSPACE."""
+    ws = resolve_workspace_arg(ctx, workspace)
+    wh = resolve_warehouse_arg(ctx, warehouse)
     try:
         async with _build_http_client(ctx) as http:
-            ws_id, entry = await _resolve_item(http, workspace, warehouse)
+            ws_id, entry = await _resolve_item(http, ws, wh)
             items = await _snapshots_svc.list_snapshots(http, ws_id, entry.id)
             render(
                 [s.model_dump(by_alias=True, mode="json") for s in items],
@@ -68,8 +75,8 @@ async def list_cmd(ctx: CliContext, workspace: str, warehouse: str) -> None:
 
 
 @snapshots_group.command("create")
-@click.argument("workspace")
-@click.argument("warehouse")
+@click.argument("workspace", required=False, default=None)
+@click.argument("warehouse", required=False, default=None)
 @click.argument("name")
 @click.option("--description", default=None, help="Optional description.")
 @click.option(
@@ -81,20 +88,22 @@ async def list_cmd(ctx: CliContext, workspace: str, warehouse: str) -> None:
 @_coro
 async def create_cmd(  # noqa: PLR0913
     ctx: CliContext,
-    workspace: str,
-    warehouse: str,
+    workspace: str | None,
+    warehouse: str | None,
     name: str,
     description: str | None,
     snapshot_dt: str | None,
 ) -> None:
     """Create a new snapshot named NAME for WAREHOUSE in WORKSPACE."""
+    ws = resolve_workspace_arg(ctx, workspace)
+    wh = resolve_warehouse_arg(ctx, warehouse)
     parsed_dt: datetime | None = None
     if snapshot_dt is not None:
         parsed_dt = _parse_utc_dt(snapshot_dt, "--snapshot-dt")
 
     try:
         async with _build_http_client(ctx) as http:
-            ws_id, entry = await _resolve_item(http, workspace, warehouse)
+            ws_id, entry = await _resolve_item(http, ws, wh)
             obj = await _snapshots_svc.create(
                 http,
                 ws_id,
@@ -163,8 +172,8 @@ async def delete_cmd(ctx: CliContext, workspace: str, snapshot: str) -> None:
 
 
 @snapshots_group.command("roll")
-@click.argument("workspace")
-@click.argument("warehouse")
+@click.argument("workspace", required=False, default=None)
+@click.argument("warehouse", required=False, default=None)
 @click.argument("snapshot_name")
 @click.option(
     "--at",
@@ -176,8 +185,8 @@ async def delete_cmd(ctx: CliContext, workspace: str, snapshot: str) -> None:
 @_coro
 async def roll_cmd(
     ctx: CliContext,
-    workspace: str,
-    warehouse: str,
+    workspace: str | None,
+    warehouse: str | None,
     snapshot_name: str,
     new_dt: str | None,
 ) -> None:
@@ -186,13 +195,15 @@ async def roll_cmd(
     WORKSPACE and WAREHOUSE accept name or GUID.
     SNAPSHOT_NAME must be the display name of the snapshot database.
     """
+    ws = resolve_workspace_arg(ctx, workspace)
+    wh = resolve_warehouse_arg(ctx, warehouse)
     parsed_dt: datetime | None = None
     if new_dt is not None:
         parsed_dt = _parse_utc_dt(new_dt, "--at")
 
     try:
         async with _build_http_client(ctx) as http:
-            ws_id, entry = await _resolve_item(http, workspace, warehouse)
+            ws_id, entry = await _resolve_item(http, ws, wh)
             if entry.connection_string is None:
                 raise click.ClickException(  # noqa: TRY003
                     f"Warehouse {entry.display_name!r} has no connection string."

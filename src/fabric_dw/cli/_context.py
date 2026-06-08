@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from fabric_dw.auth import CredentialMode
+from fabric_dw.config import UserConfig, load_config
 
 
 @dataclass
@@ -18,3 +19,11 @@ class CliContext:
     yes: bool = False
     auth: CredentialMode = field(default_factory=lambda: CredentialMode.DEFAULT)
     verbose: bool = False
+    _config: UserConfig | None = field(default=None, repr=False, compare=False)
+
+    @property
+    def config(self) -> UserConfig:
+        """Lazily load the user config from disk on first access."""
+        if self._config is None:
+            self._config = load_config()
+        return self._config

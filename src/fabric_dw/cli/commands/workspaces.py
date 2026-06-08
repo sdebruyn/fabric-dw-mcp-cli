@@ -13,7 +13,7 @@ from fabric_dw import auth as _auth
 from fabric_dw.cache import LookupCache
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import confirm, render
-from fabric_dw.cli.commands._utils import _coro
+from fabric_dw.cli.commands._utils import _coro, resolve_workspace_arg
 from fabric_dw.exceptions import FabricError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.resolver import Resolver
@@ -62,14 +62,15 @@ async def list_cmd(ctx: CliContext) -> None:
 
 
 @workspaces_group.command("get")
-@click.argument("workspace")
+@click.argument("workspace", required=False, default=None)
 @click.pass_obj
 @_coro
-async def get_cmd(ctx: CliContext, workspace: str) -> None:
+async def get_cmd(ctx: CliContext, workspace: str | None) -> None:
     """Get details for WORKSPACE (name or GUID)."""
+    ws = resolve_workspace_arg(ctx, workspace)
     try:
         async with _build_clients(ctx) as (http, _):
-            ws_id = await _resolve_workspace(http, workspace)
+            ws_id = await _resolve_workspace(http, ws)
             obj = await _workspaces_svc.get(http, ws_id)
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except FabricError as exc:
@@ -77,14 +78,15 @@ async def get_cmd(ctx: CliContext, workspace: str) -> None:
 
 
 @workspaces_group.command("get-collation")
-@click.argument("workspace")
+@click.argument("workspace", required=False, default=None)
 @click.pass_obj
 @_coro
-async def get_collation_cmd(ctx: CliContext, workspace: str) -> None:
+async def get_collation_cmd(ctx: CliContext, workspace: str | None) -> None:
     """Get the default Data Warehouse collation for WORKSPACE (name or GUID)."""
+    ws = resolve_workspace_arg(ctx, workspace)
     try:
         async with _build_clients(ctx) as (http, _):
-            ws_id = await _resolve_workspace(http, workspace)
+            ws_id = await _resolve_workspace(http, ws)
             collation = await _workspaces_svc.get_collation(http, ws_id)
             if ctx.json_output:
                 render({"collation": collation}, json_output=True)
@@ -95,18 +97,19 @@ async def get_collation_cmd(ctx: CliContext, workspace: str) -> None:
 
 
 @workspaces_group.command("set-collation")
-@click.argument("workspace")
+@click.argument("workspace", required=False, default=None)
 @click.argument("collation")
 @click.pass_obj
 @_coro
-async def set_collation_cmd(ctx: CliContext, workspace: str, collation: str) -> None:
+async def set_collation_cmd(ctx: CliContext, workspace: str | None, collation: str) -> None:
     """Set the default Data Warehouse COLLATION for WORKSPACE (name or GUID).
 
     COLLATION must be one of the supported Fabric collations.
     """
+    ws = resolve_workspace_arg(ctx, workspace)
     try:
         async with _build_clients(ctx) as (http, _):
-            ws_id = await _resolve_workspace(http, workspace)
+            ws_id = await _resolve_workspace(http, ws)
             confirmed = confirm(
                 f"Set collation to {collation!r} for workspace {ws_id}?",
                 yes=ctx.yes,

@@ -11,7 +11,12 @@ import click
 from fabric_dw import auth as _auth
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import confirm, render
-from fabric_dw.cli.commands._utils import _coro, _resolve_item
+from fabric_dw.cli.commands._utils import (
+    _coro,
+    _resolve_item,
+    resolve_warehouse_arg,
+    resolve_workspace_arg,
+)
 from fabric_dw.exceptions import FabricError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.services import queries as _queries_svc
@@ -36,15 +41,17 @@ def queries_group() -> None:
 
 
 @queries_group.command("list")
-@click.argument("workspace")
-@click.argument("warehouse")
+@click.argument("workspace", required=False, default=None)
+@click.argument("warehouse", required=False, default=None)
 @click.pass_obj
 @_coro
-async def list_cmd(ctx: CliContext, workspace: str, warehouse: str) -> None:
+async def list_cmd(ctx: CliContext, workspace: str | None, warehouse: str | None) -> None:
     """List currently running queries on WAREHOUSE in WORKSPACE."""
+    ws = resolve_workspace_arg(ctx, workspace)
+    wh = resolve_warehouse_arg(ctx, warehouse)
     try:
         async with _build_http_client(ctx) as http:
-            ws_id, entry = await _resolve_item(http, workspace, warehouse)
+            ws_id, entry = await _resolve_item(http, ws, wh)
             if entry.connection_string is None:
                 raise click.ClickException(  # noqa: TRY003
                     f"Warehouse {entry.display_name!r} has no connection string."
@@ -65,16 +72,20 @@ async def list_cmd(ctx: CliContext, workspace: str, warehouse: str) -> None:
 
 
 @queries_group.command("kill")
-@click.argument("workspace")
-@click.argument("warehouse")
+@click.argument("workspace", required=False, default=None)
+@click.argument("warehouse", required=False, default=None)
 @click.argument("session_id", type=int)
 @click.pass_obj
 @_coro
-async def kill_cmd(ctx: CliContext, workspace: str, warehouse: str, session_id: int) -> None:
+async def kill_cmd(
+    ctx: CliContext, workspace: str | None, warehouse: str | None, session_id: int
+) -> None:
     """Kill the session SESSION_ID on WAREHOUSE in WORKSPACE."""
+    ws = resolve_workspace_arg(ctx, workspace)
+    wh = resolve_warehouse_arg(ctx, warehouse)
     try:
         async with _build_http_client(ctx) as http:
-            ws_id, entry = await _resolve_item(http, workspace, warehouse)
+            ws_id, entry = await _resolve_item(http, ws, wh)
             if entry.connection_string is None:
                 raise click.ClickException(  # noqa: TRY003
                     f"Warehouse {entry.display_name!r} has no connection string."
