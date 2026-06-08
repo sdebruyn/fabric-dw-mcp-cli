@@ -117,6 +117,30 @@ class TestValidateIdentifier:
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             validate_identifier("schema.view")
 
+    def test_rejects_single_quote(self) -> None:
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            validate_identifier("view'name")
+
+    def test_rejects_opening_bracket(self) -> None:
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            validate_identifier("view[name")
+
+    def test_rejects_newline(self) -> None:
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            validate_identifier("view\nname")
+
+    def test_rejects_null_byte(self) -> None:
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            validate_identifier("view\x00name")
+
+    def test_rejects_hyphen(self) -> None:
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            validate_identifier("view-name")
+
+    def test_allows_single_underscore(self) -> None:
+        """Single underscore matches ^[A-Za-z_][A-Za-z0-9_]{0,127}$ — allowed."""
+        assert validate_identifier("_") == "_"
+
     def test_valid_mixed_case(self) -> None:
         assert validate_identifier("MyView") == "MyView"
 
@@ -196,9 +220,8 @@ class TestListViews:
         with patch("fabric_dw.sql.open_connection", return_value=conn):
             await views.list_views(target, schema="dbo")
         cursor = conn.cursor.return_value
-        call_args = cursor.execute.call_args
-        # schema filter should be passed as an argument or embedded
-        assert call_args is not None
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert "s.name = 'dbo'" in call_sql
 
     @pytest.mark.asyncio
     async def test_schema_filter_validates_identifier(self) -> None:
@@ -462,7 +485,7 @@ class TestUpdateView:
 
         cursor = ddl_conn.cursor.return_value
         call_sql: str = cursor.execute.call_args[0][0].upper()
-        assert "CREATE OR ALTER VIEW" in call_sql or "ALTER VIEW" in call_sql
+        assert "CREATE OR ALTER VIEW" in call_sql
 
     @pytest.mark.asyncio
     async def test_uses_brackets_for_schema_and_name(self) -> None:

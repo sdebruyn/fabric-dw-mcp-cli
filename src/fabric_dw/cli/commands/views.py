@@ -147,7 +147,7 @@ async def get_cmd(
 @click.option("--from-file", default=None, help="Path to a .sql file containing the SELECT body.")
 @click.pass_obj
 @_coro
-async def create_cmd(  # noqa: PLR0913
+async def create_cmd(
     ctx: CliContext,
     workspace: str | None,
     item: str | None,
@@ -186,7 +186,7 @@ async def create_cmd(  # noqa: PLR0913
 @click.option("--from-file", default=None, help="Path to a .sql file containing the SELECT body.")
 @click.pass_obj
 @_coro
-async def update_cmd(  # noqa: PLR0913
+async def update_cmd(
     ctx: CliContext,
     workspace: str | None,
     item: str | None,

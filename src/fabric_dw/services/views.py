@@ -50,6 +50,11 @@ def validate_identifier(name: str) -> str:
     - ``;`` — statement separator.
     - ``--`` — line comment.
 
+    ASCII identifiers only (regex excludes unicode).  This is a deliberate
+    conservative choice: widening the regex without switching to parameterised
+    queries would reintroduce injection risk.  Use bracket-quoted names with
+    permitted characters only.
+
     Args:
         name: The raw identifier string supplied by the caller.
 
@@ -152,6 +157,7 @@ async def list_views(
         validate_identifier(schema)
 
     schema_filter = f"s.name = '{schema}'" if schema is not None else "1=1"
+    # Safe: schema identifier passes validate_identifier() above.
     list_sql = _LIST_VIEWS_SQL.format(schema_filter=schema_filter)
 
     def _run() -> list[View]:
@@ -197,6 +203,7 @@ async def get_view(
     validate_identifier(schema)
     validate_identifier(view_name)
 
+    # Safe: schema and view_name identifiers pass validate_identifier() above.
     get_sql = _GET_VIEW_SQL.format(schema=schema, view=view_name)
 
     def _run() -> View:

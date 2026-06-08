@@ -960,6 +960,9 @@ async def create_view(
 ) -> dict[str, Any]:
     """Create a new SQL view.
 
+    CAUTION: ``select_body`` is executed verbatim as DDL. Ensure the body
+    matches the user's intent before calling this tool.
+
     Args:
         workspace: Workspace name or GUID.
         item: Warehouse or SQL endpoint name or GUID.
@@ -995,6 +998,9 @@ async def update_view(
     workspace: str, item: str, qualified_name: str, select_body: str
 ) -> dict[str, Any]:
     """Redefine a SQL view via CREATE OR ALTER VIEW.
+
+    CAUTION: ``select_body`` is executed verbatim as DDL. Ensure the body
+    matches the user's intent before calling this tool.
 
     Args:
         workspace: Workspace name or GUID.
