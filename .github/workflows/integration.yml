@@ -56,11 +56,15 @@ jobs:
             sleep 15
           done
 
-          # Poll until Active, max 5 min
+          # Poll until Active, then sleep 30s for data-plane warm-up (max ~5.5 min)
           for i in {1..30}; do
             STATE=$(az resource show --ids "$CAPACITY_ID" --query 'properties.state' -o tsv)
             echo "Post-resume state: $STATE"
-            [[ "$STATE" == "Active" ]] && exit 0
+            if [[ "$STATE" == "Active" ]]; then
+              echo "Capacity is Active; sleeping 30s for Fabric data-plane to settle..."
+              sleep 30
+              exit 0
+            fi
             sleep 10
           done
 
