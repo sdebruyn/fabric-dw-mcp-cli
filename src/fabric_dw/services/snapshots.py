@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import closing
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import cast
 from uuid import UUID
 
 from fabric_dw import sql
 from fabric_dw.auth import CredentialMode
+from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.http_client import FabricHttpClient, HttpBase
-from fabric_dw.models import WarehouseSnapshot
+from fabric_dw.models import WarehouseKind, WarehouseSnapshot
 from fabric_dw.sql import SqlTarget
 
 __all__ = [
@@ -211,6 +212,8 @@ async def rename(
     *,
     new_name: str,
     description: str | None = None,
+    cache: LookupCache | None = None,
+    old_name: str | None = None,
 ) -> WarehouseSnapshot:
     """Rename (and optionally re-describe) an existing warehouse snapshot.
 
@@ -218,12 +221,17 @@ async def rename(
     This function first GETs the snapshot to obtain the current
     ``parentWarehouseId``, then PATCHes with the full required body.
 
+    After a successful rename the stale (workspace_id, old_name) cache entry is
+    evicted and a new entry under (workspace_id, new_name) is populated.
+
     Args:
         http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
         workspace_id: The Fabric workspace UUID.
         snapshot_id: The UUID of the snapshot to rename.
         new_name: The new display name (non-empty trimmed string).
         description: Optional description to set on the snapshot.
+        cache: Optional :class:`~fabric_dw.cache.LookupCache` for stale-entry eviction.
+        old_name: The current display name; used to evict the stale cache entry.
 
     Returns:
         The updated :class:`~fabric_dw.models.WarehouseSnapshot`.
@@ -264,20 +272,43 @@ async def rename(
 
     # GET the updated snapshot to return fresh state
     updated_resp = await http.request("GET", HttpBase.FABRIC, _typed_path)
-    return _snapshot_from_typed_api(updated_resp.json())
+    result = _snapshot_from_typed_api(updated_resp.json())
+
+    if cache is not None:
+        if old_name is not None:
+            cache.evict_item(workspace_id, old_name)
+        new_entry = ItemEntry(
+            id=snapshot_id,
+            kind=WarehouseKind.SNAPSHOT,
+            connection_string=None,
+            fetched_at=datetime.now(tz=UTC),
+            display_name=new_name,
+        )
+        cache.put_item(workspace_id, new_name, new_entry)
+        cache.put_item(workspace_id, str(snapshot_id), new_entry)
+
+    return result
 
 
 async def delete(
     http: FabricHttpClient,
     workspace_id: UUID,
     snapshot_id: UUID,
+    *,
+    cache: LookupCache | None = None,
+    name: str | None = None,
 ) -> None:
     """Delete a warehouse snapshot.
+
+    After a successful delete the (workspace_id, name) and
+    (workspace_id, snapshot_id) cache entries are evicted.
 
     Args:
         http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
         workspace_id: The Fabric workspace UUID.
         snapshot_id: The UUID of the snapshot to delete.
+        cache: Optional :class:`~fabric_dw.cache.LookupCache` for stale-entry eviction.
+        name: The display name of the snapshot; used to evict the name-keyed entry.
 
     Raises:
         NotFound: If the snapshot does not exist (HTTP 404).
@@ -287,6 +318,11 @@ async def delete(
         HttpBase.FABRIC,
         f"/workspaces/{workspace_id}/items/{snapshot_id}",
     )
+
+    if cache is not None:
+        if name is not None:
+            cache.evict_item(workspace_id, name)
+        cache.evict_item(workspace_id, str(snapshot_id))
 
 
 async def roll_timestamp(

@@ -15,6 +15,7 @@ from fabric_dw.cli._render import confirm, render
 from fabric_dw.cli.commands._utils import (
     _coro,
     _resolve_item,
+    _resolve_item_with_cache,
     resolve_warehouse_arg,
     resolve_workspace_arg,
 )
@@ -134,13 +135,15 @@ async def rename_cmd(
     """Rename SNAPSHOT in WORKSPACE to NEW_NAME (workspace and snapshot accept name or GUID)."""
     try:
         async with _build_http_client(ctx) as http:
-            ws_id, entry = await _resolve_item(http, workspace, snapshot)
+            ws_id, entry, cache = await _resolve_item_with_cache(http, workspace, snapshot)
             obj = await _snapshots_svc.rename(
                 http,
                 ws_id,
                 entry.id,
                 new_name=new_name,
                 description=description,
+                cache=cache,
+                old_name=entry.display_name or None,
             )
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
@@ -156,14 +159,20 @@ async def delete_cmd(ctx: CliContext, workspace: str, snapshot: str) -> None:
     """Delete SNAPSHOT from WORKSPACE (both accept name or GUID)."""
     try:
         async with _build_http_client(ctx) as http:
-            ws_id, entry = await _resolve_item(http, workspace, snapshot)
+            ws_id, entry, cache = await _resolve_item_with_cache(http, workspace, snapshot)
             confirmed = confirm(
                 f"Delete snapshot {entry.display_name!r} ({entry.id})?",
                 yes=ctx.yes,
             )
             if not confirmed:
                 raise click.Abort()  # noqa: TRY301
-            await _snapshots_svc.delete(http, ws_id, entry.id)
+            await _snapshots_svc.delete(
+                http,
+                ws_id,
+                entry.id,
+                cache=cache,
+                name=entry.display_name or None,
+            )
             click.echo(f"Snapshot {entry.display_name!r} ({entry.id}) deleted.")
     except click.Abort:
         raise

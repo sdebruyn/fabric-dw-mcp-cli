@@ -213,7 +213,13 @@ async def rename_warehouse(
         ws_id = await _get_resolver().workspace_id(workspace)
         item = await _get_resolver().item(workspace, warehouse)
         result = await warehouses.rename(
-            _get_http(), ws_id, item.id, new_name, description=description
+            _get_http(),
+            ws_id,
+            item.id,
+            new_name,
+            description=description,
+            cache=_get_cache(),
+            old_name=item.display_name or None,
         )
     except FabricError as exc:
         raise _fabric_err(exc) from exc
@@ -226,7 +232,13 @@ async def delete_warehouse(workspace: str, warehouse: str) -> dict[str, Any]:
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
         item = await _get_resolver().item(workspace, warehouse)
-        await warehouses.delete(_get_http(), ws_id, item.id)
+        await warehouses.delete(
+            _get_http(),
+            ws_id,
+            item.id,
+            cache=_get_cache(),
+            name=item.display_name or None,
+        )
     except FabricError as exc:
         raise _fabric_err(exc) from exc
     return {"deleted": True, "warehouse_id": str(item.id)}
@@ -489,6 +501,8 @@ async def rename_snapshot(
             snap_item.id,
             new_name=new_name,
             description=description,
+            cache=_get_cache(),
+            old_name=snap_item.display_name or None,
         )
     except FabricError as exc:
         raise _fabric_err(exc) from exc
@@ -501,7 +515,13 @@ async def delete_snapshot(workspace: str, snapshot: str) -> dict[str, Any]:
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
         snap_item = await _get_resolver().item(workspace, snapshot)
-        await snapshots.delete(_get_http(), ws_id, snap_item.id)
+        await snapshots.delete(
+            _get_http(),
+            ws_id,
+            snap_item.id,
+            cache=_get_cache(),
+            name=snap_item.display_name or None,
+        )
     except FabricError as exc:
         raise _fabric_err(exc) from exc
     return {"deleted": True, "snapshot_id": str(snap_item.id)}

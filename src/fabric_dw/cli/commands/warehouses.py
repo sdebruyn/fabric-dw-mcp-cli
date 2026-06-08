@@ -15,6 +15,7 @@ from fabric_dw.cli._render import confirm, render
 from fabric_dw.cli.commands._utils import (
     _coro,
     _resolve_item,
+    _resolve_item_with_cache,
     resolve_warehouse_arg,
     resolve_workspace_arg,
 )
@@ -154,7 +155,7 @@ async def rename_cmd(
     wh = resolve_warehouse_arg(ctx, warehouse)
     try:
         async with _build_clients(ctx) as (http, _):
-            ws_id, entry = await _resolve_item(http, ws, wh)
+            ws_id, entry, cache = await _resolve_item_with_cache(http, ws, wh)
             confirmed = confirm(
                 f"Rename warehouse {entry.display_name!r} ({entry.id}) to {new_name!r}?",
                 yes=ctx.yes,
@@ -167,6 +168,8 @@ async def rename_cmd(
                 entry.id,
                 new_name,
                 description=description,
+                cache=cache,
+                old_name=entry.display_name or None,
             )
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except click.Abort:
@@ -186,14 +189,20 @@ async def delete_cmd(ctx: CliContext, workspace: str | None, warehouse: str | No
     wh = resolve_warehouse_arg(ctx, warehouse)
     try:
         async with _build_clients(ctx) as (http, _):
-            ws_id, entry = await _resolve_item(http, ws, wh)
+            ws_id, entry, cache = await _resolve_item_with_cache(http, ws, wh)
             confirmed = confirm(
                 f"Delete warehouse {entry.display_name!r} ({entry.id})?",
                 yes=ctx.yes,
             )
             if not confirmed:
                 raise click.Abort()  # noqa: TRY301
-            await _warehouses_svc.delete(http, ws_id, entry.id)
+            await _warehouses_svc.delete(
+                http,
+                ws_id,
+                entry.id,
+                cache=cache,
+                name=entry.display_name or None,
+            )
             click.echo(f"Warehouse {entry.display_name!r} ({entry.id}) deleted.")
     except click.Abort:
         raise
