@@ -100,24 +100,40 @@ fabric_dw.exceptions.AuthError: authentication failed for server ...
 
 or a raw driver message containing `Login failed` or `28000`.
 
-**What happened:** The SQL driver connects to the warehouse using an Entra (Azure AD) access token obtained from the Azure CLI cache. If the cached CLI token has expired since the process started, the driver cannot authenticate.
+**What happened:** The SQL driver is configured with `Authentication=ActiveDirectory{Default,ServicePrincipal,Interactive}` to match the `FABRIC_AUTH` mode you are using (see [`sql.py:_MODE_TO_AD_AUTH`](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/9a1436618112224b3e86085a9f2231b22e0c827b/src/fabric_dw/sql.py#L50)). In the default mode (`FABRIC_AUTH=default`) the driver runs its own [`ActiveDirectoryDefault`](https://learn.microsoft.com/sql/connect/odbc/using-azure-active-directory?WT.mc_id=MVP_310840) credential chain — environment variables → Managed Identity → Azure CLI → Visual Studio (Windows only) → Azure PowerShell → interactive browser — and is **not** limited to the Azure CLI cache. A token that was valid at connection-open time can still expire mid-session, causing the driver to fail on the next query. See [Authentication](authentication.md) for the full credential-chain reference.
 
 **Resolution:**
 
-1. Re-run `az login` (or `az login --force` to force a fresh interactive login):
+Re-authenticate via whichever credential source your chain ended up using:
 
-   ```bash
-   az login --force
-   ```
+- **Azure CLI** (most common for `default` mode on a developer machine):
 
-2. If you have a stale MSAL token cache, clear it:
+  ```bash
+  az login --force
+  ```
 
-   ```bash
-   az account clear
-   az login
-   ```
+  If you have a stale MSAL token cache, clear it first:
 
-3. Retry your command. The `FabricSqlClient` opens a new connection after a restart and will pick up the fresh token.
+  ```bash
+  az account clear
+  az login
+  ```
+
+- **Azure PowerShell** (if `AzurePowerShellCredential` was the winning source):
+
+  ```powershell
+  Connect-AzAccount
+  ```
+
+- **Service principal** (`FABRIC_AUTH=sp`) — `FABRIC_AUTH=sp` uses `ActiveDirectoryServicePrincipal` (`ClientSecretCredential`) and bypasses the `ActiveDirectoryDefault` chain described in "What happened" above. Rotate or re-export `AZURE_CLIENT_SECRET` and restart the process:
+
+  ```bash
+  export AZURE_CLIENT_SECRET="<new-secret>"
+  ```
+
+- **Interactive browser** (`FABRIC_AUTH=interactive`) — re-run your `fabric-dw` command; a new browser sign-in prompt will appear.
+
+After re-authenticating, retry your command. `FabricSqlClient` opens a fresh connection and picks up the new token automatically. Set `AZURE_LOG_LEVEL=debug` if you are unsure which credential source the chain selected.
 
 ---
 
