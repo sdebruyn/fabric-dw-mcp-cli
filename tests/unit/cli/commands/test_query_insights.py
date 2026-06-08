@@ -164,9 +164,7 @@ class TestRequestHistory:
                 new=AsyncMock(return_value=[_make_request_history_row()]),
             ),
         ):
-            result = runner.invoke(
-                cli, ["query-insights", "request-history", WS_GUID, WH_GUID]
-            )
+            result = runner.invoke(cli, ["query-insights", "request-history", WS_GUID, WH_GUID])
         assert result.exit_code == 0
 
     def test_json_output(self, runner: CliRunner, cache_env: Path) -> None:
@@ -207,14 +205,10 @@ class TestRequestHistory:
                 new=AsyncMock(side_effect=NotFound("not found")),
             ),
         ):
-            result = runner.invoke(
-                cli, ["query-insights", "request-history", WS_GUID, WH_GUID]
-            )
+            result = runner.invoke(cli, ["query-insights", "request-history", WS_GUID, WH_GUID])
         assert result.exit_code != 0
 
-    def test_permission_denied_returns_nonzero(
-        self, runner: CliRunner, cache_env: Path
-    ) -> None:
+    def test_permission_denied_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
         with (
@@ -231,14 +225,10 @@ class TestRequestHistory:
                 new=AsyncMock(side_effect=PermissionDenied("no permission")),
             ),
         ):
-            result = runner.invoke(
-                cli, ["query-insights", "request-history", WS_GUID, WH_GUID]
-            )
+            result = runner.invoke(cli, ["query-insights", "request-history", WS_GUID, WH_GUID])
         assert result.exit_code != 0
 
-    def test_invalid_since_returns_nonzero(
-        self, runner: CliRunner, cache_env: Path
-    ) -> None:
+    def test_invalid_since_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         result = runner.invoke(
             cli,
@@ -253,9 +243,7 @@ class TestRequestHistory:
         )
         assert result.exit_code != 0
 
-    def test_invalid_until_returns_nonzero(
-        self, runner: CliRunner, cache_env: Path
-    ) -> None:
+    def test_invalid_until_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         result = runner.invoke(
             cli,
@@ -294,9 +282,7 @@ class TestSessionHistory:
                 new=AsyncMock(return_value=[_make_session_history_row()]),
             ),
         ):
-            result = runner.invoke(
-                cli, ["query-insights", "session-history", WS_GUID, WH_GUID]
-            )
+            result = runner.invoke(cli, ["query-insights", "session-history", WS_GUID, WH_GUID])
         assert result.exit_code == 0
 
     def test_json_output(self, runner: CliRunner, cache_env: Path) -> None:
@@ -348,9 +334,7 @@ class TestFrequent:
                 new=AsyncMock(return_value=[_make_frequent_query_row()]),
             ),
         ):
-            result = runner.invoke(
-                cli, ["query-insights", "frequent", WS_GUID, WH_GUID]
-            )
+            result = runner.invoke(cli, ["query-insights", "frequent", WS_GUID, WH_GUID])
         assert result.exit_code == 0
 
     def test_json_output(self, runner: CliRunner, cache_env: Path) -> None:
@@ -402,9 +386,7 @@ class TestLongRunning:
                 new=AsyncMock(return_value=[_make_long_running_row()]),
             ),
         ):
-            result = runner.invoke(
-                cli, ["query-insights", "long-running", WS_GUID, WH_GUID]
-            )
+            result = runner.invoke(cli, ["query-insights", "long-running", WS_GUID, WH_GUID])
         assert result.exit_code == 0
 
     def test_json_output(self, runner: CliRunner, cache_env: Path) -> None:
@@ -456,9 +438,7 @@ class TestPoolInsights:
                 new=AsyncMock(return_value=[_make_pool_insight_row()]),
             ),
         ):
-            result = runner.invoke(
-                cli, ["query-insights", "pool-insights", WS_GUID, WH_GUID]
-            )
+            result = runner.invoke(cli, ["query-insights", "pool-insights", WS_GUID, WH_GUID])
         assert result.exit_code == 0
 
     def test_json_output(self, runner: CliRunner, cache_env: Path) -> None:

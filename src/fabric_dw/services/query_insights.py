@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import closing
 from datetime import datetime
-from typing import TypeVar
+from typing import Any
 
 from fabric_dw import sql
 from fabric_dw.auth import CredentialMode
@@ -49,15 +49,6 @@ _PERMISSION_DENIED_DOCS = (
 _DEFAULT_LIMIT = 100
 _MAX_LIMIT = 10_000
 
-_ModelT = TypeVar(
-    "_ModelT",
-    ExecRequestHistory,
-    ExecSessionHistory,
-    FrequentlyRunQuery,
-    LongRunningQuery,
-    SqlPoolInsight,
-)
-
 
 def _clamp_limit(limit: int) -> int:
     return max(1, min(limit, _MAX_LIMIT))
@@ -78,13 +69,12 @@ def _build_where(
     return " AND ".join(parts)
 
 
-def _run_query(
+def _execute_sql(
     target: SqlTarget,
     sql_text: str,
-    model_cls: type[_ModelT],
     mode: CredentialMode,
-) -> list[_ModelT]:
-    """Execute *sql_text* synchronously and return a list of *model_cls* instances."""
+) -> list[dict[str, Any]]:
+    """Execute *sql_text* synchronously and return rows as list of dicts."""
     with closing(sql.open_connection(target, mode=mode)) as conn:
         cursor = conn.cursor()
         try:
@@ -99,10 +89,7 @@ def _run_query(
                     raise PermissionDenied(msg) from exc
                 raise mapped from exc
             raise
-        return [
-            model_cls.model_validate(dict(zip(cols, r, strict=True)))  # type: ignore[return-value]
-            for r in rows
-        ]
+        return [dict(zip(cols, r, strict=True)) for r in rows]
 
 
 # ---------------------------------------------------------------------------
@@ -170,10 +157,8 @@ async def list_request_history(
     where_fragment = _build_where(since=since, until=until, column="submit_time")
     where_clause = f"\nWHERE {where_fragment}" if where_fragment else ""
     sql_text = _REQUEST_HISTORY_SQL_TEMPLATE.format(limit=clamped, where=where_clause)
-
-    return await asyncio.to_thread(
-        _run_query, target, sql_text, ExecRequestHistory, mode
-    )
+    rows = await asyncio.to_thread(_execute_sql, target, sql_text, mode)
+    return [ExecRequestHistory.model_validate(r) for r in rows]
 
 
 # ---------------------------------------------------------------------------
@@ -249,10 +234,8 @@ async def list_session_history(
     where_fragment = _build_where(since=since, until=until, column="session_start_time")
     where_clause = f"\nWHERE {where_fragment}" if where_fragment else ""
     sql_text = _SESSION_HISTORY_SQL_TEMPLATE.format(limit=clamped, where=where_clause)
-
-    return await asyncio.to_thread(
-        _run_query, target, sql_text, ExecSessionHistory, mode
-    )
+    rows = await asyncio.to_thread(_execute_sql, target, sql_text, mode)
+    return [ExecSessionHistory.model_validate(r) for r in rows]
 
 
 # ---------------------------------------------------------------------------
@@ -307,10 +290,8 @@ async def list_frequent_queries(
     where_fragment = _build_where(since=since, until=until, column="last_run_start_time")
     where_clause = f"\nWHERE {where_fragment}" if where_fragment else ""
     sql_text = _FREQUENT_QUERIES_SQL_TEMPLATE.format(limit=clamped, where=where_clause)
-
-    return await asyncio.to_thread(
-        _run_query, target, sql_text, FrequentlyRunQuery, mode
-    )
+    rows = await asyncio.to_thread(_execute_sql, target, sql_text, mode)
+    return [FrequentlyRunQuery.model_validate(r) for r in rows]
 
 
 # ---------------------------------------------------------------------------
@@ -360,10 +341,8 @@ async def list_long_running_queries(
     where_fragment = _build_where(since=since, until=until, column="last_run_start_time")
     where_clause = f"\nWHERE {where_fragment}" if where_fragment else ""
     sql_text = _LONG_RUNNING_SQL_TEMPLATE.format(limit=clamped, where=where_clause)
-
-    return await asyncio.to_thread(
-        _run_query, target, sql_text, LongRunningQuery, mode
-    )
+    rows = await asyncio.to_thread(_execute_sql, target, sql_text, mode)
+    return [LongRunningQuery.model_validate(r) for r in rows]
 
 
 # ---------------------------------------------------------------------------
@@ -411,7 +390,5 @@ async def list_sql_pool_insights(
     where_fragment = _build_where(since=since, until=until, column="timestamp")
     where_clause = f"\nWHERE {where_fragment}" if where_fragment else ""
     sql_text = _SQL_POOL_INSIGHTS_SQL_TEMPLATE.format(limit=clamped, where=where_clause)
-
-    return await asyncio.to_thread(
-        _run_query, target, sql_text, SqlPoolInsight, mode
-    )
+    rows = await asyncio.to_thread(_execute_sql, target, sql_text, mode)
+    return [SqlPoolInsight.model_validate(r) for r in rows]
