@@ -470,11 +470,11 @@ fabric-dw audit set-groups \
 
 ## fabric-dw queries
 
-Inspect and manage running queries on Microsoft Fabric Data Warehouses.
+Inspect and manage running queries on Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
 
 ### queries list
 
-List all currently running queries on a warehouse.
+List all currently running queries on a warehouse or SQL Analytics Endpoint.
 
 **Synopsis**
 
@@ -498,7 +498,7 @@ fabric-dw queries list MyWorkspace SalesWH
 
 ### queries kill
 
-Kill a specific session on a warehouse. You will be asked to confirm unless `--yes` is passed.
+Kill a specific session on a warehouse or SQL Analytics Endpoint. You will be asked to confirm unless `--yes` is passed.
 
 **Synopsis**
 
