@@ -15,18 +15,14 @@ from fabric_dw.services import sql_pools
 pytestmark = pytest.mark.integration
 
 
-async def test_get_configuration_returns_model(
-    http: FabricHttpClient, workspace_id: UUID
-) -> None:
+async def test_get_configuration_returns_model(http: FabricHttpClient, workspace_id: UUID) -> None:
     config = await sql_pools.get_configuration(http, workspace_id)
     assert isinstance(config, SqlPoolsConfiguration)
     assert isinstance(config.custom_sql_pools_enabled, bool)
     assert isinstance(config.custom_sql_pools, list)
 
 
-async def test_enable_disable_roundtrip(
-    http: FabricHttpClient, workspace_id: UUID
-) -> None:
+async def test_enable_disable_roundtrip(http: FabricHttpClient, workspace_id: UUID) -> None:
     original = await sql_pools.get_configuration(http, workspace_id)
 
     try:
@@ -39,9 +35,7 @@ async def test_enable_disable_roundtrip(
         await sql_pools.update_configuration(http, workspace_id, original)
 
 
-async def test_update_configuration_roundtrip(
-    http: FabricHttpClient, workspace_id: UUID
-) -> None:
+async def test_update_configuration_roundtrip(http: FabricHttpClient, workspace_id: UUID) -> None:
     original = await sql_pools.get_configuration(http, workspace_id)
 
     test_config = SqlPoolsConfiguration.model_validate(

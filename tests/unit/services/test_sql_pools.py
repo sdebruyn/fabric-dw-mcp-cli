@@ -126,9 +126,7 @@ async def test_get_configuration_returns_model() -> None:
 async def test_get_configuration_disabled_workspace() -> None:
     """get_configuration handles disabled pools (customSQLPoolsEnabled=false)."""
     with respx.mock:
-        respx.get(_CONFIG_URL).mock(
-            return_value=httpx.Response(200, json=POOLS_DISABLED_PAYLOAD)
-        )
+        respx.get(_CONFIG_URL).mock(return_value=httpx.Response(200, json=POOLS_DISABLED_PAYLOAD))
         client = await _make_client()
         async with client:
             result = await sql_pools.get_configuration(client, _WS_ID)

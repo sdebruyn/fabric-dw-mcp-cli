@@ -55,9 +55,7 @@ async def _resolve_workspace(http: FabricHttpClient, workspace: str) -> UUID:
 
 
 def _permission_hint(exc: PermissionDenied) -> click.ClickException:
-    return click.ClickException(
-        f"{exc}  (Hint: the caller must have the workspace admin role.)"
-    )
+    return click.ClickException(f"{exc}  (Hint: the caller must have the workspace admin role.)")
 
 
 @click.group("sql-pools")
@@ -153,9 +151,7 @@ async def edit_cmd(ctx: CliContext, workspace: str | None) -> None:
             ws_id = await _resolve_workspace(http, ws)
             current = await _svc.get_configuration(http, ws_id)
 
-        current_json = json.dumps(
-            current.model_dump(by_alias=True, mode="json"), indent=2
-        )
+        current_json = json.dumps(current.model_dump(by_alias=True, mode="json"), indent=2)
 
         editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or _default_editor()
 
