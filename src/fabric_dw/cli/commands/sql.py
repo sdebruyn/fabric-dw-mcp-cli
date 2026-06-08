@@ -73,7 +73,7 @@ def sql_group() -> None:
 )
 @click.pass_obj
 @_coro
-async def exec_cmd(  # noqa: PLR0913
+async def exec_cmd(
     ctx: CliContext,
     workspace: str | None,
     item: str | None,
