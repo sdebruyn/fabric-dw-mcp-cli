@@ -130,48 +130,6 @@ async def test_get_returns_populated_workspace() -> None:
 
 
 # ---------------------------------------------------------------------------
-# get_collation
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_get_collation_returns_none_when_absent() -> None:
-    """get_collation must return None when the workspace payload has no collation field."""
-    ws_id = _WORKSPACE_ID
-    url = f"https://api.fabric.microsoft.com/v1/workspaces/{ws_id}"
-    ws_payload = json.loads(WORKSPACE_GET_PAYLOAD)
-
-    # WORKSPACE_GET_PAYLOAD has no defaultDataWarehouseCollation
-    with respx.mock:
-        respx.get(url).mock(return_value=httpx.Response(200, json=ws_payload))
-
-        client = await _make_client()
-        async with client:
-            result = await workspaces.get_collation(client, ws_id)
-
-    assert result is None
-
-
-@pytest.mark.asyncio
-async def test_get_collation_returns_value_when_present() -> None:
-    """get_collation must return the collation string when present in the workspace payload."""
-    ws_id = _WORKSPACE_ID
-    url = f"https://api.fabric.microsoft.com/v1/workspaces/{ws_id}"
-
-    payload = json.loads(WORKSPACE_GET_PAYLOAD)
-    payload["defaultDataWarehouseCollation"] = "Latin1_General_100_BIN2_UTF8"
-
-    with respx.mock:
-        respx.get(url).mock(return_value=httpx.Response(200, json=payload))
-
-        client = await _make_client()
-        async with client:
-            result = await workspaces.get_collation(client, ws_id)
-
-    assert result == "Latin1_General_100_BIN2_UTF8"
-
-
-# ---------------------------------------------------------------------------
 # set_collation
 # ---------------------------------------------------------------------------
 

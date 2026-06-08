@@ -136,17 +136,6 @@ async def get_workspace(workspace: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def get_workspace_collation(workspace: str) -> dict[str, Any]:
-    """Return the default Data Warehouse collation for a workspace."""
-    try:
-        ws_id = await _get_resolver().workspace_id(workspace)
-        collation = await workspaces.get_collation(_get_http(), ws_id)
-    except FabricError as exc:
-        raise _fabric_err(exc) from exc
-    return {"collation": collation}
-
-
-@mcp.tool()
 async def set_workspace_collation(workspace: str, collation: str) -> dict[str, Any]:
     """Set the default Data Warehouse collation for a workspace."""
     try:

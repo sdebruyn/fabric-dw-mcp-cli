@@ -77,25 +77,6 @@ async def get_cmd(ctx: CliContext, workspace: str | None) -> None:
         raise click.ClickException(str(exc)) from exc
 
 
-@workspaces_group.command("get-collation")
-@click.argument("workspace", required=False, default=None)
-@click.pass_obj
-@_coro
-async def get_collation_cmd(ctx: CliContext, workspace: str | None) -> None:
-    """Get the default Data Warehouse collation for WORKSPACE (name or GUID)."""
-    ws = resolve_workspace_arg(ctx, workspace)
-    try:
-        async with _build_clients(ctx) as (http, _):
-            ws_id = await _resolve_workspace(http, ws)
-            collation = await _workspaces_svc.get_collation(http, ws_id)
-            if ctx.json_output:
-                render({"collation": collation}, json_output=True)
-            else:
-                click.echo(collation if collation is not None else "(not set)")
-    except FabricError as exc:
-        raise click.ClickException(str(exc)) from exc
-
-
 @workspaces_group.command("set-collation")
 @click.argument("workspace", required=False, default=None)
 @click.argument("collation")
