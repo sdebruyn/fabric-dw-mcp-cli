@@ -1,11 +1,12 @@
 {
   "name": "fabric-dw",
-  "image": "mcr.microsoft.com/devcontainers/python:1-3.13-bookworm",
+  "image": "ghcr.io/astral-sh/uv:python3.13-bookworm",
   "features": {
     "ghcr.io/devcontainers/features/azure-cli:1": {},
-    "ghcr.io/devcontainers/features/github-cli:1": {}
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/devcontainers/features/common-utils:2": { "username": "vscode" }
   },
-  "postCreateCommand": "curl -LsSf https://astral.sh/uv/install.sh | sh && source $HOME/.local/bin/env && uv sync",
+  "postCreateCommand": "uv sync",
   "customizations": {
     "vscode": {
       "extensions": [
