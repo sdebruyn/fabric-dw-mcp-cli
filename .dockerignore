@@ -14,4 +14,4 @@ docs_build/
 .pytest_cache
 *.md
 !README.md
-!LICENSE
+.env*
