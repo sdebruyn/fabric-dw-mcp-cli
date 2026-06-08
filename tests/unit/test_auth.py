@@ -12,6 +12,7 @@ from azure.identity import (
 )
 
 from fabric_dw.auth import (
+    DEFAULT_INTERACTIVE_CLIENT_ID,
     FABRIC_SCOPE,
     SQL_SCOPE,
     CredentialMode,
@@ -129,3 +130,113 @@ async def test_get_token_runs_on_non_main_thread() -> None:
 
     assert len(captured_thread_ids) == 1
     assert captured_thread_ids[0] != main_thread_id
+
+
+# ---------------------------------------------------------------------------
+# DEFAULT_INTERACTIVE_CLIENT_ID constant
+# ---------------------------------------------------------------------------
+
+
+def test_default_interactive_client_id_constant() -> None:
+    assert DEFAULT_INTERACTIVE_CLIENT_ID == "f666e5ee-2149-4c6a-87eb-13c9e1fdc70d"
+
+
+# ---------------------------------------------------------------------------
+# Interactive mode — shared client_id + env overrides
+# ---------------------------------------------------------------------------
+
+
+def test_interactive_mode_uses_default_client_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FABRIC_INTERACTIVE_CLIENT_ID", raising=False)
+    with patch("fabric_dw.auth.InteractiveBrowserCredential") as mock_ibc:
+        get_credential(CredentialMode.INTERACTIVE)
+        _, kwargs = mock_ibc.call_args
+        assert kwargs.get("client_id") == DEFAULT_INTERACTIVE_CLIENT_ID
+
+
+def test_interactive_mode_respects_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    custom_id = "deadbeef-0000-0000-0000-000000000001"
+    monkeypatch.setenv("FABRIC_INTERACTIVE_CLIENT_ID", custom_id)
+    with patch("fabric_dw.auth.InteractiveBrowserCredential") as mock_ibc:
+        get_credential(CredentialMode.INTERACTIVE)
+        _, kwargs = mock_ibc.call_args
+        assert kwargs.get("client_id") == custom_id
+
+
+def test_interactive_mode_uses_tenant_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FABRIC_INTERACTIVE_CLIENT_ID", raising=False)
+    monkeypatch.setenv("FABRIC_INTERACTIVE_TENANT_ID", "my-tenant-id")
+    with patch("fabric_dw.auth.InteractiveBrowserCredential") as mock_ibc:
+        get_credential(CredentialMode.INTERACTIVE)
+        _, kwargs = mock_ibc.call_args
+        assert kwargs.get("tenant_id") == "my-tenant-id"
+
+
+def test_interactive_mode_no_tenant_id_when_not_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FABRIC_INTERACTIVE_CLIENT_ID", raising=False)
+    monkeypatch.delenv("FABRIC_INTERACTIVE_TENANT_ID", raising=False)
+    with patch("fabric_dw.auth.InteractiveBrowserCredential") as mock_ibc:
+        get_credential(CredentialMode.INTERACTIVE)
+        _, kwargs = mock_ibc.call_args
+        assert "tenant_id" not in kwargs
+
+
+# ---------------------------------------------------------------------------
+# Default mode — shared client_id forwarded to DefaultAzureCredential
+# ---------------------------------------------------------------------------
+
+
+def test_default_mode_passes_interactive_browser_client_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FABRIC_INTERACTIVE_CLIENT_ID", raising=False)
+    with patch("fabric_dw.auth.DefaultAzureCredential") as mock_dac:
+        get_credential(CredentialMode.DEFAULT)
+        _, kwargs = mock_dac.call_args
+        assert kwargs.get("interactive_browser_client_id") == DEFAULT_INTERACTIVE_CLIENT_ID
+
+
+def test_default_mode_respects_env_override_for_interactive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    custom_id = "deadbeef-0000-0000-0000-000000000002"
+    monkeypatch.setenv("FABRIC_INTERACTIVE_CLIENT_ID", custom_id)
+    with patch("fabric_dw.auth.DefaultAzureCredential") as mock_dac:
+        get_credential(CredentialMode.DEFAULT)
+        _, kwargs = mock_dac.call_args
+        assert kwargs.get("interactive_browser_client_id") == custom_id
+
+
+def test_default_mode_passes_interactive_browser_tenant_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FABRIC_INTERACTIVE_CLIENT_ID", raising=False)
+    monkeypatch.setenv("FABRIC_INTERACTIVE_TENANT_ID", "my-tenant-id")
+    with patch("fabric_dw.auth.DefaultAzureCredential") as mock_dac:
+        get_credential(CredentialMode.DEFAULT)
+        _, kwargs = mock_dac.call_args
+        assert kwargs.get("interactive_browser_tenant_id") == "my-tenant-id"
+
+
+def test_default_mode_no_interactive_browser_tenant_id_when_not_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("FABRIC_INTERACTIVE_CLIENT_ID", raising=False)
+    monkeypatch.delenv("FABRIC_INTERACTIVE_TENANT_ID", raising=False)
+    with patch("fabric_dw.auth.DefaultAzureCredential") as mock_dac:
+        get_credential(CredentialMode.DEFAULT)
+        _, kwargs = mock_dac.call_args
+        assert "interactive_browser_tenant_id" not in kwargs
+
+
+# ---------------------------------------------------------------------------
+# SP mode — unchanged, shared default does not apply
+# ---------------------------------------------------------------------------
+
+
+def test_sp_mode_does_not_use_interactive_client_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AZURE_TENANT_ID", "test-tenant-id")
+    monkeypatch.setenv("AZURE_CLIENT_ID", "test-client-id")
+    monkeypatch.setenv("AZURE_CLIENT_SECRET", "test-client-secret")
+    monkeypatch.delenv("FABRIC_INTERACTIVE_CLIENT_ID", raising=False)
+    with patch("fabric_dw.auth.ClientSecretCredential") as mock_csc:
+        get_credential(CredentialMode.SERVICE_PRINCIPAL)
+        _, kwargs = mock_csc.call_args
+        assert "interactive_browser_client_id" not in kwargs
+        assert kwargs.get("client_id") == "test-client-id"
