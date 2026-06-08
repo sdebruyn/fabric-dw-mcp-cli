@@ -34,6 +34,11 @@ from fabric_dw.models import (
 from fabric_dw.sql import SqlTarget
 
 __all__ = [
+    "EXEC_REQUESTS_HISTORY_COLUMNS",
+    "EXEC_SESSIONS_HISTORY_COLUMNS",
+    "FREQUENTLY_RUN_QUERIES_COLUMNS",
+    "LONG_RUNNING_QUERIES_COLUMNS",
+    "SQL_POOL_INSIGHTS_COLUMNS",
     "list_frequent_queries",
     "list_long_running_queries",
     "list_request_history",
@@ -48,6 +53,119 @@ _PERMISSION_DENIED_DOCS = (
 
 _DEFAULT_LIMIT = 100
 _MAX_LIMIT = 10_000
+
+# ---------------------------------------------------------------------------
+# Canonical column lists (MS Learn Fabric variant, verified 2026-06)
+# ---------------------------------------------------------------------------
+
+#: Columns projected from ``queryinsights.exec_requests_history``.
+EXEC_REQUESTS_HISTORY_COLUMNS: tuple[str, ...] = (
+    "distributed_statement_id",
+    "database_name",
+    "submit_time",
+    "start_time",
+    "end_time",
+    "is_distributed",
+    "statement_type",
+    "total_elapsed_time_ms",
+    "login_name",
+    "row_count",
+    "status",
+    "session_id",
+    "connection_id",
+    "program_name",
+    "batch_id",
+    "root_batch_id",
+    "query_hash",
+    "label",
+    "result_cache_hit",
+    "sql_pool_name",
+    "allocated_cpu_time_ms",
+    "data_scanned_remote_storage_mb",
+    "data_scanned_memory_mb",
+    "data_scanned_disk_mb",
+    "command",
+    "error_code",
+)
+
+#: Columns projected from ``queryinsights.exec_sessions_history``.
+EXEC_SESSIONS_HISTORY_COLUMNS: tuple[str, ...] = (
+    "session_id",
+    "connection_id",
+    "session_start_time",
+    "session_end_time",
+    "program_name",
+    "login_name",
+    "status",
+    "context_info",
+    "total_query_elapsed_time_ms",
+    "last_request_start_time",
+    "last_request_end_time",
+    "is_user_process",
+    "prev_error",
+    "group_id",
+    "database_id",
+    "authenticating_database_id",
+    "open_transaction_count",
+    "text_size",
+    "language",
+    "date_format",
+    "date_first",
+    "quoted_identifier",
+    "arithabort",
+    "ansi_null_dflt_on",
+    "ansi_defaults",
+    "ansi_warnings",
+    "ansi_padding",
+    "ansi_nulls",
+    "concat_null_yields_null",
+    "transaction_isolation_level",
+    "lock_timeout",
+    "deadlock_priority",
+    "original_security_id",
+    "database_name",
+)
+
+#: Columns projected from ``queryinsights.frequently_run_queries``.
+#: ``last_run_session_id`` is documented on MS Learn but absent from the live
+#: Fabric service — omitted to prevent ``Invalid column name`` errors (#195).
+FREQUENTLY_RUN_QUERIES_COLUMNS: tuple[str, ...] = (
+    "last_run_start_time",
+    "last_run_command",
+    "number_of_runs",
+    "avg_total_elapsed_time_ms",
+    "last_run_total_elapsed_time_ms",
+    "last_dist_statement_id",
+    "min_run_total_elapsed_time_ms",
+    "max_run_total_elapsed_time_ms",
+    "number_of_successful_runs",
+    "number_of_failed_runs",
+    "number_of_cancelled_runs",
+    "query_hash",
+)
+
+#: Columns projected from ``queryinsights.long_running_queries``.
+#: ``last_run_session_id`` is documented on MS Learn but absent from the live
+#: Fabric service — omitted to prevent ``Invalid column name`` errors (#195).
+LONG_RUNNING_QUERIES_COLUMNS: tuple[str, ...] = (
+    "last_run_start_time",
+    "last_run_command",
+    "median_total_elapsed_time_ms",
+    "number_of_runs",
+    "last_run_total_elapsed_time_ms",
+    "last_dist_statement_id",
+    "query_hash",
+)
+
+#: Columns projected from ``queryinsights.sql_pool_insights``.
+SQL_POOL_INSIGHTS_COLUMNS: tuple[str, ...] = (
+    "sql_pool_name",
+    "timestamp",
+    "max_resource_percentage",
+    "is_optimized_for_reads",
+    "current_workspace_capacity",
+    "is_pool_under_pressure",
+)
 
 
 def _clamp_limit(limit: int) -> int:
@@ -250,7 +368,6 @@ SELECT TOP ({limit})
     avg_total_elapsed_time_ms,
     last_run_total_elapsed_time_ms,
     last_dist_statement_id,
-    last_run_session_id,
     min_run_total_elapsed_time_ms,
     max_run_total_elapsed_time_ms,
     number_of_successful_runs,
@@ -306,7 +423,6 @@ SELECT TOP ({limit})
     number_of_runs,
     last_run_total_elapsed_time_ms,
     last_dist_statement_id,
-    last_run_session_id,
     query_hash
 FROM queryinsights.long_running_queries{where}
 ORDER BY median_total_elapsed_time_ms DESC;

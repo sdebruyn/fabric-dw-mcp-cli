@@ -16,6 +16,13 @@ from fabric_dw.models import (
     SqlPoolInsight,
 )
 from fabric_dw.services import query_insights
+from fabric_dw.services.query_insights import (
+    EXEC_REQUESTS_HISTORY_COLUMNS,
+    EXEC_SESSIONS_HISTORY_COLUMNS,
+    FREQUENTLY_RUN_QUERIES_COLUMNS,
+    LONG_RUNNING_QUERIES_COLUMNS,
+    SQL_POOL_INSIGHTS_COLUMNS,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -42,34 +49,7 @@ def _make_conn(rows: list[tuple[object, ...]], columns: list[str]) -> MagicMock:
 # exec_requests_history
 # ---------------------------------------------------------------------------
 
-_REQ_HIST_COLS = [
-    "distributed_statement_id",
-    "database_name",
-    "submit_time",
-    "start_time",
-    "end_time",
-    "is_distributed",
-    "statement_type",
-    "total_elapsed_time_ms",
-    "login_name",
-    "row_count",
-    "status",
-    "session_id",
-    "connection_id",
-    "program_name",
-    "batch_id",
-    "root_batch_id",
-    "query_hash",
-    "label",
-    "result_cache_hit",
-    "sql_pool_name",
-    "allocated_cpu_time_ms",
-    "data_scanned_remote_storage_mb",
-    "data_scanned_memory_mb",
-    "data_scanned_disk_mb",
-    "command",
-    "error_code",
-]
+_REQ_HIST_COLS = list(EXEC_REQUESTS_HISTORY_COLUMNS)
 
 _REQ_HIST_ROW = (
     "a1b2c3d4-e5f6-7890-abcd-ef1234567890",  # distributed_statement_id
@@ -257,42 +237,7 @@ async def test_list_request_history_closes_connection() -> None:
 # exec_sessions_history
 # ---------------------------------------------------------------------------
 
-_SESS_HIST_COLS = [
-    "session_id",
-    "connection_id",
-    "session_start_time",
-    "session_end_time",
-    "program_name",
-    "login_name",
-    "status",
-    "context_info",
-    "total_query_elapsed_time_ms",
-    "last_request_start_time",
-    "last_request_end_time",
-    "is_user_process",
-    "prev_error",
-    "group_id",
-    "database_id",
-    "authenticating_database_id",
-    "open_transaction_count",
-    "text_size",
-    "language",
-    "date_format",
-    "date_first",
-    "quoted_identifier",
-    "arithabort",
-    "ansi_null_dflt_on",
-    "ansi_defaults",
-    "ansi_warnings",
-    "ansi_padding",
-    "ansi_nulls",
-    "concat_null_yields_null",
-    "transaction_isolation_level",
-    "lock_timeout",
-    "deadlock_priority",
-    "original_security_id",
-    "database_name",
-]
+_SESS_HIST_COLS = list(EXEC_SESSIONS_HISTORY_COLUMNS)
 
 _SESS_HIST_ROW = (
     1,  # session_id
@@ -403,21 +348,7 @@ async def test_list_session_history_since_adds_where() -> None:
 # frequently_run_queries
 # ---------------------------------------------------------------------------
 
-_FREQ_COLS = [
-    "last_run_start_time",
-    "last_run_command",
-    "number_of_runs",
-    "avg_total_elapsed_time_ms",
-    "last_run_total_elapsed_time_ms",
-    "last_dist_statement_id",
-    "last_run_session_id",
-    "min_run_total_elapsed_time_ms",
-    "max_run_total_elapsed_time_ms",
-    "number_of_successful_runs",
-    "number_of_failed_runs",
-    "number_of_cancelled_runs",
-    "query_hash",
-]
+_FREQ_COLS = list(FREQUENTLY_RUN_QUERIES_COLUMNS)
 
 _FREQ_ROW = (
     _NOW,  # last_run_start_time
@@ -426,7 +357,6 @@ _FREQ_ROW = (
     1500,  # avg_total_elapsed_time_ms
     1200,  # last_run_total_elapsed_time_ms
     None,  # last_dist_statement_id
-    7,  # last_run_session_id
     800,  # min_run_total_elapsed_time_ms
     2000,  # max_run_total_elapsed_time_ms
     40,  # number_of_successful_runs
@@ -518,16 +448,7 @@ async def test_list_frequent_queries_since_adds_where() -> None:
 # long_running_queries
 # ---------------------------------------------------------------------------
 
-_LONG_COLS = [
-    "last_run_start_time",
-    "last_run_command",
-    "median_total_elapsed_time_ms",
-    "number_of_runs",
-    "last_run_total_elapsed_time_ms",
-    "last_dist_statement_id",
-    "last_run_session_id",
-    "query_hash",
-]
+_LONG_COLS = list(LONG_RUNNING_QUERIES_COLUMNS)
 
 _LONG_ROW = (
     _NOW,  # last_run_start_time
@@ -536,7 +457,6 @@ _LONG_ROW = (
     5,  # number_of_runs
     28000,  # last_run_total_elapsed_time_ms
     None,  # last_dist_statement_id
-    3,  # last_run_session_id
     "def456",  # query_hash
 )
 
@@ -623,14 +543,7 @@ async def test_list_long_running_since_adds_where() -> None:
 # sql_pool_insights
 # ---------------------------------------------------------------------------
 
-_POOL_COLS = [
-    "sql_pool_name",
-    "timestamp",
-    "max_resource_percentage",
-    "is_optimized_for_reads",
-    "current_workspace_capacity",
-    "is_pool_under_pressure",
-]
+_POOL_COLS = list(SQL_POOL_INSIGHTS_COLUMNS)
 
 _POOL_ROW = (
     "SELECT",  # sql_pool_name
@@ -774,3 +687,55 @@ async def test_request_history_since_and_until_produce_and_clause() -> None:
     cursor = conn.cursor.return_value
     call_sql: str = cursor.execute.call_args[0][0]
     assert "AND" in call_sql
+
+
+# ---------------------------------------------------------------------------
+# Column-alignment tests: every canonical column appears in the SQL template
+# ---------------------------------------------------------------------------
+
+
+def test_exec_requests_history_sql_contains_all_canonical_columns() -> None:
+    """Every column in EXEC_REQUESTS_HISTORY_COLUMNS must appear in the SELECT."""
+    sql = query_insights._REQUEST_HISTORY_SQL_TEMPLATE.format(limit=100, where="")
+    for col in EXEC_REQUESTS_HISTORY_COLUMNS:
+        assert col in sql, f"Column {col!r} missing from exec_requests_history SQL"
+
+
+def test_exec_sessions_history_sql_contains_all_canonical_columns() -> None:
+    """Every column in EXEC_SESSIONS_HISTORY_COLUMNS must appear in the SELECT."""
+    sql = query_insights._SESSION_HISTORY_SQL_TEMPLATE.format(limit=100, where="")
+    for col in EXEC_SESSIONS_HISTORY_COLUMNS:
+        assert col in sql, f"Column {col!r} missing from exec_sessions_history SQL"
+
+
+def test_frequently_run_queries_sql_contains_all_canonical_columns() -> None:
+    """Every column in FREQUENTLY_RUN_QUERIES_COLUMNS must appear in the SELECT."""
+    sql = query_insights._FREQUENT_QUERIES_SQL_TEMPLATE.format(limit=100, where="")
+    for col in FREQUENTLY_RUN_QUERIES_COLUMNS:
+        assert col in sql, f"Column {col!r} missing from frequently_run_queries SQL"
+
+
+def test_long_running_queries_sql_contains_all_canonical_columns() -> None:
+    """Every column in LONG_RUNNING_QUERIES_COLUMNS must appear in the SELECT."""
+    sql = query_insights._LONG_RUNNING_SQL_TEMPLATE.format(limit=100, where="")
+    for col in LONG_RUNNING_QUERIES_COLUMNS:
+        assert col in sql, f"Column {col!r} missing from long_running_queries SQL"
+
+
+def test_sql_pool_insights_sql_contains_all_canonical_columns() -> None:
+    """Every column in SQL_POOL_INSIGHTS_COLUMNS must appear in the SELECT."""
+    sql = query_insights._SQL_POOL_INSIGHTS_SQL_TEMPLATE.format(limit=100, where="")
+    for col in SQL_POOL_INSIGHTS_COLUMNS:
+        assert col in sql, f"Column {col!r} missing from sql_pool_insights SQL"
+
+
+def test_frequently_run_queries_sql_excludes_last_run_session_id() -> None:
+    """last_run_session_id must NOT appear — it crashes on live Fabric (#195)."""
+    sql = query_insights._FREQUENT_QUERIES_SQL_TEMPLATE.format(limit=100, where="")
+    assert "last_run_session_id" not in sql
+
+
+def test_long_running_queries_sql_excludes_last_run_session_id() -> None:
+    """last_run_session_id must NOT appear — it crashes on live Fabric (#195)."""
+    sql = query_insights._LONG_RUNNING_SQL_TEMPLATE.format(limit=100, where="")
+    assert "last_run_session_id" not in sql
