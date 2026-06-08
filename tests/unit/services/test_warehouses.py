@@ -371,8 +371,8 @@ async def test_create_missing_resource_location_raises_fabric_server_error() -> 
 
 
 @pytest.mark.asyncio
-async def test_create_returns_warehouse_when_response_has_no_location_header_but_body_present() -> None:
-    """create must parse the 201 body and return the Warehouse when no Location header is present."""
+async def test_create_no_location_header_but_body_present_returns_warehouse() -> None:
+    """create must parse the 201 body and return the Warehouse when no Location header."""
     # Fabric sometimes responds 201 with the new warehouse directly in the body
     body = json.loads(WAREHOUSE_CREATE_202_PAYLOAD)  # has id + displayName + workspaceId
 
@@ -394,8 +394,8 @@ async def test_create_returns_warehouse_when_response_has_no_location_header_but
 
 
 @pytest.mark.asyncio
-async def test_create_raises_fabric_server_error_when_response_has_no_location_and_empty_body() -> None:
-    """create must raise FabricServerError when there is no Location header and the body is empty."""
+async def test_create_no_location_header_and_empty_body_raises_fabric_server_error() -> None:
+    """create must raise FabricServerError when no Location header and body is empty."""
     with respx.mock:
         respx.post(_ITEMS_URL).mock(
             return_value=httpx.Response(202, json={})  # no Location header, empty body
