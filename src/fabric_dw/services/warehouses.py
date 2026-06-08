@@ -145,8 +145,20 @@ async def create(
         "POST", HttpBase.FABRIC, f"/workspaces/{workspace_id}/items", json=body
     )
 
+    location = resp.headers.get("Location")
+
+    if location is None:
+        # Fabric occasionally returns 201 with the new warehouse directly in the body
+        # (no LRO / no Location header). Try to parse the body inline.
+        resp_body = resp.json()
+        resp_id = resp_body.get("id")
+        resp_name = resp_body.get("displayName") or resp_body.get("name")
+        if resp_id and resp_name:
+            return Warehouse.from_api(resp_body, kind=WarehouseKind.WAREHOUSE)
+        msg = "create warehouse: response had no Location header and no usable body"
+        raise FabricServerError(msg)
+
     # 202 = LRO initiated; poll the operation then fetch the new warehouse
-    location = resp.headers["Location"]
     lro_result = await http.poll_operation(location)
 
     # Extract the new warehouse ID from resourceLocation.
