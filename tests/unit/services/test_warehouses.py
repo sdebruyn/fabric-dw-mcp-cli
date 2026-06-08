@@ -370,6 +370,71 @@ async def test_create_missing_resource_location_raises_fabric_server_error() -> 
                 await warehouses.create(client, _WORKSPACE_ID, "SalesWarehouse")
 
 
+@pytest.mark.asyncio
+async def test_create_returns_warehouse_when_response_has_no_location_header_but_body_present() -> None:
+    """create must parse the 201 body and return the Warehouse when no Location header is present."""
+    # Fabric sometimes responds 201 with the new warehouse directly in the body
+    body = json.loads(WAREHOUSE_CREATE_202_PAYLOAD)  # has id + displayName + workspaceId
+
+    with respx.mock:
+        respx.post(_ITEMS_URL).mock(
+            # 201, no Location header, body contains the new warehouse
+            return_value=httpx.Response(201, json=body)
+        )
+        # No LRO poll or final GET should be called — so no extra routes needed
+
+        client = await _make_client()
+        async with client:
+            result = await warehouses.create(client, _WORKSPACE_ID, "SalesWarehouse")
+
+    assert isinstance(result, Warehouse)
+    assert result.id == _WAREHOUSE_ID
+    assert result.name == "SalesWarehouse"
+    assert result.kind == WarehouseKind.WAREHOUSE
+
+
+@pytest.mark.asyncio
+async def test_create_raises_fabric_server_error_when_response_has_no_location_and_empty_body() -> None:
+    """create must raise FabricServerError when there is no Location header and the body is empty."""
+    with respx.mock:
+        respx.post(_ITEMS_URL).mock(
+            return_value=httpx.Response(202, json={})  # no Location header, empty body
+        )
+
+        client = await _make_client()
+        async with client:
+            with pytest.raises(FabricServerError, match="no Location header and no usable body"):
+                await warehouses.create(client, _WORKSPACE_ID, "SalesWarehouse")
+
+
+@pytest.mark.asyncio
+async def test_create_existing_path_with_location_header_still_works() -> None:
+    """create must still work correctly (LRO poll + final GET) when a Location header is present."""
+    op_succeeded = json.loads(WAREHOUSE_OPERATION_SUCCEEDED_PAYLOAD)
+    wh_payload = json.loads(WAREHOUSE_GET_PAYLOAD)
+    new_wh_id = UUID("d4e5f6a7-b8c9-0123-def0-123456789abc")
+    new_wh_url = f"{_WAREHOUSES_URL}/{new_wh_id}"
+
+    with respx.mock:
+        respx.post(_ITEMS_URL).mock(
+            return_value=httpx.Response(
+                202,
+                json={},
+                headers={"Location": _OPERATION_URL},
+            )
+        )
+        respx.get(_OPERATION_URL).mock(return_value=httpx.Response(200, json=op_succeeded))
+        respx.get(new_wh_url).mock(return_value=httpx.Response(200, json=wh_payload))
+
+        client = await _make_client()
+        async with client:
+            result = await warehouses.create(client, _WORKSPACE_ID, "SalesWarehouse")
+
+    assert isinstance(result, Warehouse)
+    assert result.id == new_wh_id
+    assert result.kind == WarehouseKind.WAREHOUSE
+
+
 # ---------------------------------------------------------------------------
 # rename
 # ---------------------------------------------------------------------------
