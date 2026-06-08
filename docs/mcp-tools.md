@@ -65,7 +65,7 @@ List all warehouses and SQL analytics endpoints in a workspace, or across all vi
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID. Ignored when `all_workspaces` is `true`.
+- `workspace` (`str`) — workspace name or GUID; required when `all_workspaces` is `false`; ignored when `true`.
 - `all_workspaces` (`bool`, default `false`) — when `true`, aggregate results across every workspace the caller can see.
 
 **Returns:** `list[Warehouse]` — array of warehouse objects, each with `id`, `displayName`, `description`, `workspaceId`, `kind` (`Warehouse` or `SQLEndpoint`), `connectionString`, `defaultCollation`, and `createdDate`.
@@ -149,7 +149,7 @@ List all SQL analytics endpoints in a workspace, or across all visible workspace
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID. Ignored when `all_workspaces` is `true`.
+- `workspace` (`str`) — workspace name or GUID; required when `all_workspaces` is `false`; ignored when `true`.
 - `all_workspaces` (`bool`, default `false`) — when `true`, aggregate results across every workspace the caller can see.
 
 **Returns:** `list[Warehouse]` — array of SQL analytics endpoint objects (same fields as Warehouse, `kind` is always `SQLEndpoint`).
