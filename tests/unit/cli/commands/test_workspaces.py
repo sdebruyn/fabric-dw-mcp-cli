@@ -148,6 +148,29 @@ class TestWorkspacesGet:
         parsed = json.loads(result.output)
         assert parsed["defaultDataWarehouseCollation"] is None
 
+    def test_get_shows_collation_in_table_output(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_http.request = AsyncMock(
+            return_value=_make_response(
+                200,
+                json.dumps(
+                    {
+                        "id": WS_GUID,
+                        "displayName": "AnalyticsWorkspace",
+                        "defaultDataWarehouseCollation": "Latin1_General_100_BIN2_UTF8",
+                    }
+                ),
+            )
+        )
+        with patch(
+            "fabric_dw.cli.commands.workspaces._build_clients",
+            new=_make_cm(mock_http, None),
+        ):
+            result = runner.invoke(cli, ["workspaces", "get", WS_GUID])
+        assert result.exit_code == 0
+        assert "Latin1_General_100_BIN2_UTF8" in result.output
+
     def test_get_not_found_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()

@@ -26,6 +26,7 @@ class Workspace(_FabricBase):
     default_dataset_storage_format: str | None = Field(
         default=None, alias="defaultDatasetStorageFormat"
     )
+    # Undocumented in WorkspaceInfo; the GET endpoint returns it in practice.
     collation: str | None = Field(default=None, alias="defaultDataWarehouseCollation")
 
 

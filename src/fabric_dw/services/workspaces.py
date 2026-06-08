@@ -54,28 +54,6 @@ async def get(http: FabricHttpClient, workspace_id: UUID) -> Workspace:
     return Workspace.model_validate(resp.json())
 
 
-async def get_collation(http: FabricHttpClient, workspace_id: UUID) -> str | None:
-    """Return the default Data Warehouse collation for a workspace, or ``None`` if absent.
-
-    Microsoft's v1 REST API does not yet document a dedicated collation property
-    on the workspace resource. If the field is present in the payload it is
-    returned; otherwise ``None`` is returned without error. Do not fall back to
-    a SQL query — keep scope small.
-
-    Args:
-        http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
-        workspace_id: The UUID of the workspace to inspect.
-
-    Returns:
-        The collation string, or ``None`` if the workspace payload does not
-        carry a ``defaultDataWarehouseCollation`` field.
-    """
-    resp = await http.request("GET", HttpBase.FABRIC, f"/workspaces/{workspace_id}")
-    data: dict[str, object] = resp.json()
-    value = data.get("defaultDataWarehouseCollation")
-    return str(value) if value is not None else None
-
-
 async def set_collation(
     http: FabricHttpClient,
     workspace_id: UUID,
