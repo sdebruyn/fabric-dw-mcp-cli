@@ -9,7 +9,7 @@ repo_name = "sdebruyn/fabric-dw-mcp-cli"
 edit_uri = "edit/main/docs/"
 copyright = "Copyright &copy; 2026 Sam Debruyn"
 
-watch = ["README.md", "CONTRIBUTING.md"]
+watch = ["README.md", "CONTRIBUTING.md", "LICENSE", "SECURITY.md"]
 
 nav = [
   { "Home" = "index.md" },
@@ -20,7 +20,11 @@ nav = [
     { "Shell Completion" = "completion.md" },
     { "Troubleshooting" = "troubleshooting.md" }
   ] },
-  { "Contributing" = "contributing.md" }
+  { "About" = [
+    { "Contributing" = "contributing.md" },
+    { "License" = "license.md" },
+    { "Security" = "security.md" }
+  ] }
 ]
 
 [project.theme]
@@ -114,6 +118,7 @@ pygments_lang_class = true
 [project.markdown_extensions.pymdownx.smartsymbols]
 [project.markdown_extensions.pymdownx.snippets]
 check_paths = true
+base_path = ["."]
 [project.markdown_extensions.pymdownx.superfences]
 custom_fences = [
   { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" }
