@@ -11,7 +11,6 @@ from fabric_dw.models import Workspace
 __all__ = [
     "SUPPORTED_COLLATIONS",
     "get",
-    "get_collation",
     "list_all",
     "set_collation",
 ]

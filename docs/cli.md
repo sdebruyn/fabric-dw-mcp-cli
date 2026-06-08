@@ -107,7 +107,7 @@ fabric-dw workspaces list
 
 ### workspaces get
 
-Get details for a workspace.
+Get details for a workspace, including its default Data Warehouse collation.
 
 **Synopsis**
 
@@ -122,31 +122,10 @@ fabric-dw workspaces get MyWorkspace
 ```
 
 ```
-id             3f2a1c5d-...
-displayName    MyWorkspace
-capacityId     ab12cd34-...
-```
-
----
-
-### workspaces get-collation
-
-Get the default Data Warehouse collation configured for a workspace.
-
-**Synopsis**
-
-```
-fabric-dw workspaces get-collation [WORKSPACE]
-```
-
-**Example**
-
-```shell
-fabric-dw workspaces get-collation MyWorkspace
-```
-
-```
-Latin1_General_100_CI_AS_KS_WS_SC_UTF8
+id                                3f2a1c5d-...
+displayName                       MyWorkspace
+capacityId                        ab12cd34-...
+defaultDataWarehouseCollation     Latin1_General_100_CI_AS_KS_WS_SC_UTF8
 ```
 
 ---

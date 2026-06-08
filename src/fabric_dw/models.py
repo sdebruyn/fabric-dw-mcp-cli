@@ -26,6 +26,7 @@ class Workspace(_FabricBase):
     default_dataset_storage_format: str | None = Field(
         default=None, alias="defaultDatasetStorageFormat"
     )
+    collation: str | None = Field(default=None, alias="defaultDataWarehouseCollation")
 
 
 class WarehouseKind(StrEnum):

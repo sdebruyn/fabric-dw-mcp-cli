@@ -18,13 +18,7 @@ async def test_get_workspace(http: FabricHttpClient, workspace_id: UUID) -> None
     ws = await workspaces.get(http, workspace_id)
     assert ws.id == workspace_id
     assert ws.name
-
-
-async def test_get_collation_returns_string_or_none(
-    http: FabricHttpClient, workspace_id: UUID
-) -> None:
-    result = await workspaces.get_collation(http, workspace_id)
-    assert result is None or isinstance(result, str)
+    assert ws.collation is None or isinstance(ws.collation, str)
 
 
 async def test_set_collation_invalid_value_raises(

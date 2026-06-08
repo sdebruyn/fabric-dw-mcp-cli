@@ -48,7 +48,6 @@ EXPECTED_TOOL_NAMES: frozenset[str] = frozenset(
         # Workspaces
         "list_workspaces",
         "get_workspace",
-        "get_workspace_collation",
         "set_workspace_collation",
         # Warehouses
         "list_warehouses",
