@@ -6,14 +6,46 @@ build-backend = "hatchling.build"
 name = "fabric-dw"
 dynamic = ["version"]
 requires-python = ">=3.11"
-description = "Microsoft Fabric Data Warehouse MCP CLI"
+description = "Python CLI + MCP server for administering Microsoft Fabric Data Warehouses and SQL Analytics Endpoints"
+readme = "README.md"
 license = { text = "MIT" }
+authors = [{ name = "Sam Debruyn", email = "claude.sam@debruyn.dev" }]
+maintainers = [{ name = "Sam Debruyn", email = "claude.sam@debruyn.dev" }]
+keywords = [
+    "microsoft-fabric",
+    "fabric",
+    "data-warehouse",
+    "mcp",
+    "model-context-protocol",
+    "cli",
+    "async",
+    "uvx",
+    "sql-analytics-endpoint",
+]
 classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Framework :: AsyncIO",
+    "Framework :: Pydantic",
+    "Framework :: Pydantic :: 2",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: System Administrators",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Database",
+    "Topic :: Database :: Front-Ends",
+    "Topic :: System :: Systems Administration",
+    "Topic :: Utilities",
+    "Typing :: Typed",
 ]
 dependencies = [
     "azure-identity>=1.19",
@@ -28,6 +60,14 @@ dependencies = [
     "rich>=14",
     "anyio>=4",
 ]
+
+[project.urls]
+Homepage = "https://fdw.debruyn.dev"
+Documentation = "https://fdw.debruyn.dev"
+Repository = "https://github.com/sdebruyn/fabric-dw-mcp-cli"
+Issues = "https://github.com/sdebruyn/fabric-dw-mcp-cli/issues"
+Changelog = "https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/CHANGELOG.md"
+"Release notes" = "https://github.com/sdebruyn/fabric-dw-mcp-cli/releases"
 
 [project.scripts]
 fabric-dw = "fabric_dw.cli:main"
@@ -52,6 +92,9 @@ path = "src/fabric_dw/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/fabric_dw"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/fabric_dw/py.typed" = "fabric_dw/py.typed"
 
 [tool.ruff]
 target-version = "py311"
