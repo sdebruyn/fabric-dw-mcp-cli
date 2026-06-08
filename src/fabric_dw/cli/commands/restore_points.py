@@ -208,19 +208,29 @@ async def restore_cmd(
 
     WARNING: This is a destructive operation. The warehouse will be
     unavailable for approximately 10 minutes while the restore completes.
-    You will be asked to confirm unless --yes is passed.
+    In interactive mode you must type the warehouse name to confirm.
+    Pass --yes to skip the prompt for automation.
     """
     try:
         async with _build_http_client(ctx) as http:
             ws_id, wh_id = await _resolve_wh(http, workspace, warehouse)
-            confirmed = confirm(
-                f"Restore warehouse in {workspace!r} to restore point "
-                f"{restore_point_id!r}? "
-                f"The warehouse will be unavailable for ~10 minutes.",
-                yes=ctx.yes,
-            )
-            if not confirmed:
-                raise click.Abort()  # noqa: TRY301
+            if not ctx.yes:
+                rp = await _restore_svc.get_point(http, ws_id, wh_id, restore_point_id)
+                when = rp.event_date_time.isoformat() if rp.event_date_time else "unknown"
+                click.echo(
+                    f"\nWARNING: This will REPLACE all data in warehouse {warehouse!r} "
+                    f"with the state at restore point {restore_point_id!r} "
+                    f"(created {when}).\n"
+                    f"The warehouse will be UNAVAILABLE for ~10 minutes.\n",
+                    err=True,
+                )
+                typed = click.prompt(
+                    f"To restore warehouse {warehouse!r} to restore point "
+                    f"{restore_point_id!r} (created {when}), "
+                    f"type the warehouse name to confirm"
+                )
+                if typed != warehouse:
+                    raise click.Abort()  # noqa: TRY301
             await _restore_svc.restore_in_place(http, ws_id, wh_id, restore_point_id)
             click.echo(f"Warehouse restored to restore point {restore_point_id!r} successfully.")
     except click.Abort:

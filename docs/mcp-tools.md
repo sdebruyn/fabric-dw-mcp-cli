@@ -32,18 +32,6 @@ Return details for a single workspace.
 
 ---
 
-### get_workspace_collation
-
-Return the default Data Warehouse collation configured for a workspace.
-
-**Parameters:**
-
-- `workspace` (`str`) — workspace name or GUID.
-
-**Returns:** `{ "collation": str }` — the collation name.
-
----
-
 ### set_workspace_collation
 
 Set the default Data Warehouse collation for a workspace.

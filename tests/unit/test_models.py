@@ -147,7 +147,7 @@ class TestRestorePoint:
         assert obj.id == payload["id"]
         assert obj.name == payload["displayName"]
         assert obj.description == payload["description"]
-        assert obj.creation_mode.value == payload["creationMode"]
+        assert obj.creation_mode == payload["creationMode"]
         assert obj.event_date_time is not None
 
     def test_extra_fields_ignored(self) -> None:

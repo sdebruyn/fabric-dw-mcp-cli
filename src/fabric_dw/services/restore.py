@@ -9,7 +9,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fabric_dw.http_client import FabricHttpClient, HttpBase
-from fabric_dw.models import RestorePoint
+from fabric_dw.models import CreationModeType, RestorePoint
 
 __all__ = [
     "create_point",
@@ -126,31 +126,35 @@ async def create_point(
     location: str = resp.headers.get("Location", "")
     operation_result = await http.poll_operation(location)
 
-    # Try to extract the restore point ID from the LRO result body.
-    # The LRO result body for restore point creation doesn't contain the
-    # restore point ID; fetch the first point from the list ordered by newest.
-    # As a simpler heuristic, use GET .../restorePoints?continuationToken=… is
-    # not needed — the LRO operation result endpoint returns the created point.
-    op_id = location.rsplit("/", 1)[-1]
+    # Branch (a): some Fabric LRO responses include resourceId/id in the status
+    # body — if present, use it to GET the created point directly.
     resource_id_raw = operation_result.get("resourceId") or operation_result.get("id")
     if resource_id_raw:
-        # Fetch the freshly created restore point.
         return await get_point(http, workspace_id, warehouse_id, str(resource_id_raw))
 
-    # Fall back: try the LRO /result endpoint.
+    # Branch (b): fall back to the LRO /result sub-endpoint, which is the
+    # realistic production path for Fabric restore-point creation.
+    op_id = location.rsplit("/", 1)[-1]
     lro_result = await http.get_operation_result(op_id)
     result_id_raw = lro_result.get("id")
     if result_id_raw:
         return await get_point(http, workspace_id, warehouse_id, str(result_id_raw))
 
-    # Last resort: return the first UserDefined point by listing all points.
-    # This is safe because creation is serialised (API enforces single in-flight).
+    # Branch (c) — last resort: list all restore points and return the newest
+    # UserDefined one.  Creation is serialised (the API enforces a single
+    # in-flight create), so the highest ID (lexicographic max of timestamp
+    # strings) among UserDefined points is the one just created.
     points = await list_points(http, workspace_id, warehouse_id)
-    if points:
-        return points[0]
+    user_points = [p for p in points if p.creation_mode == CreationModeType.USER_DEFINED]
+    if user_points:
+        return max(user_points, key=lambda p: p.id)
 
-    msg = f"Cannot determine new restore point from LRO result: {operation_result}"
-    raise ValueError(msg)
+    msg = (
+        "Restore point create succeeded but the created point could not be located: "
+        f"no UserDefined restore points found after LRO completed. "
+        f"LRO result: {operation_result}"
+    )
+    raise RuntimeError(msg)
 
 
 async def update_point(

@@ -96,11 +96,17 @@ class WarehouseSnapshot(_FabricBase):
     snapshot_dt: datetime | None = Field(default=None, alias="snapshotDateTime")
 
 
-class CreationModeType(StrEnum):
-    """Whether the restore point was created by a user or by the system."""
+class CreationModeType:
+    """Known values for the ``creationMode`` field of a :class:`RestorePoint`.
 
-    USER_DEFINED = "UserDefined"
-    SYSTEM_CREATED = "SystemCreated"
+    MS Learn notes that additional creation mode types may be added over time,
+    so this is an **open** set of constants rather than a closed ``StrEnum``.
+    The ``creation_mode`` field on :class:`RestorePoint` is typed as ``str``
+    so that future unknown values pass Pydantic validation without error.
+    """
+
+    USER_DEFINED: str = "UserDefined"
+    SYSTEM_CREATED: str = "SystemCreated"
 
 
 class RestorePoint(_FabricBase):
@@ -112,7 +118,7 @@ class RestorePoint(_FabricBase):
     id: str
     name: str = Field(alias="displayName")
     description: str | None = None
-    creation_mode: CreationModeType = Field(alias="creationMode")
+    creation_mode: str = Field(alias="creationMode")
     event_date_time: datetime | None = Field(default=None, alias="eventDateTime")
 
     @classmethod

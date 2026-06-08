@@ -287,8 +287,13 @@ async def test_create_point_no_body_when_no_args() -> None:
 
 
 @respx.mock
-async def test_create_point_lro_202_polls_and_fetches() -> None:
-    """create_point should poll LRO on 202, then GET the created restore point."""
+async def test_create_point_lro_202_polls_and_fetches_via_result_endpoint() -> None:
+    """create_point should poll LRO on 202, then fetch via the /result endpoint.
+
+    This reflects the realistic Fabric production path: the LRO status body
+    does NOT contain a resource id (branch a is almost never hit in practice);
+    the /result sub-endpoint is the primary fallback (branch b).
+    """
     respx.post(_RP_LIST_URL).mock(
         return_value=httpx.Response(
             202,
@@ -303,12 +308,16 @@ async def test_create_point_lro_202_polls_and_fetches() -> None:
 
     async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
         with patch.object(http, "poll_operation", new_callable=AsyncMock) as mock_poll:
-            mock_poll.return_value = {**LRO_SUCCEEDED, "id": _RP_ID}
-            result = await restore.create_point(http, _WS_ID, _WH_ID, name="My RP")
+            # Realistic status body: no id/resourceId field
+            mock_poll.return_value = LRO_SUCCEEDED
+            with patch.object(http, "get_operation_result", new_callable=AsyncMock) as mock_result:
+                mock_result.return_value = {"id": _RP_ID}
+                result = await restore.create_point(http, _WS_ID, _WH_ID, name="My RP")
 
     assert isinstance(result, RestorePoint)
     assert result.id == _RP_ID
     mock_poll.assert_awaited_once_with(_LRO_LOCATION)
+    mock_result.assert_awaited_once_with(_LRO_OP_ID)
 
 
 @respx.mock
