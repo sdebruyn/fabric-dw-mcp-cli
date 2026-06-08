@@ -506,6 +506,64 @@ Drop a SQL view.
 
 ---
 
+## SQL Pools (beta)
+
+!!! warning "Beta / preview feature"
+    The four SQL Pools tools target a **beta / preview** API endpoint.  They may change before GA.  All callers must hold the **workspace admin role**.  See [SQL Pools](sql-pools.md) for full background on the beta status and destructive PATCH semantics.
+
+### get_sql_pools_configuration
+
+Fetch the SQL Pools configuration for a workspace.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+
+**Returns:** `SqlPoolsConfiguration` — object with `customSQLPoolsEnabled` (bool) and `customSQLPools` (list of pool objects; see [SQL Pools](sql-pools.md#field-reference) for the full field reference).
+
+---
+
+### update_sql_pools_configuration
+
+Replace the SQL Pools configuration for a workspace.
+
+!!! danger "Destructive PATCH"
+    Any pool **not** present in `custom_sql_pools` will be permanently deleted.  Supply the full desired pool list every time.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `custom_sql_pools_enabled` (`bool`) — whether custom SQL Pools are active.
+- `custom_sql_pools` (`list[dict]`) — the complete pool list.  Each pool object must include at minimum `name` (str) and `maxResourcePercentage` (int, 1–100).  Optional fields: `isDefault` (bool), `optimizeForReads` (bool), `classifier` (object with `type` str and `value` list[str]).
+
+**Returns:** `SqlPoolsConfiguration` — the fresh configuration after the update.
+
+---
+
+### enable_sql_pools
+
+Enable custom SQL Pools for a workspace without modifying pool definitions.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+
+**Returns:** `SqlPoolsConfiguration` — the updated configuration.
+
+---
+
+### disable_sql_pools
+
+Disable custom SQL Pools for a workspace, preserving the pool configuration. Re-enabling with `enable_sql_pools` restores the previously saved configuration.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+
+**Returns:** `SqlPoolsConfiguration` — the updated configuration.
+
+---
+
 ## Cache
 
 ### clear_cache

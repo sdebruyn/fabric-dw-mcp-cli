@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Literal, cast
+from typing import Annotated, Literal, cast
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -309,3 +309,74 @@ class View(_FabricBase):
     definition: str | None = None
     created: datetime
     modified: datetime
+
+
+# ---------------------------------------------------------------------------
+# SQL Pools (beta)
+# ---------------------------------------------------------------------------
+
+#: Known classifier type values from the API — open enum; more may be added.
+CLASSIFIER_TYPE_APPLICATION_NAME = "Application Name"
+CLASSIFIER_TYPE_APPLICATION_NAME_REGEX = "Application Name Regex"
+
+
+class SqlPoolClassifier(_FabricBase):
+    """A classifier element that routes sessions to a SQL pool.
+
+    ``type`` is treated as an open string rather than a closed enum because
+    the API explicitly states "Additional classifier element types may be
+    added over time".  Use :data:`CLASSIFIER_TYPE_APPLICATION_NAME` and
+    :data:`CLASSIFIER_TYPE_APPLICATION_NAME_REGEX` for the known values.
+    """
+
+    type: str = Field(alias="type")
+    value: list[str] = Field(default_factory=list, alias="value")
+
+
+class SqlPool(_FabricBase):
+    """A single custom SQL pool element."""
+
+    name: str
+    is_default: bool = Field(default=False, alias="isDefault")
+    max_resource_percentage: Annotated[int, Field(ge=1, le=100)] = Field(
+        alias="maxResourcePercentage"
+    )
+    optimize_for_reads: bool = Field(default=True, alias="optimizeForReads")
+    classifier: SqlPoolClassifier | None = Field(default=None, alias="classifier")
+
+
+class SqlPoolsConfiguration(_FabricBase):
+    """SQL pools configuration for a workspace (beta API)."""
+
+    custom_sql_pools_enabled: bool = Field(alias="customSQLPoolsEnabled")
+    custom_sql_pools: list[SqlPool] = Field(default_factory=list, alias="customSQLPools")
+
+    def validate_for_patch(self) -> None:
+        """Validate constraints that must hold before issuing a PATCH request.
+
+        This is intentionally *not* a Pydantic model validator so that GET
+        responses with server-side state that violates these constraints
+        (e.g. during a beta API drift or a race condition) can still be
+        deserialised without raising.  Call this explicitly before any write
+        operation.
+
+        Raises:
+            ValueError: If the sum of ``maxResourcePercentage`` exceeds 100,
+                or if more than one pool is marked as default.
+        """
+        pools = self.custom_sql_pools
+        if not pools:
+            return
+
+        total = sum(p.max_resource_percentage for p in pools)
+        if total > 100:  # noqa: PLR2004
+            msg = (
+                f"Sum of maxResourcePercentage across all SQL pools is {total}, which exceeds 100."
+            )
+            raise ValueError(msg)
+
+        defaults = [p for p in pools if p.is_default]
+        if len(defaults) > 1:
+            names = ", ".join(p.name for p in defaults)
+            msg = f"Exactly one SQL pool may be marked as default; got {len(defaults)}: {names}"
+            raise ValueError(msg)
