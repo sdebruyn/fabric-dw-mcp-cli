@@ -649,6 +649,126 @@ fabric-dw --yes restore-points restore MyWorkspace SalesWH 1726617378000
 
 ---
 
+## fabric-dw views
+
+Manage SQL views on Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
+
+### views list
+
+List all views on a warehouse or SQL Analytics Endpoint. Pass `--schema` to filter to a single schema.
+
+**Synopsis**
+
+```
+fabric-dw views list [OPTIONS] [WORKSPACE] [WAREHOUSE]
+```
+
+| Option | Description |
+| --- | --- |
+| `--schema TEXT` | Only list views in this schema. |
+
+**Example**
+
+```shell
+fabric-dw views list MyWorkspace SalesWH --schema dbo
+```
+
+```
+ schema_name  name         created               modified
+ ------------ ------------ --------------------- ---------------------
+ dbo          vw_sales     2026-01-10T08:00:00Z  2026-06-01T12:00:00Z
+ dbo          vw_monthly   2026-02-01T09:00:00Z  2026-05-15T14:00:00Z
+```
+
+---
+
+### views get
+
+Get the full definition of a single view.
+
+**Synopsis**
+
+```
+fabric-dw views get [WORKSPACE] [WAREHOUSE] QUALIFIED_NAME
+```
+
+`QUALIFIED_NAME` must be a dot-separated `schema.view_name` string, e.g. `dbo.vw_sales`.
+
+**Example**
+
+```shell
+fabric-dw views get MyWorkspace SalesWH dbo.vw_sales
+```
+
+```
+schema_name    dbo
+name           vw_sales
+qualified_name dbo.vw_sales
+created        2026-01-10T08:00:00Z
+modified       2026-06-01T12:00:00Z
+definition     SELECT id, amount FROM dbo.sales
+```
+
+---
+
+### views create
+
+Create a new SQL view.
+
+**Synopsis**
+
+```
+fabric-dw views create [WORKSPACE] [WAREHOUSE] QUALIFIED_NAME SELECT_BODY
+```
+
+`SELECT_BODY` is the verbatim SELECT statement that forms the view body.
+
+**Example**
+
+```shell
+fabric-dw views create MyWorkspace SalesWH dbo.vw_recent \
+  "SELECT id, amount FROM dbo.sales WHERE sale_date >= '2026-01-01'"
+```
+
+---
+
+### views update
+
+Redefine an existing view using `CREATE OR ALTER VIEW`.
+
+**Synopsis**
+
+```
+fabric-dw views update [WORKSPACE] [WAREHOUSE] QUALIFIED_NAME SELECT_BODY
+```
+
+**Example**
+
+```shell
+fabric-dw views update MyWorkspace SalesWH dbo.vw_recent \
+  "SELECT id, amount, region FROM dbo.sales WHERE sale_date >= '2026-01-01'"
+```
+
+---
+
+### views drop
+
+Drop a SQL view. You will be asked to confirm unless `--yes` is passed.
+
+**Synopsis**
+
+```
+fabric-dw views drop [WORKSPACE] [WAREHOUSE] QUALIFIED_NAME
+```
+
+**Example**
+
+```shell
+fabric-dw --yes views drop MyWorkspace SalesWH dbo.vw_recent
+```
+
+---
+
 ## fabric-dw snapshots
 
 Manage Microsoft Fabric Data Warehouse snapshots.

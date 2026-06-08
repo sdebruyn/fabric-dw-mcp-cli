@@ -432,6 +432,80 @@ Roll a snapshot's timestamp forward, or reset it to the current time.
 
 ---
 
+## SQL Views
+
+### list_views
+
+List SQL views on a warehouse or SQL Analytics Endpoint, optionally filtered to a single schema.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
+- `schema` (`str | null`, optional) — when provided, only views in this schema are returned; must be a valid SQL identifier.
+
+**Returns:** `list[View]` — array of view objects, each with `schema_name`, `name`, `qualified_name`, `created`, `modified`, and `definition` (always `null` for list results).
+
+---
+
+### get_view
+
+Fetch the full definition of a single SQL view.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`) — dot-separated schema and view name, e.g. `dbo.vw_sales`.
+
+**Returns:** `View` — single view object with `definition` populated from `sys.sql_modules`.
+
+---
+
+### create_view
+
+Create a new SQL view.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`) — dot-separated schema and view name, e.g. `dbo.vw_sales`.
+- `select_body` (`str`) — the SELECT statement that forms the view body; executed verbatim as DDL.
+
+**Returns:** `View` — the newly-created view object (fetched after DDL, includes `definition`).
+
+---
+
+### update_view
+
+Redefine an existing SQL view using `CREATE OR ALTER VIEW`.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`) — dot-separated schema and view name, e.g. `dbo.vw_sales`.
+- `select_body` (`str`) — the new SELECT statement; executed verbatim as DDL.
+
+**Returns:** `View` — the updated view object (fetched after DDL, includes `definition`).
+
+---
+
+### drop_view
+
+Drop a SQL view.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`) — dot-separated schema and view name, e.g. `dbo.vw_sales`.
+
+**Returns:** `{ "dropped": true }` — confirmation.
+
+---
+
 ## Cache
 
 ### clear_cache
