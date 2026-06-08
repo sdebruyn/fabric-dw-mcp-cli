@@ -108,11 +108,12 @@ async def list_snapshots(
                 out.append(_snapshot_from_detail(detail))
         return out
 
-    # The Fabric items-list index can lag by 60-120 seconds after a snapshot is
-    # created.  Retry several times so that callers who list immediately after
-    # create still get accurate results.
-    _max_list_retries = 6
-    _list_wait_s = 20.0
+    # The Fabric items-list index can lag up to several minutes after a snapshot is
+    # created.  Retry with back-off so that callers who list immediately after
+    # create still get accurate results.  The budget here (8 x 30 s = 240 s) covers
+    # the worst-case propagation delay observed in testing.
+    _max_list_retries = 8
+    _list_wait_s = 30.0
     results = await _fetch_once()
     for _ in range(_max_list_retries - 1):
         if results:
@@ -232,10 +233,6 @@ async def create(
                 "parentWarehouseId": str(parent_warehouse_id),
             }
 
-    # Give the Fabric items-list index time to include the new snapshot.
-    # The detail endpoint confirms the item exists, but the items-list API
-    # may lag by tens of seconds before the new entry is visible.
-    await asyncio.sleep(20.0)
     return _snapshot_from_detail(detail_body)
 
 
