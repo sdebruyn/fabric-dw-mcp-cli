@@ -53,6 +53,17 @@ def render(
         click.echo(repr(data))
 
 
+def _cell(value: object) -> str:
+    """Convert a cell value to a Rich-markup string.
+
+    ``None`` is rendered as ``[dim]NULL[/dim]`` so SQL NULLs are visually
+    distinct from the literal string ``'None'``.
+    """
+    if value is None:
+        return "[dim]NULL[/dim]"
+    return str(value)
+
+
 def _render_table(rows: Sequence[object], *, console: Console, title: str | None) -> None:
     """Render a list of dicts as a Rich Table."""
     table = Table(title=title, show_header=True, header_style="bold")
@@ -78,16 +89,16 @@ def _render_table(rows: Sequence[object], *, console: Console, title: str | None
     for row in rows:
         if isinstance(row, dict):
             row_dict = {str(k): v for k, v in row.items()}
-            table.add_row(*[str(row_dict.get(col, "")) for col in columns])
+            table.add_row(*[_cell(row_dict.get(col, "")) for col in columns])
         else:
-            table.add_row(str(row))
+            table.add_row(_cell(row))
 
     console.print(table)
 
 
 def _render_panel(data: dict[str, object], *, console: Console, title: str | None) -> None:
     """Render a single dict as a Rich Panel with key: value lines."""
-    lines = "\n".join(f"[bold]{k}[/bold]: {v}" for k, v in data.items())
+    lines = "\n".join(f"[bold]{k}[/bold]: {_cell(v)}" for k, v in data.items())
     panel = Panel(lines, title=title)
     console.print(panel)
 
