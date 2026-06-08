@@ -3,14 +3,16 @@
 import asyncio
 import os
 from enum import StrEnum
+from types import TracebackType
+from typing import Any
 
-from azure.core.credentials import AccessToken, TokenCredential
+from azure.core.credentials import AccessToken
+from azure.core.credentials_async import AsyncTokenCredential
 from azure.identity import (
-    ClientSecretCredential,
-    DefaultAzureCredential,
     InteractiveBrowserCredential,
     TokenCachePersistenceOptions,
 )
+from azure.identity.aio import ClientSecretCredential, DefaultAzureCredential
 
 from fabric_dw.exceptions import ConfigError
 
@@ -31,6 +33,48 @@ class CredentialMode(StrEnum):
     INTERACTIVE = "interactive"
 
 
+class _SyncCredentialAdapter:
+    """Adapts a synchronous TokenCredential to the AsyncTokenCredential protocol.
+
+    Used for credentials that have no async variant in azure-identity (e.g.
+    InteractiveBrowserCredential on older releases).  The synchronous
+    ``get_token`` is offloaded to a thread so the event loop is not blocked.
+    """
+
+    def __init__(self, inner: InteractiveBrowserCredential) -> None:
+        self._inner = inner
+
+    async def get_token(
+        self,
+        *scopes: str,
+        claims: str | None = None,
+        tenant_id: str | None = None,
+        enable_cae: bool = False,
+        **kwargs: Any,  # noqa: ANN401, ARG002
+    ) -> AccessToken:
+        return await asyncio.to_thread(
+            self._inner.get_token,
+            *scopes,
+            claims=claims,
+            tenant_id=tenant_id,
+            enable_cae=enable_cae,
+        )
+
+    async def close(self) -> None:
+        self._inner.close()
+
+    async def __aenter__(self) -> "_SyncCredentialAdapter":
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None = None,
+        exc_value: BaseException | None = None,
+        traceback: TracebackType | None = None,
+    ) -> None:
+        await self.close()
+
+
 def _resolve_interactive_kwargs() -> dict[str, str]:
     """Build keyword arguments for the interactive browser credential path.
 
@@ -49,14 +93,14 @@ def _resolve_interactive_kwargs() -> dict[str, str]:
     return kwargs
 
 
-def get_credential(mode: CredentialMode = CredentialMode.DEFAULT) -> TokenCredential:
+def get_credential(mode: CredentialMode = CredentialMode.DEFAULT) -> AsyncTokenCredential:
     """Return an Azure credential for the given mode.
 
     Args:
         mode: The credential mode to use. Defaults to DEFAULT.
 
     Returns:
-        A TokenCredential appropriate for the given mode.
+        An AsyncTokenCredential appropriate for the given mode.
 
     Raises:
         ConfigError: If mode is SERVICE_PRINCIPAL and any of AZURE_TENANT_ID,
@@ -89,24 +133,11 @@ def get_credential(mode: CredentialMode = CredentialMode.DEFAULT) -> TokenCreden
             client_secret=env_vars["AZURE_CLIENT_SECRET"] or "",
         )
 
-    # CredentialMode.INTERACTIVE
-    return InteractiveBrowserCredential(
-        cache_persistence_options=_CACHE_OPTIONS,
-        **_resolve_interactive_kwargs(),
+    # CredentialMode.INTERACTIVE — InteractiveBrowserCredential has no aio variant
+    # in this release of azure-identity; wrap in an adapter that offloads to thread.
+    return _SyncCredentialAdapter(
+        InteractiveBrowserCredential(
+            cache_persistence_options=_CACHE_OPTIONS,
+            **_resolve_interactive_kwargs(),
+        )
     )
-
-
-async def get_token(credential: TokenCredential, scope: str) -> AccessToken:
-    """Retrieve an access token from the credential asynchronously.
-
-    Wraps the synchronous ``credential.get_token`` call in ``asyncio.to_thread``
-    so it does not block the event loop.
-
-    Args:
-        credential: The Azure credential to use.
-        scope: The OAuth2 scope to request a token for.
-
-    Returns:
-        The raw AccessToken returned by the credential.
-    """
-    return await asyncio.to_thread(credential.get_token, scope)

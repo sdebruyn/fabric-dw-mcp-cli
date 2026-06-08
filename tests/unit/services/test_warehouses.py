@@ -10,7 +10,8 @@ from uuid import UUID
 import httpx
 import pytest
 import respx
-from azure.core.credentials import AccessToken, TokenCredential
+from azure.core.credentials import AccessToken
+from azure.core.credentials_async import AsyncTokenCredential
 
 from fabric_dw.exceptions import FabricServerError, NotFound, PermissionDenied
 from fabric_dw.http_client import FabricHttpClient
@@ -47,9 +48,9 @@ _ITEMS_URL = f"{_BASE}/workspaces/{_WORKSPACE_ID}/items"
 _OPERATION_URL = f"{_BASE}/operations/op-abc123"
 
 
-def _make_credential(token: AccessToken = _FAKE_TOKEN) -> TokenCredential:
-    cred = MagicMock(spec=TokenCredential)
-    cred.get_token = MagicMock(return_value=token)
+def _make_credential(token: AccessToken = _FAKE_TOKEN) -> AsyncTokenCredential:
+    cred = MagicMock(spec=AsyncTokenCredential)
+    cred.get_token = AsyncMock(return_value=token)
     return cred
 
 

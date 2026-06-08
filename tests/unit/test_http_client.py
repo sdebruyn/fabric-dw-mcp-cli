@@ -6,12 +6,13 @@ import asyncio
 import logging
 import time
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
 import respx
-from azure.core.credentials import AccessToken, TokenCredential
+from azure.core.credentials import AccessToken
+from azure.core.credentials_async import AsyncTokenCredential
 from freezegun import freeze_time
 
 from fabric_dw.exceptions import (
@@ -30,10 +31,10 @@ from fabric_dw.http_client import FabricHttpClient, HttpBase, _parse_retry_after
 _FAKE_TOKEN = AccessToken(token="fake-token", expires_on=int(time.time()) + 3600)  # noqa: S106
 
 
-def _make_credential(token: AccessToken = _FAKE_TOKEN) -> TokenCredential:
+def _make_credential(token: AccessToken = _FAKE_TOKEN) -> AsyncTokenCredential:
     """Build a mock credential that returns *token*."""
-    cred = MagicMock(spec=TokenCredential)
-    cred.get_token = MagicMock(return_value=token)
+    cred = MagicMock(spec=AsyncTokenCredential)
+    cred.get_token = AsyncMock(return_value=token)
     return cred
 
 
@@ -356,9 +357,8 @@ async def test_request_params_int_value_serialized() -> None:
 @pytest.mark.asyncio
 async def test_concurrent_requests_fetch_token_once() -> None:
     """Five concurrent requests before any token is fetched must call get_token exactly once."""
-    cred = MagicMock(spec=TokenCredential)
-    # get_token is synchronous; auth.get_token wraps it via asyncio.to_thread
-    cred.get_token = MagicMock(
+    cred = MagicMock(spec=AsyncTokenCredential)
+    cred.get_token = AsyncMock(
         return_value=AccessToken(token="tok", expires_on=int(time.time()) + 3600)  # noqa: S106
     )
 

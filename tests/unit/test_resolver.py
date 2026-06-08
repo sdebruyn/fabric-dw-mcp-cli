@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import httpx
 import pytest
 import respx
-from azure.core.credentials import AccessToken, TokenCredential
+from azure.core.credentials import AccessToken
+from azure.core.credentials_async import AsyncTokenCredential
 
 from fabric_dw.cache import LookupCache
 from fabric_dw.exceptions import FabricError, NotFound
@@ -39,9 +40,9 @@ _FABRIC_ITEMS_URL = f"https://api.fabric.microsoft.com/v1/workspaces/{WS_GUID}/i
 _FABRIC_ITEM_URL = f"https://api.fabric.microsoft.com/v1/workspaces/{WS_GUID}/items/{ITEM_GUID}"
 
 
-def _make_credential() -> TokenCredential:
-    cred = MagicMock(spec=TokenCredential)
-    cred.get_token = MagicMock(return_value=_FAKE_TOKEN)
+def _make_credential() -> AsyncTokenCredential:
+    cred = MagicMock(spec=AsyncTokenCredential)
+    cred.get_token = AsyncMock(return_value=_FAKE_TOKEN)
     return cred
 
 

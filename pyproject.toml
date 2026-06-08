@@ -59,6 +59,7 @@ dependencies = [
     "click>=8.2",
     "rich>=14",
     "anyio>=4",
+    "aiohttp>=3.9",
 ]
 
 [project.urls]

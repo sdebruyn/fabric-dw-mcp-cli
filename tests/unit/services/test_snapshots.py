@@ -12,7 +12,8 @@ from uuid import UUID
 import httpx
 import pytest
 import respx
-from azure.core.credentials import AccessToken, TokenCredential
+from azure.core.credentials import AccessToken
+from azure.core.credentials_async import AsyncTokenCredential
 
 from fabric_dw.exceptions import NotFound, PermissionDenied
 from fabric_dw.http_client import FabricHttpClient
@@ -116,9 +117,9 @@ WAREHOUSE_SNAPSHOT_CREATED_PAYLOAD: dict[str, Any] = {
 _LRO_LOCATION = f"{_BASE_URL}/operations/op-abc-123"
 
 
-def _make_credential() -> TokenCredential:
-    cred = MagicMock(spec=TokenCredential)
-    cred.get_token = MagicMock(return_value=_FAKE_TOKEN)
+def _make_credential() -> AsyncTokenCredential:
+    cred = MagicMock(spec=AsyncTokenCredential)
+    cred.get_token = AsyncMock(return_value=_FAKE_TOKEN)
     return cred
 
 

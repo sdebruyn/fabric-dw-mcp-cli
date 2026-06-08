@@ -22,7 +22,8 @@ from typing import Any
 
 import httpx
 from aiolimiter import AsyncLimiter
-from azure.core.credentials import AccessToken, TokenCredential
+from azure.core.credentials import AccessToken
+from azure.core.credentials_async import AsyncTokenCredential
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from fabric_dw import auth
@@ -89,7 +90,7 @@ class FabricHttpClient:
             resp = await client.request("GET", HttpBase.FABRIC, "/workspaces")
     """
 
-    def __init__(self, credential: TokenCredential, rps: int = 2) -> None:
+    def __init__(self, credential: AsyncTokenCredential, rps: int = 2) -> None:
         self._credential = credential
         self._limiter = AsyncLimiter(max_rate=rps, time_period=1)
         self._http: httpx.AsyncClient | None = None
@@ -121,7 +122,7 @@ class FabricHttpClient:
         """
         async with self._token_lock:
             if self._token is None or self._token.expires_on - _time.time() < _TOKEN_REFRESH_BUFFER:
-                self._token = await auth.get_token(self._credential, auth.FABRIC_SCOPE)
+                self._token = await self._credential.get_token(auth.FABRIC_SCOPE)
         return self._token.token
 
     # ------------------------------------------------------------------

@@ -5,13 +5,14 @@ from __future__ import annotations
 import json
 import time
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import httpx
 import pytest
 import respx
-from azure.core.credentials import AccessToken, TokenCredential
+from azure.core.credentials import AccessToken
+from azure.core.credentials_async import AsyncTokenCredential
 
 from fabric_dw.exceptions import PermissionDenied
 from fabric_dw.http_client import FabricHttpClient
@@ -46,9 +47,9 @@ AUDIT_SETTINGS_DISABLED_PAYLOAD: dict[str, Any] = {
 _FAKE_TOKEN = AccessToken(token="fake-token", expires_on=int(time.time()) + 3600)  # noqa: S106
 
 
-def _make_credential() -> TokenCredential:
-    cred = MagicMock(spec=TokenCredential)
-    cred.get_token = MagicMock(return_value=_FAKE_TOKEN)
+def _make_credential() -> AsyncTokenCredential:
+    cred = MagicMock(spec=AsyncTokenCredential)
+    cred.get_token = AsyncMock(return_value=_FAKE_TOKEN)
     return cred
 
 
