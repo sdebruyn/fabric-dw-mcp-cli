@@ -19,7 +19,7 @@
 - **CLI** — a command-line tool for common DW administration tasks.
 - **MCP server** — a [Model Context Protocol](https://modelcontextprotocol.io) server that exposes DW operations as tools for AI assistants.
 
-Authentication is configured via the `FABRIC_AUTH` environment variable. The default (`FABRIC_AUTH=default`) uses [`azure-identity` `DefaultAzureCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.defaultazurecredential?WT.mc_id=MVP_310840), which walks environment variables, Workload/Managed Identity, and the Azure CLI token cache in order. For most local usage, `az login` is all you need. See the [Authentication](https://fdw.debruyn.dev/install/#authentication) docs for the full credential chain and alternative modes.
+Authentication is configured via the `FABRIC_AUTH` environment variable. The default (`FABRIC_AUTH=default`) uses [`azure-identity` `DefaultAzureCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.defaultazurecredential?WT.mc_id=MVP_310840), which walks environment variables, Workload/Managed Identity, Azure CLI, Azure Developer CLI, Azure PowerShell, and interactive browser in order — any of these will satisfy it. See the [Authentication](https://fdw.debruyn.dev/authentication/) docs for the full chain, all supported sources, and debugging tips.
 
 ## Installation
 
