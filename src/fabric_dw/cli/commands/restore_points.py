@@ -33,12 +33,6 @@ async def _build_http_client(ctx: CliContext) -> AsyncIterator[FabricHttpClient]
         yield http
 
 
-async def _resolve_ws(http: FabricHttpClient, workspace: str) -> UUID:
-    cache = LookupCache()
-    resolver = Resolver(http=http, cache=cache)
-    return await resolver.workspace_id(workspace)
-
-
 async def _resolve_wh(http: FabricHttpClient, workspace: str, warehouse: str) -> tuple[UUID, UUID]:
     cache = LookupCache()
     resolver = Resolver(http=http, cache=cache)

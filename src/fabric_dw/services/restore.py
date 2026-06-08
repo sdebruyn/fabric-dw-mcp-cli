@@ -70,8 +70,8 @@ async def get_point(
         The :class:`~fabric_dw.models.RestorePoint`.
 
     Raises:
-        NotFound: If the restore point does not exist or the caller has
-            insufficient permissions.
+        NotFound: If the restore point does not exist.
+        PermissionDenied: If the caller has insufficient permissions.
     """
     resp = await http.request(
         "GET",
@@ -124,6 +124,9 @@ async def create_point(
 
     # 202 Accepted — poll the LRO then fetch the created restore point.
     location: str = resp.headers.get("Location", "")
+    if not location:
+        msg = "Fabric returned 202 for create_point but the Location header is missing"
+        raise ValueError(msg)
     operation_result = await http.poll_operation(location)
 
     # Branch (a): some Fabric LRO responses include resourceId/id in the status
@@ -184,6 +187,7 @@ async def update_point(
     Raises:
         ValueError: If neither *name* nor *description* is supplied.
         NotFound: If the restore point does not exist.
+        PermissionDenied: If the caller has insufficient permissions.
     """
     if name is None and description is None:
         msg = "At least one of name or description must be provided"
@@ -222,8 +226,8 @@ async def delete_point(
         point_id: The restore point ID string.
 
     Raises:
-        NotFound: If the restore point does not exist or the caller has
-            insufficient permissions.
+        NotFound: If the restore point does not exist.
+        PermissionDenied: If the caller has insufficient permissions.
     """
     await http.request(
         "DELETE",
@@ -251,8 +255,8 @@ async def restore_in_place(
         point_id: The restore point ID string.
 
     Raises:
-        NotFound: If the restore point does not exist or the caller has
-            insufficient permissions.
+        NotFound: If the restore point does not exist.
+        PermissionDenied: If the caller has insufficient permissions.
         FabricServerError: If the LRO fails or times out.
     """
     resp = await http.request(
@@ -263,5 +267,8 @@ async def restore_in_place(
 
     if resp.status_code == 202:  # noqa: PLR2004
         location: str = resp.headers.get("Location", "")
+        if not location:
+            msg = "Fabric returned 202 for restore_in_place but the Location header is missing"
+            raise ValueError(msg)
         await http.poll_operation(location)
     # 200 OK means synchronous success — nothing further to do.
