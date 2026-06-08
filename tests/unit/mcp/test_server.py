@@ -67,6 +67,7 @@ EXPECTED_TOOL_NAMES: frozenset[str] = frozenset(
         "set_audit_action_groups",
         "add_audit_group",
         "remove_audit_group",
+        "set_audit_retention",
         # Queries
         "list_running_queries",
         "kill_session",
@@ -801,3 +802,80 @@ async def test_remove_audit_group_happy_path() -> None:
     assert isinstance(result, dict)
     assert result["state"] == "Enabled"
     mock_resolver.item.assert_called_once_with(_WS_NAME, _WH_NAME)
+
+
+# ---------------------------------------------------------------------------
+# set_audit_retention happy path
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_set_audit_retention_happy_path() -> None:
+    """set_audit_retention resolves workspace + warehouse and returns updated AuditSettings."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    updated = AuditSettings.model_validate(
+        {
+            "state": "Enabled",
+            "retentionDays": 90,
+            "auditActionsAndGroups": ["BATCH_COMPLETED_GROUP"],
+        }
+    )
+    item = _make_item_entry()
+
+    mock_resolver = AsyncMock()
+    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_resolver.item = AsyncMock(return_value=item)
+    mock_http = AsyncMock()
+    mock_cache = MagicMock()
+
+    with (
+        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
+        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
+        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        patch(
+            "fabric_dw.services.audit.set_retention",
+            new=AsyncMock(return_value=updated),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "set_audit_retention",
+            {"workspace": _WS_NAME, "warehouse": _WH_NAME, "days": 90},
+        )
+
+    assert isinstance(result, dict)
+    assert result["retentionDays"] == 90
+    assert result["state"] == "Enabled"
+
+
+@pytest.mark.asyncio
+async def test_set_audit_retention_value_error_becomes_tool_error() -> None:
+    """set_audit_retention converts ValueError (disabled audit or out-of-range) to ToolError."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = _make_item_entry()
+
+    mock_resolver = AsyncMock()
+    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_resolver.item = AsyncMock(return_value=item)
+    mock_http = AsyncMock()
+    mock_cache = MagicMock()
+
+    with (
+        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
+        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
+        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        patch(
+            "fabric_dw.services.audit.set_retention",
+            new=AsyncMock(side_effect=ValueError("audit is disabled; enable first")),
+        ),
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "set_audit_retention",
+            {"workspace": _WS_NAME, "warehouse": _WH_NAME, "days": 30},
+        )
+
+    assert "disabled" in str(exc_info.value).lower()

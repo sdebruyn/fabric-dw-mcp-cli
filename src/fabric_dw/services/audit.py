@@ -25,6 +25,7 @@ __all__ = [
     "get_settings",
     "remove_action_group",
     "set_action_groups",
+    "set_retention",
 ]
 
 _ACTION_GROUP_RE = re.compile(r"^[A-Z0-9_]+$")
@@ -116,6 +117,50 @@ async def disable(
     """
     path = _audit_path(workspace_id, warehouse_id)
     await http.request("PATCH", HttpBase.FABRIC, path, json={"state": "Disabled"})
+    return await get_settings(http, workspace_id, warehouse_id)
+
+
+_MAX_RETENTION_DAYS = 3653  # ~10 years — Fabric documented upper bound
+
+
+async def set_retention(
+    http: FabricHttpClient,
+    workspace_id: UUID,
+    warehouse_id: UUID,
+    *,
+    days: int,
+) -> AuditSettings:
+    """Update the audit log retention period without changing the audit state.
+
+    Audit must already be enabled.  If it is disabled, this function raises
+    :class:`ValueError` with a hint to run ``audit enable`` first.
+
+    Args:
+        http: Authenticated Fabric HTTP client.
+        workspace_id: GUID of the Fabric workspace.
+        warehouse_id: GUID of the Data Warehouse.
+        days: Retention period in days.  Must be between 1 and 3653 (inclusive).
+
+    Returns:
+        The fresh :class:`~fabric_dw.models.AuditSettings` after the update.
+
+    Raises:
+        ValueError: If *days* is outside ``1..3653``, or if audit is currently
+            disabled (enable it first with :func:`enable`).
+        PermissionDenied: If the caller lacks the required permission (HTTP 403).
+    """
+    if not (1 <= days <= _MAX_RETENTION_DAYS):
+        msg = f"days must be between 1 and {_MAX_RETENTION_DAYS}; got {days}"
+        raise ValueError(msg)
+
+    # Pre-check: refuse silently-no-op PATCH when audit is disabled.
+    current = await get_settings(http, workspace_id, warehouse_id)
+    if current.state != "Enabled":
+        msg = "audit is disabled; enable first with `audit enable` before setting retention"
+        raise ValueError(msg)
+
+    path = _audit_path(workspace_id, warehouse_id)
+    await http.request("PATCH", HttpBase.FABRIC, path, json={"retentionDays": days})
     return await get_settings(http, workspace_id, warehouse_id)
 
 

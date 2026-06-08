@@ -112,6 +112,39 @@ async def disable_cmd(ctx: CliContext, workspace: str | None, warehouse: str | N
         raise click.ClickException(str(exc)) from exc
 
 
+@audit_group.command("set-retention")
+@click.argument("workspace", required=False, default=None)
+@click.argument("warehouse", required=False, default=None)
+@click.option(
+    "--days",
+    required=True,
+    type=int,
+    help="Retention period in days (1-3653). Does not change the audit enabled/disabled state.",
+)
+@click.pass_obj
+@_coro
+async def set_retention_cmd(
+    ctx: CliContext,
+    workspace: str | None,
+    warehouse: str | None,
+    days: int,
+) -> None:
+    """Update the audit log retention period for WAREHOUSE in WORKSPACE.
+
+    Audit must already be enabled; if disabled, enable it first with
+    ``audit enable``.  This command does NOT change the audit state.
+    """
+    ws = resolve_workspace_arg(ctx, workspace)
+    wh = resolve_warehouse_arg(ctx, warehouse)
+    try:
+        async with _build_clients(ctx) as (http, _):
+            ws_id, entry = await _resolve_item(http, ws, wh)
+            obj = await _audit_svc.set_retention(http, ws_id, entry.id, days=days)
+            render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
+    except (ValueError, FabricError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
 @audit_group.command("set-groups")
 @click.argument("workspace", required=False, default=None)
 @click.argument("warehouse", required=False, default=None)

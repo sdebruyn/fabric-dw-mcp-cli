@@ -477,3 +477,67 @@ async def test_remove_action_group_403_raises_permission_denied() -> None:
         async with client:
             with pytest.raises(PermissionDenied):
                 await audit.remove_action_group(client, _WS_ID, _WH_ID, "BATCH_COMPLETED_GROUP")
+
+
+# ---------------------------------------------------------------------------
+# set_retention
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_set_retention_patches_with_retention_days_only() -> None:
+    """set_retention should PATCH with only retentionDays (no state), then GET and return fresh."""
+    updated = AUDIT_SETTINGS_PAYLOAD.copy()
+    updated["retentionDays"] = 90
+
+    with respx.mock:
+        patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        get_route = respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=updated))
+        client = await _make_client()
+        async with client:
+            result = await audit.set_retention(client, _WS_ID, _WH_ID, days=90)
+
+    assert patch_route.called
+    sent_body = json.loads(patch_route.calls[0].request.content)
+    assert sent_body == {"retentionDays": 90}
+    assert "state" not in sent_body
+
+    assert get_route.called
+    assert isinstance(result, AuditSettings)
+    assert result.retention_days == 90
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("days", [0, -1, 3654, -100])
+async def test_set_retention_out_of_range_raises_value_error(days: int) -> None:
+    """set_retention should raise ValueError when days is outside 1..3653."""
+    client = await _make_client()
+    async with client:
+        with pytest.raises(ValueError, match="days"):
+            await audit.set_retention(client, _WS_ID, _WH_ID, days=days)
+
+
+@pytest.mark.asyncio
+async def test_set_retention_disabled_audit_raises_value_error() -> None:
+    """set_retention should raise ValueError when audit is currently disabled."""
+    with respx.mock:
+        respx.get(_AUDIT_URL).mock(
+            return_value=httpx.Response(200, json=AUDIT_SETTINGS_DISABLED_PAYLOAD)
+        )
+        client = await _make_client()
+        async with client:
+            with pytest.raises(ValueError, match="disabled"):
+                await audit.set_retention(client, _WS_ID, _WH_ID, days=30)
+
+
+@pytest.mark.asyncio
+async def test_set_retention_403_raises_permission_denied() -> None:
+    """set_retention should propagate PermissionDenied on 403 from PATCH."""
+    with respx.mock:
+        # GET succeeds (audit enabled), PATCH returns 403
+        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=AUDIT_SETTINGS_PAYLOAD))
+        respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(403, json={"error": "forbidden"}))
+        client = await _make_client()
+        async with client:
+            with pytest.raises(PermissionDenied):
+                await audit.set_retention(client, _WS_ID, _WH_ID, days=30)
