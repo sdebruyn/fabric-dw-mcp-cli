@@ -309,6 +309,16 @@ class View(_FabricBase):
     modified: datetime
 
 
+class Table(_FabricBase):
+    """A SQL table on a Fabric Data Warehouse or SQL Analytics Endpoint."""
+
+    schema_name: str
+    name: str
+    qualified_name: str
+    created: datetime
+    modified: datetime
+
+
 # ---------------------------------------------------------------------------
 # SQL Pools (beta)
 # ---------------------------------------------------------------------------

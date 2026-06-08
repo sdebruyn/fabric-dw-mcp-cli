@@ -534,6 +534,88 @@ Drop a SQL view.
 
 ---
 
+## Tables
+
+> **List-source note** — no public REST API exists for enumerating warehouse tables. `list_tables` uses TDS `sys.tables JOIN sys.schemas`.
+
+### list_tables
+
+List SQL tables on a warehouse or SQL Analytics Endpoint.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
+- `schema` (`str | null`, optional) — when provided, only tables in this schema are returned.
+
+**Returns:** `list[Table]` — each with `schema_name`, `name`, `qualified_name`, `created`, `modified`.
+
+---
+
+### read_table
+
+Return up to `count` rows from a table as JSON-serialisable columns and rows.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`) — dot-separated table name, e.g. `dbo.sales`.
+- `count` (`int`, default `10`) — maximum rows to return.
+
+**Returns:** `{ "columns": list[str], "rows": list[list] }` — column names and row arrays.
+
+---
+
+### create_table
+
+Create a new SQL table via CTAS (`CREATE TABLE … AS SELECT`).
+
+**CAUTION**: `select_body` is executed verbatim as DDL. Confirm intent before calling. The first non-comment keyword must be `SELECT`.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`) — dot-separated table name, e.g. `dbo.sales`.
+- `select_body` (`str`) — the SELECT statement for the CTAS source.
+
+**Returns:** `Table` — the newly-created table record.
+
+---
+
+### delete_table
+
+Drop a SQL table.
+
+**CAUTION**: This is a destructive, irreversible operation. All data will be permanently deleted. Confirm with the user before calling.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`) — dot-separated table name, e.g. `dbo.sales`.
+
+**Returns:** `{ "dropped": true }` — confirmation.
+
+---
+
+### clear_table
+
+Truncate a SQL table (remove all rows, preserve structure).
+
+**CAUTION**: This is a destructive, irreversible operation. All rows will be permanently deleted. The table structure is preserved. Confirm with the user before calling.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`) — dot-separated table name, e.g. `dbo.sales`.
+
+**Returns:** `{ "truncated": true }` — confirmation.
+
+---
+
 ## SQL Pools (beta)
 
 !!! warning "Beta / preview feature"

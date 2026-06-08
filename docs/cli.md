@@ -805,6 +805,138 @@ fabric-dw --yes views drop MyWorkspace SalesWH dbo.vw_recent
 
 ---
 
+## fabric-dw tables
+
+Manage SQL tables on Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
+
+> **List-source note** — no public REST API exists for enumerating warehouse tables. `tables list` falls back to TDS via `sys.tables JOIN sys.schemas`, the same approach used by `views list`.
+
+### tables list
+
+List all tables on a warehouse or SQL Analytics Endpoint. Pass `--schema` to filter to a single schema.
+
+**Synopsis**
+
+```
+fabric-dw tables list [OPTIONS] [WORKSPACE] [WAREHOUSE]
+```
+
+| Option | Description |
+| --- | --- |
+| `--schema TEXT` | Only list tables in this schema. |
+
+**Example**
+
+```shell
+fabric-dw tables list MyWorkspace SalesWH --schema dbo
+```
+
+```
+ schema_name  name      created               modified
+ ------------ --------- --------------------- ---------------------
+ dbo          customers 2026-01-10T08:00:00Z  2026-06-01T12:00:00Z
+ dbo          orders    2026-02-01T09:00:00Z  2026-05-15T14:00:00Z
+```
+
+---
+
+### tables read
+
+Read up to `--count` rows from a table and emit them as JSON (default), CSV, or Parquet.
+
+CSV and Parquet formats require `--output`. JSON is emitted to stdout by default.
+
+**Synopsis**
+
+```
+fabric-dw tables read [OPTIONS] [WORKSPACE] [WAREHOUSE] QUALIFIED_NAME
+```
+
+| Option | Description | Default |
+| --- | --- | --- |
+| `--count N` | Maximum rows to return. | `10` |
+| `--format {json\|csv\|parquet}` | Output format. | `json` |
+| `--output PATH` | Write to file instead of stdout. Required for `csv` and `parquet`. | |
+
+**Example**
+
+```shell
+fabric-dw tables read MyWorkspace SalesWH dbo.orders --count 5
+```
+
+```json
+[
+  {"id": 1, "amount": 99.99, "customer_id": 42},
+  ...
+]
+```
+
+---
+
+### tables create
+
+Create a new table via CTAS (`CREATE TABLE … AS SELECT`). The body must start with `SELECT` (leading block and line comments are allowed).
+
+**Synopsis**
+
+```
+fabric-dw tables create [OPTIONS] [WORKSPACE] [WAREHOUSE]
+```
+
+| Option | Description |
+| --- | --- |
+| `--name SCHEMA.TABLE` | **Required.** Qualified table name. |
+| `--select TEXT` | Inline SELECT statement. |
+| `--from-file PATH` | Path to a `.sql` file containing the SELECT body (UTF-8/UTF-8-sig). |
+
+Exactly one of `--select` or `--from-file` must be provided.
+
+**Example**
+
+```shell
+fabric-dw tables create MyWorkspace SalesWH \
+  --name dbo.orders_2026 \
+  --select "SELECT * FROM dbo.orders WHERE YEAR(sale_date) = 2026"
+```
+
+---
+
+### tables delete
+
+Drop a table. You will be asked to confirm unless `--yes` is passed.
+
+**Synopsis**
+
+```
+fabric-dw tables delete [OPTIONS] [WORKSPACE] [WAREHOUSE] QUALIFIED_NAME
+```
+
+**Example**
+
+```shell
+fabric-dw --yes tables delete MyWorkspace SalesWH dbo.orders_2026
+```
+
+---
+
+### tables clear
+
+Truncate a table (delete all rows, keep structure). You will be asked to confirm unless `--yes` is passed.
+
+**Synopsis**
+
+```
+fabric-dw tables clear [OPTIONS] [WORKSPACE] [WAREHOUSE] QUALIFIED_NAME
+```
+
+**Example**
+
+```shell
+fabric-dw --yes tables clear MyWorkspace SalesWH dbo.staging_load
+```
+
+---
+
 ## fabric-dw snapshots
 
 Manage Microsoft Fabric Data Warehouse snapshots.
