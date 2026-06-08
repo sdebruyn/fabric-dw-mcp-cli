@@ -509,7 +509,7 @@ Drop a SQL view.
 ## SQL Pools (beta)
 
 !!! warning "Beta / preview feature"
-    The four SQL Pools tools manage the workspace SQL Pools configuration (currently in preview).  The API may change before GA; a mandatory `?beta=true` query parameter is appended automatically.  All callers must hold the **workspace admin role**.
+    The four SQL Pools tools manage the workspace SQL Pools configuration (currently in preview; the API may change before GA). All callers must hold the **workspace admin role**.
 
 ### get_sql_pools_configuration
 
