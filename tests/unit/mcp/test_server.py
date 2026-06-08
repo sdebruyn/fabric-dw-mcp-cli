@@ -77,6 +77,8 @@ EXPECTED_TOOL_NAMES: frozenset[str] = frozenset(
         "list_frequent_queries",
         "list_long_running_queries",
         "list_sql_pool_insights",
+        # Generic SQL execution
+        "execute_sql",
         # Snapshots
         "list_snapshots",
         "create_snapshot",
@@ -879,3 +881,70 @@ async def test_set_audit_retention_value_error_becomes_tool_error() -> None:
         )
 
     assert "disabled" in str(exc_info.value).lower()
+
+
+# ---------------------------------------------------------------------------
+# execute_sql tool
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_execute_sql_happy_path() -> None:
+    """execute_sql calls sql_exec.execute and returns a dict with columns/rows/rowcount."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+    from fabric_dw.models import SqlResult  # noqa: PLC0415
+
+    sql_result = SqlResult(columns=["id", "name"], rows=[[1, "foo"], [2, "bar"]], rowcount=2)
+    item = _make_item_entry()
+
+    mock_resolver = AsyncMock()
+    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_resolver.item = AsyncMock(return_value=item)
+    mock_http = AsyncMock()
+    mock_cache = MagicMock()
+
+    with (
+        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
+        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
+        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        patch(
+            "fabric_dw.services.sql_exec.execute",
+            new=AsyncMock(return_value=sql_result),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "execute_sql",
+            {"workspace": _WS_NAME, "item": _WH_NAME, "query": "SELECT id, name FROM t"},
+        )
+
+    assert isinstance(result, dict)
+    assert result["columns"] == ["id", "name"]
+    assert result["rows"] == [[1, "foo"], [2, "bar"]]
+    assert result["rowcount"] == 2
+
+
+@pytest.mark.asyncio
+async def test_execute_sql_no_connection_string_raises_tool_error() -> None:
+    """execute_sql raises ToolError when the item has no connection string."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = _make_item_entry(connection_string=None)
+
+    mock_resolver = AsyncMock()
+    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_resolver.item = AsyncMock(return_value=item)
+    mock_http = AsyncMock()
+    mock_cache = MagicMock()
+
+    with (
+        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
+        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
+        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "execute_sql",
+            {"workspace": _WS_NAME, "item": _WH_NAME, "query": "SELECT 1"},
+        )
