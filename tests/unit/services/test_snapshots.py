@@ -193,23 +193,16 @@ async def test_list_pages_through_and_filters_by_parent() -> None:
     assert snap.name == "SalesWarehouse_Snapshot_20240315"
 
 
-@respx.mock
 async def test_list_returns_empty_when_no_snapshots() -> None:
-    """list returns empty list if no items match type=WarehouseSnapshot."""
-    payload: dict[str, Any] = {
-        "value": [
-            {
-                "id": "99999999-9999-9999-9999-999999999999",
-                "displayName": "SomeLakehouse",
-                "type": "Lakehouse",
-                "workspaceId": str(_WS_ID),
-            }
-        ]
-    }
-    respx.get(_ITEMS_URL).mock(return_value=httpx.Response(200, json=payload))
+    """list returns empty list when the server returns no WarehouseSnapshot items."""
+    payload: dict[str, Any] = {"value": []}
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(
+            url__regex=rf"https://api\.fabric\.microsoft\.com/v1/workspaces/{_WS_ID}/items(\?.*)?$"
+        ).mock(return_value=httpx.Response(200, json=payload))
 
-    async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
-        result = await snapshots.list_snapshots(http, _WS_ID, _PARENT_WH_ID)
+        async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
+            result = await snapshots.list_snapshots(http, _WS_ID, _PARENT_WH_ID)
 
     assert result == []
 

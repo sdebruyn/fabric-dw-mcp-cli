@@ -80,11 +80,18 @@ async def list_snapshots(
 
     async def _fetch_once() -> list[WarehouseSnapshot]:
         snapshot_ids: list[UUID] = []
-        async for item in http.iter_paginated(HttpBase.FABRIC, f"/workspaces/{workspace_id}/items"):
-            if item.get("type") == "WarehouseSnapshot":
-                raw_id = item.get("id")
-                if raw_id:
-                    snapshot_ids.append(UUID(str(raw_id)))
+        # Use the server-side type filter — this may return more current data than
+        # the general items list for newly-created snapshots.  The client-side
+        # check is a defence-in-depth guard in case the server ignores the param.
+        async for item in http.iter_paginated(
+            HttpBase.FABRIC,
+            f"/workspaces/{workspace_id}/items?type=WarehouseSnapshot",
+        ):
+            if item.get("type") not in (None, "WarehouseSnapshot"):
+                continue
+            raw_id = item.get("id")
+            if raw_id:
+                snapshot_ids.append(UUID(str(raw_id)))
 
         out: list[WarehouseSnapshot] = []
         for snap_id in snapshot_ids:
