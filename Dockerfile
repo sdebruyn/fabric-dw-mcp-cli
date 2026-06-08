@@ -2,12 +2,13 @@
 ARG PYTHON_VERSION=3.13
 
 # Build stage uses Astral's official uv + python image
-FROM ghcr.io/astral-sh/uv:python${PYTHON_VERSION}-bookworm-slim AS build
+FROM ghcr.io/astral-sh/uv:python${PYTHON_VERSION}-trixie-slim AS build
 WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY src/ src/
-RUN uv sync --frozen --no-dev
-RUN uv build --wheel
+COPY .git .git
+RUN uv sync --frozen --no-dev && uv build --wheel && rm -rf .git
 
 # Runtime stage stays minimal — slim Python, pip-install the wheel
 FROM python:${PYTHON_VERSION}-slim AS runtime
