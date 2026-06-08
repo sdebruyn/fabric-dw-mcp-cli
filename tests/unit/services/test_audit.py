@@ -266,11 +266,12 @@ async def test_set_action_groups_403_raises_permission_denied() -> None:
 
 @pytest.mark.asyncio
 async def test_set_action_groups_retries_on_not_found_then_succeeds() -> None:
-    """set_action_groups retries the POST when sqlAudit is not yet provisioned (404).
+    """set_action_groups enables audit and retries when sqlAudit is not yet provisioned.
 
     Regression test: Fabric returns EntityNotFound (404) briefly after a warehouse is
-    created or audit is enabled, before the audit resource is fully provisioned.
-    set_action_groups should retry the POST up to 3 times before giving up.
+    created or audit is enabled.  On the first 404, set_action_groups must call enable()
+    to provision the sqlAudit resource, then retry the POST.  Subsequent 404s are
+    retried with a back-off.  Overall the POST should succeed within 3 attempts.
     """
     groups = ["BATCH_COMPLETED_GROUP"]
     updated = AUDIT_SETTINGS_PAYLOAD.copy()
@@ -292,6 +293,8 @@ async def test_set_action_groups_retries_on_not_found_then_succeeds() -> None:
 
     with respx.mock:
         respx.post(_AUDIT_URL).mock(side_effect=_post_side_effect)
+        # enable() is triggered on first 404: PATCH + GET
+        respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
         respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=updated))
         client = await _make_client()
         async with client:
@@ -313,8 +316,57 @@ async def test_set_action_groups_raises_not_found_after_max_retries() -> None:
                 json={"errorCode": "EntityNotFound", "message": "not found", "isRetriable": False},
             )
         )
+        respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=AUDIT_SETTINGS_PAYLOAD))
         client = await _make_client()
         async with client:
             with patch("asyncio.sleep", new=AsyncMock()):
                 with pytest.raises(NotFound):
                     await audit.set_action_groups(client, _WS_ID, _WH_ID, ["BATCH_COMPLETED_GROUP"])
+
+
+@pytest.mark.asyncio
+async def test_set_action_groups_enables_on_first_404_then_succeeds() -> None:
+    """set_action_groups enables audit on first 404, then retries POST successfully.
+
+    Regression: a freshly-created warehouse has no sqlAudit resource until audit
+    is enabled.  set_action_groups must call enable() on the first 404 and then
+    retry the POST instead of sleeping and retrying the same failing call.
+    """
+    groups = ["BATCH_COMPLETED_GROUP"]
+    updated = AUDIT_SETTINGS_PAYLOAD.copy()
+    updated["auditActionsAndGroups"] = groups
+
+    post_call_count = 0
+
+    def _post_side_effect(_request: httpx.Request) -> httpx.Response:
+        nonlocal post_call_count
+        post_call_count += 1
+        if post_call_count == 1:
+            return httpx.Response(
+                404,
+                json={"errorCode": "EntityNotFound", "message": "not found", "isRetriable": False},
+            )
+        return httpx.Response(200, json={})
+
+    patch_call_count = 0
+
+    def _patch_side_effect(_request: httpx.Request) -> httpx.Response:
+        nonlocal patch_call_count
+        patch_call_count += 1
+        return httpx.Response(200, json={})
+
+    with respx.mock:
+        respx.post(_AUDIT_URL).mock(side_effect=_post_side_effect)
+        respx.patch(_AUDIT_URL).mock(side_effect=_patch_side_effect)
+        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=updated))
+        client = await _make_client()
+        async with client:
+            result = await audit.set_action_groups(client, _WS_ID, _WH_ID, groups)
+
+    # POST called twice: once (404) + once (success after enable)
+    assert post_call_count == 2
+    # enable() called once via PATCH
+    assert patch_call_count == 1
+    assert isinstance(result, AuditSettings)
+    assert result.action_groups == groups

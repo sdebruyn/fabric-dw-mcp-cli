@@ -180,12 +180,37 @@ async def create(
             raise ValueError(msg)
         new_snap_id = UUID(str(result_id_raw))
 
-    detail_resp = await http.request(
-        "GET",
-        HttpBase.FABRIC,
-        f"/workspaces/{workspace_id}/items/{new_snap_id}",
+    # Fabric occasionally returns the item detail without creationPayload populated
+    # immediately after the LRO completes (provisioning lag).  Retry a few times
+    # with a short back-off before giving up.
+    _detail_path = f"/workspaces/{workspace_id}/items/{new_snap_id}"
+    _max_detail_retries = 5
+    _detail_wait_s = 3.0
+    for _attempt in range(_max_detail_retries):
+        detail_resp = await http.request("GET", HttpBase.FABRIC, _detail_path)
+        detail_body: dict[str, object] = detail_resp.json()
+        _raw_cp = detail_body.get("creationPayload")
+        _cp: dict[str, object] = (
+            cast("dict[str, object]", _raw_cp) if isinstance(_raw_cp, dict) else {}
+        )
+        if _cp.get("parentWarehouseId") is not None:
+            return _snapshot_from_detail(detail_body)
+        if _attempt < _max_detail_retries - 1:
+            await asyncio.sleep(_detail_wait_s)
+
+    # If parentWarehouseId is still missing after all retries, fall back to the
+    # value we sent in the creation request — it's definitively correct.
+    _raw_cp2 = detail_body.get("creationPayload")  # type: ignore[possibly-undefined]
+    _cp2: dict[str, object] = (
+        cast("dict[str, object]", _raw_cp2) if isinstance(_raw_cp2, dict) else {}
     )
-    return _snapshot_from_detail(detail_resp.json())
+    if _cp2.get("parentWarehouseId") is None:
+        detail_body = dict(detail_body)
+        detail_body["creationPayload"] = {
+            **_cp2,
+            "parentWarehouseId": str(parent_warehouse_id),
+        }
+    return _snapshot_from_detail(detail_body)
 
 
 async def rename(

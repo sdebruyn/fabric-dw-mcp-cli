@@ -157,6 +157,28 @@ class TestBuildConnectionString:
         result = build_connection_string(target)
         assert "Server=custom.host.com" in result
 
+    def test_bare_fqdn_gets_server_prefix(self) -> None:
+        target = _make_target(connection_string="myhost.datawarehouse.fabric.microsoft.com")
+        result = build_connection_string(target)
+        assert result.startswith("Server=myhost.datawarehouse.fabric.microsoft.com")
+
+    def test_bare_fqdn_server_prefix_idempotent(self) -> None:
+        target = _make_target(connection_string="myhost.datawarehouse.fabric.microsoft.com")
+        first = build_connection_string(target)
+        target2 = SqlTarget(
+            workspace_id=target.workspace_id,
+            database=target.database,
+            connection_string=first,
+        )
+        second = build_connection_string(target2)
+        assert first == second
+        assert ";;" not in first
+
+    def test_already_has_server_prefix_not_duplicated(self) -> None:
+        target = _make_target(connection_string="Server=myhost.datawarehouse.fabric.microsoft.com")
+        result = build_connection_string(target)
+        assert result.count("Server=") == 1
+
 
 # ---------------------------------------------------------------------------
 # open_connection — sync, caller closes

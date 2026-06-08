@@ -353,6 +353,51 @@ _LRO_LOCATION_BY_OP_ID = f"{_BASE_URL}/operations/{_LRO_OP_ID}"
 
 
 @respx.mock
+async def test_create_retries_detail_when_creation_payload_missing() -> None:
+    """create retries GET detail when parentWarehouseId is initially None.
+
+    Regression: Fabric occasionally returns the item detail without creationPayload
+    populated immediately after the LRO completes (provisioning lag). create() must
+    retry the detail GET until parentWarehouseId is present.
+    """
+    # First detail response has creationPayload but parentWarehouseId is None
+    detail_without_parent: dict[str, Any] = {
+        "id": str(_SNAP_ID),
+        "displayName": "NewSnapshot",
+        "type": "WarehouseSnapshot",
+        "workspaceId": str(_WS_ID),
+        "creationPayload": {
+            "parentWarehouseId": None,
+            "snapshotDateTime": None,
+        },
+    }
+
+    detail_call_count = 0
+
+    def _detail_side_effect(_request: Any) -> httpx.Response:
+        nonlocal detail_call_count
+        detail_call_count += 1
+        if detail_call_count < 2:
+            return httpx.Response(200, json=detail_without_parent)
+        return httpx.Response(200, json=WAREHOUSE_SNAPSHOT_DETAIL_PAYLOAD)
+
+    respx.post(_ITEMS_URL).mock(
+        return_value=httpx.Response(202, headers={"Location": _LRO_LOCATION})
+    )
+    respx.get(f"{_ITEMS_URL}/{_SNAP_ID}").mock(side_effect=_detail_side_effect)
+
+    async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
+        with patch.object(http, "poll_operation", new_callable=AsyncMock) as mock_poll:
+            mock_poll.return_value = {"status": "Succeeded", "resourceId": str(_SNAP_ID)}
+            with patch("asyncio.sleep", new=AsyncMock()):
+                result = await snapshots.create(http, _WS_ID, _PARENT_WH_ID, "NewSnapshot")
+
+    assert detail_call_count == 2
+    assert isinstance(result, WarehouseSnapshot)
+    assert result.parent_warehouse_id == _PARENT_WH_ID
+
+
+@respx.mock
 async def test_create_uses_operation_result_endpoint_when_no_resource_id() -> None:
     """create falls back to GET /operations/{id}/result when LRO status body has no resourceId.
 

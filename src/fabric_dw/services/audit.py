@@ -153,11 +153,14 @@ async def set_action_groups(
 
     path = _audit_path(workspace_id, warehouse_id)
 
-    # Fabric briefly returns 404 (EntityNotFound) after warehouse creation or after
-    # enabling auditing, before the sqlAudit resource is fully provisioned.
-    # Retry the POST up to 3 times with a short wait before giving up.
+    # Fabric returns 404 (EntityNotFound) when the sqlAudit resource does not yet
+    # exist — this happens on freshly-created warehouses where audit has never been
+    # enabled.  Strategy: on the first 404, call enable() to provision the resource,
+    # then retry the POST.  Subsequent 404s use a plain back-off retry so that a
+    # brief provisioning lag after enable() is also tolerated.
     max_provision_retries = 3
-    provision_wait_s = 2.0
+    provision_wait_s = 3.0
+    _enabled_once = False
     last_exc: NotFound | None = None
     for attempt in range(max_provision_retries):
         try:
@@ -165,6 +168,11 @@ async def set_action_groups(
             break
         except NotFound as exc:
             last_exc = exc
+            if not _enabled_once:
+                # Provision the audit resource by enabling it, then immediately retry.
+                _enabled_once = True
+                await enable(http, workspace_id, warehouse_id)
+                continue
             if attempt < max_provision_retries - 1:
                 await asyncio.sleep(provision_wait_s)
     else:
