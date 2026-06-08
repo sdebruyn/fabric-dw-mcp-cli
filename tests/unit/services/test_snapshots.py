@@ -5,6 +5,7 @@ from __future__ import annotations
 import json as _json
 import time
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
@@ -15,9 +16,10 @@ import respx
 from azure.core.credentials import AccessToken
 from azure.core.credentials_async import AsyncTokenCredential
 
+from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.exceptions import NotFound, PermissionDenied
 from fabric_dw.http_client import FabricHttpClient
-from fabric_dw.models import WarehouseSnapshot
+from fabric_dw.models import WarehouseKind, WarehouseSnapshot
 from fabric_dw.services import snapshots
 from fabric_dw.sql import SqlTarget
 
@@ -691,3 +693,128 @@ async def test_roll_timestamp_closes_connection() -> None:
         await snapshots.roll_timestamp(target, "MySnapshot")
 
     conn.close.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# rename — cache eviction
+# ---------------------------------------------------------------------------
+
+
+def _make_snap_cache_entry(tmp_path: Path) -> tuple[LookupCache, ItemEntry]:
+    cache = LookupCache(path=tmp_path / "lookup.json")
+    entry = ItemEntry(
+        id=_SNAP_ID,
+        kind=WarehouseKind.SNAPSHOT,
+        connection_string=None,
+        fetched_at=datetime.now(tz=UTC),
+        display_name="MySnapshot",
+    )
+    cache.put_item(_WS_ID, "MySnapshot", entry)
+    cache.put_item(_WS_ID, str(_SNAP_ID), entry)
+    return cache, entry
+
+
+_RENAME_TYPED_RESP: dict[str, object] = {
+    "id": str(_SNAP_ID),
+    "displayName": "RenamedSnapshot",
+    "type": "WarehouseSnapshot",
+    "workspaceId": str(_WS_ID),
+    "properties": {
+        "parentWarehouseId": str(_PARENT_WH_ID),
+        "snapshotDateTime": "2024-03-15T08:00:00Z",
+    },
+}
+
+
+@pytest.mark.asyncio
+async def test_rename_evicts_old_name_and_inserts_new_name(tmp_path: Path) -> None:
+    """rename with cache must evict old name and populate new name."""
+    cache, _entry = _make_snap_cache_entry(tmp_path)
+
+    with respx.mock:
+        # GET current snapshot (to read parentWarehouseId)
+        respx.get(_TYPED_SNAP_URL).mock(
+            return_value=httpx.Response(200, json=_RENAME_TYPED_RESP)
+        )
+        # PATCH rename
+        respx.patch(f"{_BASE_URL}/workspaces/{_WS_ID}/items/{_SNAP_ID}").mock(
+            return_value=httpx.Response(200, json={})
+        )
+
+        cred = _make_credential()
+        async with FabricHttpClient(credential=cred) as http:
+            await snapshots.rename(
+                http,
+                _WS_ID,
+                _SNAP_ID,
+                new_name="RenamedSnapshot",
+                cache=cache,
+                old_name="MySnapshot",
+            )
+
+    assert cache.get_item(_WS_ID, "MySnapshot") is None
+    assert cache.get_item(_WS_ID, "RenamedSnapshot") is not None
+
+
+@pytest.mark.asyncio
+async def test_rename_without_cache_does_not_raise(tmp_path: Path) -> None:
+    """rename without cache= must still complete successfully."""
+    _ = tmp_path
+
+    with respx.mock:
+        respx.get(_TYPED_SNAP_URL).mock(
+            return_value=httpx.Response(200, json=_RENAME_TYPED_RESP)
+        )
+        respx.patch(f"{_BASE_URL}/workspaces/{_WS_ID}/items/{_SNAP_ID}").mock(
+            return_value=httpx.Response(200, json={})
+        )
+
+        cred = _make_credential()
+        async with FabricHttpClient(credential=cred) as http:
+            result = await snapshots.rename(http, _WS_ID, _SNAP_ID, new_name="RenamedSnapshot")
+
+    assert result.name == "RenamedSnapshot"
+
+
+# ---------------------------------------------------------------------------
+# delete — cache eviction
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_delete_evicts_name_from_cache(tmp_path: Path) -> None:
+    """delete with cache= must evict both the name entry and the GUID entry."""
+    cache, _entry = _make_snap_cache_entry(tmp_path)
+
+    with respx.mock:
+        respx.delete(f"{_BASE_URL}/workspaces/{_WS_ID}/items/{_SNAP_ID}").mock(
+            return_value=httpx.Response(204)
+        )
+
+        cred = _make_credential()
+        async with FabricHttpClient(credential=cred) as http:
+            await snapshots.delete(
+                http,
+                _WS_ID,
+                _SNAP_ID,
+                cache=cache,
+                name="MySnapshot",
+            )
+
+    assert cache.get_item(_WS_ID, "MySnapshot") is None
+    assert cache.get_item(_WS_ID, str(_SNAP_ID)) is None
+
+
+@pytest.mark.asyncio
+async def test_delete_without_cache_does_not_raise(tmp_path: Path) -> None:
+    """delete without cache= must still complete successfully."""
+    _ = tmp_path
+
+    with respx.mock:
+        respx.delete(f"{_BASE_URL}/workspaces/{_WS_ID}/items/{_SNAP_ID}").mock(
+            return_value=httpx.Response(204)
+        )
+
+        cred = _make_credential()
+        async with FabricHttpClient(credential=cred) as http:
+            await snapshots.delete(http, _WS_ID, _SNAP_ID)

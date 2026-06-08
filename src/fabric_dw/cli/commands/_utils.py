@@ -48,6 +48,23 @@ async def _resolve_item(
     return ws_id, entry
 
 
+async def _resolve_item_with_cache(
+    http: FabricHttpClient,
+    workspace: str,
+    item: str,
+) -> tuple[UUID, ItemEntry, LookupCache]:
+    """Resolve workspace and item names/GUIDs and return the shared cache instance.
+
+    Use this variant when the caller needs the cache for subsequent eviction or
+    population (e.g. after rename or delete).
+    """
+    cache = LookupCache()
+    resolver = Resolver(http=http, cache=cache)
+    ws_id = await resolver.workspace_id(workspace)
+    entry = await resolver.item(workspace, item)
+    return ws_id, entry, cache
+
+
 def resolve_workspace_arg(ctx: CliContext, value: str | None) -> str:
     """Resolve the workspace argument using the priority order.
 

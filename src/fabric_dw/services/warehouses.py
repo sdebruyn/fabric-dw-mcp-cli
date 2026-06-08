@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.exceptions import FabricServerError, NotFound, PermissionDenied
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import Warehouse, WarehouseKind
@@ -182,8 +183,13 @@ async def rename(
     new_name: str,
     *,
     description: str | None = None,
+    cache: LookupCache | None = None,
+    old_name: str | None = None,
 ) -> Warehouse:
     """Rename a Warehouse (and optionally update its description).
+
+    After a successful rename the stale (workspace_id, old_name) cache entry is
+    evicted and a new entry under (workspace_id, new_name) is populated.
 
     Args:
         http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
@@ -191,6 +197,8 @@ async def rename(
         warehouse_id: The UUID of the warehouse to rename.
         new_name: The new display name. Must be a non-empty string.
         description: Optional new description. Omitted from the body if ``None``.
+        cache: Optional :class:`~fabric_dw.cache.LookupCache` for stale-entry eviction.
+        old_name: The current display name; used to evict the stale cache entry.
 
     Returns:
         The updated :class:`~fabric_dw.models.Warehouse` as returned by the API.
@@ -212,20 +220,44 @@ async def rename(
         f"/workspaces/{workspace_id}/warehouses/{warehouse_id}",
         json=body,
     )
-    return Warehouse.from_api(resp.json(), kind=WarehouseKind.WAREHOUSE)
+    result = Warehouse.from_api(resp.json(), kind=WarehouseKind.WAREHOUSE)
+
+    if cache is not None:
+        if old_name is not None:
+            cache.evict_item(workspace_id, old_name)
+        from datetime import UTC, datetime  # noqa: PLC0415
+
+        new_entry = ItemEntry(
+            id=warehouse_id,
+            kind=WarehouseKind.WAREHOUSE,
+            connection_string=result.connection_string,
+            fetched_at=datetime.now(tz=UTC),
+            display_name=new_name,
+        )
+        cache.put_item(workspace_id, new_name, new_entry)
+
+    return result
 
 
 async def delete(
     http: FabricHttpClient,
     workspace_id: UUID,
     warehouse_id: UUID,
+    *,
+    cache: LookupCache | None = None,
+    name: str | None = None,
 ) -> None:
     """Delete a Warehouse.
+
+    After a successful delete the (workspace_id, name) and
+    (workspace_id, warehouse_id) cache entries are evicted.
 
     Args:
         http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
         workspace_id: The UUID of the workspace containing the warehouse.
         warehouse_id: The UUID of the warehouse to delete.
+        cache: Optional :class:`~fabric_dw.cache.LookupCache` for stale-entry eviction.
+        name: The display name of the warehouse; used to evict the name-keyed entry.
 
     Returns:
         ``None`` on success (204 No Content).
@@ -238,3 +270,8 @@ async def delete(
         HttpBase.FABRIC,
         f"/workspaces/{workspace_id}/warehouses/{warehouse_id}",
     )
+
+    if cache is not None:
+        if name is not None:
+            cache.evict_item(workspace_id, name)
+        cache.evict_item(workspace_id, str(warehouse_id))

@@ -325,3 +325,56 @@ def test_get_item_strips_whitespace(tmp_path: Path) -> None:
     result = cache.get_item(WS_ID, "  SalesWarehouse  ")
     assert result is not None
     assert result.id == ITEM_ID
+
+
+# ---------------------------------------------------------------------------
+# evict_item
+# ---------------------------------------------------------------------------
+
+
+def test_evict_item_removes_existing_entry(tmp_path: Path) -> None:
+    """evict_item must remove an existing item entry so subsequent get returns None."""
+    cache = _make_cache(tmp_path)
+    cache.put_item(WS_ID, "SalesWarehouse", _make_item_entry())
+    cache.evict_item(WS_ID, "SalesWarehouse")
+    assert cache.get_item(WS_ID, "SalesWarehouse") is None
+
+
+def test_evict_item_is_case_insensitive(tmp_path: Path) -> None:
+    """evict_item must evict regardless of case in the name argument."""
+    cache = _make_cache(tmp_path)
+    cache.put_item(WS_ID, "SalesWarehouse", _make_item_entry())
+    cache.evict_item(WS_ID, "SALESWAREHOUSE")
+    assert cache.get_item(WS_ID, "saleswarehouse") is None
+
+
+def test_evict_item_strips_whitespace(tmp_path: Path) -> None:
+    """evict_item must strip whitespace from the name before lookup."""
+    cache = _make_cache(tmp_path)
+    cache.put_item(WS_ID, "SalesWarehouse", _make_item_entry())
+    cache.evict_item(WS_ID, "  SalesWarehouse  ")
+    assert cache.get_item(WS_ID, "SalesWarehouse") is None
+
+
+def test_evict_item_missing_key_is_noop(tmp_path: Path) -> None:
+    """evict_item must silently ignore a missing key."""
+    cache = _make_cache(tmp_path)
+    cache.put_item(WS_ID, "SalesWarehouse", _make_item_entry())
+    cache.evict_item(WS_ID, "NonExistent")  # must not raise
+    assert cache.get_item(WS_ID, "SalesWarehouse") is not None
+
+
+def test_evict_item_only_removes_target_workspace(tmp_path: Path) -> None:
+    """evict_item must not affect entries in other workspaces."""
+    cache = _make_cache(tmp_path)
+    cache.put_item(WS_ID, "SalesWarehouse", _make_item_entry())
+    cache.put_item(WS_ID_2, "SalesWarehouse", _make_item_entry())
+    cache.evict_item(WS_ID, "SalesWarehouse")
+    assert cache.get_item(WS_ID, "SalesWarehouse") is None
+    assert cache.get_item(WS_ID_2, "SalesWarehouse") is not None
+
+
+def test_evict_item_missing_workspace_section_is_noop(tmp_path: Path) -> None:
+    """evict_item must silently handle the case where the workspace has no entries at all."""
+    cache = _make_cache(tmp_path)
+    cache.evict_item(WS_ID, "SalesWarehouse")  # must not raise

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
@@ -13,6 +15,7 @@ import respx
 from azure.core.credentials import AccessToken
 from azure.core.credentials_async import AsyncTokenCredential
 
+from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.exceptions import FabricServerError, NotFound, PermissionDenied
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import Warehouse, WarehouseKind, Workspace
@@ -698,3 +701,106 @@ async def test_list_all_workspaces_skips_not_found() -> None:
     assert len(result) == 2
     ids = {w.id for w in result}
     assert ids == {_WH_A, _WH_C}
+
+
+# ---------------------------------------------------------------------------
+# rename — cache eviction
+# ---------------------------------------------------------------------------
+
+
+def _make_item_entry_for_cache(tmp_path: Path) -> tuple[LookupCache, ItemEntry]:
+    cache = LookupCache(path=tmp_path / "lookup.json")
+    entry = ItemEntry(
+        id=_WAREHOUSE_ID,
+        kind=WarehouseKind.WAREHOUSE,
+        connection_string="wh.datawarehouse.fabric.microsoft.com",
+        fetched_at=datetime.now(tz=UTC),
+        display_name="SalesWarehouse",
+    )
+    cache.put_item(_WORKSPACE_ID, "SalesWarehouse", entry)
+    cache.put_item(_WORKSPACE_ID, str(_WAREHOUSE_ID), entry)
+    return cache, entry
+
+
+@pytest.mark.asyncio
+async def test_rename_evicts_old_name_and_inserts_new_name(tmp_path: Path) -> None:
+    """rename with cache must evict old name and populate new name."""
+    cache, _entry = _make_item_entry_for_cache(tmp_path)
+    wh_payload = json.loads(WAREHOUSE_GET_PAYLOAD)
+    updated = {**wh_payload, "displayName": "RenamedWarehouse"}
+
+    with respx.mock:
+        respx.patch(_WAREHOUSE_URL).mock(return_value=httpx.Response(200, json=updated))
+
+        client = await _make_client()
+        async with client:
+            await warehouses.rename(
+                client,
+                _WORKSPACE_ID,
+                _WAREHOUSE_ID,
+                "RenamedWarehouse",
+                cache=cache,
+                old_name="SalesWarehouse",
+            )
+
+    assert cache.get_item(_WORKSPACE_ID, "SalesWarehouse") is None
+    assert cache.get_item(_WORKSPACE_ID, "RenamedWarehouse") is not None
+
+
+@pytest.mark.asyncio
+async def test_rename_without_cache_does_not_raise(tmp_path: Path) -> None:
+    """rename without cache= must still complete successfully."""
+    _ = tmp_path
+    wh_payload = json.loads(WAREHOUSE_GET_PAYLOAD)
+    updated = {**wh_payload, "displayName": "RenamedWarehouse"}
+
+    with respx.mock:
+        respx.patch(_WAREHOUSE_URL).mock(return_value=httpx.Response(200, json=updated))
+
+        client = await _make_client()
+        async with client:
+            result = await warehouses.rename(
+                client, _WORKSPACE_ID, _WAREHOUSE_ID, "RenamedWarehouse"
+            )
+
+    assert result.name == "RenamedWarehouse"
+
+
+# ---------------------------------------------------------------------------
+# delete — cache eviction
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_delete_evicts_name_from_cache(tmp_path: Path) -> None:
+    """delete with cache= must evict both the name entry and the GUID entry."""
+    cache, _entry = _make_item_entry_for_cache(tmp_path)
+
+    with respx.mock:
+        respx.delete(_WAREHOUSE_URL).mock(return_value=httpx.Response(204))
+
+        client = await _make_client()
+        async with client:
+            await warehouses.delete(
+                client,
+                _WORKSPACE_ID,
+                _WAREHOUSE_ID,
+                cache=cache,
+                name="SalesWarehouse",
+            )
+
+    assert cache.get_item(_WORKSPACE_ID, "SalesWarehouse") is None
+    assert cache.get_item(_WORKSPACE_ID, str(_WAREHOUSE_ID)) is None
+
+
+@pytest.mark.asyncio
+async def test_delete_without_cache_does_not_raise(tmp_path: Path) -> None:
+    """delete without cache= must still complete successfully."""
+    _ = tmp_path
+
+    with respx.mock:
+        respx.delete(_WAREHOUSE_URL).mock(return_value=httpx.Response(204))
+
+        client = await _make_client()
+        async with client:
+            await warehouses.delete(client, _WORKSPACE_ID, _WAREHOUSE_ID)

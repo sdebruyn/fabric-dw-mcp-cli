@@ -237,6 +237,21 @@ class LookupCache:
             }
             self._write(data)
 
+    def evict_item(self, workspace_id: UUID, name: str) -> None:
+        """Remove the item entry for *workspace_id* / *name* from the cache.
+
+        *name* is stripped and lower-cased before key lookup.  A missing key is
+        silently ignored so callers do not need to check for existence first.
+        """
+        key = name.strip().lower()
+        with self._lock:
+            data = self._read()
+            items: dict[str, Any] = data.get("items", {})
+            ws_items: dict[str, Any] = items.get(str(workspace_id), {})
+            if key in ws_items:
+                del ws_items[key]
+                self._write(data)
+
     def clear(self) -> None:
         """Erase all cached entries by writing an empty skeleton file."""
         with self._lock:

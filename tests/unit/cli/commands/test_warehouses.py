@@ -13,7 +13,7 @@ from uuid import UUID
 import pytest
 from click.testing import CliRunner
 
-from fabric_dw.cache import ItemEntry
+from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.cli._main import cli
 from fabric_dw.exceptions import NotFound
 from fabric_dw.models import WarehouseKind
@@ -191,14 +191,15 @@ class TestWarehousesRename:
         _ = cache_env
         mock_http = AsyncMock()
         mock_http.request = AsyncMock(return_value=_make_response(200, WAREHOUSE_GET_PAYLOAD))
+        _cache = LookupCache(path=cache_env / "lookup.json")
         with (
             patch(
                 "fabric_dw.cli.commands.warehouses._build_clients",
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.warehouses._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.warehouses._resolve_item_with_cache",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry(), _cache)),
             ),
         ):
             result = runner.invoke(
@@ -210,14 +211,15 @@ class TestWarehousesRename:
     def test_rename_declined_aborts(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
+        _cache = LookupCache(path=cache_env / "lookup.json")
         with (
             patch(
                 "fabric_dw.cli.commands.warehouses._build_clients",
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.warehouses._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.warehouses._resolve_item_with_cache",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry(), _cache)),
             ),
         ):
             result = runner.invoke(
@@ -235,14 +237,15 @@ class TestWarehousesDelete:
         _ = cache_env
         mock_http = AsyncMock()
         mock_http.request = AsyncMock(return_value=_make_response(204, ""))
+        _cache = LookupCache(path=cache_env / "lookup.json")
         with (
             patch(
                 "fabric_dw.cli.commands.warehouses._build_clients",
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.warehouses._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.warehouses._resolve_item_with_cache",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry(), _cache)),
             ),
         ):
             result = runner.invoke(cli, ["--yes", "warehouses", "delete", WS_GUID, WH_GUID])
@@ -251,14 +254,15 @@ class TestWarehousesDelete:
     def test_delete_declined_aborts(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
+        _cache = LookupCache(path=cache_env / "lookup.json")
         with (
             patch(
                 "fabric_dw.cli.commands.warehouses._build_clients",
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.warehouses._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.warehouses._resolve_item_with_cache",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry(), _cache)),
             ),
         ):
             result = runner.invoke(cli, ["warehouses", "delete", WS_GUID, WH_GUID], input="n\n")

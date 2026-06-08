@@ -13,7 +13,7 @@ from uuid import UUID
 import pytest
 from click.testing import CliRunner
 
-from fabric_dw.cache import ItemEntry
+from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.cli._main import cli
 from fabric_dw.exceptions import NotFound, PermissionDenied
 from fabric_dw.models import WarehouseKind
@@ -183,14 +183,15 @@ class TestSnapshotsRename:
         mock_http.request = AsyncMock(
             return_value=_make_response(200, json.dumps(_SNAPSHOT_DETAIL))
         )
+        _cache = LookupCache(path=cache_env / "lookup.json")
         with (
             patch(
                 "fabric_dw.cli.commands.snapshots._build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.snapshots._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_snap_entry())),
+                "fabric_dw.cli.commands.snapshots._resolve_item_with_cache",
+                new=AsyncMock(return_value=(WS_UUID, _make_snap_entry(), _cache)),
             ),
         ):
             result = runner.invoke(
@@ -207,14 +208,15 @@ class TestSnapshotsDelete:
         _ = cache_env
         mock_http = AsyncMock()
         mock_http.request = AsyncMock(return_value=_make_response(204, ""))
+        _cache = LookupCache(path=cache_env / "lookup.json")
         with (
             patch(
                 "fabric_dw.cli.commands.snapshots._build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.snapshots._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_snap_entry())),
+                "fabric_dw.cli.commands.snapshots._resolve_item_with_cache",
+                new=AsyncMock(return_value=(WS_UUID, _make_snap_entry(), _cache)),
             ),
         ):
             result = runner.invoke(cli, ["--yes", "snapshots", "delete", WS_GUID, SNAP_GUID])
@@ -223,14 +225,15 @@ class TestSnapshotsDelete:
     def test_delete_declined_aborts(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
+        _cache = LookupCache(path=cache_env / "lookup.json")
         with (
             patch(
                 "fabric_dw.cli.commands.snapshots._build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.snapshots._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_snap_entry())),
+                "fabric_dw.cli.commands.snapshots._resolve_item_with_cache",
+                new=AsyncMock(return_value=(WS_UUID, _make_snap_entry(), _cache)),
             ),
         ):
             result = runner.invoke(cli, ["snapshots", "delete", WS_GUID, SNAP_GUID], input="n\n")
