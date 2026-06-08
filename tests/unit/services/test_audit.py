@@ -242,11 +242,10 @@ async def test_set_action_groups_empty_list_is_valid() -> None:
         "lowercase_group",  # lower-case letters
         "MIXED_Group",  # mixed case
         "GROUP-NAME",  # hyphen
-        "GROUP123",  # digits not allowed by ^[A-Z_]+$
     ],
 )
 async def test_set_action_groups_invalid_name_raises_value_error(bad_group: str) -> None:
-    """set_action_groups should raise ValueError for names that don't match ^[A-Z_]+$."""
+    """set_action_groups should raise ValueError for names that don't match ^[A-Z0-9_]+$."""
     client = await _make_client()
     async with client:
         with pytest.raises(ValueError, match="action_group"):
@@ -367,11 +366,10 @@ async def test_add_action_group_disabled_raises_value_error() -> None:
         "batch completed group",  # whitespace
         "lowercase_group",  # lower-case letters
         "GROUP-NAME",  # hyphen
-        "GROUP123",  # digits not allowed
     ],
 )
 async def test_add_action_group_invalid_name_raises_value_error(bad_group: str) -> None:
-    """add_action_group should raise ValueError for names that don't match ^[A-Z_]+$."""
+    """add_action_group should raise ValueError for names that don't match ^[A-Z0-9_]+$."""
     client = await _make_client()
     async with client:
         with pytest.raises(ValueError, match="action_group"):
@@ -460,11 +458,10 @@ async def test_remove_action_group_disabled_raises_value_error() -> None:
         "batch completed group",  # whitespace
         "lowercase_group",  # lower-case letters
         "GROUP-NAME",  # hyphen
-        "GROUP123",  # digits not allowed
     ],
 )
 async def test_remove_action_group_invalid_name_raises_value_error(bad_group: str) -> None:
-    """remove_action_group should raise ValueError for names that don't match ^[A-Z_]+$."""
+    """remove_action_group should raise ValueError for names that don't match ^[A-Z0-9_]+$."""
     client = await _make_client()
     async with client:
         with pytest.raises(ValueError, match="action_group"):

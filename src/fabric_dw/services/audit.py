@@ -27,7 +27,7 @@ __all__ = [
     "set_action_groups",
 ]
 
-_ACTION_GROUP_RE = re.compile(r"^[A-Z_]+$")
+_ACTION_GROUP_RE = re.compile(r"^[A-Z0-9_]+$")
 
 
 def _audit_path(workspace_id: UUID, warehouse_id: UUID) -> str:
@@ -127,8 +127,8 @@ async def set_action_groups(
 ) -> AuditSettings:
     """Replace the audited action groups for a warehouse.
 
-    Action-group names must consist exclusively of upper-case ASCII letters and
-    underscores (``^[A-Z_]+$``).  Examples of valid names:
+    Action-group names must consist exclusively of upper-case ASCII letters,
+    digits, and underscores (``^[A-Z0-9_]+$``).  Examples of valid names:
     ``BATCH_COMPLETED_GROUP``, ``SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP``.
 
     Args:
@@ -145,14 +145,14 @@ async def set_action_groups(
         This also enables auditing if currently disabled.
 
     Raises:
-        ValueError: If any name in *action_groups* does not match ``^[A-Z_]+$``.
+        ValueError: If any name in *action_groups* does not match ``^[A-Z0-9_]+$``.
         PermissionDenied: If the caller lacks the required permission (HTTP 403).
     """
     for name in action_groups:
         if not _ACTION_GROUP_RE.match(name):
             msg = (
                 f"Invalid action_group name {name!r}: "
-                "names must match ^[A-Z_]+$ (upper-case letters and underscores only)"
+                "names must match ^[A-Z0-9_]+$ (upper-case letters, digits, and underscores only)"
             )
             raise ValueError(msg)
 
@@ -183,12 +183,12 @@ async def add_action_group(
     This is idempotent — if *group* is already present the current settings
     are returned unchanged without making a PATCH request.
 
-    The group name must consist exclusively of upper-case ASCII letters and
-    underscores (``^[A-Z_]+$``).  The Fabric API documents a fixed set of
-    valid group names (e.g. ``BATCH_COMPLETED_GROUP``,
+    The group name must consist exclusively of upper-case ASCII letters,
+    digits, and underscores (``^[A-Z0-9_]+$``).  The Fabric API documents a
+    fixed set of valid group names (e.g. ``BATCH_COMPLETED_GROUP``,
     ``SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP``); invalid names are accepted
     by this client-side validation but will be rejected by the API.  The
-    broad ``^[A-Z_]+$`` pattern is used rather than a closed enum because
+    broad ``^[A-Z0-9_]+$`` pattern is used rather than a closed enum because
     Microsoft may extend the set of valid names without notice.
 
     Args:
@@ -202,7 +202,7 @@ async def add_action_group(
         (or the current settings when the group was already present).
 
     Raises:
-        ValueError: If *group* does not match ``^[A-Z_]+$``.
+        ValueError: If *group* does not match ``^[A-Z0-9_]+$``.
         ValueError: If auditing is currently disabled (``state == "Disabled"``).
             Enable auditing first with :func:`enable`.
         PermissionDenied: If the caller lacks the required permission (HTTP 403).
@@ -211,7 +211,7 @@ async def add_action_group(
     if not _ACTION_GROUP_RE.match(group):
         msg = (
             f"Invalid action_group name {group!r}: "
-            "names must match ^[A-Z_]+$ (upper-case letters and underscores only)"
+            "names must match ^[A-Z0-9_]+$ (upper-case letters, digits, and underscores only)"
         )
         raise ValueError(msg)
 
@@ -246,12 +246,12 @@ async def remove_action_group(
     This is idempotent — if *group* is not present the current settings are
     returned unchanged without making a PATCH request.
 
-    The group name must consist exclusively of upper-case ASCII letters and
-    underscores (``^[A-Z_]+$``).  The Fabric API documents a fixed set of
-    valid group names (e.g. ``BATCH_COMPLETED_GROUP``,
+    The group name must consist exclusively of upper-case ASCII letters,
+    digits, and underscores (``^[A-Z0-9_]+$``).  The Fabric API documents a
+    fixed set of valid group names (e.g. ``BATCH_COMPLETED_GROUP``,
     ``SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP``); invalid names are accepted
     by this client-side validation but will be rejected by the API.  The
-    broad ``^[A-Z_]+$`` pattern is used rather than a closed enum because
+    broad ``^[A-Z0-9_]+$`` pattern is used rather than a closed enum because
     Microsoft may extend the set of valid names without notice.
 
     Args:
@@ -265,7 +265,7 @@ async def remove_action_group(
         (or the current settings when the group was not present).
 
     Raises:
-        ValueError: If *group* does not match ``^[A-Z_]+$``.
+        ValueError: If *group* does not match ``^[A-Z0-9_]+$``.
         ValueError: If auditing is currently disabled (``state == "Disabled"``).
             Enable auditing first with :func:`enable`.
         PermissionDenied: If the caller lacks the required permission (HTTP 403).
@@ -274,7 +274,7 @@ async def remove_action_group(
     if not _ACTION_GROUP_RE.match(group):
         msg = (
             f"Invalid action_group name {group!r}: "
-            "names must match ^[A-Z_]+$ (upper-case letters and underscores only)"
+            "names must match ^[A-Z0-9_]+$ (upper-case letters, digits, and underscores only)"
         )
         raise ValueError(msg)
 

@@ -325,6 +325,31 @@ class TestAuditAddGroup:
             )
         assert result.exit_code != 0
 
+    def test_add_group_disabled_audit_returns_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.audit._build_clients",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.audit._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.cli.commands.audit._audit_svc.add_action_group",
+                new=AsyncMock(side_effect=ValueError("audit is disabled; enable first")),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["audit", "add-group", WS_GUID, WH_GUID, "BATCH_COMPLETED_GROUP"],
+            )
+        assert result.exit_code != 0
+
 
 class TestAuditRemoveGroup:
     """audit remove-group — happy path and error cases."""
@@ -395,6 +420,31 @@ class TestAuditRemoveGroup:
             result = runner.invoke(
                 cli,
                 ["audit", "remove-group", WS_GUID, WH_GUID, "invalid-lowercase"],
+            )
+        assert result.exit_code != 0
+
+    def test_remove_group_disabled_audit_returns_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.audit._build_clients",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.audit._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.cli.commands.audit._audit_svc.remove_action_group",
+                new=AsyncMock(side_effect=ValueError("audit is disabled; enable first")),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["audit", "remove-group", WS_GUID, WH_GUID, "BATCH_COMPLETED_GROUP"],
             )
         assert result.exit_code != 0
 

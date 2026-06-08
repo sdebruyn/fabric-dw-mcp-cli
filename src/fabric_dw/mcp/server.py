@@ -373,6 +373,8 @@ async def add_audit_group(workspace: str, warehouse: str, group: str) -> dict[st
     Idempotent — if *group* is already present the current settings are
     returned unchanged.  Auditing must already be enabled.
 
+    CAUTION: changes take effect immediately on the live audit policy.
+
     Args:
         workspace: Workspace name or GUID.
         warehouse: Warehouse name or GUID.
@@ -395,6 +397,8 @@ async def remove_audit_group(workspace: str, warehouse: str, group: str) -> dict
 
     Idempotent — if *group* is not present the current settings are returned
     unchanged.  Auditing must already be enabled.
+
+    CAUTION: changes take effect immediately on the live audit policy.
 
     Args:
         workspace: Workspace name or GUID.
