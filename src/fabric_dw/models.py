@@ -298,3 +298,14 @@ class SqlPoolInsight(_FabricBase):
     is_optimized_for_reads: bool | None = None
     current_workspace_capacity: str | None = None
     is_pool_under_pressure: bool | None = None
+
+
+class View(_FabricBase):
+    """A SQL view on a Fabric Data Warehouse or SQL Analytics Endpoint."""
+
+    schema_name: str
+    name: str
+    qualified_name: str
+    definition: str | None = None
+    created: datetime
+    modified: datetime
