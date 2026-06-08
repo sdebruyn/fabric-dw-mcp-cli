@@ -4,6 +4,24 @@ title: Authentication
 
 # Authentication
 
+## TL;DR
+
+If you are already signed in via [Azure CLI](https://learn.microsoft.com/cli/azure/reference-index?view=azure-cli-latest&WT.mc_id=MVP_310840#az-login) or [Azure PowerShell](https://learn.microsoft.com/powershell/module/az.accounts/connect-azaccount?WT.mc_id=MVP_310840), you don't need to configure anything — `fabric-dw` picks up your session automatically.
+
+```bash
+az login          # or: az login --tenant <tenant-id>
+fabric-dw warehouses list "Sales Workspace"
+```
+
+```powershell
+Connect-AzAccount
+fabric-dw warehouses list "Sales Workspace"
+```
+
+If neither of those works for you, read on for the alternatives.
+
+---
+
 `fabric-dw` selects a credential source via the `FABRIC_AUTH` environment variable:
 
 | `FABRIC_AUTH` value | What it uses |
@@ -75,8 +93,6 @@ When `FABRIC_AUTH` is `default` (or unset), the package delegates to [`azure-ide
 6. **Azure Developer CLI** — token from `azd auth login` — see [`AzureDeveloperCliCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.azuredeveloperclicredential?WT.mc_id=MVP_310840)
 7. **Azure PowerShell** — token from `Connect-AzAccount` — see [`AzurePowerShellCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.azurepowershellcredential?WT.mc_id=MVP_310840)
 8. **Interactive browser** — falls back to browser sign-in using the [shared app](#interactive-browser-sign-in-zero-setup) (or your override via `FABRIC_INTERACTIVE_CLIENT_ID`) — see [`InteractiveBrowserCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.interactivebrowsercredential?WT.mc_id=MVP_310840)
-
-In practice, the most common source is the Azure CLI. Run [`az login`](https://learn.microsoft.com/cli/azure/reference-index?view=azure-cli-latest&WT.mc_id=MVP_310840#az-login) (or `az login --tenant <tenant-id>`) before using `fabric-dw` and the credential chain picks up your session automatically.
 
 ---
 
