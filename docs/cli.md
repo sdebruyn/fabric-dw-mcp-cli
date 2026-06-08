@@ -887,7 +887,7 @@ fabric-dw snapshots roll MyWorkspace SalesWH snap-june-2026 \
 ## fabric-dw sql-pools
 
 !!! warning "Beta / preview feature"
-    SQL Pools targets a **beta API** that may change before GA.  See [SQL Pools](sql-pools.md) for background on the beta status and destructive PATCH semantics.
+    Manages workspace SQL Pools (currently in preview; the API may change before GA).
 
 Manage custom SQL Pools configuration at the workspace level. Callers must hold the **workspace admin role**.
 

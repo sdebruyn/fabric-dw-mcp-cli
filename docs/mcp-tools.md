@@ -509,7 +509,7 @@ Drop a SQL view.
 ## SQL Pools (beta)
 
 !!! warning "Beta / preview feature"
-    The four SQL Pools tools target a **beta / preview** API endpoint.  They may change before GA.  All callers must hold the **workspace admin role**.  See [SQL Pools](sql-pools.md) for full background on the beta status and destructive PATCH semantics.
+    The four SQL Pools tools manage the workspace SQL Pools configuration (currently in preview; the API may change before GA). All callers must hold the **workspace admin role**.
 
 ### get_sql_pools_configuration
 
@@ -519,7 +519,7 @@ Fetch the SQL Pools configuration for a workspace.
 
 - `workspace` (`str`) — workspace name or GUID.
 
-**Returns:** `SqlPoolsConfiguration` — object with `customSQLPoolsEnabled` (bool) and `customSQLPools` (list of pool objects; see [SQL Pools](sql-pools.md#field-reference) for the full field reference).
+**Returns:** `SqlPoolsConfiguration` — object with `customSQLPoolsEnabled` (bool) and `customSQLPools` (list of pool objects, each with `name`, `maxResourcePercentage`, `isDefault`, `optimizeForReads`, and optional `classifier`).
 
 ---
 
