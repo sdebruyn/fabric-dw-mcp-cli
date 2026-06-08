@@ -101,11 +101,11 @@ async def list_snapshots(
                 out.append(_snapshot_from_detail(detail))
         return out
 
-    # The Fabric items-list index can lag by tens of seconds after a snapshot is
-    # created.  Retry a small number of times so that callers who list immediately
-    # after create still get accurate results.
-    _max_list_retries = 3
-    _list_wait_s = 15.0
+    # The Fabric items-list index can lag by 60-120 seconds after a snapshot is
+    # created.  Retry several times so that callers who list immediately after
+    # create still get accurate results.
+    _max_list_retries = 6
+    _list_wait_s = 20.0
     results = await _fetch_once()
     for _ in range(_max_list_retries - 1):
         if results:
