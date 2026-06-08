@@ -31,11 +31,13 @@ from fabric_dw.cache import LookupCache
 from fabric_dw.exceptions import ConfigError, FabricError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.logging import setup_logging
+from fabric_dw.models import SqlPoolsConfiguration
 from fabric_dw.resolver import Resolver
 from fabric_dw.services import audit, queries, snapshots, sql_endpoints, warehouses, workspaces
 from fabric_dw.services import ownership as ownership_svc
 from fabric_dw.services import query_insights as _qi_svc
 from fabric_dw.services import restore as restore_svc
+from fabric_dw.services import sql_pools as sql_pools_svc
 from fabric_dw.services import views as views_svc
 from fabric_dw.sql import SqlTarget
 
@@ -1061,6 +1063,95 @@ async def drop_view(workspace: str, item: str, qualified_name: str) -> dict[str,
     except (ValueError, FabricError) as exc:
         raise _fabric_err(exc) if isinstance(exc, FabricError) else ToolError(str(exc)) from exc
     return {"dropped": True}
+
+
+# ---------------------------------------------------------------------------
+# SQL Pools tools (beta)
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def get_sql_pools_configuration(workspace: str) -> dict[str, Any]:
+    """Fetch the SQL Pools configuration for a workspace.
+
+    Requires workspace admin role.  This tool targets a **beta / preview** API
+    endpoint that may change before general availability.
+    """
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        result = await sql_pools_svc.get_configuration(_get_http(), ws_id)
+    except FabricError as exc:
+        raise _fabric_err(exc) from exc
+    return result.model_dump(by_alias=True, mode="json")
+
+
+@mcp.tool()
+async def update_sql_pools_configuration(
+    workspace: str,
+    custom_sql_pools_enabled: bool,  # noqa: FBT001
+    custom_sql_pools: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Replace the SQL Pools configuration for a workspace.
+
+    **DESTRUCTIVE PATCH**: any pool not present in *custom_sql_pools* will be
+    permanently deleted.  Supply the full desired pool list.
+
+    Requires workspace admin role.  This tool targets a **beta / preview** API.
+
+    Args:
+        workspace: Workspace name or GUID.
+        custom_sql_pools_enabled: Whether custom SQL Pools are active.
+        custom_sql_pools: Full list of pool objects.  Each must have at minimum
+            ``name`` (str) and ``maxResourcePercentage`` (int 1-100).
+            Optional fields: ``isDefault`` (bool), ``optimizeForReads`` (bool),
+            ``classifier`` (object with ``type`` str and ``value`` list[str]).
+    """
+    try:
+        config = SqlPoolsConfiguration.model_validate(
+            {
+                "customSQLPoolsEnabled": custom_sql_pools_enabled,
+                "customSQLPools": custom_sql_pools,
+            }
+        )
+    except Exception as exc:
+        raise ToolError(f"Invalid configuration: {exc}") from exc  # noqa: TRY003
+
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        result = await sql_pools_svc.update_configuration(_get_http(), ws_id, config)
+    except FabricError as exc:
+        raise _fabric_err(exc) from exc
+    return result.model_dump(by_alias=True, mode="json")
+
+
+@mcp.tool()
+async def enable_sql_pools(workspace: str) -> dict[str, Any]:
+    """Enable custom SQL Pools for a workspace without modifying pool definitions.
+
+    Requires workspace admin role.  This tool targets a **beta / preview** API.
+    """
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        result = await sql_pools_svc.enable(_get_http(), ws_id)
+    except FabricError as exc:
+        raise _fabric_err(exc) from exc
+    return result.model_dump(by_alias=True, mode="json")
+
+
+@mcp.tool()
+async def disable_sql_pools(workspace: str) -> dict[str, Any]:
+    """Disable custom SQL Pools for a workspace, preserving pool configuration.
+
+    Re-enabling with enable_sql_pools restores the previously saved configuration.
+
+    Requires workspace admin role.  This tool targets a **beta / preview** API.
+    """
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        result = await sql_pools_svc.disable(_get_http(), ws_id)
+    except FabricError as exc:
+        raise _fabric_err(exc) from exc
+    return result.model_dump(by_alias=True, mode="json")
 
 
 # ---------------------------------------------------------------------------

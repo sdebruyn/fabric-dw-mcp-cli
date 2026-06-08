@@ -884,6 +884,107 @@ fabric-dw snapshots roll MyWorkspace SalesWH snap-june-2026 \
 
 ---
 
+## fabric-dw sql-pools
+
+!!! warning "Beta / preview feature"
+    SQL Pools targets a **beta API** that may change before GA.  See [SQL Pools](sql-pools.md) for background on the beta status and destructive PATCH semantics.
+
+Manage custom SQL Pools configuration at the workspace level. Callers must hold the **workspace admin role**.
+
+### sql-pools get
+
+Fetch the current SQL Pools configuration for a workspace.
+
+**Synopsis**
+
+```
+fabric-dw sql-pools get [WORKSPACE]
+```
+
+**Example**
+
+```shell
+fabric-dw sql-pools get MyWorkspace
+```
+
+---
+
+### sql-pools set
+
+Replace the SQL Pools configuration from a JSON file. This is a **destructive PATCH** — any pool not listed in the file is permanently deleted.
+
+**Synopsis**
+
+```
+fabric-dw sql-pools set [WORKSPACE] --from-file POOLS.JSON
+```
+
+| Option | Description |
+| --- | --- |
+| `--from-file PATH` | Path to a JSON file containing the full `SqlPoolsConfiguration` payload. (required) |
+
+**Example**
+
+```shell
+fabric-dw sql-pools set MyWorkspace --from-file pools.json
+```
+
+---
+
+### sql-pools edit
+
+Open the current SQL Pools configuration in `$EDITOR` (or `$VISUAL`, or `vi`/`notepad`), then apply the modified version. Shows a diff and an explicit warning if any pool would be deleted before asking for confirmation.
+
+**Synopsis**
+
+```
+fabric-dw sql-pools edit [WORKSPACE]
+```
+
+**Example**
+
+```shell
+fabric-dw sql-pools edit MyWorkspace
+```
+
+---
+
+### sql-pools enable
+
+Enable custom SQL Pools for a workspace. Preserves the existing pool configuration.
+
+**Synopsis**
+
+```
+fabric-dw sql-pools enable [WORKSPACE]
+```
+
+**Example**
+
+```shell
+fabric-dw sql-pools enable MyWorkspace
+```
+
+---
+
+### sql-pools disable
+
+Disable custom SQL Pools for a workspace without deleting pool definitions. Re-enabling with `sql-pools enable` restores the previously saved configuration.
+
+**Synopsis**
+
+```
+fabric-dw sql-pools disable [WORKSPACE]
+```
+
+**Example**
+
+```shell
+fabric-dw sql-pools disable MyWorkspace
+```
+
+---
+
 ## fabric-dw cache
 
 Manage the local name-to-UUID lookup cache. `fabric-dw` caches workspace and item name-to-GUID mappings to avoid repeated API round-trips. Use these commands if you rename items outside the CLI or need to force a fresh lookup.
