@@ -194,7 +194,9 @@ def test_default_mode_passes_interactive_browser_client_id(monkeypatch: pytest.M
         assert kwargs.get("interactive_browser_client_id") == DEFAULT_INTERACTIVE_CLIENT_ID
 
 
-def test_default_mode_respects_env_override_for_interactive(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_default_mode_respects_env_override_for_interactive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     custom_id = "deadbeef-0000-0000-0000-000000000002"
     monkeypatch.setenv("FABRIC_INTERACTIVE_CLIENT_ID", custom_id)
     with patch("fabric_dw.auth.DefaultAzureCredential") as mock_dac:
@@ -212,7 +214,9 @@ def test_default_mode_passes_interactive_browser_tenant_id(monkeypatch: pytest.M
         assert kwargs.get("interactive_browser_tenant_id") == "my-tenant-id"
 
 
-def test_default_mode_no_interactive_browser_tenant_id_when_not_set(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_default_mode_no_interactive_browser_tenant_id_when_not_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("FABRIC_INTERACTIVE_CLIENT_ID", raising=False)
     monkeypatch.delenv("FABRIC_INTERACTIVE_TENANT_ID", raising=False)
     with patch("fabric_dw.auth.DefaultAzureCredential") as mock_dac:
