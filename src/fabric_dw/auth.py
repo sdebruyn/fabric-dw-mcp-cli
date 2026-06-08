@@ -42,7 +42,7 @@ def get_credential(mode: CredentialMode = CredentialMode.DEFAULT) -> TokenCreden
     if mode == CredentialMode.DEFAULT:
         return DefaultAzureCredential(
             cache_persistence_options=_CACHE_OPTIONS,
-            exclude_interactive_browser_credential=True,
+            exclude_interactive_browser_credential=False,
         )
 
     if mode == CredentialMode.SERVICE_PRINCIPAL:
