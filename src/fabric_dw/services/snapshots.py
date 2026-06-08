@@ -214,8 +214,8 @@ async def create(
 
     # Give the Fabric items-list index time to include the new snapshot.
     # The detail endpoint confirms the item exists, but the items-list API
-    # may lag by a few seconds before the new entry is visible.
-    await asyncio.sleep(5.0)
+    # may lag by tens of seconds before the new entry is visible.
+    await asyncio.sleep(20.0)
     return _snapshot_from_detail(detail_body)
 
 

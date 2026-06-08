@@ -156,10 +156,10 @@ async def set_action_groups(
     # Fabric returns 404 (EntityNotFound) when the sqlAudit resource does not yet
     # exist — this happens on freshly-created warehouses where audit has never been
     # enabled.  Strategy: on the first 404, call enable() to provision the resource,
-    # then retry the POST with back-off.  The sqlAudit resource takes up to ~30 s to
-    # become available after enable(); we allow 6 attempts at 10 s intervals.
-    max_provision_retries = 6
-    provision_wait_s = 10.0
+    # then retry the POST with back-off.  The sqlAudit resource can take up to ~2 min
+    # to become available after enable(); we allow 8 attempts at 15 s intervals.
+    max_provision_retries = 8
+    provision_wait_s = 15.0
     _enabled_once = False
     last_exc: NotFound | None = None
     for attempt in range(max_provision_retries):
