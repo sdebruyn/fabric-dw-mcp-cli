@@ -19,7 +19,6 @@ nav = [
     { "Authentication" = "authentication.md" },
     { "MCP" = "mcp.md" },
     { "MCP tools" = "mcp-tools.md" },
-    { "SQL Pools (beta)" = "sql-pools.md" },
     { "Shell Completion" = "completion.md" },
     { "Troubleshooting" = "troubleshooting.md" }
   ] },
