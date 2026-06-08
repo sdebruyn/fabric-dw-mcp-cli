@@ -45,7 +45,7 @@ If neither of those works for you, read on for the alternatives.
 
 On first sign-in:
 
-- **Non-admin users** — the consent prompt asks for the delegated scopes the app needs (Workspace, Item, Capacity, Tenant.Read, SQL user_impersonation). If your tenant policy requires admin consent for any of them, sign-in will fail until an admin grants it.
+- **Non-admin users** — the consent prompt asks for the delegated scopes the app needs (Workspace, Item, Tenant.Read, SQL user_impersonation). If your tenant policy requires admin consent for any of them, sign-in will fail until an admin grants it.
 - **Admins** — choose "Consent on behalf of your organization" once; subsequent sign-ins from anyone in the tenant just work.
 
 Pre-consent admin URL:
@@ -72,7 +72,6 @@ Then grant the same delegated permissions as the shared app:
 | --- | --- | --- |
 | Power BI Service | `Workspace.ReadWrite.All` | `00000009-0000-0000-c000-000000000000` |
 | Power BI Service | `Item.ReadWrite.All` | `00000009-0000-0000-c000-000000000000` |
-| Power BI Service | `Capacity.ReadWrite.All` | `00000009-0000-0000-c000-000000000000` |
 | Power BI Service | `Tenant.Read.All` | `00000009-0000-0000-c000-000000000000` |
 | Azure SQL Database | `user_impersonation` | `022907d3-0f1b-48f7-badc-1ba6abab6d66` |
 
