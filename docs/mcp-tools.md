@@ -353,17 +353,5 @@ Erase all cached workspace and item name-to-UUID mappings.
 
 ---
 
-### invalidate_workspace_cache
-
-Remove all cached entries for a specific workspace.
-
-**Parameters:**
-
-- `workspace` (`str`) — workspace name or GUID.
-
-**Returns:** `{ "invalidated": true, "workspace_id": str }` — confirmation with the workspace GUID.
-
----
-
 !!! note "Name-or-GUID resolution"
-    All `workspace`, `warehouse`, `endpoint`, and `snapshot` parameters accept either the item's display name or its GUID. The resolver translates names to GUIDs automatically and caches the mapping locally. Use [`clear_cache`](#clear_cache) or [`invalidate_workspace_cache`](#invalidate_workspace_cache) to force a fresh lookup after renaming items outside this tool. See the [CLI reference](cli.md) for further details on name resolution and cache behaviour.
+    All `workspace`, `warehouse`, `endpoint`, and `snapshot` parameters accept either the item's display name or its GUID. The resolver translates names to GUIDs automatically and caches the mapping locally. Use [`clear_cache`](#clear_cache) to force a fresh lookup after renaming items outside this tool. See the [CLI reference](cli.md) for further details on name resolution and cache behaviour.

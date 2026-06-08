@@ -242,18 +242,3 @@ class LookupCache:
         with self._lock:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             self._write(self._empty())
-
-    def invalidate_workspace(self, workspace_id: UUID) -> None:
-        """Remove *workspace_id* and all items cached under it."""
-        ws_id_str = str(workspace_id)
-        with self._lock:
-            data = self._read()
-            # Remove workspace entry whose id field matches
-            workspaces: dict[str, Any] = data.get("workspaces", {})
-            to_remove = [k for k, v in workspaces.items() if v.get("id") == ws_id_str]
-            for key in to_remove:
-                del workspaces[key]
-            # Drop all items under this workspace
-            items: dict[str, Any] = data.get("items", {})
-            items.pop(ws_id_str, None)
-            self._write(data)

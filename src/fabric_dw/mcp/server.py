@@ -550,17 +550,6 @@ async def clear_cache() -> dict[str, Any]:
     return {"cleared": True}
 
 
-@mcp.tool()
-async def invalidate_workspace_cache(workspace: str) -> dict[str, Any]:
-    """Remove cache entries for a specific workspace (name or GUID)."""
-    try:
-        ws_id = await _get_resolver().workspace_id(workspace)
-    except FabricError as exc:
-        raise _fabric_err(exc) from exc
-    _get_cache().invalidate_workspace(ws_id)
-    return {"invalidated": True, "workspace_id": str(ws_id)}
-
-
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
