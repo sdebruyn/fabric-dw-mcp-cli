@@ -6,12 +6,13 @@ import asyncio
 import logging
 import time
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
 import respx
-from azure.core.credentials import AccessToken, TokenCredential
+from azure.core.credentials import AccessToken
+from azure.core.credentials_async import AsyncTokenCredential
 from freezegun import freeze_time
 
 from fabric_dw.exceptions import (
@@ -30,10 +31,10 @@ from fabric_dw.http_client import FabricHttpClient, HttpBase, _parse_retry_after
 _FAKE_TOKEN = AccessToken(token="fake-token", expires_on=int(time.time()) + 3600)  # noqa: S106
 
 
-def _make_credential(token: AccessToken = _FAKE_TOKEN) -> TokenCredential:
+def _make_credential(token: AccessToken = _FAKE_TOKEN) -> AsyncTokenCredential:
     """Build a mock credential that returns *token*."""
-    cred = MagicMock(spec=TokenCredential)
-    cred.get_token = MagicMock(return_value=token)
+    cred = MagicMock(spec=AsyncTokenCredential)
+    cred.get_token = AsyncMock(return_value=token)
     return cred
 
 
@@ -321,6 +322,52 @@ async def test_poll_operation_timeout_raises() -> None:
 
 
 # ---------------------------------------------------------------------------
+# get_operation_result
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_operation_result_returns_body() -> None:
+    """get_operation_result should GET /operations/{op_id}/result and return the body.
+
+    Regression test: Fabric LRO status bodies do not include the created item ID.
+    The result must be fetched separately via GET /v1/operations/{op_id}/result.
+    """
+    op_id = "b80e135a-adca-42e7-aaf0-59849af2ed78"
+    result_url = f"https://api.fabric.microsoft.com/v1/operations/{op_id}/result"
+    expected = {
+        "id": "221a6eea-0f27-41eb-bcc5-e4d7b216ed43",
+        "type": "WarehouseSnapshot",
+        "displayName": "MySnapshot",
+        "workspaceId": "a91e61ef-862e-4611-9d09-9c7cc07b2519",
+    }
+
+    with respx.mock:
+        respx.get(result_url).mock(return_value=httpx.Response(200, json=expected))
+
+        client = await _get_client()
+        async with client:
+            result = await client.get_operation_result(op_id)
+
+    assert result == expected
+
+
+@pytest.mark.asyncio
+async def test_get_operation_result_not_found_propagates() -> None:
+    """get_operation_result should propagate NotFound when the result endpoint returns 404."""
+    op_id = "no-such-op"
+    result_url = f"https://api.fabric.microsoft.com/v1/operations/{op_id}/result"
+
+    with respx.mock:
+        respx.get(result_url).mock(return_value=httpx.Response(404, json={"error": "not found"}))
+
+        client = await _get_client()
+        async with client:
+            with pytest.raises(NotFound):
+                await client.get_operation_result(op_id)
+
+
+# ---------------------------------------------------------------------------
 # params type: Mapping[str, Any]
 # ---------------------------------------------------------------------------
 
@@ -356,9 +403,8 @@ async def test_request_params_int_value_serialized() -> None:
 @pytest.mark.asyncio
 async def test_concurrent_requests_fetch_token_once() -> None:
     """Five concurrent requests before any token is fetched must call get_token exactly once."""
-    cred = MagicMock(spec=TokenCredential)
-    # get_token is synchronous; auth.get_token wraps it via asyncio.to_thread
-    cred.get_token = MagicMock(
+    cred = MagicMock(spec=AsyncTokenCredential)
+    cred.get_token = AsyncMock(
         return_value=AccessToken(token="tok", expires_on=int(time.time()) + 3600)  # noqa: S106
     )
 

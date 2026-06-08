@@ -139,7 +139,13 @@ def build_connection_string(
     Returns:
         The augmented ODBC connection string, ready to pass to the driver.
     """
-    cs = _set_key(target.connection_string, "Authentication", _MODE_TO_AD_AUTH[mode])
+    # The Fabric API returns the warehouse FQDN as a bare hostname with no
+    # "Server=" prefix.  The mssql_python driver requires a proper ODBC key=value
+    # format, so prepend "Server=" when the raw string has no Server key.
+    raw = target.connection_string
+    if not _has_key(raw, "Server"):
+        raw = f"Server={raw}"
+    cs = _set_key(raw, "Authentication", _MODE_TO_AD_AUTH[mode])
     cs = _set_key(cs, "Encrypt", "yes")
     cs = _set_key(cs, "TrustServerCertificate", "no")
     return _set_key(cs, "Database", target.database)

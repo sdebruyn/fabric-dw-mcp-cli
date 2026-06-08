@@ -137,6 +137,9 @@ async def set_action_groups(
     Returns:
         The fresh :class:`~fabric_dw.models.AuditSettings` after the update.
 
+    Note:
+        This also enables auditing if currently disabled.
+
     Raises:
         ValueError: If any name in *action_groups* does not match ``^[A-Z_]+$``.
         PermissionDenied: If the caller lacks the required permission (HTTP 403).
@@ -150,5 +153,16 @@ async def set_action_groups(
             raise ValueError(msg)
 
     path = _audit_path(workspace_id, warehouse_id)
-    await http.request("POST", HttpBase.FABRIC, path, json=action_groups)
+
+    # Fabric's PATCH /settings/sqlAudit accepts an ``auditActionsAndGroups`` field
+    # alongside ``state`` and ``retentionDays``.  Using PATCH to set the action groups
+    # avoids the EntityNotFound (404) that the POST method returns on freshly-created
+    # warehouses, since PATCH will also enable auditing if it is not yet active.
+    await http.request(
+        "PATCH",
+        HttpBase.FABRIC,
+        path,
+        json={"state": "Enabled", "auditActionsAndGroups": action_groups},
+    )
+
     return await get_settings(http, workspace_id, warehouse_id)

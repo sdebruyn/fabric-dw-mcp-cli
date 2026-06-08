@@ -70,9 +70,12 @@ def _make_snap_entry() -> ItemEntry:
 _SNAPSHOT_DETAIL = {
     "id": SNAP_GUID,
     "displayName": "SalesWarehouse_Snapshot_20240315",
-    "creationPayload": {
+    "type": "WarehouseSnapshot",
+    "workspaceId": WS_GUID,
+    "properties": {
         "parentWarehouseId": WH_GUID,
         "snapshotDateTime": "2024-03-15T08:00:00Z",
+        "connectionString": "snap.datawarehouse.fabric.microsoft.com",
     },
 }
 
@@ -162,6 +165,7 @@ class TestSnapshotsCreate:
                 "fabric_dw.cli.commands.snapshots._resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_wh_entry())),
             ),
+            patch("asyncio.sleep", new=AsyncMock()),
         ):
             result = runner.invoke(
                 cli,

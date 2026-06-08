@@ -149,12 +149,14 @@ async def create(
 
     if location is None:
         # Fabric occasionally returns 201 with the new warehouse directly in the body
-        # (no LRO / no Location header). Try to parse the body inline.
+        # (no LRO / no Location header). The body does NOT include properties.connectionString,
+        # so we must do a follow-up GET to return a fully-populated Warehouse.
         resp_body = resp.json()
         resp_id = resp_body.get("id")
         resp_name = resp_body.get("displayName") or resp_body.get("name")
         if resp_id and resp_name:
-            return Warehouse.from_api(resp_body, kind=WarehouseKind.WAREHOUSE)
+            new_id = UUID(str(resp_id))
+            return await get_warehouse(http, workspace_id, new_id)
         msg = "create warehouse: response had no Location header and no usable body"
         raise FabricServerError(msg)
 

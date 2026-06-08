@@ -7,7 +7,7 @@ from enum import StrEnum
 from typing import Literal, cast
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class _FabricBase(BaseModel):
@@ -116,10 +116,17 @@ class RunningQuery(_FabricBase):
     """A currently-executing or recently-completed SQL query."""
 
     session_id: int
-    request_id: str
+    request_id: str | None = None
     status: str
     start_time: datetime
     total_elapsed_time_ms: int = Field(alias="total_elapsed_time")
     login_name: str | None = None
     command: str | None = None
     query_text: str | None = None
+
+    @field_validator("request_id", mode="before")
+    @classmethod
+    def _coerce_request_id(cls, v: object) -> str | None:
+        if v is None:
+            return None
+        return str(v)

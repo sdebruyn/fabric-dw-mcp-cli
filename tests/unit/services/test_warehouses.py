@@ -10,7 +10,8 @@ from uuid import UUID
 import httpx
 import pytest
 import respx
-from azure.core.credentials import AccessToken, TokenCredential
+from azure.core.credentials import AccessToken
+from azure.core.credentials_async import AsyncTokenCredential
 
 from fabric_dw.exceptions import FabricServerError, NotFound, PermissionDenied
 from fabric_dw.http_client import FabricHttpClient
@@ -47,9 +48,9 @@ _ITEMS_URL = f"{_BASE}/workspaces/{_WORKSPACE_ID}/items"
 _OPERATION_URL = f"{_BASE}/operations/op-abc123"
 
 
-def _make_credential(token: AccessToken = _FAKE_TOKEN) -> TokenCredential:
-    cred = MagicMock(spec=TokenCredential)
-    cred.get_token = MagicMock(return_value=token)
+def _make_credential(token: AccessToken = _FAKE_TOKEN) -> AsyncTokenCredential:
+    cred = MagicMock(spec=AsyncTokenCredential)
+    cred.get_token = AsyncMock(return_value=token)
     return cred
 
 
@@ -372,16 +373,25 @@ async def test_create_missing_resource_location_raises_fabric_server_error() -> 
 
 @pytest.mark.asyncio
 async def test_create_no_location_header_but_body_present_returns_warehouse() -> None:
-    """create must parse the 201 body and return the Warehouse when no Location header."""
+    """create must do a follow-up GET when 201 body is present (no Location header).
+
+    The 201 body never includes properties.connectionString, so a GET is required
+    to return a fully-populated Warehouse (regression: used to return connection_string=None).
+    """
     # Fabric sometimes responds 201 with the new warehouse directly in the body
-    body = json.loads(WAREHOUSE_CREATE_202_PAYLOAD)  # has id + displayName + workspaceId
+    body = json.loads(WAREHOUSE_CREATE_202_PAYLOAD)  # has id + displayName, no connectionString
+    wh_payload = json.loads(WAREHOUSE_GET_PAYLOAD)  # GET returns connectionString
+
+    new_wh_id = _WAREHOUSE_ID
+    new_wh_url = f"{_WAREHOUSES_URL}/{new_wh_id}"
 
     with respx.mock:
         respx.post(_ITEMS_URL).mock(
-            # 201, no Location header, body contains the new warehouse
+            # 201, no Location header, body contains id + displayName
             return_value=httpx.Response(201, json=body)
         )
-        # No LRO poll or final GET should be called — so no extra routes needed
+        # Follow-up GET must be made to populate connectionString
+        respx.get(new_wh_url).mock(return_value=httpx.Response(200, json=wh_payload))
 
         client = await _make_client()
         async with client:
@@ -391,6 +401,8 @@ async def test_create_no_location_header_but_body_present_returns_warehouse() ->
     assert result.id == _WAREHOUSE_ID
     assert result.name == "SalesWarehouse"
     assert result.kind == WarehouseKind.WAREHOUSE
+    # connection_string must be populated by the follow-up GET
+    assert result.connection_string == "saleswarehouse.datawarehouse.fabric.microsoft.com"
 
 
 @pytest.mark.asyncio

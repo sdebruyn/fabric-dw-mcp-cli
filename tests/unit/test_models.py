@@ -248,3 +248,27 @@ class TestRunningQuery:
         obj = RunningQuery.model_validate(payload)
         with pytest.raises(ValidationError):
             obj.status = "completed"
+
+    def test_request_id_int_coerced_to_str(self) -> None:
+        """The mssql driver returns request_id as int (0) for sessions with no active request."""
+        payload = {
+            "session_id": 7,
+            "request_id": 0,
+            "status": "running",
+            "start_time": "2024-03-15T10:00:00Z",
+            "total_elapsed_time": 0,
+        }
+        obj = RunningQuery.model_validate(payload)
+        assert obj.request_id == "0"
+
+    def test_request_id_none_accepted(self) -> None:
+        """request_id may be None when there is no active request for a session."""
+        payload = {
+            "session_id": 7,
+            "request_id": None,
+            "status": "running",
+            "start_time": "2024-03-15T10:00:00Z",
+            "total_elapsed_time": 0,
+        }
+        obj = RunningQuery.model_validate(payload)
+        assert obj.request_id is None

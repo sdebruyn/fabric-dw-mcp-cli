@@ -22,7 +22,8 @@ from typing import Any
 
 import httpx
 from aiolimiter import AsyncLimiter
-from azure.core.credentials import AccessToken, TokenCredential
+from azure.core.credentials import AccessToken
+from azure.core.credentials_async import AsyncTokenCredential
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from fabric_dw import auth
@@ -89,7 +90,7 @@ class FabricHttpClient:
             resp = await client.request("GET", HttpBase.FABRIC, "/workspaces")
     """
 
-    def __init__(self, credential: TokenCredential, rps: int = 2) -> None:
+    def __init__(self, credential: AsyncTokenCredential, rps: int = 2) -> None:
         self._credential = credential
         self._limiter = AsyncLimiter(max_rate=rps, time_period=1)
         self._http: httpx.AsyncClient | None = None
@@ -121,7 +122,7 @@ class FabricHttpClient:
         """
         async with self._token_lock:
             if self._token is None or self._token.expires_on - _time.time() < _TOKEN_REFRESH_BUFFER:
-                self._token = await auth.get_token(self._credential, auth.FABRIC_SCOPE)
+                self._token = await self._credential.get_token(auth.FABRIC_SCOPE)
         return self._token.token
 
     # ------------------------------------------------------------------
@@ -290,6 +291,28 @@ class FabricHttpClient:
     # ------------------------------------------------------------------
     # LRO polling
     # ------------------------------------------------------------------
+
+    async def get_operation_result(self, operation_id: str) -> dict[str, object]:
+        """Fetch the result of a completed LRO via ``GET /v1/operations/{id}/result``.
+
+        Microsoft Fabric LRO status bodies (from :meth:`poll_operation`) only contain
+        status metadata — the created item ID is *not* included.  Once the operation has
+        reached ``Succeeded``, the created item is available at a separate result endpoint.
+
+        Args:
+            operation_id: The UUID string of the LRO (from the ``x-ms-operation-id`` header
+                or parsed from the ``Location`` header path).
+
+        Returns:
+            The result body, e.g. ``{"id": "...", "type": "WarehouseSnapshot", ...}``.
+
+        Raises:
+            NotFound: If the result is not available (404).
+            FabricServerError: On 5xx errors.
+        """
+        result_url = f"{HttpBase.FABRIC}/operations/{operation_id}/result"
+        resp = await self._request_with_retry("GET", result_url)
+        return resp.json()  # type: ignore[no-any-return]
 
     async def poll_operation(
         self,

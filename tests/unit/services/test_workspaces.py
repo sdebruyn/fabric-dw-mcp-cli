@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 import time
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import httpx
 import pytest
 import respx
-from azure.core.credentials import AccessToken, TokenCredential
+from azure.core.credentials import AccessToken
+from azure.core.credentials_async import AsyncTokenCredential
 
 from fabric_dw.exceptions import FabricError
 from fabric_dw.http_client import FabricHttpClient
@@ -34,9 +35,9 @@ _CONTINUATION_URL = (
 )
 
 
-def _make_credential(token: AccessToken = _FAKE_TOKEN) -> TokenCredential:
-    cred = MagicMock(spec=TokenCredential)
-    cred.get_token = MagicMock(return_value=token)
+def _make_credential(token: AccessToken = _FAKE_TOKEN) -> AsyncTokenCredential:
+    cred = MagicMock(spec=AsyncTokenCredential)
+    cred.get_token = AsyncMock(return_value=token)
     return cred
 
 
