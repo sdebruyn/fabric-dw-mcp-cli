@@ -38,6 +38,8 @@ az login --tenant <tenant-id-or-domain>
 
 Then retry your `fabric-dw` command. The credential chain picks up the refreshed token automatically.
 
+Or use any other source listed in [Authentication](authentication.md). Set `AZURE_LOG_LEVEL=debug` to see which source the chain tried.
+
 ---
 
 ## 403 PermissionDenied on a workspace call

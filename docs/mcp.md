@@ -16,13 +16,11 @@ uvx fabric-dw-mcp
 
 Every client snippet below configures `uvx fabric-dw-mcp` as the entry point, so your AI tool always picks up the latest published version. Pin a version with `uvx fabric-dw-mcp@2026.6.0` if you need reproducibility.
 
-You will also need:
+You will also need an Azure credential the server can use to call the Fabric REST and SQL APIs. Set the `FABRIC_AUTH` environment variable to select a source:
 
-- Azure CLI logged in (`az login`) so the server can call the Fabric REST and SQL APIs as you.
-- Optionally, environment variables to switch auth modes:
-    - `FABRIC_AUTH=default` (default) — delegates to [`azure-identity` `DefaultAzureCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.defaultazurecredential?WT.mc_id=MVP_310840), which tries environment variables, Workload/Managed Identity, and the Azure CLI in order. See [Authentication](install.md#authentication) for the full chain.
-    - `FABRIC_AUTH=sp` plus `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` for service-principal auth.
-    - `FABRIC_AUTH=interactive` to force browser sign-in.
+- `FABRIC_AUTH=default` (default) — delegates to [`azure-identity` `DefaultAzureCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.defaultazurecredential?WT.mc_id=MVP_310840), which tries environment variables, Workload/Managed Identity, Azure CLI, Azure Developer CLI, Azure PowerShell, and interactive browser in order. See [Authentication](authentication.md) for the full chain.
+- `FABRIC_AUTH=sp` plus `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` for service-principal auth.
+- `FABRIC_AUTH=interactive` to force browser sign-in.
 
 ## Claude Code
 
@@ -320,7 +318,7 @@ After configuring your client, restart it and ask the assistant to list its avai
 - **Permission denied calling Fabric**: run `az account show` and confirm your account has at least Workspace Contributor on the target Fabric workspace.
 - **`uv: command not found`**: install uv from <https://docs.astral.sh/uv/>.
 - **`uvx: command not found`**: `uvx` ships with uv — install uv and it will be available.
-- **Server hangs at startup**: the server is likely waiting for an Azure CLI token refresh. Run `az login` before starting your assistant.
+- **Server hangs at startup**: the server is likely waiting for a credential to be resolved. Ensure your Azure credential is set up (see [Authentication](authentication.md)) before starting your assistant.
 - **Tools not visible in Copilot Chat**: ensure you are in **Agent** mode, not Ask or Edit mode.
 - **Tools not visible in Continue**: ensure you are in **Agent** mode.
 
