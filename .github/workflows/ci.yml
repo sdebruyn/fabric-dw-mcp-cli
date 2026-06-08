@@ -44,7 +44,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-      - run: uvx ty check src tests
+      - run: uv sync --frozen
+      - run: uvx ty==0.0.44 check src tests
 
   unit:
     name: Unit tests
