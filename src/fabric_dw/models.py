@@ -96,14 +96,53 @@ class WarehouseSnapshot(_FabricBase):
     snapshot_dt: datetime | None = Field(default=None, alias="snapshotDateTime")
 
 
-class RestorePoint(_FabricBase):
-    """A restore point for a Warehouse."""
+class CreationModeType:
+    """Known values for the ``creationMode`` field of a :class:`RestorePoint`.
 
-    id: UUID
-    name: str
+    MS Learn notes that additional creation mode types may be added over time,
+    so this is an **open** set of constants rather than a closed ``StrEnum``.
+    The ``creation_mode`` field on :class:`RestorePoint` is typed as ``str | None``
+    so that future unknown values and API responses with null fields pass
+    Pydantic validation without error.
+    """
+
+    USER_DEFINED: str = "UserDefined"
+    SYSTEM_CREATED: str = "SystemCreated"
+
+
+class RestorePoint(_FabricBase):
+    """A restore point for a Warehouse.
+
+    Note: ``id`` is a string timestamp (e.g. ``"1726617378000"``), *not* a UUID.
+    The Fabric API may return ``None`` for ``displayName`` and ``creationMode``
+    on system-created restore points; both fields are therefore optional.
+    """
+
+    id: str
+    name: str | None = Field(default=None, alias="displayName")
     description: str | None = None
-    created_at: datetime = Field(alias="createdAt")
-    is_system_created: bool = Field(alias="isSystemCreated")
+    creation_mode: str | None = Field(default=None, alias="creationMode")
+    event_date_time: datetime | None = Field(default=None, alias="eventDateTime")
+
+    @classmethod
+    def from_api(cls, payload: dict[str, object]) -> RestorePoint:
+        """Build a RestorePoint from the raw API response dict.
+
+        Flattens ``creationDetails.eventDateTime`` to the top level so the
+        standard Pydantic ``model_validate`` path can handle it.
+        """
+        _raw_details = payload.get("creationDetails")
+        details: dict[str, object] = (
+            cast("dict[str, object]", _raw_details) if isinstance(_raw_details, dict) else {}
+        )
+        flat: dict[str, object] = {
+            "id": payload.get("id"),
+            "displayName": payload.get("displayName"),
+            "description": payload.get("description"),
+            "creationMode": payload.get("creationMode"),
+            "eventDateTime": details.get("eventDateTime"),
+        }
+        return cls.model_validate(flat)
 
 
 class AuditSettings(_FabricBase):

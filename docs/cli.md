@@ -518,6 +518,137 @@ fabric-dw --yes queries kill MyWorkspace SalesWH 42
 
 ---
 
+## fabric-dw restore-points
+
+Manage Microsoft Fabric Warehouse restore points.
+
+A restore point captures the state of a warehouse at a point in time. User-defined restore points can be created, renamed, and deleted. System-created restore points are managed automatically by Fabric and cannot be deleted. Restore point IDs are timestamp-based strings (e.g. `"1726617378000"`), not GUIDs.
+
+### restore-points list
+
+List all restore points for a warehouse.
+
+**Synopsis**
+
+```
+fabric-dw restore-points list [WORKSPACE] [WAREHOUSE]
+```
+
+**Example**
+
+```shell
+fabric-dw restore-points list MyWorkspace SalesWH
+```
+
+```
+ id              displayName        creationMode   eventDateTime
+ --------------- ------------------ -------------- ---------------------
+ 1726617378000   Before migration   UserDefined    2024-10-18T22:17:09Z
+```
+
+---
+
+### restore-points get
+
+Get details for a single restore point by ID.
+
+**Synopsis**
+
+```
+fabric-dw restore-points get WORKSPACE WAREHOUSE RESTORE_POINT_ID
+```
+
+**Example**
+
+```shell
+fabric-dw restore-points get MyWorkspace SalesWH 1726617378000
+```
+
+---
+
+### restore-points create
+
+Create a new restore point for a warehouse at the current timestamp.
+
+**Synopsis**
+
+```
+fabric-dw restore-points create [OPTIONS] [WORKSPACE] [WAREHOUSE]
+```
+
+| Option | Description |
+| --- | --- |
+| `--name TEXT` | Optional display name (max 128 chars). |
+| `--description TEXT` | Optional description (max 512 chars). |
+
+**Example**
+
+```shell
+fabric-dw restore-points create MyWorkspace SalesWH \
+  --name "Before migration" \
+  --description "Pre-migration checkpoint"
+```
+
+---
+
+### restore-points rename
+
+Rename a restore point and optionally update its description.
+
+**Synopsis**
+
+```
+fabric-dw restore-points rename [OPTIONS] WORKSPACE WAREHOUSE RESTORE_POINT_ID NEW_NAME
+```
+
+| Option | Description |
+| --- | --- |
+| `--description TEXT` | Optional new description. |
+
+**Example**
+
+```shell
+fabric-dw restore-points rename MyWorkspace SalesWH 1726617378000 "Post-migration backup"
+```
+
+---
+
+### restore-points delete
+
+Delete a user-defined restore point. System-created restore points cannot be deleted. You will be asked to confirm unless `--yes` is passed.
+
+**Synopsis**
+
+```
+fabric-dw restore-points delete WORKSPACE WAREHOUSE RESTORE_POINT_ID
+```
+
+**Example**
+
+```shell
+fabric-dw --yes restore-points delete MyWorkspace SalesWH 1726617378000
+```
+
+---
+
+### restore-points restore
+
+Restore a warehouse in-place to a restore point. **This is a destructive operation** — the warehouse will be unavailable for approximately 10 minutes. You will be asked to confirm unless `--yes` is passed.
+
+**Synopsis**
+
+```
+fabric-dw restore-points restore WORKSPACE WAREHOUSE RESTORE_POINT_ID
+```
+
+**Example**
+
+```shell
+fabric-dw --yes restore-points restore MyWorkspace SalesWH 1726617378000
+```
+
+---
+
 ## fabric-dw snapshots
 
 Manage Microsoft Fabric Data Warehouse snapshots.

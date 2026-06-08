@@ -34,6 +34,7 @@ from fabric_dw.logging import setup_logging
 from fabric_dw.resolver import Resolver
 from fabric_dw.services import audit, queries, snapshots, sql_endpoints, warehouses, workspaces
 from fabric_dw.services import ownership as ownership_svc
+from fabric_dw.services import restore as restore_svc
 from fabric_dw.sql import SqlTarget
 
 __all__ = ["mcp", "run"]
@@ -565,6 +566,152 @@ async def roll_snapshot_timestamp(
     except FabricError as exc:
         raise _fabric_err(exc) from exc
     return {"rolled": True, "snapshot_name": snapshot_name, "new_dt": new_dt}
+
+
+# ---------------------------------------------------------------------------
+# Restore Point tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def list_restore_points(workspace: str, warehouse: str) -> list[dict[str, Any]]:
+    """Return all restore points for a warehouse."""
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        item = await _get_resolver().item(workspace, warehouse)
+        result = await restore_svc.list_points(_get_http(), ws_id, item.id)
+    except FabricError as exc:
+        raise _fabric_err(exc) from exc
+    return [rp.model_dump(by_alias=True, mode="json") for rp in result]
+
+
+@mcp.tool()
+async def get_restore_point(
+    workspace: str, warehouse: str, restore_point_id: str
+) -> dict[str, Any]:
+    """Return a single restore point by ID.
+
+    Args:
+        workspace: Workspace name or GUID.
+        warehouse: Warehouse name or GUID.
+        restore_point_id: The restore point ID string (e.g. ``"1726617378000"``).
+    """
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        item = await _get_resolver().item(workspace, warehouse)
+        result = await restore_svc.get_point(_get_http(), ws_id, item.id, restore_point_id)
+    except FabricError as exc:
+        raise _fabric_err(exc) from exc
+    return result.model_dump(by_alias=True, mode="json")
+
+
+@mcp.tool()
+async def create_restore_point(
+    workspace: str,
+    warehouse: str,
+    name: str | None = None,
+    description: str | None = None,
+) -> dict[str, Any]:
+    """Create a restore point for a warehouse at the current timestamp.
+
+    Args:
+        workspace: Workspace name or GUID.
+        warehouse: Warehouse name or GUID.
+        name: Optional display name (max 128 chars).
+        description: Optional description (max 512 chars).
+    """
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        item = await _get_resolver().item(workspace, warehouse)
+        result = await restore_svc.create_point(
+            _get_http(), ws_id, item.id, name=name, description=description
+        )
+    except FabricError as exc:
+        raise _fabric_err(exc) from exc
+    return result.model_dump(by_alias=True, mode="json")
+
+
+@mcp.tool()
+async def update_restore_point(
+    workspace: str,
+    warehouse: str,
+    restore_point_id: str,
+    name: str | None = None,
+    description: str | None = None,
+) -> dict[str, Any]:
+    """Rename and/or update the description of a restore point.
+
+    At least one of *name* or *description* must be provided.
+
+    Args:
+        workspace: Workspace name or GUID.
+        warehouse: Warehouse name or GUID.
+        restore_point_id: The restore point ID string.
+        name: New display name (max 128 chars).
+        description: New description (max 512 chars).
+    """
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        item = await _get_resolver().item(workspace, warehouse)
+        result = await restore_svc.update_point(
+            _get_http(),
+            ws_id,
+            item.id,
+            restore_point_id,
+            name=name,
+            description=description,
+        )
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+    except FabricError as exc:
+        raise _fabric_err(exc) from exc
+    return result.model_dump(by_alias=True, mode="json")
+
+
+@mcp.tool()
+async def delete_restore_point(
+    workspace: str, warehouse: str, restore_point_id: str
+) -> dict[str, Any]:
+    """Delete a user-defined restore point.
+
+    System-created restore points cannot be deleted.
+
+    Args:
+        workspace: Workspace name or GUID.
+        warehouse: Warehouse name or GUID.
+        restore_point_id: The restore point ID string.
+    """
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        item = await _get_resolver().item(workspace, warehouse)
+        await restore_svc.delete_point(_get_http(), ws_id, item.id, restore_point_id)
+    except FabricError as exc:
+        raise _fabric_err(exc) from exc
+    return {"deleted": True, "restore_point_id": restore_point_id}
+
+
+@mcp.tool()
+async def restore_warehouse_in_place(
+    workspace: str, warehouse: str, restore_point_id: str
+) -> dict[str, Any]:
+    """Restore a warehouse in-place to a restore point.
+
+    WARNING: This is a destructive, long-running operation. The warehouse
+    will be unavailable for approximately 10 minutes while the restore
+    completes.
+
+    Args:
+        workspace: Workspace name or GUID.
+        warehouse: Warehouse name or GUID.
+        restore_point_id: The restore point ID string to restore to.
+    """
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        item = await _get_resolver().item(workspace, warehouse)
+        await restore_svc.restore_in_place(_get_http(), ws_id, item.id, restore_point_id)
+    except FabricError as exc:
+        raise _fabric_err(exc) from exc
+    return {"restored": True, "restore_point_id": restore_point_id}
 
 
 # ---------------------------------------------------------------------------
