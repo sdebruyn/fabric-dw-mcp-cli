@@ -307,18 +307,18 @@ fabric-dw warehouses takeover MyWorkspace SalesWH
 
 ---
 
-## fabric-dw endpoints
+## fabric-dw sql-endpoints
 
 Manage Microsoft Fabric SQL Analytics Endpoints.
 
-### endpoints list
+### sql-endpoints list
 
 List all SQL Analytics Endpoints in a workspace. Supports `-A` / `--all-workspaces` to scan every visible workspace.
 
 **Synopsis**
 
 ```
-fabric-dw endpoints list [-A] [WORKSPACE]
+fabric-dw sql-endpoints list [-A] [WORKSPACE]
 ```
 
 | Option | Description |
@@ -328,7 +328,7 @@ fabric-dw endpoints list [-A] [WORKSPACE]
 **Example**
 
 ```shell
-fabric-dw endpoints list MyWorkspace
+fabric-dw sql-endpoints list MyWorkspace
 ```
 
 ```
@@ -339,38 +339,38 @@ fabric-dw endpoints list MyWorkspace
 
 ---
 
-### endpoints get
+### sql-endpoints get
 
 Get details for a specific SQL Analytics Endpoint.
 
 **Synopsis**
 
 ```
-fabric-dw endpoints get WORKSPACE ENDPOINT
+fabric-dw sql-endpoints get WORKSPACE ENDPOINT
 ```
 
 **Example**
 
 ```shell
-fabric-dw endpoints get MyWorkspace MyLakehouseEP
+fabric-dw sql-endpoints get MyWorkspace MyLakehouseEP
 ```
 
 ---
 
-### endpoints refresh
+### sql-endpoints refresh
 
 Refresh metadata for a SQL Analytics Endpoint by triggering a sync from the underlying Lakehouse delta tables. This is a long-running operation (LRO) that is polled to completion.
 
 **Synopsis**
 
 ```
-fabric-dw endpoints refresh WORKSPACE ENDPOINT
+fabric-dw sql-endpoints refresh WORKSPACE ENDPOINT
 ```
 
 **Example**
 
 ```shell
-fabric-dw endpoints refresh MyWorkspace MyLakehouseEP
+fabric-dw sql-endpoints refresh MyWorkspace MyLakehouseEP
 ```
 
 ---

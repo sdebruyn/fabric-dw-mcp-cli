@@ -31,7 +31,7 @@ async def _build_clients(
         yield http, None
 
 
-@click.group("endpoints")
+@click.group("sql-endpoints")
 def endpoints_group() -> None:
     """Manage Microsoft Fabric SQL Analytics Endpoints."""
 
