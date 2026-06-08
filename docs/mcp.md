@@ -114,7 +114,9 @@ For service-principal auth:
 
 Restart Cursor after saving. Open **Settings → MCP** to confirm the server status.
 
-## GitHub Copilot (VS Code)
+## GitHub Copilot
+
+### VS Code
 
 Source: <https://code.visualstudio.com/docs/copilot/customization/mcp-servers>
 
@@ -160,12 +162,17 @@ For service-principal auth:
 
 After saving, open GitHub Copilot Chat, switch to **Agent** mode, and click the tools icon to confirm `fabric-dw` appears.
 
-The Copilot CLI (`gh copilot`) uses a separate config file. Add to `~/.copilot/mcp-config.json`:
+### CLI
+
+Source: <https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers>
+
+The Copilot CLI (`gh copilot`) stores its MCP configuration separately from VS Code. Add the server to `~/.copilot/mcp-config.json` (user-level, applies to all sessions):
 
 ```json
 {
   "mcpServers": {
     "fabric-dw": {
+      "type": "stdio",
       "command": "uvx",
       "args": ["fabric-dw-mcp"],
       "env": {
@@ -176,7 +183,42 @@ The Copilot CLI (`gh copilot`) uses a separate config file. Add to `~/.copilot/m
 }
 ```
 
-Source for Copilot CLI file path: <https://learn.microsoft.com/power-apps/maker/data-platform/data-platform-mcp-vscode#github-copilot-cli>
+For service-principal auth:
+
+```json
+{
+  "mcpServers": {
+    "fabric-dw": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["fabric-dw-mcp"],
+      "env": {
+        "FABRIC_AUTH": "sp",
+        "AZURE_TENANT_ID": "<tenant-id>",
+        "AZURE_CLIENT_ID": "<client-id>",
+        "AZURE_CLIENT_SECRET": "<client-secret>"
+      }
+    }
+  }
+}
+```
+
+You can also add the server interactively without editing the file: start the CLI, enter `/mcp add`, choose **STDIO** as the server type, set the command to `uvx fabric-dw-mcp`, and add `FABRIC_AUTH=default` as an environment variable.
+
+To share the configuration with a project instead of setting it globally, add a `.mcp.json` file (or `.github/mcp.json`) in the project root with the same `mcpServers` block. Project-level configuration takes precedence over user-level when server names conflict.
+
+### Desktop (preview)
+
+Source: <https://docs.github.com/en/copilot/how-tos/github-copilot-app/customize-github-copilot-app>
+
+!!! warning "Technical preview"
+    The GitHub Copilot desktop app is in technical preview and subject to change. The configuration approach described here reflects the current state of the preview.
+
+The GitHub Copilot desktop app is built on top of Copilot CLI and shares the same MCP configuration. **Any MCP servers you have added to `~/.copilot/mcp-config.json` for the CLI are automatically available in the desktop app.** No separate config file is needed.
+
+To add or manage MCP servers directly from the desktop app, open **Settings → MCP Servers**. The app provides a catalog of popular servers and accepts custom server definitions without requiring manual file edits.
+
+To register `fabric-dw-mcp` via the settings UI, choose **Add custom server**, select **STDIO** as the type, set the command to `uvx`, the arguments to `fabric-dw-mcp`, and add `FABRIC_AUTH=default` as an environment variable. The app writes the result to `~/.copilot/mcp-config.json` using the same format shown in the [CLI section](#cli) above.
 
 ## Continue
 
