@@ -310,6 +310,28 @@ Terminate a session on a warehouse.
 
 ---
 
+## SQL
+
+### execute_sql
+
+Execute an arbitrary SQL statement or batch against a warehouse or SQL Analytics Endpoint.
+
+> **Warning:** This tool executes arbitrary SQL, including DDL (DROP, ALTER, TRUNCATE) and DML (DELETE, UPDATE). Use only when the user explicitly requests data modification. Default to SELECT when the user's intent is read-only investigation.
+
+Multi-statement batches are supported; only the **last** result set is returned. DDL/DML statements that produce no result set return `columns=[]` and `rows=[]`.
+
+`datetime` and `Decimal` column values are pre-serialised to strings. `bytes`/varbinary columns are base64-encoded and their column names are suffixed with `__base64`.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
+- `query` (`str`) — SQL statement or batch to execute.
+
+**Returns:** `{ "columns": list[str], "rows": list[list[Any]], "rowcount": int }` — `rowcount` is `-1` when the driver does not report a count.
+
+---
+
 ## Restore Points
 
 Restore point IDs are timestamp-based strings (e.g. `"1726617378000"`), not GUIDs. Each `RestorePoint` object has `id`, `displayName`, `description`, `creationMode` (`"UserDefined"` or `"SystemCreated"`), and `eventDateTime`.

@@ -388,3 +388,25 @@ class SqlPoolsConfiguration(_FabricBase):
             names = ", ".join(p.name for p in defaults)
             msg = f"Exactly one SQL pool may be marked as default; got {len(defaults)}: {names}"
             raise ValueError(msg)
+
+
+class SqlResult(_FabricBase):
+    """Result set returned by :func:`~fabric_dw.services.sql_exec.execute`.
+
+    Attributes:
+        columns: Ordered list of column names from the last result set.
+            Empty for DDL/DML statements that produce no result set.
+        rows: Each element is one row; values are JSON-serialisable scalars
+            (``str``, ``int``, ``float``, ``bool``, ``None``).
+            ``datetime`` values are pre-serialised to ISO-8601 strings.
+            ``Decimal`` values are pre-serialised to strings.
+            ``bytes`` (varbinary) columns are base64-encoded strings; the
+            corresponding column name is suffixed with ``__base64`` so
+            callers can identify binary columns.
+        rowcount: Number of rows affected (DML) or fetched (SELECT).
+            May be ``-1`` if the driver does not report a count.
+    """
+
+    columns: list[str] = Field(default_factory=list)
+    rows: list[list[object]] = Field(default_factory=list)
+    rowcount: int = -1

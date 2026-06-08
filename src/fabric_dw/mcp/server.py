@@ -37,6 +37,7 @@ from fabric_dw.services import audit, queries, snapshots, sql_endpoints, warehou
 from fabric_dw.services import ownership as ownership_svc
 from fabric_dw.services import query_insights as _qi_svc
 from fabric_dw.services import restore as restore_svc
+from fabric_dw.services import sql_exec as _sql_exec_svc
 from fabric_dw.services import sql_pools as sql_pools_svc
 from fabric_dw.services import tables as tables_svc
 from fabric_dw.services import views as views_svc
@@ -220,13 +221,7 @@ async def rename_warehouse(
         ws_id = await _get_resolver().workspace_id(workspace)
         item = await _get_resolver().item(workspace, warehouse)
         result = await warehouses.rename(
-            _get_http(),
-            ws_id,
-            item.id,
-            new_name,
-            description=description,
-            cache=_get_cache(),
-            old_name=item.display_name or None,
+            _get_http(), ws_id, item.id, new_name, description=description
         )
     except FabricError as exc:
         raise _fabric_err(exc) from exc
@@ -239,13 +234,7 @@ async def delete_warehouse(workspace: str, warehouse: str) -> dict[str, Any]:
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
         item = await _get_resolver().item(workspace, warehouse)
-        await warehouses.delete(
-            _get_http(),
-            ws_id,
-            item.id,
-            cache=_get_cache(),
-            name=item.display_name or None,
-        )
+        await warehouses.delete(_get_http(), ws_id, item.id)
     except FabricError as exc:
         raise _fabric_err(exc) from exc
     return {"deleted": True, "warehouse_id": str(item.id)}
@@ -505,6 +494,49 @@ async def kill_session(workspace: str, warehouse: str, session_id: int) -> dict[
     return {"killed": True, "session_id": session_id}
 
 
+@mcp.tool()
+async def execute_sql(workspace: str, item: str, query: str) -> dict[str, Any]:
+    """Execute an arbitrary SQL statement or batch against a warehouse or SQL Analytics Endpoint.
+
+    WARNING: this tool executes arbitrary SQL against the target. DDL (DROP,
+    ALTER, TRUNCATE) and DML (DELETE, UPDATE) are permitted. Use only when the
+    user explicitly requests data modification. Default to SELECT when the
+    user's intent is read-only investigation.
+
+    Supports both Warehouse and SQL Analytics Endpoint items.  Multi-statement
+    batches are allowed; only the **last** result set is returned.  DDL/DML
+    statements that produce no result set return ``columns=[]`` and ``rows=[]``.
+
+    ``datetime`` and ``Decimal`` column values are pre-serialised to strings.
+    ``bytes`` / varbinary columns are base64-encoded and their column names are
+    suffixed with ``__base64``.
+
+    Args:
+        workspace: Workspace name or GUID.
+        item: Warehouse or SQL Analytics Endpoint name or GUID.
+        query: SQL statement or batch to execute.
+
+    Returns:
+        A dict with keys ``columns`` (list[str]), ``rows`` (list[list[Any]]),
+        and ``rowcount`` (int; ``-1`` when the driver does not report a count).
+    """
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        entry = await _get_resolver().item(workspace, item)
+        if entry.connection_string is None:
+            msg = f"item {item!r} has no connection string; cannot execute SQL"
+            raise FabricError(msg)  # noqa: TRY301
+        target = SqlTarget(
+            workspace_id=str(ws_id),
+            database=entry.display_name,
+            connection_string=entry.connection_string,
+        )
+        result = await _sql_exec_svc.execute(target, query, mode=_get_auth_mode())
+    except FabricError as exc:
+        raise _fabric_err(exc) from exc
+    return result.model_dump(mode="json")
+
+
 # ---------------------------------------------------------------------------
 # Query Insights tools
 # ---------------------------------------------------------------------------
@@ -756,8 +788,6 @@ async def rename_snapshot(
             snap_item.id,
             new_name=new_name,
             description=description,
-            cache=_get_cache(),
-            old_name=snap_item.display_name or None,
         )
     except FabricError as exc:
         raise _fabric_err(exc) from exc
@@ -770,13 +800,7 @@ async def delete_snapshot(workspace: str, snapshot: str) -> dict[str, Any]:
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
         snap_item = await _get_resolver().item(workspace, snapshot)
-        await snapshots.delete(
-            _get_http(),
-            ws_id,
-            snap_item.id,
-            cache=_get_cache(),
-            name=snap_item.display_name or None,
-        )
+        await snapshots.delete(_get_http(), ws_id, snap_item.id)
     except FabricError as exc:
         raise _fabric_err(exc) from exc
     return {"deleted": True, "snapshot_id": str(snap_item.id)}
