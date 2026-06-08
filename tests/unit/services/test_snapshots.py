@@ -35,8 +35,11 @@ _FAKE_TOKEN = AccessToken(token="fake-token", expires_on=int(time.time()) + 3600
 _BASE_URL = "https://api.fabric.microsoft.com/v1"
 _ITEMS_URL = f"{_BASE_URL}/workspaces/{_WS_ID}/items"
 _SNAP_DETAIL_URL = f"{_BASE_URL}/workspaces/{_WS_ID}/items/{_SNAP_ID}"
+# Dedicated warehouseSnapshots endpoint URLs
+_TYPED_SNAPS_URL = f"{_BASE_URL}/workspaces/{_WS_ID}/warehouseSnapshots"
+_TYPED_SNAP_URL = f"{_BASE_URL}/workspaces/{_WS_ID}/warehouseSnapshots/{_SNAP_ID}"
 
-# A single snapshot whose parent matches _PARENT_WH_ID
+# A single snapshot whose parent matches _PARENT_WH_ID (flat model format)
 WAREHOUSE_SNAPSHOT_PAYLOAD: dict[str, Any] = {
     "id": str(_SNAP_ID),
     "displayName": "SalesWarehouse_Snapshot_20240315",
@@ -44,7 +47,22 @@ WAREHOUSE_SNAPSHOT_PAYLOAD: dict[str, Any] = {
     "snapshotDateTime": "2024-03-15T08:00:00Z",
 }
 
-# Detail payload as returned by GET /workspaces/{ws}/items/{id}
+# Detail payload as returned by GET /workspaces/{ws}/warehouseSnapshots/{id}
+# (type-specific endpoint — uses "properties" not "creationPayload")
+WAREHOUSE_SNAPSHOT_TYPED_PAYLOAD: dict[str, Any] = {
+    "id": str(_SNAP_ID),
+    "displayName": "SalesWarehouse_Snapshot_20240315",
+    "type": "WarehouseSnapshot",
+    "workspaceId": str(_WS_ID),
+    "properties": {
+        "parentWarehouseId": str(_PARENT_WH_ID),
+        "snapshotDateTime": "2024-03-15T08:00:00Z",
+        "connectionString": "snap.datawarehouse.fabric.microsoft.com",
+    },
+}
+
+# Legacy detail payload as returned by GET /workspaces/{ws}/items/{id}
+# (generic items endpoint — uses "creationPayload")
 WAREHOUSE_SNAPSHOT_DETAIL_PAYLOAD: dict[str, Any] = {
     "id": str(_SNAP_ID),
     "displayName": "SalesWarehouse_Snapshot_20240315",
@@ -58,37 +76,42 @@ WAREHOUSE_SNAPSHOT_DETAIL_PAYLOAD: dict[str, Any] = {
 
 # Snapshot whose parent does NOT match _PARENT_WH_ID (should be filtered out)
 _OTHER_SNAP_ID = UUID("22222222-3333-4444-5555-666666666666")
-WAREHOUSE_SNAPSHOT_OTHER_PARENT_DETAIL_PAYLOAD: dict[str, Any] = {
+WAREHOUSE_SNAPSHOT_OTHER_PARENT_TYPED_PAYLOAD: dict[str, Any] = {
     "id": str(_OTHER_SNAP_ID),
     "displayName": "OtherWarehouse_Snapshot",
     "type": "WarehouseSnapshot",
     "workspaceId": str(_WS_ID),
-    "creationPayload": {
+    "properties": {
         "parentWarehouseId": str(_OTHER_WH_ID),
         "snapshotDateTime": "2024-03-15T09:00:00Z",
+        "connectionString": "other.datawarehouse.fabric.microsoft.com",
     },
 }
 
-# Items list page 1 (two WarehouseSnapshot items + a non-snapshot item)
-ITEMS_LIST_WITH_SNAPSHOTS_PAYLOAD: dict[str, Any] = {
+# warehouseSnapshots list page 1 (two snapshots — matching + non-matching parent)
+TYPED_SNAPS_LIST_PAYLOAD: dict[str, Any] = {
     "value": [
         {
             "id": str(_SNAP_ID),
             "displayName": "SalesWarehouse_Snapshot_20240315",
             "type": "WarehouseSnapshot",
             "workspaceId": str(_WS_ID),
+            "properties": {
+                "parentWarehouseId": str(_PARENT_WH_ID),
+                "snapshotDateTime": "2024-03-15T08:00:00Z",
+                "connectionString": "snap.datawarehouse.fabric.microsoft.com",
+            },
         },
         {
             "id": str(_OTHER_SNAP_ID),
             "displayName": "OtherWarehouse_Snapshot",
             "type": "WarehouseSnapshot",
             "workspaceId": str(_WS_ID),
-        },
-        {
-            "id": "99999999-9999-9999-9999-999999999999",
-            "displayName": "SomeLakehouse",
-            "type": "Lakehouse",
-            "workspaceId": str(_WS_ID),
+            "properties": {
+                "parentWarehouseId": str(_OTHER_WH_ID),
+                "snapshotDateTime": "2024-03-15T09:00:00Z",
+                "connectionString": "other.datawarehouse.fabric.microsoft.com",
+            },
         },
     ]
 }
@@ -100,18 +123,6 @@ WAREHOUSE_SNAPSHOT_CREATE_OPERATION_PAYLOAD: dict[str, Any] = {
     "lastUpdatedTimeUtc": "2024-03-15T10:01:00Z",
     "percentComplete": 100,
     "error": None,
-}
-
-# The newly created snapshot returned after LRO + GET
-WAREHOUSE_SNAPSHOT_CREATED_PAYLOAD: dict[str, Any] = {
-    "id": str(_SNAP_ID),
-    "displayName": "NewSnapshot",
-    "type": "WarehouseSnapshot",
-    "workspaceId": str(_WS_ID),
-    "creationPayload": {
-        "parentWarehouseId": str(_PARENT_WH_ID),
-        "snapshotDateTime": "2024-03-15T08:00:00Z",
-    },
 }
 
 _LRO_LOCATION = f"{_BASE_URL}/operations/op-abc-123"
@@ -151,36 +162,26 @@ def _no_real_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def test_list_pages_through_and_filters_by_parent() -> None:
-    """list should page through items, filter WarehouseSnapshot, fetch detail, and match parent."""
-    page2_url = f"{_BASE_URL}/workspaces/{_WS_ID}/items?continuationToken=page2"
+    """list should use /warehouseSnapshots, page through results, and filter by parent."""
+    page2_url = f"{_TYPED_SNAPS_URL}?continuationToken=page2"
 
-    page1_payload = dict(ITEMS_LIST_WITH_SNAPSHOTS_PAYLOAD)
+    page1_payload = dict(TYPED_SNAPS_LIST_PAYLOAD)
     page1_payload["continuationUri"] = page2_url
     page2_payload: dict[str, Any] = {"value": []}
 
-    items_page_call_count = 0
+    call_count = 0
 
-    def _items_side_effect(_request: Any) -> httpx.Response:
-        nonlocal items_page_call_count
-        items_page_call_count += 1
-        if items_page_call_count == 1:
+    def _side_effect(_request: Any) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
             return httpx.Response(200, json=page1_payload)
         return httpx.Response(200, json=page2_payload)
 
     with respx.mock(assert_all_called=False) as mock_router:
-        # Match both the base items URL and the continuation URL
         mock_router.get(
-            url__regex=rf"https://api\.fabric\.microsoft\.com/v1/workspaces/{_WS_ID}/items(\?.*)?$"
-        ).mock(side_effect=_items_side_effect)
-
-        # Detail for matching snapshot
-        mock_router.get(f"{_ITEMS_URL}/{_SNAP_ID}").mock(
-            return_value=httpx.Response(200, json=WAREHOUSE_SNAPSHOT_DETAIL_PAYLOAD)
-        )
-        # Detail for non-matching snapshot
-        mock_router.get(f"{_ITEMS_URL}/{_OTHER_SNAP_ID}").mock(
-            return_value=httpx.Response(200, json=WAREHOUSE_SNAPSHOT_OTHER_PARENT_DETAIL_PAYLOAD)
-        )
+            url__regex=rf"https://api\.fabric\.microsoft\.com/v1/workspaces/{_WS_ID}/warehouseSnapshots(\?.*)?$"
+        ).mock(side_effect=_side_effect)
 
         async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
             result = await snapshots.list_snapshots(http, _WS_ID, _PARENT_WH_ID)
@@ -194,61 +195,17 @@ async def test_list_pages_through_and_filters_by_parent() -> None:
 
 
 async def test_list_returns_empty_when_no_snapshots() -> None:
-    """list returns empty list when the server returns no WarehouseSnapshot items."""
+    """list returns empty list when the workspace has no warehouseSnapshots."""
     payload: dict[str, Any] = {"value": []}
     with respx.mock(assert_all_called=False) as mock_router:
         mock_router.get(
-            url__regex=rf"https://api\.fabric\.microsoft\.com/v1/workspaces/{_WS_ID}/items(\?.*)?$"
+            url__regex=rf"https://api\.fabric\.microsoft\.com/v1/workspaces/{_WS_ID}/warehouseSnapshots(\?.*)?$"
         ).mock(return_value=httpx.Response(200, json=payload))
 
         async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
             result = await snapshots.list_snapshots(http, _WS_ID, _PARENT_WH_ID)
 
     assert result == []
-
-
-async def test_list_retries_when_items_index_initially_empty() -> None:
-    """list_snapshots retries when the items-list API returns no WarehouseSnapshot entries.
-
-    Regression: after create() the Fabric items-list index can lag by tens of seconds.
-    list_snapshots() must retry a small number of times so callers who list immediately
-    after create still see the newly-created snapshot.
-    """
-    empty_payload: dict[str, Any] = {"value": []}
-    with_snapshot_payload: dict[str, Any] = {
-        "value": [
-            {
-                "id": str(_SNAP_ID),
-                "displayName": "SalesWarehouse_Snapshot_20240315",
-                "type": "WarehouseSnapshot",
-                "workspaceId": str(_WS_ID),
-            },
-        ]
-    }
-
-    call_count = 0
-
-    def _items_side_effect(_request: Any) -> httpx.Response:
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            return httpx.Response(200, json=empty_payload)
-        return httpx.Response(200, json=with_snapshot_payload)
-
-    with respx.mock(assert_all_called=False) as mock_router:
-        mock_router.get(
-            url__regex=rf"https://api\.fabric\.microsoft\.com/v1/workspaces/{_WS_ID}/items(\?.*)?$"
-        ).mock(side_effect=_items_side_effect)
-        mock_router.get(f"{_ITEMS_URL}/{_SNAP_ID}").mock(
-            return_value=httpx.Response(200, json=WAREHOUSE_SNAPSHOT_DETAIL_PAYLOAD)
-        )
-
-        async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
-            result = await snapshots.list_snapshots(http, _WS_ID, _PARENT_WH_ID)
-
-    assert call_count >= 2, "expected at least one retry when first call returns empty"
-    assert len(result) == 1
-    assert result[0].id == _SNAP_ID
 
 
 # ---------------------------------------------------------------------------
@@ -258,7 +215,7 @@ async def test_list_retries_when_items_index_initially_empty() -> None:
 
 @respx.mock
 async def test_create_happy_path_with_snapshot_dt() -> None:
-    """create should POST with snapshotDateTime, poll LRO, GET result, return WarehouseSnapshot."""
+    """create should POST with snapshotDateTime, poll LRO, GET typed endpoint, return snapshot."""
     snap_dt = datetime(2024, 3, 15, 8, 0, 0, tzinfo=UTC)
 
     # POST → 202 with Location header
@@ -269,9 +226,9 @@ async def test_create_happy_path_with_snapshot_dt() -> None:
     respx.get(_LRO_LOCATION).mock(
         return_value=httpx.Response(200, json=WAREHOUSE_SNAPSHOT_CREATE_OPERATION_PAYLOAD)
     )
-    # GET newly created snapshot
-    respx.get(f"{_ITEMS_URL}/{_SNAP_ID}").mock(
-        return_value=httpx.Response(200, json=WAREHOUSE_SNAPSHOT_DETAIL_PAYLOAD)
+    # GET newly created snapshot via typed endpoint
+    respx.get(_TYPED_SNAP_URL).mock(
+        return_value=httpx.Response(200, json=WAREHOUSE_SNAPSHOT_TYPED_PAYLOAD)
     )
 
     async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
@@ -302,8 +259,8 @@ async def test_create_happy_path_without_snapshot_dt() -> None:
         return httpx.Response(202, headers={"Location": _LRO_LOCATION})
 
     respx.post(_ITEMS_URL).mock(side_effect=_capture)
-    respx.get(f"{_ITEMS_URL}/{_SNAP_ID}").mock(
-        return_value=httpx.Response(200, json=WAREHOUSE_SNAPSHOT_DETAIL_PAYLOAD)
+    respx.get(_TYPED_SNAP_URL).mock(
+        return_value=httpx.Response(200, json=WAREHOUSE_SNAPSHOT_TYPED_PAYLOAD)
     )
 
     async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
@@ -346,8 +303,8 @@ async def test_create_posts_correct_body_with_snapshot_dt() -> None:
         return httpx.Response(202, headers={"Location": _LRO_LOCATION})
 
     respx.post(_ITEMS_URL).mock(side_effect=_capture)
-    respx.get(f"{_ITEMS_URL}/{_SNAP_ID}").mock(
-        return_value=httpx.Response(200, json=WAREHOUSE_SNAPSHOT_DETAIL_PAYLOAD)
+    respx.get(_TYPED_SNAP_URL).mock(
+        return_value=httpx.Response(200, json=WAREHOUSE_SNAPSHOT_TYPED_PAYLOAD)
     )
 
     async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
@@ -377,8 +334,8 @@ async def test_create_polls_lro_and_fetches_result() -> None:
     respx.post(_ITEMS_URL).mock(
         return_value=httpx.Response(202, headers={"Location": _LRO_LOCATION})
     )
-    respx.get(f"{_ITEMS_URL}/{_SNAP_ID}").mock(
-        return_value=httpx.Response(200, json=WAREHOUSE_SNAPSHOT_DETAIL_PAYLOAD)
+    respx.get(_TYPED_SNAP_URL).mock(
+        return_value=httpx.Response(200, json=WAREHOUSE_SNAPSHOT_TYPED_PAYLOAD)
     )
 
     async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
@@ -397,21 +354,22 @@ _LRO_LOCATION_BY_OP_ID = f"{_BASE_URL}/operations/{_LRO_OP_ID}"
 
 @respx.mock
 async def test_create_retries_detail_when_creation_payload_missing() -> None:
-    """create retries GET detail when parentWarehouseId is initially None.
+    """create retries GET /warehouseSnapshots/{id} when parentWarehouseId is initially None.
 
-    Regression: Fabric occasionally returns the item detail without creationPayload
+    Regression: Fabric occasionally returns the item detail without properties.parentWarehouseId
     populated immediately after the LRO completes (provisioning lag). create() must
     retry the detail GET until parentWarehouseId is present.
     """
-    # First detail response has creationPayload but parentWarehouseId is None
+    # First detail response has properties but parentWarehouseId is None
     detail_without_parent: dict[str, Any] = {
         "id": str(_SNAP_ID),
         "displayName": "NewSnapshot",
         "type": "WarehouseSnapshot",
         "workspaceId": str(_WS_ID),
-        "creationPayload": {
+        "properties": {
             "parentWarehouseId": None,
             "snapshotDateTime": None,
+            "connectionString": None,
         },
     }
 
@@ -422,12 +380,12 @@ async def test_create_retries_detail_when_creation_payload_missing() -> None:
         detail_call_count += 1
         if detail_call_count < 2:
             return httpx.Response(200, json=detail_without_parent)
-        return httpx.Response(200, json=WAREHOUSE_SNAPSHOT_DETAIL_PAYLOAD)
+        return httpx.Response(200, json=WAREHOUSE_SNAPSHOT_TYPED_PAYLOAD)
 
     respx.post(_ITEMS_URL).mock(
         return_value=httpx.Response(202, headers={"Location": _LRO_LOCATION})
     )
-    respx.get(f"{_ITEMS_URL}/{_SNAP_ID}").mock(side_effect=_detail_side_effect)
+    respx.get(_TYPED_SNAP_URL).mock(side_effect=_detail_side_effect)
 
     async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
         with patch.object(http, "poll_operation", new_callable=AsyncMock) as mock_poll:
@@ -466,8 +424,8 @@ async def test_create_uses_operation_result_endpoint_when_no_resource_id() -> No
         return_value=httpx.Response(202, headers={"Location": _LRO_LOCATION_BY_OP_ID})
     )
     respx.get(_LRO_RESULT_URL).mock(return_value=httpx.Response(200, json=lro_result_body))
-    respx.get(f"{_ITEMS_URL}/{_SNAP_ID}").mock(
-        return_value=httpx.Response(200, json=WAREHOUSE_SNAPSHOT_DETAIL_PAYLOAD)
+    respx.get(f"{_BASE_URL}/workspaces/{_WS_ID}/warehouseSnapshots/{_SNAP_ID}").mock(
+        return_value=httpx.Response(200, json=WAREHOUSE_SNAPSHOT_TYPED_PAYLOAD)
     )
 
     async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
@@ -487,18 +445,18 @@ async def test_create_uses_operation_result_endpoint_when_no_resource_id() -> No
 
 @respx.mock
 async def test_rename_fetches_existing_then_patches_with_all_fields() -> None:
-    """rename should GET the snapshot first, then PATCH with all required fields."""
+    """rename should GET /warehouseSnapshots/{id}, PATCH /items/{id} with all required fields."""
     patch_url = f"{_ITEMS_URL}/{_SNAP_ID}"
 
     captured_patch_requests: list[Any] = []
 
     def _patch_capture(request: Any) -> httpx.Response:
         captured_patch_requests.append(request)
-        return httpx.Response(200, json=WAREHOUSE_SNAPSHOT_DETAIL_PAYLOAD)
+        return httpx.Response(200, json={})
 
-    # GET to fetch existing snapshot detail (and again after PATCH for updated result)
-    respx.get(patch_url).mock(
-        return_value=httpx.Response(200, json=WAREHOUSE_SNAPSHOT_DETAIL_PAYLOAD)
+    # GET to fetch existing snapshot detail (typed endpoint)
+    respx.get(_TYPED_SNAP_URL).mock(
+        return_value=httpx.Response(200, json=WAREHOUSE_SNAPSHOT_TYPED_PAYLOAD)
     )
     # PATCH for rename
     respx.patch(patch_url).mock(side_effect=_patch_capture)
@@ -538,25 +496,23 @@ async def test_rename_empty_new_name_raises_value_error() -> None:
 @respx.mock
 async def test_rename_returns_updated_warehouse_snapshot() -> None:
     """rename should return the refreshed WarehouseSnapshot after PATCH."""
-    updated_detail = dict(WAREHOUSE_SNAPSHOT_DETAIL_PAYLOAD)
-    updated_detail = {**updated_detail, "displayName": "RenamedSnapshot"}
-    _raw_cp = updated_detail["creationPayload"]
-    assert isinstance(_raw_cp, dict)
-    updated_detail["creationPayload"] = dict(_raw_cp)
+    updated_typed = {
+        **WAREHOUSE_SNAPSHOT_TYPED_PAYLOAD,
+        "displayName": "RenamedSnapshot",
+    }
 
-    snap_url = f"{_ITEMS_URL}/{_SNAP_ID}"
-
+    snap_url = _TYPED_SNAP_URL
     call_count = 0
 
     def _get_side_effect(_request: Any) -> httpx.Response:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            return httpx.Response(200, json=WAREHOUSE_SNAPSHOT_DETAIL_PAYLOAD)
-        return httpx.Response(200, json=updated_detail)
+            return httpx.Response(200, json=WAREHOUSE_SNAPSHOT_TYPED_PAYLOAD)
+        return httpx.Response(200, json=updated_typed)
 
     respx.get(snap_url).mock(side_effect=_get_side_effect)
-    respx.patch(snap_url).mock(return_value=httpx.Response(200, json={}))
+    respx.patch(f"{_ITEMS_URL}/{_SNAP_ID}").mock(return_value=httpx.Response(200, json={}))
 
     async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
         result = await snapshots.rename(
