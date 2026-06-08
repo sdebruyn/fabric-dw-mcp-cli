@@ -619,11 +619,11 @@ Truncate a SQL table (remove all rows, preserve structure).
 ## SQL Pools (beta)
 
 !!! warning "Beta / preview feature"
-    The four SQL Pools tools manage the workspace SQL Pools configuration (currently in preview; the API may change before GA). All callers must hold the **workspace admin role**.
+    The SQL Pools tools manage the workspace SQL Pools configuration (currently in preview; the API may change before GA). All callers must hold the **workspace admin role**.
 
 ### get_sql_pools_configuration
 
-Fetch the SQL Pools configuration for a workspace.
+Fetch the full SQL Pools configuration (enabled flag + pool list) for a workspace.
 
 **Parameters:**
 
@@ -633,20 +633,89 @@ Fetch the SQL Pools configuration for a workspace.
 
 ---
 
-### update_sql_pools_configuration
+### list_sql_pools
 
-Replace the SQL Pools configuration for a workspace.
-
-!!! danger "Destructive PATCH"
-    Any pool **not** present in `custom_sql_pools` will be permanently deleted.  Supply the full desired pool list every time.
+Return the list of SQL pools for a workspace.
 
 **Parameters:**
 
 - `workspace` (`str`) — workspace name or GUID.
-- `custom_sql_pools_enabled` (`bool`) — whether custom SQL Pools are active.
-- `custom_sql_pools` (`list[dict]`) — the complete pool list.  Each pool object must include at minimum `name` (str) and `maxResourcePercentage` (int, 1–100).  Optional fields: `isDefault` (bool), `optimizeForReads` (bool), `classifier` (object with `type` str and `value` list[str]).
 
-**Returns:** `SqlPoolsConfiguration` — the fresh configuration after the update.
+**Returns:** `list[SqlPool]` — array of pool objects, each with `name`, `isDefault`, `maxResourcePercentage`, `optimizeForReads`, and optional `classifier`.
+
+---
+
+### get_sql_pool
+
+Return details for a single SQL pool by name.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `pool_name` (`str`) — pool name.
+
+**Returns:** `SqlPool` — single pool object (fields as above).
+
+---
+
+### create_sql_pool
+
+Add a new SQL pool to a workspace.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `name` (`str`) — pool name (must be unique within the workspace).
+- `max_percent` (`int`) — max resource percentage (1–100).
+- `is_default` (`bool`, default `false`) — whether this is the default pool.
+- `optimize_for_reads` (`bool`, default `true`) — enable read optimisation.
+- `classifier_type` (`str | null`, optional) — classifier type (e.g. `"Application Name"`).
+- `classifier_values` (`list[str] | null`, optional) — classifier value list.
+
+**Returns:** `SqlPool` — the newly-created pool object.
+
+---
+
+### update_sql_pool
+
+Update an existing SQL pool.  Only the parameters you supply are changed; all other fields are preserved.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `name` (`str`) — name of the pool to update.
+- `max_percent` (`int | null`, optional) — new max resource percentage.
+- `is_default` (`bool | null`, optional) — set or clear the default flag.
+- `optimize_for_reads` (`bool | null`, optional) — enable or disable read optimisation.
+- `classifier_type` (`str | null`, optional) — new classifier type.
+- `classifier_values` (`list[str] | null`, optional) — new classifier value list (replaces all existing values).
+
+**Returns:** `SqlPool` — the updated pool object.
+
+---
+
+### delete_sql_pool
+
+Delete an SQL pool from a workspace.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `pool_name` (`str`) — name of the pool to delete.
+
+**Returns:** `{ "deleted": true, "pool_name": str }` — confirmation.
+
+---
+
+### reset_sql_pools
+
+Clear all SQL pools for a workspace.  The `customSQLPoolsEnabled` flag is preserved.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+
+**Returns:** `SqlPoolsConfiguration` — the updated configuration (with an empty pool list).
 
 ---
 

@@ -28,10 +28,10 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw import auth as _auth
 from fabric_dw.cache import LookupCache
-from fabric_dw.exceptions import ConfigError, FabricError
+from fabric_dw.exceptions import AlreadyExists, ConfigError, FabricError, NotFound
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.logging import setup_logging
-from fabric_dw.models import SqlPoolsConfiguration
+from fabric_dw.models import SqlPool, SqlPoolClassifier
 from fabric_dw.resolver import Resolver
 from fabric_dw.services import audit, queries, snapshots, sql_endpoints, warehouses, workspaces
 from fabric_dw.services import ownership as ownership_svc
@@ -1303,7 +1303,7 @@ async def clear_table(workspace: str, item: str, qualified_name: str) -> dict[st
 
 @mcp.tool()
 async def get_sql_pools_configuration(workspace: str) -> dict[str, Any]:
-    """Fetch the SQL Pools configuration for a workspace.
+    """Fetch the full SQL Pools configuration (enabled flag + pool list) for a workspace.
 
     Requires workspace admin role.  This tool targets a **beta / preview** API
     endpoint that may change before general availability.
@@ -1317,39 +1317,171 @@ async def get_sql_pools_configuration(workspace: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def update_sql_pools_configuration(
-    workspace: str,
-    custom_sql_pools_enabled: bool,  # noqa: FBT001
-    custom_sql_pools: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """Replace the SQL Pools configuration for a workspace.
-
-    **DESTRUCTIVE PATCH**: any pool not present in *custom_sql_pools* will be
-    permanently deleted.  Supply the full desired pool list.
+async def list_sql_pools(workspace: str) -> list[dict[str, Any]]:
+    """Return the list of custom SQL pools for a workspace.
 
     Requires workspace admin role.  This tool targets a **beta / preview** API.
+    """
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        config = await sql_pools_svc.get_configuration(_get_http(), ws_id)
+    except FabricError as exc:
+        raise _fabric_err(exc) from exc
+    return [p.model_dump(by_alias=True, mode="json") for p in config.custom_sql_pools]
+
+
+@mcp.tool()
+async def get_sql_pool(workspace: str, pool_name: str) -> dict[str, Any]:
+    """Return details for a single SQL pool by name.
 
     Args:
         workspace: Workspace name or GUID.
-        custom_sql_pools_enabled: Whether custom SQL Pools are active.
-        custom_sql_pools: Full list of pool objects.  Each must have at minimum
-            ``name`` (str) and ``maxResourcePercentage`` (int 1-100).
-            Optional fields: ``isDefault`` (bool), ``optimizeForReads`` (bool),
-            ``classifier`` (object with ``type`` str and ``value`` list[str]).
+        pool_name: The pool name.
+
+    Requires workspace admin role.  This tool targets a **beta / preview** API.
     """
     try:
-        config = SqlPoolsConfiguration.model_validate(
+        ws_id = await _get_resolver().workspace_id(workspace)
+        config = await sql_pools_svc.get_configuration(_get_http(), ws_id)
+    except FabricError as exc:
+        raise _fabric_err(exc) from exc
+    pool = next((p for p in config.custom_sql_pools if p.name == pool_name), None)
+    if pool is None:
+        raise ToolError(f"pool {pool_name!r} not found")  # noqa: TRY003
+    return pool.model_dump(by_alias=True, mode="json")
+
+
+@mcp.tool()
+async def create_sql_pool(  # noqa: PLR0913
+    workspace: str,
+    name: str,
+    max_percent: int,
+    is_default: bool = False,  # noqa: FBT001, FBT002
+    optimize_for_reads: bool = True,  # noqa: FBT001, FBT002
+    classifier_type: str | None = None,
+    classifier_values: list[str] | None = None,
+) -> dict[str, Any]:
+    """Add a new custom SQL pool to a workspace.
+
+    Args:
+        workspace: Workspace name or GUID.
+        name: Pool name (must be unique within the workspace).
+        max_percent: Max resource percentage (1-100).
+        is_default: Whether this pool is the default pool. Defaults to false.
+        optimize_for_reads: Enable read optimisation. Defaults to true.
+        classifier_type: Classifier type (e.g. ``"Application Name"``).
+        classifier_values: List of classifier values (e.g. application names).
+
+    Requires workspace admin role.  This tool targets a **beta / preview** API.
+    """
+    classifier: SqlPoolClassifier | None = None
+    if classifier_type is not None:
+        classifier = SqlPoolClassifier.model_validate(
+            {"type": classifier_type, "value": classifier_values or []}
+        )
+
+    try:
+        pool = SqlPool.model_validate(
             {
-                "customSQLPoolsEnabled": custom_sql_pools_enabled,
-                "customSQLPools": custom_sql_pools,
+                "name": name,
+                "isDefault": is_default,
+                "maxResourcePercentage": max_percent,
+                "optimizeForReads": optimize_for_reads,
+                "classifier": (
+                    classifier.model_dump(by_alias=True, mode="json") if classifier else None
+                ),
             }
         )
     except Exception as exc:
-        raise ToolError(f"Invalid configuration: {exc}") from exc  # noqa: TRY003
+        raise ToolError(f"Invalid pool: {exc}") from exc  # noqa: TRY003
 
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
-        result = await sql_pools_svc.update_configuration(_get_http(), ws_id, config)
+        result = await sql_pools_svc.create_pool(_get_http(), ws_id, pool)
+    except AlreadyExists as exc:
+        raise ToolError(str(exc)) from exc
+    except FabricError as exc:
+        raise _fabric_err(exc) from exc
+    created = next(p for p in result.custom_sql_pools if p.name == name)
+    return created.model_dump(by_alias=True, mode="json")
+
+
+@mcp.tool()
+async def update_sql_pool(  # noqa: PLR0913
+    workspace: str,
+    name: str,
+    max_percent: int | None = None,
+    is_default: bool | None = None,  # noqa: FBT001
+    optimize_for_reads: bool | None = None,  # noqa: FBT001
+    classifier_type: str | None = None,
+    classifier_values: list[str] | None = None,
+) -> dict[str, Any]:
+    """Update an existing SQL pool.  Only the parameters you supply are changed.
+
+    Args:
+        workspace: Workspace name or GUID.
+        name: Name of the pool to update.
+        max_percent: New max resource percentage (1-100), or omit to keep current.
+        is_default: Set or clear the default flag, or omit to keep current.
+        optimize_for_reads: Enable/disable read optimisation, or omit to keep current.
+        classifier_type: New classifier type, or omit to keep current.
+        classifier_values: New classifier value list, or omit to keep current.
+
+    Requires workspace admin role.  This tool targets a **beta / preview** API.
+    """
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        result = await sql_pools_svc.update_pool(
+            _get_http(),
+            ws_id,
+            name,
+            max_resource_percentage=max_percent,
+            is_default=is_default,
+            optimize_for_reads=optimize_for_reads,
+            classifier_type=classifier_type,
+            classifier_values=classifier_values,
+        )
+    except NotFound as exc:
+        raise ToolError(str(exc)) from exc
+    except FabricError as exc:
+        raise _fabric_err(exc) from exc
+    updated = next(p for p in result.custom_sql_pools if p.name == name)
+    return updated.model_dump(by_alias=True, mode="json")
+
+
+@mcp.tool()
+async def delete_sql_pool(workspace: str, pool_name: str) -> dict[str, Any]:
+    """Delete an SQL pool from a workspace.
+
+    Args:
+        workspace: Workspace name or GUID.
+        pool_name: Name of the pool to delete.
+
+    Requires workspace admin role.  This tool targets a **beta / preview** API.
+    """
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        await sql_pools_svc.delete_pool(_get_http(), ws_id, pool_name)
+    except NotFound as exc:
+        raise ToolError(str(exc)) from exc
+    except FabricError as exc:
+        raise _fabric_err(exc) from exc
+    return {"deleted": True, "pool_name": pool_name}
+
+
+@mcp.tool()
+async def reset_sql_pools(workspace: str) -> dict[str, Any]:
+    """Clear all SQL pools for a workspace, preserving the enabled/disabled state.
+
+    Requires workspace admin role.  This tool targets a **beta / preview** API.
+
+    CAUTION: this permanently removes ALL pool definitions in the workspace. The
+    configuration's enabled-state is preserved, but every pool is wiped. Use only
+    when the user explicitly requests a reset.
+    """
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        result = await sql_pools_svc.reset_pools(_get_http(), ws_id)
     except FabricError as exc:
         raise _fabric_err(exc) from exc
     return result.model_dump(by_alias=True, mode="json")

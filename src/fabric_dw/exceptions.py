@@ -22,6 +22,10 @@ class FabricServerError(FabricError):
     """Raised on persistent 5xx errors or a failed LRO operation."""
 
 
+class AlreadyExists(FabricError):  # noqa: N818
+    """Raised when a resource with the given name already exists."""
+
+
 class ConfigError(FabricError):
     """Raised when required configuration is missing or invalid."""
 

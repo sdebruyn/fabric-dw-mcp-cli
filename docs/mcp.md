@@ -69,7 +69,7 @@ The equivalent `.mcp.json` snippet (project scope, `default` auth):
 }
 ```
 
-After adding, verify with `/mcp` inside a Claude Code session. You should see 22 tools including `list_workspaces`, `get_warehouse`, `kill_session`, and `clear_cache`.
+After adding, verify with `/mcp` inside a Claude Code session. You should see 27 tools including `list_workspaces`, `get_warehouse`, `kill_session`, and `clear_cache`.
 
 ## Cursor
 
@@ -311,7 +311,7 @@ Codex picks up config changes on the next invocation; no explicit reload is need
 
 ## Verifying
 
-After configuring your client, restart it and ask the assistant to list its available tools. You should see entries like `list_workspaces`, `get_warehouse`, `kill_session`, `clear_cache`, and 18 others (22 tools total).
+After configuring your client, restart it and ask the assistant to list its available tools. You should see entries like `list_workspaces`, `get_warehouse`, `kill_session`, `clear_cache`, and 23 others (27 tools total).
 
 ## Troubleshooting
 

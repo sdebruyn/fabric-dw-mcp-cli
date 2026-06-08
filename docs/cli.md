@@ -1055,13 +1055,13 @@ fabric-dw snapshots roll MyWorkspace SalesWH snap-june-2026 \
 ## fabric-dw sql-pools
 
 !!! warning "Beta / preview feature"
-    Manages workspace SQL Pools (currently in preview; the API may change before GA).
+    Manages workspace SQL Pools (currently in preview; the API may change before GA).  Callers must hold the **workspace admin role**.
 
-Manage custom SQL Pools configuration at the workspace level. Callers must hold the **workspace admin role**.
+Manage custom SQL Pools at the workspace level with sub-resource commands that mirror the Azure CLI style.
 
 ### sql-pools get
 
-Fetch the current SQL Pools configuration for a workspace.
+Fetch the full SQL Pools configuration (enabled flag + pool list) for a workspace.
 
 **Synopsis**
 
@@ -1077,42 +1077,125 @@ fabric-dw sql-pools get MyWorkspace
 
 ---
 
-### sql-pools set
+### sql-pools list
 
-Replace the SQL Pools configuration from a JSON file. This is a **destructive PATCH** — any pool not listed in the file is permanently deleted.
+List all SQL pools in a workspace.
 
 **Synopsis**
 
 ```
-fabric-dw sql-pools set [WORKSPACE] --from-file POOLS.JSON
+fabric-dw sql-pools list [WORKSPACE]
 ```
-
-| Option | Description |
-| --- | --- |
-| `--from-file PATH` | Path to a JSON file containing the full `SqlPoolsConfiguration` payload. (required) |
 
 **Example**
 
 ```shell
-fabric-dw sql-pools set MyWorkspace --from-file pools.json
+fabric-dw sql-pools list MyWorkspace
 ```
 
 ---
 
-### sql-pools edit
+### sql-pools show
 
-Open the current SQL Pools configuration in `$EDITOR` (or `$VISUAL`, or `vi`/`notepad`), then apply the modified version. Shows a diff and an explicit warning if any pool would be deleted before asking for confirmation.
+Show details for a single SQL pool.
 
 **Synopsis**
 
 ```
-fabric-dw sql-pools edit [WORKSPACE]
+fabric-dw sql-pools show [WORKSPACE] --name POOL
 ```
+
+| Option | Description |
+| --- | --- |
+| `--name TEXT` | Pool name to show. (required) |
 
 **Example**
 
 ```shell
-fabric-dw sql-pools edit MyWorkspace
+fabric-dw sql-pools show MyWorkspace --name ETL
+```
+
+---
+
+### sql-pools create
+
+Add a new SQL pool to a workspace.
+
+**Synopsis**
+
+```
+fabric-dw sql-pools create [OPTIONS] [WORKSPACE]
+```
+
+| Option | Description |
+| --- | --- |
+| `--name TEXT` | Pool name. (required) |
+| `--max-percent INTEGER` | Max resource percentage (1–100). (required) |
+| `--default` / `--no-default` | Mark as default pool. Default: `--no-default`. |
+| `--optimize-for-reads` / `--no-optimize-for-reads` | Enable read optimisation. Default: `--optimize-for-reads`. |
+| `--classifier-type TEXT` | Classifier type (e.g. `Application Name`). |
+| `--classifier-value TEXT` | Classifier value. Repeat for multiple values. |
+
+**Example**
+
+```shell
+fabric-dw sql-pools create MyWorkspace \
+  --name ETL \
+  --max-percent 30 \
+  --no-optimize-for-reads \
+  --classifier-type "Application Name" \
+  --classifier-value "ETL" \
+  --classifier-value "Load"
+```
+
+---
+
+### sql-pools update
+
+Update an existing SQL pool. Only the flags you provide are changed; all other fields are preserved.
+
+**Synopsis**
+
+```
+fabric-dw sql-pools update [OPTIONS] [WORKSPACE]
+```
+
+| Option | Description |
+| --- | --- |
+| `--name TEXT` | Pool name to update. (required) |
+| `--max-percent INTEGER` | New max resource percentage. |
+| `--default` / `--no-default` | Set or clear the default flag. |
+| `--optimize-for-reads` / `--no-optimize-for-reads` | Enable or disable read optimisation. |
+| `--classifier-type TEXT` | New classifier type. |
+| `--classifier-value TEXT` | New classifier value(s). Replaces all existing values. |
+
+**Example**
+
+```shell
+fabric-dw sql-pools update MyWorkspace --name ETL --max-percent 40
+```
+
+---
+
+### sql-pools delete
+
+Remove a SQL pool from a workspace. You will be asked to confirm unless `--yes` is passed.
+
+**Synopsis**
+
+```
+fabric-dw sql-pools delete [OPTIONS] [WORKSPACE]
+```
+
+| Option | Description |
+| --- | --- |
+| `--name TEXT` | Pool name to delete. (required) |
+| `--yes` | Skip confirmation prompt. |
+
+**Example**
+
+```shell
+fabric-dw --yes sql-pools delete MyWorkspace --name ETL
 ```
 
 ---
@@ -1149,6 +1232,28 @@ fabric-dw sql-pools disable [WORKSPACE]
 
 ```shell
 fabric-dw sql-pools disable MyWorkspace
+```
+
+---
+
+### sql-pools reset
+
+Clear all SQL pools for a workspace. The enabled/disabled state is preserved. You will be asked to confirm unless `--yes` is passed.
+
+**Synopsis**
+
+```
+fabric-dw sql-pools reset [OPTIONS] [WORKSPACE]
+```
+
+| Option | Description |
+| --- | --- |
+| `--yes` | Skip confirmation prompt. |
+
+**Example**
+
+```shell
+fabric-dw --yes sql-pools reset MyWorkspace
 ```
 
 ---
