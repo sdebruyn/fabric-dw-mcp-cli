@@ -298,6 +298,29 @@ class SqlPoolInsight(_FabricBase):
     is_pool_under_pressure: bool | None = None
 
 
+class TableSyncError(_FabricBase):
+    """Error details for a single table synchronization failure."""
+
+    error_code: str | None = Field(default=None, alias="errorCode")
+    message: str | None = None
+
+
+class TableSyncStatus(_FabricBase):
+    """Per-table result returned by a SQL analytics endpoint metadata refresh.
+
+    Corresponds to the ``TableSyncStatus`` object in the Fabric REST API.
+    """
+
+    table_name: str = Field(alias="tableName")
+    status: str
+    start_date_time: datetime | None = Field(default=None, alias="startDateTime")
+    end_date_time: datetime | None = Field(default=None, alias="endDateTime")
+    last_successful_sync_date_time: datetime | None = Field(
+        default=None, alias="lastSuccessfulSyncDateTime"
+    )
+    error: TableSyncError | None = None
+
+
 class View(_FabricBase):
     """A SQL view on a Fabric Data Warehouse or SQL Analytics Endpoint."""
 

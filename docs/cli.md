@@ -340,16 +340,31 @@ fabric-dw sql-endpoints get MyWorkspace MyLakehouseEP
 
 Refresh metadata for a SQL Analytics Endpoint by triggering a sync from the underlying Lakehouse delta tables. This is a long-running operation (LRO) that is polled to completion.
 
+Results are shown as a Rich table (Table, Status, End Time, Error). Pass `--json` on the root command to emit raw JSON instead.
+
 **Synopsis**
 
 ```
-fabric-dw sql-endpoints refresh WORKSPACE ENDPOINT
+fabric-dw sql-endpoints refresh [--recreate-tables] WORKSPACE ENDPOINT
 ```
+
+**Options**
+
+| Flag | Description |
+|------|-------------|
+| `--recreate-tables` | Drop and recreate all tables during the refresh. Use to resolve inconsistencies or force a clean rebuild. **Destructive** — use with caution. |
 
 **Example**
 
 ```shell
+# Standard refresh — shows a per-table Rich table
 fabric-dw sql-endpoints refresh MyWorkspace MyLakehouseEP
+
+# Force a full table recreate
+fabric-dw sql-endpoints refresh --recreate-tables MyWorkspace MyLakehouseEP
+
+# Emit raw JSON
+fabric-dw --json sql-endpoints refresh MyWorkspace MyLakehouseEP
 ```
 
 ---

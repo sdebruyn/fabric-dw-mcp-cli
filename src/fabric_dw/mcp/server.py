@@ -288,18 +288,32 @@ async def get_sql_endpoint(workspace: str, endpoint: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def refresh_sql_endpoint_metadata(workspace: str, endpoint: str) -> dict[str, Any]:
+async def refresh_sql_endpoint_metadata(
+    workspace: str,
+    endpoint: str,
+    recreate_tables: bool = False,  # noqa: FBT001, FBT002
+) -> list[dict[str, Any]]:
     """Refresh metadata for a SQL analytics endpoint (sync from the underlying Lakehouse).
 
     This is a long-running operation (LRO) that is polled to completion.
+    Returns a list of per-table sync results.
+
+    Args:
+        workspace: Workspace name or GUID.
+        endpoint: SQL analytics endpoint name or GUID.
+        recreate_tables: When ``True``, drop and recreate all tables during
+            the refresh.  Use to resolve inconsistencies or force a clean
+            rebuild.  **Destructive** — use with caution.
     """
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
         item = await _get_resolver().item(workspace, endpoint)
-        result = await sql_endpoints.refresh_metadata(_get_http(), ws_id, item.id)
+        statuses = await sql_endpoints.refresh_metadata(
+            _get_http(), ws_id, item.id, recreate_tables=recreate_tables
+        )
     except FabricError as exc:
         raise _fabric_err(exc) from exc
-    return result
+    return [s.model_dump(by_alias=True, mode="json") for s in statuses]
 
 
 # ---------------------------------------------------------------------------
