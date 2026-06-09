@@ -49,6 +49,8 @@ async def list_item_access(
         PermissionDenied: If the caller is not a Fabric Administrator (HTTP 403).
         NotFound: If the workspace or item does not exist (HTTP 404).
     """
+    # The optional ?type= query param is intentionally omitted: Warehouse and
+    # SQLEndpoint items do not filter by type, and omitting it returns all principals.
     path = f"/admin/workspaces/{workspace_id}/items/{item_id}/users"
     results: list[ItemAccess] = []
 

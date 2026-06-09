@@ -129,6 +129,21 @@ Take ownership of a Warehouse. Not supported for SQL analytics endpoints.
 
 ---
 
+### get_warehouse_permissions
+
+Return all principals (users, groups, service principals) with access to a Warehouse, including their effective permissions.
+
+> **Note:** Requires **Fabric Administrator** role (`Tenant.Read.All` or `Tenant.ReadWrite.All` scope). See [Microsoft Fabric admin documentation](https://learn.microsoft.com/en-us/fabric/admin/microsoft-fabric-admin) for how to request the role.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `warehouse` (`str`) — warehouse name or GUID.
+
+**Returns:** `list[ItemAccess]` — array of access records, each with `principal` (containing `id`, `displayName`, `type`, and type-specific fields such as `userPrincipalName` or `aadAppId`) and `itemAccessDetails` (containing `type`, `permissions`, and `additionalPermissions`).
+
+---
+
 ## SQL analytics endpoints
 
 ### list_sql_endpoints
@@ -168,6 +183,21 @@ Refresh metadata for a SQL analytics endpoint by syncing from the underlying Lak
 - `recreate_tables` (`bool`, default `False`) — drop and recreate all tables during the refresh. Use to resolve inconsistencies or force a clean rebuild. DESTRUCTIVE — use with caution.
 
 **Returns:** `list[TableSyncStatus]` — array of per-table sync results, each with `tableName`, `status`, `startDateTime`, `endDateTime`, `lastSuccessfulSyncDateTime`, and `error`.
+
+---
+
+### get_sql_endpoint_permissions
+
+Return all principals (users, groups, service principals) with access to a SQL Analytics Endpoint, including their effective permissions.
+
+> **Note:** Requires **Fabric Administrator** role (`Tenant.Read.All` or `Tenant.ReadWrite.All` scope). See [Microsoft Fabric admin documentation](https://learn.microsoft.com/en-us/fabric/admin/microsoft-fabric-admin) for how to request the role.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `sql_endpoint` (`str`) — SQL analytics endpoint name or GUID.
+
+**Returns:** `list[ItemAccess]` — array of access records, each with `principal` (containing `id`, `displayName`, `type`, and type-specific fields such as `userPrincipalName` or `aadAppId`) and `itemAccessDetails` (containing `type`, `permissions`, and `additionalPermissions`).
 
 ---
 

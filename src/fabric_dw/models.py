@@ -479,6 +479,9 @@ class ItemAccessPrincipal(_FabricBase):
             if isinstance(sp_details, dict):
                 flat["aad_app_id"] = sp_details.get("aadAppId")
 
+        # ServicePrincipalProfile: no scalar sub-fields to extract (profile
+        # identity is carried by the top-level id/displayName only).
+
         return flat
 
 

@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import json as _json
 import logging
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import click
-from rich.console import Console
-from rich.table import Table
 
 from fabric_dw import auth as _auth
 from fabric_dw.cache import LookupCache
@@ -19,12 +17,13 @@ from fabric_dw.cli.commands._utils import (
     _coro,
     _resolve_item,
     _resolve_item_with_cache,
+    render_permissions_table,
     resolve_warehouse_arg,
     resolve_workspace_arg,
 )
 from fabric_dw.exceptions import FabricError
 from fabric_dw.http_client import FabricHttpClient
-from fabric_dw.models import ItemAccess, WarehouseKind
+from fabric_dw.models import WarehouseKind
 from fabric_dw.resolver import Resolver
 from fabric_dw.services import ownership as _ownership_svc
 from fabric_dw.services import permissions as _permissions_svc
@@ -249,30 +248,6 @@ async def takeover_cmd(ctx: CliContext, workspace: str | None, warehouse: str | 
         raise click.ClickException(str(exc)) from exc
 
 
-def _render_permissions_table(
-    accesses: Sequence[ItemAccess], *, console: Console | None = None
-) -> None:
-    """Render a sequence of :class:`~fabric_dw.models.ItemAccess` as a Rich table."""
-    con = console or Console()
-    table = Table(title="Warehouse Permissions", show_header=True, header_style="bold")
-    table.add_column("Display Name", no_wrap=True)
-    table.add_column("UPN / App ID")
-    table.add_column("Type")
-    table.add_column("Permissions")
-    table.add_column("Additional")
-
-    for entry in accesses:
-        p = entry.principal
-        display = p.display_name or ""
-        identity = p.user_principal_name or (str(p.aad_app_id) if p.aad_app_id else "")
-        ptype = p.type
-        perms = ", ".join(entry.item_access_details.permissions)
-        additional = ", ".join(entry.item_access_details.additional_permissions)
-        table.add_row(display, identity, ptype, perms, additional)
-
-    con.print(table)
-
-
 @warehouses_group.command("permissions")
 @click.argument("workspace", required=False, default=None)
 @click.argument("warehouse", required=False, default=None)
@@ -299,6 +274,6 @@ async def permissions_cmd(ctx: CliContext, workspace: str | None, warehouse: str
                     )
                 )
             else:
-                _render_permissions_table(items)
+                render_permissions_table(items, title="Warehouse Permissions")
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc
