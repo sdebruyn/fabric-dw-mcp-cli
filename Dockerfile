@@ -4,6 +4,7 @@ ARG PYTHON_VERSION=3.13
 # Build stage uses Astral's official uv + python image
 FROM ghcr.io/astral-sh/uv:python${PYTHON_VERSION}-trixie-slim AS build
 WORKDIR /app
+# Global env var (not _FOR_<dist>) because hatch-vcs calls setuptools-scm without dist_name.
 ARG SETUPTOOLS_SCM_PRETEND_VERSION
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=${SETUPTOOLS_SCM_PRETEND_VERSION}
 COPY pyproject.toml uv.lock README.md LICENSE ./
