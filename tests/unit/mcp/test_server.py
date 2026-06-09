@@ -92,6 +92,19 @@ EXPECTED_TOOL_NAMES: frozenset[str] = frozenset(
         "list_schemas",
         "create_schema",
         "delete_schema",
+        # Views
+        "list_views",
+        "read_view",
+        "get_view",
+        "create_view",
+        "update_view",
+        "drop_view",
+        # Tables
+        "list_tables",
+        "read_table",
+        "create_table",
+        "delete_table",
+        "clear_table",
     }
 )
 
@@ -1229,3 +1242,89 @@ async def test_list_schemas_works_on_sql_endpoint() -> None:
 
     assert isinstance(result, list)
     assert result[0]["name"] == "dbo"
+
+
+@pytest.mark.asyncio
+async def test_read_view_happy_path() -> None:
+    """read_view calls views_svc.read_view and returns {columns, rows}."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = _make_item_entry()
+
+    mock_resolver = AsyncMock()
+    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_resolver.item = AsyncMock(return_value=item)
+    mock_http = AsyncMock()
+    mock_cache = MagicMock()
+
+    with (
+        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
+        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
+        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        patch(
+            "fabric_dw.services.views.read_view",
+            new=AsyncMock(return_value=(["id", "amount"], [(1, 100), (2, 200)])),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "read_view",
+            {"workspace": _WS_NAME, "item": _WH_NAME, "qualified_name": "dbo.vw_sales"},
+        )
+
+    assert isinstance(result, dict)
+    assert result["columns"] == ["id", "amount"]
+    assert result["rows"] == [[1, 100], [2, 200]]
+
+
+@pytest.mark.asyncio
+async def test_read_view_no_connection_string_raises_tool_error() -> None:
+    """read_view raises ToolError when the item has no connection string."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = _make_item_entry(connection_string=None)
+
+    mock_resolver = AsyncMock()
+    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_resolver.item = AsyncMock(return_value=item)
+    mock_http = AsyncMock()
+    mock_cache = MagicMock()
+
+    with (
+        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
+        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
+        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "read_view",
+            {"workspace": _WS_NAME, "item": _WH_NAME, "qualified_name": "dbo.vw_sales"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_read_view_bad_qualified_name_raises_tool_error() -> None:
+    """read_view raises ToolError when qualified_name has no dot."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = _make_item_entry()
+
+    mock_resolver = AsyncMock()
+    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_resolver.item = AsyncMock(return_value=item)
+    mock_http = AsyncMock()
+    mock_cache = MagicMock()
+
+    with (
+        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
+        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
+        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "read_view",
+            {"workspace": _WS_NAME, "item": _WH_NAME, "qualified_name": "nodot"},
+        )

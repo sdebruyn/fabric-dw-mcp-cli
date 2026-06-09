@@ -10,7 +10,7 @@ import pytest
 from fabric_dw.exceptions import AuthError, NotFound, PermissionDenied
 from fabric_dw.models import View
 from fabric_dw.services import views
-from fabric_dw.services.views import validate_identifier
+from fabric_dw.services.views import read_view, validate_identifier
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -279,6 +279,103 @@ class TestListViews:
             pytest.raises(RuntimeError, match="network timeout"),
         ):
             await views.list_views(target)
+
+
+# ===========================================================================
+# read_view
+# ===========================================================================
+
+
+class TestReadView:
+    @pytest.mark.asyncio
+    async def test_returns_columns_and_rows(self) -> None:
+        target = _make_target()
+        cols = ["id", "name"]
+        rows: list[tuple[object, ...]] = [(1, "Alice"), (2, "Bob")]
+        conn = _make_conn(rows, cols)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result_cols, result_rows = await read_view(target, "dbo", "vw_sales")
+        assert result_cols == cols
+        assert list(result_rows) == rows
+
+    @pytest.mark.asyncio
+    async def test_sql_uses_select_top(self) -> None:
+        target = _make_target()
+        conn = _make_conn([(1,)], ["id"])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await read_view(target, "dbo", "vw_sales", count=5)
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0].upper()
+        assert "SELECT TOP" in call_sql
+        assert "5" in call_sql
+
+    @pytest.mark.asyncio
+    async def test_sql_uses_bracket_quoting(self) -> None:
+        target = _make_target()
+        conn = _make_conn([(1,)], ["id"])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await read_view(target, "dbo", "vw_sales")
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert "[dbo]" in call_sql
+        assert "[vw_sales]" in call_sql
+
+    @pytest.mark.asyncio
+    async def test_validates_schema_identifier(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await read_view(target, "bad;schema", "vw_sales")
+
+    @pytest.mark.asyncio
+    async def test_validates_view_name_identifier(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await read_view(target, "dbo", "vw--injection")
+
+    @pytest.mark.asyncio
+    async def test_raises_not_found_when_no_columns(self) -> None:
+        target = _make_target()
+        cursor = MagicMock()
+        cursor.description = None
+        cursor.fetchall.return_value = []
+        conn = MagicMock()
+        conn.cursor.return_value = cursor
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(NotFound),
+        ):
+            await read_view(target, "dbo", "vw_nonexistent")
+
+    @pytest.mark.asyncio
+    async def test_maps_permission_denied(self) -> None:
+        target = _make_target()
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.execute.side_effect = Exception("permission was denied on object vw_sales")
+        conn.cursor.return_value = cursor
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(PermissionDenied),
+        ):
+            await read_view(target, "dbo", "vw_sales")
+
+    @pytest.mark.asyncio
+    async def test_closes_connection(self) -> None:
+        target = _make_target()
+        conn = _make_conn([(1,)], ["id"])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await read_view(target, "dbo", "vw_sales")
+        conn.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_default_count_is_ten(self) -> None:
+        target = _make_target()
+        conn = _make_conn([(1,)], ["id"])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await read_view(target, "dbo", "vw_sales")
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert "10" in call_sql
 
 
 # ===========================================================================

@@ -29,6 +29,7 @@ __all__ = [
     "drop_view",
     "get_view",
     "list_views",
+    "read_view",
     "update_view",
     "validate_identifier",
 ]
@@ -77,6 +78,8 @@ def validate_identifier(name: str) -> str:
 # ---------------------------------------------------------------------------
 # SQL templates
 # ---------------------------------------------------------------------------
+
+_READ_VIEW_SQL = "SELECT TOP ({count}) * FROM [{schema}].[{view}];"
 
 _LIST_VIEWS_SQL = """\
 SELECT
@@ -173,6 +176,60 @@ async def list_views(
                     raise mapped from exc
                 raise
             return [_row_to_view(cols, r) for r in rows]
+
+    return await asyncio.to_thread(_run)
+
+
+async def read_view(
+    target: SqlTarget,
+    schema: str,
+    view_name: str,
+    *,
+    count: int = 10,
+    mode: CredentialMode = CredentialMode.DEFAULT,
+) -> tuple[list[str], list[tuple[object, ...]]]:
+    """Return up to *count* rows from *schema*.*view_name*.
+
+    The result is a ``(columns, rows)`` pair suitable for passing to
+    :mod:`fabric_dw.sql_io` for materialisation via Arrow.
+
+    Args:
+        target: The warehouse or SQL Analytics Endpoint to query.
+        schema: The schema name.  Must pass :func:`validate_identifier`.
+        view_name: The view name.  Must pass :func:`validate_identifier`.
+        count: Maximum number of rows to return (default 10).
+        mode: The credential mode for Entra authentication.
+
+    Returns:
+        A ``(columns, rows)`` tuple where *columns* is a list of column name
+        strings and *rows* is a list of row tuples.
+
+    Raises:
+        ValueError: If *schema* or *view_name* fails identifier validation.
+        NotFound: If the view does not exist (zero rows AND zero columns).
+        PermissionDenied: If the driver reports a permission error.
+    """
+    validate_identifier(schema)
+    validate_identifier(view_name)
+
+    read_sql = _READ_VIEW_SQL.format(count=int(count), schema=schema, view=view_name)
+
+    def _run() -> tuple[list[str], list[tuple[object, ...]]]:
+        with closing(sql.open_connection(target, mode=mode)) as conn:
+            cursor = conn.cursor()
+            try:
+                cursor.execute(read_sql)
+                cols = [c[0] for c in (cursor.description or [])]
+                rows = cursor.fetchall()
+            except Exception as exc:
+                mapped = sql.map_driver_error(exc)
+                if mapped:
+                    raise mapped from exc
+                raise
+            if not cols:
+                msg = f"View [{schema}].[{view_name}] not found"
+                raise NotFound(msg)
+            return cols, list(rows)
 
     return await asyncio.to_thread(_run)
 
