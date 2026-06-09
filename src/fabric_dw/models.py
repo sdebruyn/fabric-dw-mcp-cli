@@ -7,7 +7,7 @@ from enum import StrEnum
 from typing import Annotated, Literal, cast
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class _FabricBase(BaseModel):
@@ -418,6 +418,98 @@ class SqlPoolsConfiguration(_FabricBase):
             names = ", ".join(p.name for p in defaults)
             msg = f"Exactly one SQL pool may be marked as default; got {len(defaults)}: {names}"
             raise ValueError(msg)
+
+
+# ---------------------------------------------------------------------------
+# Item access details (admin API)
+# ---------------------------------------------------------------------------
+
+
+class PrincipalType(StrEnum):
+    """The type of the principal returned by the item access details API.
+
+    Note: additional types may be added by Microsoft over time.
+    """
+
+    USER = "User"
+    GROUP = "Group"
+    SERVICE_PRINCIPAL = "ServicePrincipal"
+    SERVICE_PRINCIPAL_PROFILE = "ServicePrincipalProfile"
+    ENTIRE_TENANT = "EntireTenant"
+
+
+class ItemAccessPrincipal(_FabricBase):
+    """Minimal representation of a principal in an item access record.
+
+    Covers all five principal variants (User, Group, ServicePrincipal,
+    ServicePrincipalProfile, EntireTenant).  Type-specific detail fields
+    (``userPrincipalName``, ``aadAppId``, ``groupType``) are surfaced as
+    optional top-level attributes so that consumers do not need to traverse
+    nested detail sub-objects.
+    """
+
+    id: UUID
+    display_name: str | None = Field(default=None, alias="displayName")
+    type: str  # open string — new values may appear
+
+    # User-specific
+    user_principal_name: str | None = None
+
+    # Group-specific
+    group_type: str | None = None
+
+    # ServicePrincipal-specific
+    aad_app_id: UUID | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _flatten_detail(cls, data: object) -> object:
+        """Flatten the type-specific detail sub-object to the top level."""
+        if not isinstance(data, dict):
+            return data
+
+        flat = dict(data)
+        principal_type = flat.get("type", "")
+
+        if principal_type == PrincipalType.USER:
+            user_details = flat.get("userDetails")
+            if isinstance(user_details, dict):
+                flat["user_principal_name"] = user_details.get("userPrincipalName")
+
+        elif principal_type == PrincipalType.GROUP:
+            group_details = flat.get("groupDetails")
+            if isinstance(group_details, dict):
+                flat["group_type"] = group_details.get("groupType")
+
+        elif principal_type == PrincipalType.SERVICE_PRINCIPAL:
+            sp_details = flat.get("servicePrincipalDetails")
+            if isinstance(sp_details, dict):
+                flat["aad_app_id"] = sp_details.get("aadAppId")
+
+        # ServicePrincipalProfile: no scalar sub-fields to extract (profile
+        # identity is carried by the top-level id/displayName only).
+
+        return flat
+
+
+class ItemAccessDetail(_FabricBase):
+    """Item-level permission details for a single principal."""
+
+    item_type: str | None = Field(default=None, alias="type")
+    permissions: list[str] = Field(default_factory=list)
+    additional_permissions: list[str] = Field(default_factory=list, alias="additionalPermissions")
+
+
+class ItemAccess(_FabricBase):
+    """Combined principal + permission record from the admin item-access API."""
+
+    principal: ItemAccessPrincipal
+    item_access_details: ItemAccessDetail = Field(alias="itemAccessDetails")
+
+    @classmethod
+    def from_api(cls, raw: dict[str, object]) -> ItemAccess:
+        """Build an :class:`ItemAccess` from a raw ``accessDetails`` element."""
+        return cls.model_validate(raw)
 
 
 class SqlResult(_FabricBase):

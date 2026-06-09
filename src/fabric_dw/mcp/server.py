@@ -36,6 +36,7 @@ from fabric_dw.models import SqlPool, SqlPoolClassifier, WarehouseKind
 from fabric_dw.resolver import Resolver
 from fabric_dw.services import audit, queries, snapshots, sql_endpoints, warehouses, workspaces
 from fabric_dw.services import ownership as ownership_svc
+from fabric_dw.services import permissions as _permissions_svc
 from fabric_dw.services import query_insights as _qi_svc
 from fabric_dw.services import restore as restore_svc
 from fabric_dw.services import schemas as schemas_svc
@@ -274,6 +275,23 @@ async def takeover_warehouse(workspace: str, warehouse: str) -> dict[str, Any]:
     return {"taken_over": True, "warehouse_id": str(item.id)}
 
 
+@mcp.tool()
+async def get_warehouse_permissions(workspace: str, warehouse: str) -> list[dict[str, Any]]:
+    """Return principals with access to a Warehouse item.
+
+    Requires Fabric Administrator role (admin API).
+
+    See https://learn.microsoft.com/en-us/fabric/admin/microsoft-fabric-admin for details.
+    """
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        item = await _get_resolver().item(workspace, warehouse)
+        result = await _permissions_svc.list_item_access(_get_http(), ws_id, item.id)
+    except FabricError as exc:
+        raise _fabric_err(exc) from exc
+    return [a.model_dump(by_alias=True, mode="json") for a in result]
+
+
 # ---------------------------------------------------------------------------
 # SQL Endpoint tools
 # ---------------------------------------------------------------------------
@@ -336,6 +354,23 @@ async def refresh_sql_endpoint_metadata(
     except FabricError as exc:
         raise _fabric_err(exc) from exc
     return [s.model_dump(by_alias=True, mode="json") for s in statuses]
+
+
+@mcp.tool()
+async def get_sql_endpoint_permissions(workspace: str, sql_endpoint: str) -> list[dict[str, Any]]:
+    """Return principals with access to a SQL Analytics Endpoint item.
+
+    Requires Fabric Administrator role (admin API).
+
+    See https://learn.microsoft.com/en-us/fabric/admin/microsoft-fabric-admin for details.
+    """
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        item = await _get_resolver().item(workspace, sql_endpoint)
+        result = await _permissions_svc.list_item_access(_get_http(), ws_id, item.id)
+    except FabricError as exc:
+        raise _fabric_err(exc) from exc
+    return [a.model_dump(by_alias=True, mode="json") for a in result]
 
 
 # ---------------------------------------------------------------------------

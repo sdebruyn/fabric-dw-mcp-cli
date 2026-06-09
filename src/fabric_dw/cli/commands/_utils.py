@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Sequence
 from functools import wraps
 from typing import TYPE_CHECKING, ParamSpec, TypeVar
 from uuid import UUID
 
 import anyio
 import click
+from rich.console import Console
+from rich.table import Table
 
 from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.http_client import FabricHttpClient
-from fabric_dw.models import WarehouseKind
+from fabric_dw.models import ItemAccess, WarehouseKind
 from fabric_dw.resolver import Resolver
 
 if TYPE_CHECKING:
@@ -99,6 +101,39 @@ def resolve_workspace_arg(ctx: CliContext, value: str | None) -> str:
     raise click.UsageError(  # noqa: TRY003
         "no workspace specified; pass as argument or run 'fabric-dw config set workspace ...'"
     )
+
+
+def render_permissions_table(
+    accesses: Sequence[ItemAccess],
+    *,
+    title: str,
+    console: Console | None = None,
+) -> None:
+    """Render a sequence of :class:`~fabric_dw.models.ItemAccess` as a Rich table.
+
+    Args:
+        accesses: The list of item access records to display.
+        title: Table title shown in the Rich header.
+        console: Optional Rich console; defaults to a new :class:`~rich.console.Console`.
+    """
+    con = console or Console()
+    table = Table(title=title, show_header=True, header_style="bold")
+    table.add_column("Display Name", no_wrap=True)
+    table.add_column("UPN / App ID")
+    table.add_column("Type")
+    table.add_column("Permissions")
+    table.add_column("Additional Permissions")
+
+    for entry in accesses:
+        p = entry.principal
+        display = p.display_name or ""
+        identity = p.user_principal_name or (str(p.aad_app_id) if p.aad_app_id else "")
+        ptype = p.type
+        perms = ", ".join(entry.item_access_details.permissions)
+        additional = ", ".join(entry.item_access_details.additional_permissions)
+        table.add_row(display, identity, ptype, perms, additional)
+
+    con.print(table)
 
 
 def resolve_warehouse_arg(ctx: CliContext, value: str | None) -> str:

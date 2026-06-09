@@ -15,11 +15,17 @@ from fabric_dw import auth as _auth
 from fabric_dw.cache import LookupCache
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import render
-from fabric_dw.cli.commands._utils import _coro, _resolve_item
+from fabric_dw.cli.commands._utils import (
+    _coro,
+    _resolve_item,
+    render_permissions_table,
+    resolve_workspace_arg,
+)
 from fabric_dw.exceptions import FabricError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import TableSyncStatus
 from fabric_dw.resolver import Resolver
+from fabric_dw.services import permissions as _permissions_svc
 from fabric_dw.services import sql_endpoints as _sql_endpoints_svc
 
 _log = logging.getLogger(__name__)
@@ -184,5 +190,35 @@ async def refresh_cmd(
                 )
             else:
                 _render_refresh_table(statuses)
+    except FabricError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+@sql_endpoints_group.command("permissions")
+@click.argument("workspace", required=False, default=None)
+@click.argument("endpoint")
+@click.pass_obj
+@_coro
+async def permissions_cmd(ctx: CliContext, workspace: str | None, endpoint: str) -> None:
+    """List principals with access to ENDPOINT in WORKSPACE (both accept name or GUID).
+
+    Requires Fabric Administrator role.
+    See https://learn.microsoft.com/en-us/fabric/admin/microsoft-fabric-admin for details.
+    """
+    ws = resolve_workspace_arg(ctx, workspace)
+    try:
+        async with _build_clients(ctx) as (http, _):
+            ws_id, entry = await _resolve_item(http, ws, endpoint)
+            items = await _permissions_svc.list_item_access(http, ws_id, entry.id)
+            if ctx.json_output:
+                click.echo(
+                    _json.dumps(
+                        [a.model_dump(by_alias=True, mode="json") for a in items],
+                        indent=2,
+                        default=str,
+                    )
+                )
+            else:
+                render_permissions_table(items, title="SQL Analytics Endpoint Permissions")
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc

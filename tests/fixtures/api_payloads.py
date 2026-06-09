@@ -279,3 +279,97 @@ WAREHOUSE_OPERATION_SUCCEEDED_NO_LOCATION_PAYLOAD = """{
   "error": null,
   "resourceLocation": null
 }"""
+
+# Item access details — single-page response with User, Group, ServicePrincipal entries
+ITEM_ACCESS_DETAILS_PAYLOAD = """{
+  "accessDetails": [
+    {
+      "principal": {
+        "id": "f3052d1c-61a9-46fb-8df9-0d78916ae041",
+        "displayName": "Jacob Hancock",
+        "type": "User",
+        "userDetails": {
+          "userPrincipalName": "jacob@example.com"
+        }
+      },
+      "itemAccessDetails": {
+        "type": "Warehouse",
+        "permissions": ["Read", "Write"],
+        "additionalPermissions": ["ReadAll"]
+      }
+    },
+    {
+      "principal": {
+        "id": "c7db8e03-c8cb-4d4c-9f64-1dcd327c9d3c",
+        "displayName": "TestSecurityGroup",
+        "type": "Group",
+        "groupDetails": {
+          "groupType": "SecurityGroup"
+        }
+      },
+      "itemAccessDetails": {
+        "type": "Warehouse",
+        "permissions": ["Read"],
+        "additionalPermissions": []
+      }
+    },
+    {
+      "principal": {
+        "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "displayName": "MyServicePrincipal",
+        "type": "ServicePrincipal",
+        "servicePrincipalDetails": {
+          "aadAppId": "b2c3d4e5-f6a7-8901-bcde-f01234567891"
+        }
+      },
+      "itemAccessDetails": {
+        "type": "Warehouse",
+        "permissions": ["Read", "Reshare"],
+        "additionalPermissions": []
+      }
+    }
+  ]
+}"""
+
+# Item access details — page 1 of 2 (with continuationUri)
+ITEM_ACCESS_DETAILS_PAGE1_PAYLOAD = """{
+  "accessDetails": [
+    {
+      "principal": {
+        "id": "f3052d1c-61a9-46fb-8df9-0d78916ae041",
+        "displayName": "Jacob Hancock",
+        "type": "User",
+        "userDetails": {
+          "userPrincipalName": "jacob@example.com"
+        }
+      },
+      "itemAccessDetails": {
+        "type": "Warehouse",
+        "permissions": ["Read"],
+        "additionalPermissions": []
+      }
+    }
+  ],
+  "continuationUri": "https://api.fabric.microsoft.com/v1/admin/workspaces/a1b2c3d4-e5f6-7890-abcd-ef1234567890/items/d4e5f6a7-b8c9-0123-def0-123456789abc/users?continuationToken=page2token"
+}"""
+
+# Item access details — page 2 of 2 (no continuationUri)
+ITEM_ACCESS_DETAILS_PAGE2_PAYLOAD = """{
+  "accessDetails": [
+    {
+      "principal": {
+        "id": "c7db8e03-c8cb-4d4c-9f64-1dcd327c9d3c",
+        "displayName": "Eric Solomon",
+        "type": "User",
+        "userDetails": {
+          "userPrincipalName": "eric@example.com"
+        }
+      },
+      "itemAccessDetails": {
+        "type": "Warehouse",
+        "permissions": ["Read", "Reshare"],
+        "additionalPermissions": ["ReadAll"]
+      }
+    }
+  ]
+}"""

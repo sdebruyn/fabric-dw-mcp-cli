@@ -286,6 +286,39 @@ fabric-dw warehouses takeover MyWorkspace SalesWH
 
 ---
 
+### warehouses permissions
+
+List all principals (users, groups, service principals) with access to a warehouse, including their effective permissions. Requires **Fabric Administrator** role.
+
+**Synopsis**
+
+```
+fabric-dw [--json] warehouses permissions [WORKSPACE] [WAREHOUSE]
+```
+
+| Option | Description |
+| --- | --- |
+| `--json` | Emit raw JSON instead of a Rich table. Pass on the root command. |
+
+**Example**
+
+```shell
+# Tabular output
+fabric-dw warehouses permissions MyWorkspace SalesWH
+
+# Raw JSON
+fabric-dw --json warehouses permissions MyWorkspace SalesWH
+```
+
+```
+ Display Name    UPN / App ID             Type    Permissions    Additional Permissions
+ --------------- ------------------------ ------- -------------- ----------------------
+ Alice           alice@contoso.com        User    Read, Write
+ DataPipeline    00000000-0000-...        ServicePrincipal  Read
+```
+
+---
+
 ## fabric-dw sql-endpoints
 
 Manage Microsoft Fabric SQL Analytics Endpoints.
@@ -365,6 +398,39 @@ fabric-dw sql-endpoints refresh --recreate-tables MyWorkspace MyLakehouseEP
 
 # Emit raw JSON
 fabric-dw --json sql-endpoints refresh MyWorkspace MyLakehouseEP
+```
+
+---
+
+### sql-endpoints permissions
+
+List all principals (users, groups, service principals) with access to a SQL Analytics Endpoint, including their effective permissions. Requires **Fabric Administrator** role.
+
+**Synopsis**
+
+```
+fabric-dw [--json] sql-endpoints permissions [WORKSPACE] ENDPOINT
+```
+
+| Option | Description |
+| --- | --- |
+| `--json` | Emit raw JSON instead of a Rich table. Pass on the root command. |
+
+**Example**
+
+```shell
+# Tabular output
+fabric-dw sql-endpoints permissions MyWorkspace MyLakehouseEP
+
+# Raw JSON
+fabric-dw --json sql-endpoints permissions MyWorkspace MyLakehouseEP
+```
+
+```
+ Display Name    UPN / App ID             Type    Permissions    Additional Permissions
+ --------------- ------------------------ ------- -------------- ----------------------
+ Alice           alice@contoso.com        User    Read, Write
+ DataPipeline    00000000-0000-...        ServicePrincipal  Read
 ```
 
 ---

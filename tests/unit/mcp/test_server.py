@@ -29,9 +29,10 @@ from uuid import UUID
 import pytest
 
 from fabric_dw.cache import ItemEntry
-from fabric_dw.exceptions import NotFound
+from fabric_dw.exceptions import NotFound, PermissionDenied
 from fabric_dw.models import (
     AuditSettings,
+    ItemAccess,
     RunningQuery,
     TableSyncStatus,
     Warehouse,
@@ -88,6 +89,9 @@ EXPECTED_TOOL_NAMES: frozenset[str] = frozenset(
         "roll_snapshot_timestamp",
         # Cache
         "clear_cache",
+        # Permissions (admin API)
+        "get_warehouse_permissions",
+        "get_sql_endpoint_permissions",
         # Schemas
         "list_schemas",
         "create_schema",
@@ -1031,6 +1035,125 @@ async def test_execute_sql_no_connection_string_raises_tool_error() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Permissions tools
+# ---------------------------------------------------------------------------
+
+
+def _make_item_access() -> ItemAccess:
+    return ItemAccess.model_validate(
+        {
+            "principal": {
+                "id": str(_WH_ID),
+                "displayName": "Jacob Hancock",
+                "type": "User",
+                "userDetails": {"userPrincipalName": "jacob@example.com"},
+            },
+            "itemAccessDetails": {
+                "type": "Warehouse",
+                "permissions": ["Read", "Write"],
+                "additionalPermissions": ["ReadAll"],
+            },
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_warehouse_permissions_happy_path() -> None:
+    """get_warehouse_permissions returns a list of serialised ItemAccess dicts."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    access = _make_item_access()
+    item = _make_item_entry()
+
+    mock_resolver = AsyncMock()
+    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_resolver.item = AsyncMock(return_value=item)
+    mock_http = AsyncMock()
+    mock_cache = MagicMock()
+
+    with (
+        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
+        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
+        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        patch(
+            "fabric_dw.services.permissions.list_item_access",
+            new=AsyncMock(return_value=[access]),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "get_warehouse_permissions",
+            {"workspace": _WS_NAME, "warehouse": _WH_NAME},
+        )
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0]["principal"]["displayName"] == "Jacob Hancock"
+
+
+@pytest.mark.asyncio
+async def test_get_sql_endpoint_permissions_happy_path() -> None:
+    """get_sql_endpoint_permissions returns a list of serialised ItemAccess dicts."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    access = _make_item_access()
+    item = _make_item_entry()
+
+    mock_resolver = AsyncMock()
+    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_resolver.item = AsyncMock(return_value=item)
+    mock_http = AsyncMock()
+    mock_cache = MagicMock()
+
+    with (
+        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
+        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
+        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        patch(
+            "fabric_dw.services.permissions.list_item_access",
+            new=AsyncMock(return_value=[access]),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "get_sql_endpoint_permissions",
+            {"workspace": _WS_NAME, "sql_endpoint": _WH_NAME},
+        )
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0]["principal"]["type"] == "User"
+
+
+@pytest.mark.asyncio
+async def test_get_warehouse_permissions_permission_denied_becomes_tool_error() -> None:
+    """get_warehouse_permissions wraps PermissionDenied into ToolError."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = _make_item_entry()
+
+    mock_resolver = AsyncMock()
+    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_resolver.item = AsyncMock(return_value=item)
+    mock_http = AsyncMock()
+    mock_cache = MagicMock()
+
+    with (
+        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
+        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
+        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        patch(
+            "fabric_dw.services.permissions.list_item_access",
+            new=AsyncMock(side_effect=PermissionDenied("Fabric Administrator")),
+        ),
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "get_warehouse_permissions",
+            {"workspace": _WS_NAME, "warehouse": _WH_NAME},
+        )
+
+
 # ---------------------------------------------------------------------------
 # SQL Endpoint guard — create_table / delete_table / clear_table via MCP
 # ---------------------------------------------------------------------------
