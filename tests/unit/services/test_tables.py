@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from fabric_dw.exceptions import AuthError, NotFound, PermissionDenied
-from fabric_dw.models import Table
+from fabric_dw.exceptions import AuthError, ItemKindError, NotFound, PermissionDenied
+from fabric_dw.models import Table, WarehouseKind
 from fabric_dw.services import tables
 from fabric_dw.services.tables import validate_identifier
 
@@ -623,3 +623,75 @@ class TestClearTable:
             pytest.raises(RuntimeError, match="timeout"),
         ):
             await tables.clear_table(target, "dbo", "sales")
+
+
+# ===========================================================================
+# SQL Endpoint guard — service layer
+# ===========================================================================
+
+
+class TestSqlEndpointGuard:
+    """Verify that create/delete/clear reject SQL Endpoint items before any I/O."""
+
+    @pytest.mark.asyncio
+    async def test_create_table_rejects_sql_endpoint(self) -> None:
+        target = _make_target()
+        with pytest.raises(ItemKindError, match="read-only"):
+            await tables.create_table(
+                target,
+                "dbo",
+                "sales",
+                "SELECT 1",
+                kind=WarehouseKind.SQL_ENDPOINT,
+            )
+
+    @pytest.mark.asyncio
+    async def test_delete_table_rejects_sql_endpoint(self) -> None:
+        target = _make_target()
+        with pytest.raises(ItemKindError, match="read-only"):
+            await tables.delete_table(
+                target,
+                "dbo",
+                "sales",
+                kind=WarehouseKind.SQL_ENDPOINT,
+            )
+
+    @pytest.mark.asyncio
+    async def test_clear_table_rejects_sql_endpoint(self) -> None:
+        target = _make_target()
+        with pytest.raises(ItemKindError, match="read-only"):
+            await tables.clear_table(
+                target,
+                "dbo",
+                "sales",
+                kind=WarehouseKind.SQL_ENDPOINT,
+            )
+
+    @pytest.mark.asyncio
+    async def test_create_table_warehouse_allowed(self) -> None:
+        """WarehouseKind.WAREHOUSE must not be blocked by the guard."""
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            result = await tables.create_table(
+                target,
+                "dbo",
+                "sales",
+                "SELECT 1 AS id",
+                kind=WarehouseKind.WAREHOUSE,
+            )
+        assert isinstance(result, Table)
+
+    @pytest.mark.asyncio
+    async def test_guard_fires_before_identifier_validation(self) -> None:
+        """ItemKindError must be raised even when schema/table identifiers are invalid."""
+        target = _make_target()
+        with pytest.raises(ItemKindError):
+            await tables.create_table(
+                target,
+                "bad]schema",
+                "sales",
+                "SELECT 1",
+                kind=WarehouseKind.SQL_ENDPOINT,
+            )

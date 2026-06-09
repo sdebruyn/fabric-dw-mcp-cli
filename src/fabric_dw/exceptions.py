@@ -38,5 +38,5 @@ class ConfigError(FabricError):
         )
 
 
-class ValidationError(FabricError):
+class ItemKindError(FabricError):
     """Raised when an operation is not valid for the resolved item kind."""

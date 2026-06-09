@@ -27,8 +27,8 @@ from typing import cast
 
 from fabric_dw import sql
 from fabric_dw.auth import CredentialMode
-from fabric_dw.exceptions import NotFound
-from fabric_dw.models import Table
+from fabric_dw.exceptions import ItemKindError, NotFound
+from fabric_dw.models import Table, WarehouseKind
 from fabric_dw.services.views import validate_identifier
 from fabric_dw.sql import SqlTarget
 
@@ -40,6 +40,26 @@ __all__ = [
     "read_table",
     "validate_identifier",
 ]
+
+# ---------------------------------------------------------------------------
+# Guard
+# ---------------------------------------------------------------------------
+
+_SQL_ENDPOINT_READONLY_MSG = "SQL Endpoints are read-only; CREATE/DROP/TRUNCATE not supported"
+
+
+def _assert_not_sql_endpoint(kind: WarehouseKind) -> None:
+    """Raise :class:`~fabric_dw.exceptions.ItemKindError` for SQL Endpoint items.
+
+    Args:
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the resolved item.
+
+    Raises:
+        ItemKindError: If *kind* is :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
+    """
+    if kind == WarehouseKind.SQL_ENDPOINT:
+        raise ItemKindError(_SQL_ENDPOINT_READONLY_MSG)
+
 
 # ---------------------------------------------------------------------------
 # SQL templates
@@ -218,6 +238,7 @@ async def create_table(
     table_name: str,
     select_body: str,
     *,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
     mode: CredentialMode = CredentialMode.DEFAULT,
 ) -> Table:
     """Create a new table via ``CREATE TABLE [schema].[table] AS <select_body>`` (CTAS).
@@ -229,6 +250,8 @@ async def create_table(
         select_body: The SELECT statement (or CTE) used as the CTAS source.
             The first non-comment keyword **must** be ``SELECT`` or ``WITH``
             (for CTE-based queries); anything else raises :class:`ValueError`.
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
+            SQL Endpoint items are rejected with :class:`~fabric_dw.exceptions.ItemKindError`.
         mode: The credential mode for Entra authentication.
 
     Returns:
@@ -236,10 +259,12 @@ async def create_table(
         (fetched via ``sys.tables`` after DDL).
 
     Raises:
+        ItemKindError: If *kind* is :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
         ValueError: If *schema* or *table_name* fails identifier validation, or
             if *select_body* does not start with SELECT or WITH (CTE).
         PermissionDenied: If the driver reports a CREATE TABLE permission error.
     """
+    _assert_not_sql_endpoint(kind)
     validate_identifier(schema)
     validate_identifier(table_name)
     _reject_non_select(select_body)
@@ -267,6 +292,7 @@ async def delete_table(
     schema: str,
     table_name: str,
     *,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
     mode: CredentialMode = CredentialMode.DEFAULT,
 ) -> None:
     """Drop a table via ``DROP TABLE [schema].[table]``.
@@ -275,12 +301,16 @@ async def delete_table(
         target: The warehouse to connect to.
         schema: The schema name.  Must pass :func:`validate_identifier`.
         table_name: The table name.  Must pass :func:`validate_identifier`.
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
+            SQL Endpoint items are rejected with :class:`~fabric_dw.exceptions.ItemKindError`.
         mode: The credential mode for Entra authentication.
 
     Raises:
+        ItemKindError: If *kind* is :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
         ValueError: If *schema* or *table_name* fails identifier validation.
         PermissionDenied: If the driver reports a DROP TABLE permission error.
     """
+    _assert_not_sql_endpoint(kind)
     validate_identifier(schema)
     validate_identifier(table_name)
 
@@ -306,6 +336,7 @@ async def clear_table(
     schema: str,
     table_name: str,
     *,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
     mode: CredentialMode = CredentialMode.DEFAULT,
 ) -> None:
     """Truncate a table via ``TRUNCATE TABLE [schema].[table]``.
@@ -314,12 +345,16 @@ async def clear_table(
         target: The warehouse to connect to.
         schema: The schema name.  Must pass :func:`validate_identifier`.
         table_name: The table name.  Must pass :func:`validate_identifier`.
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
+            SQL Endpoint items are rejected with :class:`~fabric_dw.exceptions.ItemKindError`.
         mode: The credential mode for Entra authentication.
 
     Raises:
+        ItemKindError: If *kind* is :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
         ValueError: If *schema* or *table_name* fails identifier validation.
         PermissionDenied: If the driver reports a TRUNCATE TABLE permission error.
     """
+    _assert_not_sql_endpoint(kind)
     validate_identifier(schema)
     validate_identifier(table_name)
 

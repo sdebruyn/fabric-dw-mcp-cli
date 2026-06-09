@@ -458,10 +458,9 @@ class TestTablesCreate:
         assert result.exit_code == 0
 
     def test_create_sql_endpoint_rejected(self, runner: CliRunner, cache_env: Path) -> None:
-        """SQL Endpoint items must be rejected before issuing DDL."""
+        """SQL Endpoint items must be rejected by the service-layer guard before issuing DDL."""
         _ = cache_env
         mock_http = AsyncMock()
-        mock_create = AsyncMock(return_value=_make_table())
         with (
             patch(
                 "fabric_dw.cli.commands.tables._build_http_client",
@@ -471,7 +470,6 @@ class TestTablesCreate:
                 "fabric_dw.cli.commands.tables._resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_sql_endpoint_entry())),
             ),
-            patch("fabric_dw.services.tables.create_table", new=mock_create),
         ):
             result = runner.invoke(
                 cli,
@@ -488,7 +486,6 @@ class TestTablesCreate:
             )
         assert result.exit_code != 0
         assert "read-only" in result.output
-        mock_create.assert_not_awaited()
 
 
 # ===========================================================================
@@ -594,10 +591,9 @@ class TestTablesDelete:
         assert result.exit_code == 0
 
     def test_delete_sql_endpoint_rejected(self, runner: CliRunner, cache_env: Path) -> None:
-        """SQL Endpoint items must be rejected before issuing DDL."""
+        """SQL Endpoint items must be rejected by the service-layer guard before issuing DDL."""
         _ = cache_env
         mock_http = AsyncMock()
-        mock_delete = AsyncMock(return_value=None)
         with (
             patch(
                 "fabric_dw.cli.commands.tables._build_http_client",
@@ -607,14 +603,12 @@ class TestTablesDelete:
                 "fabric_dw.cli.commands.tables._resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_sql_endpoint_entry())),
             ),
-            patch("fabric_dw.services.tables.delete_table", new=mock_delete),
         ):
             result = runner.invoke(
                 cli, ["--yes", "tables", "delete", WS_GUID, SE_GUID, "dbo.sales"]
             )
         assert result.exit_code != 0
         assert "read-only" in result.output
-        mock_delete.assert_not_awaited()
 
 
 # ===========================================================================
@@ -714,10 +708,9 @@ class TestTablesClear:
         assert result.exit_code == 0
 
     def test_clear_sql_endpoint_rejected(self, runner: CliRunner, cache_env: Path) -> None:
-        """SQL Endpoint items must be rejected before issuing DDL."""
+        """SQL Endpoint items must be rejected by the service-layer guard before issuing DDL."""
         _ = cache_env
         mock_http = AsyncMock()
-        mock_clear = AsyncMock(return_value=None)
         with (
             patch(
                 "fabric_dw.cli.commands.tables._build_http_client",
@@ -727,9 +720,7 @@ class TestTablesClear:
                 "fabric_dw.cli.commands.tables._resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_sql_endpoint_entry())),
             ),
-            patch("fabric_dw.services.tables.clear_table", new=mock_clear),
         ):
             result = runner.invoke(cli, ["--yes", "tables", "clear", WS_GUID, SE_GUID, "dbo.sales"])
         assert result.exit_code != 0
         assert "read-only" in result.output
-        mock_clear.assert_not_awaited()
