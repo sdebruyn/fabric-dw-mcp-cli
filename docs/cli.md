@@ -880,6 +880,39 @@ fabric-dw --yes views drop MyWorkspace SalesWH dbo.vw_recent
 
 ---
 
+### views read
+
+Read up to `--count` rows from a view and emit them as JSON (default), CSV, or Parquet.
+
+CSV and Parquet formats require `--output`. JSON is emitted to stdout by default.
+
+**Synopsis**
+
+```
+fabric-dw views read [OPTIONS] [WORKSPACE] [WAREHOUSE] QUALIFIED_NAME
+```
+
+| Option | Description | Default |
+| --- | --- | --- |
+| `--count N` | Maximum rows to return. | `10` |
+| `--format {json\|csv\|parquet}` | Output format. | `json` |
+| `--output PATH` | Write to file instead of stdout. Required for `csv` and `parquet`. | |
+
+**Example**
+
+```shell
+fabric-dw views read MyWorkspace SalesWH dbo.vw_sales --count 5
+```
+
+```json
+[
+  {"id": 1, "amount": 99.99, "customer_id": 42},
+  ...
+]
+```
+
+---
+
 ## fabric-dw tables
 
 Manage SQL tables on Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.

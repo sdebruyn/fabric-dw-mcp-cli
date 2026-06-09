@@ -598,6 +598,48 @@ class TestViewsUpdate:
             )
         assert result.exit_code != 0
 
+    def test_update_from_file_strips_utf8_sig_bom(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        """Files with UTF-8-sig BOM (\xef\xbb\xbf) must be decoded transparently."""
+        _ = cache_env
+        sql_file = tmp_path / "view_update_bom.sql"
+        sql_file.write_bytes(b"\xef\xbb\xbfSELECT id FROM dbo.sales")
+        captured_body: list[str] = []
+
+        async def _capture(
+            _target: object, _schema: object, _view_name: object, body: str, **_kw: object
+        ) -> View:
+            captured_body.append(body)
+            return _make_view(with_definition=True)
+
+        with (
+            patch(
+                "fabric_dw.cli.commands.views._build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.views._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+            patch("fabric_dw.services.views.update_view", new=_capture),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "--yes",
+                    "views",
+                    "update",
+                    WS_GUID,
+                    WH_GUID,
+                    "dbo.vw_sales",
+                    "--from-file",
+                    str(sql_file),
+                ],
+            )
+        assert result.exit_code == 0
+        assert captured_body == ["SELECT id FROM dbo.sales"]
+
 
 # ===========================================================================
 # views drop
