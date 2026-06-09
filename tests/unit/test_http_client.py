@@ -249,6 +249,70 @@ async def test_iter_paginated_follows_continuation_uri() -> None:
         assert call_count == 2
 
 
+@pytest.mark.asyncio
+async def test_iter_paginated_single_page() -> None:
+    """iter_paginated should yield all items from a single-page response."""
+    page: dict[str, Any] = {"value": [{"id": "x"}, {"id": "y"}]}
+
+    with respx.mock:
+        respx.get("https://api.fabric.microsoft.com/v1/items").mock(
+            return_value=httpx.Response(200, json=page)
+        )
+
+        client = await _get_client()
+        async with client:
+            items = [item async for item in client.iter_paginated(HttpBase.FABRIC, "/items")]
+
+    assert items == [{"id": "x"}, {"id": "y"}]
+
+
+@pytest.mark.asyncio
+async def test_iter_paginated_two_pages_follows_continuation_uri() -> None:
+    """iter_paginated should follow continuationUri and yield items from both pages."""
+    continuation_url = "https://api.fabric.microsoft.com/v1/items?continuation=abc"
+    page1: dict[str, Any] = {
+        "value": [{"id": "1"}],
+        "continuationUri": continuation_url,
+    }
+    page2: dict[str, Any] = {"value": [{"id": "2"}, {"id": "3"}]}
+
+    call_count = 0
+
+    def side_effect(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if "continuation" in str(request.url):
+            return httpx.Response(200, json=page2)
+        return httpx.Response(200, json=page1)
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(url__regex=r"https://api\.fabric\.microsoft\.com/v1/items.*").mock(
+            side_effect=side_effect
+        )
+
+        client = await _get_client()
+        async with client:
+            items = [item async for item in client.iter_paginated(HttpBase.FABRIC, "/items")]
+
+    assert items == [{"id": "1"}, {"id": "2"}, {"id": "3"}]
+    assert call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_iter_paginated_empty_value_list() -> None:
+    """iter_paginated should yield nothing when the value list is empty."""
+    with respx.mock:
+        respx.get("https://api.fabric.microsoft.com/v1/items").mock(
+            return_value=httpx.Response(200, json={"value": []})
+        )
+
+        client = await _get_client()
+        async with client:
+            items = [item async for item in client.iter_paginated(HttpBase.FABRIC, "/items")]
+
+    assert items == []
+
+
 # ---------------------------------------------------------------------------
 # LRO polling
 # ---------------------------------------------------------------------------

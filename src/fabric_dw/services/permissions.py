@@ -12,7 +12,6 @@ Reference:
 
 from __future__ import annotations
 
-from typing import cast
 from uuid import UUID
 
 from fabric_dw.exceptions import PermissionDenied
@@ -52,30 +51,11 @@ async def list_item_access(
     # The optional ?type= query param is intentionally omitted: Warehouse and
     # SQLEndpoint items do not filter by type, and omitting it returns all principals.
     path = f"/admin/workspaces/{workspace_id}/items/{item_id}/users"
-    results: list[ItemAccess] = []
-
-    # The admin endpoint uses the same continuationUri pagination pattern as
-    # other Fabric list endpoints, but the items are in "accessDetails" rather
-    # than "value".  We implement manual pagination here instead of using
-    # iter_paginated (which looks for "value").
-    url: str | None = f"{HttpBase.FABRIC}{path}"
 
     try:
-        while url is not None:
-            resp = await http._request_with_retry("GET", url)  # type: ignore[attr-defined]
-            data = cast("dict[str, object]", resp.json())
-
-            raw_items = data.get("accessDetails", [])
-            if isinstance(raw_items, list):
-                results.extend(
-                    ItemAccess.from_api({str(k): v for k, v in raw.items()})
-                    for raw in raw_items
-                    if isinstance(raw, dict)
-                )
-
-            cont = data.get("continuationUri")
-            url = cont if isinstance(cont, str) else None
+        return [
+            ItemAccess.from_api(raw)
+            async for raw in http.iter_paginated(HttpBase.FABRIC, path, key="accessDetails")
+        ]
     except PermissionDenied as exc:
         raise PermissionDenied(_ADMIN_HINT) from exc
-
-    return results
