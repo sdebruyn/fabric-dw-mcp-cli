@@ -36,3 +36,7 @@ class ConfigError(FabricError):
             f"Missing required environment variable(s) for service principal auth: "
             f"{', '.join(names)}"
         )
+
+
+class ValidationError(FabricError):
+    """Raised when an operation is not valid for the resolved item kind."""

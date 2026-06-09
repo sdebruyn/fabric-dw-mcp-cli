@@ -10,6 +10,7 @@ from pathlib import Path
 import click
 
 from fabric_dw import auth as _auth
+from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import confirm, render
 from fabric_dw.cli.commands._utils import (
@@ -18,8 +19,9 @@ from fabric_dw.cli.commands._utils import (
     resolve_warehouse_arg,
     resolve_workspace_arg,
 )
-from fabric_dw.exceptions import FabricError
+from fabric_dw.exceptions import FabricError, ValidationError
 from fabric_dw.http_client import FabricHttpClient
+from fabric_dw.models import WarehouseKind
 from fabric_dw.services import tables as _tables_svc
 from fabric_dw.sql import SqlTarget
 from fabric_dw.sql_io import OutputFormat, columns_rows_to_arrow, write_arrow
@@ -32,6 +34,22 @@ async def _build_http_client(ctx: CliContext) -> AsyncIterator[FabricHttpClient]
     credential = _auth.get_credential(ctx.auth)
     async with FabricHttpClient(credential) as http:
         yield http
+
+
+_SQL_ENDPOINT_READONLY_MSG = "SQL Endpoints are read-only; CREATE/DROP/TRUNCATE not supported"
+
+
+def _assert_not_sql_endpoint(entry: ItemEntry) -> None:
+    """Raise ValidationError if *entry* is a SQL Endpoint (read-only).
+
+    Args:
+        entry: The resolved ItemEntry.
+
+    Raises:
+        ValidationError: If the item kind is :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
+    """
+    if entry.kind == WarehouseKind.SQL_ENDPOINT:
+        raise ValidationError(_SQL_ENDPOINT_READONLY_MSG)
 
 
 def _parse_qualified_name(qualified_name: str) -> tuple[str, str]:
@@ -184,6 +202,7 @@ async def create_cmd(
     try:
         async with _build_http_client(ctx) as http:
             ws_id, entry = await _resolve_item(http, ws, wh)
+            _assert_not_sql_endpoint(entry)
             if entry.connection_string is None:
                 raise click.ClickException(  # noqa: TRY003
                     f"Item {entry.display_name!r} has no connection string."
@@ -218,6 +237,7 @@ async def delete_cmd(
     try:
         async with _build_http_client(ctx) as http:
             ws_id, entry = await _resolve_item(http, ws, wh)
+            _assert_not_sql_endpoint(entry)
             if entry.connection_string is None:
                 raise click.ClickException(  # noqa: TRY003
                     f"Item {entry.display_name!r} has no connection string."
@@ -260,6 +280,7 @@ async def clear_cmd(
     try:
         async with _build_http_client(ctx) as http:
             ws_id, entry = await _resolve_item(http, ws, wh)
+            _assert_not_sql_endpoint(entry)
             if entry.connection_string is None:
                 raise click.ClickException(  # noqa: TRY003
                     f"Item {entry.display_name!r} has no connection string."
