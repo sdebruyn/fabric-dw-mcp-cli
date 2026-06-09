@@ -601,6 +601,21 @@ Drop a SQL view.
 
 ---
 
+### read_view
+
+Return up to `count` rows from a view as JSON-serialisable columns and rows.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`) — dot-separated schema and view name, e.g. `dbo.vw_sales`.
+- `count` (`int`, default `10`) — maximum rows to return.
+
+**Returns:** `{ "columns": list[str], "rows": list[list] }` — column names and row arrays.
+
+---
+
 ## Tables
 
 > **List-source note** — no public REST API exists for enumerating warehouse tables. `list_tables` uses TDS `sys.tables JOIN sys.schemas`.

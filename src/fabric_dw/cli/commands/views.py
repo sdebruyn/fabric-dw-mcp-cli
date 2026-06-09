@@ -22,6 +22,7 @@ from fabric_dw.exceptions import FabricError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.services import views as _views_svc
 from fabric_dw.sql import SqlTarget
+from fabric_dw.sql_io import OutputFormat, columns_rows_to_arrow, write_arrow
 
 _log = logging.getLogger(__name__)
 
@@ -60,7 +61,7 @@ def _load_select_body(select: str | None, from_file: str | None) -> str:
         path = Path(from_file)
         if not path.is_file():
             raise click.UsageError(f"File not found: {from_file}")  # noqa: TRY003
-        return path.read_text(encoding="utf-8").strip()
+        return path.read_text(encoding="utf-8-sig").strip()
     if select:
         return select
     raise click.UsageError("Provide --select or --from-file.")  # noqa: TRY003
@@ -101,6 +102,61 @@ async def list_cmd(
                 json_output=ctx.json_output,
                 table_title="Views",
             )
+    except (ValueError, FabricError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+@views_group.command("read")
+@click.argument("workspace", required=False, default=None)
+@click.argument("item", required=False, default=None)
+@click.argument("qualified_name")
+@click.option("--count", default=10, show_default=True, help="Max rows to return.")
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(list(OutputFormat.ALL), case_sensitive=False),
+    default=OutputFormat.JSON,
+    show_default=True,
+    help="Output format.",
+)
+@click.option("--output", default=None, help="Write to this file instead of stdout.")
+@click.pass_obj
+@_coro
+async def read_cmd(
+    ctx: CliContext,
+    workspace: str | None,
+    item: str | None,
+    qualified_name: str,
+    count: int,
+    fmt: str,
+    output: str | None,
+) -> None:
+    """Read up to COUNT rows from QUALIFIED_NAME (schema.view) on ITEM in WORKSPACE."""
+    ws = resolve_workspace_arg(ctx, workspace)
+    wh = resolve_warehouse_arg(ctx, item)
+    schema, view_name = _parse_qualified_name(qualified_name)
+    output_path = Path(output) if output else None
+
+    if fmt in (OutputFormat.CSV, OutputFormat.PARQUET) and output_path is None:
+        raise click.UsageError(f"--output PATH is required for {fmt!r} format.")  # noqa: TRY003
+
+    try:
+        async with _build_http_client(ctx) as http:
+            ws_id, entry = await _resolve_item(http, ws, wh)
+            if entry.connection_string is None:
+                raise click.ClickException(  # noqa: TRY003
+                    f"Item {entry.display_name!r} has no connection string."
+                )
+            target = SqlTarget(
+                workspace_id=str(ws_id),
+                database=entry.display_name,
+                connection_string=entry.connection_string,
+            )
+            columns, rows = await _views_svc.read_view(
+                target, schema, view_name, count=count, mode=ctx.auth
+            )
+            arrow_table = columns_rows_to_arrow(columns, rows)
+            write_arrow(arrow_table, fmt, output_path)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 

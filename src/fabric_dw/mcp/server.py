@@ -1095,6 +1095,45 @@ async def list_views(workspace: str, item: str, schema: str | None = None) -> li
 
 
 @mcp.tool()
+async def read_view(
+    workspace: str, item: str, qualified_name: str, count: int = 10
+) -> dict[str, Any]:
+    """Return up to *count* rows from a view as JSON-serialisable columns + rows.
+
+    Args:
+        workspace: Workspace name or GUID.
+        item: Warehouse or SQL endpoint name or GUID.
+        qualified_name: Dot-separated qualified view name, e.g. ``dbo.vw_sales``.
+        count: Maximum number of rows to return (default 10).
+    """
+    schema, _, view_name = qualified_name.partition(".")
+    if not schema or not view_name:
+        raise ToolError(  # noqa: TRY003
+            f"qualified_name must be <schema>.<view>, got {qualified_name!r}"
+        )
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        entry = await _get_resolver().item(workspace, item)
+        if entry.connection_string is None:
+            msg = f"item {item!r} has no connection string; cannot read views"
+            raise FabricError(msg)  # noqa: TRY301
+        target = SqlTarget(
+            workspace_id=str(ws_id),
+            database=entry.display_name,
+            connection_string=entry.connection_string,
+        )
+        columns, rows = await views_svc.read_view(
+            target, schema, view_name, count=count, mode=_get_auth_mode()
+        )
+    except (ValueError, FabricError) as exc:
+        raise _fabric_err(exc) if isinstance(exc, FabricError) else ToolError(str(exc)) from exc
+    return {
+        "columns": columns,
+        "rows": [[_json_safe_value(v) for v in row] for row in rows],
+    }
+
+
+@mcp.tool()
 async def get_view(workspace: str, item: str, qualified_name: str) -> dict[str, Any]:
     """Fetch the full definition of a view (schema.view).
 

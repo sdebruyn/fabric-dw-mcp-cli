@@ -151,6 +151,131 @@ class TestViewsList:
 
 
 # ===========================================================================
+# views read
+# ===========================================================================
+
+
+class TestViewsRead:
+    def test_read_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.views._build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.views._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.views.read_view",
+                new=AsyncMock(return_value=(["id", "name"], [(1, "Alice")])),
+            ),
+        ):
+            result = runner.invoke(cli, ["views", "read", WS_GUID, WH_GUID, "dbo.vw_sales"])
+        assert result.exit_code == 0
+
+    def test_read_json_output_to_stdout(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.views._build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.views._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.views.read_view",
+                new=AsyncMock(return_value=(["id"], [(42,)])),
+            ),
+        ):
+            result = runner.invoke(cli, ["views", "read", WS_GUID, WH_GUID, "dbo.vw_sales"])
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed[0]["id"] == 42
+
+    def test_read_csv_requires_output(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        result = runner.invoke(
+            cli, ["views", "read", WS_GUID, WH_GUID, "dbo.vw_sales", "--format", "csv"]
+        )
+        assert result.exit_code != 0
+
+    def test_read_parquet_requires_output(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        result = runner.invoke(
+            cli, ["views", "read", WS_GUID, WH_GUID, "dbo.vw_sales", "--format", "parquet"]
+        )
+        assert result.exit_code != 0
+
+    def test_read_csv_with_output(self, runner: CliRunner, cache_env: Path, tmp_path: Path) -> None:
+        _ = cache_env
+        out_file = tmp_path / "out.csv"
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.views._build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.views._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.views.read_view",
+                new=AsyncMock(return_value=(["id"], [(1,)])),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "views",
+                    "read",
+                    WS_GUID,
+                    WH_GUID,
+                    "dbo.vw_sales",
+                    "--format",
+                    "csv",
+                    "--output",
+                    str(out_file),
+                ],
+            )
+        assert result.exit_code == 0
+        assert out_file.exists()
+
+    def test_read_bad_qualified_name_exits_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        result = runner.invoke(cli, ["views", "read", WS_GUID, WH_GUID, "nodot"])
+        assert result.exit_code != 0
+
+    def test_read_not_found_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.views._build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.views._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.views.read_view",
+                new=AsyncMock(side_effect=NotFound("view not found")),
+            ),
+        ):
+            result = runner.invoke(cli, ["views", "read", WS_GUID, WH_GUID, "dbo.vw_missing"])
+        assert result.exit_code != 0
+
+
+# ===========================================================================
 # views get
 # ===========================================================================
 
@@ -329,6 +454,49 @@ class TestViewsCreate:
         )
         assert result.exit_code != 0
 
+    def test_create_from_file_strips_utf8_sig_bom(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        """Files with UTF-8-sig BOM (\xef\xbb\xbf) must be decoded transparently."""
+        _ = cache_env
+        sql_file = tmp_path / "view_bom.sql"
+        sql_file.write_bytes(b"\xef\xbb\xbfSELECT id FROM dbo.sales")
+        mock_http = AsyncMock()
+        captured_body: list[str] = []
+
+        async def _capture(
+            _target: object, _schema: object, _view_name: object, body: str, **_kw: object
+        ) -> View:
+            captured_body.append(body)
+            return _make_view(with_definition=True)
+
+        with (
+            patch(
+                "fabric_dw.cli.commands.views._build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.views._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+            patch("fabric_dw.services.views.create_view", new=_capture),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "views",
+                    "create",
+                    WS_GUID,
+                    WH_GUID,
+                    "--name",
+                    "dbo.vw_sales",
+                    "--from-file",
+                    str(sql_file),
+                ],
+            )
+        assert result.exit_code == 0
+        assert captured_body == ["SELECT id FROM dbo.sales"]
+
     def test_create_permission_denied_returns_nonzero(
         self, runner: CliRunner, cache_env: Path
     ) -> None:
@@ -429,6 +597,48 @@ class TestViewsUpdate:
                 input="n\n",
             )
         assert result.exit_code != 0
+
+    def test_update_from_file_strips_utf8_sig_bom(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        """Files with UTF-8-sig BOM (\xef\xbb\xbf) must be decoded transparently."""
+        _ = cache_env
+        sql_file = tmp_path / "view_update_bom.sql"
+        sql_file.write_bytes(b"\xef\xbb\xbfSELECT id FROM dbo.sales")
+        captured_body: list[str] = []
+
+        async def _capture(
+            _target: object, _schema: object, _view_name: object, body: str, **_kw: object
+        ) -> View:
+            captured_body.append(body)
+            return _make_view(with_definition=True)
+
+        with (
+            patch(
+                "fabric_dw.cli.commands.views._build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.views._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+            patch("fabric_dw.services.views.update_view", new=_capture),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "--yes",
+                    "views",
+                    "update",
+                    WS_GUID,
+                    WH_GUID,
+                    "dbo.vw_sales",
+                    "--from-file",
+                    str(sql_file),
+                ],
+            )
+        assert result.exit_code == 0
+        assert captured_body == ["SELECT id FROM dbo.sales"]
 
 
 # ===========================================================================
