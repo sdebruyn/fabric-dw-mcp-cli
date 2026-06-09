@@ -313,6 +313,88 @@ async def test_iter_paginated_empty_value_list() -> None:
     assert items == []
 
 
+@pytest.mark.asyncio
+async def test_iter_paginated_custom_key() -> None:
+    """iter_paginated with key='someOtherKey' must yield items from that key, not from 'value'.
+
+    The response body contains both 'someOtherKey' (with id=1) and 'value' (with id=99).
+    Only the item from 'someOtherKey' should be yielded.
+    """
+    page: dict[str, Any] = {
+        "someOtherKey": [{"id": 1}],
+        "value": [{"id": 99}],
+    }
+
+    with respx.mock:
+        respx.get("https://api.fabric.microsoft.com/v1/items").mock(
+            return_value=httpx.Response(200, json=page)
+        )
+
+        client = await _get_client()
+        async with client:
+            items = [
+                item
+                async for item in client.iter_paginated(
+                    HttpBase.FABRIC, "/items", key="someOtherKey"
+                )
+            ]
+
+    assert items == [{"id": 1}], f"Expected only id=1 from 'someOtherKey'; got {items}"
+
+
+@pytest.mark.asyncio
+async def test_iter_paginated_params_only_on_first_request() -> None:
+    """params must be sent on the first request only, not on continuation requests.
+
+    Mock two responses:
+    - First: contains continuationUri.
+    - Second: no continuationUri.
+    Verify via captured request URLs/params that the first call includes params={"x": "y"}
+    and the second call (continuation URL) does NOT include those params.
+    """
+    continuation_url = "https://api.fabric.microsoft.com/v1/items?continuation=tok"
+    page1: dict[str, Any] = {
+        "value": [{"id": "first"}],
+        "continuationUri": continuation_url,
+    }
+    page2: dict[str, Any] = {"value": [{"id": "second"}]}
+
+    captured_requests: list[httpx.Request] = []
+
+    def side_effect(request: httpx.Request) -> httpx.Response:
+        captured_requests.append(request)
+        if "continuation" in str(request.url):
+            return httpx.Response(200, json=page2)
+        return httpx.Response(200, json=page1)
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(url__regex=r"https://api\.fabric\.microsoft\.com/v1/items.*").mock(
+            side_effect=side_effect
+        )
+
+        client = await _get_client()
+        async with client:
+            items = [
+                item
+                async for item in client.iter_paginated(
+                    HttpBase.FABRIC, "/items", params={"x": "y"}
+                )
+            ]
+
+    assert items == [{"id": "first"}, {"id": "second"}]
+    assert len(captured_requests) == 2, f"Expected 2 requests; got {len(captured_requests)}"
+
+    first_url = str(captured_requests[0].url)
+    second_url = str(captured_requests[1].url)
+
+    # First request must contain the custom param
+    assert "x=y" in first_url, f"Expected 'x=y' in first request URL; got {first_url}"
+    # Second request (continuation) must NOT contain the custom param
+    assert "x=y" not in second_url, (
+        f"Params must not be forwarded to continuation URL; second URL: {second_url}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # LRO polling
 # ---------------------------------------------------------------------------

@@ -268,7 +268,7 @@ class FabricHttpClient:
         *,
         key: str = "value",
         params: dict[str, str] | None = None,
-    ) -> AsyncIterator[dict[str, Any]]:
+    ) -> AsyncIterator[dict[str, object]]:
         """Iterate over all items across paginated responses.
 
         Follows the ``continuationUri`` field in each page until it is absent.
@@ -289,7 +289,7 @@ class FabricHttpClient:
             # continuationUri is always a full URL; use _request_with_retry directly
             resp = await self._request_with_retry("GET", url, params=params if first else None)
             first = False
-            data: dict[str, Any] = resp.json()
+            data: dict[str, object] = resp.json()
             raw_items = data.get(key, [])
             if isinstance(raw_items, list):
                 for item in raw_items:
