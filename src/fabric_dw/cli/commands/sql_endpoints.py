@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json as _json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 
 import click
@@ -15,11 +15,16 @@ from fabric_dw import auth as _auth
 from fabric_dw.cache import LookupCache
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import render
-from fabric_dw.cli.commands._utils import _coro, _resolve_item
+from fabric_dw.cli.commands._utils import (
+    _coro,
+    _resolve_item,
+    resolve_workspace_arg,
+)
 from fabric_dw.exceptions import FabricError
 from fabric_dw.http_client import FabricHttpClient
-from fabric_dw.models import TableSyncStatus
+from fabric_dw.models import ItemAccess, TableSyncStatus
 from fabric_dw.resolver import Resolver
+from fabric_dw.services import permissions as _permissions_svc
 from fabric_dw.services import sql_endpoints as _sql_endpoints_svc
 
 _log = logging.getLogger(__name__)
@@ -184,5 +189,59 @@ async def refresh_cmd(
                 )
             else:
                 _render_refresh_table(statuses)
+    except FabricError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+def _render_permissions_table(
+    accesses: Sequence[ItemAccess], *, console: Console | None = None
+) -> None:
+    """Render a sequence of :class:`~fabric_dw.models.ItemAccess` as a Rich table."""
+    con = console or Console()
+    table = Table(title="SQL Analytics Endpoint Permissions", show_header=True, header_style="bold")
+    table.add_column("Display Name", no_wrap=True)
+    table.add_column("UPN / App ID")
+    table.add_column("Type")
+    table.add_column("Permissions")
+    table.add_column("Additional")
+
+    for entry in accesses:
+        p = entry.principal
+        display = p.display_name or ""
+        identity = p.user_principal_name or (str(p.aad_app_id) if p.aad_app_id else "")
+        ptype = p.type
+        perms = ", ".join(entry.item_access_details.permissions)
+        additional = ", ".join(entry.item_access_details.additional_permissions)
+        table.add_row(display, identity, ptype, perms, additional)
+
+    con.print(table)
+
+
+@sql_endpoints_group.command("permissions")
+@click.argument("workspace", required=False, default=None)
+@click.argument("endpoint")
+@click.pass_obj
+@_coro
+async def permissions_cmd(ctx: CliContext, workspace: str | None, endpoint: str) -> None:
+    """List principals with access to ENDPOINT in WORKSPACE (both accept name or GUID).
+
+    Requires Fabric Administrator role.
+    See https://learn.microsoft.com/en-us/fabric/admin/microsoft-fabric-admin for details.
+    """
+    ws = resolve_workspace_arg(ctx, workspace)
+    try:
+        async with _build_clients(ctx) as (http, _):
+            ws_id, entry = await _resolve_item(http, ws, endpoint)
+            items = await _permissions_svc.list_item_access(http, ws_id, entry.id)
+            if ctx.json_output:
+                click.echo(
+                    _json.dumps(
+                        [a.model_dump(by_alias=True, mode="json") for a in items],
+                        indent=2,
+                        default=str,
+                    )
+                )
+            else:
+                _render_permissions_table(items)
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc
