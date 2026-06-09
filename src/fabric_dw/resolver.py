@@ -111,14 +111,14 @@ class Resolver:
             return cached.id
 
         # 3. Power BI OData filter — escape single quotes per OData spec
-        resp = await self._http.request(
-            "GET",
-            HttpBase.POWERBI,
-            "/groups",
-            params={"$filter": f"name eq '{_odata_escape(value)}'"},
-        )
-        body: dict[str, Any] = resp.json()
-        results: list[dict[str, Any]] = body.get("value", [])
+        results: list[dict[str, object]] = [
+            item
+            async for item in self._http.iter_paginated(
+                HttpBase.POWERBI,
+                "/groups",
+                params={"$filter": f"name eq '{_odata_escape(value)}'"},
+            )
+        ]
 
         if not results:
             raise NotFound(f"workspace {value!r} not found")  # noqa: TRY003

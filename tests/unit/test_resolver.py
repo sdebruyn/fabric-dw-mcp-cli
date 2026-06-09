@@ -213,6 +213,44 @@ async def test_workspace_id_multiple_matches_error_mentions_all_ids(tmp_path: Pa
 
 
 # ---------------------------------------------------------------------------
+# workspace_id: continuation pages are followed
+# ---------------------------------------------------------------------------
+
+# A continuation URL that uses a distinct path segment so respx can
+# differentiate it from the first-page URL (which carries a $filter param
+# that respx ignores when matching by default).
+_PBI_GROUPS_CONT_URL = "https://api.powerbi.com/v1.0/myorg/groups/continuation/abc123"
+
+
+@pytest.mark.asyncio
+async def test_workspace_id_follows_continuation_pages(tmp_path: Path) -> None:
+    """workspace_id collects items across multiple continuation pages.
+
+    Simulates an API that returns an empty first page with a continuationUri,
+    and the actual result on the second page.  This proves that iter_paginated
+    is used (single-shot body.get() would return an empty list and raise NotFound).
+    """
+    resolver, client, _ = _make_resolver(tmp_path)
+
+    # Page 1 is empty but carries a continuationUri.
+    # Page 2 contains the matching workspace.
+    page1_response: dict[str, object] = {
+        "value": [],
+        "continuationUri": _PBI_GROUPS_CONT_URL,
+    }
+    page2_response: dict[str, object] = {
+        "value": [{"id": WS_GUID, "name": "AnalyticsWorkspace", "type": "Workspace"}],
+        "continuationUri": None,
+    }
+    with respx.mock:
+        respx.get(_PBI_GROUPS_URL).mock(return_value=httpx.Response(200, json=page1_response))
+        respx.get(_PBI_GROUPS_CONT_URL).mock(return_value=httpx.Response(200, json=page2_response))
+        async with client:
+            result = await resolver.workspace_id("AnalyticsWorkspace")
+    assert result == WS_UUID
+
+
+# ---------------------------------------------------------------------------
 # item: GUID input fetches detail directly
 # ---------------------------------------------------------------------------
 
