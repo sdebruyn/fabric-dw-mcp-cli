@@ -88,6 +88,10 @@ EXPECTED_TOOL_NAMES: frozenset[str] = frozenset(
         "roll_snapshot_timestamp",
         # Cache
         "clear_cache",
+        # Schemas
+        "list_schemas",
+        "create_schema",
+        "delete_schema",
     }
 )
 

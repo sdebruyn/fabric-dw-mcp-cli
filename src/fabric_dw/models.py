@@ -332,6 +332,13 @@ class View(_FabricBase):
     modified: datetime
 
 
+class Schema(_FabricBase):
+    """A SQL schema on a Fabric Data Warehouse."""
+
+    name: str
+    principal_id: int | None = None
+
+
 class Table(_FabricBase):
     """A SQL table on a Fabric Data Warehouse or SQL Analytics Endpoint."""
 

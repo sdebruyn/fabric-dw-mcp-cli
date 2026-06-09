@@ -37,6 +37,7 @@ from fabric_dw.services import audit, queries, snapshots, sql_endpoints, warehou
 from fabric_dw.services import ownership as ownership_svc
 from fabric_dw.services import query_insights as _qi_svc
 from fabric_dw.services import restore as restore_svc
+from fabric_dw.services import schemas as schemas_svc
 from fabric_dw.services import sql_exec as _sql_exec_svc
 from fabric_dw.services import sql_pools as sql_pools_svc
 from fabric_dw.services import tables as tables_svc
@@ -1175,6 +1176,115 @@ async def drop_view(workspace: str, item: str, qualified_name: str) -> dict[str,
     except (ValueError, FabricError) as exc:
         raise _fabric_err(exc) if isinstance(exc, FabricError) else ToolError(str(exc)) from exc
     return {"dropped": True}
+
+
+# ---------------------------------------------------------------------------
+# Schema tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def list_schemas(workspace: str, item: str) -> list[dict[str, Any]]:
+    """List user-defined SQL schemas on a warehouse.
+
+    System schemas (``sys``, ``INFORMATION_SCHEMA``, ``db_*`` fixed-role
+    schemas) are excluded.  ``dbo`` is included as it is user-writable.
+
+    Only Fabric Data Warehouses are supported; SQL Analytics Endpoints are
+    rejected.
+
+    Args:
+        workspace: Workspace name or GUID.
+        item: Warehouse name or GUID.
+    """
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        entry = await _get_resolver().item(workspace, item)
+        if entry.connection_string is None:
+            msg = f"item {item!r} has no connection string; cannot query schemas"
+            raise FabricError(msg)  # noqa: TRY301
+        target = SqlTarget(
+            workspace_id=str(ws_id),
+            database=entry.display_name,
+            connection_string=entry.connection_string,
+        )
+        result = await schemas_svc.list_schemas(target, mode=_get_auth_mode())
+    except (ValueError, FabricError) as exc:
+        raise _fabric_err(exc) if isinstance(exc, FabricError) else ToolError(str(exc)) from exc
+    return [s.model_dump(mode="json") for s in result]
+
+
+@mcp.tool()
+async def create_schema(workspace: str, item: str, name: str) -> dict[str, Any]:
+    """Create a new SQL schema on a warehouse.
+
+    Only Fabric Data Warehouses are supported; SQL Analytics Endpoints are
+    rejected.
+
+    Args:
+        workspace: Workspace name or GUID.
+        item: Warehouse name or GUID.
+        name: The schema name.  Must be a valid SQL identifier.
+    """
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        entry = await _get_resolver().item(workspace, item)
+        if entry.connection_string is None:
+            msg = f"item {item!r} has no connection string; cannot create schemas"
+            raise FabricError(msg)  # noqa: TRY301
+        target = SqlTarget(
+            workspace_id=str(ws_id),
+            database=entry.display_name,
+            connection_string=entry.connection_string,
+        )
+        result = await schemas_svc.create_schema(target, name, mode=_get_auth_mode())
+    except (ValueError, FabricError) as exc:
+        raise _fabric_err(exc) if isinstance(exc, FabricError) else ToolError(str(exc)) from exc
+    return result.model_dump(mode="json")
+
+
+@mcp.tool()
+async def delete_schema(
+    workspace: str,
+    item: str,
+    name: str,
+    cascade: bool = False,  # noqa: FBT001, FBT002
+) -> dict[str, Any]:
+    """Drop a SQL schema from a warehouse.
+
+    CAUTION: This is a destructive, irreversible operation.  The schema will
+    be permanently deleted.  If the schema still contains tables or views,
+    the operation will fail unless *cascade* is ``True``.
+
+    CAUTION: When *cascade* is ``True``, **all tables and views in the schema
+    are permanently deleted along with their data**.  Confirm explicitly with
+    the user before calling with ``cascade=True``.
+
+    Only Fabric Data Warehouses are supported; SQL Analytics Endpoints are
+    rejected.
+
+    Args:
+        workspace: Workspace name or GUID.
+        item: Warehouse name or GUID.
+        name: The schema name to drop.
+        cascade: When ``True``, drop all tables and views in the schema first.
+            Defaults to ``False``.
+    """
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        entry = await _get_resolver().item(workspace, item)
+        if entry.connection_string is None:
+            msg = f"item {item!r} has no connection string; cannot delete schemas"
+            raise FabricError(msg)  # noqa: TRY301
+        target = SqlTarget(
+            workspace_id=str(ws_id),
+            database=entry.display_name,
+            connection_string=entry.connection_string,
+        )
+        await schemas_svc.delete_schema(target, name, cascade=cascade, mode=_get_auth_mode())
+    except (ValueError, FabricError) as exc:
+        raise _fabric_err(exc) if isinstance(exc, FabricError) else ToolError(str(exc)) from exc
+    return {"deleted": True}
 
 
 # ---------------------------------------------------------------------------
