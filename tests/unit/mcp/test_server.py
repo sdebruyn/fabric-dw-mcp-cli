@@ -1009,3 +1009,107 @@ async def test_execute_sql_no_connection_string_raises_tool_error() -> None:
             "execute_sql",
             {"workspace": _WS_NAME, "item": _WH_NAME, "query": "SELECT 1"},
         )
+
+
+# ---------------------------------------------------------------------------
+# SQL Endpoint guard — create_table / delete_table / clear_table via MCP
+# ---------------------------------------------------------------------------
+
+_SE_NAME = "SalesLakehouse"
+_SE_ID = UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
+
+
+def _make_sql_endpoint_entry() -> ItemEntry:
+    return ItemEntry(
+        id=_SE_ID,
+        kind=WarehouseKind.SQL_ENDPOINT,
+        connection_string="lakehouse.datawarehouse.fabric.microsoft.com",
+        fetched_at=datetime.now(tz=UTC),
+        display_name=_SE_NAME,
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_table_sql_endpoint_raises_tool_error() -> None:
+    """create_table must raise ToolError when the item is a SQL Endpoint."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_resolver = AsyncMock()
+    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_resolver.item = AsyncMock(return_value=_make_sql_endpoint_entry())
+    mock_http = AsyncMock()
+    mock_cache = MagicMock()
+
+    with (
+        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
+        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
+        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "create_table",
+            {
+                "workspace": _WS_NAME,
+                "item": _SE_NAME,
+                "qualified_name": "dbo.sales",
+                "select_body": "SELECT id FROM src.raw",
+            },
+        )
+
+    assert "read-only" in str(exc_info.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_delete_table_sql_endpoint_raises_tool_error() -> None:
+    """delete_table must raise ToolError when the item is a SQL Endpoint."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_resolver = AsyncMock()
+    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_resolver.item = AsyncMock(return_value=_make_sql_endpoint_entry())
+    mock_http = AsyncMock()
+    mock_cache = MagicMock()
+
+    with (
+        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
+        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
+        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "delete_table",
+            {"workspace": _WS_NAME, "item": _SE_NAME, "qualified_name": "dbo.sales"},
+        )
+
+    assert "read-only" in str(exc_info.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_clear_table_sql_endpoint_raises_tool_error() -> None:
+    """clear_table must raise ToolError when the item is a SQL Endpoint."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_resolver = AsyncMock()
+    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_resolver.item = AsyncMock(return_value=_make_sql_endpoint_entry())
+    mock_http = AsyncMock()
+    mock_cache = MagicMock()
+
+    with (
+        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
+        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
+        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "clear_table",
+            {"workspace": _WS_NAME, "item": _SE_NAME, "qualified_name": "dbo.sales"},
+        )
+
+    assert "read-only" in str(exc_info.value).lower()

@@ -1280,7 +1280,7 @@ async def create_table(
             connection_string=entry.connection_string,
         )
         result = await tables_svc.create_table(
-            target, schema, table_name, select_body, mode=_get_auth_mode()
+            target, schema, table_name, select_body, kind=entry.kind, mode=_get_auth_mode()
         )
     except (ValueError, FabricError) as exc:
         raise _fabric_err(exc) if isinstance(exc, FabricError) else ToolError(str(exc)) from exc
@@ -1315,7 +1315,9 @@ async def delete_table(workspace: str, item: str, qualified_name: str) -> dict[s
             database=entry.display_name,
             connection_string=entry.connection_string,
         )
-        await tables_svc.delete_table(target, schema, table_name, mode=_get_auth_mode())
+        await tables_svc.delete_table(
+            target, schema, table_name, kind=entry.kind, mode=_get_auth_mode()
+        )
     except (ValueError, FabricError) as exc:
         raise _fabric_err(exc) if isinstance(exc, FabricError) else ToolError(str(exc)) from exc
     return {"dropped": True}
@@ -1350,7 +1352,9 @@ async def clear_table(workspace: str, item: str, qualified_name: str) -> dict[st
             database=entry.display_name,
             connection_string=entry.connection_string,
         )
-        await tables_svc.clear_table(target, schema, table_name, mode=_get_auth_mode())
+        await tables_svc.clear_table(
+            target, schema, table_name, kind=entry.kind, mode=_get_auth_mode()
+        )
     except (ValueError, FabricError) as exc:
         raise _fabric_err(exc) if isinstance(exc, FabricError) else ToolError(str(exc)) from exc
     return {"truncated": True}

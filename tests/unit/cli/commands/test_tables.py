@@ -18,6 +18,9 @@ from fabric_dw.cli._main import cli
 from fabric_dw.exceptions import NotFound, PermissionDenied
 from fabric_dw.models import Table, WarehouseKind
 
+SE_GUID = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"
+SE_UUID = UUID(SE_GUID)
+
 WS_GUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 WH_GUID = "d4e5f6a7-b8c9-0123-def0-123456789abc"
 WS_UUID = UUID(WS_GUID)
@@ -52,6 +55,16 @@ def _make_item_entry() -> ItemEntry:
         connection_string="wh.datawarehouse.fabric.microsoft.com",
         fetched_at=datetime.now(tz=UTC),
         display_name="SalesWarehouse",
+    )
+
+
+def _make_sql_endpoint_entry() -> ItemEntry:
+    return ItemEntry(
+        id=SE_UUID,
+        kind=WarehouseKind.SQL_ENDPOINT,
+        connection_string="se.datawarehouse.fabric.microsoft.com",
+        fetched_at=datetime.now(tz=UTC),
+        display_name="SalesLakehouse",
     )
 
 
@@ -411,6 +424,69 @@ class TestTablesCreate:
             )
         assert result.exit_code != 0
 
+    def test_create_warehouse_item_allowed(self, runner: CliRunner, cache_env: Path) -> None:
+        """Warehouse items should not be blocked by the SQL Endpoint guard."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables._build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.create_table",
+                new=AsyncMock(return_value=_make_table()),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "tables",
+                    "create",
+                    WS_GUID,
+                    WH_GUID,
+                    "--name",
+                    "dbo.sales",
+                    "--select",
+                    "SELECT id FROM src.raw",
+                ],
+            )
+        assert result.exit_code == 0
+
+    def test_create_sql_endpoint_rejected(self, runner: CliRunner, cache_env: Path) -> None:
+        """SQL Endpoint items must be rejected by the service-layer guard before issuing DDL."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables._build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_sql_endpoint_entry())),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "tables",
+                    "create",
+                    WS_GUID,
+                    SE_GUID,
+                    "--name",
+                    "dbo.sales",
+                    "--select",
+                    "SELECT id FROM src.raw",
+                ],
+            )
+        assert result.exit_code != 0
+        assert "read-only" in result.output
+
 
 # ===========================================================================
 # tables delete
@@ -491,6 +567,49 @@ class TestTablesDelete:
             )
         assert result.exit_code != 0
 
+    def test_delete_warehouse_item_allowed(self, runner: CliRunner, cache_env: Path) -> None:
+        """Warehouse items should not be blocked by the SQL Endpoint guard."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables._build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.delete_table",
+                new=AsyncMock(return_value=None),
+            ),
+        ):
+            result = runner.invoke(
+                cli, ["--yes", "tables", "delete", WS_GUID, WH_GUID, "dbo.sales"]
+            )
+        assert result.exit_code == 0
+
+    def test_delete_sql_endpoint_rejected(self, runner: CliRunner, cache_env: Path) -> None:
+        """SQL Endpoint items must be rejected by the service-layer guard before issuing DDL."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables._build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_sql_endpoint_entry())),
+            ),
+        ):
+            result = runner.invoke(
+                cli, ["--yes", "tables", "delete", WS_GUID, SE_GUID, "dbo.sales"]
+            )
+        assert result.exit_code != 0
+        assert "read-only" in result.output
+
 
 # ===========================================================================
 # tables clear
@@ -566,3 +685,42 @@ class TestTablesClear:
         ):
             result = runner.invoke(cli, ["--yes", "tables", "clear", WS_GUID, WH_GUID, "dbo.sales"])
         assert result.exit_code != 0
+
+    def test_clear_warehouse_item_allowed(self, runner: CliRunner, cache_env: Path) -> None:
+        """Warehouse items should not be blocked by the SQL Endpoint guard."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables._build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.clear_table",
+                new=AsyncMock(return_value=None),
+            ),
+        ):
+            result = runner.invoke(cli, ["--yes", "tables", "clear", WS_GUID, WH_GUID, "dbo.sales"])
+        assert result.exit_code == 0
+
+    def test_clear_sql_endpoint_rejected(self, runner: CliRunner, cache_env: Path) -> None:
+        """SQL Endpoint items must be rejected by the service-layer guard before issuing DDL."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables._build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_sql_endpoint_entry())),
+            ),
+        ):
+            result = runner.invoke(cli, ["--yes", "tables", "clear", WS_GUID, SE_GUID, "dbo.sales"])
+        assert result.exit_code != 0
+        assert "read-only" in result.output
