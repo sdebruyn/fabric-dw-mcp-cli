@@ -261,7 +261,14 @@ class FabricHttpClient:
     # Pagination
     # ------------------------------------------------------------------
 
-    async def iter_paginated(self, base: HttpBase, path: str) -> AsyncIterator[dict[str, object]]:
+    async def iter_paginated(
+        self,
+        base: HttpBase,
+        path: str,
+        *,
+        key: str = "value",
+        params: dict[str, str] | None = None,
+    ) -> AsyncIterator[dict[str, object]]:
         """Iterate over all items across paginated responses.
 
         Follows the ``continuationUri`` field in each page until it is absent.
@@ -269,19 +276,23 @@ class FabricHttpClient:
         Args:
             base: Base URL enum value (used only for the first request).
             path: Initial path to request.
+            key: JSON key whose list value contains the items (default ``"value"``).
+            params: Optional query parameters for the first request only.
 
         Yields:
-            Individual items from the ``value`` array in each page.
+            Individual items from the *key* array in each page.
         """
         url: str | None = f"{base}{path}"
+        first = True
 
         while url is not None:
             # continuationUri is always a full URL; use _request_with_retry directly
-            resp = await self._request_with_retry("GET", url)
+            resp = await self._request_with_retry("GET", url, params=params if first else None)
+            first = False
             data: dict[str, object] = resp.json()
-            value = data.get("value", [])
-            if isinstance(value, list):
-                for item in value:
+            raw_items = data.get(key, [])
+            if isinstance(raw_items, list):
+                for item in raw_items:
                     if isinstance(item, dict):
                         yield {str(k): v for k, v in item.items()}
 
