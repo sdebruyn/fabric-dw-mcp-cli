@@ -193,7 +193,9 @@ async def create_cmd(
                 database=entry.display_name,
                 connection_string=entry.connection_string,
             )
-            t = await _tables_svc.create_table(target, schema, table_name, body, mode=ctx.auth)
+            t = await _tables_svc.create_table(
+                target, schema, table_name, body, kind=entry.kind, mode=ctx.auth
+            )
             render(t.model_dump(mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -233,7 +235,9 @@ async def delete_cmd(
                 database=entry.display_name,
                 connection_string=entry.connection_string,
             )
-            await _tables_svc.delete_table(target, schema, table_name, mode=ctx.auth)
+            await _tables_svc.delete_table(
+                target, schema, table_name, kind=entry.kind, mode=ctx.auth
+            )
             click.echo(f"Table [{schema}].[{table_name}] dropped.")
     except click.Abort:
         raise
@@ -275,7 +279,9 @@ async def clear_cmd(
                 database=entry.display_name,
                 connection_string=entry.connection_string,
             )
-            await _tables_svc.clear_table(target, schema, table_name, mode=ctx.auth)
+            await _tables_svc.clear_table(
+                target, schema, table_name, kind=entry.kind, mode=ctx.auth
+            )
             click.echo(f"Table [{schema}].[{table_name}] truncated.")
     except click.Abort:
         raise

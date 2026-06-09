@@ -15,7 +15,7 @@ from rich.table import Table
 
 from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.http_client import FabricHttpClient
-from fabric_dw.models import ItemAccess
+from fabric_dw.models import ItemAccess, WarehouseKind
 from fabric_dw.resolver import Resolver
 
 if TYPE_CHECKING:
@@ -23,6 +23,20 @@ if TYPE_CHECKING:
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
+
+_SQL_ENDPOINT_READ_ONLY = "SQL Endpoints are read-only; CREATE/DROP SCHEMA not supported"
+
+
+def _guard_not_sql_endpoint(entry: ItemEntry) -> None:
+    """Raise ValueError if *entry* is a SQL Analytics Endpoint.
+
+    SQL Analytics Endpoints are read-only; DDL operations are not supported.
+
+    Raises:
+        ValueError: If the resolved item is a SQL Analytics Endpoint.
+    """
+    if entry.kind == WarehouseKind.SQL_ENDPOINT:
+        raise ValueError(_SQL_ENDPOINT_READ_ONLY)
 
 
 def _coro(f: Callable[_P, Coroutine[None, None, _R]]) -> Callable[_P, _R]:

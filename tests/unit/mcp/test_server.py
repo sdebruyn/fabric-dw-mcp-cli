@@ -92,6 +92,10 @@ EXPECTED_TOOL_NAMES: frozenset[str] = frozenset(
         # Permissions (admin API)
         "get_warehouse_permissions",
         "get_sql_endpoint_permissions",
+        # Schemas
+        "list_schemas",
+        "create_schema",
+        "delete_schema",
     }
 )
 
@@ -139,6 +143,21 @@ def _make_item_entry(
     return ItemEntry(
         id=item_id,
         kind=WarehouseKind.WAREHOUSE,
+        connection_string=connection_string,
+        fetched_at=datetime.now(tz=UTC),
+        display_name=display_name,
+    )
+
+
+def _make_sql_endpoint_entry(
+    *,
+    item_id: UUID = _WH_ID,
+    connection_string: str | None = "ep.fabric.microsoft.com",
+    display_name: str = "MySqlEndpoint",
+) -> ItemEntry:
+    return ItemEntry(
+        id=item_id,
+        kind=WarehouseKind.SQL_ENDPOINT,
         connection_string=connection_string,
         fetched_at=datetime.now(tz=UTC),
         display_name=display_name,
@@ -1133,3 +1152,203 @@ async def test_get_warehouse_permissions_permission_denied_becomes_tool_error() 
             "get_warehouse_permissions",
             {"workspace": _WS_NAME, "warehouse": _WH_NAME},
         )
+
+
+# ---------------------------------------------------------------------------
+# SQL Endpoint guard — create_table / delete_table / clear_table via MCP
+# ---------------------------------------------------------------------------
+
+_SE_NAME = "SalesLakehouse"
+_SE_ID = UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
+
+
+@pytest.mark.asyncio
+async def test_create_table_sql_endpoint_raises_tool_error() -> None:
+    """create_table must raise ToolError when the item is a SQL Endpoint."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_resolver = AsyncMock()
+    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_resolver.item = AsyncMock(
+        return_value=_make_sql_endpoint_entry(item_id=_SE_ID, display_name=_SE_NAME)
+    )
+    mock_http = AsyncMock()
+    mock_cache = MagicMock()
+
+    with (
+        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
+        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
+        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "create_table",
+            {
+                "workspace": _WS_NAME,
+                "item": _SE_NAME,
+                "qualified_name": "dbo.sales",
+                "select_body": "SELECT id FROM src.raw",
+            },
+        )
+
+    assert "read-only" in str(exc_info.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_delete_table_sql_endpoint_raises_tool_error() -> None:
+    """delete_table must raise ToolError when the item is a SQL Endpoint."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_resolver = AsyncMock()
+    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_resolver.item = AsyncMock(
+        return_value=_make_sql_endpoint_entry(item_id=_SE_ID, display_name=_SE_NAME)
+    )
+    mock_http = AsyncMock()
+    mock_cache = MagicMock()
+
+    with (
+        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
+        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
+        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "delete_table",
+            {"workspace": _WS_NAME, "item": _SE_NAME, "qualified_name": "dbo.sales"},
+        )
+
+    assert "read-only" in str(exc_info.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_clear_table_sql_endpoint_raises_tool_error() -> None:
+    """clear_table must raise ToolError when the item is a SQL Endpoint."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_resolver = AsyncMock()
+    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_resolver.item = AsyncMock(
+        return_value=_make_sql_endpoint_entry(item_id=_SE_ID, display_name=_SE_NAME)
+    )
+    mock_http = AsyncMock()
+    mock_cache = MagicMock()
+
+    with (
+        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
+        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
+        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "clear_table",
+            {"workspace": _WS_NAME, "item": _SE_NAME, "qualified_name": "dbo.sales"},
+        )
+
+    assert "read-only" in str(exc_info.value).lower()
+
+
+# ---------------------------------------------------------------------------
+# Schema tool SQL Endpoint guard
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_schema_rejects_sql_endpoint() -> None:
+    """create_schema must raise ToolError when called against a SQL Analytics Endpoint."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    ep_entry = _make_sql_endpoint_entry()
+
+    mock_resolver = AsyncMock()
+    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_resolver.item = AsyncMock(return_value=ep_entry)
+    mock_http = AsyncMock()
+    mock_cache = MagicMock()
+
+    with (
+        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
+        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
+        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "create_schema",
+            {"workspace": _WS_NAME, "item": "MySqlEndpoint", "name": "newschema"},
+        )
+
+    assert "read-only" in str(exc_info.value).lower() or "SQL Analytics Endpoint" in str(
+        exc_info.value
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_schema_rejects_sql_endpoint() -> None:
+    """delete_schema must raise ToolError when called against a SQL Analytics Endpoint."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    ep_entry = _make_sql_endpoint_entry()
+
+    mock_resolver = AsyncMock()
+    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_resolver.item = AsyncMock(return_value=ep_entry)
+    mock_http = AsyncMock()
+    mock_cache = MagicMock()
+
+    with (
+        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
+        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
+        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "delete_schema",
+            {"workspace": _WS_NAME, "item": "MySqlEndpoint", "name": "oldschema"},
+        )
+
+    assert "read-only" in str(exc_info.value).lower() or "SQL Analytics Endpoint" in str(
+        exc_info.value
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_schemas_works_on_sql_endpoint() -> None:
+    """list_schemas is a read-only operation and must work on SQL Analytics Endpoints."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+    from fabric_dw.models import Schema  # noqa: PLC0415
+
+    ep_entry = _make_sql_endpoint_entry()
+    schemas_result = [Schema(name="dbo", principal_id=1)]
+
+    mock_resolver = AsyncMock()
+    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_resolver.item = AsyncMock(return_value=ep_entry)
+    mock_http = AsyncMock()
+    mock_cache = MagicMock()
+
+    with (
+        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
+        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
+        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        patch(
+            "fabric_dw.services.schemas.list_schemas",
+            new=AsyncMock(return_value=schemas_result),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "list_schemas",
+            {"workspace": _WS_NAME, "item": "MySqlEndpoint"},
+        )
+
+    assert isinstance(result, list)
+    assert result[0]["name"] == "dbo"

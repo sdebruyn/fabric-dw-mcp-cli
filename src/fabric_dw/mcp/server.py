@@ -27,17 +27,19 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw import auth as _auth
+from fabric_dw.cache import ItemEntry as _ItemEntry
 from fabric_dw.cache import LookupCache
 from fabric_dw.exceptions import AlreadyExists, ConfigError, FabricError, NotFound
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.logging import setup_logging
-from fabric_dw.models import SqlPool, SqlPoolClassifier
+from fabric_dw.models import SqlPool, SqlPoolClassifier, WarehouseKind
 from fabric_dw.resolver import Resolver
 from fabric_dw.services import audit, queries, snapshots, sql_endpoints, warehouses, workspaces
 from fabric_dw.services import ownership as ownership_svc
 from fabric_dw.services import permissions as _permissions_svc
 from fabric_dw.services import query_insights as _qi_svc
 from fabric_dw.services import restore as restore_svc
+from fabric_dw.services import schemas as schemas_svc
 from fabric_dw.services import sql_exec as _sql_exec_svc
 from fabric_dw.services import sql_pools as sql_pools_svc
 from fabric_dw.services import tables as tables_svc
@@ -116,6 +118,26 @@ def _fabric_err(exc: FabricError) -> ToolError:
     """Convert a :class:`FabricError` to a :class:`ToolError`."""
     err_type = type(exc).__name__
     return ToolError(f"{err_type}: {exc}")
+
+
+_SQL_ENDPOINT_DDL_ERROR = "SQL Analytics Endpoints are read-only; CREATE/DROP SCHEMA not supported"
+
+
+def _require_warehouse(entry: _ItemEntry, item: str) -> None:
+    """Raise ToolError if *entry* is a SQL Analytics Endpoint.
+
+    DDL operations (CREATE SCHEMA, DROP SCHEMA) are not supported on SQL
+    Analytics Endpoints, which are read-only views over Lakehouse data.
+
+    Args:
+        entry: The resolved item entry.
+        item: The item name/GUID as supplied by the caller (used in the error message).
+
+    Raises:
+        ToolError: If the resolved item is a SQL Analytics Endpoint.
+    """
+    if entry.kind == WarehouseKind.SQL_ENDPOINT:
+        raise ToolError(f"{item!r}: {_SQL_ENDPOINT_DDL_ERROR}")  # noqa: TRY003
 
 
 # ---------------------------------------------------------------------------
@@ -1213,6 +1235,118 @@ async def drop_view(workspace: str, item: str, qualified_name: str) -> dict[str,
 
 
 # ---------------------------------------------------------------------------
+# Schema tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def list_schemas(workspace: str, item: str) -> list[dict[str, Any]]:
+    """List user-defined SQL schemas on a warehouse or SQL Analytics Endpoint.
+
+    System schemas (``sys``, ``INFORMATION_SCHEMA``, ``db_*`` fixed-role
+    schemas, ``guest``) are excluded.  ``dbo`` is included as it is
+    user-writable.
+
+    Listing schemas is a read-only operation and works on both Fabric Data
+    Warehouses and SQL Analytics Endpoints.
+
+    Args:
+        workspace: Workspace name or GUID.
+        item: Warehouse or SQL Analytics Endpoint name or GUID.
+    """
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        entry = await _get_resolver().item(workspace, item)
+        if entry.connection_string is None:
+            msg = f"item {item!r} has no connection string; cannot query schemas"
+            raise FabricError(msg)  # noqa: TRY301
+        target = SqlTarget(
+            workspace_id=str(ws_id),
+            database=entry.display_name,
+            connection_string=entry.connection_string,
+        )
+        result = await schemas_svc.list_schemas(target, mode=_get_auth_mode())
+    except (ValueError, FabricError) as exc:
+        raise _fabric_err(exc) if isinstance(exc, FabricError) else ToolError(str(exc)) from exc
+    return [s.model_dump(mode="json") for s in result]
+
+
+@mcp.tool()
+async def create_schema(workspace: str, item: str, name: str) -> dict[str, Any]:
+    """Create a new SQL schema on a warehouse.
+
+    Only Fabric Data Warehouses are supported; SQL Analytics Endpoints are
+    rejected because they are read-only views over Lakehouse data.
+
+    Args:
+        workspace: Workspace name or GUID.
+        item: Warehouse name or GUID.
+        name: The schema name.  Must be a valid SQL identifier.
+    """
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        entry = await _get_resolver().item(workspace, item)
+        _require_warehouse(entry, item)
+        if entry.connection_string is None:
+            msg = f"item {item!r} has no connection string; cannot create schemas"
+            raise FabricError(msg)  # noqa: TRY301
+        target = SqlTarget(
+            workspace_id=str(ws_id),
+            database=entry.display_name,
+            connection_string=entry.connection_string,
+        )
+        result = await schemas_svc.create_schema(target, name, mode=_get_auth_mode())
+    except (ValueError, FabricError) as exc:
+        raise _fabric_err(exc) if isinstance(exc, FabricError) else ToolError(str(exc)) from exc
+    return result.model_dump(mode="json")
+
+
+@mcp.tool()
+async def delete_schema(
+    workspace: str,
+    item: str,
+    name: str,
+    cascade: bool = False,  # noqa: FBT001, FBT002
+) -> dict[str, Any]:
+    """Drop a SQL schema from a warehouse.
+
+    CAUTION: This is a destructive, irreversible operation.  The schema will
+    be permanently deleted.  If the schema still contains tables or views,
+    the operation will fail unless *cascade* is ``True``.
+
+    CAUTION: When *cascade* is ``True``, **all tables and views in the schema
+    are permanently deleted along with their data**.  Confirm explicitly with
+    the user before calling with ``cascade=True``.
+
+    Only Fabric Data Warehouses are supported; SQL Analytics Endpoints are
+    rejected.
+
+    Args:
+        workspace: Workspace name or GUID.
+        item: Warehouse name or GUID.
+        name: The schema name to drop.
+        cascade: When ``True``, drop all tables and views in the schema first.
+            Defaults to ``False``.
+    """
+    try:
+        ws_id = await _get_resolver().workspace_id(workspace)
+        entry = await _get_resolver().item(workspace, item)
+        _require_warehouse(entry, item)
+        if entry.connection_string is None:
+            msg = f"item {item!r} has no connection string; cannot delete schemas"
+            raise FabricError(msg)  # noqa: TRY301
+        target = SqlTarget(
+            workspace_id=str(ws_id),
+            database=entry.display_name,
+            connection_string=entry.connection_string,
+        )
+        await schemas_svc.delete_schema(target, name, cascade=cascade, mode=_get_auth_mode())
+    except (ValueError, FabricError) as exc:
+        raise _fabric_err(exc) if isinstance(exc, FabricError) else ToolError(str(exc)) from exc
+    return {"deleted": True}
+
+
+# ---------------------------------------------------------------------------
 # Tables tools
 # ---------------------------------------------------------------------------
 
@@ -1315,7 +1449,7 @@ async def create_table(
             connection_string=entry.connection_string,
         )
         result = await tables_svc.create_table(
-            target, schema, table_name, select_body, mode=_get_auth_mode()
+            target, schema, table_name, select_body, kind=entry.kind, mode=_get_auth_mode()
         )
     except (ValueError, FabricError) as exc:
         raise _fabric_err(exc) if isinstance(exc, FabricError) else ToolError(str(exc)) from exc
@@ -1350,7 +1484,9 @@ async def delete_table(workspace: str, item: str, qualified_name: str) -> dict[s
             database=entry.display_name,
             connection_string=entry.connection_string,
         )
-        await tables_svc.delete_table(target, schema, table_name, mode=_get_auth_mode())
+        await tables_svc.delete_table(
+            target, schema, table_name, kind=entry.kind, mode=_get_auth_mode()
+        )
     except (ValueError, FabricError) as exc:
         raise _fabric_err(exc) if isinstance(exc, FabricError) else ToolError(str(exc)) from exc
     return {"dropped": True}
@@ -1385,7 +1521,9 @@ async def clear_table(workspace: str, item: str, qualified_name: str) -> dict[st
             database=entry.display_name,
             connection_string=entry.connection_string,
         )
-        await tables_svc.clear_table(target, schema, table_name, mode=_get_auth_mode())
+        await tables_svc.clear_table(
+            target, schema, table_name, kind=entry.kind, mode=_get_auth_mode()
+        )
     except (ValueError, FabricError) as exc:
         raise _fabric_err(exc) if isinstance(exc, FabricError) else ToolError(str(exc)) from exc
     return {"truncated": True}

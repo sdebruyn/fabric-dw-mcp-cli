@@ -683,6 +683,62 @@ Truncate a SQL table (remove all rows, preserve structure).
 
 ---
 
+## Schemas
+
+> **List-source note** — no public REST API exists for enumerating warehouse schemas. `list_schemas` uses TDS `sys.schemas`, filtering out `sys`, `INFORMATION_SCHEMA`, `guest`, and `db_*` fixed-role schemas. `dbo` is always included because it is user-writable.
+
+> **SQL Analytics Endpoints** — `list_schemas` works on both Fabric Data Warehouses and SQL Analytics Endpoints. `create_schema` and `delete_schema` are DDL operations and are rejected with a `ToolError` when the resolved item is a SQL Analytics Endpoint.
+
+### list_schemas
+
+List user-defined SQL schemas on a warehouse or SQL Analytics Endpoint. System schemas are excluded automatically.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
+
+**Returns:** `list[Schema]` — array of schema objects, each with `name` and `principal_id`.
+
+---
+
+### create_schema
+
+Create a new SQL schema on a Fabric Data Warehouse.
+
+**CAUTION**: SQL Analytics Endpoints are read-only — this tool raises a `ToolError` if `item` resolves to a SQL Analytics Endpoint.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse name or GUID.
+- `name` (`str`) — the schema name; must be a valid SQL identifier.
+
+**Returns:** `Schema` — the newly-created schema record with `name` and `principal_id`.
+
+---
+
+### delete_schema
+
+Drop a SQL schema from a Fabric Data Warehouse.
+
+**CAUTION**: This is a destructive, irreversible operation. The schema will be permanently deleted. If the schema still contains tables or views the operation will fail unless `cascade=True`.
+
+**CAUTION**: When `cascade=True`, **all tables and views in the schema are permanently deleted along with their data**. Confirm explicitly with the user before calling with `cascade=True`.
+
+SQL Analytics Endpoints are read-only — this tool raises a `ToolError` if `item` resolves to a SQL Analytics Endpoint.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse name or GUID.
+- `name` (`str`) — the schema name to drop.
+- `cascade` (`bool`, default `False`) — when `True`, drop all tables and views in the schema first.
+
+**Returns:** `{ "deleted": true }` — confirmation.
+
+---
+
 ## SQL Pools (beta)
 
 !!! warning "Beta / preview feature"
