@@ -20,6 +20,7 @@ they are maintained by the engine and are not user-editable:
 
 - ``sys`` — SQL Server system catalog schema.
 - ``INFORMATION_SCHEMA`` — ANSI information schema views.
+- ``guest`` — system guest principal schema, not user-editable.
 - ``db_owner``, ``db_accessadmin``, ``db_securityadmin``, ``db_ddladmin``,
   ``db_backupoperator``, ``db_datareader``, ``db_datawriter``,
   ``db_denydatareader``, ``db_denydatawriter`` — fixed database role schemas
@@ -54,10 +55,16 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 #: System schemas that are never user-editable on Fabric Data Warehouses.
+#:
+#: The explicit ``db_*`` names are kept alongside the ``db[_]%`` LIKE clause in
+#: the query for clarity — they document which fixed-role schemas exist even
+#: though the LIKE pattern already covers them.
 _SYSTEM_SCHEMAS: frozenset[str] = frozenset(
     {
         "sys",
         "INFORMATION_SCHEMA",
+        "guest",  # system guest principal schema
+        # Fixed database-role schemas — also matched by the db[_]% LIKE clause.
         "db_owner",
         "db_accessadmin",
         "db_securityadmin",
@@ -269,9 +276,11 @@ async def _fetch_schema(
         A :class:`~fabric_dw.models.Schema` instance.
 
     Raises:
+        ValueError: If *name* fails identifier validation (belt-and-suspenders).
         NotFound: If the schema is not found after creation.
     """
-    # Safe: name passes validate_identifier() before this helper is called.
+    # Belt-and-suspenders: validate even though callers should have validated already.
+    validate_identifier(name)
     fetch_sql = (
         f"SELECT s.name, s.principal_id "  # noqa: S608  # nosec B608
         f"FROM sys.schemas s "
@@ -311,6 +320,15 @@ async def _drop_schema_objects(
 
     This is a helper for :func:`delete_schema` when ``cascade=True``.
     The schema name is assumed to have been validated by the caller.
+
+    .. note::
+
+        **View-on-view dependency caveat**: objects are dropped in catalog order
+        (the order returned by ``sys.tables``/``sys.views``), without analysing
+        inter-object dependencies.  If the schema contains views that reference
+        other views in the same schema, the drop may fail with a dependency
+        error depending on the order in which the engine returns them.  In that
+        case, re-run the operation or drop the dependent views manually first.
 
     Args:
         target: The warehouse to connect to.

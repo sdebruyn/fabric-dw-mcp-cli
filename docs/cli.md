@@ -1012,6 +1012,82 @@ fabric-dw --yes tables clear MyWorkspace SalesWH dbo.staging_load
 
 ---
 
+## fabric-dw schemas
+
+Manage SQL schemas on Microsoft Fabric Data Warehouses.
+
+> **List-source note** — no public REST API exists for enumerating warehouse schemas. `schemas list` falls back to TDS via `sys.schemas`, filtering out well-known system schemas (`sys`, `INFORMATION_SCHEMA`, `guest`, `db_*` fixed-role schemas). `dbo` is always included because it is user-writable.
+
+> **SQL Analytics Endpoints** — `schemas list` works on both warehouses and SQL Analytics Endpoints. `schemas create` and `schemas delete` are DDL operations and are only supported on Fabric Data Warehouses; they will fail with an error if the resolved item is a SQL Analytics Endpoint.
+
+### schemas list
+
+List all user-defined schemas on a warehouse or SQL Analytics Endpoint. System schemas are excluded.
+
+**Usage**
+
+```shell
+fabric-dw schemas list [OPTIONS] [WORKSPACE] [WAREHOUSE]
+```
+
+**Example**
+
+```shell
+fabric-dw schemas list MyWorkspace SalesWH
+```
+
+```
+ name     principal_id
+ ───────────────────────
+ dbo      1
+ sales    5
+ staging  7
+```
+
+### schemas create
+
+Create a new SQL schema on a warehouse.
+
+**Usage**
+
+```shell
+fabric-dw schemas create [OPTIONS] [WORKSPACE] [WAREHOUSE] NAME
+```
+
+**Example**
+
+```shell
+fabric-dw schemas create MyWorkspace SalesWH reporting
+```
+
+### schemas delete
+
+Drop a schema from a warehouse. You will be asked to confirm unless `--yes` is passed.
+
+Pass `--cascade` to also drop all tables and views inside the schema before dropping the schema itself. **This is a destructive, irreversible operation.**
+
+**Usage**
+
+```shell
+fabric-dw schemas delete [OPTIONS] [WORKSPACE] [WAREHOUSE] NAME
+```
+
+| Option | Description |
+| --- | --- |
+| `--cascade` | Drop all tables and views in the schema first. **WARNING: permanently deletes all contained objects and data.** |
+
+**Example**
+
+```shell
+# Drop an empty schema
+fabric-dw --yes schemas delete MyWorkspace SalesWH staging
+
+# Drop a schema and all its tables/views
+fabric-dw --yes schemas delete MyWorkspace SalesWH staging --cascade
+```
+
+---
+
 ## fabric-dw snapshots
 
 Manage Microsoft Fabric Data Warehouse snapshots.

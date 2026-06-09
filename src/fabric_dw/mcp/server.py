@@ -27,11 +27,12 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw import auth as _auth
+from fabric_dw.cache import ItemEntry as _ItemEntry
 from fabric_dw.cache import LookupCache
 from fabric_dw.exceptions import AlreadyExists, ConfigError, FabricError, NotFound
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.logging import setup_logging
-from fabric_dw.models import SqlPool, SqlPoolClassifier
+from fabric_dw.models import SqlPool, SqlPoolClassifier, WarehouseKind
 from fabric_dw.resolver import Resolver
 from fabric_dw.services import audit, queries, snapshots, sql_endpoints, warehouses, workspaces
 from fabric_dw.services import ownership as ownership_svc
@@ -116,6 +117,26 @@ def _fabric_err(exc: FabricError) -> ToolError:
     """Convert a :class:`FabricError` to a :class:`ToolError`."""
     err_type = type(exc).__name__
     return ToolError(f"{err_type}: {exc}")
+
+
+_SQL_ENDPOINT_DDL_ERROR = "SQL Analytics Endpoints are read-only; CREATE/DROP SCHEMA not supported"
+
+
+def _require_warehouse(entry: _ItemEntry, item: str) -> None:
+    """Raise ToolError if *entry* is a SQL Analytics Endpoint.
+
+    DDL operations (CREATE SCHEMA, DROP SCHEMA) are not supported on SQL
+    Analytics Endpoints, which are read-only views over Lakehouse data.
+
+    Args:
+        entry: The resolved item entry.
+        item: The item name/GUID as supplied by the caller (used in the error message).
+
+    Raises:
+        ToolError: If the resolved item is a SQL Analytics Endpoint.
+    """
+    if entry.kind == WarehouseKind.SQL_ENDPOINT:
+        raise ToolError(f"{item!r}: {_SQL_ENDPOINT_DDL_ERROR}")  # noqa: TRY003
 
 
 # ---------------------------------------------------------------------------
@@ -1185,17 +1206,18 @@ async def drop_view(workspace: str, item: str, qualified_name: str) -> dict[str,
 
 @mcp.tool()
 async def list_schemas(workspace: str, item: str) -> list[dict[str, Any]]:
-    """List user-defined SQL schemas on a warehouse.
+    """List user-defined SQL schemas on a warehouse or SQL Analytics Endpoint.
 
     System schemas (``sys``, ``INFORMATION_SCHEMA``, ``db_*`` fixed-role
-    schemas) are excluded.  ``dbo`` is included as it is user-writable.
+    schemas, ``guest``) are excluded.  ``dbo`` is included as it is
+    user-writable.
 
-    Only Fabric Data Warehouses are supported; SQL Analytics Endpoints are
-    rejected.
+    Listing schemas is a read-only operation and works on both Fabric Data
+    Warehouses and SQL Analytics Endpoints.
 
     Args:
         workspace: Workspace name or GUID.
-        item: Warehouse name or GUID.
+        item: Warehouse or SQL Analytics Endpoint name or GUID.
     """
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
@@ -1219,7 +1241,7 @@ async def create_schema(workspace: str, item: str, name: str) -> dict[str, Any]:
     """Create a new SQL schema on a warehouse.
 
     Only Fabric Data Warehouses are supported; SQL Analytics Endpoints are
-    rejected.
+    rejected because they are read-only views over Lakehouse data.
 
     Args:
         workspace: Workspace name or GUID.
@@ -1229,6 +1251,7 @@ async def create_schema(workspace: str, item: str, name: str) -> dict[str, Any]:
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
         entry = await _get_resolver().item(workspace, item)
+        _require_warehouse(entry, item)
         if entry.connection_string is None:
             msg = f"item {item!r} has no connection string; cannot create schemas"
             raise FabricError(msg)  # noqa: TRY301
@@ -1273,6 +1296,7 @@ async def delete_schema(
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
         entry = await _get_resolver().item(workspace, item)
+        _require_warehouse(entry, item)
         if entry.connection_string is None:
             msg = f"item {item!r} has no connection string; cannot delete schemas"
             raise FabricError(msg)  # noqa: TRY301

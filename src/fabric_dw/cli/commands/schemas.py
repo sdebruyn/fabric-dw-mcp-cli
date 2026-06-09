@@ -9,36 +9,21 @@ from contextlib import asynccontextmanager
 import click
 
 from fabric_dw import auth as _auth
-from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import confirm, render
 from fabric_dw.cli.commands._utils import (
     _coro,
+    _guard_not_sql_endpoint,
     _resolve_item,
     resolve_warehouse_arg,
     resolve_workspace_arg,
 )
 from fabric_dw.exceptions import FabricError
 from fabric_dw.http_client import FabricHttpClient
-from fabric_dw.models import WarehouseKind
 from fabric_dw.services import schemas as _schemas_svc
 from fabric_dw.sql import SqlTarget
 
-_SQL_ENDPOINT_READ_ONLY = "SQL Endpoints are read-only; CREATE/DROP SCHEMA not supported"
-
 _log = logging.getLogger(__name__)
-
-
-def _guard_not_sql_endpoint(entry: ItemEntry) -> None:
-    """Raise ValueError if *entry* is a SQL Endpoint.
-
-    SQL Analytics Endpoints are read-only; DDL operations are not supported.
-
-    Raises:
-        ValueError: If the resolved item is a SQL Analytics Endpoint.
-    """
-    if entry.kind == WarehouseKind.SQL_ENDPOINT:
-        raise ValueError(_SQL_ENDPOINT_READ_ONLY)
 
 
 @asynccontextmanager

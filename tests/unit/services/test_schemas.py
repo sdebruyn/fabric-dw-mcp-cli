@@ -145,6 +145,17 @@ class TestListSchemas:
         assert "db[_]%" in call_sql
 
     @pytest.mark.asyncio
+    async def test_sql_excludes_guest_schema(self) -> None:
+        target = _make_target()
+        conn = _make_conn([], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await schemas.list_schemas(target)
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        # 'guest' must appear in the NOT IN clause
+        assert "'guest'" in call_sql
+
+    @pytest.mark.asyncio
     async def test_closes_connection(self) -> None:
         target = _make_target()
         conn = _make_conn([_SCHEMA_ROW_1], _LIST_COLS)
@@ -402,10 +413,16 @@ class TestDeleteSchemaCascade:
         with patch(
             "fabric_dw.sql.open_connection",
             side_effect=[list_conn, drop1_conn, drop2_conn, drop_schema_conn],
-        ):
+        ) as mock_open:
             await schemas.delete_schema(target, "sales", cascade=True)
-        # Should have opened 4 connections total (list + 2 drops + schema drop)
-        assert True  # if we get here without error, the cascade ran
+        # Should have opened 4 connections total: list + DROP TABLE + DROP VIEW + DROP SCHEMA
+        assert mock_open.call_count == 4
+        drop_table_sql_raw: str = drop1_conn.cursor.return_value.execute.call_args[0][0]
+        drop_view_sql_raw: str = drop2_conn.cursor.return_value.execute.call_args[0][0]
+        assert "DROP TABLE" in drop_table_sql_raw.upper()
+        assert "[t1]" in drop_table_sql_raw
+        assert "DROP VIEW" in drop_view_sql_raw.upper()
+        assert "[v1]" in drop_view_sql_raw
 
     @pytest.mark.asyncio
     async def test_cascade_false_does_not_enumerate_objects(self) -> None:
