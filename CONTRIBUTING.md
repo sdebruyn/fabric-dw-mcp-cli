@@ -80,7 +80,7 @@ just type
 just test
 # With coverage report:
 just cov
-# With HTML coverage report (opens htmlcov/index.html):
+# With HTML coverage report:
 just cov-html
 ```
 
