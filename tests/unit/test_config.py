@@ -131,3 +131,60 @@ def test_load_after_clear_returns_empty(tmp_path: Path) -> None:
     clear_config(path)
     cfg = load_config(path)
     assert cfg == UserConfig(defaults=Defaults())
+
+
+# ---------------------------------------------------------------------------
+# TOML round-trip with hostile workspace / warehouse names
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        'Sales "Workspace"',  # embedded double-quote
+        "Back\\slash WS",  # backslash
+        "Line\nBreak WS",  # newline (LF)
+        "Tab\tWS",  # horizontal tab
+        "Control\x00WS",  # null byte (control character)
+        "Unicode ☃ Snowman",  # BMP unicode
+        "Non-BMP \U0001f600 Emoji",  # non-BMP unicode (surrogate pair in UTF-16)
+        '"""triple quotes"""',  # triple double-quote
+        "null\x00byte\x01ctrl",  # multiple control chars
+    ],
+)
+def test_round_trip_hostile_workspace_name(tmp_path: Path, name: str) -> None:
+    """save_config + load_config must survive hostile workspace name strings."""
+    path = tmp_path / "config.toml"
+    cfg = UserConfig(defaults=Defaults(workspace=name))
+    save_config(cfg, path)
+    loaded = load_config(path)
+    assert loaded.defaults.workspace == name
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        'Ware"house',
+        "DW\\backslash",
+        "Line\nBreak-DW",
+    ],
+)
+def test_round_trip_hostile_warehouse_name(tmp_path: Path, name: str) -> None:
+    """save_config + load_config must survive hostile warehouse name strings."""
+    path = tmp_path / "config.toml"
+    cfg = UserConfig(defaults=Defaults(warehouse=name))
+    save_config(cfg, path)
+    loaded = load_config(path)
+    assert loaded.defaults.warehouse == name
+
+
+def test_round_trip_both_hostile(tmp_path: Path) -> None:
+    """Both workspace and warehouse with hostile characters round-trip correctly."""
+    path = tmp_path / "config.toml"
+    ws = 'My "Workspace"\nwith newline'
+    wh = "DW\\slash\ttab"
+    cfg = UserConfig(defaults=Defaults(workspace=ws, warehouse=wh))
+    save_config(cfg, path)
+    loaded = load_config(path)
+    assert loaded.defaults.workspace == ws
+    assert loaded.defaults.warehouse == wh

@@ -8,11 +8,13 @@ from azure.core.credentials import AccessToken
 from azure.identity.aio import ClientSecretCredential as AsyncClientSecretCredential
 from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
 
+import fabric_dw.auth as auth_module
 from fabric_dw.auth import (
     DEFAULT_INTERACTIVE_CLIENT_ID,
     FABRIC_SCOPE,
     SQL_SCOPE,
     CredentialMode,
+    SyncCredentialAdapter,
     _SyncCredentialAdapter,
     get_credential,
 )
@@ -87,11 +89,11 @@ def test_get_credential_service_principal_raises_config_error_when_all_env_missi
 
 def test_get_credential_interactive_returns_sync_adapter() -> None:
     credential = get_credential(CredentialMode.INTERACTIVE)
-    assert isinstance(credential, _SyncCredentialAdapter)
+    assert isinstance(credential, SyncCredentialAdapter)
 
 
 # ---------------------------------------------------------------------------
-# _SyncCredentialAdapter — get_token and close dispatch via asyncio.to_thread
+# SyncCredentialAdapter — get_token and close dispatch via asyncio.to_thread
 # ---------------------------------------------------------------------------
 
 
@@ -102,7 +104,7 @@ async def test_sync_adapter_get_token_returns_token_from_inner() -> None:
     inner = MagicMock()
     inner.get_token.return_value = expected_token
 
-    adapter = _SyncCredentialAdapter(inner)
+    adapter = SyncCredentialAdapter(inner)
     result = await adapter.get_token(FABRIC_SCOPE)
 
     assert result == expected_token
@@ -124,7 +126,7 @@ async def test_sync_adapter_get_token_runs_in_worker_thread() -> None:
     inner = MagicMock()
     inner.get_token.side_effect = fake_get_token
 
-    adapter = _SyncCredentialAdapter(inner)
+    adapter = SyncCredentialAdapter(inner)
     await adapter.get_token(FABRIC_SCOPE)
 
     assert inner_thread, "inner.get_token was never called"
@@ -136,7 +138,7 @@ async def test_sync_adapter_get_token_dispatches_via_to_thread() -> None:
     """get_token must call asyncio.to_thread with the inner method."""
     inner = MagicMock()
     inner.get_token.return_value = AccessToken("tok", 9999999999)
-    adapter = _SyncCredentialAdapter(inner)
+    adapter = SyncCredentialAdapter(inner)
 
     with patch("fabric_dw.auth.asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
         mock_to_thread.return_value = AccessToken("tok", 9999999999)
@@ -154,7 +156,7 @@ async def test_sync_adapter_get_token_dispatches_via_to_thread() -> None:
 async def test_sync_adapter_close_dispatches_via_to_thread() -> None:
     """close() must offload the inner close call to a worker thread."""
     inner = MagicMock()
-    adapter = _SyncCredentialAdapter(inner)
+    adapter = SyncCredentialAdapter(inner)
 
     with patch("fabric_dw.auth.asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
         mock_to_thread.return_value = None
@@ -174,7 +176,7 @@ async def test_sync_adapter_close_runs_in_worker_thread() -> None:
     inner = MagicMock()
     inner.close.side_effect = fake_close
 
-    adapter = _SyncCredentialAdapter(inner)
+    adapter = SyncCredentialAdapter(inner)
     await adapter.close()
 
     assert inner_thread, "inner.close was never called"
@@ -289,3 +291,73 @@ def test_sp_mode_does_not_use_interactive_client_id(monkeypatch: pytest.MonkeyPa
         _, kwargs = mock_csc.call_args
         assert "interactive_browser_client_id" not in kwargs
         assert kwargs.get("client_id") == "test-client-id"
+
+
+# ---------------------------------------------------------------------------
+# Registry dispatch — one test per mode
+# ---------------------------------------------------------------------------
+
+
+def test_registry_dispatches_default_mode() -> None:
+    """Registry must dispatch to the default factory for CredentialMode.DEFAULT."""
+    mock_factory = MagicMock(return_value=MagicMock())
+    original = auth_module._CREDENTIAL_REGISTRY[CredentialMode.DEFAULT]
+    try:
+        auth_module._CREDENTIAL_REGISTRY[CredentialMode.DEFAULT] = mock_factory
+        get_credential(CredentialMode.DEFAULT)
+        mock_factory.assert_called_once()
+    finally:
+        auth_module._CREDENTIAL_REGISTRY[CredentialMode.DEFAULT] = original
+
+
+def test_registry_dispatches_service_principal_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Registry must dispatch to the SP factory for CredentialMode.SERVICE_PRINCIPAL."""
+    monkeypatch.setenv("AZURE_TENANT_ID", "t")
+    monkeypatch.setenv("AZURE_CLIENT_ID", "c")
+    monkeypatch.setenv("AZURE_CLIENT_SECRET", "s")
+    mock_factory = MagicMock(return_value=MagicMock())
+    original = auth_module._CREDENTIAL_REGISTRY[CredentialMode.SERVICE_PRINCIPAL]
+    try:
+        auth_module._CREDENTIAL_REGISTRY[CredentialMode.SERVICE_PRINCIPAL] = mock_factory
+        get_credential(CredentialMode.SERVICE_PRINCIPAL)
+        mock_factory.assert_called_once()
+    finally:
+        auth_module._CREDENTIAL_REGISTRY[CredentialMode.SERVICE_PRINCIPAL] = original
+
+
+def test_registry_dispatches_interactive_mode() -> None:
+    """Registry must dispatch to the interactive factory for CredentialMode.INTERACTIVE."""
+    mock_factory = MagicMock(return_value=MagicMock())
+    original = auth_module._CREDENTIAL_REGISTRY[CredentialMode.INTERACTIVE]
+    try:
+        auth_module._CREDENTIAL_REGISTRY[CredentialMode.INTERACTIVE] = mock_factory
+        get_credential(CredentialMode.INTERACTIVE)
+        mock_factory.assert_called_once()
+    finally:
+        auth_module._CREDENTIAL_REGISTRY[CredentialMode.INTERACTIVE] = original
+
+
+# ---------------------------------------------------------------------------
+# SyncCredentialAdapter rename — backward-compat alias
+# ---------------------------------------------------------------------------
+
+
+def test_private_alias_is_same_class() -> None:
+    """_SyncCredentialAdapter must be an alias for SyncCredentialAdapter."""
+    assert _SyncCredentialAdapter is SyncCredentialAdapter
+
+
+def test_sync_adapter_public_name() -> None:
+    """SyncCredentialAdapter must be exported in __all__."""
+    assert "SyncCredentialAdapter" in auth_module.__all__
+
+
+# ---------------------------------------------------------------------------
+# get_credential unknown mode — new explicit-error contract (registry refactor)
+# ---------------------------------------------------------------------------
+
+
+def test_get_credential_unknown_mode_raises_config_error() -> None:
+    """get_credential must raise ConfigError for a mode not in the registry."""
+    with pytest.raises(ConfigError, match="Unknown credential mode"):
+        get_credential("not-a-real-mode")  # ty: ignore[invalid-argument-type]
