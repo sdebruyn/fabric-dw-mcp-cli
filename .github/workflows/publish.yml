@@ -2,12 +2,21 @@ name: Publish
 
 on:
   push:
-    branches: [main]
-    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+    tags: ["v[0-9]*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish (e.g. v2026.6.0)"
+        required: true
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
   id-token: write
+  attestations: write
 
 jobs:
   publish:
@@ -17,6 +26,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          ref: ${{ inputs.tag || github.ref }}
 
       - uses: astral-sh/setup-uv@v8.2.0
         with:
@@ -30,15 +40,35 @@ jobs:
 
       - run: uv build
 
+      - name: Generate CycloneDX SBOM
+        run: |
+          uvx cyclonedx-py environment --output-format json --outfile dist/sbom.cdx.json
+          python -c "import json,sys; d=json.load(open('dist/sbom.cdx.json')); print(f'SBOM: {len(d.get(\"components\",[]))} components')"
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: dist/sbom.cdx.json
+          if-no-files-found: error
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/*.whl
+            dist/*.tar.gz
+
       - name: Publish to PyPI (OIDC)
         run: uv publish --trusted-publishing always
 
       - name: Create GitHub Release (tag only)
-        if: github.ref_type == 'tag'
+        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/*.whl
             dist/*.tar.gz
+            dist/sbom.cdx.json
           generate_release_notes: true
           name: ${{ github.ref_name }}
