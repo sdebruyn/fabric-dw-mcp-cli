@@ -7,13 +7,30 @@ lint:
 fmt:
     uv run ruff format .
 
+fix:
+    uv run ruff check --fix .
+    uv run ruff format .
+
 type:
-    uvx ty==0.0.44 check src tests
+    uv run ty check src tests
 
 test:
     uv run pytest tests/unit -q
 
 cov:
-    uv run pytest tests/unit --cov=fabric_dw --cov-report=term
+    uv run pytest tests/unit --cov --cov-report=term
+
+cov-html:
+    uv run pytest tests/unit --cov --cov-report=html
+
+integration:
+    uv run pytest tests/integration -q
+
+build:
+    uv build
+
+audit:
+    uvx 'bandit[sarif]' -r src/ -ll
+    uvx pip-audit --strict
 
 check: lint type test

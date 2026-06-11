@@ -5,6 +5,13 @@ updates:
     schedule:
       interval: weekly
     groups:
+      security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      major:
+        update-types:
+          - major
       patch-and-minor:
         patterns:
           - "*"
@@ -17,6 +24,29 @@ updates:
     schedule:
       interval: weekly
     groups:
+      security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      major:
+        update-types:
+          - major
+      patch-and-minor:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      security:
+        applies-to: security-updates
+        patterns:
+          - "*"
       patch-and-minor:
         patterns:
           - "*"

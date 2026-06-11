@@ -4,12 +4,13 @@ We use [GitHub Private Vulnerability Reporting](https://docs.github.com/code-sec
 
 **To report a vulnerability**: [open a private advisory](https://github.com/sdebruyn/fabric-dw-mcp-cli/security/advisories/new). GitHub will deliver it directly and privately to the maintainers — no public issue or email needed.
 
+We aim to acknowledge reports within **5 business days** and to publish a fix or advisory within **90 days** of confirmation.
+
 ## Supported versions
 
-| Version | Supported |
-| --- | --- |
-| Latest stable | yes |
-| Anything older | no |
+This project is in **pre-1.0 / alpha**. Only the **latest published release** on PyPI receives security fixes. No backports are made to older releases.
+
+If you are running anything other than the latest published version, upgrade first before reporting.
 
 ## Scope
 

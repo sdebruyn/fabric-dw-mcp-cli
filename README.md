@@ -5,11 +5,16 @@
 </p>
 <h1 align="center">fabric-dw</h1>
 
-> Python CLI and MCP server for administering Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
+<p align="center">
+  <a href="https://github.com/sdebruyn/fabric-dw-mcp-cli/actions/workflows/ci.yml"><img src="https://github.com/sdebruyn/fabric-dw-mcp-cli/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://pypi.org/project/fabric-dw/"><img src="https://img.shields.io/pypi/v/fabric-dw" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/fabric-dw/"><img src="https://img.shields.io/pypi/pyversions/fabric-dw" alt="Python versions"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/sdebruyn/fabric-dw-mcp-cli" alt="License"></a>
+</p>
 
-## Status
+> **Alpha — work in progress.** The API and CLI interface may change without notice. See the [open issues](https://github.com/sdebruyn/fabric-dw-mcp-cli/issues) for current status.
 
-**Alpha — work in progress.** The API and CLI interface may change without notice. See the [open issues](https://github.com/sdebruyn/fabric-dw-mcp-cli/issues) for current status.
+Python CLI and MCP server for administering Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
 
 ## Description
 
@@ -24,9 +29,44 @@ Authentication is configured via the `FABRIC_AUTH` environment variable. The def
 
 ```bash
 pip install fabric-dw
+# or run without installing:
+uvx fabric-dw --help
 ```
 
-> Note: placeholder release; CLI/MCP under active development. Installation instructions will be updated on first release.
+## Quick Start
+
+### CLI
+
+```bash
+# List all workspaces you have access to
+uvx fabric-dw workspaces list
+
+# List warehouses and SQL Analytics Endpoints in a workspace
+uvx fabric-dw warehouses list <workspace-name-or-id>
+
+# Execute a SQL query against a warehouse
+uvx fabric-dw sql exec <workspace-name-or-id> <warehouse-name-or-id> "SELECT TOP 10 * FROM dbo.my_table"
+
+# List restore points for a warehouse
+uvx fabric-dw restore-points list <workspace-name-or-id> <warehouse-name-or-id>
+```
+
+### MCP Server
+
+Add to your MCP client configuration (e.g. Claude Desktop, VS Code):
+
+```json
+{
+  "mcpServers": {
+    "fabric-dw": {
+      "command": "uvx",
+      "args": ["--from", "fabric-dw", "fabric-dw-mcp"]
+    }
+  }
+}
+```
+
+The MCP server exposes all CLI operations (workspaces, warehouses, SQL endpoints, audit, queries, snapshots, restore points, schemas, tables, views) as MCP tools. Set `FABRIC_AUTH` in the environment if you need a non-default auth mode.
 
 ## Run in Docker
 
@@ -43,28 +83,6 @@ docker run --rm \
 Dev images (built from every main merge): `ghcr.io/sdebruyn/fabric-dw:main` or `:<version>.dev<N>`.
 
 Package page: [ghcr.io/sdebruyn/fabric-dw](https://github.com/sdebruyn/fabric-dw-mcp-cli/pkgs/container/fabric-dw)
-
-## Quick Start
-
-### CLI
-
-```bash
-# Coming soon
-fabric-dw --help
-```
-
-### MCP Server
-
-```json
-// Coming soon — add to your MCP client configuration
-{
-  "mcpServers": {
-    "fabric-dw": {
-      "command": "fabric-dw-mcp"
-    }
-  }
-}
-```
 
 ## Develop in a container
 
