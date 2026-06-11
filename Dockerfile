@@ -41,8 +41,9 @@ RUN pip install --no-cache-dir /tmp/*.whl && rm /tmp/*.whl
 
 ENV FABRIC_AUTH=default PYTHONUNBUFFERED=1
 
-# Run as non-root for security hardening
-RUN useradd --uid 10001 --no-create-home --shell /sbin/nologin app
+# Run as non-root for security hardening; create home so Path.home() resolves correctly
+RUN useradd --uid 10001 --create-home --home-dir /home/app --shell /usr/sbin/nologin app
+ENV HOME=/home/app
 USER app
 
 # HEALTHCHECK is intentionally omitted: fabric-dw-mcp is a stdio MCP server that

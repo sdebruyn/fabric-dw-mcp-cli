@@ -3,7 +3,7 @@ name: Docker
 on:
   push:
     branches: [main]
-    tags: ["v[0-9]+.[0-9]+*"]
+    tags: ["v[0-9]*"]
 
 concurrency:
   group: docker-${{ github.ref }}
@@ -63,7 +63,6 @@ jobs:
           push: true
           tags: ${{ steps.docker_tags.outputs.tags }}
           build-args: |
-            SETUPTOOLS_SCM_PRETEND_VERSION=${{ steps.docker_tags.outputs.version }}
             VERSION=${{ steps.docker_tags.outputs.version }}
           provenance: true
           sbom: true
