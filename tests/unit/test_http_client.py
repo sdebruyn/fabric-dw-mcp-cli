@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import unittest.mock
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -17,6 +18,7 @@ from freezegun import freeze_time
 
 from fabric_dw.exceptions import (
     AuthError,
+    FabricError,
     FabricServerError,
     NotFound,
     PermissionDenied,
@@ -633,3 +635,297 @@ async def test_debug_log_contains_elapsed_ms(caplog: pytest.LogCaptureFixture) -
         or "ms" in record.getMessage()
     )
     assert has_elapsed, f"No elapsed info in log record: {record.getMessage()}"
+
+
+# ---------------------------------------------------------------------------
+# Exception context attributes
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_status_mapping_fills_exception_attributes() -> None:
+    """Error exceptions must carry status, request_id, and body attributes."""
+    req_id = "test-req-id-001"
+
+    with respx.mock:
+        respx.get("https://api.fabric.microsoft.com/v1/items").mock(
+            return_value=httpx.Response(
+                404,
+                headers={"x-ms-request-id": req_id},
+                json={"error": {"code": "ItemNotFound", "message": "not found"}},
+            )
+        )
+        client = await _get_client()
+        async with client:
+            with pytest.raises(NotFound) as exc_info:
+                await client.request("GET", HttpBase.FABRIC, "/items")
+
+    err = exc_info.value
+    assert err.status == 404
+    assert err.request_id == req_id
+    assert isinstance(err.body, dict)
+    assert err.body.get("error") is not None
+
+
+@pytest.mark.asyncio
+async def test_auth_error_carries_status() -> None:
+    """AuthError must have status=401."""
+    with respx.mock:
+        respx.get("https://api.fabric.microsoft.com/v1/items").mock(
+            return_value=httpx.Response(401, json={"error": "unauthorized"})
+        )
+        client = await _get_client()
+        async with client:
+            with pytest.raises(AuthError) as exc_info:
+                await client.request("GET", HttpBase.FABRIC, "/items")
+
+    assert exc_info.value.status == 401
+
+
+@pytest.mark.asyncio
+async def test_server_error_carries_status() -> None:
+    """FabricServerError must have status=500."""
+    with respx.mock:
+        respx.get("https://api.fabric.microsoft.com/v1/items").mock(
+            return_value=httpx.Response(500, json={"error": "boom"})
+        )
+        client = await _get_client()
+        async with client:
+            with pytest.raises(FabricServerError) as exc_info:
+                await client.request("GET", HttpBase.FABRIC, "/items")
+
+    assert exc_info.value.status == 500
+
+
+@pytest.mark.asyncio
+async def test_rate_limited_error_carries_status() -> None:
+    """RateLimitedError raised after consecutive 429s must carry status=429."""
+
+    def side_effect(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, headers={"Retry-After": "0"}, json={})
+
+    with respx.mock:
+        respx.get("https://api.fabric.microsoft.com/v1/items").mock(side_effect=side_effect)
+
+        client = await _get_client(rps=10)
+        async with client:
+            with pytest.raises(RateLimitedError) as exc_info:
+                await client.request("GET", HttpBase.FABRIC, "/items")
+
+    assert exc_info.value.status == 429
+
+
+# ---------------------------------------------------------------------------
+# FabricError __str__ with hint and request_id
+# ---------------------------------------------------------------------------
+
+
+def test_fabric_error_str_no_extras() -> None:
+    """FabricError without hint/request_id returns the plain message."""
+    err = FabricError("plain message")
+    assert str(err) == "plain message"
+
+
+def test_fabric_error_str_with_hint() -> None:
+    """FabricError with hint appends it on a new line."""
+    err = FabricError("base msg", hint="try again later")
+    assert str(err) == "base msg\nHint: try again later"
+
+
+def test_fabric_error_str_with_request_id() -> None:
+    """FabricError with request_id appends it."""
+    err = FabricError("base msg", request_id="abc-123")
+    assert str(err) == "base msg (request-id: abc-123)"
+
+
+def test_fabric_error_str_with_hint_and_request_id() -> None:
+    """FabricError with both hint and request_id includes both."""
+    err = FabricError("base msg", hint="do X", request_id="rid-42")
+    text = str(err)
+    assert "Hint: do X" in text
+    assert "request-id: rid-42" in text
+
+
+# ---------------------------------------------------------------------------
+# 429 deadline aggregation (concurrent)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_429_deadline_aggregated_for_concurrent_requests() -> None:
+    """Two concurrent 429s with Retry-After values aggregate to the MAX deadline.
+
+    Both requests see a 429 first. After sleeping the maximum Retry-After,
+    both succeed. The total elapsed time must be >= the longer Retry-After.
+    """
+    call_count = 0
+
+    def side_effect(_request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count <= 2:
+            # First two calls return 429 with 1 second Retry-After
+            return httpx.Response(429, headers={"Retry-After": "1"}, json={})
+        return httpx.Response(200, json={"value": []})
+
+    with respx.mock:
+        respx.get("https://api.fabric.microsoft.com/v1/items").mock(side_effect=side_effect)
+
+        client = FabricHttpClient(credential=_make_credential(), rps=10)
+        async with client:
+            start = time.monotonic()
+            results = await asyncio.gather(
+                client.request("GET", HttpBase.FABRIC, "/items"),
+                client.request("GET", HttpBase.FABRIC, "/items"),
+            )
+            elapsed = time.monotonic() - start
+
+    assert all(r.status_code == 200 for r in results)
+    # Must have waited at least 1 second for the Retry-After
+    assert elapsed >= 0.9, f"Retry-After not honored: {elapsed:.2f}s"
+
+
+# ---------------------------------------------------------------------------
+# 429 honours Retry-After via deadline (single request)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_429_deadline_single_request_honors_retry_after() -> None:
+    """429 with Retry-After: 1 sets _pause_until and waits before retry."""
+    call_count = 0
+
+    def side_effect(_request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return httpx.Response(429, headers={"Retry-After": "1"}, json={})
+        return httpx.Response(200, json={"ok": True})
+
+    with respx.mock:
+        respx.get("https://api.fabric.microsoft.com/v1/items").mock(side_effect=side_effect)
+
+        client = FabricHttpClient(credential=_make_credential(), rps=10)
+        async with client:
+            start = time.monotonic()
+            resp = await client.request("GET", HttpBase.FABRIC, "/items")
+            elapsed = time.monotonic() - start
+
+    assert resp.status_code == 200
+    assert call_count == 2
+    assert elapsed >= 0.9, f"Pause deadline not honored: {elapsed:.2f}s"
+
+
+# ---------------------------------------------------------------------------
+# Correlation id in debug log
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_debug_log_includes_request_id_when_present(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When x-ms-request-id is in the response, it must appear in the log extra."""
+    req_id = "fabric-req-id-xyz"
+
+    with respx.mock:
+        respx.get("https://api.fabric.microsoft.com/v1/items").mock(
+            return_value=httpx.Response(
+                200,
+                headers={"x-ms-request-id": req_id},
+                json={},
+            )
+        )
+
+        client = await _get_client(rps=10)
+        async with client:
+            with caplog.at_level(logging.DEBUG, logger="fabric_dw.http"):
+                await client.request("GET", HttpBase.FABRIC, "/items")
+
+    fabric_records = [r for r in caplog.records if r.name == "fabric_dw.http"]
+    assert len(fabric_records) >= 1
+    record = fabric_records[0]
+    # request_id should be available as an extra attribute on the log record
+    assert hasattr(record, "request_id"), f"request_id not in log record: {record.__dict__}"
+    assert record.request_id == req_id
+
+
+# ---------------------------------------------------------------------------
+# Configurability: constructor parameters
+# ---------------------------------------------------------------------------
+
+
+def test_constructor_parameters_are_stored() -> None:
+    """FabricHttpClient stores custom constructor parameters."""
+    cred = _make_credential()
+    client = FabricHttpClient(
+        credential=cred,
+        rps=5,
+        timeout=60.0,
+        max_429_retries=3,
+        poll_interval=5.0,
+        token_refresh_buffer=600.0,
+    )
+    assert client._timeout == 60.0
+    assert client._max_429_retries == 3
+    assert client._poll_interval == 5.0
+    assert client._token_refresh_buffer == 600.0
+
+
+@pytest.mark.asyncio
+async def test_timeout_wired_into_http_client() -> None:
+    """The timeout parameter must be forwarded to the underlying httpx.AsyncClient."""
+    cred = _make_credential()
+    client = FabricHttpClient(credential=cred, timeout=42.0)
+    async with client:
+        assert client._http is not None
+        assert client._http.timeout.read == 42.0
+
+
+# ---------------------------------------------------------------------------
+# poll_operation jitter
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_poll_operation_jitter_within_bounds() -> None:
+    """poll_operation sleep must include jitter in [0, interval * 0.25] range.
+
+    Monkeypatches asyncio.sleep to capture the actual sleep durations and
+    verifies that at least one sleep is > the base interval (i.e. has jitter)
+    when multiple polls occur.
+    """
+    poll_count = 0
+    sleep_durations: list[float] = []
+
+    original_sleep = asyncio.sleep
+
+    async def mock_sleep(seconds: float) -> None:
+        sleep_durations.append(seconds)
+        # Use a tiny actual sleep so the test doesn't hang
+        await original_sleep(0)
+
+    def side_effect(_request: httpx.Request) -> httpx.Response:
+        nonlocal poll_count
+        poll_count += 1
+        if poll_count < 4:
+            return httpx.Response(202, headers={"Retry-After": "1"}, json={"status": "Running"})
+        return httpx.Response(200, json={"status": "Succeeded"})
+
+    with respx.mock:
+        respx.get("https://api.fabric.microsoft.com/v1/operations/op-jitter").mock(
+            side_effect=side_effect
+        )
+
+        client = FabricHttpClient(credential=_make_credential(), rps=10, poll_interval=2.0)
+        async with client:
+            with unittest.mock.patch("asyncio.sleep", side_effect=mock_sleep):
+                await client.poll_operation(
+                    "https://api.fabric.microsoft.com/v1/operations/op-jitter"
+                )
+
+    # Each sleep should be base_wait + jitter where base_wait=1 (from Retry-After: 1)
+    # jitter is in [0, 0.25], so sleep must be in [1.0, 1.25]
+    assert len(sleep_durations) >= 3, f"Expected at least 3 sleeps; got {len(sleep_durations)}"
+    for dur in sleep_durations:
+        assert 1.0 <= dur <= 1.26, f"Sleep {dur:.3f} outside expected [1.0, 1.25] range"
