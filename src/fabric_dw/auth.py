@@ -2,9 +2,9 @@
 
 import asyncio
 import os
+from collections.abc import Callable
 from enum import StrEnum
 from types import TracebackType
-from typing import Any
 
 from azure.core.credentials import AccessToken
 from azure.core.credentials_async import AsyncTokenCredential
@@ -26,6 +26,15 @@ DEFAULT_INTERACTIVE_CLIENT_ID = "f666e5ee-2149-4c6a-87eb-13c9e1fdc70d"
 
 _CACHE_OPTIONS = TokenCachePersistenceOptions(name="fabric-dw", allow_unencrypted_storage=True)
 
+__all__ = [
+    "DEFAULT_INTERACTIVE_CLIENT_ID",
+    "FABRIC_SCOPE",
+    "SQL_SCOPE",
+    "CredentialMode",
+    "SyncCredentialAdapter",
+    "get_credential",
+]
+
 
 class CredentialMode(StrEnum):
     DEFAULT = "default"
@@ -33,12 +42,13 @@ class CredentialMode(StrEnum):
     INTERACTIVE = "interactive"
 
 
-class _SyncCredentialAdapter:
+class SyncCredentialAdapter:
     """Adapts a synchronous TokenCredential to the AsyncTokenCredential protocol.
 
     Used because ``azure.identity.aio.InteractiveBrowserCredential`` does not
     exist in azure-identity 1.25.x.  Both ``get_token`` and ``close`` are
-    offloaded to a worker thread so the event loop is never blocked.
+    offloaded to a worker thread via :func:`asyncio.to_thread` so the event
+    loop is never blocked.
 
     Remove this adapter and switch to ``azure.identity.aio.InteractiveBrowserCredential``
     once that ships in a stable release.
@@ -53,7 +63,7 @@ class _SyncCredentialAdapter:
         claims: str | None = None,
         tenant_id: str | None = None,
         enable_cae: bool = False,
-        **kwargs: Any,  # noqa: ANN401, ARG002
+        **kwargs: object,  # noqa: ARG002 — required by AsyncTokenCredential protocol
     ) -> AccessToken:
         return await asyncio.to_thread(
             self._inner.get_token,
@@ -66,7 +76,7 @@ class _SyncCredentialAdapter:
     async def close(self) -> None:
         await asyncio.to_thread(self._inner.close)
 
-    async def __aenter__(self) -> "_SyncCredentialAdapter":
+    async def __aenter__(self) -> "SyncCredentialAdapter":
         return self
 
     async def __aexit__(
@@ -76,6 +86,11 @@ class _SyncCredentialAdapter:
         traceback: TracebackType | None = None,
     ) -> None:
         await self.close()
+
+
+# Keep a private alias so existing internal call sites and any external code
+# that still references the old private name continue to work.
+_SyncCredentialAdapter = SyncCredentialAdapter
 
 
 def _resolve_interactive_kwargs() -> dict[str, str]:
@@ -96,6 +111,59 @@ def _resolve_interactive_kwargs() -> dict[str, str]:
     return kwargs
 
 
+def _make_default_credential() -> AsyncTokenCredential:
+    interactive_kwargs = _resolve_interactive_kwargs()
+    dac_kwargs: dict[str, object] = {
+        "cache_persistence_options": _CACHE_OPTIONS,
+        "exclude_interactive_browser_credential": False,
+        "interactive_browser_client_id": interactive_kwargs["client_id"],
+    }
+    if "tenant_id" in interactive_kwargs:
+        dac_kwargs["interactive_browser_tenant_id"] = interactive_kwargs["tenant_id"]
+    return DefaultAzureCredential(**dac_kwargs)
+
+
+def _make_service_principal_credential() -> AsyncTokenCredential:
+    env_vars = {
+        "AZURE_TENANT_ID": os.environ.get("AZURE_TENANT_ID"),
+        "AZURE_CLIENT_ID": os.environ.get("AZURE_CLIENT_ID"),
+        "AZURE_CLIENT_SECRET": os.environ.get("AZURE_CLIENT_SECRET"),
+    }
+    missing = [name for name, value in env_vars.items() if not value]
+    if missing:
+        raise ConfigError.missing_env_vars(missing)
+
+    # Values are guaranteed non-empty by the missing check above; the dict
+    # lookup and cast are safe — they only reach this point when all three
+    # vars are present and non-empty.
+    return ClientSecretCredential(
+        tenant_id=str(env_vars["AZURE_TENANT_ID"]),
+        client_id=str(env_vars["AZURE_CLIENT_ID"]),
+        client_secret=str(env_vars["AZURE_CLIENT_SECRET"]),
+    )
+
+
+def _make_interactive_credential() -> AsyncTokenCredential:
+    # InteractiveBrowserCredential has no aio variant in this release of
+    # azure-identity; wrap in an adapter that offloads to a worker thread.
+    return SyncCredentialAdapter(
+        InteractiveBrowserCredential(
+            cache_persistence_options=_CACHE_OPTIONS,
+            **_resolve_interactive_kwargs(),
+        )
+    )
+
+
+#: Registry mapping each CredentialMode to a factory that produces the
+#: appropriate AsyncTokenCredential.  To add a new mode, register a new
+#: factory here — no other code needs to change.
+_CREDENTIAL_REGISTRY: dict[CredentialMode, Callable[[], AsyncTokenCredential]] = {
+    CredentialMode.DEFAULT: _make_default_credential,
+    CredentialMode.SERVICE_PRINCIPAL: _make_service_principal_credential,
+    CredentialMode.INTERACTIVE: _make_interactive_credential,
+}
+
+
 def get_credential(mode: CredentialMode = CredentialMode.DEFAULT) -> AsyncTokenCredential:
     """Return an Azure credential for the given mode.
 
@@ -108,39 +176,9 @@ def get_credential(mode: CredentialMode = CredentialMode.DEFAULT) -> AsyncTokenC
     Raises:
         ConfigError: If mode is SERVICE_PRINCIPAL and any of AZURE_TENANT_ID,
             AZURE_CLIENT_ID, or AZURE_CLIENT_SECRET are missing from the environment.
+        ConfigError: If *mode* is not a recognised :class:`CredentialMode`.
     """
-    if mode == CredentialMode.DEFAULT:
-        interactive_kwargs = _resolve_interactive_kwargs()
-        dac_kwargs: dict[str, object] = {
-            "cache_persistence_options": _CACHE_OPTIONS,
-            "exclude_interactive_browser_credential": False,
-            "interactive_browser_client_id": interactive_kwargs["client_id"],
-        }
-        if "tenant_id" in interactive_kwargs:
-            dac_kwargs["interactive_browser_tenant_id"] = interactive_kwargs["tenant_id"]
-        return DefaultAzureCredential(**dac_kwargs)
-
-    if mode == CredentialMode.SERVICE_PRINCIPAL:
-        env_vars = {
-            "AZURE_TENANT_ID": os.environ.get("AZURE_TENANT_ID"),
-            "AZURE_CLIENT_ID": os.environ.get("AZURE_CLIENT_ID"),
-            "AZURE_CLIENT_SECRET": os.environ.get("AZURE_CLIENT_SECRET"),
-        }
-        missing = [name for name, value in env_vars.items() if not value]
-        if missing:
-            raise ConfigError.missing_env_vars(missing)
-
-        return ClientSecretCredential(
-            tenant_id=env_vars["AZURE_TENANT_ID"] or "",
-            client_id=env_vars["AZURE_CLIENT_ID"] or "",
-            client_secret=env_vars["AZURE_CLIENT_SECRET"] or "",
-        )
-
-    # CredentialMode.INTERACTIVE — InteractiveBrowserCredential has no aio variant
-    # in this release of azure-identity; wrap in an adapter that offloads to thread.
-    return _SyncCredentialAdapter(
-        InteractiveBrowserCredential(
-            cache_persistence_options=_CACHE_OPTIONS,
-            **_resolve_interactive_kwargs(),
-        )
-    )
+    factory = _CREDENTIAL_REGISTRY.get(mode)
+    if factory is None:
+        raise ConfigError.unknown_credential_mode(mode)
+    return factory()

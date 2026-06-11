@@ -13,8 +13,9 @@ The TOML shape is intentionally tiny:
     warehouse = "Sales-DW"
 
 Reads are done with :mod:`tomllib` (stdlib, Python 3.11+).
-Writes are hand-generated TOML (no third-party serialiser needed for this
-simple shape) and are atomic: ``tempfile.mkstemp + os.replace``.
+Writes use :mod:`tomli_w` for spec-compliant serialisation (handles newlines,
+control characters, non-BMP unicode, etc.) and are atomic:
+``tempfile.mkstemp + os.replace``.
 The file is protected by a :class:`filelock.FileLock` so concurrent CLI
 invocations do not corrupt each other.
 """
@@ -25,13 +26,12 @@ import contextlib
 import logging
 import os
 import tempfile
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-if True:  # pragma: no branch  # tomllib is stdlib >= 3.11
-    import tomllib
-
 import filelock
+import tomli_w
 
 __all__ = [
     "Defaults",
@@ -104,8 +104,8 @@ def load_config(path: Path | None = None) -> UserConfig:
     warehouse = defaults_raw.get("warehouse")
     return UserConfig(
         defaults=Defaults(
-            workspace=str(workspace) if isinstance(workspace, str) else None,
-            warehouse=str(warehouse) if isinstance(warehouse, str) else None,
+            workspace=workspace if isinstance(workspace, str) else None,
+            warehouse=warehouse if isinstance(warehouse, str) else None,
         )
     )
 
@@ -114,19 +114,20 @@ def save_config(config: UserConfig, path: Path | None = None) -> None:
     """Atomically write *config* to *path*.
 
     Creates parent directories as needed.
+    Serialises with :mod:`tomli_w` for full TOML-spec compliance (handles
+    newlines, control characters, non-BMP unicode in workspace/warehouse names).
     """
     resolved = path if path is not None else default_path()
     resolved.parent.mkdir(parents=True, exist_ok=True)
 
-    # Hand-write minimal TOML — no third-party serialiser required.
-    lines: list[str] = ["[defaults]\n"]
+    defaults_dict: dict[str, str] = {}
     if config.defaults.workspace is not None:
-        escaped = config.defaults.workspace.replace("\\", "\\\\").replace('"', '\\"')
-        lines.append(f'workspace = "{escaped}"\n')
+        defaults_dict["workspace"] = config.defaults.workspace
     if config.defaults.warehouse is not None:
-        escaped = config.defaults.warehouse.replace("\\", "\\\\").replace('"', '\\"')
-        lines.append(f'warehouse = "{escaped}"\n')
-    content = "".join(lines)
+        defaults_dict["warehouse"] = config.defaults.warehouse
+
+    data: dict[str, object] = {"defaults": defaults_dict}
+    content = tomli_w.dumps(data)
 
     lock = filelock.FileLock(str(resolved) + ".lock", timeout=_LOCK_TIMEOUT)
     with lock:
@@ -136,8 +137,8 @@ def save_config(config: UserConfig, path: Path | None = None) -> None:
             suffix=".toml",
         )
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(content)
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(content.encode())
             os.replace(tmp_name, resolved)
         except Exception:
             with contextlib.suppress(OSError):

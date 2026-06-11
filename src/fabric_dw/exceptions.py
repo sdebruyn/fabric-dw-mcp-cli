@@ -37,6 +37,11 @@ class ConfigError(FabricError):
             f"{', '.join(names)}"
         )
 
+    @classmethod
+    def unknown_credential_mode(cls, mode: object) -> "ConfigError":
+        """Create a ConfigError for an unrecognised credential mode."""
+        return cls(f"Unknown credential mode: {mode!r}")
+
 
 class ItemKindError(FabricError):
     """Raised when an operation is not valid for the resolved item kind."""
