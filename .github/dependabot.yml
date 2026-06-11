@@ -47,6 +47,9 @@ updates:
         applies-to: security-updates
         patterns:
           - "*"
+      major:
+        update-types:
+          - major
       patch-and-minor:
         patterns:
           - "*"
