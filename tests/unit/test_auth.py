@@ -350,3 +350,14 @@ def test_private_alias_is_same_class() -> None:
 def test_sync_adapter_public_name() -> None:
     """SyncCredentialAdapter must be exported in __all__."""
     assert "SyncCredentialAdapter" in auth_module.__all__
+
+
+# ---------------------------------------------------------------------------
+# get_credential unknown mode — new explicit-error contract (registry refactor)
+# ---------------------------------------------------------------------------
+
+
+def test_get_credential_unknown_mode_raises_config_error() -> None:
+    """get_credential must raise ConfigError for a mode not in the registry."""
+    with pytest.raises(ConfigError, match="Unknown credential mode"):
+        get_credential("not-a-real-mode")  # ty: ignore[invalid-argument-type]

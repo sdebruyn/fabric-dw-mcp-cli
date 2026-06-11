@@ -21,10 +21,11 @@ The interactive browser sign-in path (and the fallback interactive browser step 
 
 - **Application (client) ID**: `f666e5ee-2149-4c6a-87eb-13c9e1fdc70d`
 
-This application requests delegated (user-context) permissions for the following scopes:
+This application requests delegated (user-context) permissions for the following scope:
 
 - `https://analysis.windows.net/powerbi/api/.default` — Power BI / Fabric REST API
-- `https://database.windows.net/.default` — Azure SQL / Fabric SQL Analytics Endpoint
+
+> **Note**: The `SQL_SCOPE` constant (`https://database.windows.net/.default`) is defined in `auth.py` for future use when direct Fabric SQL Analytics Endpoint connections are implemented, but it is not yet requested at runtime.
 
 ### Implications
 

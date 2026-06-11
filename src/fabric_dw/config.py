@@ -127,7 +127,6 @@ def save_config(config: UserConfig, path: Path | None = None) -> None:
         defaults_dict["warehouse"] = config.defaults.warehouse
 
     data: dict[str, object] = {"defaults": defaults_dict}
-    content = tomli_w.dumps(data)
 
     lock = filelock.FileLock(str(resolved) + ".lock", timeout=_LOCK_TIMEOUT)
     with lock:
@@ -138,7 +137,7 @@ def save_config(config: UserConfig, path: Path | None = None) -> None:
         )
         try:
             with os.fdopen(fd, "wb") as fh:
-                fh.write(content.encode())
+                tomli_w.dump(data, fh)
             os.replace(tmp_name, resolved)
         except Exception:
             with contextlib.suppress(OSError):
