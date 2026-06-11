@@ -210,7 +210,7 @@ class FabricHttpClient:
             AuthError: On 401.
             PermissionDenied: On 403.
             NotFound: On 404.
-            RateLimitedError: When the server returns 429 more than max_429_retries times.
+            RateLimitedError: After exactly ``max_429_retries`` consecutive 429 responses.
             FabricServerError: On persistent 5xx errors.
         """
         url = f"{base}{path}"
@@ -271,7 +271,14 @@ class FabricHttpClient:
                     )
 
                 retry_after_raw = resp.headers.get("Retry-After", "1")
-                wait_s = _parse_retry_after(retry_after_raw)
+                try:
+                    wait_s = _parse_retry_after(retry_after_raw)
+                except ValueError:
+                    _logger.warning(
+                        "Malformed Retry-After header %r; falling back to 1.0s",
+                        retry_after_raw,
+                    )
+                    wait_s = 1.0
 
                 # Aggregate concurrent 429s: keep the latest (furthest) deadline.
                 deadline = _time.monotonic() + wait_s
@@ -291,20 +298,23 @@ class FabricHttpClient:
         json: object = None,
         params: Mapping[str, Any] | None = None,
     ) -> httpx.Response:
-        """Fetch token, wait for any pause deadline, acquire the limiter, and send.
+        """Wait for any pause deadline, fetch token, acquire the limiter, and send.
 
-        Token fetch happens BEFORE acquiring the rate-limiter slot so that a
-        cache-miss token refresh does not consume RPS budget.
+        The pause-deadline wait happens first so that the token is fetched (and
+        potentially refreshed) immediately before use, regardless of how long the
+        429-induced pause was.  Token fetch happens BEFORE acquiring the
+        rate-limiter slot so that a cache-miss refresh does not consume RPS budget.
         """
         assert self._http is not None  # noqa: S101 — enforced by _do_request
 
-        # Fetch token outside the limiter to avoid wasting RPS budget on refresh.
-        token = await self._get_token()
-
         # Honour the 429 pause deadline (aggregated across all concurrent callers).
+        # This must happen before token fetch so the token is always fresh at send time.
         now = _time.monotonic()
         if self._pause_until > now:
             await asyncio.sleep(self._pause_until - now)
+
+        # Fetch token outside the limiter to avoid wasting RPS budget on refresh.
+        token = await self._get_token()
 
         headers = {"Authorization": f"Bearer {token}"}
 

@@ -929,3 +929,130 @@ async def test_poll_operation_jitter_within_bounds() -> None:
     assert len(sleep_durations) >= 3, f"Expected at least 3 sleeps; got {len(sleep_durations)}"
     for dur in sleep_durations:
         assert 1.0 <= dur <= 1.26, f"Sleep {dur:.3f} outside expected [1.0, 1.25] range"
+
+
+# ---------------------------------------------------------------------------
+# Garbage Retry-After header (regression: must not crash)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_429_with_garbage_retry_after_falls_back_and_succeeds() -> None:
+    """A malformed Retry-After value must NOT raise ValueError.
+
+    The 429 loop must catch the parse error, fall back to 1.0s,
+    log a warning, and then retry — succeeding on the next response.
+    """
+    call_count = 0
+
+    def side_effect(_request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return httpx.Response(429, headers={"Retry-After": "garbage"}, json={})
+        return httpx.Response(200, json={"ok": True})
+
+    with respx.mock:
+        respx.get("https://api.fabric.microsoft.com/v1/items").mock(side_effect=side_effect)
+
+        client = FabricHttpClient(credential=_make_credential(), rps=10)
+        async with client:
+            resp = await client.request("GET", HttpBase.FABRIC, "/items")
+
+    # Must succeed (no ValueError propagated)
+    assert resp.status_code == 200
+    assert call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_429_garbage_retry_after_emits_warning(caplog: pytest.LogCaptureFixture) -> None:
+    """A malformed Retry-After must emit a WARNING log with the raw header value."""
+    call_count = 0
+
+    def side_effect(_request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return httpx.Response(429, headers={"Retry-After": "soon"}, json={})
+        return httpx.Response(200, json={})
+
+    with respx.mock:
+        respx.get("https://api.fabric.microsoft.com/v1/items").mock(side_effect=side_effect)
+
+        client = FabricHttpClient(credential=_make_credential(), rps=10)
+        async with client:
+            with caplog.at_level(logging.WARNING, logger="fabric_dw.http"):
+                await client.request("GET", HttpBase.FABRIC, "/items")
+
+    warning_records = [
+        r for r in caplog.records if r.levelno == logging.WARNING and r.name == "fabric_dw.http"
+    ]
+    assert len(warning_records) >= 1, f"No WARNING emitted; records={caplog.records}"
+    assert "soon" in warning_records[0].getMessage(), (
+        f"Raw header value not in warning: {warning_records[0].getMessage()}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Token fetch ordering: deadline wait BEFORE token fetch
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_send_once_deadline_sleep_happens_before_get_token() -> None:
+    """_send_once must sleep for the pause deadline BEFORE calling _get_token.
+
+    We monkeypatch _send_once internals by tracking call order via a shared
+    event log: asyncio.sleep records when it's called; _get_token records
+    when it's called.  The sleep entry must precede the get_token entry.
+    """
+    event_log: list[str] = []
+
+    original_get_token = FabricHttpClient._get_token  # type: ignore[attr-defined]
+    original_sleep = asyncio.sleep
+
+    async def tracking_get_token(self: FabricHttpClient) -> str:
+        event_log.append("get_token")
+        return await original_get_token(self)
+
+    async def tracking_sleep(seconds: float) -> None:
+        if seconds > 0:
+            event_log.append(f"sleep:{seconds:.2f}")
+        await original_sleep(0)  # Don't actually wait in tests
+
+    call_count = 0
+
+    def side_effect(_request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return httpx.Response(429, headers={"Retry-After": "0.05"}, json={})
+        return httpx.Response(200, json={"ok": True})
+
+    with respx.mock:
+        respx.get("https://api.fabric.microsoft.com/v1/items").mock(side_effect=side_effect)
+
+        client = FabricHttpClient(credential=_make_credential(), rps=10)
+        async with client:
+            with (
+                unittest.mock.patch.object(FabricHttpClient, "_get_token", tracking_get_token),
+                unittest.mock.patch("asyncio.sleep", side_effect=tracking_sleep),
+            ):
+                resp = await client.request("GET", HttpBase.FABRIC, "/items")
+
+    assert resp.status_code == 200
+    assert call_count == 2
+
+    # Verify ordering: the deadline sleep must appear BEFORE the second get_token call
+    sleep_events = [e for e in event_log if e.startswith("sleep:")]
+    token_events = [e for e in event_log if e == "get_token"]
+
+    assert len(sleep_events) >= 1, f"Expected at least one deadline sleep; log={event_log}"
+    assert len(token_events) >= 2, f"Expected >=2 get_token calls in log={event_log}"
+
+    first_sleep_idx = next(i for i, e in enumerate(event_log) if e.startswith("sleep:"))
+    second_token_idx = [i for i, e in enumerate(event_log) if e == "get_token"][1]
+    assert first_sleep_idx < second_token_idx, (
+        f"Deadline sleep ({first_sleep_idx}) must precede second get_token ({second_token_idx}); "
+        f"log={event_log}"
+    )
