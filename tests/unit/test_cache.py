@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
+from unittest.mock import patch
 from uuid import UUID
 
 import pytest
@@ -378,3 +381,200 @@ def test_evict_item_missing_workspace_section_is_noop(tmp_path: Path) -> None:
     """evict_item must silently handle the case where the workspace has no entries at all."""
     cache = _make_cache(tmp_path)
     cache.evict_item(WS_ID, "SalesWarehouse")  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# _read: narrow exception handling + schema version check
+# ---------------------------------------------------------------------------
+
+
+def test_read_logs_exc_info_on_oserror(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """_read must log with exc_info=True on OSError."""
+    cache_file = tmp_path / "lookup.json"
+    cache_file.write_text("valid json but will be replaced")
+    cache = LookupCache(path=cache_file)
+
+    # Make the file unreadable (simulate OSError during read_text)
+    cache_file.chmod(0o000)
+    try:
+        with caplog.at_level(logging.WARNING, logger="fabric_dw.cache"):
+            result = cache.get_workspace("anything")
+        assert result is None
+        # exc_info=True causes the traceback to appear in the log record
+        assert any(r.exc_info is not None for r in caplog.records)
+    finally:
+        cache_file.chmod(0o644)
+
+
+def test_read_returns_empty_on_schema_version_mismatch(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """_read must return empty skeleton when the stored version != _SCHEMA_VERSION."""
+    cache_file = tmp_path / "lookup.json"
+    # Write a cache file with a future schema version
+    cache_file.write_text(
+        json.dumps(
+            {
+                "version": 99,
+                "workspaces": {"ws": {"id": str(WS_ID), "fetched_at": "2099-01-01T00:00:00+00:00"}},
+                "items": {},
+            }
+        )
+    )
+    cache = LookupCache(path=cache_file)
+    with caplog.at_level(logging.INFO, logger="fabric_dw.cache"):
+        result = cache.get_workspace("ws")
+    assert result is None, "schema-mismatched cache must be treated as empty"
+    assert any("schema version mismatch" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Freshness: future fetched_at must be rejected
+# ---------------------------------------------------------------------------
+
+
+def test_future_fetched_at_not_fresh(tmp_path: Path) -> None:
+    """An entry with fetched_at in the future must be treated as stale."""
+    cache = _make_cache(tmp_path, ttl=timedelta(hours=24))
+    cache_file = tmp_path / "lookup.json"
+    cache.put_workspace("ws", WS_ID)
+    # Overwrite fetched_at to be one hour in the future
+    future = (datetime.now(tz=UTC) + timedelta(hours=1)).isoformat()
+    data = json.loads(cache_file.read_text())
+    data["workspaces"]["ws"]["fetched_at"] = future
+    cache_file.write_text(json.dumps(data))
+    assert cache.get_workspace("ws") is None, "future fetched_at must be rejected"
+
+
+def test_exact_now_fetched_at_is_fresh(tmp_path: Path) -> None:
+    """An entry with fetched_at == now is on the boundary and must be treated as fresh."""
+    cache = _make_cache(tmp_path, ttl=timedelta(hours=24))
+    # A freshly written entry should always be within TTL
+    cache.put_workspace("ws", WS_ID)
+    result = cache.get_workspace("ws")
+    assert result is not None, "just-written entry must be fresh"
+
+
+def test_item_future_fetched_at_rejected(tmp_path: Path) -> None:
+    """Item entry with fetched_at in the future must be treated as stale."""
+    cache = _make_cache(tmp_path, ttl=timedelta(hours=24))
+    cache_file = tmp_path / "lookup.json"
+    cache.put_item(WS_ID, "wh", _make_item_entry())
+    future = (datetime.now(tz=UTC) + timedelta(hours=1)).isoformat()
+    data = json.loads(cache_file.read_text())
+    data["items"][str(WS_ID)]["wh"]["fetched_at"] = future
+    cache_file.write_text(json.dumps(data))
+    assert cache.get_item(WS_ID, "wh") is None, "future fetched_at in item must be rejected"
+
+
+# ---------------------------------------------------------------------------
+# evict_workspace
+# ---------------------------------------------------------------------------
+
+
+def test_evict_workspace_by_name_removes_entry(tmp_path: Path) -> None:
+    """evict_workspace removes the workspace entry by display name."""
+    cache = _make_cache(tmp_path)
+    cache.put_workspace("MyWS", WS_ID)
+    cache.evict_workspace("MyWS")
+    assert cache.get_workspace("MyWS") is None
+
+
+def test_evict_workspace_by_name_also_removes_items(tmp_path: Path) -> None:
+    """evict_workspace removes all per-workspace item entries."""
+    cache = _make_cache(tmp_path)
+    cache.put_workspace("MyWS", WS_ID)
+    cache.put_item(WS_ID, "wh1", _make_item_entry())
+    cache.evict_workspace("MyWS")
+    assert cache.get_workspace("MyWS") is None
+    assert cache.get_item(WS_ID, "wh1") is None
+
+
+def test_evict_workspace_by_uuid_removes_items(tmp_path: Path) -> None:
+    """evict_workspace by UUID string removes the items bucket."""
+    cache = _make_cache(tmp_path)
+    cache.put_item(WS_ID, "wh1", _make_item_entry())
+    cache.evict_workspace(str(WS_ID))
+    assert cache.get_item(WS_ID, "wh1") is None
+
+
+def test_evict_workspace_case_insensitive(tmp_path: Path) -> None:
+    """evict_workspace name lookup must be case-insensitive."""
+    cache = _make_cache(tmp_path)
+    cache.put_workspace("MyWS", WS_ID)
+    cache.put_item(WS_ID, "wh1", _make_item_entry())
+    cache.evict_workspace("MYWS")
+    assert cache.get_workspace("myws") is None
+    assert cache.get_item(WS_ID, "wh1") is None
+
+
+def test_evict_workspace_does_not_affect_other_workspaces(tmp_path: Path) -> None:
+    """evict_workspace must not remove entries belonging to another workspace."""
+    cache = _make_cache(tmp_path)
+    cache.put_workspace("WS1", WS_ID)
+    cache.put_workspace("WS2", WS_ID_2)
+    cache.put_item(WS_ID, "wh1", _make_item_entry())
+    cache.put_item(WS_ID_2, "wh2", _make_item_entry())
+    cache.evict_workspace("WS1")
+    assert cache.get_workspace("WS2") is not None
+    assert cache.get_item(WS_ID_2, "wh2") is not None
+
+
+def test_evict_workspace_missing_is_noop(tmp_path: Path) -> None:
+    """evict_workspace must not raise when the workspace does not exist."""
+    cache = _make_cache(tmp_path)
+    cache.evict_workspace("NonExistent")  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# put_items: single lock+read+write for multiple keys
+# ---------------------------------------------------------------------------
+
+
+def test_put_items_stores_all_entries(tmp_path: Path) -> None:
+    """put_items must store all provided (name, entry) pairs."""
+    cache = _make_cache(tmp_path)
+    entry = _make_item_entry()
+    cache.put_items(WS_ID, [("SalesWarehouse", entry), (str(ITEM_ID), entry)])
+    assert cache.get_item(WS_ID, "SalesWarehouse") is not None
+    assert cache.get_item(WS_ID, str(ITEM_ID)) is not None
+
+
+def test_put_items_single_write_cycle(tmp_path: Path) -> None:
+    """put_items must use exactly one write cycle for multiple aliases."""
+    cache = _make_cache(tmp_path)
+    entry = _make_item_entry()
+
+    write_calls: list[object] = []
+
+    original_write = cache._write
+
+    def tracking_write(data: dict[str, Any]) -> None:
+        write_calls.append(data)
+        original_write(data)
+
+    with patch.object(cache, "_write", side_effect=tracking_write):
+        cache.put_items(WS_ID, [("SalesWarehouse", entry), (str(ITEM_ID), entry)])
+
+    assert len(write_calls) == 1, "put_items must call _write exactly once"
+
+
+def test_put_items_empty_iterable_is_noop(tmp_path: Path) -> None:
+    """put_items with an empty iterable must not write or raise."""
+    cache = _make_cache(tmp_path)
+    write_calls: list[object] = []
+
+    def _capture(data: object) -> None:
+        write_calls.append(data)
+
+    with patch.object(cache, "_write", side_effect=_capture):
+        cache.put_items(WS_ID, [])
+    assert len(write_calls) == 0, "put_items([]) must not call _write"
+
+
+def test_put_items_case_insensitive_keys(tmp_path: Path) -> None:
+    """put_items must normalise keys to lower-case."""
+    cache = _make_cache(tmp_path)
+    entry = _make_item_entry()
+    cache.put_items(WS_ID, [("SalesWarehouse", entry)])
+    assert cache.get_item(WS_ID, "saleswarehouse") is not None

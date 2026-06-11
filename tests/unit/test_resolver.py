@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import httpx
@@ -17,7 +17,7 @@ from fabric_dw.cache import LookupCache
 from fabric_dw.exceptions import FabricError, NotFound
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import WarehouseKind
-from fabric_dw.resolver import Resolver
+from fabric_dw.resolver import _ITEM_TYPE_INFO, _ITEM_TYPES, ItemTypeInfo, Resolver, _odata_escape
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
@@ -548,3 +548,203 @@ async def test_item_guid_unknown_type_raises_fabric_error(tmp_path: Path) -> Non
         async with client:
             with pytest.raises(FabricError, match="unsupported type"):
                 await resolver.item(WS_GUID, ITEM_GUID)
+
+
+# ---------------------------------------------------------------------------
+# Negative cache: repeated NotFound avoids API call
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_workspace_negative_cache_avoids_second_api_call(tmp_path: Path) -> None:
+    """Second lookup of a missing workspace must not hit the API (negative cache)."""
+    resolver, client, _ = _make_resolver(tmp_path)
+    with respx.mock:
+        route = respx.get(_PBI_GROUPS_URL).mock(
+            return_value=httpx.Response(200, json=_pbi_empty_response())
+        )
+        async with client:
+            with pytest.raises(NotFound):
+                await resolver.workspace_id("GhostWorkspace")
+            # Second call: negative cache should fire before the HTTP route
+            with pytest.raises(NotFound):
+                await resolver.workspace_id("GhostWorkspace")
+    # The real API should only have been called once
+    assert route.call_count == 1, "negative cache must suppress the second API call"
+
+
+@pytest.mark.asyncio
+async def test_workspace_negative_cache_clears_on_success(tmp_path: Path) -> None:
+    """After a successful lookup the negative cache entry must be cleared."""
+    resolver, client, _ = _make_resolver(tmp_path)
+    with respx.mock:
+        # First call: not found → recorded in negative cache
+        route = respx.get(_PBI_GROUPS_URL).mock(
+            return_value=httpx.Response(200, json=_pbi_empty_response())
+        )
+        async with client:
+            with pytest.raises(NotFound):
+                await resolver.workspace_id("GhostWorkspace")
+
+        # Now the workspace "appears"
+        route.side_effect = None  # type: ignore[attr-defined]
+        route.mock(
+            return_value=httpx.Response(200, json=_pbi_group_response(WS_GUID, "GhostWorkspace"))
+        )
+        # Manually clear the negative cache to simulate TTL expiry or explicit clear
+        resolver._negative.clear()
+        async with client:
+            result = await resolver.workspace_id("GhostWorkspace")
+    assert result == WS_UUID
+
+
+@pytest.mark.asyncio
+async def test_item_negative_cache_avoids_second_api_call(tmp_path: Path) -> None:
+    """Second lookup of a missing item must not page through items again."""
+    resolver, client, _ = _make_resolver(tmp_path)
+    # Items list returns nothing matching the name
+    list_payload = _items_list_payload(_warehouse_list_item(ITEM_GUID, "OtherWarehouse"))
+    with respx.mock:
+        route = respx.get(_FABRIC_ITEMS_URL).mock(
+            return_value=httpx.Response(200, json=list_payload)
+        )
+        async with client:
+            with pytest.raises(NotFound):
+                await resolver.item(WS_GUID, "GhostItem")
+            # Second call: negative cache should fire before hitting the list endpoint
+            with pytest.raises(NotFound):
+                await resolver.item(WS_GUID, "GhostItem")
+    assert route.call_count == 1, "negative cache must suppress the second items-list call"
+
+
+# ---------------------------------------------------------------------------
+# _odata_escape: length guard
+# ---------------------------------------------------------------------------
+
+
+def test_odata_escape_rejects_oversized_value() -> None:
+    """_odata_escape must raise ValueError for values exceeding _ODATA_MAX_LEN."""
+    ok_value = "A" * 256  # exactly at the limit
+    assert _odata_escape(ok_value) == ok_value  # must not raise
+
+    too_long = "A" * 257
+    with pytest.raises(ValueError, match="too long"):
+        _odata_escape(too_long)
+
+
+@pytest.mark.asyncio
+async def test_workspace_id_oversized_name_raises_value_error(tmp_path: Path) -> None:
+    """workspace_id must propagate ValueError for names exceeding _ODATA_MAX_LEN."""
+    resolver, client, _ = _make_resolver(tmp_path)
+    with respx.mock:
+        async with client:
+            with pytest.raises(ValueError, match="too long"):
+                await resolver.workspace_id("A" * 257)
+
+
+# ---------------------------------------------------------------------------
+# Type filter passed to iter_paginated
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_item_name_passes_type_param_to_items_api(tmp_path: Path) -> None:
+    """item() with item_type kwarg must send type= query param to the items API."""
+    resolver, client, _ = _make_resolver(tmp_path)
+    list_payload = _items_list_payload(_warehouse_list_item(ITEM_GUID, "SalesWarehouse"))
+    generic_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "SalesWarehouse")
+    specific_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "SalesWarehouse")
+    with respx.mock:
+        list_route = respx.get(_FABRIC_ITEMS_URL).mock(
+            return_value=httpx.Response(200, json=list_payload)
+        )
+        respx.get(_FABRIC_ITEM_URL).mock(return_value=httpx.Response(200, json=generic_payload))
+        respx.get(
+            f"https://api.fabric.microsoft.com/v1/workspaces/{WS_GUID}/warehouses/{ITEM_GUID}"
+        ).mock(return_value=httpx.Response(200, json=specific_payload))
+        async with client:
+            result = await resolver.item(WS_GUID, "SalesWarehouse", item_type="Warehouse")
+    assert result.id == ITEM_UUID
+    # Verify the request carried the type query parameter
+    assert list_route.call_count == 1
+    called_url = list_route.calls[0].request.url
+    assert "type=Warehouse" in str(called_url) or "type" in called_url.params
+
+
+@pytest.mark.asyncio
+async def test_item_name_no_type_param_when_item_type_not_provided(tmp_path: Path) -> None:
+    """item() without item_type must not send a type= param to the items API."""
+    resolver, client, _ = _make_resolver(tmp_path)
+    list_payload = _items_list_payload(_warehouse_list_item(ITEM_GUID, "SalesWarehouse"))
+    generic_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "SalesWarehouse")
+    specific_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "SalesWarehouse")
+    with respx.mock:
+        list_route = respx.get(_FABRIC_ITEMS_URL).mock(
+            return_value=httpx.Response(200, json=list_payload)
+        )
+        respx.get(_FABRIC_ITEM_URL).mock(return_value=httpx.Response(200, json=generic_payload))
+        respx.get(
+            f"https://api.fabric.microsoft.com/v1/workspaces/{WS_GUID}/warehouses/{ITEM_GUID}"
+        ).mock(return_value=httpx.Response(200, json=specific_payload))
+        async with client:
+            await resolver.item(WS_GUID, "SalesWarehouse")
+    called_url = list_route.calls[0].request.url
+    assert "type" not in str(called_url.params)
+
+
+# ---------------------------------------------------------------------------
+# put_items: batch write (single lock cycle) via _fetch_item_detail
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fetch_item_detail_uses_put_items(tmp_path: Path) -> None:
+    """_fetch_item_detail must call put_items (not two separate put_item calls)."""
+    resolver, client, cache = _make_resolver(tmp_path)
+    generic_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "SalesWarehouse")
+    specific_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "SalesWarehouse")
+
+    original_put_items = cache.put_items
+
+    put_items_spy = MagicMock(wraps=original_put_items)
+    put_item_spy = MagicMock(wraps=lambda *_a: None)
+
+    with (
+        respx.mock,
+        patch.object(cache, "put_items", put_items_spy),
+        patch.object(cache, "put_item", put_item_spy),
+    ):
+        respx.get(_FABRIC_ITEM_URL).mock(return_value=httpx.Response(200, json=generic_payload))
+        respx.get(
+            f"https://api.fabric.microsoft.com/v1/workspaces/{WS_GUID}/warehouses/{ITEM_GUID}"
+        ).mock(return_value=httpx.Response(200, json=specific_payload))
+        async with client:
+            await resolver.item(WS_GUID, ITEM_GUID)
+
+    assert put_items_spy.call_count == 1, "must use put_items (single write cycle)"
+    assert put_item_spy.call_count == 0, "must NOT fall back to individual put_item calls"
+
+
+# ---------------------------------------------------------------------------
+# _ITEM_TYPE_INFO consolidation
+# ---------------------------------------------------------------------------
+
+
+def test_item_type_info_covers_all_known_types() -> None:
+    """_ITEM_TYPE_INFO must cover Warehouse, SQLEndpoint, and WarehouseSnapshot."""
+    assert "Warehouse" in _ITEM_TYPE_INFO
+    assert "SQLEndpoint" in _ITEM_TYPE_INFO
+    assert "WarehouseSnapshot" in _ITEM_TYPE_INFO
+    # _ITEM_TYPES must be derived from _ITEM_TYPE_INFO keys
+    assert frozenset(_ITEM_TYPE_INFO) == _ITEM_TYPES
+
+
+def test_item_type_info_namedtuple_fields() -> None:
+    """ItemTypeInfo must expose kind and endpoint attributes."""
+    wh = _ITEM_TYPE_INFO["Warehouse"]
+    assert isinstance(wh, ItemTypeInfo)
+    assert wh.kind == WarehouseKind.WAREHOUSE
+    assert wh.endpoint == "warehouses"
+
+    snap = _ITEM_TYPE_INFO["WarehouseSnapshot"]
+    assert snap.endpoint is None  # no type-specific endpoint

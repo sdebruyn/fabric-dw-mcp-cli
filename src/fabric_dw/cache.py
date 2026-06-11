@@ -35,6 +35,7 @@ import json
 import logging
 import os
 import tempfile
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -111,12 +112,22 @@ class LookupCache:
         try:
             raw = self._path.read_text(encoding="utf-8")
             data: dict[str, Any] = json.loads(raw)
-        except Exception:
-            _log.warning("Cache file %s is missing or corrupt; treating as empty", self._path)
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            _log.warning(
+                "Cache file %s is missing or corrupt; treating as empty",
+                self._path,
+                exc_info=True,
+            )
             return self._empty()
         else:
             if not isinstance(data, dict):
                 _log.warning("Cache file %s has unexpected shape; treating as empty", self._path)
+                return self._empty()
+            if data.get("version") != _SCHEMA_VERSION:
+                _log.info(
+                    "Cache schema version mismatch (found %r); starting empty",
+                    data.get("version"),
+                )
                 return self._empty()
             return data
 
@@ -152,7 +163,8 @@ class LookupCache:
         # Handle naive datetimes by assuming UTC
         if fetched_at.tzinfo is None:
             fetched_at = fetched_at.replace(tzinfo=UTC)
-        return (now - fetched_at) < self._ttl
+        # Reject future fetched_at (clock drift / corruption) and entries beyond TTL
+        return now >= fetched_at and (now - fetched_at) < self._ttl
 
     # ------------------------------------------------------------------
     # Public API
@@ -237,6 +249,32 @@ class LookupCache:
             }
             self._write(data)
 
+    def put_items(self, workspace_id: UUID, entries: Iterable[tuple[str, ItemEntry]]) -> None:
+        """Store multiple item entries under *workspace_id* in a single lock+read+write cycle.
+
+        Each *(name, entry)* pair is treated identically to :meth:`put_item`:
+        *name* is stripped and lower-cased before storage.  Passing aliases
+        (e.g. display name + GUID string) in the same call avoids the two
+        separate lock cycles that consecutive :meth:`put_item` calls would
+        incur.
+        """
+        pairs = [(name.strip().lower(), entry) for name, entry in entries]
+        if not pairs:
+            return
+        with self._lock:
+            data = self._read()
+            items: dict[str, Any] = data.setdefault("items", {})
+            ws_items: dict[str, Any] = items.setdefault(str(workspace_id), {})
+            for key, entry in pairs:
+                ws_items[key] = {
+                    "id": str(entry.id),
+                    "kind": str(entry.kind),
+                    "connection_string": entry.connection_string,
+                    "fetched_at": entry.fetched_at.isoformat(),
+                    "display_name": entry.display_name,
+                }
+            self._write(data)
+
     def evict_item(self, workspace_id: UUID, name: str) -> None:
         """Remove the item entry for *workspace_id* / *name* from the cache.
 
@@ -250,6 +288,43 @@ class LookupCache:
             ws_items: dict[str, Any] = items.get(str(workspace_id), {})
             if key in ws_items:
                 del ws_items[key]
+                self._write(data)
+
+    def evict_workspace(self, name_or_id: str) -> None:
+        """Remove the workspace entry for *name_or_id* and all its item entries.
+
+        *name_or_id* is stripped and lower-cased before workspace key lookup.
+        If *name_or_id* looks like a UUID the items section is also purged by
+        UUID key; if it is a display name, the stored UUID is looked up first
+        so that the per-workspace items bucket can be removed too.
+
+        Missing keys are silently ignored so callers do not need to check for
+        existence first.
+        """
+        key = name_or_id.strip().lower()
+        with self._lock:
+            data = self._read()
+            workspaces: dict[str, Any] = data.get("workspaces", {})
+            items: dict[str, Any] = data.get("items", {})
+            changed = False
+
+            # Determine the UUID string for the workspace items bucket.
+            # The workspace dict stores the id under key "id".
+            ws_record = workspaces.get(key)
+            ws_uuid_str: str | None = None
+            if isinstance(ws_record, dict):
+                ws_uuid_str = ws_record.get("id")
+                del workspaces[key]
+                changed = True
+            elif key in items:
+                # name_or_id was a UUID string; no workspace name entry present
+                ws_uuid_str = key
+
+            if ws_uuid_str is not None and ws_uuid_str in items:
+                del items[ws_uuid_str]
+                changed = True
+
+            if changed:
                 self._write(data)
 
     def clear(self) -> None:
