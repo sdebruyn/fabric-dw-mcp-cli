@@ -41,7 +41,12 @@ _ODATA_MAX_LEN = 256
 # How long (in seconds) a negative-cache entry is considered valid.
 # Kept in-memory only — persisting "not found" results across restarts would
 # suppress retries even when the resource reappears after a short outage.
-_NEGATIVE_TTL = 60.0
+#
+# This TTL is intentionally short (5 s): the negative cache exists only to
+# suppress rapid repeated misses (typo retry loops, burst lookups within a
+# single user gesture).  A longer window would mask newly created resources
+# from the MCP singleton, which outlives any single command invocation.
+_NEGATIVE_TTL = 5.0
 
 
 class ItemTypeInfo(NamedTuple):
@@ -78,16 +83,19 @@ def _odata_escape(value: str) -> str:
         The escaped string suitable for embedding in an OData filter.
 
     Raises:
-        ValueError: If *value* exceeds ``_ODATA_MAX_LEN`` characters.
+        FabricError: If *value* exceeds ``_ODATA_MAX_LEN`` characters.
             Fabric display names are much shorter; an oversized value most
             likely indicates an injection attempt or a caller bug.
+            Raising ``FabricError`` (not ``ValueError``) ensures the existing
+            ``except FabricError`` handlers in MCP tools and CLI catch it and
+            surface a structured error rather than a raw traceback.
     """
     if len(value) > _ODATA_MAX_LEN:
         msg = (
-            f"OData filter value too long ({len(value)} chars > {_ODATA_MAX_LEN}); "
-            "Fabric display names cannot exceed this length"
+            "workspace or item name exceeds 256 characters "
+            f"({len(value)} chars); Fabric display names cannot exceed this length"
         )
-        raise ValueError(msg)
+        raise FabricError(msg)
     return value.replace("'", "''")
 
 
@@ -131,8 +139,12 @@ class Resolver:
     def _negative_check(self, scope: str, key: str) -> None:
         """Raise NotFound immediately if *key* is in the negative cache and still fresh."""
         ts = self._negative.get((scope, key))
-        if ts is not None and (time.monotonic() - ts) < _NEGATIVE_TTL:
-            raise NotFound(f"{scope}/{key!r} not found (negative cache)")  # noqa: TRY003
+        if ts is not None:
+            age = time.monotonic() - ts
+            if age < _NEGATIVE_TTL:
+                raise NotFound(f"{scope}/{key!r} not found")  # noqa: TRY003
+            # Entry has expired; prune it now to keep the dict bounded.
+            del self._negative[(scope, key)]
 
     def _negative_record(self, scope: str, key: str) -> None:
         """Record a not-found result in the negative cache."""
@@ -141,6 +153,20 @@ class Resolver:
     def _negative_clear(self, scope: str, key: str) -> None:
         """Remove a negative-cache entry after a successful put."""
         self._negative.pop((scope, key), None)
+
+    def clear_negative_cache(self) -> None:
+        """Clear the entire in-memory negative cache.
+
+        Cheap O(1) operation that discards all recorded "not found" results.
+        Mutating frontends (MCP create / rename tools) should call this after
+        a successful write so that subsequent lookups for the new name succeed
+        immediately rather than waiting for _NEGATIVE_TTL seconds to elapse.
+
+        .. note::
+            Wiring this call into MCP create/rename tools is tracked as a
+            follow-up task; this method exists so the wiring is trivial.
+        """
+        self._negative.clear()
 
     # ------------------------------------------------------------------
     # workspace_id
@@ -337,4 +363,11 @@ class Resolver:
                 (str(item_id), entry),
             ],
         )
+        # Clear-on-put: drop all negative entries for this workspace scope so
+        # that a freshly created item becomes immediately resolvable even within
+        # the _NEGATIVE_TTL window (defence-in-depth against create→resolve race).
+        ws_key = str(workspace_id)
+        stale_neg = [k for k in self._negative if k[0] == ws_key]
+        for k in stale_neg:
+            del self._negative[k]
         return entry

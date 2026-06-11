@@ -468,6 +468,41 @@ def test_item_future_fetched_at_rejected(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# _read: corrupt inner collections (non-dict workspaces/items fields)
+# ---------------------------------------------------------------------------
+
+
+def test_read_treats_non_dict_workspaces_field_as_empty(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """If workspaces field is not a dict, _read returns empty skeleton."""
+    cache_file = tmp_path / "lookup.json"
+    cache_file.write_text(json.dumps({"version": 1, "workspaces": ["a", "b"], "items": {}}))
+    cache = LookupCache(path=cache_file)
+    with caplog.at_level(logging.WARNING, logger="fabric_dw.cache"):
+        result = cache.get_workspace("anything")
+    assert result is None
+    assert any("non-dict" in r.message for r in caplog.records), (
+        "expected a warning about non-dict field"
+    )
+
+
+def test_read_treats_non_dict_items_field_as_empty(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """If items field is not a dict, _read returns empty skeleton."""
+    cache_file = tmp_path / "lookup.json"
+    cache_file.write_text(json.dumps({"version": 1, "workspaces": {}, "items": "oops"}))
+    cache = LookupCache(path=cache_file)
+    with caplog.at_level(logging.WARNING, logger="fabric_dw.cache"):
+        result = cache.get_item(WS_ID, "anything")
+    assert result is None
+    assert any("non-dict" in r.message for r in caplog.records), (
+        "expected a warning about non-dict field"
+    )
+
+
+# ---------------------------------------------------------------------------
 # evict_workspace
 # ---------------------------------------------------------------------------
 
@@ -491,10 +526,27 @@ def test_evict_workspace_by_name_also_removes_items(tmp_path: Path) -> None:
 
 
 def test_evict_workspace_by_uuid_removes_items(tmp_path: Path) -> None:
-    """evict_workspace by UUID string removes the items bucket."""
+    """evict_workspace by UUID string removes the items bucket AND the display-name entry."""
     cache = _make_cache(tmp_path)
+    cache.put_workspace("MyWS", WS_ID)
     cache.put_item(WS_ID, "wh1", _make_item_entry())
     cache.evict_workspace(str(WS_ID))
+    # Items bucket must be gone
+    assert cache.get_item(WS_ID, "wh1") is None
+    # Display-name entry that pointed to this UUID must also be gone
+    assert cache.get_workspace("MyWS") is None
+
+
+def test_evict_workspace_by_uuid_removes_all_display_name_aliases(tmp_path: Path) -> None:
+    """evict_workspace by UUID removes all workspace entries mapping to that UUID."""
+    cache = _make_cache(tmp_path)
+    # Store two display-name aliases pointing to the same UUID
+    cache.put_workspace("Alias1", WS_ID)
+    cache.put_workspace("Alias2", WS_ID)
+    cache.put_item(WS_ID, "wh1", _make_item_entry())
+    cache.evict_workspace(str(WS_ID))
+    assert cache.get_workspace("Alias1") is None
+    assert cache.get_workspace("Alias2") is None
     assert cache.get_item(WS_ID, "wh1") is None
 
 

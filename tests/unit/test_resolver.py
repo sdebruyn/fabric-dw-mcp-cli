@@ -17,7 +17,14 @@ from fabric_dw.cache import LookupCache
 from fabric_dw.exceptions import FabricError, NotFound
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import WarehouseKind
-from fabric_dw.resolver import _ITEM_TYPE_INFO, _ITEM_TYPES, ItemTypeInfo, Resolver, _odata_escape
+from fabric_dw.resolver import (
+    _ITEM_TYPE_INFO,
+    _ITEM_TYPES,
+    _NEGATIVE_TTL,
+    ItemTypeInfo,
+    Resolver,
+    _odata_escape,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
@@ -575,7 +582,12 @@ async def test_workspace_negative_cache_avoids_second_api_call(tmp_path: Path) -
 
 @pytest.mark.asyncio
 async def test_workspace_negative_cache_clears_on_success(tmp_path: Path) -> None:
-    """After a successful lookup the negative cache entry must be cleared."""
+    """After a successful lookup the negative cache entry must be cleared.
+
+    This test verifies that when workspace_id() finds the workspace via the API
+    (positive result), it calls _negative_clear() and removes any stale negative
+    entry for that key — WITHOUT relying on manual cache manipulation.
+    """
     resolver, client, _ = _make_resolver(tmp_path)
     with respx.mock:
         # First call: not found → recorded in negative cache
@@ -586,15 +598,22 @@ async def test_workspace_negative_cache_clears_on_success(tmp_path: Path) -> Non
             with pytest.raises(NotFound):
                 await resolver.workspace_id("GhostWorkspace")
 
-        # Now the workspace "appears"
+        # Verify the entry was recorded
+        assert ("workspace", "ghostworkspace") in resolver._negative
+
+        # Now the workspace "appears" — but the negative TTL (5s) is still active,
+        # so we back-date the negative entry timestamp to simulate TTL expiry.
+        resolver._negative[("workspace", "ghostworkspace")] = time.monotonic() - 10.0
+
         route.side_effect = None  # type: ignore[attr-defined]
         route.mock(
             return_value=httpx.Response(200, json=_pbi_group_response(WS_GUID, "GhostWorkspace"))
         )
-        # Manually clear the negative cache to simulate TTL expiry or explicit clear
-        resolver._negative.clear()
         async with client:
             result = await resolver.workspace_id("GhostWorkspace")
+
+    # Successful lookup must have cleared the negative entry
+    assert ("workspace", "ghostworkspace") not in resolver._negative
     assert result == WS_UUID
 
 
@@ -623,22 +642,22 @@ async def test_item_negative_cache_avoids_second_api_call(tmp_path: Path) -> Non
 
 
 def test_odata_escape_rejects_oversized_value() -> None:
-    """_odata_escape must raise ValueError for values exceeding _ODATA_MAX_LEN."""
+    """_odata_escape must raise FabricError for values exceeding _ODATA_MAX_LEN."""
     ok_value = "A" * 256  # exactly at the limit
     assert _odata_escape(ok_value) == ok_value  # must not raise
 
     too_long = "A" * 257
-    with pytest.raises(ValueError, match="too long"):
+    with pytest.raises(FabricError, match="exceeds 256 characters"):
         _odata_escape(too_long)
 
 
 @pytest.mark.asyncio
-async def test_workspace_id_oversized_name_raises_value_error(tmp_path: Path) -> None:
-    """workspace_id must propagate ValueError for names exceeding _ODATA_MAX_LEN."""
+async def test_workspace_id_oversized_name_raises_fabric_error(tmp_path: Path) -> None:
+    """workspace_id must raise FabricError (not ValueError) for names exceeding _ODATA_MAX_LEN."""
     resolver, client, _ = _make_resolver(tmp_path)
     with respx.mock:
         async with client:
-            with pytest.raises(ValueError, match="too long"):
+            with pytest.raises(FabricError, match="exceeds 256 characters"):
                 await resolver.workspace_id("A" * 257)
 
 
@@ -723,6 +742,83 @@ async def test_fetch_item_detail_uses_put_items(tmp_path: Path) -> None:
 
     assert put_items_spy.call_count == 1, "must use put_items (single write cycle)"
     assert put_item_spy.call_count == 0, "must NOT fall back to individual put_item calls"
+
+
+# ---------------------------------------------------------------------------
+# Negative cache: TTL constant, expired-entry pruning, clear-on-put
+# ---------------------------------------------------------------------------
+
+
+def test_negative_ttl_is_five_seconds() -> None:
+    """_NEGATIVE_TTL must be 5 seconds (not 60) to avoid masking newly created items."""
+    assert _NEGATIVE_TTL == 5.0, (
+        f"_NEGATIVE_TTL should be 5.0 s but is {_NEGATIVE_TTL}; "
+        "a longer window masks newly created resources in the MCP singleton"
+    )
+
+
+@pytest.mark.asyncio
+async def test_negative_cache_expired_entry_pruned_on_check(tmp_path: Path) -> None:
+    """_negative_check must prune expired entries to keep the dict bounded."""
+    resolver, client, _ = _make_resolver(tmp_path)
+    # Manually insert an expired negative entry
+    resolver._negative[("workspace", "ghost")] = time.monotonic() - (_NEGATIVE_TTL + 1)
+    with respx.mock:
+        respx.get(_PBI_GROUPS_URL).mock(
+            return_value=httpx.Response(200, json=_pbi_group_response(WS_GUID, "ghost"))
+        )
+        async with client:
+            # Should NOT raise NotFound (entry is expired), and must prune it
+            result = await resolver.workspace_id("ghost")
+    assert result == WS_UUID
+    # Expired entry must have been pruned
+    assert ("workspace", "ghost") not in resolver._negative
+
+
+@pytest.mark.asyncio
+async def test_clear_negative_cache_empties_all_entries(tmp_path: Path) -> None:
+    """clear_negative_cache() must discard all in-memory negative entries."""
+    resolver, client, _ = _make_resolver(tmp_path)
+    with respx.mock:
+        respx.get(_PBI_GROUPS_URL).mock(
+            return_value=httpx.Response(200, json=_pbi_empty_response())
+        )
+        async with client:
+            with pytest.raises(NotFound):
+                await resolver.workspace_id("Ghost1")
+            with pytest.raises(NotFound):
+                await resolver.workspace_id("Ghost2")
+    assert len(resolver._negative) == 2
+    resolver.clear_negative_cache()
+    assert len(resolver._negative) == 0
+
+
+@pytest.mark.asyncio
+async def test_item_fetch_clears_workspace_negative_entries(tmp_path: Path) -> None:
+    """After _fetch_item_detail succeeds, negative entries for that workspace are cleared."""
+    resolver, client, _ = _make_resolver(tmp_path)
+    # Pre-seed negative cache entries for the workspace scope
+    ws_key = str(WS_UUID)
+    resolver._negative[(ws_key, "saleswarehouse")] = time.monotonic()
+    resolver._negative[(ws_key, "otherwarehouse")] = time.monotonic()
+    # An unrelated workspace entry must not be touched
+    resolver._negative[("otherws", "something")] = time.monotonic()
+
+    generic_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "SalesWarehouse")
+    specific_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "SalesWarehouse")
+    with respx.mock:
+        respx.get(_FABRIC_ITEM_URL).mock(return_value=httpx.Response(200, json=generic_payload))
+        respx.get(
+            f"https://api.fabric.microsoft.com/v1/workspaces/{WS_GUID}/warehouses/{ITEM_GUID}"
+        ).mock(return_value=httpx.Response(200, json=specific_payload))
+        async with client:
+            await resolver.item(WS_GUID, ITEM_GUID)
+
+    # Workspace-scoped negative entries must have been cleared
+    assert (ws_key, "saleswarehouse") not in resolver._negative
+    assert (ws_key, "otherwarehouse") not in resolver._negative
+    # Unrelated workspace entries must be untouched
+    assert ("otherws", "something") in resolver._negative
 
 
 # ---------------------------------------------------------------------------

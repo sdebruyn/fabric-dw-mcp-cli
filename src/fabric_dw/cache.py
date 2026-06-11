@@ -105,6 +105,28 @@ class LookupCache:
         """Return a fresh empty cache skeleton (never share the same inner dicts)."""
         return {"version": _SCHEMA_VERSION, "workspaces": {}, "items": {}}
 
+    def _validate(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Validate *data* shape and return it, or an empty skeleton on any violation."""
+        if not isinstance(data, dict):
+            _log.warning("Cache file %s has unexpected shape; treating as empty", self._path)
+            return self._empty()
+        if data.get("version") != _SCHEMA_VERSION:
+            _log.info(
+                "Cache schema version mismatch (found %r); starting empty",
+                data.get("version"),
+            )
+            return self._empty()
+        # Validate inner collections so callers can safely call .get() on them.
+        # A corrupt-but-decodable file that has non-dict inner fields would otherwise
+        # cause AttributeError/TypeError when callers invoke .get() on those values.
+        if not isinstance(data.get("workspaces"), dict) or not isinstance(data.get("items"), dict):
+            _log.warning(
+                "Cache file %s has non-dict 'workspaces' or 'items' field; treating as empty",
+                self._path,
+            )
+            return self._empty()
+        return data
+
     def _read(self) -> dict[str, Any]:
         """Read and parse the cache file; return empty skeleton on missing/corrupt."""
         if not self._path.exists():
@@ -119,17 +141,7 @@ class LookupCache:
                 exc_info=True,
             )
             return self._empty()
-        else:
-            if not isinstance(data, dict):
-                _log.warning("Cache file %s has unexpected shape; treating as empty", self._path)
-                return self._empty()
-            if data.get("version") != _SCHEMA_VERSION:
-                _log.info(
-                    "Cache schema version mismatch (found %r); starting empty",
-                    data.get("version"),
-                )
-                return self._empty()
-            return data
+        return self._validate(data)
 
     def _write(self, data: dict[str, Any]) -> None:
         """Atomically write *data* to the cache file, creating parent dirs as needed.
@@ -317,8 +329,18 @@ class LookupCache:
                 del workspaces[key]
                 changed = True
             elif key in items:
-                # name_or_id was a UUID string; no workspace name entry present
+                # name_or_id was a UUID string; no workspace name entry present.
+                # Also scan workspaces for any display-name entry pointing to this UUID
+                # and remove it, so a subsequent get_workspace(name) also returns None.
                 ws_uuid_str = key
+                stale_keys = [
+                    k
+                    for k, v in workspaces.items()
+                    if isinstance(v, dict) and v.get("id") == ws_uuid_str
+                ]
+                for stale in stale_keys:
+                    del workspaces[stale]
+                    changed = True
 
             if ws_uuid_str is not None and ws_uuid_str in items:
                 del items[ws_uuid_str]
