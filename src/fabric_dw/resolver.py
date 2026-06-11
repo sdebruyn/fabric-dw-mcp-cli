@@ -13,8 +13,9 @@ Resolution order:
 from __future__ import annotations
 
 import re
+import time
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, NamedTuple
 from uuid import UUID
 
 from fabric_dw.cache import ItemEntry, LookupCache
@@ -32,22 +33,41 @@ GUID_RE = re.compile(
     re.IGNORECASE,
 )
 
-_ITEM_TYPES = frozenset({"Warehouse", "SQLEndpoint", "WarehouseSnapshot"})
-_KIND_MAP: dict[str, WarehouseKind] = {
-    "Warehouse": WarehouseKind.WAREHOUSE,
-    "SQLEndpoint": WarehouseKind.SQL_ENDPOINT,
-    "WarehouseSnapshot": WarehouseKind.SNAPSHOT,
+# Maximum length allowed for OData-escaped name values.
+# Fabric display names are well below this limit; rejecting oversized inputs
+# defends against injection attempts and avoids unexpected server errors.
+_ODATA_MAX_LEN = 256
+
+# How long (in seconds) a negative-cache entry is considered valid.
+# Kept in-memory only — persisting "not found" results across restarts would
+# suppress retries even when the resource reappears after a short outage.
+#
+# This TTL is intentionally short (5 s): the negative cache exists only to
+# suppress rapid repeated misses (typo retry loops, burst lookups within a
+# single user gesture).  A longer window would mask newly created resources
+# from the MCP singleton, which outlives any single command invocation.
+_NEGATIVE_TTL = 5.0
+
+
+class ItemTypeInfo(NamedTuple):
+    """Metadata for a supported Fabric item type."""
+
+    kind: WarehouseKind
+    # Type-specific REST endpoint segment, or None when the generic /items/{id}
+    # endpoint is sufficient (e.g. WarehouseSnapshot has no dedicated endpoint).
+    endpoint: str | None
+
+
+# Single source of truth for all supported item type mappings.
+# Derives the frozenset of valid types and the kind/endpoint lookups.
+_ITEM_TYPE_INFO: dict[str, ItemTypeInfo] = {
+    "Warehouse": ItemTypeInfo(kind=WarehouseKind.WAREHOUSE, endpoint="warehouses"),
+    "SQLEndpoint": ItemTypeInfo(kind=WarehouseKind.SQL_ENDPOINT, endpoint="sqlEndpoints"),
+    # WarehouseSnapshot has no type-specific detail endpoint; fall back to generic.
+    "WarehouseSnapshot": ItemTypeInfo(kind=WarehouseKind.SNAPSHOT, endpoint=None),
 }
 
-# Type-specific Fabric REST endpoints for detail fetching.
-# The generic /items/{id} endpoint does not reliably return the `properties`
-# block for all item types; using the type-specific endpoints is required to
-# get `connectionString` for Warehouse and SQLEndpoint.
-_TYPE_ENDPOINT: dict[str, str] = {
-    "Warehouse": "warehouses",
-    "SQLEndpoint": "sqlEndpoints",
-    # WarehouseSnapshot has no type-specific detail endpoint; fall back to generic.
-}
+_ITEM_TYPES: frozenset[str] = frozenset(_ITEM_TYPE_INFO)
 
 
 def _odata_escape(value: str) -> str:
@@ -55,7 +75,27 @@ def _odata_escape(value: str) -> str:
 
     Per the OData specification, a single quote inside a single-quoted string
     must be escaped by doubling it (e.g. ``O'Brien`` → ``O''Brien``).
+
+    Args:
+        value: The raw string to escape.
+
+    Returns:
+        The escaped string suitable for embedding in an OData filter.
+
+    Raises:
+        FabricError: If *value* exceeds ``_ODATA_MAX_LEN`` characters.
+            Fabric display names are much shorter; an oversized value most
+            likely indicates an injection attempt or a caller bug.
+            Raising ``FabricError`` (not ``ValueError``) ensures the existing
+            ``except FabricError`` handlers in MCP tools and CLI catch it and
+            surface a structured error rather than a raw traceback.
     """
+    if len(value) > _ODATA_MAX_LEN:
+        msg = (
+            "workspace or item name exceeds 256 characters "
+            f"({len(value)} chars); Fabric display names cannot exceed this length"
+        )
+        raise FabricError(msg)
     return value.replace("'", "''")
 
 
@@ -74,11 +114,59 @@ def _connection_string_from_detail(payload: dict[str, Any], kind: WarehouseKind)
 
 
 class Resolver:
-    """Resolves workspace / item names or GUIDs to UUIDs and ItemEntry objects."""
+    """Resolves workspace / item names or GUIDs to UUIDs and ItemEntry objects.
+
+    In addition to the persistent filesystem cache (``LookupCache``), each
+    ``Resolver`` instance keeps an **in-memory** negative cache.  When a
+    workspace or item lookup raises ``NotFound``, the failed key is recorded
+    with a monotonic timestamp; subsequent lookups within ``_NEGATIVE_TTL``
+    seconds re-raise ``NotFound`` without hitting the API.
+
+    The negative cache is intentionally *not* persisted.  "Not found" is a
+    transient condition (the resource may be created moments later), and
+    persisting it across process restarts would suppress retries even after
+    the resource appears.  An in-memory TTL of ``_NEGATIVE_TTL`` seconds
+    provides adequate 429-protection without that risk.
+    """
 
     def __init__(self, http: FabricHttpClient, cache: LookupCache) -> None:
         self._http = http
         self._cache = cache
+        # Negative cache: maps (scope, key) → monotonic timestamp of the failure.
+        # scope is "workspace" or a workspace UUID string (for items).
+        self._negative: dict[tuple[str, str], float] = {}
+
+    def _negative_check(self, scope: str, key: str) -> None:
+        """Raise NotFound immediately if *key* is in the negative cache and still fresh."""
+        ts = self._negative.get((scope, key))
+        if ts is not None:
+            age = time.monotonic() - ts
+            if age < _NEGATIVE_TTL:
+                raise NotFound(f"{scope}/{key!r} not found")  # noqa: TRY003
+            # Entry has expired; prune it now to keep the dict bounded.
+            del self._negative[(scope, key)]
+
+    def _negative_record(self, scope: str, key: str) -> None:
+        """Record a not-found result in the negative cache."""
+        self._negative[(scope, key)] = time.monotonic()
+
+    def _negative_clear(self, scope: str, key: str) -> None:
+        """Remove a negative-cache entry after a successful put."""
+        self._negative.pop((scope, key), None)
+
+    def clear_negative_cache(self) -> None:
+        """Clear the entire in-memory negative cache.
+
+        Cheap O(1) operation that discards all recorded "not found" results.
+        Mutating frontends (MCP create / rename tools) should call this after
+        a successful write so that subsequent lookups for the new name succeed
+        immediately rather than waiting for _NEGATIVE_TTL seconds to elapse.
+
+        .. note::
+            Wiring this call into MCP create/rename tools is tracked as a
+            follow-up task; this method exists so the wiring is trivial.
+        """
+        self._negative.clear()
 
     # ------------------------------------------------------------------
     # workspace_id
@@ -105,12 +193,15 @@ class Resolver:
         if GUID_RE.match(value):
             return UUID(value)
 
-        # 2. Cache hit
+        # 2. Negative cache hit — avoid re-hitting the API for known-missing names
+        self._negative_check("workspace", value.lower())
+
+        # 3. Cache hit
         cached = self._cache.get_workspace(value)
         if cached is not None:
             return cached.id
 
-        # 3. Power BI OData filter — escape single quotes per OData spec
+        # 4. Power BI OData filter — escape single quotes per OData spec
         resp = await self._http.request(
             "GET",
             HttpBase.POWERBI,
@@ -121,6 +212,7 @@ class Resolver:
         results: list[dict[str, Any]] = body.get("value", [])
 
         if not results:
+            self._negative_record("workspace", value.lower())
             raise NotFound(f"workspace {value!r} not found")  # noqa: TRY003
 
         if len(results) > 1:
@@ -131,13 +223,14 @@ class Resolver:
 
         ws_id = UUID(str(results[0]["id"]))
         self._cache.put_workspace(value, ws_id)
+        self._negative_clear("workspace", value.lower())
         return ws_id
 
     # ------------------------------------------------------------------
     # item
     # ------------------------------------------------------------------
 
-    async def item(self, workspace: str, value: str) -> ItemEntry:
+    async def item(self, workspace: str, value: str, *, item_type: str | None = None) -> ItemEntry:
         """Resolve *value* (name or GUID) to an ItemEntry within *workspace*.
 
         Leading/trailing whitespace in *value* is stripped before lookup.
@@ -145,6 +238,9 @@ class Resolver:
         Args:
             workspace: Workspace name or GUID.
             value: Item display name or GUID.
+            item_type: Optional Fabric item type string (e.g. ``"Warehouse"``)
+                used to narrow the server-side ``type`` filter when paging
+                through items.  Has no effect when *value* is a GUID.
 
         Returns:
             The resolved ItemEntry with ``connection_string`` populated.
@@ -154,6 +250,7 @@ class Resolver:
         """
         value = value.strip()
         ws_id = await self.workspace_id(workspace)
+        ws_key = str(ws_id)
 
         # 1. GUID fast-path: check cache first, then fetch detail
         if GUID_RE.match(value):
@@ -161,27 +258,51 @@ class Resolver:
             cached_item = self._cache.get_item(ws_id, value)
             if cached_item is not None:
                 return cached_item
-            return await self._fetch_item_detail(ws_id, item_uuid)
+            self._negative_check(ws_key, value.lower())
+            try:
+                result = await self._fetch_item_detail(ws_id, item_uuid)
+            except NotFound:
+                self._negative_record(ws_key, value.lower())
+                raise
+            self._negative_clear(ws_key, value.lower())
+            return result
 
-        # 2. Cache hit
+        # 2. Negative cache hit
+        self._negative_check(ws_key, value.lower())
+
+        # 3. Cache hit
         cached_item = self._cache.get_item(ws_id, value)
         if cached_item is not None:
             return cached_item
 
-        # 3. Page through /v1/workspaces/{ws}/items, filter by kind + name
+        # 4. Page through /v1/workspaces/{ws}/items, filter by kind + name.
+        # Pass ``type`` parameter when a single item type is known so the
+        # server returns fewer items (Fabric items API supports this filter).
+        list_params: dict[str, str] | None = None
+        if item_type and item_type in _ITEM_TYPES:
+            list_params = {"type": item_type}
+
         async for raw_item in self._http.iter_paginated(
-            HttpBase.FABRIC, f"/workspaces/{ws_id}/items"
+            HttpBase.FABRIC, f"/workspaces/{ws_id}/items", params=list_params
         ):
-            item_type = str(raw_item.get("type", ""))
-            if item_type not in _ITEM_TYPES:
+            raw_type = str(raw_item.get("type", ""))
+            if raw_type not in _ITEM_TYPES:
                 continue
             display_name = str(raw_item.get("displayName", ""))
             if display_name.lower() != value.lower():
                 continue
-            # Found a name match — fetch full detail to get connection_string
+            # Found a name match — fetch full detail to get connection_string.
+            # Break out of pagination immediately; no need to fetch remaining pages.
             item_id = UUID(str(raw_item["id"]))
-            return await self._fetch_item_detail(ws_id, item_id)
+            try:
+                result = await self._fetch_item_detail(ws_id, item_id)
+            except NotFound:
+                self._negative_record(ws_key, value.lower())
+                raise
+            self._negative_clear(ws_key, value.lower())
+            return result
 
+        self._negative_record(ws_key, value.lower())
         raise NotFound(f"item {value!r} not found in workspace {ws_id}")  # noqa: TRY003
 
     async def _fetch_item_detail(self, workspace_id: UUID, item_id: UUID) -> ItemEntry:
@@ -192,8 +313,8 @@ class Resolver:
         2. If the type has a dedicated endpoint (Warehouse → /warehouses/{id},
            SQLEndpoint → /sqlEndpoints/{id}), fetch that endpoint for the full
            ``properties`` payload including ``connectionString``.
-        3. Store the entry under both the display name and the GUID string so
-           subsequent GUID lookups also hit the cache.
+        3. Store the entry under both the display name and the GUID string in a
+           single lock+read+write cycle via :meth:`LookupCache.put_items`.
         4. Raise ``FabricError`` for any unsupported item type.
         """
         # Step 1 — generic discovery
@@ -205,21 +326,21 @@ class Resolver:
         generic_payload: dict[str, Any] = resp.json()
         item_type = str(generic_payload.get("type", ""))
 
-        if item_type not in _KIND_MAP:
+        if item_type not in _ITEM_TYPE_INFO:
             raise FabricError(  # noqa: TRY003
                 f"item {item_id} has unsupported type {item_type!r}; "
                 "expected Warehouse, SQLEndpoint or WarehouseSnapshot"
             )
 
-        kind = _KIND_MAP[item_type]
+        type_info = _ITEM_TYPE_INFO[item_type]
+        kind = type_info.kind
 
         # Step 2 — type-specific detail fetch (if available)
-        type_segment = _TYPE_ENDPOINT.get(item_type)
-        if type_segment is not None:
+        if type_info.endpoint is not None:
             detail_resp = await self._http.request(
                 "GET",
                 HttpBase.FABRIC,
-                f"/workspaces/{workspace_id}/{type_segment}/{item_id}",
+                f"/workspaces/{workspace_id}/{type_info.endpoint}/{item_id}",
             )
             payload: dict[str, Any] = detail_resp.json()
         else:
@@ -234,8 +355,19 @@ class Resolver:
             fetched_at=datetime.now(tz=UTC),
             display_name=display_name,
         )
-        # Store under display name for name-based lookups
-        self._cache.put_item(workspace_id, display_name, entry)
-        # Store under the GUID string (lower-cased) so future GUID lookups hit cache
-        self._cache.put_item(workspace_id, str(item_id), entry)
+        # Store under display name and GUID string in a single lock+read+write cycle
+        self._cache.put_items(
+            workspace_id,
+            [
+                (display_name, entry),
+                (str(item_id), entry),
+            ],
+        )
+        # Clear-on-put: drop all negative entries for this workspace scope so
+        # that a freshly created item becomes immediately resolvable even within
+        # the _NEGATIVE_TTL window (defence-in-depth against create→resolve race).
+        ws_key = str(workspace_id)
+        stale_neg = [k for k in self._negative if k[0] == ws_key]
+        for k in stale_neg:
+            del self._negative[k]
         return entry
