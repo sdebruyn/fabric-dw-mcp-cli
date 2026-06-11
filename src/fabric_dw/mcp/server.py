@@ -12,6 +12,26 @@ Architecture
 - ``workspace`` and ``warehouse`` parameters are always ``str`` (name OR GUID);
   the :class:`~fabric_dw.resolver.Resolver` translates them to UUIDs
   internally.
+
+Security environment variables
+-------------------------------
+``FABRIC_MCP_READONLY``
+    Set to ``1``, ``true``, or ``yes`` to restrict ``execute_sql`` to
+    SELECT/WITH statements and block all mutating tools.
+
+``FABRIC_MCP_ALLOW_DESTRUCTIVE``
+    Set to ``1``, ``true``, or ``yes`` to enable permanently-destructive
+    tools (delete_warehouse, delete_snapshot, delete_restore_point,
+    restore_warehouse_in_place, delete_schema, delete_table, clear_table,
+    delete_sql_pool, reset_sql_pools).  Defaults to **disabled**.
+
+``FABRIC_MCP_WORKSPACES``
+    Comma-separated workspace names or GUIDs the server may touch.
+    Unset = all workspaces allowed.
+
+``FABRIC_MCP_ALLOW_REMOTE``
+    Set to ``1``, ``true``, or ``yes`` to allow the HTTP transport to bind
+    on a non-loopback address.  A prominent WARNING is logged when set.
 """
 
 from __future__ import annotations
@@ -19,12 +39,14 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import sys
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
+from pydantic import Field
 
 from fabric_dw import auth as _auth
 from fabric_dw.cache import ItemEntry as _ItemEntry
@@ -32,6 +54,15 @@ from fabric_dw.cache import LookupCache
 from fabric_dw.exceptions import AlreadyExists, ConfigError, FabricError, NotFound
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.logging import setup_logging
+from fabric_dw.mcp._guards import (
+    _env_flag as _guards_env_flag,
+)
+from fabric_dw.mcp._guards import (
+    assert_destructive_allowed,
+    assert_readonly_sql,
+    assert_workspace_allowed,
+    assert_writes_allowed,
+)
 from fabric_dw.models import SqlPool, SqlPoolClassifier, WarehouseKind
 from fabric_dw.resolver import Resolver
 from fabric_dw.services import audit, queries, snapshots, sql_endpoints, warehouses, workspaces
@@ -158,8 +189,10 @@ async def list_workspaces() -> list[dict[str, Any]]:
 @mcp.tool()
 async def get_workspace(workspace: str) -> dict[str, Any]:
     """Return details for a single workspace (name or GUID)."""
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         result = await workspaces.get(_get_http(), ws_id)
     except FabricError as exc:
         raise _fabric_err(exc) from exc
@@ -169,8 +202,11 @@ async def get_workspace(workspace: str) -> dict[str, Any]:
 @mcp.tool()
 async def set_workspace_collation(workspace: str, collation: str) -> dict[str, Any]:
     """Set the default Data Warehouse collation for a workspace."""
+    assert_writes_allowed("set_workspace_collation")
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         await workspaces.set_collation(_get_http(), ws_id, collation)
     except ValueError as exc:
         raise ToolError(str(exc)) from exc
@@ -191,11 +227,14 @@ async def list_warehouses(workspace: str, all_workspaces: bool = False) -> list[
     When *all_workspaces* is ``True``, ignore *workspace* and aggregate results
     across every workspace the caller can see.
     """
+    if not all_workspaces:
+        assert_workspace_allowed(workspace)
     try:
         if all_workspaces:
             result = await warehouses.list_all_workspaces(_get_http())
         else:
             ws_id = await _get_resolver().workspace_id(workspace)
+            assert_workspace_allowed(workspace, str(ws_id))
             result = await warehouses.list_warehouses(_get_http(), ws_id)
     except FabricError as exc:
         raise _fabric_err(exc) from exc
@@ -205,8 +244,10 @@ async def list_warehouses(workspace: str, all_workspaces: bool = False) -> list[
 @mcp.tool()
 async def get_warehouse(workspace: str, warehouse: str) -> dict[str, Any]:
     """Return details for a single warehouse (name or GUID)."""
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         item = await _get_resolver().item(workspace, warehouse)
         result = await warehouses.get_warehouse(_get_http(), ws_id, item.id)
     except FabricError as exc:
@@ -222,8 +263,11 @@ async def create_warehouse(
     description: str | None = None,
 ) -> dict[str, Any]:
     """Create a new Warehouse in a workspace."""
+    assert_writes_allowed("create_warehouse")
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         result = await warehouses.create(
             _get_http(), ws_id, name, collation=collation, description=description
         )
@@ -240,8 +284,11 @@ async def rename_warehouse(
     description: str | None = None,
 ) -> dict[str, Any]:
     """Rename a Warehouse (and optionally update its description)."""
+    assert_writes_allowed("rename_warehouse")
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         item = await _get_resolver().item(workspace, warehouse)
         result = await warehouses.rename(
             _get_http(), ws_id, item.id, new_name, description=description
@@ -254,8 +301,12 @@ async def rename_warehouse(
 @mcp.tool()
 async def delete_warehouse(workspace: str, warehouse: str) -> dict[str, Any]:
     """Delete a Warehouse."""
+    assert_writes_allowed("delete_warehouse")
+    assert_destructive_allowed()
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         item = await _get_resolver().item(workspace, warehouse)
         await warehouses.delete(_get_http(), ws_id, item.id)
     except FabricError as exc:
@@ -266,8 +317,11 @@ async def delete_warehouse(workspace: str, warehouse: str) -> dict[str, Any]:
 @mcp.tool()
 async def takeover_warehouse(workspace: str, warehouse: str) -> dict[str, Any]:
     """Take ownership of a Warehouse."""
+    assert_writes_allowed("takeover_warehouse")
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         item = await _get_resolver().item(workspace, warehouse)
         await ownership_svc.takeover(_get_http(), ws_id, item.id)
     except FabricError as exc:
@@ -283,8 +337,10 @@ async def get_warehouse_permissions(workspace: str, warehouse: str) -> list[dict
 
     See https://learn.microsoft.com/en-us/fabric/admin/microsoft-fabric-admin for details.
     """
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         item = await _get_resolver().item(workspace, warehouse)
         result = await _permissions_svc.list_item_access(_get_http(), ws_id, item.id)
     except FabricError as exc:
@@ -304,11 +360,14 @@ async def list_sql_endpoints(workspace: str, all_workspaces: bool = False) -> li
     When *all_workspaces* is ``True``, ignore *workspace* and aggregate results
     across every workspace the caller can see.
     """
+    if not all_workspaces:
+        assert_workspace_allowed(workspace)
     try:
         if all_workspaces:
             result = await sql_endpoints.list_all_workspaces(_get_http())
         else:
             ws_id = await _get_resolver().workspace_id(workspace)
+            assert_workspace_allowed(workspace, str(ws_id))
             result = await sql_endpoints.list_endpoints(_get_http(), ws_id)
     except FabricError as exc:
         raise _fabric_err(exc) from exc
@@ -318,8 +377,10 @@ async def list_sql_endpoints(workspace: str, all_workspaces: bool = False) -> li
 @mcp.tool()
 async def get_sql_endpoint(workspace: str, endpoint: str) -> dict[str, Any]:
     """Return details for a single SQL analytics endpoint (name or GUID)."""
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         item = await _get_resolver().item(workspace, endpoint)
         result = await sql_endpoints.get_endpoint(_get_http(), ws_id, item.id)
     except FabricError as exc:
@@ -345,8 +406,11 @@ async def refresh_sql_endpoint_metadata(
             the refresh.  Use to resolve inconsistencies or force a clean
             rebuild.  **Destructive** — use with caution.
     """
+    assert_writes_allowed("refresh_sql_endpoint_metadata")
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         item = await _get_resolver().item(workspace, endpoint)
         statuses = await sql_endpoints.refresh_metadata(
             _get_http(), ws_id, item.id, recreate_tables=recreate_tables
@@ -364,8 +428,10 @@ async def get_sql_endpoint_permissions(workspace: str, sql_endpoint: str) -> lis
 
     See https://learn.microsoft.com/en-us/fabric/admin/microsoft-fabric-admin for details.
     """
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         item = await _get_resolver().item(workspace, sql_endpoint)
         result = await _permissions_svc.list_item_access(_get_http(), ws_id, item.id)
     except FabricError as exc:
@@ -381,8 +447,10 @@ async def get_sql_endpoint_permissions(workspace: str, sql_endpoint: str) -> lis
 @mcp.tool()
 async def get_audit_settings(workspace: str, warehouse: str) -> dict[str, Any]:
     """Fetch the current SQL audit settings for a warehouse."""
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         item = await _get_resolver().item(workspace, warehouse)
         result = await audit.get_settings(_get_http(), ws_id, item.id)
     except FabricError as exc:
@@ -393,8 +461,11 @@ async def get_audit_settings(workspace: str, warehouse: str) -> dict[str, Any]:
 @mcp.tool()
 async def enable_audit(workspace: str, warehouse: str, retention_days: int = 0) -> dict[str, Any]:
     """Enable SQL auditing on a warehouse."""
+    assert_writes_allowed("enable_audit")
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         item = await _get_resolver().item(workspace, warehouse)
         result = await audit.enable(_get_http(), ws_id, item.id, retention_days=retention_days)
     except FabricError as exc:
@@ -405,8 +476,11 @@ async def enable_audit(workspace: str, warehouse: str, retention_days: int = 0) 
 @mcp.tool()
 async def disable_audit(workspace: str, warehouse: str) -> dict[str, Any]:
     """Disable SQL auditing on a warehouse."""
+    assert_writes_allowed("disable_audit")
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         item = await _get_resolver().item(workspace, warehouse)
         result = await audit.disable(_get_http(), ws_id, item.id)
     except FabricError as exc:
@@ -419,8 +493,11 @@ async def set_audit_action_groups(
     workspace: str, warehouse: str, action_groups: list[str]
 ) -> dict[str, Any]:
     """Replace the audited action groups for a warehouse."""
+    assert_writes_allowed("set_audit_action_groups")
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         item = await _get_resolver().item(workspace, warehouse)
         result = await audit.set_action_groups(_get_http(), ws_id, item.id, action_groups)
     except FabricError as exc:
@@ -442,8 +519,11 @@ async def add_audit_group(workspace: str, warehouse: str, group: str) -> dict[st
         warehouse: Warehouse name or GUID.
         group: Action group name, e.g. ``BATCH_COMPLETED_GROUP``.
     """
+    assert_writes_allowed("add_audit_group")
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         item = await _get_resolver().item(workspace, warehouse)
         result = await audit.add_action_group(_get_http(), ws_id, item.id, group)
     except ValueError as exc:
@@ -467,8 +547,11 @@ async def remove_audit_group(workspace: str, warehouse: str, group: str) -> dict
         warehouse: Warehouse name or GUID.
         group: Action group name, e.g. ``BATCH_COMPLETED_GROUP``.
     """
+    assert_writes_allowed("remove_audit_group")
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         item = await _get_resolver().item(workspace, warehouse)
         result = await audit.remove_action_group(_get_http(), ws_id, item.id, group)
     except ValueError as exc:
@@ -489,8 +572,11 @@ async def set_audit_retention(workspace: str, warehouse: str, days: int) -> dict
         warehouse: Warehouse name or GUID.
         days: Retention period in days (>= 1). The API enforces its own upper bound.
     """
+    assert_writes_allowed("set_audit_retention")
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         item = await _get_resolver().item(workspace, warehouse)
         result = await audit.set_retention(_get_http(), ws_id, item.id, days=days)
     except ValueError as exc:
@@ -508,8 +594,10 @@ async def set_audit_retention(workspace: str, warehouse: str, days: int) -> dict
 @mcp.tool()
 async def list_running_queries(workspace: str, warehouse: str) -> list[dict[str, Any]]:
     """Return all currently-executing queries on a warehouse."""
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         item = await _get_resolver().item(workspace, warehouse)
         if item.connection_string is None:
             msg = f"warehouse {warehouse!r} has no connection string; cannot query DMVs"
@@ -528,8 +616,10 @@ async def list_running_queries(workspace: str, warehouse: str) -> list[dict[str,
 @mcp.tool()
 async def list_connections(workspace: str, warehouse: str) -> list[dict[str, Any]]:
     """Return all active SQL connections on a warehouse or SQL Analytics Endpoint."""
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         item = await _get_resolver().item(workspace, warehouse)
         if item.connection_string is None:
             msg = f"warehouse {warehouse!r} has no connection string; cannot query DMVs"
@@ -548,8 +638,11 @@ async def list_connections(workspace: str, warehouse: str) -> list[dict[str, Any
 @mcp.tool()
 async def kill_session(workspace: str, warehouse: str, session_id: int) -> dict[str, Any]:
     """Terminate a session on a warehouse by session_id."""
+    assert_writes_allowed("kill_session")
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         item = await _get_resolver().item(workspace, warehouse)
         if item.connection_string is None:
             msg = f"warehouse {warehouse!r} has no connection string; cannot kill sessions"
@@ -566,13 +659,19 @@ async def kill_session(workspace: str, warehouse: str, session_id: int) -> dict[
 
 
 @mcp.tool()
-async def execute_sql(workspace: str, item: str, query: str) -> dict[str, Any]:
+async def execute_sql(
+    workspace: str,
+    item: str,
+    query: str,
+    max_rows: Annotated[int, Field(ge=1, le=10000)] = 1000,
+) -> dict[str, Any]:
     """Execute an arbitrary SQL statement or batch against a warehouse or SQL Analytics Endpoint.
 
     WARNING: this tool executes arbitrary SQL against the target. DDL (DROP,
-    ALTER, TRUNCATE) and DML (DELETE, UPDATE) are permitted. Use only when the
-    user explicitly requests data modification. Default to SELECT when the
-    user's intent is read-only investigation.
+    ALTER, TRUNCATE) and DML (DELETE, UPDATE) are permitted unless
+    ``FABRIC_MCP_READONLY=1`` is set. Use only when the user explicitly
+    requests data modification. Default to SELECT when the user's intent is
+    read-only investigation.
 
     Supports both Warehouse and SQL Analytics Endpoint items.  Multi-statement
     batches are allowed; only the **last** result set is returned.  DDL/DML
@@ -582,17 +681,28 @@ async def execute_sql(workspace: str, item: str, query: str) -> dict[str, Any]:
     ``bytes`` / varbinary columns are base64-encoded and their column names are
     suffixed with ``__base64``.
 
+    For large tables, add a TOP clause or WHERE predicate to the query rather
+    than relying solely on ``max_rows`` — the server still fetches up to
+    ``max_rows`` rows from the driver before slicing.
+
     Args:
         workspace: Workspace name or GUID.
         item: Warehouse or SQL Analytics Endpoint name or GUID.
         query: SQL statement or batch to execute.
+        max_rows: Maximum rows to return (1-10000, default 1000).  When the
+            result set is larger the response includes ``"truncated": true``.
 
     Returns:
         A dict with keys ``columns`` (list[str]), ``rows`` (list[list[Any]]),
-        and ``rowcount`` (int; ``-1`` when the driver does not report a count).
+        ``rowcount`` (int; ``-1`` when the driver does not report a count),
+        ``row_count_returned`` (int), and ``truncated`` (bool).
     """
+    if _guards_env_flag("FABRIC_MCP_READONLY"):
+        assert_readonly_sql(query)
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         entry = await _get_resolver().item(workspace, item)
         if entry.connection_string is None:
             msg = f"item {item!r} has no connection string; cannot execute SQL"
@@ -605,7 +715,12 @@ async def execute_sql(workspace: str, item: str, query: str) -> dict[str, Any]:
         result = await _sql_exec_svc.execute(target, query, mode=_get_auth_mode())
     except FabricError as exc:
         raise _fabric_err(exc) from exc
-    return result.model_dump(mode="json")
+    sliced_rows = result.rows[:max_rows]
+    out = result.model_dump(mode="json")
+    out["rows"] = sliced_rows
+    out["row_count_returned"] = len(sliced_rows)
+    out["truncated"] = len(result.rows) > max_rows
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -615,7 +730,9 @@ async def execute_sql(workspace: str, item: str, query: str) -> dict[str, Any]:
 
 async def _resolve_qi_target(workspace: str, warehouse: str) -> SqlTarget:
     """Resolve workspace + warehouse to a SqlTarget for Query Insights views."""
+    assert_workspace_allowed(workspace)
     ws_id = await _get_resolver().workspace_id(workspace)
+    assert_workspace_allowed(workspace, str(ws_id))
     item = await _get_resolver().item(workspace, warehouse)
     if item.connection_string is None:
         msg = f"item {warehouse!r} has no connection string; cannot query Query Insights DMVs"
@@ -792,8 +909,10 @@ async def list_sql_pool_insights(
 @mcp.tool()
 async def list_snapshots(workspace: str, warehouse: str) -> list[dict[str, Any]]:
     """Return all snapshots belonging to a warehouse."""
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         item = await _get_resolver().item(workspace, warehouse)
         result = await snapshots.list_snapshots(_get_http(), ws_id, item.id)
     except FabricError as exc:
@@ -818,6 +937,8 @@ async def create_snapshot(
         description: Optional description.
         snapshot_dt: Optional ISO-8601 datetime string for the snapshot point-in-time.
     """
+    assert_writes_allowed("create_snapshot")
+    assert_workspace_allowed(workspace)
     parsed_dt: datetime | None = None
     if snapshot_dt is not None:
         try:
@@ -828,6 +949,7 @@ async def create_snapshot(
             ) from exc
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         item = await _get_resolver().item(workspace, warehouse)
         result = await snapshots.create(
             _get_http(),
@@ -850,8 +972,11 @@ async def rename_snapshot(
     description: str | None = None,
 ) -> dict[str, Any]:
     """Rename a warehouse snapshot."""
+    assert_writes_allowed("rename_snapshot")
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         snap_item = await _get_resolver().item(workspace, snapshot)
         result = await snapshots.rename(
             _get_http(),
@@ -868,8 +993,12 @@ async def rename_snapshot(
 @mcp.tool()
 async def delete_snapshot(workspace: str, snapshot: str) -> dict[str, Any]:
     """Delete a warehouse snapshot."""
+    assert_writes_allowed("delete_snapshot")
+    assert_destructive_allowed()
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         snap_item = await _get_resolver().item(workspace, snapshot)
         await snapshots.delete(_get_http(), ws_id, snap_item.id)
     except FabricError as exc:
@@ -892,6 +1021,8 @@ async def roll_snapshot_timestamp(
         snapshot_name: The snapshot database name to roll.
         new_dt: Optional ISO-8601 datetime string; defaults to CURRENT_TIMESTAMP.
     """
+    assert_writes_allowed("roll_snapshot_timestamp")
+    assert_workspace_allowed(workspace)
     parsed_dt: datetime | None = None
     if new_dt is not None:
         try:
@@ -902,6 +1033,7 @@ async def roll_snapshot_timestamp(
             ) from exc
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         item = await _get_resolver().item(workspace, warehouse)
         if item.connection_string is None:
             msg = f"warehouse {warehouse!r} has no connection string"
@@ -925,8 +1057,10 @@ async def roll_snapshot_timestamp(
 @mcp.tool()
 async def list_restore_points(workspace: str, warehouse: str) -> list[dict[str, Any]]:
     """Return all restore points for a warehouse."""
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         item = await _get_resolver().item(workspace, warehouse)
         result = await restore_svc.list_points(_get_http(), ws_id, item.id)
     except FabricError as exc:
@@ -945,8 +1079,10 @@ async def get_restore_point(
         warehouse: Warehouse name or GUID.
         restore_point_id: The restore point ID string (e.g. ``"1726617378000"``).
     """
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         item = await _get_resolver().item(workspace, warehouse)
         result = await restore_svc.get_point(_get_http(), ws_id, item.id, restore_point_id)
     except FabricError as exc:
@@ -969,8 +1105,11 @@ async def create_restore_point(
         name: Optional display name (max 128 chars).
         description: Optional description (max 512 chars).
     """
+    assert_writes_allowed("create_restore_point")
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         item = await _get_resolver().item(workspace, warehouse)
         result = await restore_svc.create_point(
             _get_http(), ws_id, item.id, name=name, description=description
@@ -999,8 +1138,11 @@ async def update_restore_point(
         name: New display name (max 128 chars).
         description: New description (max 512 chars).
     """
+    assert_writes_allowed("update_restore_point")
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         item = await _get_resolver().item(workspace, warehouse)
         result = await restore_svc.update_point(
             _get_http(),
@@ -1030,8 +1172,12 @@ async def delete_restore_point(
         warehouse: Warehouse name or GUID.
         restore_point_id: The restore point ID string.
     """
+    assert_writes_allowed("delete_restore_point")
+    assert_destructive_allowed()
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         item = await _get_resolver().item(workspace, warehouse)
         await restore_svc.delete_point(_get_http(), ws_id, item.id, restore_point_id)
     except FabricError as exc:
@@ -1054,8 +1200,12 @@ async def restore_warehouse_in_place(
         warehouse: Warehouse name or GUID.
         restore_point_id: The restore point ID string to restore to.
     """
+    assert_writes_allowed("restore_warehouse_in_place")
+    assert_destructive_allowed()
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         item = await _get_resolver().item(workspace, warehouse)
         await restore_svc.restore_in_place(_get_http(), ws_id, item.id, restore_point_id)
     except FabricError as exc:
@@ -1077,8 +1227,10 @@ async def list_views(workspace: str, item: str, schema: str | None = None) -> li
         item: Warehouse or SQL endpoint name or GUID.
         schema: When provided, only views in this schema are returned.
     """
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         entry = await _get_resolver().item(workspace, item)
         if entry.connection_string is None:
             msg = f"item {item!r} has no connection string; cannot query views"
@@ -1111,8 +1263,10 @@ async def read_view(
         raise ToolError(  # noqa: TRY003
             f"qualified_name must be <schema>.<view>, got {qualified_name!r}"
         )
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         entry = await _get_resolver().item(workspace, item)
         if entry.connection_string is None:
             msg = f"item {item!r} has no connection string; cannot read views"
@@ -1147,8 +1301,10 @@ async def get_view(workspace: str, item: str, qualified_name: str) -> dict[str, 
         raise ToolError(  # noqa: TRY003
             f"qualified_name must be <schema>.<view>, got {qualified_name!r}"
         )
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         entry = await _get_resolver().item(workspace, item)
         if entry.connection_string is None:
             msg = f"item {item!r} has no connection string; cannot query views"
@@ -1184,8 +1340,11 @@ async def create_view(
         raise ToolError(  # noqa: TRY003
             f"qualified_name must be <schema>.<view>, got {qualified_name!r}"
         )
+    assert_writes_allowed("create_view")
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         entry = await _get_resolver().item(workspace, item)
         if entry.connection_string is None:
             msg = f"item {item!r} has no connection string; cannot create views"
@@ -1223,8 +1382,11 @@ async def update_view(
         raise ToolError(  # noqa: TRY003
             f"qualified_name must be <schema>.<view>, got {qualified_name!r}"
         )
+    assert_writes_allowed("update_view")
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         entry = await _get_resolver().item(workspace, item)
         if entry.connection_string is None:
             msg = f"item {item!r} has no connection string; cannot update views"
@@ -1256,8 +1418,11 @@ async def drop_view(workspace: str, item: str, qualified_name: str) -> dict[str,
         raise ToolError(  # noqa: TRY003
             f"qualified_name must be <schema>.<view>, got {qualified_name!r}"
         )
+    assert_writes_allowed("drop_view")
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         entry = await _get_resolver().item(workspace, item)
         if entry.connection_string is None:
             msg = f"item {item!r} has no connection string; cannot drop views"
@@ -1293,8 +1458,10 @@ async def list_schemas(workspace: str, item: str) -> list[dict[str, Any]]:
         workspace: Workspace name or GUID.
         item: Warehouse or SQL Analytics Endpoint name or GUID.
     """
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         entry = await _get_resolver().item(workspace, item)
         if entry.connection_string is None:
             msg = f"item {item!r} has no connection string; cannot query schemas"
@@ -1322,8 +1489,11 @@ async def create_schema(workspace: str, item: str, name: str) -> dict[str, Any]:
         item: Warehouse name or GUID.
         name: The schema name.  Must be a valid SQL identifier.
     """
+    assert_writes_allowed("create_schema")
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         entry = await _get_resolver().item(workspace, item)
         _require_warehouse(entry, item)
         if entry.connection_string is None:
@@ -1367,8 +1537,12 @@ async def delete_schema(
         cascade: When ``True``, drop all tables and views in the schema first.
             Defaults to ``False``.
     """
+    assert_writes_allowed("delete_schema")
+    assert_destructive_allowed()
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         entry = await _get_resolver().item(workspace, item)
         _require_warehouse(entry, item)
         if entry.connection_string is None:
@@ -1399,8 +1573,10 @@ async def list_tables(workspace: str, item: str, schema: str | None = None) -> l
         item: Warehouse or SQL endpoint name or GUID.
         schema: When provided, only tables in this schema are returned.
     """
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         entry = await _get_resolver().item(workspace, item)
         if entry.connection_string is None:
             msg = f"item {item!r} has no connection string; cannot query tables"
@@ -1433,8 +1609,10 @@ async def read_table(
         raise ToolError(  # noqa: TRY003
             f"qualified_name must be <schema>.<table>, got {qualified_name!r}"
         )
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         entry = await _get_resolver().item(workspace, item)
         if entry.connection_string is None:
             msg = f"item {item!r} has no connection string; cannot read tables"
@@ -1476,8 +1654,11 @@ async def create_table(
         raise ToolError(  # noqa: TRY003
             f"qualified_name must be <schema>.<table>, got {qualified_name!r}"
         )
+    assert_writes_allowed("create_table")
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         entry = await _get_resolver().item(workspace, item)
         if entry.connection_string is None:
             msg = f"item {item!r} has no connection string; cannot create tables"
@@ -1512,8 +1693,12 @@ async def delete_table(workspace: str, item: str, qualified_name: str) -> dict[s
         raise ToolError(  # noqa: TRY003
             f"qualified_name must be <schema>.<table>, got {qualified_name!r}"
         )
+    assert_writes_allowed("delete_table")
+    assert_destructive_allowed()
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         entry = await _get_resolver().item(workspace, item)
         if entry.connection_string is None:
             msg = f"item {item!r} has no connection string; cannot delete tables"
@@ -1549,8 +1734,12 @@ async def clear_table(workspace: str, item: str, qualified_name: str) -> dict[st
         raise ToolError(  # noqa: TRY003
             f"qualified_name must be <schema>.<table>, got {qualified_name!r}"
         )
+    assert_writes_allowed("clear_table")
+    assert_destructive_allowed()
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         entry = await _get_resolver().item(workspace, item)
         if entry.connection_string is None:
             msg = f"item {item!r} has no connection string; cannot clear tables"
@@ -1580,8 +1769,10 @@ async def get_sql_pools_configuration(workspace: str) -> dict[str, Any]:
     Requires workspace admin role.  This tool targets a **beta / preview** API
     endpoint that may change before general availability.
     """
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         result = await sql_pools_svc.get_configuration(_get_http(), ws_id)
     except FabricError as exc:
         raise _fabric_err(exc) from exc
@@ -1594,8 +1785,10 @@ async def list_sql_pools(workspace: str) -> list[dict[str, Any]]:
 
     Requires workspace admin role.  This tool targets a **beta / preview** API.
     """
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         config = await sql_pools_svc.get_configuration(_get_http(), ws_id)
     except FabricError as exc:
         raise _fabric_err(exc) from exc
@@ -1612,8 +1805,10 @@ async def get_sql_pool(workspace: str, pool_name: str) -> dict[str, Any]:
 
     Requires workspace admin role.  This tool targets a **beta / preview** API.
     """
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         config = await sql_pools_svc.get_configuration(_get_http(), ws_id)
     except FabricError as exc:
         raise _fabric_err(exc) from exc
@@ -1646,6 +1841,8 @@ async def create_sql_pool(  # noqa: PLR0913
 
     Requires workspace admin role.  This tool targets a **beta / preview** API.
     """
+    assert_writes_allowed("create_sql_pool")
+    assert_workspace_allowed(workspace)
     classifier: SqlPoolClassifier | None = None
     if classifier_type is not None:
         classifier = SqlPoolClassifier.model_validate(
@@ -1669,6 +1866,7 @@ async def create_sql_pool(  # noqa: PLR0913
 
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         result = await sql_pools_svc.create_pool(_get_http(), ws_id, pool)
     except AlreadyExists as exc:
         raise ToolError(str(exc)) from exc
@@ -1701,8 +1899,11 @@ async def update_sql_pool(  # noqa: PLR0913
 
     Requires workspace admin role.  This tool targets a **beta / preview** API.
     """
+    assert_writes_allowed("update_sql_pool")
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         result = await sql_pools_svc.update_pool(
             _get_http(),
             ws_id,
@@ -1731,8 +1932,12 @@ async def delete_sql_pool(workspace: str, pool_name: str) -> dict[str, Any]:
 
     Requires workspace admin role.  This tool targets a **beta / preview** API.
     """
+    assert_writes_allowed("delete_sql_pool")
+    assert_destructive_allowed()
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         await sql_pools_svc.delete_pool(_get_http(), ws_id, pool_name)
     except NotFound as exc:
         raise ToolError(str(exc)) from exc
@@ -1751,8 +1956,12 @@ async def reset_sql_pools(workspace: str) -> dict[str, Any]:
     configuration's enabled-state is preserved, but every pool is wiped. Use only
     when the user explicitly requests a reset.
     """
+    assert_writes_allowed("reset_sql_pools")
+    assert_destructive_allowed()
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         result = await sql_pools_svc.reset_pools(_get_http(), ws_id)
     except FabricError as exc:
         raise _fabric_err(exc) from exc
@@ -1765,8 +1974,11 @@ async def enable_sql_pools(workspace: str) -> dict[str, Any]:
 
     Requires workspace admin role.  This tool targets a **beta / preview** API.
     """
+    assert_writes_allowed("enable_sql_pools")
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         result = await sql_pools_svc.enable(_get_http(), ws_id)
     except FabricError as exc:
         raise _fabric_err(exc) from exc
@@ -1781,8 +1993,11 @@ async def disable_sql_pools(workspace: str) -> dict[str, Any]:
 
     Requires workspace admin role.  This tool targets a **beta / preview** API.
     """
+    assert_writes_allowed("disable_sql_pools")
+    assert_workspace_allowed(workspace)
     try:
         ws_id = await _get_resolver().workspace_id(workspace)
+        assert_workspace_allowed(workspace, str(ws_id))
         result = await sql_pools_svc.disable(_get_http(), ws_id)
     except FabricError as exc:
         raise _fabric_err(exc) from exc
@@ -1806,6 +2021,9 @@ async def clear_cache() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
 def run(argv: Sequence[str] | None = None) -> None:
     """Parse CLI arguments and start the FastMCP server.
 
@@ -1818,11 +2036,21 @@ def run(argv: Sequence[str] | None = None) -> None:
         Communicate over stdin/stdout — standard for Claude Desktop and similar.
     ``--transport http``
         Expose a streamable-HTTP endpoint.
+
+    HTTP-transport options
+    ----------------------
+    ``--host HOST``
+        Bind address for HTTP transport (default ``127.0.0.1``).  Binding to
+        a non-loopback address requires ``FABRIC_MCP_ALLOW_REMOTE=1``.
+    ``--port PORT``
+        TCP port for HTTP transport (default ``8000``).
     """
     # Configure structured logging from env var (default INFO)
     raw_level = os.environ.get("FABRIC_LOG_LEVEL", "INFO").upper()
     log_level = getattr(logging, raw_level, logging.INFO)
     setup_logging(log_level)
+
+    logger = logging.getLogger(__name__)
 
     parser = argparse.ArgumentParser(
         prog="fabric-dw-mcp",
@@ -1834,9 +2062,46 @@ def run(argv: Sequence[str] | None = None) -> None:
         default="stdio",
         help="Transport to use: 'stdio' (default) or 'http' (streamable-HTTP).",
     )
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Bind address for HTTP transport (default: 127.0.0.1).",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="TCP port for HTTP transport (default: 8000).",
+    )
     args = parser.parse_args(argv)
 
     transport: Literal["stdio", "streamable-http"] = (
         "streamable-http" if args.transport == "http" else "stdio"
     )
+
+    if transport == "streamable-http":
+        if args.host not in _LOOPBACK_HOSTS:
+            if not _guards_env_flag("FABRIC_MCP_ALLOW_REMOTE"):
+                logger.error(
+                    "refusing to bind HTTP transport on %s:%s — this would expose the server "
+                    "network-wide without authentication or TLS. "
+                    "Set FABRIC_MCP_ALLOW_REMOTE=1 to override (ensure a reverse proxy provides "
+                    "authentication and TLS termination).",
+                    args.host,
+                    args.port,
+                )
+                sys.exit(1)
+            logger.warning(
+                "WARNING: HTTP transport is bound on %s:%s (non-loopback). "
+                "The MCP protocol has NO built-in authentication or TLS. "
+                "Ensure an authenticating reverse proxy fronts this endpoint before "
+                "exposing it to untrusted networks.",
+                args.host,
+                args.port,
+            )
+
+        # Update FastMCP settings before run so uvicorn picks them up.
+        mcp.settings.host = args.host
+        mcp.settings.port = args.port
+
     mcp.run(transport=transport)
