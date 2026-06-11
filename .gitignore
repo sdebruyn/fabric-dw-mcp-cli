@@ -48,3 +48,6 @@ Thumbs.db
 
 # Docs build output
 docs_build/site/
+
+# SARIF security scan output
+bandit.sarif

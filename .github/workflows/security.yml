@@ -11,6 +11,7 @@ concurrency:
 permissions:
   contents: read
   pull-requests: read
+  security-events: write
 jobs:
   bandit:
     runs-on: ubuntu-latest
@@ -20,7 +21,16 @@ jobs:
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v8.2.0
         with: { enable-cache: true }
-      - run: uvx --quiet bandit -r src/ -ll
+      - name: Run bandit (SARIF)
+        run: uvx --quiet 'bandit[sarif]' -r src/ -ll -f sarif -o bandit.sarif
+        continue-on-error: true
+      - name: Upload SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: bandit.sarif
+      - name: Run bandit (gate, human-readable)
+        run: uvx --quiet 'bandit[sarif]' -r src/ -ll
   dependency-review:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -40,4 +50,4 @@ jobs:
       - uses: astral-sh/setup-uv@v8.2.0
         with: { enable-cache: true }
       - run: uv sync --frozen
-      - run: uvx --quiet pip-audit
+      - run: uvx --quiet pip-audit --strict

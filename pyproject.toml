@@ -76,14 +76,15 @@ fabric-dw-mcp = "fabric_dw.mcp.server:run"
 
 [dependency-groups]
 dev = [
-    "pytest",
-    "pytest-asyncio",
+    "pytest>=9.0",
+    "pytest-asyncio>=1.4",
     "anyio[trio]",
-    "respx>=0.21",
+    "respx>=0.23",
     "freezegun>=1.5",
     "pytest-randomly",
     "pytest-cov",
-    "ruff",
+    "ruff>=0.15,<0.16",
+    "ty==0.0.44",
 ]
 docs = ["zensical>=0.0.42"]
 
@@ -121,8 +122,10 @@ select = [
 [tool.ruff.format]
 
 [tool.ty]
-# ty is in alpha; configuration options may expand with future releases.
-# Run with: uvx ty check src tests
+# ty 0.0.44 is in alpha; no meaningful strictness settings are stable yet.
+# Pinned to 0.0.44 in [dependency-groups].dev and the justfile `type` recipe.
+# Re-evaluate configuration options when ty reaches a stable 0.1+ release.
+# Run with: uv run ty check src tests
 
 [tool.pytest.ini_options]
 markers = ["integration: hits real Fabric APIs"]
@@ -130,8 +133,11 @@ addopts = "-ra --strict-markers"
 asyncio_mode = "auto"
 
 [tool.coverage.run]
-source = ["fabric_dw"]
+source_pkgs = ["fabric_dw"]
 branch = true
+
+[tool.coverage.paths]
+fabric_dw = ["src/fabric_dw", "**/site-packages/fabric_dw"]
 
 [tool.coverage.report]
 fail_under = 80

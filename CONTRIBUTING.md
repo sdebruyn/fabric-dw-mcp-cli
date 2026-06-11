@@ -58,25 +58,30 @@ Run all gates with [`just`](https://github.com/casey/just#installation) before p
 just check
 ```
 
-Or run individual checks manually:
+Or run individual checks:
 
 ### Lint
 
 ```bash
-uv run ruff check .
-uv run ruff format --check .
+just lint
+# Auto-fix lint and format issues:
+just fix
 ```
 
 ### Type checking
 
 ```bash
-uvx ty==0.0.44 check src tests
+just type
 ```
 
 ### Unit tests
 
 ```bash
-uv run pytest tests/unit -q
+just test
+# With coverage report:
+just cov
+# With HTML coverage report:
+just cov-html
 ```
 
 ### Integration tests
@@ -84,7 +89,21 @@ uv run pytest tests/unit -q
 Requires a valid `az login` session and a reachable Fabric workspace.
 
 ```bash
-uv run pytest tests/integration
+just integration
+```
+
+**Integration test policy:** the integration suite is **label-gated** — it only runs in CI when the `integration` label is applied to a PR. This is intentional: the integration tests hit real Fabric APIs and consume capacity. Maintainers apply the label when a PR touches API-touching behaviour. The integration suite is _not_ a required status check; it is a maintainer-controlled gate.
+
+### Security audit
+
+```bash
+just audit
+```
+
+### Build wheel/sdist
+
+```bash
+just build
 ```
 
 ## Code of Conduct
