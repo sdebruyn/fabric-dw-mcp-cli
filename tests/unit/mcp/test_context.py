@@ -172,3 +172,46 @@ class TestFabricLifespan:
         assert _ctx_module._SERVER_CTX is None
         # __aexit__ must still have been called.
         assert fake_http.exited == 1
+
+    @pytest.mark.anyio
+    async def test_reset_pool_called_on_lifespan_exit(self) -> None:
+        """reset_pool() is called during normal lifespan shutdown."""
+        fake_http = _FakeHttpClient()
+        fake_ctx = ServerContext(
+            http=fake_http,  # ty: ignore[invalid-argument-type]
+            cache=MagicMock(),
+            resolver=MagicMock(),
+            auth_mode=_auth.CredentialMode.DEFAULT,
+        )
+        app_mock = MagicMock()
+
+        with (
+            patch("fabric_dw.mcp._context.build_context", return_value=fake_ctx),
+            patch("fabric_dw.mcp._context.reset_pool") as mock_reset_pool,
+        ):
+            async with fabric_lifespan(app_mock):
+                mock_reset_pool.assert_not_called()
+
+        mock_reset_pool.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_reset_pool_called_on_lifespan_exception(self) -> None:
+        """reset_pool() is called even when the lifespan body raises."""
+        fake_http = _FakeHttpClient()
+        fake_ctx = ServerContext(
+            http=fake_http,  # ty: ignore[invalid-argument-type]
+            cache=MagicMock(),
+            resolver=MagicMock(),
+            auth_mode=_auth.CredentialMode.DEFAULT,
+        )
+        app_mock = MagicMock()
+
+        with (
+            patch("fabric_dw.mcp._context.build_context", return_value=fake_ctx),
+            patch("fabric_dw.mcp._context.reset_pool") as mock_reset_pool,
+            pytest.raises(RuntimeError, match="crash"),
+        ):
+            async with fabric_lifespan(app_mock):
+                raise RuntimeError("crash")
+
+        mock_reset_pool.assert_called_once()

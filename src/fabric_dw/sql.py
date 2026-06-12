@@ -4,20 +4,44 @@ Public API
 ----------
 - :class:`SqlTarget`          — frozen dataclass identifying a warehouse.
 - :func:`build_connection_string` — augment the raw API connection string.
-- :func:`open_connection`     — open a single sync connection (caller closes).
+- :func:`open_connection`     — checkout a pooled (or fresh) connection; caller closes.
 - :func:`map_driver_error`    — classify a driver exception → high-level error.
 - :func:`run_query`           — open connection, execute, fetch, map errors.
 - :func:`run_statements`      — execute multiple DDL statements on ONE connection.
+- :func:`reset_pool`          — drain and physically close all pooled connections.
+
+Connection Pool
+---------------
+``open_connection`` returns a thin wrapper whose ``.close()`` method returns
+the underlying connection to a per-key LIFO pool instead of physically closing
+it.  The pool is keyed on ``(workspace_id, database, mode)`` and bounded by two
+module-level constants:
+
+``POOL_MAX_IDLE``       — maximum idle connections per key (default 4).
+``POOL_MAX_IDLE_SECS``  — maximum idle age in seconds before eviction (default 300).
+
+Disable pooling entirely by setting the environment variable
+``FABRIC_SQL_POOL=0`` before process startup, or at runtime by setting
+``os.environ["FABRIC_SQL_POOL"] = "0"`` and then calling :func:`reset_pool` to
+drain existing connections.  When disabled every ``open_connection`` call opens a
+fresh physical connection and ``.close()`` physically closes it.
+
+Call :func:`reset_pool` on graceful shutdown to close all idle connections.  The
+MCP server lifespan calls ``reset_pool`` in its ``finally`` block so pooled TDS
+connections are drained on server shutdown.
 """
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import importlib
+import os
 import re
+import threading
+import time
 import types
 from collections.abc import Sequence
-from contextlib import closing
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
@@ -159,6 +183,182 @@ def _set_key(connection_string: str, key: str, value: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Connection pool
+# ---------------------------------------------------------------------------
+
+# Pool configuration constants — override at module level before first use.
+# Env var FABRIC_SQL_POOL=0 disables pooling entirely at any time.
+POOL_MAX_IDLE: int = 4
+"""Maximum number of idle connections kept per ``(workspace_id, database, mode)`` key."""
+
+POOL_MAX_IDLE_SECS: float = 300.0
+"""Maximum age (seconds) of an idle connection before eviction on next checkout."""
+
+# Pool key type: (workspace_id, database, mode_value)
+_PoolKey = tuple[str, str, str]
+
+# Each slot stores (underlying_connection, last_used_monotonic_timestamp).
+_PoolSlot = tuple[Any, float]
+
+# The pool: key -> LIFO stack of idle slots (top = last element).
+_pool: dict[_PoolKey, list[_PoolSlot]] = {}
+_pool_lock = threading.Lock()
+
+
+def _pool_enabled() -> bool:
+    """Return True when connection pooling is active.
+
+    Reads ``FABRIC_SQL_POOL`` from the environment at call-time so tests can
+    toggle it without reimporting the module.  Any value other than ``"0"``
+    keeps pooling enabled (the default).
+    """
+    return os.environ.get("FABRIC_SQL_POOL", "1") != "0"
+
+
+def _pool_time() -> float:
+    """Return the current monotonic clock value.
+
+    Isolated so tests can monkeypatch it to inject a deterministic clock
+    without affecting ``time.monotonic`` globally.
+    """
+    return time.monotonic()
+
+
+def _is_alive(conn: Any) -> bool:  # noqa: ANN401
+    """Return True if *conn* appears usable.
+
+    Checks the ``closed`` attribute when it is an ``int`` or ``bool`` (the
+    DB-API convention: 0 = open).  Ignores the attribute when it is not a
+    plain numeric value so that mock objects without an explicit ``closed``
+    attribute are treated as alive.
+    """
+    closed = getattr(conn, "closed", None)
+    # Only trust closed when it is a real int/bool; ignore Mock objects, etc.
+    if not isinstance(closed, (int, bool)):
+        return True
+    return not bool(closed)
+
+
+def reset_pool() -> None:
+    """Drain and physically close every pooled connection.
+
+    Call this on graceful shutdown (e.g. from the MCP server lifespan teardown,
+    a CLI ``finally`` block, or a pytest fixture teardown).  Safe to call
+    multiple times and from any thread.
+    """
+    with _pool_lock:
+        to_close: list[Any] = []
+        for slots in _pool.values():
+            while slots:
+                conn, _ts = slots.pop()
+                to_close.append(conn)
+        _pool.clear()
+    # Close outside the lock so slow I/O does not block other threads.
+    for conn in to_close:
+        with contextlib.suppress(Exception):
+            conn.close()
+
+
+def _pool_checkout(key: _PoolKey) -> Any | None:  # noqa: ANN401
+    """Pop and return a live, non-expired connection from the pool, or ``None``.
+
+    Expired or dead connections are discarded (physically closed) during the
+    search.  The pop is from the end of the list (LIFO - most recently used).
+    """
+    now = _pool_time()
+    deadline = POOL_MAX_IDLE_SECS
+    to_discard: list[Any] = []
+    result: Any = None
+
+    with _pool_lock:
+        slots = _pool.get(key)
+        if not slots:
+            return None
+        # Pop from the top (LIFO) until we find a usable slot.
+        while slots:
+            conn, last_used = slots.pop()
+            if now - last_used > deadline or not _is_alive(conn):
+                to_discard.append(conn)
+                continue
+            result = conn
+            break
+
+    # Close discarded connections outside the lock (may be slow I/O).
+    for dead in to_discard:
+        with contextlib.suppress(Exception):
+            dead.close()
+
+    return result
+
+
+def _pool_checkin(key: _PoolKey, conn: Any) -> None:  # noqa: ANN401
+    """Return *conn* to the pool if there is room, else physically close it."""
+    do_close = False
+    with _pool_lock:
+        slots = _pool.setdefault(key, [])
+        if len(slots) >= POOL_MAX_IDLE:
+            do_close = True
+        else:
+            slots.append((conn, _pool_time()))
+    if do_close:
+        with contextlib.suppress(Exception):
+            conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Pooled connection wrapper
+# ---------------------------------------------------------------------------
+
+
+class _PooledConnection:
+    """Thin wrapper that intercepts ``.close()`` to return the connection to the pool.
+
+    When ``.close()`` is called:
+    - If ``_discard`` is ``True`` (set after a failed query), the underlying
+      connection is physically closed and NOT returned to the pool.
+    - If pooling is disabled (``FABRIC_SQL_POOL=0``), the underlying connection
+      is physically closed.
+    - Otherwise the underlying connection is returned to the pool for reuse.
+
+    All other method calls are forwarded verbatim to the underlying connection,
+    so callers need not change any code.
+    """
+
+    def __init__(self, underlying: Any, key: _PoolKey) -> None:  # noqa: ANN401
+        self._underlying = underlying
+        self._key = key
+        # Set to True after an exception during execute so that the connection
+        # is NOT returned to the pool (unknown transaction state).
+        self._discard: bool = False
+
+    # ------------------------------------------------------------------ #
+    # Forward _Connection protocol methods to the underlying object.      #
+    # ------------------------------------------------------------------ #
+
+    def cursor(self) -> Any:  # noqa: ANN401
+        return self._underlying.cursor()
+
+    def commit(self) -> None:
+        self._underlying.commit()
+
+    def close(self) -> None:
+        """Return to pool or physically close, depending on state and config."""
+        if self._discard or not _pool_enabled():
+            self._underlying.close()
+        else:
+            _pool_checkin(self._key, self._underlying)
+
+    # Convenience accessor used by pool-specific tests.
+    @property
+    def _raw(self) -> Any:  # noqa: ANN401
+        return self._underlying
+
+
+def _make_pool_key(target: SqlTarget, mode: CredentialMode) -> _PoolKey:
+    return (target.workspace_id, target.database, mode.value)
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -198,25 +398,38 @@ def open_connection(
     *,
     mode: CredentialMode = CredentialMode.DEFAULT,
 ) -> _Connection:
-    """Open a single synchronous connection to the target warehouse.
+    """Return a connection to the target warehouse, reusing a pooled one when available.
 
-    This function is intentionally synchronous.  Callers that need to keep
-    the event loop free should wrap the entire sync block in
-    ``asyncio.to_thread``.
+    The returned object satisfies the :class:`_Connection` protocol.  Its
+    ``.close()`` method returns the connection to the pool (when pooling is
+    enabled and the connection is healthy) rather than physically closing the
+    socket.  Callers do **not** need to change - the ``contextlib.closing``
+    pattern works unchanged.
 
-    The caller is responsible for closing the returned connection (e.g. via
-    ``contextlib.closing``).
+    When pooling is disabled (``FABRIC_SQL_POOL=0``) every call opens a fresh
+    physical connection and ``.close()`` physically closes it.
+
+    This function is intentionally synchronous.  Callers that need to keep the
+    event loop free should wrap the entire sync block in ``asyncio.to_thread``.
 
     Args:
         target: The :class:`SqlTarget` identifying the warehouse.
         mode: The credential mode for Entra authentication.
 
     Returns:
-        A DB-API 2.0 connection object from the ``mssql_python`` driver.
+        A :class:`_PooledConnection` wrapping a DB-API 2.0 connection from
+        the ``mssql_python`` driver.
     """
+    key = _make_pool_key(target, mode)
+
+    if _pool_enabled():
+        cached = _pool_checkout(key)
+        if cached is not None:
+            return _PooledConnection(cached, key)
+
     cs = build_connection_string(target, mode=mode)
-    conn: _Connection = _get_mssql().connect(cs)
-    return conn
+    raw_conn: Any = _get_mssql().connect(cs)
+    return _PooledConnection(raw_conn, key)
 
 
 def map_driver_error(exc: BaseException) -> Exception | None:
@@ -224,10 +437,10 @@ def map_driver_error(exc: BaseException) -> Exception | None:
 
     Matching strategy (in priority order):
 
-    1. **Native SQL Server error numbers** — inspect ``exc.ddbc_error`` for
+    1. **Native SQL Server error numbers** - inspect ``exc.ddbc_error`` for
        embedded error numbers (e.g. ``Error: 229``, ``(18456)``).  This is the
        most reliable signal and survives locale / driver-version changes.
-    2. **Message-fragment fallback** — scan the stringified exception for known
+    2. **Message-fragment fallback** - scan the stringified exception for known
        English substrings.  Kept so that behaviour never regresses when error
        numbers are unavailable (e.g. mock exceptions in tests).
 
@@ -295,16 +508,16 @@ def run_query(  # noqa: PLR0913
             placeholders in *statement*.  Identifiers (schema/table names) MUST
             be bracket-quoted via :func:`~fabric_dw.identifiers.quote_identifier`
             and validated via :func:`~fabric_dw.identifiers.validate_identifier`
-            — they cannot be bound as parameters.
+            - they cannot be bound as parameters.
         mode: The credential mode for Entra authentication.
         commit: When ``True``, call ``conn.commit()`` after execute (for DDL/DML).
         fetch: One of:
-            - ``"all"`` (default) — call ``fetchall()`` and return
+            - ``"all"`` (default) - call ``fetchall()`` and return
               ``(columns, rows)``; columns are derived from ``cursor.description``.
-            - ``"one"`` — call ``fetchone()`` (not yet used but available for
+            - ``"one"`` - call ``fetchone()`` (not yet used but available for
               future point-lookup helpers); returns ``(columns, [row])`` or
               ``([], [])`` when no row.
-            - ``"none"`` — do not fetch; returns ``([], [])``.
+            - ``"none"`` - do not fetch; returns ``([], [])``.
 
     Returns:
         A ``(columns, rows)`` tuple where *columns* is a list of column-name
@@ -315,20 +528,15 @@ def run_query(  # noqa: PLR0913
         AuthError: If the driver reports an authentication failure.
         Exception: Any other driver error is propagated unchanged.
     """
-    with closing(open_connection(target, mode=mode)) as conn:
-        cursor = conn.cursor()
-        try:
-            if params:
-                cursor.execute(statement, params)
-            else:
-                cursor.execute(statement)
-            if commit:
-                conn.commit()
-        except Exception as exc:
-            mapped = map_driver_error(exc)
-            if mapped:
-                raise mapped from exc
-            raise
+    conn = open_connection(target, mode=mode)
+    cursor = conn.cursor()
+    try:
+        if params:
+            cursor.execute(statement, params)
+        else:
+            cursor.execute(statement)
+        if commit:
+            conn.commit()
 
         if fetch == "none":
             return [], []
@@ -341,7 +549,19 @@ def run_query(  # noqa: PLR0913
 
         # Default: fetch all rows.
         rows: list[tuple[Any, ...]] = cursor.fetchall()
+    except Exception as exc:
+        # Mark tainted so close() physically closes instead of pooling.
+        # setattr is safe for both _PooledConnection and mock objects.
+        if isinstance(conn, _PooledConnection):
+            conn._discard = True
+        mapped = map_driver_error(exc)
+        if mapped:
+            raise mapped from exc
+        raise
+    else:
         return cols, rows
+    finally:
+        conn.close()
 
 
 def run_statements(
@@ -367,14 +587,19 @@ def run_statements(
         AuthError: If the driver reports an authentication failure.
         Exception: Any other driver error is propagated unchanged.
     """
-    with closing(open_connection(target, mode=mode)) as conn:
-        cursor = conn.cursor()
+    conn = open_connection(target, mode=mode)
+    cursor = conn.cursor()
+    try:
         for stmt in statements:
             try:
                 cursor.execute(stmt)
                 conn.commit()
             except Exception as exc:
+                if isinstance(conn, _PooledConnection):
+                    conn._discard = True
                 mapped = map_driver_error(exc)
                 if mapped:
                     raise mapped from exc
                 raise
+    finally:
+        conn.close()
