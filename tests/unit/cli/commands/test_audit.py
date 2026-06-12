@@ -15,8 +15,8 @@ from click.testing import CliRunner
 
 from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._main import cli
-from fabric_dw.exceptions import NotFoundError
-from fabric_dw.models import WarehouseKind
+from fabric_dw.exceptions import FabricError, NotFoundError
+from fabric_dw.models import AuditSettings, WarehouseKind
 from tests.fixtures.api_payloads import AUDIT_SETTINGS_PAYLOAD
 
 WS_GUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
@@ -156,7 +156,8 @@ class TestAuditEnable:
         _ = cache_env
         mock_http = AsyncMock()
         mock_http.request = AsyncMock(return_value=_make_response(200, AUDIT_SETTINGS_PAYLOAD))
-        mock_enable = AsyncMock()
+        audit_settings = AuditSettings.model_validate(json.loads(AUDIT_SETTINGS_PAYLOAD))
+        mock_enable = AsyncMock(return_value=audit_settings)
         with (
             patch(
                 "fabric_dw.cli.commands.audit.build_http_client",
@@ -301,6 +302,10 @@ class TestAuditSetRetention:
             patch(
                 "fabric_dw.cli.commands.audit._resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.cli.commands.audit._audit_svc.set_retention",
+                new=AsyncMock(side_effect=FabricError("retentionDays value is out of range")),
             ),
         ):
             result = runner.invoke(
