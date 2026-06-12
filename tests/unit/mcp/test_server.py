@@ -1327,6 +1327,33 @@ async def test_delete_schema_passes_kind_to_service(mock_ctx, ctx_patch) -> None
     assert kwargs.get("kind") == WarehouseKind.WAREHOUSE
 
 
+async def test_delete_schema_passes_sql_endpoint_kind_to_service(mock_ctx, ctx_patch) -> None:
+    """delete_schema must forward kind=SQL_ENDPOINT when the entry is a SQL Analytics Endpoint.
+
+    Without this test, a bug that always passed kind=WAREHOUSE would not be caught
+    by the Warehouse-only test above.
+    """
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = _make_sql_endpoint_entry()  # SQL_ENDPOINT kind
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+    mock_delete = AsyncMock(return_value=None)
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
+        patch("fabric_dw.services.schemas.delete_schema", new=mock_delete),
+    ):
+        await mcp._tool_manager.call_tool(
+            "delete_schema",
+            {"workspace": _WS_NAME, "item": "MySqlEndpoint", "name": "myschema"},
+        )
+
+    _, kwargs = mock_delete.call_args
+    assert kwargs.get("kind") == WarehouseKind.SQL_ENDPOINT
+
+
 async def test_read_view_happy_path(mock_ctx, ctx_patch) -> None:
     """read_view calls views_svc.read_view and returns {columns, rows}."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415

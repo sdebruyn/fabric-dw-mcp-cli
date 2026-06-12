@@ -397,10 +397,15 @@ class TestDeleteSchemaCascade:
         drop_sql: str = cursor.execute.call_args[0][0].upper()
         assert "DROP PROCEDURE" in drop_sql
 
-    async def test_cascade_drops_function_then_schema(self) -> None:
-        """cascade=True on WAREHOUSE: DROP FUNCTION for scalar functions (type FN)."""
+    @pytest.mark.parametrize("fn_type", ["FN", "IF", "TF"])
+    async def test_cascade_drops_function_for_all_function_types(self, fn_type: str) -> None:
+        """cascade=True on WAREHOUSE: DROP FUNCTION for all function type codes (FN/IF/TF).
+
+        Removing any of the three _TYPE_TO_DDL_KEYWORD entries for function types
+        would cause this parametrised test to fail for that type code.
+        """
         target = _make_target()
-        list_conn = _make_conn([("fn_calc", "FN")], _OBJ_COLS)
+        list_conn = _make_conn([("fn_calc", fn_type)], _OBJ_COLS)
         drop_objects_conn = _make_conn_for_ddl()
         drop_schema_conn = _make_conn_for_ddl()
         with patch(
@@ -549,10 +554,17 @@ class TestDeleteSchemaCascadeEndpoint:
         drop_sql: str = cursor.execute.call_args[0][0].upper()
         assert "DROP PROCEDURE" in drop_sql
 
-    async def test_cascade_endpoint_drops_function(self) -> None:
-        """cascade=True on SQL_ENDPOINT: functions (FN/IF/TF) ARE dropped."""
+    @pytest.mark.parametrize("fn_type", ["FN", "IF", "TF"])
+    async def test_cascade_endpoint_drops_function_for_all_function_types(
+        self, fn_type: str
+    ) -> None:
+        """cascade=True on SQL_ENDPOINT: DROP FUNCTION for all function type codes (FN/IF/TF).
+
+        Removing any of the three _TYPE_TO_DDL_KEYWORD entries for function types
+        would cause this parametrised test to fail for that type code.
+        """
         target = _make_target()
-        list_conn = _make_conn([("fn_calc", "FN")], _OBJ_COLS)
+        list_conn = _make_conn([("fn_calc", fn_type)], _OBJ_COLS)
         drop_objects_conn = _make_conn_for_ddl()
         drop_schema_conn = _make_conn_for_ddl()
         with patch(
@@ -657,3 +669,26 @@ class TestDeleteSchemaCascadeEndpoint:
         assert any("DROP VIEW" in s for s in sqls)
         assert any("DROP PROCEDURE" in s for s in sqls)
         assert any("DROP FUNCTION" in s for s in sqls)
+
+    async def test_cascade_endpoint_space_padded_type_code_excluded(self) -> None:
+        """sys.objects.type is char(2); single-char codes are right-padded (e.g. 'U ').
+
+        The .strip() call in _drop_schema_objects must handle this so that 'U ' is
+        still recognised as a table and excluded on a SQL Analytics Endpoint.
+        Removing .strip() would cause the padded code to bypass the exclusion check
+        and generate a DROP TABLE statement — this test would then catch it.
+        """
+        target = _make_target()
+        # Simulate driver returning space-padded char(2) type code for a table
+        list_conn = _make_conn([("orders", "U ")], _OBJ_COLS)
+        drop_schema_conn = _make_conn_for_ddl()
+        with patch(
+            "fabric_dw.sql.open_connection",
+            side_effect=[list_conn, drop_schema_conn],
+        ) as mock_open:
+            await schemas.delete_schema(
+                target, "sales", cascade=True, kind=WarehouseKind.SQL_ENDPOINT
+            )
+        # 'U ' must be stripped → table excluded → no object-drop connection opened.
+        # Connection count: list (1) + DROP SCHEMA (2) = 2.
+        assert mock_open.call_count == 2
