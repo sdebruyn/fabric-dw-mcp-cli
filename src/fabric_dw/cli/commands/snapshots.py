@@ -33,13 +33,13 @@ def snapshots_group() -> None:
 
 @snapshots_group.command("list")
 @click.argument("workspace", required=False, default=None)
-@click.argument("warehouse", required=False, default=None)
+@click.argument("item", required=False, default=None)
 @click.pass_obj
 @_coro
-async def list_cmd(ctx: CliContext, workspace: str | None, warehouse: str | None) -> None:
-    """List all snapshots for WAREHOUSE in WORKSPACE."""
+async def list_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> None:
+    """List all snapshots for ITEM (warehouse) in WORKSPACE."""
     ws = resolve_workspace_arg(ctx, workspace)
-    wh = resolve_warehouse_arg(ctx, warehouse)
+    wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
             ws_id, entry = await _resolve_item(http, ws, wh)
@@ -55,7 +55,7 @@ async def list_cmd(ctx: CliContext, workspace: str | None, warehouse: str | None
 
 @snapshots_group.command("create")
 @click.argument("workspace", required=False, default=None)
-@click.argument("warehouse", required=False, default=None)
+@click.argument("item", required=False, default=None)
 @click.argument("name")
 @click.option("--description", default=None, help="Optional description.")
 @click.option(
@@ -68,14 +68,14 @@ async def list_cmd(ctx: CliContext, workspace: str | None, warehouse: str | None
 async def create_cmd(
     ctx: CliContext,
     workspace: str | None,
-    warehouse: str | None,
+    item: str | None,
     name: str,
     description: str | None,
     snapshot_dt: str | None,
 ) -> None:
-    """Create a new snapshot named NAME for WAREHOUSE in WORKSPACE."""
+    """Create a new snapshot named NAME for ITEM (warehouse) in WORKSPACE."""
     ws = resolve_workspace_arg(ctx, workspace)
-    wh = resolve_warehouse_arg(ctx, warehouse)
+    wh = resolve_warehouse_arg(ctx, item)
     parsed_dt: datetime | None = None
     if snapshot_dt is not None:
         parsed_dt = parse_iso_datetime(snapshot_dt, "--snapshot-dt")
@@ -138,10 +138,12 @@ async def delete_cmd(ctx: CliContext, workspace: str, snapshot: str) -> None:
     try:
         async with build_http_client(ctx) as http:
             ws_id, entry, cache = await _resolve_item_with_cache(http, workspace, snapshot)
-            confirm_destructive(
+            if not confirm_destructive(
                 f"Delete snapshot {entry.display_name!r} ({entry.id})?",
                 yes=ctx.yes,
-            )
+            ):
+                click.echo("Aborted.")
+                return
             await _snapshots_svc.delete(
                 http,
                 ws_id,
@@ -150,15 +152,13 @@ async def delete_cmd(ctx: CliContext, workspace: str, snapshot: str) -> None:
                 name=entry.display_name or None,
             )
             click.echo(f"Snapshot {entry.display_name!r} ({entry.id}) deleted.")
-    except click.Abort:
-        raise
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc
 
 
 @snapshots_group.command("roll")
 @click.argument("workspace", required=False, default=None)
-@click.argument("warehouse", required=False, default=None)
+@click.argument("item", required=False, default=None)
 @click.argument("snapshot_name")
 @click.option(
     "--at",
@@ -171,17 +171,17 @@ async def delete_cmd(ctx: CliContext, workspace: str, snapshot: str) -> None:
 async def roll_cmd(
     ctx: CliContext,
     workspace: str | None,
-    warehouse: str | None,
+    item: str | None,
     snapshot_name: str,
     new_dt: str | None,
 ) -> None:
-    """Roll SNAPSHOT_NAME on WAREHOUSE in WORKSPACE to a new timestamp.
+    """Roll SNAPSHOT_NAME on ITEM (warehouse) in WORKSPACE to a new timestamp.
 
-    WORKSPACE and WAREHOUSE accept name or GUID.
+    WORKSPACE and ITEM accept name or GUID.
     SNAPSHOT_NAME must be the display name of the snapshot database.
     """
     ws = resolve_workspace_arg(ctx, workspace)
-    wh = resolve_warehouse_arg(ctx, warehouse)
+    wh = resolve_warehouse_arg(ctx, item)
     parsed_dt: datetime | None = None
     if new_dt is not None:
         parsed_dt = parse_iso_datetime(new_dt, "--at")
@@ -189,14 +189,14 @@ async def roll_cmd(
     try:
         async with build_http_client(ctx) as http:
             target, entry = await build_sql_target(http, ws, wh)
-            confirm_destructive(
+            if not confirm_destructive(
                 f"Roll snapshot {snapshot_name!r} on warehouse "
                 f"{entry.display_name!r} ({entry.id})?",
                 yes=ctx.yes,
-            )
+            ):
+                click.echo("Aborted.")
+                return
             await _snapshots_svc.roll_timestamp(target, snapshot_name, parsed_dt, mode=ctx.auth)
             click.echo(f"Snapshot {snapshot_name!r} rolled.")
-    except click.Abort:
-        raise
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc

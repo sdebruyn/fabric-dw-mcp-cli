@@ -208,7 +208,8 @@ class TestWarehousesRename:
             )
         assert result.exit_code == 0
 
-    def test_rename_declined_aborts(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_rename_declined_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        """Declining rename is a clean no-op (exit 0, policy: decline != error)."""
         _ = cache_env
         mock_http = AsyncMock()
         _cache = LookupCache(path=cache_env / "lookup.json")
@@ -227,7 +228,8 @@ class TestWarehousesRename:
                 ["warehouses", "rename", WS_GUID, WH_GUID, "NewName"],
                 input="n\n",
             )
-        assert result.exit_code != 0
+        assert result.exit_code == 0
+        assert "Aborted." in result.output
 
 
 class TestWarehousesDelete:
@@ -251,7 +253,8 @@ class TestWarehousesDelete:
             result = runner.invoke(cli, ["--yes", "warehouses", "delete", WS_GUID, WH_GUID])
         assert result.exit_code == 0
 
-    def test_delete_declined_aborts(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_delete_declined_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        """Declining delete is a clean no-op (exit 0, policy: decline != error)."""
         _ = cache_env
         mock_http = AsyncMock()
         _cache = LookupCache(path=cache_env / "lookup.json")
@@ -266,7 +269,8 @@ class TestWarehousesDelete:
             ),
         ):
             result = runner.invoke(cli, ["warehouses", "delete", WS_GUID, WH_GUID], input="n\n")
-        assert result.exit_code != 0
+        assert result.exit_code == 0
+        assert "Aborted." in result.output
 
 
 class TestWarehousesListAllWorkspaces:
@@ -362,14 +366,13 @@ class TestWarehousesTakeover:
 class TestWarehousesDefaultFallback:
     """Verify that workspace/warehouse defaults from config are used when arg is omitted."""
 
-    def test_list_uses_config_default_workspace(
+    def test_list_explicit_workspace_arg_exits_zero(
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """warehouses list requires an explicit WORKSPACE or -A (no config-default fallback)."""
         monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
         monkeypatch.delenv("FABRIC_DW_DEFAULT_WORKSPACE", raising=False)
-        # Write workspace default to config
-        runner.invoke(cli, ["config", "set", "workspace", WS_GUID])
         mock_http = AsyncMock()
         mock_http.iter_paginated = MagicMock(return_value=_async_iter([]))
         with (
@@ -382,7 +385,7 @@ class TestWarehousesDefaultFallback:
                 new=AsyncMock(return_value=WS_UUID),
             ),
         ):
-            result = runner.invoke(cli, ["warehouses", "list"])
+            result = runner.invoke(cli, ["warehouses", "list", WS_GUID])
         assert result.exit_code == 0
 
     def test_list_missing_workspace_raises_usage_error(

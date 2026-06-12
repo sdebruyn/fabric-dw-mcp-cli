@@ -2,22 +2,21 @@
 
 from __future__ import annotations
 
-import json as _json
 import logging
 
 import click
 
 from fabric_dw.cli._context import CliContext
-from fabric_dw.cli._render import confirm, render
+from fabric_dw.cli._render import confirm, render, render_permissions_table
 from fabric_dw.cli.commands._utils import (
     _coro,
     _resolve_item,
     _resolve_item_with_cache,
     build_http_client,
     make_resolver,
-    render_permissions_table,
     resolve_warehouse_arg,
     resolve_workspace_arg,
+    validate_workspace_or_all_workspaces,
 )
 from fabric_dw.exceptions import FabricError
 from fabric_dw.models import WarehouseKind
@@ -31,6 +30,8 @@ _log = logging.getLogger(__name__)
 @click.group("warehouses")
 def warehouses_group() -> None:
     """Manage Microsoft Fabric Data Warehouses and SQL Analytics Endpoints."""
+    # NOTE: positional argument is named 'warehouse' throughout this group (not 'item') because
+    # every command here is warehouse-specific; this is a deliberate exception to the item-rename.
 
 
 @warehouses_group.command("list")
@@ -49,12 +50,9 @@ async def list_cmd(ctx: CliContext, workspace: str | None, all_workspaces: bool)
     """List all warehouses in WORKSPACE (name or GUID).
 
     Pass -A / --all-workspaces to scan every visible workspace instead.
-    WORKSPACE and --all-workspaces are mutually exclusive.
-    WORKSPACE may be omitted when a default is set via
-    ``fabric-dw config set workspace`` or ``FABRIC_DW_DEFAULT_WORKSPACE``.
+    WORKSPACE and --all-workspaces are mutually exclusive; exactly one is required.
     """
-    if workspace and all_workspaces:
-        raise click.UsageError("WORKSPACE and --all-workspaces are mutually exclusive.")  # noqa: TRY003
+    validate_workspace_or_all_workspaces(workspace, all_workspaces)
     try:
         async with build_http_client(ctx) as http:
             if all_workspaces:
@@ -148,7 +146,8 @@ async def rename_cmd(
                 yes=ctx.yes,
             )
             if not confirmed:
-                raise click.Abort()  # noqa: TRY301
+                click.echo("Aborted.")
+                return
             obj = await _warehouses_svc.rename(
                 http,
                 ws_id,
@@ -159,8 +158,6 @@ async def rename_cmd(
                 old_name=entry.display_name or None,
             )
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
-    except click.Abort:
-        raise
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -182,7 +179,8 @@ async def delete_cmd(ctx: CliContext, workspace: str | None, warehouse: str | No
                 yes=ctx.yes,
             )
             if not confirmed:
-                raise click.Abort()  # noqa: TRY301
+                click.echo("Aborted.")
+                return
             await _warehouses_svc.delete(
                 http,
                 ws_id,
@@ -191,8 +189,6 @@ async def delete_cmd(ctx: CliContext, workspace: str | None, warehouse: str | No
                 name=entry.display_name or None,
             )
             click.echo(f"Warehouse {entry.display_name!r} ({entry.id}) deleted.")
-    except click.Abort:
-        raise
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -221,11 +217,10 @@ async def takeover_cmd(ctx: CliContext, workspace: str | None, warehouse: str | 
                 yes=ctx.yes,
             )
             if not confirmed:
-                raise click.Abort()  # noqa: TRY301
+                click.echo("Aborted.")
+                return
             await _ownership_svc.takeover(http, ws_id, entry.id)
             click.echo(f"Ownership of warehouse {entry.display_name!r} ({entry.id}) taken.")
-    except click.Abort:
-        raise
     except click.UsageError:
         raise
     except FabricError as exc:
@@ -249,15 +244,8 @@ async def permissions_cmd(ctx: CliContext, workspace: str | None, warehouse: str
         async with build_http_client(ctx) as http:
             ws_id, entry = await _resolve_item(http, ws, wh)
             items = await _permissions_svc.list_item_access(http, ws_id, entry.id)
-            if ctx.json_output:
-                click.echo(
-                    _json.dumps(
-                        [a.model_dump(by_alias=True, mode="json") for a in items],
-                        indent=2,
-                        default=str,
-                    )
-                )
-            else:
-                render_permissions_table(items, title="Warehouse Permissions")
+            render_permissions_table(
+                items, title="Warehouse Permissions", json_output=ctx.json_output
+            )
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc

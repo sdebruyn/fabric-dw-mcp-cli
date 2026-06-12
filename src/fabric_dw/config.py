@@ -40,6 +40,7 @@ __all__ = [
     "default_path",
     "load_config",
     "save_config",
+    "set_default",
 ]
 
 _log = logging.getLogger(__name__)
@@ -143,6 +144,29 @@ def save_config(config: UserConfig, path: Path | None = None) -> None:
             with contextlib.suppress(OSError):
                 os.unlink(tmp_name)
             raise
+
+
+def set_default(key: str, value: str | None, path: Path | None = None) -> None:
+    """Atomically update a single key under ``[defaults]`` without touching other keys.
+
+    Args:
+        key: One of ``"workspace"`` or ``"warehouse"``.
+        value: The new value, or *None* to clear (unset) the key.
+        path: Optional override for the config file path.
+
+    Raises:
+        ValueError: If *key* is not a recognised defaults field.
+    """
+    allowed = {"workspace", "warehouse"}
+    if key not in allowed:
+        raise ValueError(f"Unknown config key {key!r}; must be one of {sorted(allowed)}")  # noqa: TRY003
+    cfg = load_config(path)
+    current = cfg.defaults
+    new_defaults = Defaults(
+        workspace=value if key == "workspace" else current.workspace,
+        warehouse=value if key == "warehouse" else current.warehouse,
+    )
+    save_config(UserConfig(defaults=new_defaults), path)
 
 
 def clear_config(path: Path | None = None) -> None:

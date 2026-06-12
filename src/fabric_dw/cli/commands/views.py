@@ -47,7 +47,7 @@ async def list_cmd(
             target, _entry = await build_sql_target(http, ws, wh)
             items = await _views_svc.list_views(target, schema=schema, mode=ctx.auth)
             render(
-                [v.model_dump(mode="json") for v in items],
+                [v.model_dump(by_alias=True, mode="json") for v in items],
                 json_output=ctx.json_output,
                 table_title="Views",
             )
@@ -121,7 +121,7 @@ async def get_cmd(
         async with build_http_client(ctx) as http:
             target, _entry = await build_sql_target(http, ws, wh)
             v = await _views_svc.get_view(target, schema, view_name, mode=ctx.auth)
-            render(v.model_dump(mode="json"), json_output=ctx.json_output)
+            render(v.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -151,7 +151,7 @@ async def create_cmd(
         async with build_http_client(ctx) as http:
             target, _entry = await build_sql_target(http, ws, wh)
             v = await _views_svc.create_view(target, schema, view_name, body, mode=ctx.auth)
-            render(v.model_dump(mode="json"), json_output=ctx.json_output)
+            render(v.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -185,11 +185,10 @@ async def update_cmd(
                 yes=ctx.yes,
             )
             if not confirmed:
-                raise click.Abort()  # noqa: TRY301
+                click.echo("Aborted.")
+                return
             v = await _views_svc.update_view(target, schema, view_name, body, mode=ctx.auth)
-            render(v.model_dump(mode="json"), json_output=ctx.json_output)
-    except click.Abort:
-        raise
+            render(v.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -218,10 +217,9 @@ async def drop_cmd(
                 yes=ctx.yes,
             )
             if not confirmed:
-                raise click.Abort()  # noqa: TRY301
+                click.echo("Aborted.")
+                return
             await _views_svc.drop_view(target, schema, view_name, mode=ctx.auth)
             click.echo(f"View [{schema}].[{view_name}] dropped.")
-    except click.Abort:
-        raise
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc

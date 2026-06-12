@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator, Callable, Coroutine, Sequence
+from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from functools import wraps
@@ -13,14 +13,12 @@ from uuid import UUID
 
 import anyio
 import click
-from rich.console import Console
-from rich.table import Table
 
 from fabric_dw import auth as _auth
 from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.identifiers import parse_qualified_name as _parse_qn
-from fabric_dw.models import ItemAccess, WarehouseKind
+from fabric_dw.models import WarehouseKind
 from fabric_dw.resolver import Resolver
 from fabric_dw.sql import SqlTarget
 
@@ -240,7 +238,15 @@ def parse_iso_datetime(value: str, param_name: str, *, assume_utc: bool = True) 
             f"invalid {param_name} {value!r}: expected ISO-8601 (e.g. 2024-01-01T00:00:00)"
         ) from exc
     if assume_utc:
-        return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
+        dt = dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
+    _DT_YEAR_MIN = 2000  # noqa: N806
+    _DT_YEAR_MAX = 2100  # noqa: N806
+    # Sanity range check: reject obviously wrong years (e.g. epoch 0 or year 9999).
+    if not (_DT_YEAR_MIN <= dt.year <= _DT_YEAR_MAX):
+        raise click.UsageError(  # noqa: TRY003
+            f"invalid {param_name} {value!r}: year {dt.year} is out of the expected range "
+            "(2000-2100). Check the timestamp."
+        )
     return dt
 
 
@@ -249,25 +255,28 @@ def parse_iso_datetime(value: str, param_name: str, *, assume_utc: bool = True) 
 # ---------------------------------------------------------------------------
 
 
-def confirm_destructive(prompt_text: str, *, yes: bool) -> None:
+def confirm_destructive(prompt_text: str, *, yes: bool) -> bool:
     """Prompt the user to confirm a destructive operation.
 
     Prints a WARNING preamble to *stderr* then asks for confirmation.
-    If the user declines, raises :class:`click.Abort`.
+
+    Policy: declining a destructive prompt is NOT an error — the user changed
+    their mind.  Callers should treat a ``False`` return as a clean no-op and
+    exit 0 (print "Aborted." and return).  Only genuine service/network errors
+    should exit non-zero.
 
     Args:
         prompt_text: The full confirmation prompt string (shown after the preamble).
         yes: When *True*, skip the prompt entirely (non-interactive / ``--yes`` mode).
 
-    Raises:
-        click.Abort: If the user answers "no".
+    Returns:
+        ``True`` when the operation should proceed, ``False`` when the user
+        declined (never raises).
     """
     if yes:
-        return
+        return True
     click.echo(f"\nWARNING: {prompt_text}\n", err=True)
-    confirmed = click.confirm("Proceed?", default=False)
-    if not confirmed:
-        raise click.Abort()
+    return click.confirm("Proceed?", default=False)
 
 
 # ---------------------------------------------------------------------------
@@ -332,38 +341,28 @@ def resolve_warehouse_arg(ctx: CliContext, value: str | None) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Permissions table renderer
+# --all-workspaces / WORKSPACE mutual-exclusion guard
 # ---------------------------------------------------------------------------
 
 
-def render_permissions_table(
-    accesses: Sequence[ItemAccess],
-    *,
-    title: str,
-    console: Console | None = None,
-) -> None:
-    """Render a sequence of :class:`~fabric_dw.models.ItemAccess` as a Rich table.
+def validate_workspace_or_all_workspaces(workspace: str | None, all_workspaces: bool) -> None:
+    """Enforce the WORKSPACE / --all-workspaces contract.
+
+    Either an explicit WORKSPACE or --all-workspaces must be given — but not
+    both.  Raises :class:`click.UsageError` in both failure cases so callers
+    get a consistent, friendly message regardless of which subcommand they
+    invoke.
 
     Args:
-        accesses: The list of item access records to display.
-        title: Table title shown in the Rich header.
-        console: Optional Rich console; defaults to a new :class:`~rich.console.Console`.
+        workspace: The positional WORKSPACE argument (or *None* if omitted).
+        all_workspaces: Whether ``--all-workspaces`` / ``-A`` was passed.
+
+    Raises:
+        click.UsageError: If both or neither are provided.
     """
-    con = console or Console()
-    table = Table(title=title, show_header=True, header_style="bold")
-    table.add_column("Display Name", no_wrap=True)
-    table.add_column("UPN / App ID")
-    table.add_column("Type")
-    table.add_column("Permissions")
-    table.add_column("Additional Permissions")
-
-    for entry in accesses:
-        p = entry.principal
-        display = p.display_name or ""
-        identity = p.user_principal_name or (str(p.aad_app_id) if p.aad_app_id else "")
-        ptype = p.type
-        perms = ", ".join(entry.item_access_details.permissions)
-        additional = ", ".join(entry.item_access_details.additional_permissions)
-        table.add_row(display, identity, ptype, perms, additional)
-
-    con.print(table)
+    if workspace and all_workspaces:
+        raise click.UsageError("WORKSPACE and --all-workspaces are mutually exclusive.")  # noqa: TRY003
+    if not workspace and not all_workspaces:
+        raise click.UsageError(  # noqa: TRY003
+            "Provide WORKSPACE or pass --all-workspaces / -A."
+        )

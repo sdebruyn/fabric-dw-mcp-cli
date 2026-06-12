@@ -290,14 +290,14 @@ async def update_cmd(
 @sql_pools_group.command("delete")
 @click.argument("workspace", required=False, default=None)
 @click.option("--name", required=True, help="Name of the pool to delete.")
-@click.option("--yes", "yes", is_flag=True, default=False, help="Skip confirmation prompt.")
 @click.pass_obj
 @_coro
-async def delete_cmd(ctx: CliContext, workspace: str | None, name: str, yes: bool) -> None:
+async def delete_cmd(ctx: CliContext, workspace: str | None, name: str) -> None:
     """Remove an SQL pool from WORKSPACE."""
     ws = resolve_workspace_arg(ctx, workspace)
-    if not yes and not ctx.yes and not confirm(f"Delete pool {name!r}?", yes=False):
-        raise click.Abort()
+    if not confirm(f"Delete pool {name!r}?", yes=ctx.yes):
+        click.echo("Aborted.")
+        return
     try:
         async with build_http_client(ctx) as http:
             ws_id = await resolve_workspace_id(http, ws)
@@ -368,14 +368,14 @@ async def disable_cmd(ctx: CliContext, workspace: str | None) -> None:
 
 @sql_pools_group.command("reset")
 @click.argument("workspace", required=False, default=None)
-@click.option("--yes", "yes", is_flag=True, default=False, help="Skip confirmation prompt.")
 @click.pass_obj
 @_coro
-async def reset_cmd(ctx: CliContext, workspace: str | None, yes: bool) -> None:
+async def reset_cmd(ctx: CliContext, workspace: str | None) -> None:
     """Clear all SQL pools for WORKSPACE (preserves enabled/disabled state)."""
     ws = resolve_workspace_arg(ctx, workspace)
-    if not yes and not ctx.yes and not confirm("Clear all SQL pools?", yes=False):
-        raise click.Abort()
+    if not confirm("Clear all SQL pools?", yes=ctx.yes):
+        click.echo("Aborted.")
+        return
     try:
         async with build_http_client(ctx) as http:
             ws_id = await resolve_workspace_id(http, ws)

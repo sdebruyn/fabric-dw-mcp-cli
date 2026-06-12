@@ -149,6 +149,62 @@ class TestAuditEnable:
             )
         assert result.exit_code == 0
 
+    def test_enable_with_unlimited_flag_exits_zero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """--unlimited flag sets retention to 0 (service convention for unlimited)."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_http.request = AsyncMock(return_value=_make_response(200, AUDIT_SETTINGS_PAYLOAD))
+        mock_enable = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.audit.build_http_client",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.audit._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.cli.commands.audit._audit_svc.enable",
+                new=mock_enable,
+            ),
+        ):
+            result = runner.invoke(cli, ["audit", "enable", WS_GUID, WH_GUID, "--unlimited"])
+        assert result.exit_code == 0
+        mock_enable.assert_awaited_once()
+        _, kwargs = mock_enable.call_args
+        assert kwargs["retention_days"] == 0
+
+    def test_enable_retention_and_unlimited_mutual_exclusion(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """Providing both --retention-days and --unlimited is a usage error."""
+        _ = cache_env
+        result = runner.invoke(
+            cli,
+            ["audit", "enable", WS_GUID, WH_GUID, "--retention-days", "30", "--unlimited"],
+        )
+        assert result.exit_code != 0
+
+    def test_enable_retention_days_zero_is_rejected(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """--retention-days 0 must be rejected with a usage error (use --unlimited instead)."""
+        _ = cache_env
+        result = runner.invoke(cli, ["audit", "enable", WS_GUID, WH_GUID, "--retention-days", "0"])
+        assert result.exit_code != 0
+        assert "--unlimited" in result.output
+
+    def test_enable_retention_days_negative_is_rejected(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """Negative --retention-days must be rejected with a usage error."""
+        _ = cache_env
+        result = runner.invoke(cli, ["audit", "enable", WS_GUID, WH_GUID, "--retention-days", "-1"])
+        assert result.exit_code != 0
+
 
 class TestAuditDisable:
     """audit disable — happy path and confirmation."""
@@ -170,7 +226,8 @@ class TestAuditDisable:
             result = runner.invoke(cli, ["--yes", "audit", "disable", WS_GUID, WH_GUID])
         assert result.exit_code == 0
 
-    def test_disable_declined_aborts(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_disable_declined_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        """Declining disable is a clean no-op (exit 0, policy: decline != error)."""
         _ = cache_env
         mock_http = AsyncMock()
         with (
@@ -184,7 +241,8 @@ class TestAuditDisable:
             ),
         ):
             result = runner.invoke(cli, ["audit", "disable", WS_GUID, WH_GUID], input="n\n")
-        assert result.exit_code != 0
+        assert result.exit_code == 0
+        assert "Aborted." in result.output
 
 
 class TestAuditSetRetention:

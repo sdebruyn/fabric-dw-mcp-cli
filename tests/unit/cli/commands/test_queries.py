@@ -164,7 +164,8 @@ class TestQueriesKill:
             result = runner.invoke(cli, ["--yes", "queries", "kill", WS_GUID, WH_GUID, "42"])
         assert result.exit_code == 0
 
-    def test_kill_declined_aborts(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_kill_declined_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        """Declining kill is a clean no-op (exit 0, policy: decline != error)."""
         _ = cache_env
         mock_http = AsyncMock()
         with (
@@ -178,7 +179,8 @@ class TestQueriesKill:
             ),
         ):
             result = runner.invoke(cli, ["queries", "kill", WS_GUID, WH_GUID, "42"], input="n\n")
-        assert result.exit_code != 0
+        assert result.exit_code == 0
+        assert "Aborted." in result.output
 
     def test_kill_permission_denied_returns_nonzero(
         self, runner: CliRunner, cache_env: Path

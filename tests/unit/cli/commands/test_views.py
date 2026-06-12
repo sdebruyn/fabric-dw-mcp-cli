@@ -579,7 +579,8 @@ class TestViewsUpdate:
             )
         assert result.exit_code == 0
 
-    def test_update_declined_aborts(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_update_declined_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        """Declining update is a clean no-op (exit 0, policy: decline != error)."""
         _ = cache_env
         mock_http = AsyncMock()
         with (
@@ -605,7 +606,8 @@ class TestViewsUpdate:
                 ],
                 input="n\n",
             )
-        assert result.exit_code != 0
+        assert result.exit_code == 0
+        assert "Aborted." in result.output
 
     def test_update_from_file_strips_utf8_sig_bom(
         self, runner: CliRunner, cache_env: Path, tmp_path: Path
@@ -678,7 +680,8 @@ class TestViewsDrop:
             )
         assert result.exit_code == 0
 
-    def test_drop_declined_aborts(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_drop_declined_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        """Declining drop is a clean no-op (exit 0, policy: decline != error)."""
         _ = cache_env
         mock_http = AsyncMock()
         with (
@@ -696,7 +699,8 @@ class TestViewsDrop:
                 ["views", "drop", WS_GUID, WH_GUID, "dbo.vw_sales"],
                 input="n\n",
             )
-        assert result.exit_code != 0
+        assert result.exit_code == 0
+        assert "Aborted." in result.output
 
     def test_drop_bad_qualified_name_exits_nonzero(
         self, runner: CliRunner, cache_env: Path

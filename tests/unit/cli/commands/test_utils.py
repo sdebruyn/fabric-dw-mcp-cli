@@ -24,6 +24,7 @@ from fabric_dw.cli.commands._utils import (
     parse_qualified_name,
     resolve_item,
     resolve_workspace_id,
+    validate_workspace_or_all_workspaces,
 )
 from fabric_dw.models import WarehouseKind
 from fabric_dw.resolver import Resolver
@@ -359,21 +360,74 @@ class TestParseIsoDatetime:
 
 
 class TestConfirmDestructive:
-    """confirm_destructive skips prompt when yes=True, aborts when declined."""
+    """confirm_destructive skips prompt when yes=True; returns bool (never raises).
 
-    def test_yes_flag_skips_prompt(self) -> None:
-        # Should not raise.
-        confirm_destructive("Delete everything?", yes=True)
+    Policy: declining a destructive prompt is NOT an error (exit 0 / no-op).
+    """
 
-    def test_declined_raises_abort(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_yes_flag_returns_true(self) -> None:
+        result = confirm_destructive("Delete everything?", yes=True)
+        assert result is True
+
+    def test_declined_returns_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("click.confirm", lambda *_a, **_kw: False)
-        with pytest.raises(click.Abort):
-            confirm_destructive("Delete everything?", yes=False)
+        result = confirm_destructive("Delete everything?", yes=False)
+        assert result is False
 
-    def test_confirmed_does_not_raise(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_confirmed_returns_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("click.confirm", lambda *_a, **_kw: True)
+        result = confirm_destructive("Delete everything?", yes=False)
+        assert result is True
+
+
+# ---------------------------------------------------------------------------
+# validate_workspace_or_all_workspaces
+# ---------------------------------------------------------------------------
+
+
+class TestValidateWorkspaceOrAllWorkspaces:
+    """Shared guard for the WORKSPACE / --all-workspaces mutual-exclusion contract."""
+
+    def test_explicit_workspace_passes(self) -> None:
         # Should not raise.
-        confirm_destructive("Delete everything?", yes=False)
+        validate_workspace_or_all_workspaces("my-ws", all_workspaces=False)
+
+    def test_all_workspaces_passes(self) -> None:
+        # Should not raise.
+        validate_workspace_or_all_workspaces(None, all_workspaces=True)
+
+    def test_both_raises_usage_error(self) -> None:
+        with pytest.raises(click.UsageError, match="mutually exclusive"):
+            validate_workspace_or_all_workspaces("my-ws", all_workspaces=True)
+
+    def test_neither_raises_usage_error(self) -> None:
+        with pytest.raises(click.UsageError, match="Provide WORKSPACE"):
+            validate_workspace_or_all_workspaces(None, all_workspaces=False)
+
+
+# ---------------------------------------------------------------------------
+# parse_iso_datetime sanity range
+# ---------------------------------------------------------------------------
+
+
+class TestParseIsodatetimeSanityRange:
+    """parse_iso_datetime rejects years outside 2000-2100."""
+
+    def test_valid_year_passes(self) -> None:
+        dt = parse_iso_datetime("2024-06-01T12:00:00Z", "--ts")
+        assert dt.year == 2024
+
+    def test_year_before_2000_raises(self) -> None:
+        with pytest.raises(click.UsageError, match="out of the expected range"):
+            parse_iso_datetime("1999-12-31T23:59:59", "--ts")
+
+    def test_year_after_2100_raises(self) -> None:
+        with pytest.raises(click.UsageError, match="out of the expected range"):
+            parse_iso_datetime("2101-01-01T00:00:00", "--ts")
+
+    def test_epoch_raises(self) -> None:
+        with pytest.raises(click.UsageError, match="out of the expected range"):
+            parse_iso_datetime("1970-01-01T00:00:00", "--ts")
 
 
 # ---------------------------------------------------------------------------
