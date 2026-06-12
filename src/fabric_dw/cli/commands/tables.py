@@ -8,11 +8,12 @@ from pathlib import Path
 import click
 
 from fabric_dw.cli._context import CliContext
-from fabric_dw.cli._render import confirm, render
+from fabric_dw.cli._render import render
 from fabric_dw.cli.commands._utils import (
     _coro,
     build_http_client,
     build_sql_target,
+    confirm_destructive,
     load_select_body,
     parse_qualified_name,
     resolve_warehouse_arg,
@@ -152,12 +153,10 @@ async def delete_cmd(
     try:
         async with build_http_client(ctx) as http:
             target, entry = await build_sql_target(http, ws, wh)
-            confirmed = confirm(
+            confirm_destructive(
                 f"Drop table [{schema}].[{table_name}] from {entry.display_name!r} ({entry.id})?",
                 yes=ctx.yes,
             )
-            if not confirmed:
-                raise click.Abort()  # noqa: TRY301
             await _tables_svc.delete_table(
                 target, schema, table_name, kind=entry.kind, mode=ctx.auth
             )
@@ -187,12 +186,10 @@ async def clear_cmd(
     try:
         async with build_http_client(ctx) as http:
             target, entry = await build_sql_target(http, ws, wh)
-            confirmed = confirm(
+            confirm_destructive(
                 f"Truncate table [{schema}].[{table_name}] on {entry.display_name!r}?",
                 yes=ctx.yes,
             )
-            if not confirmed:
-                raise click.Abort()  # noqa: TRY301
             await _tables_svc.clear_table(
                 target, schema, table_name, kind=entry.kind, mode=ctx.auth
             )

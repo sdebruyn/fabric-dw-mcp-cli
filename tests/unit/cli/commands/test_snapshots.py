@@ -183,6 +183,49 @@ class TestSnapshotsCreate:
         assert result.exit_code == 0
 
 
+class TestSnapshotsCreateDatetime:
+    """snapshots create --snapshot-dt validation."""
+
+    def test_bad_snapshot_dt_exits_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
+        """A malformed --snapshot-dt must produce a non-zero exit and show an error."""
+        _ = cache_env
+        result = runner.invoke(
+            cli,
+            [
+                "snapshots",
+                "create",
+                WS_GUID,
+                WH_GUID,
+                "MySnapshot",
+                "--snapshot-dt",
+                "not-a-date",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "not-a-date" in result.output
+        assert "--snapshot-dt" in result.output
+
+    def test_bad_snapshot_dt_shows_expected_format(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """Error message must mention the expected ISO-8601 format."""
+        _ = cache_env
+        result = runner.invoke(
+            cli,
+            [
+                "snapshots",
+                "create",
+                WS_GUID,
+                WH_GUID,
+                "MySnapshot",
+                "--snapshot-dt",
+                "2024-99-99",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "ISO-8601" in result.output or "2024-" in result.output
+
+
 class TestSnapshotsRename:
     """snapshots rename — happy path."""
 

@@ -8,13 +8,14 @@ from datetime import datetime
 import click
 
 from fabric_dw.cli._context import CliContext
-from fabric_dw.cli._render import confirm, render
+from fabric_dw.cli._render import render
 from fabric_dw.cli.commands._utils import (
     _coro,
     _resolve_item,
     _resolve_item_with_cache,
     build_http_client,
     build_sql_target,
+    confirm_destructive,
     parse_iso_datetime,
     resolve_warehouse_arg,
     resolve_workspace_arg,
@@ -137,12 +138,10 @@ async def delete_cmd(ctx: CliContext, workspace: str, snapshot: str) -> None:
     try:
         async with build_http_client(ctx) as http:
             ws_id, entry, cache = await _resolve_item_with_cache(http, workspace, snapshot)
-            confirmed = confirm(
+            confirm_destructive(
                 f"Delete snapshot {entry.display_name!r} ({entry.id})?",
                 yes=ctx.yes,
             )
-            if not confirmed:
-                raise click.Abort()  # noqa: TRY301
             await _snapshots_svc.delete(
                 http,
                 ws_id,
@@ -190,13 +189,11 @@ async def roll_cmd(
     try:
         async with build_http_client(ctx) as http:
             target, entry = await build_sql_target(http, ws, wh)
-            confirmed = confirm(
+            confirm_destructive(
                 f"Roll snapshot {snapshot_name!r} on warehouse "
                 f"{entry.display_name!r} ({entry.id})?",
                 yes=ctx.yes,
             )
-            if not confirmed:
-                raise click.Abort()  # noqa: TRY301
             await _snapshots_svc.roll_timestamp(target, snapshot_name, parsed_dt, mode=ctx.auth)
             click.echo(f"Snapshot {snapshot_name!r} rolled.")
     except click.Abort:

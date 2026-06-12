@@ -224,7 +224,7 @@ class TestSchemasCreate:
             ),
             patch(
                 "fabric_dw.cli.commands.schemas.build_sql_target",
-                new=AsyncMock(return_value=(WS_UUID, _make_sql_endpoint_entry())),
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
             ),
         ):
             result = runner.invoke(cli, ["schemas", "create", WS_GUID, WH_GUID, "sales"])
@@ -358,7 +358,7 @@ class TestSchemasDelete:
             ),
             patch(
                 "fabric_dw.cli.commands.schemas.build_sql_target",
-                new=AsyncMock(return_value=(WS_UUID, _make_sql_endpoint_entry())),
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
             ),
         ):
             result = runner.invoke(cli, ["-y", "schemas", "delete", WS_GUID, WH_GUID, "sales"])
@@ -385,7 +385,7 @@ class TestSchemasDelete:
                 cli,
                 ["-y", "schemas", "delete", WS_GUID, WH_GUID, "sales", "--cascade"],
             )
-        # The cascade warning is emitted to stderr; the command exits cleanly.
+        # With --yes the prompt is skipped entirely; the command exits cleanly.
         assert result.exit_code == 0
 
     def test_delete_permission_error_returns_nonzero(

@@ -7,12 +7,13 @@ import logging
 import click
 
 from fabric_dw.cli._context import CliContext
-from fabric_dw.cli._render import confirm, render
+from fabric_dw.cli._render import render
 from fabric_dw.cli.commands._utils import (
     _coro,
     _guard_not_sql_endpoint,
     build_http_client,
     build_sql_target,
+    confirm_destructive,
     resolve_warehouse_arg,
     resolve_workspace_arg,
 )
@@ -107,18 +108,13 @@ async def delete_cmd(
         async with build_http_client(ctx) as http:
             target, entry = await build_sql_target(http, ws, wh)
             _guard_not_sql_endpoint(entry)
+            prompt = f"Drop schema [{name}] from {entry.display_name!r} ({entry.id})?"
             if cascade:
-                click.echo(
-                    f"WARNING: --cascade will permanently drop all tables and views "
-                    f"in schema [{name}] on {entry.display_name!r}.",
-                    err=True,
+                prompt = (
+                    f"--cascade will permanently drop all tables and views "
+                    f"in schema [{name}] on {entry.display_name!r}. " + prompt
                 )
-            confirmed = confirm(
-                f"Drop schema [{name}] from {entry.display_name!r} ({entry.id})?",
-                yes=ctx.yes,
-            )
-            if not confirmed:
-                raise click.Abort()  # noqa: TRY301
+            confirm_destructive(prompt, yes=ctx.yes)
             await _schemas_svc.delete_schema(target, name, cascade=cascade, mode=ctx.auth)
             click.echo(f"Schema [{name}] dropped.")
     except click.Abort:

@@ -477,7 +477,7 @@ class TestTablesCreate:
             ),
             patch(
                 "fabric_dw.cli.commands.tables.build_sql_target",
-                new=AsyncMock(return_value=(WS_UUID, _make_sql_endpoint_entry())),
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
             ),
         ):
             result = runner.invoke(
@@ -610,7 +610,7 @@ class TestTablesDelete:
             ),
             patch(
                 "fabric_dw.cli.commands.tables.build_sql_target",
-                new=AsyncMock(return_value=(WS_UUID, _make_sql_endpoint_entry())),
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
             ),
         ):
             result = runner.invoke(
@@ -727,7 +727,7 @@ class TestTablesClear:
             ),
             patch(
                 "fabric_dw.cli.commands.tables.build_sql_target",
-                new=AsyncMock(return_value=(WS_UUID, _make_sql_endpoint_entry())),
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
             ),
         ):
             result = runner.invoke(cli, ["--yes", "tables", "clear", WS_GUID, SE_GUID, "dbo.sales"])

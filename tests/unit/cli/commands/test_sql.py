@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
+import click
 import pytest
 from click.testing import CliRunner
 
@@ -324,13 +325,8 @@ class TestSqlExecErrors:
     ) -> None:
         _ = cache_env
         mock_http = AsyncMock()
-        no_conn_item = ItemEntry(
-            id=WH_UUID,
-            kind=WarehouseKind.WAREHOUSE,
-            connection_string=None,
-            fetched_at=datetime.now(tz=UTC),
-            display_name="SalesWarehouse",
-        )
+        # build_sql_target raises ClickException when connection_string is None;
+        # simulate that real behaviour so the test exercises the intended guard path.
         with (
             patch(
                 "fabric_dw.cli.commands.sql.build_http_client",
@@ -338,7 +334,11 @@ class TestSqlExecErrors:
             ),
             patch(
                 "fabric_dw.cli.commands.sql.build_sql_target",
-                new=AsyncMock(return_value=(WS_UUID, no_conn_item)),
+                new=AsyncMock(
+                    side_effect=click.ClickException(
+                        "Item 'SalesWarehouse' has no connection string."
+                    )
+                ),
             ),
         ):
             result = runner.invoke(
