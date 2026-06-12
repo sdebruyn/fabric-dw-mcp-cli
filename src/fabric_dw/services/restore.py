@@ -6,10 +6,13 @@ API reference:
 
 from __future__ import annotations
 
+import http as _http
 from uuid import UUID
 
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import CreationModeType, RestorePoint
+from fabric_dw.services._helpers import compact
+from fabric_dw.services._lro import resolve_lro_item_id
 
 __all__ = [
     "create_point",
@@ -19,6 +22,9 @@ __all__ = [
     "restore_in_place",
     "update_point",
 ]
+
+_HTTP_201_CREATED = _http.HTTPStatus.CREATED
+_HTTP_202_ACCEPTED = _http.HTTPStatus.ACCEPTED
 
 
 def _rp_base(workspace_id: UUID, warehouse_id: UUID) -> str:
@@ -105,11 +111,7 @@ async def create_point(
     Returns:
         The newly-created :class:`~fabric_dw.models.RestorePoint`.
     """
-    body: dict[str, object] = {}
-    if name is not None:
-        body["displayName"] = name
-    if description is not None:
-        body["description"] = description
+    body = compact({"displayName": name, "description": description})
 
     resp = await http.request(
         "POST",
@@ -118,7 +120,7 @@ async def create_point(
         json=body or None,
     )
 
-    if resp.status_code == 201:  # noqa: PLR2004
+    if resp.status_code == _HTTP_201_CREATED:
         # Synchronous success — body contains the RestorePoint directly.
         return RestorePoint.from_api(resp.json())
 
@@ -129,21 +131,19 @@ async def create_point(
         raise ValueError(msg)
     operation_result = await http.poll_operation(location)
 
-    # Branch (a): some Fabric LRO responses include resourceId/id in the status
-    # body — if present, use it to GET the created point directly.
-    resource_id_raw = operation_result.get("resourceId") or operation_result.get("id")
-    if resource_id_raw:
-        return await get_point(http, workspace_id, warehouse_id, str(resource_id_raw))
+    # Use the shared LRO helper to probe Path A (status body) then Path B
+    # (/result sub-endpoint).  For restore-points, the status body sometimes
+    # carries "resourceId" or "id"; the /result endpoint is the primary path.
+    resource_id_str = await resolve_lro_item_id(
+        http,
+        operation_result=operation_result,
+        location=location,
+        result_id_keys=("resourceId", "id"),
+    )
+    if resource_id_str:
+        return await get_point(http, workspace_id, warehouse_id, resource_id_str)
 
-    # Branch (b): fall back to the LRO /result sub-endpoint, which is the
-    # realistic production path for Fabric restore-point creation.
-    op_id = location.rsplit("/", 1)[-1]
-    lro_result = await http.get_operation_result(op_id)
-    result_id_raw = lro_result.get("id")
-    if result_id_raw:
-        return await get_point(http, workspace_id, warehouse_id, str(result_id_raw))
-
-    # Branch (c) — last resort: list all restore points and return the newest
+    # Path C — last resort: list all restore points and return the newest
     # UserDefined one.  Creation is serialised (the API enforces a single
     # in-flight create), so the highest ID (lexicographic max of timestamp
     # strings) among UserDefined points is the one just created.
@@ -193,11 +193,7 @@ async def update_point(
         msg = "At least one of name or description must be provided"
         raise ValueError(msg)
 
-    body: dict[str, object] = {}
-    if name is not None:
-        body["displayName"] = name
-    if description is not None:
-        body["description"] = description
+    body = compact({"displayName": name, "description": description})
 
     await http.request(
         "PATCH",
@@ -205,8 +201,8 @@ async def update_point(
         f"{_rp_base(workspace_id, warehouse_id)}/{point_id}",
         json=body,
     )
-    # Fabric returns a minimal body on PATCH (often just the ID); GET the full
-    # resource to ensure we return a correctly-populated RestorePoint.
+    # PATCH returns a minimal body (often just the ID); GET the full resource to
+    # ensure we return a correctly-populated RestorePoint.
     return await get_point(http, workspace_id, warehouse_id, point_id)
 
 
@@ -267,7 +263,7 @@ async def restore_in_place(
         f"{_rp_base(workspace_id, warehouse_id)}/{point_id}/restore",
     )
 
-    if resp.status_code == 202:  # noqa: PLR2004
+    if resp.status_code == _HTTP_202_ACCEPTED:
         location: str = resp.headers.get("Location", "")
         if not location:
             msg = "Fabric returned 202 for restore_in_place but the Location header is missing"

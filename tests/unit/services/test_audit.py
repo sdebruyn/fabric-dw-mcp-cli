@@ -289,6 +289,46 @@ async def test_set_action_groups_works_on_fresh_warehouse() -> None:
     assert result.action_groups == groups
 
 
+@pytest.mark.asyncio
+async def test_set_action_groups_ensure_enabled_false_omits_state() -> None:
+    """set_action_groups with ensure_enabled=False should NOT include state=Enabled in the PATCH."""
+    groups = ["BATCH_COMPLETED_GROUP"]
+    updated = AUDIT_SETTINGS_PAYLOAD.copy()
+    updated["auditActionsAndGroups"] = groups
+
+    with respx.mock:
+        patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=updated))
+        client = await _make_client()
+        async with client:
+            result = await audit.set_action_groups(
+                client, _WS_ID, _WH_ID, groups, ensure_enabled=False
+            )
+
+    assert patch_route.called
+    sent_body = json.loads(patch_route.calls[0].request.content)
+    assert "state" not in sent_body
+    assert sent_body["auditActionsAndGroups"] == groups
+    assert isinstance(result, AuditSettings)
+
+
+@pytest.mark.asyncio
+async def test_set_action_groups_ensure_enabled_true_default_includes_state() -> None:
+    """set_action_groups default (ensure_enabled=True) includes state=Enabled in the PATCH."""
+    groups = ["BATCH_COMPLETED_GROUP"]
+    updated = AUDIT_SETTINGS_PAYLOAD.copy()
+
+    with respx.mock:
+        patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=updated))
+        client = await _make_client()
+        async with client:
+            await audit.set_action_groups(client, _WS_ID, _WH_ID, groups)
+
+    sent_body = json.loads(patch_route.calls[0].request.content)
+    assert sent_body.get("state") == "Enabled"
+
+
 # ---------------------------------------------------------------------------
 # add_action_group
 # ---------------------------------------------------------------------------
@@ -538,16 +578,25 @@ async def test_set_retention_boundary_values_are_accepted(days: int) -> None:
 
 
 @pytest.mark.asyncio
-async def test_set_retention_disabled_audit_raises_value_error() -> None:
-    """set_retention should raise ValueError when audit is currently disabled."""
+async def test_set_retention_disabled_audit_sends_patch_to_server() -> None:
+    """set_retention no longer pre-checks audit state; it sends PATCH and lets the server decide.
+
+    The old pre-flight GET was racy (another caller could disable audit between the
+    GET and the PATCH).  The new behaviour sends the PATCH directly and lets the
+    server reject invalid states.
+    """
+    updated = AUDIT_SETTINGS_PAYLOAD.copy()
+    updated["retentionDays"] = 30
+
     with respx.mock:
-        respx.get(_AUDIT_URL).mock(
-            return_value=httpx.Response(200, json=AUDIT_SETTINGS_DISABLED_PAYLOAD)
-        )
+        patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=updated))
         client = await _make_client()
         async with client:
-            with pytest.raises(ValueError, match="disabled"):
-                await audit.set_retention(client, _WS_ID, _WH_ID, days=30)
+            result = await audit.set_retention(client, _WS_ID, _WH_ID, days=30)
+
+    assert patch_route.called
+    assert isinstance(result, AuditSettings)
 
 
 @pytest.mark.asyncio

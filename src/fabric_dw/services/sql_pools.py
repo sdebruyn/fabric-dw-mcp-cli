@@ -21,6 +21,8 @@ role.
 
 from __future__ import annotations
 
+import types
+from collections.abc import Mapping
 from uuid import UUID
 
 from fabric_dw.exceptions import AlreadyExists, NotFound
@@ -40,7 +42,8 @@ __all__ = [
 
 # The beta query parameter — centralised so removing it later is a one-liner.
 # Microsoft Learn docs sample uses capital-T "True" for this query parameter.
-_BETA_PARAMS: dict[str, str] = {"beta": "True"}
+# Wrapped in MappingProxyType to prevent accidental mutation by callers.
+_BETA_PARAMS: Mapping[str, str] = types.MappingProxyType({"beta": "True"})
 
 
 def _config_path(workspace_id: UUID) -> str:
@@ -115,6 +118,7 @@ async def update_configuration(
         json=body,
         params=_BETA_PARAMS,
     )
+    # PATCH returns empty/partial body on this endpoint; re-fetch required.
     return await get_configuration(http, workspace_id)
 
 
@@ -124,8 +128,12 @@ async def enable(
 ) -> SqlPoolsConfiguration:
     """Enable custom SQL Pools for a workspace without modifying the pool list.
 
-    Fetches the current configuration and PATCHes only ``customSQLPoolsEnabled=true``,
-    preserving all existing pools.
+    Fetches the current configuration and PATCHes the full config document with
+    ``customSQLPoolsEnabled=true``, preserving all existing pools.
+
+    The Fabric beta API requires a full configuration document on PATCH — a
+    minimal ``{"customSQLPoolsEnabled": true}`` payload does not preserve the
+    existing pool list.  The full roundtrip is therefore necessary.
 
     Args:
         http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
@@ -160,8 +168,13 @@ async def disable(
     Per API documentation: "When set to false, the configuration is disabled
     but preserved.  Re-enabling it restores the previously saved configuration."
 
-    Fetches the current configuration and PATCHes only ``customSQLPoolsEnabled=false``,
-    keeping all pool definitions intact so they can be restored by :func:`enable`.
+    Fetches the current configuration and PATCHes the full config document with
+    ``customSQLPoolsEnabled=false``, keeping all pool definitions intact so they
+    can be restored by :func:`enable`.
+
+    The Fabric beta API requires a full configuration document on PATCH — a
+    minimal ``{"customSQLPoolsEnabled": false}`` payload does not preserve the
+    existing pool list.  The full roundtrip is therefore necessary.
 
     Args:
         http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
@@ -198,9 +211,11 @@ async def create_pool(
     list back.  Raises :class:`~fabric_dw.exceptions.AlreadyExists` if a pool
     with the same name already exists.
 
-    Note: not locked. Two simultaneous create_pool calls with the same name
-    will both pass the duplicate check and the second's PATCH will overwrite
-    the first.
+    Note:
+        This function performs a read-modify-write (GET then PATCH) without
+        optimistic concurrency control.  The Fabric REST API does not expose
+        ETags or ``If-Match`` on the SQL Pools endpoint.  Under concurrent
+        modification the last writer wins silently.
 
     Args:
         http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
@@ -245,9 +260,22 @@ async def update_pool(
     provided field overrides, then PATCHes the full list back.  Fields not
     supplied are left unchanged.
 
-    Note: setting is_default=True does NOT automatically clear is_default on
-    other pools. The caller must explicitly unset it on the previous default
-    if the API rejects multiple defaults.
+    **Classifier semantics**: if neither *classifier_type* nor
+    *classifier_values* is provided, the existing classifier is left
+    completely untouched.  If **either** is provided, **both** must be
+    provided and the classifier object is replaced wholesale — no partial
+    merge is performed.
+
+    Note:
+        Setting ``is_default=True`` does **not** automatically clear
+        ``is_default`` on other pools.  The caller must explicitly unset it
+        on the previous default if the API rejects multiple defaults.
+
+    Note:
+        This function performs a read-modify-write (GET then PATCH) without
+        optimistic concurrency control.  The Fabric REST API does not expose
+        ETags or ``If-Match`` on the SQL Pools endpoint.  Under concurrent
+        modification the last writer wins silently.
 
     Args:
         http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
@@ -256,17 +284,18 @@ async def update_pool(
         max_resource_percentage: New max-resource-percentage (1-100), or ``None`` to keep.
         is_default: New default flag, or ``None`` to keep.
         optimize_for_reads: New optimize-for-reads flag, or ``None`` to keep.
-        classifier_type: New classifier type string, or ``None`` to keep.
-        classifier_values: New classifier value list, or ``None`` to keep.
+        classifier_type: New classifier type string.  Must be supplied together
+            with *classifier_values* or not at all.
+        classifier_values: New classifier value list.  Must be supplied together
+            with *classifier_type* or not at all.
 
     Returns:
         The updated :class:`~fabric_dw.models.SqlPoolsConfiguration`.
 
     Raises:
-        ValueError: If exactly one of ``classifier_type`` / ``classifier_values``
-            is supplied without the other (both must be provided together, or
-            neither).
-        NotFound: If no pool named ``name`` exists.
+        ValueError: If exactly one of *classifier_type* / *classifier_values*
+            is supplied without the other.
+        NotFound: If no pool named *name* exists.
         PermissionDenied: If the caller does not have the workspace admin role.
     """
     if (classifier_type is None) != (classifier_values is None):
@@ -285,19 +314,13 @@ async def update_pool(
         raw["isDefault"] = is_default
     if optimize_for_reads is not None:
         raw["optimizeForReads"] = optimize_for_reads
-    if classifier_type is not None or classifier_values is not None:
-        existing_cls = raw.get("classifier") or {}
-        updated_cls = {
-            "type": (
-                classifier_type if classifier_type is not None else existing_cls.get("type", "")
-            ),
-            "value": (
-                classifier_values
-                if classifier_values is not None
-                else existing_cls.get("value", [])
-            ),
+    if classifier_type is not None and classifier_values is not None:
+        # Replace the classifier object wholesale — no partial merge to avoid
+        # sending an empty string type or stale values to the server.
+        raw["classifier"] = {
+            "type": classifier_type,
+            "value": classifier_values,
         }
-        raw["classifier"] = updated_cls
 
     new_pool = SqlPool.model_validate(raw)
     new_pools = [new_pool if p.name == name else p for p in current.custom_sql_pools]
@@ -320,6 +343,12 @@ async def delete_pool(
     Fetches the current pool list, drops the named pool, and PATCHes the
     remaining list back.  Raises :class:`~fabric_dw.exceptions.NotFound` if no
     pool with that name exists.
+
+    Note:
+        This function performs a read-modify-write (GET then PATCH) without
+        optimistic concurrency control.  The Fabric REST API does not expose
+        ETags or ``If-Match`` on the SQL Pools endpoint.  Under concurrent
+        modification the last writer wins silently.
 
     Args:
         http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
@@ -350,24 +379,24 @@ async def delete_pool(
 async def reset_pools(
     http: FabricHttpClient,
     workspace_id: UUID,
-) -> SqlPoolsConfiguration:
+) -> SqlPoolsConfiguration | None:
     """Clear all custom pools for a workspace, preserving the enabled flag.
 
     Fetches the current configuration, replaces ``customSQLPools`` with an
     empty list, and PATCHes.  ``customSQLPoolsEnabled`` is left unchanged.
 
-    If the workspace has never been provisioned (GET returns 404), the
-    endpoint is already in the desired empty state.  A sentinel
-    ``SqlPoolsConfiguration(custom_sql_pools_enabled=False, custom_sql_pools=[])``
-    is returned without making a PATCH request.
+    If the workspace has never been provisioned (GET returns 404), the endpoint
+    is already in the desired empty state.  ``None`` is returned to indicate
+    that no configuration exists rather than fabricating a sentinel value.
 
     Args:
         http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
         workspace_id: The Fabric workspace UUID.
 
     Returns:
-        The updated :class:`~fabric_dw.models.SqlPoolsConfiguration` (or the
-        sentinel configuration when the workspace was not provisioned).
+        The updated :class:`~fabric_dw.models.SqlPoolsConfiguration`, or
+        ``None`` if the workspace has no SQL pools configuration (never
+        provisioned — GET returned 404).
 
     Raises:
         PermissionDenied: If the caller does not have the workspace admin role.
@@ -375,9 +404,7 @@ async def reset_pools(
     try:
         current = await get_configuration(http, workspace_id)
     except NotFound:
-        return SqlPoolsConfiguration.model_validate(
-            {"customSQLPoolsEnabled": False, "customSQLPools": []}
-        )
+        return None
     new_config = SqlPoolsConfiguration.model_validate(
         {
             "customSQLPoolsEnabled": current.custom_sql_pools_enabled,

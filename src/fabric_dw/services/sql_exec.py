@@ -175,13 +175,14 @@ async def execute(
                     mapped = sql.map_driver_error(exc)
                     if mapped is not None:
                         if isinstance(mapped, PermissionDenied):
-                            msg = (
-                                f"{mapped}  "
-                                "Hint: the caller must have at least READ permission on the "
-                                "warehouse/SQL endpoint. See "
-                                "https://learn.microsoft.com/fabric/data-warehouse/sql-permissions"
-                            )
-                            raise PermissionDenied(msg) from exc
+                            raise PermissionDenied(
+                                str(mapped),
+                                hint=(
+                                    "The caller must have at least READ permission on the "
+                                    "warehouse/SQL endpoint. See "
+                                    "https://learn.microsoft.com/fabric/data-warehouse/sql-permissions"
+                                ),
+                            ) from exc
                         raise mapped from exc
                     raise
 

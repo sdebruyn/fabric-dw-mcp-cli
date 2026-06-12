@@ -800,8 +800,12 @@ async def test_reset_pools_preserves_disabled_state() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reset_pools_404_returns_sentinel_without_patch() -> None:
-    """reset_pools returns an empty sentinel config when the workspace 404s (never provisioned)."""
+async def test_reset_pools_404_returns_none_without_patch() -> None:
+    """reset_pools returns None when the workspace has no SQL pools config (never provisioned).
+
+    The old code returned a fake sentinel SqlPoolsConfiguration.  The new behaviour
+    returns None so callers can distinguish "truly empty" from "never provisioned".
+    """
     with respx.mock:
         get_route = respx.get(_CONFIG_URL).mock(
             return_value=httpx.Response(404, json={"error": "not found"})
@@ -813,9 +817,7 @@ async def test_reset_pools_404_returns_sentinel_without_patch() -> None:
 
     assert get_route.call_count == 1
     assert not patch_route.called
-    assert isinstance(result, SqlPoolsConfiguration)
-    assert result.custom_sql_pools_enabled is False
-    assert result.custom_sql_pools == []
+    assert result is None
 
 
 # ---------------------------------------------------------------------------

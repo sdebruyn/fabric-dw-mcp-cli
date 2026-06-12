@@ -11,6 +11,8 @@ from fabric_dw.auth import CredentialMode
 from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import WarehouseKind, WarehouseSnapshot
+from fabric_dw.services._helpers import compact
+from fabric_dw.services._lro import LRO_DETAIL_WAIT_S, LRO_MAX_DETAIL_RETRIES, resolve_lro_item_id
 from fabric_dw.sql import SqlTarget, run_query
 
 __all__ = [
@@ -134,12 +136,11 @@ async def create(
         creation_payload["snapshotDateTime"] = snapshot_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     body: dict[str, object] = {
+        **compact({"description": description}),
         "type": "WarehouseSnapshot",
         "displayName": name,
         "creationPayload": creation_payload,
     }
-    if description is not None:
-        body["description"] = description
 
     resp = await http.request(
         "POST",
@@ -151,38 +152,29 @@ async def create(
     location: str = resp.headers.get("Location", "")
     operation_result = await http.poll_operation(location)
 
-    # Extract the new item's ID.
+    # Extract the new item's ID using the shared LRO helper.
     # Fabric LRO status bodies only contain status metadata — the created item ID is NOT
     # included in the status body.  Per Microsoft docs, once Succeeded, the item is
     # available via GET /v1/operations/{op_id}/result.
-    # We try the status body first (some older responses include resourceId/createdItemId),
-    # then fall back to the /result endpoint using the operation ID parsed from the Location
-    # header (Location path format: .../operations/{op_id}).
-    resource_id_raw = (
-        operation_result.get("resourceId")
-        or operation_result.get("createdItemId")
-        or operation_result.get("itemId")
+    # The helper tries Path A (status body keys) then Path B (/result sub-endpoint).
+    resource_id_str = await resolve_lro_item_id(
+        http,
+        operation_result=operation_result,
+        location=location,
+        result_id_keys=("resourceId", "createdItemId", "itemId", "id"),
     )
-    if resource_id_raw:
-        new_snap_id = UUID(str(resource_id_raw))
-    else:
-        # Parse the operation ID from the Location header and call the /result endpoint.
-        op_id = location.rsplit("/", 1)[-1]
-        lro_result = await http.get_operation_result(op_id)
-        result_id_raw = lro_result.get("id")
-        if not result_id_raw:
-            msg = f"Cannot determine new snapshot ID from LRO result: {operation_result}"
-            raise ValueError(msg)
-        new_snap_id = UUID(str(result_id_raw))
+    if not resource_id_str:
+        msg = f"Cannot determine new snapshot ID from LRO result: {operation_result}"
+        raise ValueError(msg)
+    new_snap_id = UUID(resource_id_str)
 
     # Use the type-specific endpoint to fetch the new snapshot's detail.
     # GET /warehouseSnapshots/{id} returns properties.parentWarehouseId directly.
-    # Retry a few times with a short back-off in case provisioning hasn't finished.
+    # Retry up to LRO_MAX_DETAIL_RETRIES times with LRO_DETAIL_WAIT_S back-off in
+    # case provisioning hasn't finished yet.
     _typed_detail_path = f"/workspaces/{workspace_id}/warehouseSnapshots/{new_snap_id}"
-    _max_detail_retries = 5
-    _detail_wait_s = 3.0
     typed_body: dict[str, object] = {}
-    for _attempt in range(_max_detail_retries):
+    for _attempt in range(LRO_MAX_DETAIL_RETRIES):
         typed_resp = await http.request("GET", HttpBase.FABRIC, _typed_detail_path)
         typed_body = typed_resp.json()
         _raw_props = typed_body.get("properties")
@@ -191,8 +183,8 @@ async def create(
         )
         if _props.get("parentWarehouseId") is not None:
             break
-        if _attempt < _max_detail_retries - 1:
-            await asyncio.sleep(_detail_wait_s)
+        if _attempt < LRO_MAX_DETAIL_RETRIES - 1:
+            await asyncio.sleep(LRO_DETAIL_WAIT_S)
     else:
         # parentWarehouseId still absent after all retries — inject the value we sent.
         _raw_props2 = typed_body.get("properties")
@@ -257,14 +249,13 @@ async def rename(
     parent_wh_id = props.get("parentWarehouseId")
 
     patch_body: dict[str, object] = {
+        **compact({"description": description}),
         "type": "WarehouseSnapshot",
         "displayName": new_name,
         "creationPayload": {
             "parentWarehouseId": parent_wh_id,
         },
     }
-    if description is not None:
-        patch_body["description"] = description
 
     await http.request(
         "PATCH",
@@ -273,7 +264,7 @@ async def rename(
         json=patch_body,
     )
 
-    # GET the updated snapshot to return fresh state
+    # PATCH /items/{id} returns partial body for rename; re-fetch via typed endpoint.
     updated_resp = await http.request("GET", HttpBase.FABRIC, _typed_path)
     result = _snapshot_from_typed_api(updated_resp.json())
 

@@ -33,7 +33,6 @@ schema for warehouse tables.
 from __future__ import annotations
 
 import asyncio
-from typing import cast
 
 from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import NotFound
@@ -120,7 +119,7 @@ def _row_to_schema(cols: list[str], row: tuple[object, ...]) -> Schema:
     data = dict(zip(cols, row, strict=True))
     name = str(data["name"])
     raw_pid = data.get("principal_id")
-    principal_id = int(cast("int", raw_pid)) if raw_pid is not None else None
+    principal_id = int(str(raw_pid)) if raw_pid is not None else None
     return Schema(name=name, principal_id=principal_id)
 
 

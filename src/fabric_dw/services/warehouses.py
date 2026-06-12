@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import http as _http
 import logging
 from datetime import UTC, datetime
 from uuid import UUID
@@ -12,6 +13,7 @@ from fabric_dw.exceptions import FabricServerError, NotFound, PermissionDenied
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import Warehouse, WarehouseKind
 from fabric_dw.services._concurrency import bounded_gather
+from fabric_dw.services._helpers import compact
 from fabric_dw.services.workspaces import SUPPORTED_COLLATIONS
 from fabric_dw.services.workspaces import list_all as _list_all_workspaces
 
@@ -19,6 +21,9 @@ _logger = logging.getLogger("fabric_dw.warehouses")
 
 # Backoff schedule for transient empty-2xx responses (seconds).
 _EMPTY_2XX_BACKOFF = (2, 6, 18)
+
+_HTTP_400_BAD_REQUEST = _http.HTTPStatus.BAD_REQUEST
+_HTTP_500_INTERNAL_SERVER_ERROR = _http.HTTPStatus.INTERNAL_SERVER_ERROR
 
 __all__ = [
     "create",
@@ -160,9 +165,11 @@ async def create(
         msg = f"Unsupported collation {collation!r}. Allowed values: {sorted(SUPPORTED_COLLATIONS)}"
         raise ValueError(msg)
 
-    body: dict[str, object] = {"type": "Warehouse", "displayName": name}
-    if description is not None:
-        body["description"] = description
+    body: dict[str, object] = {
+        **compact({"description": description}),
+        "type": "Warehouse",
+        "displayName": name,
+    }
     if collation is not None:
         body["creationPayload"] = {"defaultCollation": collation}
 
@@ -196,7 +203,10 @@ async def create(
                 return await get_warehouse(http, workspace_id, new_id)
 
             # Do not retry on 4xx — those are definitive client errors.
-            if resp.status_code >= 400 and resp.status_code < 500:  # noqa: PLR2004
+            if (
+                resp.status_code >= _HTTP_400_BAD_REQUEST
+                and resp.status_code < _HTTP_500_INTERNAL_SERVER_ERROR
+            ):
                 msg = (
                     f"create warehouse: {resp.status_code} error response "
                     f"with no Location header and no usable body"
@@ -268,9 +278,10 @@ async def rename(
         msg = "Warehouse name must be a non-empty string"
         raise ValueError(msg)
 
-    body: dict[str, object] = {"displayName": new_name}
-    if description is not None:
-        body["description"] = description
+    body: dict[str, object] = {
+        **compact({"description": description}),
+        "displayName": new_name,
+    }
 
     resp = await http.request(
         "PATCH",

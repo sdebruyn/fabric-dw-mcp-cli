@@ -194,8 +194,7 @@ def _execute_sql(
     try:
         cols, rows = run_query(target, sql_text, mode=mode)
     except PermissionDenied as exc:
-        msg = f"{exc} — {_PERMISSION_DENIED_DOCS}"
-        raise PermissionDenied(msg) from exc
+        raise PermissionDenied(str(exc), hint=_PERMISSION_DENIED_DOCS) from exc
     return [dict(zip(cols, r, strict=True)) for r in rows]
 
 

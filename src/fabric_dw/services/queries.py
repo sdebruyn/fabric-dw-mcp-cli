@@ -160,7 +160,10 @@ async def kill(
                 mapped = sql.map_driver_error(exc)
                 if mapped:
                     msg = f"Permission denied when trying to KILL session {session_id}: {mapped}"
-                    raise PermissionDenied(msg) from exc
+                    raise PermissionDenied(
+                        msg,
+                        hint="KILL requires Monitor or Admin permission on Fabric DW.",
+                    ) from exc
                 if isinstance(exc, (PermissionDenied, AuthError)):
                     msg = f"Permission denied when trying to KILL session {session_id}: {exc}"
                     raise PermissionDenied(msg) from exc

@@ -94,6 +94,7 @@ async def enable(
         path,
         json={"state": "Enabled", "retentionDays": retention_days},
     )
+    # PATCH returns empty/partial body on this endpoint; re-fetch required.
     return await get_settings(http, workspace_id, warehouse_id)
 
 
@@ -117,6 +118,7 @@ async def disable(
     """
     path = _audit_path(workspace_id, warehouse_id)
     await http.request("PATCH", HttpBase.FABRIC, path, json={"state": "Disabled"})
+    # PATCH returns empty/partial body on this endpoint; re-fetch required.
     return await get_settings(http, workspace_id, warehouse_id)
 
 
@@ -129,8 +131,9 @@ async def set_retention(
 ) -> AuditSettings:
     """Update the audit log retention period without changing the audit state.
 
-    Audit must already be enabled.  If it is disabled, this function raises
-    :class:`ValueError` with a hint to run ``audit enable`` first.
+    Sends the PATCH directly and lets the server reject invalid states (e.g.
+    setting retention while audit is disabled).  If the API returns an error,
+    it is propagated to the caller as-is — no pre-flight GET is performed.
 
     The Fabric REST API does not document an upper bound for ``retentionDays``.
     Only the lower bound (>= 1) is enforced here; the API will reject any value
@@ -146,22 +149,16 @@ async def set_retention(
         The fresh :class:`~fabric_dw.models.AuditSettings` after the update.
 
     Raises:
-        ValueError: If *days* is less than 1, or if audit is currently
-            disabled (enable it first with :func:`enable`).
+        ValueError: If *days* is less than 1.
         PermissionDenied: If the caller lacks the required permission (HTTP 403).
     """
     if days < 1:
         msg = f"days must be >= 1; got {days}"
         raise ValueError(msg)
 
-    # Pre-check: refuse silently-no-op PATCH when audit is disabled.
-    current = await get_settings(http, workspace_id, warehouse_id)
-    if current.state != "Enabled":
-        msg = "audit is disabled; enable first with `audit enable` before setting retention"
-        raise ValueError(msg)
-
     path = _audit_path(workspace_id, warehouse_id)
     await http.request("PATCH", HttpBase.FABRIC, path, json={"retentionDays": days})
+    # PATCH returns empty/partial body on this endpoint; re-fetch required.
     return await get_settings(http, workspace_id, warehouse_id)
 
 
@@ -170,6 +167,8 @@ async def set_action_groups(
     workspace_id: UUID,
     warehouse_id: UUID,
     action_groups: list[str],
+    *,
+    ensure_enabled: bool = True,
 ) -> AuditSettings:
     """Replace the audited action groups for a warehouse.
 
@@ -183,12 +182,13 @@ async def set_action_groups(
         warehouse_id: GUID of the Data Warehouse.
         action_groups: List of action-group name strings to set.  Pass an empty
             list to clear all action groups.
+        ensure_enabled: When ``True`` (default), the PATCH also sets
+            ``state=Enabled`` so that auditing is active after the call even if
+            it was previously disabled.  When ``False``, only the action-group
+            list is changed and the current audit state is left untouched.
 
     Returns:
         The fresh :class:`~fabric_dw.models.AuditSettings` after the update.
-
-    Note:
-        This also enables auditing if currently disabled.
 
     Raises:
         ValueError: If any name in *action_groups* does not match ``^[A-Z0-9_]+$``.
@@ -207,14 +207,18 @@ async def set_action_groups(
     # Fabric's PATCH /settings/sqlAudit accepts an ``auditActionsAndGroups`` field
     # alongside ``state`` and ``retentionDays``.  Using PATCH to set the action groups
     # avoids the EntityNotFound (404) that the POST method returns on freshly-created
-    # warehouses, since PATCH will also enable auditing if it is not yet active.
+    # warehouses, since PATCH with state=Enabled is idempotent and always works.
+    patch_body: dict[str, object] = {"auditActionsAndGroups": action_groups}
+    if ensure_enabled:
+        patch_body["state"] = "Enabled"
+
     await http.request(
         "PATCH",
         HttpBase.FABRIC,
         path,
-        json={"state": "Enabled", "auditActionsAndGroups": action_groups},
+        json=patch_body,
     )
-
+    # PATCH returns empty/partial body on this endpoint; re-fetch required.
     return await get_settings(http, workspace_id, warehouse_id)
 
 
@@ -236,6 +240,12 @@ async def add_action_group(
     by this client-side validation but will be rejected by the API.  The
     broad ``^[A-Z0-9_]+$`` pattern is used rather than a closed enum because
     Microsoft may extend the set of valid names without notice.
+
+    Note:
+        This function performs a read-modify-write (GET then PATCH) without
+        optimistic concurrency control.  The Fabric REST API does not expose
+        ETags or ``If-Match`` on the ``/settings/sqlAudit`` endpoint.  Under
+        concurrent modification the last writer wins silently.
 
     Args:
         http: Authenticated Fabric HTTP client.
@@ -278,6 +288,7 @@ async def add_action_group(
         path,
         json={"auditActionsAndGroups": new_groups},
     )
+    # PATCH returns empty/partial body on this endpoint; re-fetch required.
     return await get_settings(http, workspace_id, warehouse_id)
 
 
@@ -299,6 +310,12 @@ async def remove_action_group(
     by this client-side validation but will be rejected by the API.  The
     broad ``^[A-Z0-9_]+$`` pattern is used rather than a closed enum because
     Microsoft may extend the set of valid names without notice.
+
+    Note:
+        This function performs a read-modify-write (GET then PATCH) without
+        optimistic concurrency control.  The Fabric REST API does not expose
+        ETags or ``If-Match`` on the ``/settings/sqlAudit`` endpoint.  Under
+        concurrent modification the last writer wins silently.
 
     Args:
         http: Authenticated Fabric HTTP client.
@@ -341,4 +358,5 @@ async def remove_action_group(
         path,
         json={"auditActionsAndGroups": new_groups},
     )
+    # PATCH returns empty/partial body on this endpoint; re-fetch required.
     return await get_settings(http, workspace_id, warehouse_id)

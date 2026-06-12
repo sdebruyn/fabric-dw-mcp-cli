@@ -395,7 +395,10 @@ async def reset_cmd(ctx: CliContext, workspace: str | None, yes: bool) -> None:
         async with _build_http_client(ctx) as http:
             ws_id = await _resolve_workspace(http, ws)
             result = await _svc.reset_pools(http, ws_id)
-            render(result.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
+            if result is None:
+                click.echo("Workspace has no SQL pools configuration (never provisioned).")
+            else:
+                render(result.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except PermissionDenied as exc:
         raise _permission_hint(exc) from exc
     except FabricError as exc:

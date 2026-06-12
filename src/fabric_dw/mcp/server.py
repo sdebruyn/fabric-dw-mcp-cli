@@ -1982,6 +1982,8 @@ async def reset_sql_pools(workspace: str) -> dict[str, Any]:
         result = await sql_pools_svc.reset_pools(_get_http(), ws_id)
     except FabricError as exc:
         raise _fabric_err(exc) from exc
+    if result is None:
+        return {"message": "Workspace has no SQL pools configuration (never provisioned)."}
     return result.model_dump(by_alias=True, mode="json")
 
 
