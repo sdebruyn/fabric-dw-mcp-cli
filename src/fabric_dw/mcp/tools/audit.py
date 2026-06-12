@@ -1,0 +1,164 @@
+"""MCP tools for SQL audit settings operations."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
+
+from fabric_dw.exceptions import FabricError
+from fabric_dw.mcp._context import get_context
+from fabric_dw.mcp._guards import assert_workspace_allowed, assert_writes_allowed
+from fabric_dw.mcp._helpers import fabric_err
+from fabric_dw.services import audit
+
+__all__ = ["register"]
+
+
+def register(mcp: FastMCP) -> None:  # noqa: PLR0915
+    """Register audit tools against *mcp*."""
+
+    @mcp.tool(name="get_audit_settings")
+    async def get_audit_settings(workspace: str, warehouse: str) -> dict[str, Any]:
+        """Fetch the current SQL audit settings for a warehouse."""
+        assert_workspace_allowed(workspace)
+        ctx = get_context()
+        try:
+            ws_id = await ctx.resolver.workspace_id(workspace)
+            assert_workspace_allowed(workspace, str(ws_id))
+            item = await ctx.resolver.item(workspace, warehouse)
+            result = await audit.get_settings(ctx.http, ws_id, item.id)
+        except FabricError as exc:
+            raise fabric_err(exc) from exc
+        return result.model_dump(by_alias=True, mode="json")
+
+    @mcp.tool(name="enable_audit")
+    async def enable_audit(
+        workspace: str, warehouse: str, retention_days: int = 0
+    ) -> dict[str, Any]:
+        """Enable SQL auditing on a warehouse."""
+        assert_writes_allowed("enable_audit")
+        assert_workspace_allowed(workspace)
+        ctx = get_context()
+        try:
+            ws_id = await ctx.resolver.workspace_id(workspace)
+            assert_workspace_allowed(workspace, str(ws_id))
+            item = await ctx.resolver.item(workspace, warehouse)
+            result = await audit.enable(ctx.http, ws_id, item.id, retention_days=retention_days)
+        except FabricError as exc:
+            raise fabric_err(exc) from exc
+        return result.model_dump(by_alias=True, mode="json")
+
+    @mcp.tool(name="disable_audit")
+    async def disable_audit(workspace: str, warehouse: str) -> dict[str, Any]:
+        """Disable SQL auditing on a warehouse."""
+        assert_writes_allowed("disable_audit")
+        assert_workspace_allowed(workspace)
+        ctx = get_context()
+        try:
+            ws_id = await ctx.resolver.workspace_id(workspace)
+            assert_workspace_allowed(workspace, str(ws_id))
+            item = await ctx.resolver.item(workspace, warehouse)
+            result = await audit.disable(ctx.http, ws_id, item.id)
+        except FabricError as exc:
+            raise fabric_err(exc) from exc
+        return result.model_dump(by_alias=True, mode="json")
+
+    @mcp.tool(name="set_audit_action_groups")
+    async def set_audit_action_groups(
+        workspace: str, warehouse: str, action_groups: list[str]
+    ) -> dict[str, Any]:
+        """Replace the audited action groups for a warehouse."""
+        assert_writes_allowed("set_audit_action_groups")
+        assert_workspace_allowed(workspace)
+        ctx = get_context()
+        try:
+            ws_id = await ctx.resolver.workspace_id(workspace)
+            assert_workspace_allowed(workspace, str(ws_id))
+            item = await ctx.resolver.item(workspace, warehouse)
+            result = await audit.set_action_groups(ctx.http, ws_id, item.id, action_groups)
+        except FabricError as exc:
+            raise fabric_err(exc) from exc
+        return result.model_dump(by_alias=True, mode="json")
+
+    @mcp.tool(name="add_audit_group")
+    async def add_audit_group(workspace: str, warehouse: str, group: str) -> dict[str, Any]:
+        """Add a single audit action group without overwriting the others.
+
+        Idempotent — if *group* is already present the current settings are
+        returned unchanged.  Auditing must already be enabled.
+
+        CAUTION: changes take effect immediately on the live audit policy.
+
+        Args:
+            workspace: Workspace name or GUID.
+            warehouse: Warehouse name or GUID.
+            group: Action group name, e.g. ``BATCH_COMPLETED_GROUP``.
+        """
+        assert_writes_allowed("add_audit_group")
+        assert_workspace_allowed(workspace)
+        ctx = get_context()
+        try:
+            ws_id = await ctx.resolver.workspace_id(workspace)
+            assert_workspace_allowed(workspace, str(ws_id))
+            item = await ctx.resolver.item(workspace, warehouse)
+            result = await audit.add_action_group(ctx.http, ws_id, item.id, group)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+        except FabricError as exc:
+            raise fabric_err(exc) from exc
+        return result.model_dump(by_alias=True, mode="json")
+
+    @mcp.tool(name="remove_audit_group")
+    async def remove_audit_group(workspace: str, warehouse: str, group: str) -> dict[str, Any]:
+        """Remove a single audit action group without overwriting the others.
+
+        Idempotent — if *group* is not present the current settings are returned
+        unchanged.  Auditing must already be enabled.
+
+        CAUTION: changes take effect immediately on the live audit policy.
+
+        Args:
+            workspace: Workspace name or GUID.
+            warehouse: Warehouse name or GUID.
+            group: Action group name, e.g. ``BATCH_COMPLETED_GROUP``.
+        """
+        assert_writes_allowed("remove_audit_group")
+        assert_workspace_allowed(workspace)
+        ctx = get_context()
+        try:
+            ws_id = await ctx.resolver.workspace_id(workspace)
+            assert_workspace_allowed(workspace, str(ws_id))
+            item = await ctx.resolver.item(workspace, warehouse)
+            result = await audit.remove_action_group(ctx.http, ws_id, item.id, group)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+        except FabricError as exc:
+            raise fabric_err(exc) from exc
+        return result.model_dump(by_alias=True, mode="json")
+
+    @mcp.tool(name="set_audit_retention")
+    async def set_audit_retention(workspace: str, warehouse: str, days: int) -> dict[str, Any]:
+        """Update the audit log retention period without changing the audit enabled/disabled state.
+
+        Audit must already be enabled; if disabled, enable it first with ``enable_audit``.
+
+        Args:
+            workspace: Workspace name or GUID.
+            warehouse: Warehouse name or GUID.
+            days: Retention period in days (>= 1). The API enforces its own upper bound.
+        """
+        assert_writes_allowed("set_audit_retention")
+        assert_workspace_allowed(workspace)
+        ctx = get_context()
+        try:
+            ws_id = await ctx.resolver.workspace_id(workspace)
+            assert_workspace_allowed(workspace, str(ws_id))
+            item = await ctx.resolver.item(workspace, warehouse)
+            result = await audit.set_retention(ctx.http, ws_id, item.id, days=days)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+        except FabricError as exc:
+            raise fabric_err(exc) from exc
+        return result.model_dump(by_alias=True, mode="json")

@@ -1,0 +1,69 @@
+"""Per-domain MCP tool registration modules.
+
+Each sub-module exposes a ``register(mcp: FastMCP) -> None`` function that
+decorates and registers that domain's tools against the provided
+:class:`~mcp.server.fastmcp.FastMCP` instance.
+
+Domains
+-------
+- :mod:`.workspaces` — workspace listing, detail, collation
+- :mod:`.warehouses` — warehouse CRUD, takeover, permissions
+- :mod:`.sql_endpoints` — SQL Analytics Endpoint listing, detail, refresh, permissions
+- :mod:`.audit` — SQL audit settings management
+- :mod:`.queries` — running queries, connections, kill session
+- :mod:`.query_insights` — Query Insights DMV tools
+- :mod:`.sql_exec` — generic SQL execution (execute_sql)
+- :mod:`.snapshots` — warehouse snapshot CRUD, roll timestamp
+- :mod:`.restore` — restore points CRUD, in-place restore
+- :mod:`.views` — SQL view listing, reading, CRUD
+- :mod:`.schemas` — SQL schema listing and DDL
+- :mod:`.tables` — SQL table listing, reading, DDL
+- :mod:`.sql_pools` — SQL Pools beta API
+- :mod:`.cache` — cache management (clear_cache)
+"""
+
+from __future__ import annotations
+
+from mcp.server.fastmcp import FastMCP
+
+from fabric_dw.mcp.tools import (
+    audit,
+    cache,
+    queries,
+    query_insights,
+    restore,
+    schemas,
+    snapshots,
+    sql_endpoints,
+    sql_exec,
+    sql_pools,
+    tables,
+    views,
+    warehouses,
+    workspaces,
+)
+
+__all__ = ["register_all"]
+
+_DOMAINS = [
+    workspaces,
+    warehouses,
+    sql_endpoints,
+    audit,
+    queries,
+    query_insights,
+    sql_exec,
+    snapshots,
+    restore,
+    views,
+    schemas,
+    tables,
+    sql_pools,
+    cache,
+]
+
+
+def register_all(mcp: FastMCP) -> None:
+    """Register all domain tools against *mcp*."""
+    for domain in _DOMAINS:
+        domain.register(mcp)
