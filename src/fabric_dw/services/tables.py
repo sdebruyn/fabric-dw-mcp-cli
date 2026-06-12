@@ -2,7 +2,7 @@
 
 Public API
 ----------
-- :func:`validate_identifier` — re-exported from :mod:`views` (shared validator).
+- :func:`validate_identifier` — re-exported from :mod:`fabric_dw.identifiers`.
 - :func:`list_tables`          — list all tables via TDS ``sys.tables JOIN sys.schemas``.
 - :func:`read_table`           — ``SELECT TOP (N) * FROM [schema].[table]``.
 - :func:`create_table`         — ``CREATE TABLE … AS <select_body>`` (CTAS).
@@ -21,16 +21,14 @@ from __future__ import annotations
 
 import asyncio
 import re
-from contextlib import closing
 from datetime import datetime
 from typing import cast
 
-from fabric_dw import sql
 from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import ItemKindError, NotFound
+from fabric_dw.identifiers import quote_identifier, validate_identifier
 from fabric_dw.models import Table, WarehouseKind
-from fabric_dw.services.views import validate_identifier
-from fabric_dw.sql import SqlTarget
+from fabric_dw.sql import SqlTarget, run_query
 
 __all__ = [
     "clear_table",
@@ -77,7 +75,16 @@ WHERE ({schema_filter})
 ORDER BY s.name, t.name;
 """
 
-_READ_TABLE_SQL = "SELECT TOP ({count}) * FROM [{schema}].[{table}];"
+# TOP count is an internal int (not user-supplied string), safe to embed.
+_READ_TABLE_SQL = "SELECT TOP ({count}) * FROM {schema_q}.{table_q};"
+
+_FETCH_TABLE_SQL = """\
+SELECT s.name AS schema_name, t.name, t.create_date AS created,
+       t.modify_date AS modified
+FROM sys.tables t
+JOIN sys.schemas s ON s.schema_id = t.schema_id
+WHERE s.name = ? AND t.name = ?;
+"""
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -158,22 +165,23 @@ async def list_tables(
     if schema is not None:
         validate_identifier(schema)
 
-    schema_filter = f"s.name = '{schema}'" if schema is not None else "1=1"
+    if schema is not None:
+        schema_filter = "s.name = ?"
+        filter_params: list[object] = [schema]
+    else:
+        schema_filter = "1=1"
+        filter_params = []
+
     list_sql = _LIST_TABLES_SQL.format(schema_filter=schema_filter)
 
     def _run() -> list[Table]:
-        with closing(sql.open_connection(target, mode=mode)) as conn:
-            cursor = conn.cursor()
-            try:
-                cursor.execute(list_sql)
-                cols = [c[0] for c in (cursor.description or [])]
-                rows = cursor.fetchall()
-            except Exception as exc:
-                mapped = sql.map_driver_error(exc)
-                if mapped:
-                    raise mapped from exc
-                raise
-            return [_row_to_table(cols, r) for r in rows]
+        cols, rows = run_query(
+            target,
+            list_sql,
+            params=filter_params or None,
+            mode=mode,
+        )
+        return [_row_to_table(cols, r) for r in rows]
 
     return await asyncio.to_thread(_run)
 
@@ -210,24 +218,18 @@ async def read_table(
     validate_identifier(schema)
     validate_identifier(table_name)
 
-    read_sql = _READ_TABLE_SQL.format(count=int(count), schema=schema, table=table_name)
+    read_sql = _READ_TABLE_SQL.format(
+        count=int(count),
+        schema_q=quote_identifier(schema),
+        table_q=quote_identifier(table_name),
+    )
 
     def _run() -> tuple[list[str], list[tuple[object, ...]]]:
-        with closing(sql.open_connection(target, mode=mode)) as conn:
-            cursor = conn.cursor()
-            try:
-                cursor.execute(read_sql)
-                cols = [c[0] for c in (cursor.description or [])]
-                rows = cursor.fetchall()
-            except Exception as exc:
-                mapped = sql.map_driver_error(exc)
-                if mapped:
-                    raise mapped from exc
-                raise
-            if not cols:
-                msg = f"Table [{schema}].[{table_name}] not found"
-                raise NotFound(msg)
-            return cols, list(rows)
+        cols, rows = run_query(target, read_sql, mode=mode)
+        if not cols:
+            msg = f"Table [{schema}].[{table_name}] not found"
+            raise NotFound(msg)
+        return cols, list(rows)
 
     return await asyncio.to_thread(_run)
 
@@ -269,19 +271,10 @@ async def create_table(
     validate_identifier(table_name)
     _reject_non_select(select_body)
 
-    ddl = f"CREATE TABLE [{schema}].[{table_name}] AS {select_body}"
+    ddl = f"CREATE TABLE {quote_identifier(schema)}.{quote_identifier(table_name)} AS {select_body}"
 
     def _run_ddl() -> None:
-        with closing(sql.open_connection(target, mode=mode)) as conn:
-            cursor = conn.cursor()
-            try:
-                cursor.execute(ddl)
-                conn.commit()
-            except Exception as exc:
-                mapped = sql.map_driver_error(exc)
-                if mapped:
-                    raise mapped from exc
-                raise
+        run_query(target, ddl, mode=mode, commit=True, fetch="none")
 
     await asyncio.to_thread(_run_ddl)
     return await _fetch_table(target, schema, table_name, mode=mode)
@@ -314,19 +307,10 @@ async def delete_table(
     validate_identifier(schema)
     validate_identifier(table_name)
 
-    ddl = f"DROP TABLE [{schema}].[{table_name}]"
+    ddl = f"DROP TABLE {quote_identifier(schema)}.{quote_identifier(table_name)}"
 
     def _run() -> None:
-        with closing(sql.open_connection(target, mode=mode)) as conn:
-            cursor = conn.cursor()
-            try:
-                cursor.execute(ddl)
-                conn.commit()
-            except Exception as exc:
-                mapped = sql.map_driver_error(exc)
-                if mapped:
-                    raise mapped from exc
-                raise
+        run_query(target, ddl, mode=mode, commit=True, fetch="none")
 
     await asyncio.to_thread(_run)
 
@@ -358,19 +342,10 @@ async def clear_table(
     validate_identifier(schema)
     validate_identifier(table_name)
 
-    ddl = f"TRUNCATE TABLE [{schema}].[{table_name}]"
+    ddl = f"TRUNCATE TABLE {quote_identifier(schema)}.{quote_identifier(table_name)}"
 
     def _run() -> None:
-        with closing(sql.open_connection(target, mode=mode)) as conn:
-            cursor = conn.cursor()
-            try:
-                cursor.execute(ddl)
-                conn.commit()
-            except Exception as exc:
-                mapped = sql.map_driver_error(exc)
-                if mapped:
-                    raise mapped from exc
-                raise
+        run_query(target, ddl, mode=mode, commit=True, fetch="none")
 
     await asyncio.to_thread(_run)
 
@@ -401,30 +376,17 @@ async def _fetch_table(
     Raises:
         NotFound: If the table is not found after creation.
     """
-    # Safe: schema and table_name pass validate_identifier() before this helper is called.
-    fetch_sql = (
-        f"SELECT s.name AS schema_name, t.name, t.create_date AS created, "  # noqa: S608  # nosec B608
-        f"t.modify_date AS modified "
-        f"FROM sys.tables t "
-        f"JOIN sys.schemas s ON s.schema_id = t.schema_id "
-        f"WHERE s.name = '{schema}' AND t.name = '{table_name}';"
-    )
 
     def _run() -> Table:
-        with closing(sql.open_connection(target, mode=mode)) as conn:
-            cursor = conn.cursor()
-            try:
-                cursor.execute(fetch_sql)
-                cols = [c[0] for c in (cursor.description or [])]
-                rows = cursor.fetchall()
-            except Exception as exc:
-                mapped = sql.map_driver_error(exc)
-                if mapped:
-                    raise mapped from exc
-                raise
-            if not rows:
-                msg = f"Table [{schema}].[{table_name}] not found after creation"
-                raise NotFound(msg)
-            return _row_to_table(cols, rows[0])
+        cols, rows = run_query(
+            target,
+            _FETCH_TABLE_SQL,
+            params=[schema, table_name],
+            mode=mode,
+        )
+        if not rows:
+            msg = f"Table [{schema}].[{table_name}] not found after creation"
+            raise NotFound(msg)
+        return _row_to_table(cols, rows[0])
 
     return await asyncio.to_thread(_run)

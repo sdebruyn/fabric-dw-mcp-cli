@@ -2,7 +2,7 @@
 
 Public API
 ----------
-- :func:`validate_identifier` — re-exported from :mod:`views` (shared validator).
+- :func:`validate_identifier` — re-exported from :mod:`fabric_dw.identifiers`.
 - :func:`list_schemas`         — list all user-defined schemas via TDS ``sys.schemas``.
 - :func:`create_schema`        — ``CREATE SCHEMA [<name>]``.
 - :func:`delete_schema`        — ``DROP SCHEMA [<name>]``. Optionally cascade-drops
@@ -33,15 +33,13 @@ schema for warehouse tables.
 from __future__ import annotations
 
 import asyncio
-from contextlib import closing
 from typing import cast
 
-from fabric_dw import sql
 from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import NotFound
+from fabric_dw.identifiers import quote_identifier, validate_identifier
 from fabric_dw.models import Schema
-from fabric_dw.services.views import validate_identifier
-from fabric_dw.sql import SqlTarget
+from fabric_dw.sql import SqlTarget, run_query, run_statements
 
 __all__ = [
     "create_schema",
@@ -77,26 +75,38 @@ _SYSTEM_SCHEMAS: frozenset[str] = frozenset(
     }
 )
 
-_LIST_SCHEMAS_SQL = """\
+# Build the IN-clause using parameter binding (? placeholders).
+# The placeholders string is constructed from the frozenset length; the actual
+# values are passed as params so the driver handles quoting/escaping.
+_SYSTEM_SCHEMA_PLACEHOLDERS = ", ".join("?" for _ in _SYSTEM_SCHEMAS)
+_SYSTEM_SCHEMA_PARAMS: tuple[str, ...] = tuple(sorted(_SYSTEM_SCHEMAS))
+
+_LIST_SCHEMAS_SQL = f"""\
 SELECT
     s.name,
     s.principal_id
 FROM sys.schemas s
-WHERE s.name NOT IN ({placeholders})
+WHERE s.name NOT IN ({_SYSTEM_SCHEMA_PLACEHOLDERS})
   AND s.name NOT LIKE 'db[_]%'
 ORDER BY s.name;
-"""
+"""  # noqa: S608 — placeholders are ? params; schema names in _SYSTEM_SCHEMA_PARAMS are hardcoded constants.
 
 _LIST_TABLES_IN_SCHEMA_SQL = """\
 SELECT t.name AS obj_name, 'TABLE' AS obj_type
 FROM sys.tables t
 JOIN sys.schemas s ON s.schema_id = t.schema_id
-WHERE s.name = '{schema}'
+WHERE s.name = ?
 UNION ALL
 SELECT v.name AS obj_name, 'VIEW' AS obj_type
 FROM sys.views v
 JOIN sys.schemas s ON s.schema_id = v.schema_id
-WHERE s.name = '{schema}';
+WHERE s.name = ?;
+"""
+
+_FETCH_SCHEMA_SQL = """\
+SELECT s.name, s.principal_id
+FROM sys.schemas s
+WHERE s.name = ?;
 """
 
 
@@ -140,22 +150,15 @@ async def list_schemas(
         PermissionDenied: If the driver reports a permission error.
         AuthError: If the driver reports an authentication failure.
     """
-    placeholders = ", ".join(f"'{s}'" for s in sorted(_SYSTEM_SCHEMAS))
-    list_sql = _LIST_SCHEMAS_SQL.format(placeholders=placeholders)
 
     def _run() -> list[Schema]:
-        with closing(sql.open_connection(target, mode=mode)) as conn:
-            cursor = conn.cursor()
-            try:
-                cursor.execute(list_sql)
-                cols = [c[0] for c in (cursor.description or [])]
-                rows = cursor.fetchall()
-            except Exception as exc:
-                mapped = sql.map_driver_error(exc)
-                if mapped:
-                    raise mapped from exc
-                raise
-            return [_row_to_schema(cols, r) for r in rows]
+        cols, rows = run_query(
+            target,
+            _LIST_SCHEMAS_SQL,
+            params=list(_SYSTEM_SCHEMA_PARAMS),
+            mode=mode,
+        )
+        return [_row_to_schema(cols, r) for r in rows]
 
     return await asyncio.to_thread(_run)
 
@@ -182,20 +185,10 @@ async def create_schema(
         PermissionDenied: If the driver reports a CREATE SCHEMA permission error.
     """
     validate_identifier(name)
-
-    ddl = f"CREATE SCHEMA [{name}]"
+    ddl = f"CREATE SCHEMA {quote_identifier(name)}"
 
     def _run_ddl() -> None:
-        with closing(sql.open_connection(target, mode=mode)) as conn:
-            cursor = conn.cursor()
-            try:
-                cursor.execute(ddl)
-                conn.commit()
-            except Exception as exc:
-                mapped = sql.map_driver_error(exc)
-                if mapped:
-                    raise mapped from exc
-                raise
+        run_query(target, ddl, mode=mode, commit=True, fetch="none")
 
     await asyncio.to_thread(_run_ddl)
     return await _fetch_schema(target, name, mode=mode)
@@ -237,19 +230,10 @@ async def delete_schema(
     if cascade:
         await _drop_schema_objects(target, name, mode=mode)
 
-    ddl = f"DROP SCHEMA [{name}]"
+    ddl = f"DROP SCHEMA {quote_identifier(name)}"
 
     def _run() -> None:
-        with closing(sql.open_connection(target, mode=mode)) as conn:
-            cursor = conn.cursor()
-            try:
-                cursor.execute(ddl)
-                conn.commit()
-            except Exception as exc:
-                mapped = sql.map_driver_error(exc)
-                if mapped:
-                    raise mapped from exc
-                raise
+        run_query(target, ddl, mode=mode, commit=True, fetch="none")
 
     await asyncio.to_thread(_run)
 
@@ -281,28 +265,18 @@ async def _fetch_schema(
     """
     # Belt-and-suspenders: validate even though callers should have validated already.
     validate_identifier(name)
-    fetch_sql = (
-        f"SELECT s.name, s.principal_id "  # noqa: S608  # nosec B608
-        f"FROM sys.schemas s "
-        f"WHERE s.name = '{name}';"
-    )
 
     def _run() -> Schema:
-        with closing(sql.open_connection(target, mode=mode)) as conn:
-            cursor = conn.cursor()
-            try:
-                cursor.execute(fetch_sql)
-                cols = [c[0] for c in (cursor.description or [])]
-                rows = cursor.fetchall()
-            except Exception as exc:
-                mapped = sql.map_driver_error(exc)
-                if mapped:
-                    raise mapped from exc
-                raise
-            if not rows:
-                msg = f"Schema [{name}] not found after creation"
-                raise NotFound(msg)
-            return _row_to_schema(cols, rows[0])
+        cols, rows = run_query(
+            target,
+            _FETCH_SCHEMA_SQL,
+            params=[name],
+            mode=mode,
+        )
+        if not rows:
+            msg = f"Schema [{name}] not found after creation"
+            raise NotFound(msg)
+        return _row_to_schema(cols, rows[0])
 
     return await asyncio.to_thread(_run)
 
@@ -315,8 +289,9 @@ async def _drop_schema_objects(
 ) -> None:
     """Drop all tables and views contained in *schema_name*.
 
-    Enumerates objects via ``sys.tables`` and ``sys.views`` then issues
-    individual ``DROP TABLE`` / ``DROP VIEW`` DDL for each.
+    Enumerates objects via ``sys.tables`` and ``sys.views`` then issues all
+    ``DROP TABLE`` / ``DROP VIEW`` DDL statements on a **single** connection,
+    avoiding the N x TCP+TLS handshake overhead of the previous approach.
 
     This is a helper for :func:`delete_schema` when ``cascade=True``.
     The schema name is assumed to have been validated by the caller.
@@ -335,41 +310,31 @@ async def _drop_schema_objects(
         schema_name: The schema whose objects will be dropped (already validated).
         mode: The credential mode for Entra authentication.
     """
-    # Safe: schema_name passes validate_identifier() in delete_schema().
-    list_sql = _LIST_TABLES_IN_SCHEMA_SQL.format(schema=schema_name)
 
     def _run() -> list[tuple[str, str]]:
-        with closing(sql.open_connection(target, mode=mode)) as conn:
-            cursor = conn.cursor()
-            try:
-                cursor.execute(list_sql)
-                rows = cursor.fetchall()
-            except Exception as exc:
-                mapped = sql.map_driver_error(exc)
-                if mapped:
-                    raise mapped from exc
-                raise
-            return [(str(r[0]), str(r[1])) for r in rows]
+        # Use schema_name twice: once for sys.tables, once for sys.views (UNION ALL).
+        _cols, rows = run_query(
+            target,
+            _LIST_TABLES_IN_SCHEMA_SQL,
+            params=[schema_name, schema_name],
+            mode=mode,
+        )
+        return [(str(r[0]), str(r[1])) for r in rows]
 
     objects = await asyncio.to_thread(_run)
 
+    if not objects:
+        return
+
+    # Build all DROP statements then execute them on ONE connection.
+    ddl_statements: list[str] = []
     for obj_name, obj_type in objects:
-        # Object names come from sys.tables/sys.views — bracket-safe catalog names.
-        # Validate anyway to be defensive.
+        # Object names come from sys.tables/sys.views — catalog names.
+        # Validate anyway to be defensive (belt-and-suspenders).
         validate_identifier(obj_name)
         ddl_keyword = "TABLE" if obj_type == "TABLE" else "VIEW"
-        ddl = f"DROP {ddl_keyword} [{schema_name}].[{obj_name}]"
+        ddl_statements.append(
+            f"DROP {ddl_keyword} {quote_identifier(schema_name)}.{quote_identifier(obj_name)}"
+        )
 
-        def _run_drop(stmt: str = ddl) -> None:
-            with closing(sql.open_connection(target, mode=mode)) as conn:
-                cursor = conn.cursor()
-                try:
-                    cursor.execute(stmt)
-                    conn.commit()
-                except Exception as exc:
-                    mapped = sql.map_driver_error(exc)
-                    if mapped:
-                        raise mapped from exc
-                    raise
-
-        await asyncio.to_thread(_run_drop)
+    await asyncio.to_thread(run_statements, target, ddl_statements, mode=mode)

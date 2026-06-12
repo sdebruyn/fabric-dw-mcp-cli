@@ -640,3 +640,65 @@ async def test_list_connections_most_recent_session_id_can_be_none() -> None:
         result = await queries.list_connections(target)
 
     assert result[0].most_recent_session_id is None
+
+
+# ---------------------------------------------------------------------------
+# list_running — INNER JOIN correctness
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_running_sql_uses_inner_join() -> None:
+    """The SQL must use INNER JOIN (not LEFT JOIN) so that the WHERE predicate
+    on the right-side table is semantically correct rather than implied.
+    A LEFT JOIN with a right-side WHERE predicate behaves as INNER JOIN but
+    misleads the reader."""
+    target = _make_target()
+    conn = _make_conn([], _COLS)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await queries.list_running(target)
+
+    cursor = conn.cursor.return_value
+    call_sql: str = cursor.execute.call_args[0][0]
+    assert "INNER JOIN" in call_sql.upper()
+    assert "LEFT JOIN" not in call_sql.upper()
+
+
+# ---------------------------------------------------------------------------
+# kill — integer-only injection guard
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_kill_sql_contains_bare_integer() -> None:
+    """KILL statement must embed a bare integer, not a quoted or f-string value."""
+    target = _make_target()
+    conn = MagicMock()
+    cursor = MagicMock()
+    conn.cursor.return_value = cursor
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await queries.kill(target, 123)
+
+    call_sql: str = cursor.execute.call_args[0][0]
+    # Must be exactly "KILL 123" (no quotes, no extra tokens)
+    assert call_sql.strip() == "KILL 123"
+
+
+@pytest.mark.asyncio
+async def test_kill_sql_session_id_is_integer_not_string() -> None:
+    """The embedded session_id must be a plain integer (not a quoted string)."""
+    target = _make_target()
+    conn = MagicMock()
+    cursor = MagicMock()
+    conn.cursor.return_value = cursor
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await queries.kill(target, 7)
+
+    call_sql: str = cursor.execute.call_args[0][0]
+    # Must not contain quotes around the number
+    assert "'7'" not in call_sql
+    assert '"7"' not in call_sql
+    assert "7" in call_sql

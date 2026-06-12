@@ -11,7 +11,13 @@ import pytest
 import fabric_dw.sql as _sql_module
 from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import AuthError, PermissionDenied
-from fabric_dw.sql import SqlTarget, build_connection_string, map_driver_error
+from fabric_dw.sql import (
+    SqlTarget,
+    build_connection_string,
+    map_driver_error,
+    run_query,
+    run_statements,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -309,3 +315,229 @@ class TestMapDriverError:
         result = map_driver_error(exc)
         assert result is not None
         assert original_msg in str(result)
+
+    # --- Native error number tests (strategy 1: locale-independent) ---
+
+    @staticmethod
+    def _make_driver_exc(msg: str, ddbc_error: str) -> BaseException:
+        """Build a mock driver exception with a ``ddbc_error`` attribute."""
+        exc = MagicMock(spec=Exception)
+        exc.__str__ = MagicMock(return_value=msg)
+        exc.ddbc_error = ddbc_error
+        return exc  # type: ignore[return-value]
+
+    def test_native_error_229_returns_permission_denied(self) -> None:
+        """Error number 229 (SELECT permission denied) → PermissionDenied."""
+        exc = self._make_driver_exc("some driver error", "Error: 229 SELECT permission denied")
+        result = map_driver_error(exc)
+        assert isinstance(result, PermissionDenied)
+
+    def test_native_error_230_returns_permission_denied(self) -> None:
+        """Error number 230 (INSERT permission denied) → PermissionDenied."""
+        exc = self._make_driver_exc("some driver error", "(230) INSERT permission denied")
+        result = map_driver_error(exc)
+        assert isinstance(result, PermissionDenied)
+
+    def test_native_error_297_returns_permission_denied(self) -> None:
+        """Error number 297 (execute permission denied) → PermissionDenied."""
+        exc = self._make_driver_exc("some driver error", "Error: 297 execute permission denied")
+        result = map_driver_error(exc)
+        assert isinstance(result, PermissionDenied)
+
+    def test_native_error_18456_returns_auth_error(self) -> None:
+        """Error number 18456 (login failed) → AuthError."""
+        exc = self._make_driver_exc("login failed", "[SQL Server]Login failed. Error: 18456")
+        result = map_driver_error(exc)
+        assert isinstance(result, AuthError)
+
+    def test_native_permission_wins_over_fragment_auth(self) -> None:
+        """Native error 229 beats an auth fragment in the message string."""
+        exc = self._make_driver_exc("authentication failed error", "Error: 229 permission")
+        result = map_driver_error(exc)
+        assert isinstance(result, PermissionDenied)
+
+    def test_unrecognised_native_error_falls_through_to_fragment(self) -> None:
+        """An unrecognised native error number falls through to fragment matching."""
+        exc = self._make_driver_exc("permission was denied for this object", "Error: 9999 unknown")
+        result = map_driver_error(exc)
+        assert isinstance(result, PermissionDenied)
+
+
+# ---------------------------------------------------------------------------
+# run_query — param binding
+# ---------------------------------------------------------------------------
+
+
+class TestRunQuery:
+    """Tests for run_query: param forwarding, commit, fetch modes, error mapping."""
+
+    def test_params_forwarded_to_cursor_execute(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """When params are given, cursor.execute is called with the params sequence."""
+        mock_mssql, _mock_conn, mock_cursor = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        run_query(_make_target(), "SELECT * FROM t WHERE id = ?", params=["abc"])
+
+        mock_cursor.execute.assert_called_once_with("SELECT * FROM t WHERE id = ?", ["abc"])
+
+    def test_no_params_calls_execute_without_params(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """When params is None, cursor.execute is called with the SQL only."""
+        mock_mssql, _mock_conn, mock_cursor = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        run_query(_make_target(), "SELECT 1")
+
+        mock_cursor.execute.assert_called_once_with("SELECT 1")
+
+    def test_returns_columns_and_rows(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_mssql, _mock_conn, mock_cursor = _make_mock_mssql()
+        mock_cursor.description = [("col1", None), ("col2", None)]
+        mock_cursor.fetchall.return_value = [(1, "a"), (2, "b")]
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        cols, rows = run_query(_make_target(), "SELECT col1, col2 FROM t")
+
+        assert cols == ["col1", "col2"]
+        assert rows == [(1, "a"), (2, "b")]
+
+    def test_commit_true_calls_commit(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_mssql, mock_conn, _mock_cursor = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        run_query(_make_target(), "INSERT INTO t VALUES (1)", commit=True, fetch="none")
+
+        mock_conn.commit.assert_called_once()
+
+    def test_commit_false_does_not_call_commit(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_mssql, mock_conn, _mock_cursor = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        run_query(_make_target(), "SELECT 1", commit=False)
+
+        mock_conn.commit.assert_not_called()
+
+    def test_fetch_none_returns_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_mssql, _, _ = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        cols, rows = run_query(_make_target(), "DELETE FROM t", fetch="none")
+
+        assert cols == []
+        assert rows == []
+
+    def test_connection_closed_after_run(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_mssql, mock_conn, _ = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        run_query(_make_target(), "SELECT 1")
+
+        mock_conn.close.assert_called_once()
+
+    def test_connection_closed_on_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_mssql, mock_conn, mock_cursor = _make_mock_mssql()
+        mock_cursor.execute.side_effect = Exception("boom")
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with pytest.raises(Exception, match="boom"):
+            run_query(_make_target(), "SELECT 1")
+
+        mock_conn.close.assert_called_once()
+
+    def test_permission_denied_fragment_mapped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_mssql, _, mock_cursor = _make_mock_mssql()
+        mock_cursor.execute.side_effect = Exception("permission was denied on object X")
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with pytest.raises(PermissionDenied):
+            run_query(_make_target(), "SELECT * FROM X")
+
+    def test_auth_error_fragment_mapped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_mssql, _, mock_cursor = _make_mock_mssql()
+        mock_cursor.execute.side_effect = Exception("Authentication failed for user ''")
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with pytest.raises(AuthError):
+            run_query(_make_target(), "SELECT 1")
+
+    def test_multiple_params_bound_correctly(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Multiple ? placeholders are passed as a sequence."""
+        mock_mssql, _, mock_cursor = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        run_query(_make_target(), "SELECT * FROM t WHERE a = ? AND b = ?", params=["x", 42])
+
+        mock_cursor.execute.assert_called_once_with(
+            "SELECT * FROM t WHERE a = ? AND b = ?", ["x", 42]
+        )
+
+
+# ---------------------------------------------------------------------------
+# run_statements — single connection for all DDL
+# ---------------------------------------------------------------------------
+
+
+class TestRunStatements:
+    """run_statements must use ONE connection for all statements."""
+
+    def test_all_statements_use_single_connection(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """connect() is called exactly once regardless of statement count."""
+        mock_mssql, _mock_conn, _mock_cursor = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        run_statements(
+            _make_target(),
+            ["DROP TABLE [dbo].[t1]", "DROP TABLE [dbo].[t2]", "DROP TABLE [dbo].[t3]"],
+        )
+
+        # Only one TCP connection was opened.
+        assert mock_mssql.connect.call_count == 1
+
+    def test_each_statement_is_executed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_mssql, _mock_conn, mock_cursor = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        stmts = ["DROP VIEW [dbo].[v1]", "DROP TABLE [dbo].[t1]"]
+        run_statements(_make_target(), stmts)
+
+        assert mock_cursor.execute.call_count == 2
+        mock_cursor.execute.assert_any_call("DROP VIEW [dbo].[v1]")
+        mock_cursor.execute.assert_any_call("DROP TABLE [dbo].[t1]")
+
+    def test_commit_called_after_each_statement(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_mssql, mock_conn, _mock_cursor = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        run_statements(_make_target(), ["DROP TABLE [a]", "DROP TABLE [b]"])
+
+        assert mock_conn.commit.call_count == 2
+
+    def test_connection_closed_after_all_statements(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_mssql, mock_conn, _ = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        run_statements(_make_target(), ["DROP TABLE [dbo].[t]"])
+
+        mock_conn.close.assert_called_once()
+
+    def test_error_on_first_statement_closes_connection(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        mock_mssql, mock_conn, mock_cursor = _make_mock_mssql()
+        mock_cursor.execute.side_effect = Exception("permission was denied")
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with pytest.raises(PermissionDenied):
+            run_statements(_make_target(), ["DROP TABLE [dbo].[t]"])
+
+        mock_conn.close.assert_called_once()
+
+    def test_empty_statements_opens_and_closes_connection(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        mock_mssql, mock_conn, _ = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        run_statements(_make_target(), [])
+
+        assert mock_mssql.connect.call_count == 1
+        mock_conn.close.assert_called_once()
