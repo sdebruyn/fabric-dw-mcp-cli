@@ -101,6 +101,16 @@ _FORBIDDEN_TOKENS = frozenset(
         "UPDATETEXT",
         "SP_EXECUTESQL",
         "XP_CMDSHELL",
+        # DoS / context-switch tokens — T-SQL batches don't require semicolons,
+        # so these can appear after a newline following a valid SELECT and still
+        # execute.  WAITFOR can hang a connection for hours; USE switches the
+        # database context; SHUTDOWN, RECONFIGURE, and DBCC are admin-only
+        # commands with no place in a read-only query.
+        "WAITFOR",
+        "USE",
+        "SHUTDOWN",
+        "RECONFIGURE",
+        "DBCC",
     }
 )
 
@@ -175,9 +185,11 @@ def assert_readonly_sql(statement: str) -> None:
         (INSERT, UPDATE, DELETE, MERGE, INTO, EXEC, EXECUTE, DROP, ALTER,
         CREATE, TRUNCATE, GRANT, REVOKE, DENY, KILL, BACKUP, RESTORE,
         OPENROWSET, OPENQUERY, WRITETEXT, UPDATETEXT, SP_EXECUTESQL,
-        XP_CMDSHELL) causes the statement to be rejected — regardless of where
-        it appears.  This catches ``WITH x AS (SELECT 1) DELETE …`` as well as
-        ``SELECT * INTO backup FROM t``.
+        XP_CMDSHELL, WAITFOR, USE, SHUTDOWN, RECONFIGURE, DBCC) causes the
+        statement to be rejected — regardless of where it appears.  This
+        catches ``WITH x AS (SELECT 1) DELETE …``, ``SELECT * INTO backup FROM
+        t``, and newline-separated DoS/context-switch payloads such as
+        ``SELECT 1\nWAITFOR DELAY '99:0:0'`` or ``SELECT 1\nUSE master``.
 
     Args:
         statement: The raw SQL string supplied by the caller.

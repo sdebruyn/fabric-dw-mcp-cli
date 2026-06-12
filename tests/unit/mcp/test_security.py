@@ -215,6 +215,77 @@ class TestAssertReadonlySql:
         with pytest.raises(ToolError):
             self._call("SELECT xp_cmdshell('dir')")
 
+    # ------------------------------------------------------------------
+    # DoS / context-switch bypass regression tests (T-SQL newline batch)
+    # ------------------------------------------------------------------
+
+    def test_rejects_waitfor_delay_after_select(self) -> None:
+        """CRITICAL: SELECT 1\\nWAITFOR DELAY must be rejected (DoS via connection hang)."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError, match="WAITFOR"):
+            self._call("SELECT 1\nWAITFOR DELAY '99:0:0'")
+
+    def test_rejects_use_after_select(self) -> None:
+        """CRITICAL: SELECT 1\\nUSE master must be rejected (database context switch)."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError, match="USE"):
+            self._call("SELECT 1\nUSE master")
+
+    def test_rejects_waitfor_as_first_token(self) -> None:
+        """WAITFOR as the first token must be rejected."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError):
+            self._call("WAITFOR DELAY '00:01:00'")
+
+    def test_rejects_use_as_first_token(self) -> None:
+        """USE as the first token must be rejected."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError):
+            self._call("USE master")
+
+    def test_rejects_dbcc_after_select(self) -> None:
+        """DBCC must be rejected even when following a valid SELECT."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError, match="DBCC"):
+            self._call("SELECT 1\nDBCC FREEPROCCACHE")
+
+    def test_rejects_shutdown(self) -> None:
+        """SHUTDOWN must be rejected."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError, match="SHUTDOWN"):
+            self._call("SELECT 1\nSHUTDOWN")
+
+    def test_rejects_reconfigure(self) -> None:
+        """RECONFIGURE must be rejected."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError, match="RECONFIGURE"):
+            self._call("SELECT 1\nRECONFIGURE")
+
+    def test_rejects_dbcc_standalone(self) -> None:
+        """DBCC as the first token must be rejected."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError):
+            self._call("DBCC CHECKDB")
+
+    def test_accepts_set_nocount_then_select(self) -> None:
+        """SET NOCOUNT ON;\\nSELECT 1 — SET is not forbidden; the multi-statement
+        check fires because ';' is followed by a newline and then SELECT.
+        This pins the current behaviour: the batch is rejected due to the
+        multi-statement rule, not due to SET being forbidden.
+        """
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError, match=r"multi-statement|non-SELECT"):
+            self._call("SET NOCOUNT ON;\nSELECT 1")
+
 
 # ---------------------------------------------------------------------------
 # 2. assert_writes_allowed
