@@ -23,13 +23,13 @@ during these tests.
 |---|---|---|---|
 | `warehouses list` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_warehouses.py#L13) | ✅ | ✅ |
 | `warehouses get` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_warehouses.py#L20) | ✅ | ✅ |
-| `warehouses create` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/conftest.py#L39) [^create-wh] | ✅ | ✅ |
+| `warehouses create` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/conftest.py#L40) [^create-wh] | ✅ | ✅ |
 | `warehouses rename` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_warehouses.py#L29) | ✅ | ✅ |
 | `warehouses delete` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_warehouses.py#L37) | ✅ | ✅ |
 | `warehouses takeover` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_ownership.py#L13) | ✅ | ✅ |
 | `warehouses permissions` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_permissions.py#L44) | ✅ | ✅ |
 
-[^create-wh]: `warehouses.create` is exercised indirectly via the `ephemeral_warehouse` fixture in `conftest.py` (line 39), which is shared by dozens of tests.
+[^create-wh]: `warehouses.create` is exercised indirectly via the `ephemeral_warehouse` fixture in `conftest.py` (line 40), which is shared by dozens of tests.
 
 ### SQL Analytics Endpoints
 
@@ -163,6 +163,10 @@ MCP (FastMCP tool) ───┘
 So a ✅ in "Integration test" gives confidence that the Fabric API contract is honoured: the correct HTTP calls are made, pagination and LRO polling work, and the response is deserialised correctly.
 
 ### What is NOT covered by these tests
+
+The integration tests run against an ephemeral **Data Warehouse** only — no SQL Analytics Endpoint is ever provisioned.
+This is why every row in the SQL Analytics Endpoints, Views, and Schemas sections is ❌: those features either require a SQL Analytics Endpoint or depend on schema support that is only available on a Lakehouse SQL Endpoint, neither of which exists in the ephemeral test fixture.
+A schema-enabled Lakehouse fixture to provide SQL-endpoint coverage is being added separately.
 
 The integration tests do **not** exercise the upper adapter layers:
 
