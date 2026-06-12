@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import http as http_module
 from uuid import UUID
 
-from fabric_dw.exceptions import FabricError, NotFoundError
+from fabric_dw.exceptions import BadRequestError, FabricError, NotFoundError
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import Workspace
 
@@ -92,22 +91,15 @@ async def set_collation(
     )
 
     try:
-        resp = await http.request(
+        await http.request(
             "PATCH",
             HttpBase.FABRIC,
             f"/workspaces/{workspace_id}",
             json={"defaultDataWarehouseCollation": collation},
         )
-    except NotFoundError as exc:
+    except (NotFoundError, BadRequestError) as exc:
+        # The v1 API may not expose defaultDataWarehouseCollation on all tenants yet.
+        # Surface a portal link so the user knows the manual fallback path.
         raise FabricError(portal_msg) from exc
     except FabricError:
         raise
-
-    # http_client returns non-error responses (including 400) without raising;
-    # treat any remaining 4xx as a portal-redirect case.
-    if (
-        http_module.HTTPStatus.BAD_REQUEST
-        <= resp.status_code
-        < http_module.HTTPStatus.INTERNAL_SERVER_ERROR
-    ):
-        raise FabricError(portal_msg)

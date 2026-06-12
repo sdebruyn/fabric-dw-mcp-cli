@@ -52,6 +52,15 @@ class FabricServerError(FabricError):
     """Raised on persistent 5xx errors or a failed LRO operation."""
 
 
+class BadRequestError(FabricError):
+    """Raised on HTTP 400 - the request body or parameters were invalid.
+
+    The ``body`` attribute contains the parsed Fabric error JSON (errorCode /
+    message) when available, giving callers visibility into the exact reason the
+    request was rejected.
+    """
+
+
 class AlreadyExistsError(FabricError):
     """Raised when a resource with the given name already exists."""
 

@@ -40,6 +40,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 from fabric_dw import auth
 from fabric_dw.exceptions import (
     AuthError,
+    BadRequestError,
     FabricError,
     FabricServerError,
     NotFoundError,
@@ -352,7 +353,9 @@ class FabricHttpClient:
     def _map_status(self, resp: httpx.Response, url: str) -> None:
         """Raise a typed ``FabricError`` subclass for error status codes.
 
-        Uses ``_STATUS_TO_EXC`` for known 4xx codes; raises ``FabricServerError``
+        Uses ``_STATUS_TO_EXC`` for known 4xx codes (401, 403, 404); raises
+        ``BadRequestError`` for any other 4xx (including 400) so that Fabric
+        error details are never silently discarded; raises ``FabricServerError``
         for any 5xx response.  JSON body is parsed best-effort (parse errors
         are silently swallowed).  The ``x-ms-request-id`` header is captured
         for all raised exceptions.
@@ -372,6 +375,16 @@ class FabricHttpClient:
         exc_class = _STATUS_TO_EXC.get(status)
         if exc_class is not None:
             raise exc_class(
+                f"HTTP {status} for {url}: {resp.text}",
+                status=status,
+                request_id=request_id,
+                body=body,
+            )
+
+        if http.HTTPStatus.BAD_REQUEST <= status < http.HTTPStatus.INTERNAL_SERVER_ERROR:
+            # Unmapped 4xx — surface the full Fabric error body so callers can see
+            # the errorCode/message (e.g. InvalidItemType, WorkspaceItemsLimitExceeded).
+            raise BadRequestError(
                 f"HTTP {status} for {url}: {resp.text}",
                 status=status,
                 request_id=request_id,

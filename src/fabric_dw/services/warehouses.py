@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import http as _http
 import logging
 from datetime import UTC, datetime
 from uuid import UUID
@@ -21,9 +20,6 @@ _logger = logging.getLogger("fabric_dw.warehouses")
 
 # Backoff schedule for transient empty-2xx responses (seconds).
 _EMPTY_2XX_BACKOFF = (2, 6, 18)
-
-_HTTP_400_BAD_REQUEST = _http.HTTPStatus.BAD_REQUEST
-_HTTP_500_INTERNAL_SERVER_ERROR = _http.HTTPStatus.INTERNAL_SERVER_ERROR
 
 __all__ = [
     "create",
@@ -167,11 +163,10 @@ async def create(
 
     body: dict[str, object] = {
         **compact({"description": description}),
-        "type": "Warehouse",
         "displayName": name,
     }
     if collation is not None:
-        body["creationPayload"] = {"defaultCollation": collation}
+        body["creationPayload"] = {"collationType": collation}
 
     for attempt, backoff in enumerate(
         [None, *_EMPTY_2XX_BACKOFF], start=0
@@ -185,8 +180,11 @@ async def create(
             )
             await asyncio.sleep(backoff)
 
+        # Use the type-specific endpoint (POST /workspaces/{id}/warehouses).
+        # Any 4xx is raised by the HTTP client as BadRequestError before reaching here,
+        # so the only non-202/201 responses that arrive are genuine 2xx with missing data.
         resp = await http.request(
-            "POST", HttpBase.FABRIC, f"/workspaces/{workspace_id}/items", json=body
+            "POST", HttpBase.FABRIC, f"/workspaces/{workspace_id}/warehouses", json=body
         )
 
         location = resp.headers.get("Location")
@@ -201,17 +199,6 @@ async def create(
             if resp_id and resp_name:
                 new_id = UUID(str(resp_id))
                 return await get_warehouse(http, workspace_id, new_id)
-
-            # Do not retry on 4xx — those are definitive client errors.
-            if (
-                resp.status_code >= _HTTP_400_BAD_REQUEST
-                and resp.status_code < _HTTP_500_INTERNAL_SERVER_ERROR
-            ):
-                msg = (
-                    f"create warehouse: {resp.status_code} error response "
-                    f"with no Location header and no usable body"
-                )
-                raise FabricServerError(msg)
 
             # 2xx + no Location + no usable body: transient Fabric data-plane not ready.
             # Continue the retry loop (will raise below if exhausted).
