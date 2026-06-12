@@ -501,16 +501,17 @@ fabric-dw sql exec [OPTIONS] [WORKSPACE] [ITEM]
 | --- | --- |
 | `-q` / `--query TEXT` | SQL statement or batch to execute inline. |
 | `-f` / `--file PATH` | Path to a `.sql` file to execute. UTF-8 and UTF-8 BOM files are both supported. |
-| `--table` | Render results as a Rich table instead of JSON. |
+
+Output defaults to a Rich table (rows/columns). Pass `--json` on the root command to emit machine-readable JSON (`{"columns": [...], "rows": [...], "rowcount": N}`).
 
 **Example**
 
 ```shell
-# Inline query, JSON output (default)
+# Inline query, Rich table output (default)
 fabric-dw sql exec MyWorkspace SalesWH -q "SELECT TOP 5 * FROM dbo.Sales"
 
-# File input, table output
-fabric-dw sql exec MyWorkspace SalesWH -f ./queries/report.sql --table
+# File input, JSON output
+fabric-dw --json sql exec MyWorkspace SalesWH -f ./queries/report.sql
 ```
 
 ```json
@@ -563,12 +564,19 @@ fabric-dw audit enable [OPTIONS] [WORKSPACE] [WAREHOUSE]
 
 | Option | Description | Default |
 | --- | --- | --- |
-| `--retention-days INTEGER` | Audit log retention in days. `0` means unlimited. | `0` |
+| `--retention-days INTEGER` | Audit log retention in days (>= 1). Mutually exclusive with `--unlimited`. | — |
+| `--unlimited` | Set unlimited audit log retention (service value 0). Mutually exclusive with `--retention-days`. | off |
+
+Omitting both `--retention-days` and `--unlimited` defaults to unlimited retention. Passing `0` for `--retention-days` is rejected — use `--unlimited` for no-limit retention.
 
 **Example**
 
 ```shell
+# Retain logs for 90 days
 fabric-dw audit enable --retention-days 90 MyWorkspace SalesWH
+
+# Unlimited retention
+fabric-dw audit enable --unlimited MyWorkspace SalesWH
 ```
 
 ---
@@ -757,6 +765,142 @@ fabric-dw queries kill [WORKSPACE] [WAREHOUSE] SESSION_ID
 
 ```shell
 fabric-dw --yes queries kill MyWorkspace SalesWH 42
+```
+
+---
+
+## fabric-dw query-insights
+
+Inspect Query Insights DMVs on Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
+
+All sub-commands query the `queryinsights` schema DMVs via TDS and support optional time-range filtering with `--since` and `--until` (ISO-8601 strings). The `--limit` option caps the number of rows returned (default: 100, max: 10 000).
+
+### query-insights request-history
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+List completed SQL requests from `queryinsights.exec_requests_history`.
+
+**Synopsis**
+
+```
+fabric-dw query-insights request-history [OPTIONS] [WORKSPACE] [WAREHOUSE]
+```
+
+| Option | Description | Default |
+| --- | --- | --- |
+| `--limit INTEGER` | Maximum rows to return (1–10 000). | `100` |
+| `--since ISO8601` | Return rows with timestamp >= this value. | — |
+| `--until ISO8601` | Return rows with timestamp <= this value. | — |
+
+**Example**
+
+```shell
+fabric-dw query-insights request-history MyWorkspace SalesWH --limit 50 --since 2026-06-01T00:00:00
+```
+
+---
+
+### query-insights session-history
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+List completed sessions from `queryinsights.exec_sessions_history`.
+
+**Synopsis**
+
+```
+fabric-dw query-insights session-history [OPTIONS] [WORKSPACE] [WAREHOUSE]
+```
+
+| Option | Description | Default |
+| --- | --- | --- |
+| `--limit INTEGER` | Maximum rows to return (1–10 000). | `100` |
+| `--since ISO8601` | Return rows with session_start_time >= this value. | — |
+| `--until ISO8601` | Return rows with session_start_time <= this value. | — |
+
+**Example**
+
+```shell
+fabric-dw query-insights session-history MyWorkspace SalesWH
+```
+
+---
+
+### query-insights frequent
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+List frequently-run queries from `queryinsights.frequently_run_queries`.
+
+**Synopsis**
+
+```
+fabric-dw query-insights frequent [OPTIONS] [WORKSPACE] [WAREHOUSE]
+```
+
+| Option | Description | Default |
+| --- | --- | --- |
+| `--limit INTEGER` | Maximum rows to return (1–10 000). | `100` |
+| `--since ISO8601` | Return rows with last_run_start_time >= this value. | — |
+| `--until ISO8601` | Return rows with last_run_start_time <= this value. | — |
+
+**Example**
+
+```shell
+fabric-dw query-insights frequent MyWorkspace SalesWH --limit 20
+```
+
+---
+
+### query-insights long-running
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+List long-running queries from `queryinsights.long_running_queries`.
+
+**Synopsis**
+
+```
+fabric-dw query-insights long-running [OPTIONS] [WORKSPACE] [WAREHOUSE]
+```
+
+| Option | Description | Default |
+| --- | --- | --- |
+| `--limit INTEGER` | Maximum rows to return (1–10 000). | `100` |
+| `--since ISO8601` | Return rows with last_run_start_time >= this value. | — |
+| `--until ISO8601` | Return rows with last_run_start_time <= this value. | — |
+
+**Example**
+
+```shell
+fabric-dw query-insights long-running MyWorkspace SalesWH
+```
+
+---
+
+### query-insights pool-insights
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+List SQL pool insight events from `queryinsights.sql_pool_insights`.
+
+**Synopsis**
+
+```
+fabric-dw query-insights pool-insights [OPTIONS] [WORKSPACE] [WAREHOUSE]
+```
+
+| Option | Description | Default |
+| --- | --- | --- |
+| `--limit INTEGER` | Maximum rows to return (1–10 000). | `100` |
+| `--since ISO8601` | Return rows with timestamp >= this value. | — |
+| `--until ISO8601` | Return rows with timestamp <= this value. | — |
+
+**Example**
+
+```shell
+fabric-dw query-insights pool-insights MyWorkspace SalesWH
 ```
 
 ---
@@ -979,16 +1123,23 @@ Create a new SQL view.
 **Synopsis**
 
 ```
-fabric-dw views create [WORKSPACE] [WAREHOUSE] QUALIFIED_NAME SELECT_BODY
+fabric-dw views create [OPTIONS] [WORKSPACE] [WAREHOUSE]
 ```
 
-`SELECT_BODY` is the verbatim SELECT statement that forms the view body.
+| Option | Description |
+| --- | --- |
+| `--name SCHEMA.VIEW` | **Required.** Qualified view name (e.g. `dbo.vw_sales`). |
+| `--select TEXT` | Inline SELECT statement for the view body. |
+| `--from-file PATH` | Path to a `.sql` file containing the SELECT statement. |
+
+Exactly one of `--select` or `--from-file` must be provided.
 
 **Example**
 
 ```shell
-fabric-dw views create MyWorkspace SalesWH dbo.vw_recent \
-  "SELECT id, amount FROM dbo.sales WHERE sale_date >= '2026-01-01'"
+fabric-dw views create MyWorkspace SalesWH \
+  --name dbo.vw_recent \
+  --select "SELECT id, amount FROM dbo.sales WHERE sale_date >= '2026-01-01'"
 ```
 
 ---
@@ -1002,14 +1153,23 @@ Redefine an existing view using `CREATE OR ALTER VIEW`.
 **Synopsis**
 
 ```
-fabric-dw views update [WORKSPACE] [WAREHOUSE] QUALIFIED_NAME SELECT_BODY
+fabric-dw views update [OPTIONS] [WORKSPACE] [WAREHOUSE] QUALIFIED_NAME
 ```
+
+`QUALIFIED_NAME` is the dot-separated `schema.view_name` to update.
+
+| Option | Description |
+| --- | --- |
+| `--select TEXT` | Inline SELECT statement for the new view body. |
+| `--from-file PATH` | Path to a `.sql` file containing the new SELECT statement. |
+
+Exactly one of `--select` or `--from-file` must be provided.
 
 **Example**
 
 ```shell
 fabric-dw views update MyWorkspace SalesWH dbo.vw_recent \
-  "SELECT id, amount, region FROM dbo.sales WHERE sale_date >= '2026-01-01'"
+  --select "SELECT id, amount, region FROM dbo.sales WHERE sale_date >= '2026-01-01'"
 ```
 
 ---
@@ -1030,6 +1190,32 @@ fabric-dw views drop [WORKSPACE] [WAREHOUSE] QUALIFIED_NAME
 
 ```shell
 fabric-dw --yes views drop MyWorkspace SalesWH dbo.vw_recent
+```
+
+---
+
+### views rename
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Rename a SQL view via `sp_rename`. The new name must be an unqualified (bare) identifier — `sp_rename` cannot move a view to a different schema.
+
+**Synopsis**
+
+```
+fabric-dw views rename [OPTIONS] [WORKSPACE] [WAREHOUSE] QUALIFIED_NAME
+```
+
+`QUALIFIED_NAME` is the current dot-separated `schema.view_name`.
+
+| Option | Description |
+| --- | --- |
+| `--new-name TEXT` | **Required.** New bare view name (no schema prefix). |
+
+**Example**
+
+```shell
+fabric-dw views rename MyWorkspace SalesWH dbo.vw_recent --new-name vw_revenue
 ```
 
 ---
@@ -1065,6 +1251,142 @@ fabric-dw views read MyWorkspace SalesWH dbo.vw_sales --count 5
   {"id": 1, "amount": 99.99, "customer_id": 42},
   ...
 ]
+```
+
+---
+
+## fabric-dw procedures
+
+Manage stored procedures on Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
+
+### procedures list
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+List stored procedures on a warehouse or SQL Analytics Endpoint. Pass `--schema` to filter to a single schema.
+
+**Synopsis**
+
+```
+fabric-dw procedures list [OPTIONS] [WORKSPACE] [ITEM]
+```
+
+| Option | Description |
+| --- | --- |
+| `--schema TEXT` | Only list procedures in this schema. |
+
+**Example**
+
+```shell
+fabric-dw procedures list MyWorkspace SalesWH --schema dbo
+```
+
+```
+ schema_name  name            created               modified
+ ------------ --------------- --------------------- ---------------------
+ dbo          usp_load_sales  2026-01-10T08:00:00Z  2026-06-01T12:00:00Z
+```
+
+---
+
+### procedures get
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Get the full definition of a single stored procedure.
+
+**Synopsis**
+
+```
+fabric-dw procedures get [WORKSPACE] [ITEM] QUALIFIED_NAME
+```
+
+`QUALIFIED_NAME` must be a dot-separated `schema.proc_name` string, e.g. `dbo.usp_load_sales`.
+
+**Example**
+
+```shell
+fabric-dw procedures get MyWorkspace SalesWH dbo.usp_load_sales
+```
+
+---
+
+### procedures create
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Create a new stored procedure.
+
+**Synopsis**
+
+```
+fabric-dw procedures create [OPTIONS] [WORKSPACE] [ITEM]
+```
+
+| Option | Description |
+| --- | --- |
+| `--name SCHEMA.PROC` | **Required.** Qualified procedure name (e.g. `dbo.usp_load_sales`). |
+| `--body TEXT` | Inline procedure body (the `AS …` section). |
+| `--from-file PATH` | Path to a `.sql` file containing the procedure body. |
+
+Exactly one of `--body` or `--from-file` must be provided.
+
+**Example**
+
+```shell
+fabric-dw procedures create MyWorkspace SalesWH \
+  --name dbo.usp_archive_orders \
+  --body "BEGIN INSERT INTO dbo.archive SELECT * FROM dbo.orders; END"
+```
+
+---
+
+### procedures update
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Redefine an existing stored procedure via `CREATE OR ALTER PROCEDURE`.
+
+**Synopsis**
+
+```
+fabric-dw procedures update [OPTIONS] [WORKSPACE] [ITEM] QUALIFIED_NAME
+```
+
+`QUALIFIED_NAME` is the dot-separated `schema.proc_name` to update.
+
+| Option | Description |
+| --- | --- |
+| `--body TEXT` | Inline procedure body. |
+| `--from-file PATH` | Path to a `.sql` file containing the procedure body. |
+
+Exactly one of `--body` or `--from-file` must be provided. You will be asked to confirm unless `--yes` is passed.
+
+**Example**
+
+```shell
+fabric-dw procedures update MyWorkspace SalesWH dbo.usp_archive_orders \
+  --from-file ./procs/usp_archive_orders_v2.sql
+```
+
+---
+
+### procedures drop
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Drop a stored procedure. You will be asked to confirm unless `--yes` is passed.
+
+**Synopsis**
+
+```
+fabric-dw procedures drop [WORKSPACE] [ITEM] QUALIFIED_NAME
+```
+
+**Example**
+
+```shell
+fabric-dw --yes procedures drop MyWorkspace SalesWH dbo.usp_archive_orders
 ```
 
 ---
@@ -1211,13 +1533,74 @@ fabric-dw --yes tables clear MyWorkspace SalesWH dbo.staging_load
 
 ---
 
+### tables clone
+
+**Targets:** Data Warehouse only
+
+Create a zero-copy clone of a table using `CREATE TABLE … AS CLONE OF`. Pass `--at` to clone from a point in time within the warehouse data-retention window.
+
+**Synopsis**
+
+```
+fabric-dw tables clone [OPTIONS] [WORKSPACE] [ITEM]
+```
+
+| Option | Description |
+| --- | --- |
+| `--source SCHEMA.TABLE` | **Required.** Qualified source table to clone. |
+| `--name SCHEMA.TABLE` | **Required.** Qualified name for the new clone. |
+| `--at ISO8601` | Optional UTC timestamp for a historical clone (e.g. `2024-05-20T14:00:00`). Must be within the data-retention window. |
+
+**Example**
+
+```shell
+# Clone to the current state
+fabric-dw tables clone MyWorkspace SalesWH \
+  --source dbo.orders \
+  --name dbo.orders_backup
+
+# Point-in-time clone
+fabric-dw tables clone MyWorkspace SalesWH \
+  --source dbo.orders \
+  --name dbo.orders_may_snapshot \
+  --at 2024-05-20T14:00:00
+```
+
+---
+
+### tables rename
+
+**Targets:** Data Warehouse only
+
+Rename a table via `sp_rename`. The new name must be an unqualified (bare) identifier — `sp_rename` cannot move a table to a different schema.
+
+**Synopsis**
+
+```
+fabric-dw tables rename [OPTIONS] [WORKSPACE] [ITEM] QUALIFIED_NAME
+```
+
+`QUALIFIED_NAME` is the current dot-separated `schema.table_name`.
+
+| Option | Description |
+| --- | --- |
+| `--new-name TEXT` | **Required.** New bare table name (no schema prefix). |
+
+**Example**
+
+```shell
+fabric-dw tables rename MyWorkspace SalesWH dbo.orders_2025 --new-name orders_archive_2025
+```
+
+---
+
 ## fabric-dw schemas
 
 Manage SQL schemas on Microsoft Fabric Data Warehouses.
 
 > **List-source note** — no public REST API exists for enumerating warehouse schemas. `schemas list` falls back to TDS via `sys.schemas`, filtering out well-known system schemas (`sys`, `INFORMATION_SCHEMA`, `guest`, `db_*` fixed-role schemas). `dbo` is always included because it is user-writable.
 
-> **SQL Analytics Endpoints** — `schemas list` works on both warehouses and SQL Analytics Endpoints. `schemas create` and `schemas delete` are DDL operations and are only supported on Fabric Data Warehouses; they will fail with an error if the resolved item is a SQL Analytics Endpoint.
+> **SQL Analytics Endpoints** — `schemas list`, `schemas create`, and `schemas delete` all work on both Fabric Data Warehouses and SQL Analytics Endpoints. When `schemas delete --cascade` is used on a SQL Analytics Endpoint, views, stored procedures, and functions in the schema are dropped, but tables are **not** dropped (because `DROP TABLE` is a Warehouse-only operation on Fabric). If the schema contains tables, the final `DROP SCHEMA` will be rejected by the engine; remove the tables manually first or omit `--cascade` and drop the schema only after it is empty.
 
 ### schemas list
 
