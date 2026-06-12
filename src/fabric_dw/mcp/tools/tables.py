@@ -225,7 +225,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
 
                 raise ToolError(
-                    f"invalid --at timestamp {at!r}: expected ISO-8601 (e.g. 2024-01-01T00:00:00)"
+                    f"invalid at timestamp {at!r}: expected ISO-8601 (e.g. 2024-01-01T00:00:00)"
                 ) from exc
             at_dt = at_dt.replace(tzinfo=UTC) if at_dt.tzinfo is None else at_dt.astimezone(UTC)
 

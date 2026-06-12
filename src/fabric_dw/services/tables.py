@@ -303,7 +303,7 @@ async def clone_table(
 
     The ``AT`` timestamp — when provided — is a :class:`~datetime.datetime`
     that has already been parsed and validated at the CLI/MCP boundary.  It is
-    formatted to a fixed safe literal (``YYYY-MM-DDTHH:MM:SSS.mmm``) so no
+    formatted to a fixed safe literal (``YYYY-MM-DDTHH:MM:SS.mmm``) so no
     raw user string is ever interpolated into the DDL.
 
     Args:

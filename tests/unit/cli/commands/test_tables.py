@@ -791,7 +791,15 @@ class TestTablesClone:
             ),
             patch(
                 "fabric_dw.services.tables.clone_table",
-                new=AsyncMock(return_value=_make_table()),
+                new=AsyncMock(
+                    return_value=Table(
+                        schema_name="dbo",
+                        name="sales_clone",
+                        qualified_name="dbo.sales_clone",
+                        created=_NOW,
+                        modified=_NOW,
+                    )
+                ),
             ),
         ):
             result = runner.invoke(
@@ -810,7 +818,7 @@ class TestTablesClone:
             )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
-        assert parsed["name"] == "sales"
+        assert parsed["name"] == "sales_clone"
 
     def test_clone_with_at_timestamp(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env

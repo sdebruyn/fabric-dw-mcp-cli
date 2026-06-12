@@ -107,7 +107,7 @@ async def test_clone_table_creates_identical_rows(ephemeral_sql_target: SqlTarge
             ephemeral_sql_target, schema, clone_name, count=100
         )
         assert src_cols == cln_cols
-        assert len(cln_rows) == len(src_rows)
+        assert cln_rows == src_rows
     finally:
         with contextlib.suppress(Exception):
             await tables.delete_table(ephemeral_sql_target, schema, source_name)
