@@ -1158,11 +1158,15 @@ async def test_clear_table_sql_endpoint_raises_tool_error(mock_ctx, ctx_patch) -
 # ---------------------------------------------------------------------------
 
 
-async def test_create_schema_rejects_sql_endpoint(mock_ctx, ctx_patch) -> None:
-    """create_schema must raise ToolError when called against a SQL Analytics Endpoint."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+async def test_create_schema_works_on_sql_endpoint(mock_ctx, ctx_patch) -> None:
+    """create_schema is allowed on SQL Analytics Endpoints.
 
+    CREATE SCHEMA is listed in the Applies-to for 'SQL analytics endpoint in
+    Microsoft Fabric' in the Fabric T-SQL reference — the client-side guard
+    was too strict and has been removed.
+    """
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+    from fabric_dw.models import Schema  # noqa: PLC0415
 
     ep_entry = _make_sql_endpoint_entry()
     mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
@@ -1170,26 +1174,28 @@ async def test_create_schema_rejects_sql_endpoint(mock_ctx, ctx_patch) -> None:
 
     with (
         ctx_patch,
-        pytest.raises(ToolError) as exc_info,
+        patch(
+            "fabric_dw.services.schemas.create_schema",
+            new=AsyncMock(return_value=Schema(name="newschema", principal_id=5)),
+        ),
     ):
-        await mcp._tool_manager.call_tool(
+        result = await mcp._tool_manager.call_tool(
             "create_schema",
             {"workspace": _WS_NAME, "item": "MySqlEndpoint", "name": "newschema"},
         )
 
-    assert "read-only" in str(exc_info.value).lower() or "SQL Analytics Endpoint" in str(
-        exc_info.value
-    )
+    assert result["name"] == "newschema"
 
 
-async def test_delete_schema_rejects_sql_endpoint(mock_ctx, ctx_patch) -> None:
-    """delete_schema must raise ToolError when called against a SQL Analytics Endpoint.
+async def test_delete_schema_works_on_sql_endpoint(mock_ctx, ctx_patch) -> None:
+    """delete_schema is allowed on SQL Analytics Endpoints.
 
-    FABRIC_MCP_ALLOW_DESTRUCTIVE=1 is set so the destructive guard passes and
-    the SQL-endpoint read-only guard fires instead.
+    DROP SCHEMA is listed in the Applies-to for 'SQL analytics endpoint in
+    Microsoft Fabric' in the Fabric T-SQL reference — the client-side guard
+    was too strict and has been removed.
+
+    FABRIC_MCP_ALLOW_DESTRUCTIVE=1 is set so the destructive guard passes.
     """
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
-
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     ep_entry = _make_sql_endpoint_entry()
@@ -1199,16 +1205,17 @@ async def test_delete_schema_rejects_sql_endpoint(mock_ctx, ctx_patch) -> None:
     with (
         ctx_patch,
         patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
-        pytest.raises(ToolError) as exc_info,
+        patch(
+            "fabric_dw.services.schemas.delete_schema",
+            new=AsyncMock(return_value=None),
+        ),
     ):
-        await mcp._tool_manager.call_tool(
+        result = await mcp._tool_manager.call_tool(
             "delete_schema",
             {"workspace": _WS_NAME, "item": "MySqlEndpoint", "name": "oldschema"},
         )
 
-    assert "read-only" in str(exc_info.value).lower() or "SQL Analytics Endpoint" in str(
-        exc_info.value
-    )
+    assert result == {"deleted": True}
 
 
 async def test_list_schemas_works_on_sql_endpoint(mock_ctx, ctx_patch) -> None:

@@ -214,7 +214,8 @@ class TestSchemasCreate:
         parsed = json.loads(result.output)
         assert parsed["name"] == "sales"
 
-    def test_create_sql_endpoint_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_create_sql_endpoint_succeeds(self, runner: CliRunner, cache_env: Path) -> None:
+        """CREATE SCHEMA is supported on SQL Analytics Endpoints (Fabric T-SQL reference)."""
         _ = cache_env
         mock_http = AsyncMock()
         with (
@@ -226,9 +227,13 @@ class TestSchemasCreate:
                 "fabric_dw.cli.commands.schemas.build_sql_target",
                 new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
             ),
+            patch(
+                "fabric_dw.services.schemas.create_schema",
+                new=AsyncMock(return_value=_make_schema()),
+            ),
         ):
             result = runner.invoke(cli, ["schemas", "create", WS_GUID, WH_GUID, "sales"])
-        assert result.exit_code != 0
+        assert result.exit_code == 0
 
     def test_create_permission_error_returns_nonzero(
         self, runner: CliRunner, cache_env: Path
@@ -350,7 +355,8 @@ class TestSchemasDelete:
         _, kwargs = mock_delete.call_args
         assert kwargs.get("cascade") is False
 
-    def test_delete_sql_endpoint_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_delete_sql_endpoint_succeeds(self, runner: CliRunner, cache_env: Path) -> None:
+        """DROP SCHEMA is supported on SQL Analytics Endpoints (Fabric T-SQL reference)."""
         _ = cache_env
         mock_http = AsyncMock()
         with (
@@ -362,9 +368,14 @@ class TestSchemasDelete:
                 "fabric_dw.cli.commands.schemas.build_sql_target",
                 new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
             ),
+            patch(
+                "fabric_dw.services.schemas.delete_schema",
+                new=AsyncMock(return_value=None),
+            ),
         ):
             result = runner.invoke(cli, ["-y", "schemas", "delete", WS_GUID, WH_GUID, "sales"])
-        assert result.exit_code != 0
+        assert result.exit_code == 0
+        assert "dropped" in result.output
 
     def test_delete_cascade_warns_on_stderr(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
