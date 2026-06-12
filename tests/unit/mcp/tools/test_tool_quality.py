@@ -204,7 +204,7 @@ async def test_resolve_item_returns_pair() -> None:
     assert ws_id == _WS_ID
     assert entry is expected_entry
     mock_resolver.workspace_id.assert_awaited_once_with(_WS_NAME)
-    mock_resolver.item.assert_awaited_once_with(_WS_NAME, _WH_NAME)
+    mock_resolver.item.assert_awaited_once_with(str(_WS_ID), _WH_NAME)
 
 
 # ---------------------------------------------------------------------------

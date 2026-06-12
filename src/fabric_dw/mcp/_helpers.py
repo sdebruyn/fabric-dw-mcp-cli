@@ -167,7 +167,7 @@ def make_sql_target(ws_id: UUID, entry: _ItemEntry, item: str) -> SqlTarget:
     """
     if entry.connection_string is None:
         raise ToolError(  # noqa: TRY003
-            f"warehouse {item!r} has no connection string; cannot execute SQL"
+            f"item {item!r} has no connection string; cannot execute SQL"
         )
     return SqlTarget(
         workspace_id=str(ws_id),
@@ -199,7 +199,7 @@ async def resolve_item(resolver: Resolver, workspace: str, item: str) -> tuple[U
         ``(workspace_id, entry)`` — both values the tool normally needs.
     """
     ws_id = await resolver.workspace_id(workspace)
-    entry = await resolver.item(workspace, item)
+    entry = await resolver.item(str(ws_id), item)
     return ws_id, entry
 
 

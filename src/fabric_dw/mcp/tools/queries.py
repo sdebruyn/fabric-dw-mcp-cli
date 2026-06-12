@@ -10,7 +10,7 @@ from mcp.server.fastmcp import FastMCP
 from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
 from fabric_dw.mcp._guards import assert_workspace_allowed, assert_writes_allowed
-from fabric_dw.mcp._helpers import fabric_err, make_sql_target, resolve_item
+from fabric_dw.mcp._helpers import fabric_err, make_sql_target, resolve_item, tool_err
 from fabric_dw.services import queries
 
 __all__ = ["register"]
@@ -63,6 +63,6 @@ def register(mcp: FastMCP) -> None:
             _log.debug("kill_session ws=%s item=%s session=%s", ws_id, item.id, session_id)
             target = make_sql_target(ws_id, item, warehouse)
             await queries.kill(target, session_id, mode=ctx.auth_mode)
-        except FabricError as exc:
-            raise fabric_err(exc) from exc
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
         return {"killed": True, "session_id": session_id}

@@ -15,7 +15,7 @@ from fabric_dw.mcp._guards import (
     assert_workspace_allowed,
     assert_writes_allowed,
 )
-from fabric_dw.mcp._helpers import fabric_err, resolve_item
+from fabric_dw.mcp._helpers import fabric_err, resolve_item, tool_err
 from fabric_dw.services import restore as restore_svc
 
 __all__ = ["register"]
@@ -186,6 +186,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 restore_point_id,
             )
             await restore_svc.restore_in_place(ctx.http, ws_id, item.id, restore_point_id)
-        except FabricError as exc:
-            raise fabric_err(exc) from exc
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
         return {"restored": True, "restore_point_id": restore_point_id}

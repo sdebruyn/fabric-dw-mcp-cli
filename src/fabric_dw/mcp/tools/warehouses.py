@@ -16,7 +16,7 @@ from fabric_dw.mcp._guards import (
     assert_workspace_allowed,
     assert_writes_allowed,
 )
-from fabric_dw.mcp._helpers import fabric_err, resolve_item
+from fabric_dw.mcp._helpers import fabric_err, resolve_item, tool_err
 from fabric_dw.services import ownership as ownership_svc
 from fabric_dw.services import permissions as _permissions_svc
 from fabric_dw.services import warehouses
@@ -93,8 +93,8 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             result = await warehouses.create(
                 ctx.http, ws_id, name, collation=collation, description=description
             )
-        except FabricError as exc:
-            raise fabric_err(exc) from exc
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
         ctx.resolver.clear_negative_cache()
         return result.model_dump(by_alias=True, mode="json")
 
@@ -116,8 +116,8 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             result = await warehouses.rename(
                 ctx.http, ws_id, item.id, new_name, description=description
             )
-        except FabricError as exc:
-            raise fabric_err(exc) from exc
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
         ctx.resolver.clear_negative_cache()
         return result.model_dump(by_alias=True, mode="json")
 

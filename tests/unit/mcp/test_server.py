@@ -512,7 +512,7 @@ async def test_get_audit_settings_happy_path(mock_ctx, ctx_patch) -> None:
     assert isinstance(result, dict)
     assert result["state"] == "Enabled"
     assert result["retentionDays"] == 30
-    mock_ctx.resolver.item.assert_called_once_with(_WS_NAME, _WH_NAME)
+    mock_ctx.resolver.item.assert_called_once_with(str(_WS_ID), _WH_NAME)
 
 
 # ---------------------------------------------------------------------------
@@ -850,7 +850,7 @@ async def test_add_audit_group_happy_path(mock_ctx, ctx_patch) -> None:
 
     assert isinstance(result, dict)
     assert result["state"] == "Enabled"
-    mock_ctx.resolver.item.assert_called_once_with(_WS_NAME, _WH_NAME)
+    mock_ctx.resolver.item.assert_called_once_with(str(_WS_ID), _WH_NAME)
 
 
 @pytest.mark.asyncio
@@ -877,7 +877,7 @@ async def test_remove_audit_group_happy_path(mock_ctx, ctx_patch) -> None:
 
     assert isinstance(result, dict)
     assert result["state"] == "Enabled"
-    mock_ctx.resolver.item.assert_called_once_with(_WS_NAME, _WH_NAME)
+    mock_ctx.resolver.item.assert_called_once_with(str(_WS_ID), _WH_NAME)
 
 
 # ---------------------------------------------------------------------------

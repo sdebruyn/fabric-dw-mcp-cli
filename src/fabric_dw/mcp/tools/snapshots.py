@@ -16,7 +16,7 @@ from fabric_dw.mcp._guards import (
     assert_workspace_allowed,
     assert_writes_allowed,
 )
-from fabric_dw.mcp._helpers import fabric_err, make_sql_target, resolve_item
+from fabric_dw.mcp._helpers import fabric_err, make_sql_target, resolve_item, tool_err
 from fabric_dw.services import snapshots
 
 __all__ = ["register"]
@@ -81,8 +81,8 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 description=description,
                 snapshot_dt=parsed_dt,
             )
-        except FabricError as exc:
-            raise fabric_err(exc) from exc
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
         ctx.resolver.clear_negative_cache()
         return result.model_dump(by_alias=True, mode="json")
 
@@ -108,8 +108,8 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 new_name=new_name,
                 description=description,
             )
-        except FabricError as exc:
-            raise fabric_err(exc) from exc
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
         ctx.resolver.clear_negative_cache()
         return result.model_dump(by_alias=True, mode="json")
 
