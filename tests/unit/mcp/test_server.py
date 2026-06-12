@@ -108,6 +108,7 @@ EXPECTED_TOOL_NAMES: frozenset[str] = frozenset(
         "create_view",
         "update_view",
         "drop_view",
+        "rename_view",
         # Tables
         "list_tables",
         "read_table",
@@ -1568,6 +1569,8 @@ async def test_read_view_bad_qualified_name_raises_tool_error(mock_ctx, ctx_patc
         )
 
 
+
+
 # ---------------------------------------------------------------------------
 # rename_table MCP tool tests
 # ---------------------------------------------------------------------------
@@ -1711,5 +1714,158 @@ async def test_rename_table_undotted_qualified_name_raises_tool_error(
                 "item": _WH_NAME,
                 "qualified_name": "nodot",
                 "new_name": "sales_v2",
+            },
+        )
+
+# ---------------------------------------------------------------------------
+# rename_view MCP tool tests
+# ---------------------------------------------------------------------------
+
+
+async def test_rename_view_happy_path(mock_ctx, ctx_patch) -> None:
+    """rename_view calls views_svc.rename_view and returns the renamed View."""
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+    from fabric_dw.models import View  # noqa: PLC0415
+
+    renamed_view = View(
+        schema_name="dbo",
+        name="vw_revenue",
+        qualified_name="dbo.vw_revenue",
+        definition=None,
+        created=datetime.now(tz=UTC),
+        modified=datetime.now(tz=UTC),
+    )
+    item = _make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.views.rename_view",
+            new=AsyncMock(return_value=renamed_view),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "rename_view",
+            {
+                "workspace": _WS_NAME,
+                "item": _WH_NAME,
+                "qualified_name": "dbo.vw_sales",
+                "new_name": "vw_revenue",
+            },
+        )
+
+    assert isinstance(result, dict)
+    assert result["name"] == "vw_revenue"
+    assert result["schema_name"] == "dbo"
+
+
+async def test_rename_view_blocked_by_readonly(ctx_patch) -> None:
+    """rename_view raises ToolError when FABRIC_MCP_READONLY is set."""
+    import os  # noqa: PLC0415
+
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
+        pytest.raises(ToolError, match="read-only mode"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "rename_view",
+            {
+                "workspace": _WS_NAME,
+                "item": _WH_NAME,
+                "qualified_name": "dbo.vw_sales",
+                "new_name": "vw_revenue",
+            },
+        )
+
+
+async def test_rename_view_blocked_by_workspace_allowlist(ctx_patch) -> None:
+    """rename_view raises ToolError when workspace is not in FABRIC_MCP_WORKSPACES."""
+    import os  # noqa: PLC0415
+
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "allowed-ws"}),
+        pytest.raises(ToolError, match="allowlist"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "rename_view",
+            {
+                "workspace": "forbidden-ws",
+                "item": _WH_NAME,
+                "qualified_name": "dbo.vw_sales",
+                "new_name": "vw_revenue",
+            },
+        )
+
+
+async def test_rename_view_accepts_sql_endpoint_item(mock_ctx, ctx_patch) -> None:
+    """rename_view must not reject SQL Analytics Endpoint items (no DW-only guard)."""
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+    from fabric_dw.models import View  # noqa: PLC0415
+
+    renamed_view = View(
+        schema_name="dbo",
+        name="vw_revenue",
+        qualified_name="dbo.vw_revenue",
+        definition=None,
+        created=datetime.now(tz=UTC),
+        modified=datetime.now(tz=UTC),
+    )
+    ep_entry = make_item_entry(kind=WarehouseKind.SQL_ENDPOINT)
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=ep_entry)
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.views.rename_view",
+            new=AsyncMock(return_value=renamed_view),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "rename_view",
+            {
+                "workspace": _WS_NAME,
+                "item": _WH_NAME,
+                "qualified_name": "dbo.vw_sales",
+                "new_name": "vw_revenue",
+            },
+        )
+
+    assert result["name"] == "vw_revenue"
+
+
+async def test_rename_view_bad_qualified_name_raises_tool_error(ctx_patch) -> None:
+    """rename_view raises ToolError when qualified_name has no dot."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with (
+        ctx_patch,
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "rename_view",
+            {
+                "workspace": _WS_NAME,
+                "item": _WH_NAME,
+                "qualified_name": "nodot",
+                "new_name": "vw_revenue",
             },
         )

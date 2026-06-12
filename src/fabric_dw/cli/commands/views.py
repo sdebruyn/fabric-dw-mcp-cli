@@ -222,3 +222,37 @@ async def drop_cmd(
             click.echo(f"View [{schema}].[{view_name}] dropped.")
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
+
+
+@views_group.command("rename")
+@click.argument("workspace", required=False, default=None)
+@click.argument("item", required=False, default=None)
+@click.argument("qualified_name")
+@click.option("--new-name", required=True, help="New bare (unqualified) view name.")
+@click.pass_obj
+@_coro
+async def rename_cmd(
+    ctx: CliContext,
+    workspace: str | None,
+    item: str | None,
+    qualified_name: str,
+    new_name: str,
+) -> None:
+    """Rename QUALIFIED_NAME (schema.view) on ITEM in WORKSPACE to --new-name."""
+    ws = resolve_workspace_arg(ctx, workspace)
+    wh = resolve_warehouse_arg(ctx, item)
+    schema, view_name = parse_qualified_name(qualified_name, kind="view")
+    try:
+        async with build_http_client(ctx) as http:
+            target, entry = await build_sql_target(http, ws, wh)
+            confirmed = confirm(
+                f"Rename view [{schema}].[{view_name}] on {entry.display_name!r} to {new_name!r}?",
+                yes=ctx.yes,
+            )
+            if not confirmed:
+                click.echo("Aborted.")
+                return
+            v = await _views_svc.rename_view(target, qualified_name, new_name, mode=ctx.auth)
+            render(v.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
+    except (ValueError, FabricError) as exc:
+        raise click.ClickException(str(exc)) from exc
