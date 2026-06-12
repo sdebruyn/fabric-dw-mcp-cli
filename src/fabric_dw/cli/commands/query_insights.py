@@ -3,73 +3,35 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from datetime import datetime
 
 import click
 
-from fabric_dw import auth as _auth
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import render
 from fabric_dw.cli.commands._utils import (
     _coro,
-    _resolve_item,
+    build_http_client,
+    build_sql_target,
+    parse_iso_datetime,
     resolve_warehouse_arg,
     resolve_workspace_arg,
 )
 from fabric_dw.exceptions import FabricError
-from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.services import query_insights as _qi_svc
-from fabric_dw.sql import SqlTarget
 
 _log = logging.getLogger(__name__)
 
 
-@asynccontextmanager
-async def _build_http_client(
-    ctx: CliContext,
-) -> AsyncIterator[FabricHttpClient]:
-    """Build and yield an HTTP client for query-insights commands."""
-    credential = _auth.get_credential(ctx.auth)
-    async with FabricHttpClient(credential) as http:
-        yield http
-
-
 def _parse_iso(value: str | None, param_name: str) -> datetime | None:
-    """Parse an ISO-8601 string; raise UsageError on bad input."""
+    """Parse an optional ISO-8601 string; raise UsageError on bad input.
+
+    Thin wrapper around :func:`~fabric_dw.cli.commands._utils.parse_iso_datetime`
+    that handles the ``None`` sentinel (option not provided).
+    """
     if value is None:
         return None
-    try:
-        return datetime.fromisoformat(value)
-    except ValueError as exc:
-        raise click.UsageError(  # noqa: TRY003
-            f"invalid {param_name} {value!r}: expected ISO-8601 (e.g. 2024-01-01T00:00:00)"
-        ) from exc
-
-
-# ---------------------------------------------------------------------------
-# Shared build-target helper
-# ---------------------------------------------------------------------------
-
-
-async def _build_target(
-    http: FabricHttpClient,
-    workspace: str,
-    item: str,
-) -> tuple[SqlTarget, str]:
-    """Resolve workspace + item and return a (SqlTarget, display_name) pair."""
-    ws_id, entry = await _resolve_item(http, workspace, item)
-    if entry.connection_string is None:
-        raise click.ClickException(  # noqa: TRY003
-            f"Item {entry.display_name!r} has no connection string."
-        )
-    target = SqlTarget(
-        workspace_id=str(ws_id),
-        database=entry.display_name,
-        connection_string=entry.connection_string,
-    )
-    return target, entry.display_name
+    return parse_iso_datetime(value, param_name, assume_utc=False)
 
 
 # ---------------------------------------------------------------------------
@@ -134,8 +96,8 @@ async def request_history_cmd(
     since_dt = _parse_iso(since, "--since")
     until_dt = _parse_iso(until, "--until")
     try:
-        async with _build_http_client(ctx) as http:
-            target, _ = await _build_target(http, ws, wh)
+        async with build_http_client(ctx) as http:
+            target, _ = await build_sql_target(http, ws, wh)
             items = await _qi_svc.list_request_history(
                 target, limit=limit, since=since_dt, until=until_dt, mode=ctx.auth
             )
@@ -175,8 +137,8 @@ async def session_history_cmd(
     since_dt = _parse_iso(since, "--since")
     until_dt = _parse_iso(until, "--until")
     try:
-        async with _build_http_client(ctx) as http:
-            target, _ = await _build_target(http, ws, wh)
+        async with build_http_client(ctx) as http:
+            target, _ = await build_sql_target(http, ws, wh)
             items = await _qi_svc.list_session_history(
                 target, limit=limit, since=since_dt, until=until_dt, mode=ctx.auth
             )
@@ -216,8 +178,8 @@ async def frequent_cmd(
     since_dt = _parse_iso(since, "--since")
     until_dt = _parse_iso(until, "--until")
     try:
-        async with _build_http_client(ctx) as http:
-            target, _ = await _build_target(http, ws, wh)
+        async with build_http_client(ctx) as http:
+            target, _ = await build_sql_target(http, ws, wh)
             items = await _qi_svc.list_frequent_queries(
                 target, limit=limit, since=since_dt, until=until_dt, mode=ctx.auth
             )
@@ -257,8 +219,8 @@ async def long_running_cmd(
     since_dt = _parse_iso(since, "--since")
     until_dt = _parse_iso(until, "--until")
     try:
-        async with _build_http_client(ctx) as http:
-            target, _ = await _build_target(http, ws, wh)
+        async with build_http_client(ctx) as http:
+            target, _ = await build_sql_target(http, ws, wh)
             items = await _qi_svc.list_long_running_queries(
                 target, limit=limit, since=since_dt, until=until_dt, mode=ctx.auth
             )
@@ -298,8 +260,8 @@ async def pool_insights_cmd(
     since_dt = _parse_iso(since, "--since")
     until_dt = _parse_iso(until, "--until")
     try:
-        async with _build_http_client(ctx) as http:
-            target, _ = await _build_target(http, ws, wh)
+        async with build_http_client(ctx) as http:
+            target, _ = await build_sql_target(http, ws, wh)
             items = await _qi_svc.list_sql_pool_insights(
                 target, limit=limit, since=since_dt, until=until_dt, mode=ctx.auth
             )

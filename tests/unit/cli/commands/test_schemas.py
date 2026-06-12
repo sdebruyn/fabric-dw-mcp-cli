@@ -17,6 +17,7 @@ from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._main import cli
 from fabric_dw.exceptions import NotFound, PermissionDenied
 from fabric_dw.models import Schema, WarehouseKind
+from fabric_dw.sql import SqlTarget
 
 WS_GUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 WH_GUID = "d4e5f6a7-b8c9-0123-def0-123456789abc"
@@ -35,6 +36,14 @@ def runner() -> CliRunner:
 def cache_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     return tmp_path
+
+
+def _make_sql_target() -> SqlTarget:
+    return SqlTarget(
+        workspace_id=WS_GUID,
+        database="SalesWarehouse",
+        connection_string="wh.datawarehouse.fabric.microsoft.com",
+    )
 
 
 def _make_http_cm(http: object) -> object:
@@ -80,12 +89,12 @@ class TestSchemasList:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.schemas._build_http_client",
+                "fabric_dw.cli.commands.schemas.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.schemas._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.schemas.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.schemas.list_schemas",
@@ -100,12 +109,12 @@ class TestSchemasList:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.schemas._build_http_client",
+                "fabric_dw.cli.commands.schemas.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.schemas._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.schemas.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.schemas.list_schemas",
@@ -123,11 +132,11 @@ class TestSchemasList:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.schemas._build_http_client",
+                "fabric_dw.cli.commands.schemas.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.schemas._resolve_item",
+                "fabric_dw.cli.commands.schemas.build_sql_target",
                 new=AsyncMock(side_effect=NotFound("not found")),
             ),
         ):
@@ -141,12 +150,12 @@ class TestSchemasList:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.schemas._build_http_client",
+                "fabric_dw.cli.commands.schemas.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.schemas._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.schemas.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.schemas.list_schemas",
@@ -168,12 +177,12 @@ class TestSchemasCreate:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.schemas._build_http_client",
+                "fabric_dw.cli.commands.schemas.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.schemas._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.schemas.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.schemas.create_schema",
@@ -188,12 +197,12 @@ class TestSchemasCreate:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.schemas._build_http_client",
+                "fabric_dw.cli.commands.schemas.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.schemas._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.schemas.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.schemas.create_schema",
@@ -210,11 +219,11 @@ class TestSchemasCreate:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.schemas._build_http_client",
+                "fabric_dw.cli.commands.schemas.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.schemas._resolve_item",
+                "fabric_dw.cli.commands.schemas.build_sql_target",
                 new=AsyncMock(return_value=(WS_UUID, _make_sql_endpoint_entry())),
             ),
         ):
@@ -228,12 +237,12 @@ class TestSchemasCreate:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.schemas._build_http_client",
+                "fabric_dw.cli.commands.schemas.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.schemas._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.schemas.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.schemas.create_schema",
@@ -255,12 +264,12 @@ class TestSchemasDelete:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.schemas._build_http_client",
+                "fabric_dw.cli.commands.schemas.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.schemas._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.schemas.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.schemas.delete_schema",
@@ -276,12 +285,12 @@ class TestSchemasDelete:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.schemas._build_http_client",
+                "fabric_dw.cli.commands.schemas.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.schemas._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.schemas.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.schemas.delete_schema",
@@ -299,12 +308,12 @@ class TestSchemasDelete:
         mock_delete = AsyncMock(return_value=None)
         with (
             patch(
-                "fabric_dw.cli.commands.schemas._build_http_client",
+                "fabric_dw.cli.commands.schemas.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.schemas._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.schemas.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch("fabric_dw.services.schemas.delete_schema", new=mock_delete),
         ):
@@ -322,12 +331,12 @@ class TestSchemasDelete:
         mock_delete = AsyncMock(return_value=None)
         with (
             patch(
-                "fabric_dw.cli.commands.schemas._build_http_client",
+                "fabric_dw.cli.commands.schemas.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.schemas._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.schemas.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch("fabric_dw.services.schemas.delete_schema", new=mock_delete),
         ):
@@ -344,11 +353,11 @@ class TestSchemasDelete:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.schemas._build_http_client",
+                "fabric_dw.cli.commands.schemas.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.schemas._resolve_item",
+                "fabric_dw.cli.commands.schemas.build_sql_target",
                 new=AsyncMock(return_value=(WS_UUID, _make_sql_endpoint_entry())),
             ),
         ):
@@ -360,12 +369,12 @@ class TestSchemasDelete:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.schemas._build_http_client",
+                "fabric_dw.cli.commands.schemas.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.schemas._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.schemas.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.schemas.delete_schema",
@@ -386,12 +395,12 @@ class TestSchemasDelete:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.schemas._build_http_client",
+                "fabric_dw.cli.commands.schemas.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.schemas._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.schemas.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.schemas.delete_schema",

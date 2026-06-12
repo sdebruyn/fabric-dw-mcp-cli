@@ -36,10 +36,10 @@ def cache_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def _make_cm(http: object, sql: object) -> object:
+def _make_cm(http: object, _sql: object = None) -> object:
     @asynccontextmanager
-    async def _cm(_ctx: object) -> AsyncIterator[tuple[object, object]]:
-        yield http, sql
+    async def _cm(_ctx: object) -> AsyncIterator[object]:
+        yield http
 
     return _cm
 
@@ -63,7 +63,7 @@ class TestAuditGet:
         mock_http.request = AsyncMock(return_value=_make_response(200, AUDIT_SETTINGS_PAYLOAD))
         with (
             patch(
-                "fabric_dw.cli.commands.audit._build_clients",
+                "fabric_dw.cli.commands.audit.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -80,7 +80,7 @@ class TestAuditGet:
         mock_http.request = AsyncMock(return_value=_make_response(200, AUDIT_SETTINGS_PAYLOAD))
         with (
             patch(
-                "fabric_dw.cli.commands.audit._build_clients",
+                "fabric_dw.cli.commands.audit.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -98,7 +98,7 @@ class TestAuditGet:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.audit._build_clients",
+                "fabric_dw.cli.commands.audit.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -119,7 +119,7 @@ class TestAuditEnable:
         mock_http.request = AsyncMock(return_value=_make_response(200, AUDIT_SETTINGS_PAYLOAD))
         with (
             patch(
-                "fabric_dw.cli.commands.audit._build_clients",
+                "fabric_dw.cli.commands.audit.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -136,7 +136,7 @@ class TestAuditEnable:
         mock_http.request = AsyncMock(return_value=_make_response(200, AUDIT_SETTINGS_PAYLOAD))
         with (
             patch(
-                "fabric_dw.cli.commands.audit._build_clients",
+                "fabric_dw.cli.commands.audit.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -159,7 +159,7 @@ class TestAuditDisable:
         mock_http.request = AsyncMock(return_value=_make_response(200, AUDIT_SETTINGS_PAYLOAD))
         with (
             patch(
-                "fabric_dw.cli.commands.audit._build_clients",
+                "fabric_dw.cli.commands.audit.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -175,7 +175,7 @@ class TestAuditDisable:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.audit._build_clients",
+                "fabric_dw.cli.commands.audit.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -196,7 +196,7 @@ class TestAuditSetRetention:
         mock_http.request = AsyncMock(return_value=_make_response(200, AUDIT_SETTINGS_PAYLOAD))
         with (
             patch(
-                "fabric_dw.cli.commands.audit._build_clients",
+                "fabric_dw.cli.commands.audit.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -215,7 +215,7 @@ class TestAuditSetRetention:
         mock_http.request = AsyncMock(return_value=_make_response(200, AUDIT_SETTINGS_PAYLOAD))
         with (
             patch(
-                "fabric_dw.cli.commands.audit._build_clients",
+                "fabric_dw.cli.commands.audit.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -237,7 +237,7 @@ class TestAuditSetRetention:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.audit._build_clients",
+                "fabric_dw.cli.commands.audit.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -264,7 +264,7 @@ class TestAuditSetRetention:
         mock_http.request = AsyncMock(return_value=_make_response(200, AUDIT_SETTINGS_PAYLOAD))
         with (
             patch(
-                "fabric_dw.cli.commands.audit._build_clients",
+                "fabric_dw.cli.commands.audit.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -287,7 +287,7 @@ class TestAuditSetGroups:
         mock_http.request = AsyncMock(return_value=_make_response(200, AUDIT_SETTINGS_PAYLOAD))
         with (
             patch(
-                "fabric_dw.cli.commands.audit._build_clients",
+                "fabric_dw.cli.commands.audit.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -317,7 +317,7 @@ class TestAuditSetGroups:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.audit._build_clients",
+                "fabric_dw.cli.commands.audit.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -353,7 +353,7 @@ class TestAuditAddGroup:
         mock_http.request = AsyncMock(return_value=_make_response(200, AUDIT_SETTINGS_PAYLOAD))
         with (
             patch(
-                "fabric_dw.cli.commands.audit._build_clients",
+                "fabric_dw.cli.commands.audit.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -379,7 +379,7 @@ class TestAuditAddGroup:
         mock_http.request = AsyncMock(return_value=_make_response(200, AUDIT_SETTINGS_PAYLOAD))
         with (
             patch(
-                "fabric_dw.cli.commands.audit._build_clients",
+                "fabric_dw.cli.commands.audit.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -402,7 +402,7 @@ class TestAuditAddGroup:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.audit._build_clients",
+                "fabric_dw.cli.commands.audit.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -423,7 +423,7 @@ class TestAuditAddGroup:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.audit._build_clients",
+                "fabric_dw.cli.commands.audit.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -451,7 +451,7 @@ class TestAuditRemoveGroup:
         mock_http.request = AsyncMock(return_value=_make_response(200, AUDIT_SETTINGS_PAYLOAD))
         with (
             patch(
-                "fabric_dw.cli.commands.audit._build_clients",
+                "fabric_dw.cli.commands.audit.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -477,7 +477,7 @@ class TestAuditRemoveGroup:
         mock_http.request = AsyncMock(return_value=_make_response(200, AUDIT_SETTINGS_PAYLOAD))
         with (
             patch(
-                "fabric_dw.cli.commands.audit._build_clients",
+                "fabric_dw.cli.commands.audit.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -500,7 +500,7 @@ class TestAuditRemoveGroup:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.audit._build_clients",
+                "fabric_dw.cli.commands.audit.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -521,7 +521,7 @@ class TestAuditRemoveGroup:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.audit._build_clients",
+                "fabric_dw.cli.commands.audit.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -556,7 +556,7 @@ class TestAuditDefaultFallback:
         mock_http.request = AsyncMock(return_value=_make_response(200, AUDIT_SETTINGS_PAYLOAD))
         with (
             patch(
-                "fabric_dw.cli.commands.audit._build_clients",
+                "fabric_dw.cli.commands.audit.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(

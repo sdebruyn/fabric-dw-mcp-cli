@@ -17,6 +17,7 @@ from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.cli._main import cli
 from fabric_dw.exceptions import NotFound, PermissionDenied
 from fabric_dw.models import WarehouseKind
+from fabric_dw.sql import SqlTarget
 
 WS_GUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 WH_GUID = "d4e5f6a7-b8c9-0123-def0-123456789abc"
@@ -45,6 +46,14 @@ def _make_http_cm(http: object) -> object:
         yield http
 
     return _cm
+
+
+def _make_sql_target() -> SqlTarget:
+    return SqlTarget(
+        workspace_id=WS_GUID,
+        database="SalesWarehouse",
+        connection_string="wh.datawarehouse.fabric.microsoft.com",
+    )
 
 
 def _make_wh_entry() -> ItemEntry:
@@ -89,7 +98,7 @@ class TestSnapshotsList:
         mock_http.iter_paginated = MagicMock(return_value=_async_iter([]))
         with (
             patch(
-                "fabric_dw.cli.commands.snapshots._build_http_client",
+                "fabric_dw.cli.commands.snapshots.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
@@ -106,7 +115,7 @@ class TestSnapshotsList:
         mock_http.iter_paginated = MagicMock(return_value=_async_iter([]))
         with (
             patch(
-                "fabric_dw.cli.commands.snapshots._build_http_client",
+                "fabric_dw.cli.commands.snapshots.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
@@ -124,7 +133,7 @@ class TestSnapshotsList:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.snapshots._build_http_client",
+                "fabric_dw.cli.commands.snapshots.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
@@ -158,7 +167,7 @@ class TestSnapshotsCreate:
         )
         with (
             patch(
-                "fabric_dw.cli.commands.snapshots._build_http_client",
+                "fabric_dw.cli.commands.snapshots.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
@@ -186,7 +195,7 @@ class TestSnapshotsRename:
         _cache = LookupCache(path=cache_env / "lookup.json")
         with (
             patch(
-                "fabric_dw.cli.commands.snapshots._build_http_client",
+                "fabric_dw.cli.commands.snapshots.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
@@ -211,7 +220,7 @@ class TestSnapshotsDelete:
         _cache = LookupCache(path=cache_env / "lookup.json")
         with (
             patch(
-                "fabric_dw.cli.commands.snapshots._build_http_client",
+                "fabric_dw.cli.commands.snapshots.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
@@ -228,7 +237,7 @@ class TestSnapshotsDelete:
         _cache = LookupCache(path=cache_env / "lookup.json")
         with (
             patch(
-                "fabric_dw.cli.commands.snapshots._build_http_client",
+                "fabric_dw.cli.commands.snapshots.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
@@ -248,12 +257,12 @@ class TestSnapshotsRoll:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.snapshots._build_http_client",
+                "fabric_dw.cli.commands.snapshots.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.snapshots._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_wh_entry())),
+                "fabric_dw.cli.commands.snapshots.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_wh_entry())),
             ),
             patch(
                 "fabric_dw.services.snapshots.roll_timestamp",
@@ -278,12 +287,12 @@ class TestSnapshotsRoll:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.snapshots._build_http_client",
+                "fabric_dw.cli.commands.snapshots.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.snapshots._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_wh_entry())),
+                "fabric_dw.cli.commands.snapshots.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_wh_entry())),
             ),
             patch(
                 "fabric_dw.services.snapshots.roll_timestamp",
@@ -310,12 +319,12 @@ class TestSnapshotsRoll:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.snapshots._build_http_client",
+                "fabric_dw.cli.commands.snapshots.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.snapshots._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_wh_entry())),
+                "fabric_dw.cli.commands.snapshots.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_wh_entry())),
             ),
         ):
             result = runner.invoke(
@@ -338,12 +347,12 @@ class TestSnapshotsRoll:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.snapshots._build_http_client",
+                "fabric_dw.cli.commands.snapshots.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.snapshots._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_wh_entry())),
+                "fabric_dw.cli.commands.snapshots.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_wh_entry())),
             ),
             patch(
                 "fabric_dw.services.snapshots.roll_timestamp",
@@ -385,7 +394,7 @@ class TestSnapshotsDefaultFallback:
         mock_http.iter_paginated = MagicMock(return_value=_async_iter([]))
         with (
             patch(
-                "fabric_dw.cli.commands.snapshots._build_http_client",
+                "fabric_dw.cli.commands.snapshots.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(

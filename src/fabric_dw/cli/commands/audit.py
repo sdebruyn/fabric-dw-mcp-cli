@@ -3,35 +3,22 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 
 import click
 
-from fabric_dw import auth as _auth
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import confirm, render
 from fabric_dw.cli.commands._utils import (
     _coro,
     _resolve_item,
+    build_http_client,
     resolve_warehouse_arg,
     resolve_workspace_arg,
 )
 from fabric_dw.exceptions import FabricError
-from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.services import audit as _audit_svc
 
 _log = logging.getLogger(__name__)
-
-
-@asynccontextmanager
-async def _build_clients(
-    ctx: CliContext,
-) -> AsyncIterator[tuple[FabricHttpClient, None]]:
-    """Build and yield an HTTP client for audit commands."""
-    credential = _auth.get_credential(ctx.auth)
-    async with FabricHttpClient(credential) as http:
-        yield http, None
 
 
 @click.group("audit")
@@ -49,7 +36,7 @@ async def get_cmd(ctx: CliContext, workspace: str | None, warehouse: str | None)
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, warehouse)
     try:
-        async with _build_clients(ctx) as (http, _):
+        async with build_http_client(ctx) as http:
             ws_id, entry = await _resolve_item(http, ws, wh)
             obj = await _audit_svc.get_settings(http, ws_id, entry.id)
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
@@ -78,7 +65,7 @@ async def enable_cmd(
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, warehouse)
     try:
-        async with _build_clients(ctx) as (http, _):
+        async with build_http_client(ctx) as http:
             ws_id, entry = await _resolve_item(http, ws, wh)
             obj = await _audit_svc.enable(http, ws_id, entry.id, retention_days=retention_days)
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
@@ -96,7 +83,7 @@ async def disable_cmd(ctx: CliContext, workspace: str | None, warehouse: str | N
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, warehouse)
     try:
-        async with _build_clients(ctx) as (http, _):
+        async with build_http_client(ctx) as http:
             ws_id, entry = await _resolve_item(http, ws, wh)
             confirmed = confirm(
                 f"Disable auditing on warehouse {entry.display_name!r} ({entry.id})?",
@@ -137,7 +124,7 @@ async def set_retention_cmd(
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, warehouse)
     try:
-        async with _build_clients(ctx) as (http, _):
+        async with build_http_client(ctx) as http:
             ws_id, entry = await _resolve_item(http, ws, wh)
             obj = await _audit_svc.set_retention(http, ws_id, entry.id, days=days)
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
@@ -169,7 +156,7 @@ async def set_groups_cmd(
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, warehouse)
     try:
-        async with _build_clients(ctx) as (http, _):
+        async with build_http_client(ctx) as http:
             ws_id, entry = await _resolve_item(http, ws, wh)
             obj = await _audit_svc.set_action_groups(http, ws_id, entry.id, list(groups))
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
@@ -194,7 +181,7 @@ async def add_group_cmd(
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, warehouse)
     try:
-        async with _build_clients(ctx) as (http, _):
+        async with build_http_client(ctx) as http:
             ws_id, entry = await _resolve_item(http, ws, wh)
             obj = await _audit_svc.add_action_group(http, ws_id, entry.id, group)
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
@@ -219,7 +206,7 @@ async def remove_group_cmd(
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, warehouse)
     try:
-        async with _build_clients(ctx) as (http, _):
+        async with build_http_client(ctx) as http:
             ws_id, entry = await _resolve_item(http, ws, wh)
             obj = await _audit_svc.remove_action_group(http, ws_id, entry.id, group)
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)

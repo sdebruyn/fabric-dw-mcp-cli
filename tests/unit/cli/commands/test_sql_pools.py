@@ -98,11 +98,11 @@ class TestSqlPoolsGet:
         _ = cache_env
         with (
             patch(
-                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                "fabric_dw.cli.commands.sql_pools.build_http_client",
                 new=_make_http_cm(AsyncMock()),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                "fabric_dw.cli.commands.sql_pools.resolve_workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
             patch(
@@ -117,11 +117,11 @@ class TestSqlPoolsGet:
         _ = cache_env
         with (
             patch(
-                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                "fabric_dw.cli.commands.sql_pools.build_http_client",
                 new=_make_http_cm(AsyncMock()),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                "fabric_dw.cli.commands.sql_pools.resolve_workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
             patch(
@@ -139,11 +139,11 @@ class TestSqlPoolsGet:
         _ = cache_env
         with (
             patch(
-                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                "fabric_dw.cli.commands.sql_pools.build_http_client",
                 new=_make_http_cm(AsyncMock()),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                "fabric_dw.cli.commands.sql_pools.resolve_workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
             patch(
@@ -161,11 +161,11 @@ class TestSqlPoolsList:
         _ = cache_env
         with (
             patch(
-                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                "fabric_dw.cli.commands.sql_pools.build_http_client",
                 new=_make_http_cm(AsyncMock()),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                "fabric_dw.cli.commands.sql_pools.resolve_workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
             patch(
@@ -180,11 +180,11 @@ class TestSqlPoolsList:
         _ = cache_env
         with (
             patch(
-                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                "fabric_dw.cli.commands.sql_pools.build_http_client",
                 new=_make_http_cm(AsyncMock()),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                "fabric_dw.cli.commands.sql_pools.resolve_workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
             patch(
@@ -207,11 +207,11 @@ class TestSqlPoolsShow:
         _ = cache_env
         with (
             patch(
-                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                "fabric_dw.cli.commands.sql_pools.build_http_client",
                 new=_make_http_cm(AsyncMock()),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                "fabric_dw.cli.commands.sql_pools.resolve_workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
             patch(
@@ -226,11 +226,11 @@ class TestSqlPoolsShow:
         _ = cache_env
         with (
             patch(
-                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                "fabric_dw.cli.commands.sql_pools.build_http_client",
                 new=_make_http_cm(AsyncMock()),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                "fabric_dw.cli.commands.sql_pools.resolve_workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
             patch(
@@ -248,11 +248,11 @@ class TestSqlPoolsCreate:
         mock_create = AsyncMock(return_value=_CONFIG)
         with (
             patch(
-                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                "fabric_dw.cli.commands.sql_pools.build_http_client",
                 new=_make_http_cm(AsyncMock()),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                "fabric_dw.cli.commands.sql_pools.resolve_workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
             patch(
@@ -286,11 +286,11 @@ class TestSqlPoolsCreate:
         mock_create = AsyncMock(return_value=_CONFIG)
         with (
             patch(
-                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                "fabric_dw.cli.commands.sql_pools.build_http_client",
                 new=_make_http_cm(AsyncMock()),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                "fabric_dw.cli.commands.sql_pools.resolve_workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
             patch(
@@ -326,11 +326,11 @@ class TestSqlPoolsCreate:
         _ = cache_env
         with (
             patch(
-                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                "fabric_dw.cli.commands.sql_pools.build_http_client",
                 new=_make_http_cm(AsyncMock()),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                "fabric_dw.cli.commands.sql_pools.resolve_workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
             patch(
@@ -358,11 +358,11 @@ class TestSqlPoolsCreate:
         mock_create = AsyncMock(return_value=_CONFIG)
         with (
             patch(
-                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                "fabric_dw.cli.commands.sql_pools.build_http_client",
                 new=_make_http_cm(AsyncMock()),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                "fabric_dw.cli.commands.sql_pools.resolve_workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
             patch(
@@ -395,11 +395,11 @@ class TestSqlPoolsUpdate:
         mock_update = AsyncMock(return_value=_CONFIG)
         with (
             patch(
-                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                "fabric_dw.cli.commands.sql_pools.build_http_client",
                 new=_make_http_cm(AsyncMock()),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                "fabric_dw.cli.commands.sql_pools.resolve_workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
             patch(
@@ -426,11 +426,11 @@ class TestSqlPoolsUpdate:
         _ = cache_env
         with (
             patch(
-                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                "fabric_dw.cli.commands.sql_pools.build_http_client",
                 new=_make_http_cm(AsyncMock()),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                "fabric_dw.cli.commands.sql_pools.resolve_workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
             patch(
@@ -459,11 +459,11 @@ class TestSqlPoolsUpdate:
         mock_update = AsyncMock(return_value=_CONFIG)
         with (
             patch(
-                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                "fabric_dw.cli.commands.sql_pools.build_http_client",
                 new=_make_http_cm(AsyncMock()),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                "fabric_dw.cli.commands.sql_pools.resolve_workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
             patch(
@@ -492,11 +492,11 @@ class TestSqlPoolsUpdate:
         mock_update = AsyncMock(return_value=_CONFIG)
         with (
             patch(
-                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                "fabric_dw.cli.commands.sql_pools.build_http_client",
                 new=_make_http_cm(AsyncMock()),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                "fabric_dw.cli.commands.sql_pools.resolve_workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
             patch(
@@ -526,11 +526,11 @@ class TestSqlPoolsDelete:
         mock_delete = AsyncMock(return_value=_CONFIG_EMPTY)
         with (
             patch(
-                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                "fabric_dw.cli.commands.sql_pools.build_http_client",
                 new=_make_http_cm(AsyncMock()),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                "fabric_dw.cli.commands.sql_pools.resolve_workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
             patch(
@@ -549,11 +549,11 @@ class TestSqlPoolsDelete:
         _ = cache_env
         with (
             patch(
-                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                "fabric_dw.cli.commands.sql_pools.build_http_client",
                 new=_make_http_cm(AsyncMock()),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                "fabric_dw.cli.commands.sql_pools.resolve_workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
             patch(
@@ -571,11 +571,11 @@ class TestSqlPoolsDelete:
         _ = cache_env
         with (
             patch(
-                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                "fabric_dw.cli.commands.sql_pools.build_http_client",
                 new=_make_http_cm(AsyncMock()),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                "fabric_dw.cli.commands.sql_pools.resolve_workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
             patch(
@@ -596,11 +596,11 @@ class TestSqlPoolsEnable:
         _ = cache_env
         with (
             patch(
-                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                "fabric_dw.cli.commands.sql_pools.build_http_client",
                 new=_make_http_cm(AsyncMock()),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                "fabric_dw.cli.commands.sql_pools.resolve_workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
             patch(
@@ -615,11 +615,11 @@ class TestSqlPoolsEnable:
         _ = cache_env
         with (
             patch(
-                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                "fabric_dw.cli.commands.sql_pools.build_http_client",
                 new=_make_http_cm(AsyncMock()),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                "fabric_dw.cli.commands.sql_pools.resolve_workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
             patch(
@@ -637,11 +637,11 @@ class TestSqlPoolsDisable:
         _ = cache_env
         with (
             patch(
-                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                "fabric_dw.cli.commands.sql_pools.build_http_client",
                 new=_make_http_cm(AsyncMock()),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                "fabric_dw.cli.commands.sql_pools.resolve_workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
             patch(
@@ -659,11 +659,11 @@ class TestSqlPoolsReset:
         mock_reset = AsyncMock(return_value=_CONFIG_EMPTY)
         with (
             patch(
-                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                "fabric_dw.cli.commands.sql_pools.build_http_client",
                 new=_make_http_cm(AsyncMock()),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                "fabric_dw.cli.commands.sql_pools.resolve_workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
             patch(
@@ -679,11 +679,11 @@ class TestSqlPoolsReset:
         _ = cache_env
         with (
             patch(
-                "fabric_dw.cli.commands.sql_pools._build_http_client",
+                "fabric_dw.cli.commands.sql_pools.build_http_client",
                 new=_make_http_cm(AsyncMock()),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_pools._resolve_workspace",
+                "fabric_dw.cli.commands.sql_pools.resolve_workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
             patch(

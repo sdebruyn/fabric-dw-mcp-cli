@@ -8,37 +8,26 @@ Commands
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import click
 
-from fabric_dw import auth as _auth
 from fabric_dw.cli._render import render
 from fabric_dw.cli.commands._utils import (
     _coro,
-    _resolve_item,
+    build_http_client,
+    build_sql_target,
     resolve_warehouse_arg,
     resolve_workspace_arg,
 )
 from fabric_dw.exceptions import FabricError
-from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.services import sql_exec as _sql_exec_svc
-from fabric_dw.sql import SqlTarget
 
 if TYPE_CHECKING:
     from fabric_dw.cli._context import CliContext
 
 _log = logging.getLogger(__name__)
-
-
-@asynccontextmanager
-async def _build_http_client(ctx: CliContext) -> AsyncIterator[FabricHttpClient]:
-    credential = _auth.get_credential(ctx.auth)
-    async with FabricHttpClient(credential) as http:
-        yield http
 
 
 @click.group("sql")
@@ -103,17 +92,8 @@ async def exec_cmd(
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, item)
     try:
-        async with _build_http_client(ctx) as http:
-            ws_id, entry = await _resolve_item(http, ws, wh)
-            if entry.connection_string is None:
-                raise click.ClickException(  # noqa: TRY003
-                    f"Item {entry.display_name!r} has no connection string."
-                )
-            target = SqlTarget(
-                workspace_id=str(ws_id),
-                database=entry.display_name,
-                connection_string=entry.connection_string,
-            )
+        async with build_http_client(ctx) as http:
+            target, _entry = await build_sql_target(http, ws, wh)
             result = await _sql_exec_svc.execute(target, query_text, mode=ctx.auth)
 
             if table_output:

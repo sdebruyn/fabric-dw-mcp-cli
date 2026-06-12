@@ -3,40 +3,21 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-from uuid import UUID
 
 import click
 
-from fabric_dw import auth as _auth
-from fabric_dw.cache import LookupCache
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import confirm, render
-from fabric_dw.cli.commands._utils import _coro, resolve_workspace_arg
+from fabric_dw.cli.commands._utils import (
+    _coro,
+    build_http_client,
+    resolve_workspace_arg,
+    resolve_workspace_id,
+)
 from fabric_dw.exceptions import FabricError
-from fabric_dw.http_client import FabricHttpClient
-from fabric_dw.resolver import Resolver
 from fabric_dw.services import workspaces as _workspaces_svc
 
 _log = logging.getLogger(__name__)
-
-
-@asynccontextmanager
-async def _build_clients(
-    ctx: CliContext,
-) -> AsyncIterator[tuple[FabricHttpClient, None]]:
-    """Build and yield an HTTP client for workspace commands."""
-    credential = _auth.get_credential(ctx.auth)
-    async with FabricHttpClient(credential) as http:
-        yield http, None
-
-
-async def _resolve_workspace(http: FabricHttpClient, workspace: str) -> UUID:
-    """Resolve a workspace name or GUID to a UUID."""
-    cache = LookupCache()
-    resolver = Resolver(http=http, cache=cache)
-    return await resolver.workspace_id(workspace)
 
 
 @click.group("workspaces")
@@ -50,7 +31,7 @@ def workspaces_group() -> None:
 async def list_cmd(ctx: CliContext) -> None:
     """List all workspaces the authenticated principal has access to."""
     try:
-        async with _build_clients(ctx) as (http, _):
+        async with build_http_client(ctx) as http:
             items = await _workspaces_svc.list_all(http)
             render(
                 [w.model_dump(by_alias=True, mode="json") for w in items],
@@ -69,8 +50,8 @@ async def get_cmd(ctx: CliContext, workspace: str | None) -> None:
     """Get details for WORKSPACE (name or GUID)."""
     ws = resolve_workspace_arg(ctx, workspace)
     try:
-        async with _build_clients(ctx) as (http, _):
-            ws_id = await _resolve_workspace(http, ws)
+        async with build_http_client(ctx) as http:
+            ws_id = await resolve_workspace_id(http, ws)
             obj = await _workspaces_svc.get(http, ws_id)
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except FabricError as exc:
@@ -89,8 +70,8 @@ async def set_collation_cmd(ctx: CliContext, workspace: str | None, collation: s
     """
     ws = resolve_workspace_arg(ctx, workspace)
     try:
-        async with _build_clients(ctx) as (http, _):
-            ws_id = await _resolve_workspace(http, ws)
+        async with build_http_client(ctx) as http:
+            ws_id = await resolve_workspace_id(http, ws)
             confirmed = confirm(
                 f"Set collation to {collation!r} for workspace {ws_id}?",
                 yes=ctx.yes,

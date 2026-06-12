@@ -17,6 +17,7 @@ from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._main import cli
 from fabric_dw.exceptions import NotFound, PermissionDenied
 from fabric_dw.models import View, WarehouseKind
+from fabric_dw.sql import SqlTarget
 
 WS_GUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 WH_GUID = "d4e5f6a7-b8c9-0123-def0-123456789abc"
@@ -35,6 +36,14 @@ def runner() -> CliRunner:
 def cache_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     return tmp_path
+
+
+def _make_sql_target() -> SqlTarget:
+    return SqlTarget(
+        workspace_id=WS_GUID,
+        database="SalesWarehouse",
+        connection_string="wh.datawarehouse.fabric.microsoft.com",
+    )
 
 
 def _make_http_cm(http: object) -> object:
@@ -77,12 +86,12 @@ class TestViewsList:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.views._build_http_client",
+                "fabric_dw.cli.commands.views.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.views._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.views.list_views",
@@ -97,12 +106,12 @@ class TestViewsList:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.views._build_http_client",
+                "fabric_dw.cli.commands.views.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.views._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.views.list_views",
@@ -120,12 +129,12 @@ class TestViewsList:
         mock_list = AsyncMock(return_value=[_make_view()])
         with (
             patch(
-                "fabric_dw.cli.commands.views._build_http_client",
+                "fabric_dw.cli.commands.views.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.views._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch("fabric_dw.services.views.list_views", new=mock_list),
         ):
@@ -138,11 +147,11 @@ class TestViewsList:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.views._build_http_client",
+                "fabric_dw.cli.commands.views.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.views._resolve_item",
+                "fabric_dw.cli.commands.views.build_sql_target",
                 new=AsyncMock(side_effect=NotFound("not found")),
             ),
         ):
@@ -161,12 +170,12 @@ class TestViewsRead:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.views._build_http_client",
+                "fabric_dw.cli.commands.views.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.views._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.views.read_view",
@@ -181,12 +190,12 @@ class TestViewsRead:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.views._build_http_client",
+                "fabric_dw.cli.commands.views.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.views._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.views.read_view",
@@ -218,12 +227,12 @@ class TestViewsRead:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.views._build_http_client",
+                "fabric_dw.cli.commands.views.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.views._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.views.read_view",
@@ -259,12 +268,12 @@ class TestViewsRead:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.views._build_http_client",
+                "fabric_dw.cli.commands.views.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.views._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.views.read_view",
@@ -286,12 +295,12 @@ class TestViewsGet:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.views._build_http_client",
+                "fabric_dw.cli.commands.views.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.views._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.views.get_view",
@@ -306,12 +315,12 @@ class TestViewsGet:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.views._build_http_client",
+                "fabric_dw.cli.commands.views.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.views._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.views.get_view",
@@ -335,12 +344,12 @@ class TestViewsGet:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.views._build_http_client",
+                "fabric_dw.cli.commands.views.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.views._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.views.get_view",
@@ -362,12 +371,12 @@ class TestViewsCreate:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.views._build_http_client",
+                "fabric_dw.cli.commands.views.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.views._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.views.create_view",
@@ -396,12 +405,12 @@ class TestViewsCreate:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.views._build_http_client",
+                "fabric_dw.cli.commands.views.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.views._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.views.create_view",
@@ -472,12 +481,12 @@ class TestViewsCreate:
 
         with (
             patch(
-                "fabric_dw.cli.commands.views._build_http_client",
+                "fabric_dw.cli.commands.views.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.views._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch("fabric_dw.services.views.create_view", new=_capture),
         ):
@@ -504,12 +513,12 @@ class TestViewsCreate:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.views._build_http_client",
+                "fabric_dw.cli.commands.views.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.views._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.views.create_view",
@@ -543,12 +552,12 @@ class TestViewsUpdate:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.views._build_http_client",
+                "fabric_dw.cli.commands.views.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.views._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.views.update_view",
@@ -575,12 +584,12 @@ class TestViewsUpdate:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.views._build_http_client",
+                "fabric_dw.cli.commands.views.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.views._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
         ):
             result = runner.invoke(
@@ -615,12 +624,12 @@ class TestViewsUpdate:
 
         with (
             patch(
-                "fabric_dw.cli.commands.views._build_http_client",
+                "fabric_dw.cli.commands.views.build_http_client",
                 new=_make_http_cm(AsyncMock()),
             ),
             patch(
-                "fabric_dw.cli.commands.views._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch("fabric_dw.services.views.update_view", new=_capture),
         ):
@@ -652,12 +661,12 @@ class TestViewsDrop:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.views._build_http_client",
+                "fabric_dw.cli.commands.views.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.views._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.views.drop_view",
@@ -674,12 +683,12 @@ class TestViewsDrop:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.views._build_http_client",
+                "fabric_dw.cli.commands.views.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.views._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
         ):
             result = runner.invoke(
@@ -703,12 +712,12 @@ class TestViewsDrop:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.views._build_http_client",
+                "fabric_dw.cli.commands.views.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.views._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.views.drop_view",
