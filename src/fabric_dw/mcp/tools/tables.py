@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
@@ -190,3 +191,66 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
         return {"truncated": True}
+
+    @mcp.tool(name="clone_table")
+    async def clone_table(
+        workspace: str,
+        item: str,
+        source: str,
+        new_table: str,
+        at: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a zero-copy clone of a table using ``CREATE TABLE … AS CLONE OF …``.
+
+        Only supported on Fabric Data Warehouses (not SQL Analytics Endpoints).
+
+        Args:
+            workspace: Workspace name or GUID.
+            item: Warehouse name or GUID.
+            source: Qualified source table name, e.g. ``dbo.sales``.
+            new_table: Qualified name for the new cloned table, e.g. ``dbo.sales_clone``.
+            at: Optional ISO-8601 UTC timestamp for a point-in-time clone,
+                e.g. ``2024-05-20T14:00:00``.  Must be within the data-retention
+                window (30 days by default).  When omitted, the clone reflects the
+                current state of the source table.
+        """
+        assert_writes_allowed("clone_table")
+        assert_workspace_allowed(workspace)
+
+        at_dt: datetime | None = None
+        if at is not None:
+            try:
+                at_dt = datetime.fromisoformat(at)
+            except ValueError as exc:
+                from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+                raise ToolError(
+                    f"invalid at timestamp {at!r}: expected ISO-8601 (e.g. 2024-01-01T00:00:00)"
+                ) from exc
+            at_dt = at_dt.replace(tzinfo=UTC) if at_dt.tzinfo is None else at_dt.astimezone(UTC)
+
+        ctx = get_context()
+        try:
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
+            assert_workspace_allowed(workspace, str(ws_id))
+            _log.debug(
+                "clone_table ws=%s item=%s source=%s new_table=%s at=%s",
+                ws_id,
+                entry.id,
+                source,
+                new_table,
+                at,
+            )
+            target = make_sql_target(ws_id, entry, item)
+            result = await tables_svc.clone_table(
+                target,
+                source,
+                new_table,
+                at=at_dt,
+                kind=entry.kind,
+                mode=ctx.auth_mode,
+            )
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        ctx.resolver.clear_negative_cache()
+        return result.model_dump(mode="json")

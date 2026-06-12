@@ -15,6 +15,7 @@ from fabric_dw.cli.commands._utils import (
     build_sql_target,
     confirm_destructive,
     load_select_body,
+    parse_iso_datetime,
     parse_qualified_name,
     resolve_warehouse_arg,
     resolve_workspace_arg,
@@ -195,5 +196,59 @@ async def clear_cmd(
                 target, schema, table_name, kind=entry.kind, mode=ctx.auth
             )
             click.echo(f"Table [{schema}].[{table_name}] truncated.")
+    except (ValueError, FabricError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+@tables_group.command("clone")
+@click.argument("workspace", required=False, default=None)
+@click.argument("item", required=False, default=None)
+@click.option("--source", required=True, help="Qualified source table: schema.table.")
+@click.option(
+    "--name", "new_table", required=True, help="Qualified name for the clone: schema.table."
+)
+@click.option(
+    "--at",
+    "at_str",
+    default=None,
+    help=(
+        "Optional point-in-time (UTC) for a historical clone, "
+        "e.g. 2024-05-20T14:00:00. Must be within the data-retention window."
+    ),
+)
+@click.pass_obj
+@_coro
+async def clone_cmd(
+    ctx: CliContext,
+    workspace: str | None,
+    item: str | None,
+    source: str,
+    new_table: str,
+    at_str: str | None,
+) -> None:
+    """Clone SOURCE table as a zero-copy clone named NAME on ITEM in WORKSPACE.
+
+    Creates a new table using ``CREATE TABLE … AS CLONE OF …``.  The optional
+    ``--at`` timestamp must be within the warehouse data-retention window (UTC).
+    Only supported on Fabric Data Warehouses (not SQL Analytics Endpoints).
+    """
+    ws = resolve_workspace_arg(ctx, workspace)
+    wh = resolve_warehouse_arg(ctx, item)
+    # Validate both qualified names eagerly so bad input is reported before any I/O.
+    parse_qualified_name(source, kind="table")
+    parse_qualified_name(new_table, kind="table")
+    at = parse_iso_datetime(at_str, "--at") if at_str is not None else None
+    try:
+        async with build_http_client(ctx) as http:
+            target, entry = await build_sql_target(http, ws, wh)
+            t = await _tables_svc.clone_table(
+                target,
+                source,
+                new_table,
+                at=at,
+                kind=entry.kind,
+                mode=ctx.auth,
+            )
+            render(t.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
