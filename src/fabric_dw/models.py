@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated, Literal, cast
+from typing import Annotated, Any, Literal, cast
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -50,41 +51,65 @@ class Warehouse(_FabricBase):
     collation: str | None = Field(default=None, alias="defaultCollation")
     created_date: datetime | None = Field(default=None, alias="createdDate")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _flatten_api_payload(cls, data: object) -> object:
+        """Flatten nested ``properties`` to top-level Pydantic fields.
+
+        Picks up the connection string from the correct nested path depending
+        on the ``kind`` field (WAREHOUSE uses ``properties.connectionString``;
+        SQL_ENDPOINT uses ``properties.sqlEndpointProperties.connectionString``).
+
+        If ``data`` is already a flat dict (e.g. already processed or assembled
+        manually), the properties-flattening is skipped so the standard
+        Pydantic constructor path keeps working.
+        """
+        if not isinstance(data, dict):
+            return data
+        d = cast("_AnyDict", data)
+        if "properties" not in d:
+            # Already flat (or manually constructed without properties key).
+            return d
+
+        props = d.get("properties")
+        props_dict: dict[str, Any] = props if isinstance(props, dict) else {}
+
+        kind_val = d.get("kind")
+        conn_string: Any = None
+        if kind_val in {WarehouseKind.WAREHOUSE, WarehouseKind.WAREHOUSE.value}:
+            conn_string = props_dict.get("connectionString")
+        elif kind_val in {WarehouseKind.SQL_ENDPOINT, WarehouseKind.SQL_ENDPOINT.value}:
+            sql_ep = props_dict.get("sqlEndpointProperties")
+            sql_ep_dict: dict[str, Any] = sql_ep if isinstance(sql_ep, dict) else {}
+            conn_string = sql_ep_dict.get("connectionString")
+        # For SNAPSHOT kind or unknown kinds, conn_string stays None.
+
+        return {
+            **d,
+            "connectionString": d.get("connectionString", conn_string),
+            "defaultCollation": d.get("defaultCollation", props_dict.get("defaultCollation")),
+            "createdDate": d.get("createdDate", props_dict.get("createdDate")),
+        }
+
     @classmethod
     def from_api(cls, payload: dict[str, object], kind: WarehouseKind) -> Warehouse:
         """Build a Warehouse from a raw API response dict.
 
+        .. deprecated::
+            Prefer ``Warehouse.model_validate({**payload, "kind": kind})`` directly.
+            This shim delegates to :meth:`model_validate` and is kept for
+            backward compatibility with existing call sites.
+
         Picks up the connection string from the correct nested properties path
         depending on whether the item is a WAREHOUSE or SQL_ENDPOINT.
-        """
-        _raw_props = payload.get("properties")
-        props: dict[str, object] = (
-            cast("dict[str, object]", _raw_props) if isinstance(_raw_props, dict) else {}
-        )
 
-        if kind == WarehouseKind.WAREHOUSE:
-            conn_string = props.get("connectionString")
-        elif kind == WarehouseKind.SQL_ENDPOINT:
-            _raw_sql_ep = props.get("sqlEndpointProperties")
-            sql_ep: dict[str, object] = (
-                cast("dict[str, object]", _raw_sql_ep) if isinstance(_raw_sql_ep, dict) else {}
-            )
-            conn_string = sql_ep.get("connectionString")
-        else:
+        Raises:
+            ValueError: If *kind* is :attr:`WarehouseKind.SNAPSHOT`.
+        """
+        if kind == WarehouseKind.SNAPSHOT:
             msg = f"from_api does not support kind={kind}"
             raise ValueError(msg)
-
-        flat: dict[str, object] = {
-            "id": payload.get("id"),
-            "displayName": payload.get("displayName"),
-            "description": payload.get("description"),
-            "workspaceId": payload.get("workspaceId"),
-            "kind": kind,
-            "connectionString": conn_string,
-            "defaultCollation": props.get("defaultCollation"),
-            "createdDate": props.get("createdDate"),
-        }
-        return cls.model_validate(flat)
+        return cls.model_validate({**payload, "kind": kind})
 
 
 class WarehouseSnapshot(_FabricBase):
@@ -96,18 +121,18 @@ class WarehouseSnapshot(_FabricBase):
     snapshot_dt: datetime | None = Field(default=None, alias="snapshotDateTime")
 
 
-class CreationModeType:
+class CreationModeType(StrEnum):
     """Known values for the ``creationMode`` field of a :class:`RestorePoint`.
 
-    MS Learn notes that additional creation mode types may be added over time,
-    so this is an **open** set of constants rather than a closed ``StrEnum``.
-    The ``creation_mode`` field on :class:`RestorePoint` is typed as ``str | None``
-    so that future unknown values and API responses with null fields pass
-    Pydantic validation without error.
+    This is an **open** enum — MS Learn notes that additional creation mode
+    types may be added over time.  The ``creation_mode`` field on
+    :class:`RestorePoint` is typed as ``str | None`` so that future unknown
+    values and API responses with null fields pass Pydantic validation without
+    error.  Use these constants when you need to compare against known values.
     """
 
-    USER_DEFINED: str = "UserDefined"
-    SYSTEM_CREATED: str = "SystemCreated"
+    USER_DEFINED = "UserDefined"
+    SYSTEM_CREATED = "SystemCreated"
 
 
 class RestorePoint(_FabricBase):
@@ -124,25 +149,34 @@ class RestorePoint(_FabricBase):
     creation_mode: str | None = Field(default=None, alias="creationMode")
     event_date_time: datetime | None = Field(default=None, alias="eventDateTime")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _flatten_creation_details(cls, data: object) -> object:
+        """Flatten ``creationDetails.eventDateTime`` to the top level.
+
+        If ``eventDateTime`` is already present at the top level (e.g. when
+        calling :meth:`model_validate` directly on an already-flat dict), the
+        existing value is preserved.
+        """
+        if not isinstance(data, dict):
+            return data
+        d = cast("_AnyDict", data)
+        if "eventDateTime" in d or "creationDetails" not in d:
+            return d
+        details = d.get("creationDetails")
+        details_dict: dict[str, Any] = details if isinstance(details, dict) else {}
+        return {**d, "eventDateTime": details_dict.get("eventDateTime")}
+
     @classmethod
     def from_api(cls, payload: dict[str, object]) -> RestorePoint:
         """Build a RestorePoint from the raw API response dict.
 
-        Flattens ``creationDetails.eventDateTime`` to the top level so the
-        standard Pydantic ``model_validate`` path can handle it.
+        .. deprecated::
+            Prefer ``RestorePoint.model_validate(payload)`` directly.
+            This shim delegates to :meth:`model_validate` and is kept for
+            backward compatibility with existing call sites.
         """
-        _raw_details = payload.get("creationDetails")
-        details: dict[str, object] = (
-            cast("dict[str, object]", _raw_details) if isinstance(_raw_details, dict) else {}
-        )
-        flat: dict[str, object] = {
-            "id": payload.get("id"),
-            "displayName": payload.get("displayName"),
-            "description": payload.get("description"),
-            "creationMode": payload.get("creationMode"),
-            "eventDateTime": details.get("eventDateTime"),
-        }
-        return cls.model_validate(flat)
+        return cls.model_validate(payload)
 
 
 class AuditSettings(_FabricBase):
@@ -189,24 +223,36 @@ class Connection(_FabricBase):
 
 
 class ExecRequestHistory(_FabricBase):
-    """A completed SQL request from ``queryinsights.exec_requests_history``."""
+    """A completed SQL request from ``queryinsights.exec_requests_history``.
 
+    .. note::
+        This model is an intentional 1-to-1 projection of the DMV / queryinsights
+        view columns.  **Do not restructure into sub-models** — that would
+        destabilise the query_insights service and the CLI rendering layer.
+        Adding a new column?  Append it in the appropriate group below.
+    """
+
+    # --- identifiers ---
     distributed_statement_id: UUID | None = None
-    database_name: str | None = None
+    session_id: int | None = None
+    connection_id: UUID | None = None
+    batch_id: UUID | None = None
+    root_batch_id: UUID | None = None
+
+    # --- timing ---
     submit_time: datetime | None = None
     start_time: datetime | None = None
     end_time: datetime | None = None
+    total_elapsed_time_ms: int | None = None
+
+    # --- details ---
+    database_name: str | None = None
     is_distributed: int | None = None
     statement_type: str | None = None
-    total_elapsed_time_ms: int | None = None
     login_name: str | None = None
     row_count: int
     status: str | None = None
-    session_id: int | None = None
-    connection_id: UUID | None = None
     program_name: str | None = None
-    batch_id: UUID | None = None
-    root_batch_id: UUID | None = None
     query_hash: str | None = None
     label: str | None = None
     result_cache_hit: int | None = None
@@ -220,19 +266,31 @@ class ExecRequestHistory(_FabricBase):
 
 
 class ExecSessionHistory(_FabricBase):
-    """A completed session from ``queryinsights.exec_sessions_history``."""
+    """A completed session from ``queryinsights.exec_sessions_history``.
 
+    .. note::
+        This model is an intentional 1-to-1 projection of the DMV / queryinsights
+        view columns.  **Do not restructure into sub-models** — that would
+        destabilise the query_insights service and the CLI rendering layer.
+        Adding a new column?  Append it in the appropriate group below.
+    """
+
+    # --- identifiers ---
     session_id: int
     connection_id: UUID
+
+    # --- timing ---
     session_start_time: datetime
     session_end_time: datetime | None = None
+    total_query_elapsed_time_ms: int
+    last_request_start_time: datetime
+    last_request_end_time: datetime | None = None
+
+    # --- details ---
     program_name: str | None = None
     login_name: str
     status: str
     context_info: bytes | None = None
-    total_query_elapsed_time_ms: int
-    last_request_start_time: datetime
-    last_request_end_time: datetime | None = None
     is_user_process: bool
     prev_error: int
     group_id: int
@@ -367,7 +425,7 @@ class SqlPoolClassifier(_FabricBase):
     :data:`CLASSIFIER_TYPE_APPLICATION_NAME_REGEX` for the known values.
     """
 
-    type: str = Field(alias="type")
+    type: str
     value: list[str] = Field(default_factory=list, alias="value")
 
 
@@ -438,6 +496,52 @@ class PrincipalType(StrEnum):
     ENTIRE_TENANT = "EntireTenant"
 
 
+_AnyDict = dict[str, Any]
+_Flattener = Callable[[_AnyDict], _AnyDict]
+
+
+def _flatten_user(data: _AnyDict) -> _AnyDict:
+    """Extract ``userPrincipalName`` from the ``userDetails`` sub-object."""
+    user_details = data.get("userDetails")
+    if isinstance(user_details, dict):
+        return {**data, "user_principal_name": user_details.get("userPrincipalName")}
+    return data
+
+
+def _flatten_group(data: _AnyDict) -> _AnyDict:
+    """Extract ``groupType`` from the ``groupDetails`` sub-object."""
+    group_details = data.get("groupDetails")
+    if isinstance(group_details, dict):
+        return {**data, "group_type": group_details.get("groupType")}
+    return data
+
+
+def _flatten_service_principal(data: _AnyDict) -> _AnyDict:
+    """Extract ``aadAppId`` from the ``servicePrincipalDetails`` sub-object."""
+    sp_details = data.get("servicePrincipalDetails")
+    if isinstance(sp_details, dict):
+        return {**data, "aad_app_id": sp_details.get("aadAppId")}
+    return data
+
+
+def _flatten_noop(data: _AnyDict) -> _AnyDict:
+    """No-op flattener — for principal types with no scalar sub-fields to extract."""
+    return data
+
+
+#: Registry mapping principal type strings to their flattening function.
+#: Unknown principal types fall back to :func:`_flatten_noop` so parsing never
+#: crashes when Microsoft adds a new variant.
+_PRINCIPAL_FLATTENERS: dict[str, _Flattener] = {
+    PrincipalType.USER: _flatten_user,
+    PrincipalType.GROUP: _flatten_group,
+    PrincipalType.SERVICE_PRINCIPAL: _flatten_service_principal,
+    # ServicePrincipalProfile and EntireTenant: identity carried by top-level fields only.
+    PrincipalType.SERVICE_PRINCIPAL_PROFILE: _flatten_noop,
+    PrincipalType.ENTIRE_TENANT: _flatten_noop,
+}
+
+
 class ItemAccessPrincipal(_FabricBase):
     """Minimal representation of a principal in an item access record.
 
@@ -464,32 +568,18 @@ class ItemAccessPrincipal(_FabricBase):
     @model_validator(mode="before")
     @classmethod
     def _flatten_detail(cls, data: object) -> object:
-        """Flatten the type-specific detail sub-object to the top level."""
+        """Flatten the type-specific detail sub-object to the top level.
+
+        Dispatches to the appropriate flattener in :data:`_PRINCIPAL_FLATTENERS`
+        keyed by the principal ``type`` string.  Unknown principal types fall
+        back to a no-op so parsing never raises on new API variants.
+        """
         if not isinstance(data, dict):
             return data
-
-        flat = dict(data)
-        principal_type = flat.get("type", "")
-
-        if principal_type == PrincipalType.USER:
-            user_details = flat.get("userDetails")
-            if isinstance(user_details, dict):
-                flat["user_principal_name"] = user_details.get("userPrincipalName")
-
-        elif principal_type == PrincipalType.GROUP:
-            group_details = flat.get("groupDetails")
-            if isinstance(group_details, dict):
-                flat["group_type"] = group_details.get("groupType")
-
-        elif principal_type == PrincipalType.SERVICE_PRINCIPAL:
-            sp_details = flat.get("servicePrincipalDetails")
-            if isinstance(sp_details, dict):
-                flat["aad_app_id"] = sp_details.get("aadAppId")
-
-        # ServicePrincipalProfile: no scalar sub-fields to extract (profile
-        # identity is carried by the top-level id/displayName only).
-
-        return flat
+        d = cast("_AnyDict", data)
+        principal_type = str(d.get("type", ""))
+        flattener = _PRINCIPAL_FLATTENERS.get(principal_type, _flatten_noop)
+        return flattener(d)
 
 
 class ItemAccessDetail(_FabricBase):
@@ -532,3 +622,50 @@ class SqlResult(_FabricBase):
     columns: list[str] = Field(default_factory=list)
     rows: list[list[object]] = Field(default_factory=list)
     rowcount: int = -1
+
+
+# ---------------------------------------------------------------------------
+# API payload helpers — boundary validation for raw HTTP response bodies
+# ---------------------------------------------------------------------------
+
+
+def as_props(raw: object) -> _AnyDict:
+    """Return *raw* as a dict if it is one, else an empty dict.
+
+    Use this at the API boundary instead of ``cast(...)`` + ``isinstance``
+    to validate that a nested ``properties`` value is a plain dict.
+
+    Args:
+        raw: The value to coerce (typically ``response.get("properties")``).
+
+    Returns:
+        The original dict if *raw* is a :class:`dict`, otherwise ``{}``.
+    """
+    return cast("_AnyDict", raw) if isinstance(raw, dict) else {}
+
+
+class WarehouseSnapshotApiPayload(_FabricBase):
+    """Typed wrapper for the raw API response body of a warehouse-snapshot item.
+
+    Used by :mod:`fabric_dw.services.snapshots` to validate/type-narrow the
+    nested ``properties`` object returned by the
+    ``GET /workspaces/{ws}/warehouseSnapshots`` and
+    ``GET /workspaces/{ws}/warehouseSnapshots/{id}`` endpoints, avoiding
+    reflexive ``cast(...)`` calls at each call site.
+    """
+
+    id: str | None = None
+    display_name: str | None = Field(default=None, alias="displayName")
+    parent_warehouse_id: str | None = Field(default=None, alias="parentWarehouseId")
+    snapshot_date_time: str | None = Field(default=None, alias="snapshotDateTime")
+
+    model_config = ConfigDict(extra="ignore", frozen=False, populate_by_name=True)
+
+    @classmethod
+    def props_from_item(cls, item: dict[str, object]) -> WarehouseSnapshotApiPayload:
+        """Parse the ``properties`` sub-object of a snapshot API item response.
+
+        Returns a :class:`WarehouseSnapshotApiPayload` populated from the
+        ``properties`` dict, or an empty instance if the key is absent.
+        """
+        return cls.model_validate(as_props(item.get("properties")))

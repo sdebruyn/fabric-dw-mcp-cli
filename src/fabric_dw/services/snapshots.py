@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
-from typing import cast
 from uuid import UUID
 
 from fabric_dw.auth import CredentialMode
 from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.http_client import FabricHttpClient, HttpBase
-from fabric_dw.models import WarehouseKind, WarehouseSnapshot
+from fabric_dw.models import WarehouseKind, WarehouseSnapshot, WarehouseSnapshotApiPayload, as_props
 from fabric_dw.services._helpers import compact
 from fabric_dw.services._lro import LRO_DETAIL_WAIT_S, LRO_MAX_DETAIL_RETRIES, resolve_lro_item_id
 from fabric_dw.sql import SqlTarget, run_query
@@ -51,15 +50,12 @@ def _snapshot_from_typed_api(item: dict[str, object]) -> WarehouseSnapshot:
     ``parentWarehouseId`` and ``snapshotDateTime`` nested under ``properties``
     (not ``creationPayload``).
     """
-    _raw_props = item.get("properties")
-    props: dict[str, object] = (
-        cast("dict[str, object]", _raw_props) if isinstance(_raw_props, dict) else {}
-    )
+    props = WarehouseSnapshotApiPayload.props_from_item(item)
     flat: dict[str, object] = {
         "id": item.get("id"),
         "displayName": item.get("displayName"),
-        "parentWarehouseId": props.get("parentWarehouseId"),
-        "snapshotDateTime": props.get("snapshotDateTime"),
+        "parentWarehouseId": props.parent_warehouse_id,
+        "snapshotDateTime": props.snapshot_date_time,
     }
     return WarehouseSnapshot.model_validate(flat)
 
@@ -89,11 +85,7 @@ async def list_snapshots(
         HttpBase.FABRIC,
         f"/workspaces/{workspace_id}/warehouseSnapshots",
     ):
-        _raw_props = item.get("properties")
-        props: dict[str, object] = (
-            cast("dict[str, object]", _raw_props) if isinstance(_raw_props, dict) else {}
-        )
-        raw_parent_id = props.get("parentWarehouseId")
+        raw_parent_id = WarehouseSnapshotApiPayload.props_from_item(item).parent_warehouse_id
         if raw_parent_id and UUID(str(raw_parent_id)) == parent_warehouse_id:
             out.append(_snapshot_from_typed_api(item))
     return out
@@ -177,23 +169,16 @@ async def create(
     for _attempt in range(LRO_MAX_DETAIL_RETRIES):
         typed_resp = await http.request("GET", HttpBase.FABRIC, _typed_detail_path)
         typed_body = typed_resp.json()
-        _raw_props = typed_body.get("properties")
-        _props: dict[str, object] = (
-            cast("dict[str, object]", _raw_props) if isinstance(_raw_props, dict) else {}
-        )
-        if _props.get("parentWarehouseId") is not None:
+        if WarehouseSnapshotApiPayload.props_from_item(typed_body).parent_warehouse_id is not None:
             break
         if _attempt < LRO_MAX_DETAIL_RETRIES - 1:
             await asyncio.sleep(LRO_DETAIL_WAIT_S)
     else:
         # parentWarehouseId still absent after all retries — inject the value we sent.
-        _raw_props2 = typed_body.get("properties")
-        _props2: dict[str, object] = (
-            cast("dict[str, object]", _raw_props2) if isinstance(_raw_props2, dict) else {}
-        )
+        existing_props = as_props(typed_body.get("properties"))
         typed_body = dict(typed_body)
         typed_body["properties"] = {
-            **_props2,
+            **existing_props,
             "parentWarehouseId": str(parent_warehouse_id),
         }
 
@@ -242,11 +227,7 @@ async def rename(
     _typed_path = f"/workspaces/{workspace_id}/warehouseSnapshots/{snapshot_id}"
     current_resp = await http.request("GET", HttpBase.FABRIC, _typed_path)
     current: dict[str, object] = current_resp.json()
-    _raw_props = current.get("properties")
-    props: dict[str, object] = (
-        cast("dict[str, object]", _raw_props) if isinstance(_raw_props, dict) else {}
-    )
-    parent_wh_id = props.get("parentWarehouseId")
+    parent_wh_id = WarehouseSnapshotApiPayload.props_from_item(current).parent_warehouse_id
 
     patch_body: dict[str, object] = {
         **compact({"description": description}),
