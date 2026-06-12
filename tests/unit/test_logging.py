@@ -106,24 +106,22 @@ class TestJsonFormatterExtraFields:
         assert parsed.get("count") == 42
 
     def test_extra_non_standard_field_named_level_does_not_overwrite_core_key(self) -> None:
-        """An extra field named 'level' that is NOT a standard LogRecord attr must not
-        overwrite the core 'level' key in the JSON payload.
+        """An extra field named 'level' must not overwrite the core 'level' payload key.
 
-        We use a custom attribute name that happens to collide with a payload key but
-        is not in _STANDARD_LOGRECORD_ATTRS.  We simulate this by injecting a key that
-        is definitely not standard and checking that core keys are preserved.
+        'level' is NOT in _STANDARD_LOGRECORD_ATTRS (only 'levelname' is), so it
+        reaches the extras merge loop.  The guard ``if key not in payload`` must
+        prevent it from clobbering the real level value derived from levelname.
         """
         formatter = _JsonFormatter()
-        # Inject a non-standard attribute that would collide with 'level' if the guard
-        # were missing.  We use '_custom_level' since 'level' is a payload key we compute.
-        # The real protection: extras loop does `if key not in payload`.
-        record = self._make_record(msg="real message", extra={"workspace_id": "ws-123"})
+        # Inject a colliding 'level' key via extra — this is NOT a standard LogRecord
+        # attribute, so the extras loop will encounter it.  The guard must block it.
+        record = self._make_record(msg="real message", extra={"level": "EVIL"})
         parsed = json.loads(formatter.format(record))
-        # Core keys must retain their proper values
-        assert parsed["level"] == "DEBUG"
+        # Core key must retain the real level, not "EVIL"
+        assert parsed["level"] == "DEBUG", (
+            f"Guard failed: level was overwritten to {parsed['level']!r}"
+        )
         assert parsed["msg"] == "real message"
-        # The extra must appear
-        assert parsed.get("workspace_id") == "ws-123"
 
     def test_non_serialisable_extra_coerced_to_str(self) -> None:
         """Non-JSON-serialisable extra values must be coerced to str, not raise."""

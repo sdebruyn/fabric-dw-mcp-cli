@@ -309,9 +309,14 @@ class FabricHttpClient:
 
         # Honour the 429 pause deadline (aggregated across all concurrent callers).
         # This must happen before token fetch so the token is always fresh at send time.
-        now = _time.monotonic()
-        if self._pause_until > now:
-            await asyncio.sleep(self._pause_until - now)
+        # Use a while loop so that if another coroutine extends _pause_until while we
+        # are sleeping, we re-check and sleep again rather than waking up early.
+        while True:
+            now = _time.monotonic()
+            remaining = self._pause_until - now
+            if remaining <= 0:
+                break
+            await asyncio.sleep(remaining)
 
         # Fetch token outside the limiter to avoid wasting RPS budget on refresh.
         token = await self._get_token()

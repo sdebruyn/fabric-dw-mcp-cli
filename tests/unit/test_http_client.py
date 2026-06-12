@@ -889,11 +889,12 @@ async def test_timeout_wired_into_http_client() -> None:
 
 @pytest.mark.asyncio
 async def test_poll_operation_jitter_within_bounds() -> None:
-    """poll_operation sleep must include jitter in [0, interval * 0.25] range.
+    """poll_operation sleep must add the jitter produced by random.uniform.
 
-    Monkeypatches asyncio.sleep to capture the actual sleep durations and
-    verifies that at least one sleep is > the base interval (i.e. has jitter)
-    when multiple polls occur.
+    Patches random.uniform to a fixed non-zero value (0.15) so the test is
+    deterministic: each sleep must equal exactly base_wait + 0.15 where
+    base_wait=1.0 (from Retry-After: 1).  This proves the code applies jitter
+    rather than only checking that it falls within a probabilistic range.
     """
     poll_count = 0
     sleep_durations: list[float] = []
@@ -912,6 +913,10 @@ async def test_poll_operation_jitter_within_bounds() -> None:
             return httpx.Response(202, headers={"Retry-After": "1"}, json={"status": "Running"})
         return httpx.Response(200, json={"status": "Succeeded"})
 
+    # Patch random.uniform to a fixed non-zero value so jitter is deterministic.
+    # base_wait=1.0 (Retry-After: 1), jitter_max=1.0*0.25=0.25, fixed jitter=0.15
+    _fixed_jitter = 0.15
+
     with respx.mock:
         respx.get("https://api.fabric.microsoft.com/v1/operations/op-jitter").mock(
             side_effect=side_effect
@@ -919,16 +924,22 @@ async def test_poll_operation_jitter_within_bounds() -> None:
 
         client = FabricHttpClient(credential=_make_credential(), rps=10, poll_interval=2.0)
         async with client:
-            with unittest.mock.patch("asyncio.sleep", side_effect=mock_sleep):
+            with (
+                unittest.mock.patch("asyncio.sleep", side_effect=mock_sleep),
+                unittest.mock.patch(
+                    "fabric_dw.http_client.random.uniform", return_value=_fixed_jitter
+                ),
+            ):
                 await client.poll_operation(
                     "https://api.fabric.microsoft.com/v1/operations/op-jitter"
                 )
 
-    # Each sleep should be base_wait + jitter where base_wait=1 (from Retry-After: 1)
-    # jitter is in [0, 0.25], so sleep must be in [1.0, 1.25]
+    # Each sleep must be exactly base_wait (1.0) + fixed jitter (0.15) = 1.15
     assert len(sleep_durations) >= 3, f"Expected at least 3 sleeps; got {len(sleep_durations)}"
     for dur in sleep_durations:
-        assert 1.0 <= dur <= 1.26, f"Sleep {dur:.3f} outside expected [1.0, 1.25] range"
+        assert dur == pytest.approx(1.0 + _fixed_jitter), (
+            f"Sleep {dur:.3f} != expected {1.0 + _fixed_jitter:.3f}; jitter may not be applied"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1055,4 +1066,51 @@ async def test_send_once_deadline_sleep_happens_before_get_token() -> None:
     assert first_sleep_idx < second_token_idx, (
         f"Deadline sleep ({first_sleep_idx}) must precede second get_token ({second_token_idx}); "
         f"log={event_log}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# _pause_until extended mid-sleep triggers a second sleep (while-loop guard)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_send_once_re_sleeps_when_pause_until_extended_mid_sleep() -> None:
+    """_send_once must re-check _pause_until after waking and sleep again if extended.
+
+    Regression for the original single-if implementation: if a concurrent coroutine
+    extends _pause_until while this coroutine is sleeping, the while loop must
+    detect the remaining time and sleep again rather than proceeding immediately.
+    """
+    sleep_durations: list[float] = []
+    original_sleep = asyncio.sleep
+
+    call_count = 0
+
+    async def mock_sleep(seconds: float) -> None:
+        nonlocal call_count
+        sleep_durations.append(seconds)
+        # On the first deadline sleep, extend _pause_until by an extra 0.1s
+        # to simulate a concurrent coroutine updating the shared deadline.
+        if len(sleep_durations) == 1 and seconds > 0:
+            client._pause_until = client._pause_until + 0.1
+        await original_sleep(0)  # Don't actually wait in tests
+
+    with respx.mock:
+        respx.get("https://api.fabric.microsoft.com/v1/items").mock(
+            return_value=httpx.Response(200, json={"ok": True})
+        )
+
+        client = FabricHttpClient(credential=_make_credential(), rps=10)
+        async with client:
+            # Pre-set a deadline in the future so _send_once will enter the while loop
+            client._pause_until = time.monotonic() + 0.05
+            with unittest.mock.patch("asyncio.sleep", side_effect=mock_sleep):
+                resp = await client.request("GET", HttpBase.FABRIC, "/items")
+
+    assert resp.status_code == 200
+    # The while loop must have produced at least 2 deadline sleeps:
+    # once for the original deadline, once after _pause_until was extended.
+    assert len(sleep_durations) >= 2, (
+        f"Expected >=2 sleeps (original + extended deadline); got {sleep_durations}"
     )
