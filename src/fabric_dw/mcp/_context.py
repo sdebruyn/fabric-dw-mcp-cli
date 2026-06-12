@@ -35,6 +35,7 @@ from fabric_dw.cache import LookupCache
 from fabric_dw.exceptions import ConfigError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.resolver import Resolver
+from fabric_dw.sql import reset_pool
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -153,3 +154,4 @@ async def fabric_lifespan(app: FastMCP) -> AsyncIterator[None]:  # noqa: ARG001
             yield
         finally:
             _SERVER_CTX = None
+            reset_pool()

@@ -784,3 +784,51 @@ class TestConnectionPool:
         run_statements(_make_target(), ["DROP TABLE [a]", "DROP TABLE [b]", "DROP TABLE [c]"])
 
         assert mock_mssql.connect.call_count == 1
+
+    def test_fetchall_error_discards_connection(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A fetchall() error marks the connection as discarded (not pooled)."""
+        mock_mssql, mock_conn, mock_cursor = _make_mock_mssql()
+        mock_cursor.description = [("col1",)]
+        mock_cursor.fetchall.side_effect = Exception("stream interrupted")
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with pytest.raises(Exception, match="stream interrupted"):
+            run_query(_make_target(), "SELECT col1 FROM t")
+
+        # The tainted connection must have been physically closed.
+        mock_conn.close.assert_called_once()
+
+        # Pool must be empty — the next call must open a fresh connection.
+        mock_cursor2 = MagicMock()
+        mock_cursor2.description = []
+        mock_cursor2.fetchall.return_value = []
+        mock_conn2 = MagicMock()
+        mock_conn2.cursor.return_value = mock_cursor2
+        mock_mssql.connect.return_value = mock_conn2
+
+        run_query(_make_target(), "SELECT 1", fetch="none")
+        assert mock_mssql.connect.call_count == 2
+
+    def test_fetchone_error_discards_connection(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A fetchone() error marks the connection as discarded (not pooled)."""
+        mock_mssql, mock_conn, mock_cursor = _make_mock_mssql()
+        mock_cursor.description = [("col1",)]
+        mock_cursor.fetchone.side_effect = Exception("stream interrupted")
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with pytest.raises(Exception, match="stream interrupted"):
+            run_query(_make_target(), "SELECT col1 FROM t", fetch="one")
+
+        # The tainted connection must have been physically closed.
+        mock_conn.close.assert_called_once()
+
+        # Pool must be empty — the next call must open a fresh connection.
+        mock_cursor2 = MagicMock()
+        mock_cursor2.description = []
+        mock_cursor2.fetchone.return_value = None
+        mock_conn2 = MagicMock()
+        mock_conn2.cursor.return_value = mock_cursor2
+        mock_mssql.connect.return_value = mock_conn2
+
+        run_query(_make_target(), "SELECT 1", fetch="none")
+        assert mock_mssql.connect.call_count == 2

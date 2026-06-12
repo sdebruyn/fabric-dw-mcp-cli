@@ -27,8 +27,8 @@ drain existing connections.  When disabled every ``open_connection`` call opens 
 fresh physical connection and ``.close()`` physically closes it.
 
 Call :func:`reset_pool` on graceful shutdown to close all idle connections.  The
-MCP server lifespan currently does not call ``reset_pool``; wiring it is tracked
-as a follow-up.
+MCP server lifespan calls ``reset_pool`` in its ``finally`` block so pooled TDS
+connections are drained on server shutdown.
 """
 
 from __future__ import annotations
@@ -537,32 +537,31 @@ def run_query(  # noqa: PLR0913
             cursor.execute(statement)
         if commit:
             conn.commit()
+
+        if fetch == "none":
+            return [], []
+
+        cols = [c[0] for c in (cursor.description or [])]
+
+        if fetch == "one":
+            row = cursor.fetchone()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            return cols, ([row] if row is not None else [])
+
+        # Default: fetch all rows.
+        rows: list[tuple[Any, ...]] = cursor.fetchall()
     except Exception as exc:
         # Mark tainted so close() physically closes instead of pooling.
         # setattr is safe for both _PooledConnection and mock objects.
         if isinstance(conn, _PooledConnection):
             conn._discard = True
-        conn.close()
         mapped = map_driver_error(exc)
         if mapped:
             raise mapped from exc
         raise
-
-    if fetch == "none":
+    else:
+        return cols, rows
+    finally:
         conn.close()
-        return [], []
-
-    cols = [c[0] for c in (cursor.description or [])]
-
-    if fetch == "one":
-        row = cursor.fetchone()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-        conn.close()
-        return cols, ([row] if row is not None else [])
-
-    # Default: fetch all rows.
-    rows: list[tuple[Any, ...]] = cursor.fetchall()
-    conn.close()
-    return cols, rows
 
 
 def run_statements(
