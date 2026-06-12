@@ -8,9 +8,27 @@ The MCP server exposes the following tools. Each takes the parameters listed and
 
 ---
 
+## Item targets: Data Warehouse vs SQL Analytics Endpoint
+
+Fabric has two SQL-surface item kinds:
+
+- **Data Warehouse** — read-write, supports full DDL (CREATE/DROP/TRUNCATE TABLE, CREATE/DROP SCHEMA, CREATE/ALTER VIEW, etc.).
+- **SQL Analytics Endpoint** — read-only SQL surface auto-generated over a Lakehouse. DDL and mutating operations are not supported; only read/query operations are allowed.
+
+Each tool below is labelled with one of:
+
+- **`Targets: Data Warehouse · SQL Analytics Endpoint`** — the tool works on both item kinds.
+- **`Targets: Data Warehouse only`** — the tool is blocked on SQL Analytics Endpoints (either by an explicit guard in the source code, because it requires write/DDL capability that endpoints do not have, or because it calls warehouse-scoped REST API paths that are not available for SQL Analytics Endpoints).
+- **`Targets: SQL Analytics Endpoint`** — the tool operates on SQL Analytics Endpoints specifically (not on Data Warehouses).
+- **`Targets: Workspace (not item-specific)`** — the tool operates at the workspace level and does not target a specific DW or SQL Analytics Endpoint item.
+
+---
+
 ## Workspaces
 
 ### list_workspaces
+
+**Targets:** Workspace (not item-specific)
 
 List all Fabric workspaces the authenticated principal has access to.
 
@@ -21,6 +39,8 @@ List all Fabric workspaces the authenticated principal has access to.
 ---
 
 ### get_workspace
+
+**Targets:** Workspace (not item-specific)
 
 Return details for a single workspace.
 
@@ -33,6 +53,8 @@ Return details for a single workspace.
 ---
 
 ### set_workspace_collation
+
+**Targets:** Workspace (not item-specific)
 
 Set the default Data Warehouse collation for a workspace.
 
@@ -49,6 +71,8 @@ Set the default Data Warehouse collation for a workspace.
 
 ### list_warehouses
 
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
 List all warehouses and SQL analytics endpoints in a workspace, or across all visible workspaces.
 
 **Parameters:**
@@ -62,7 +86,9 @@ List all warehouses and SQL analytics endpoints in a workspace, or across all vi
 
 ### get_warehouse
 
-Return details for a single warehouse.
+**Targets:** Data Warehouse only
+
+Return details for a single Data Warehouse. Uses the warehouse-scoped REST path (`GET /workspaces/{ws}/warehouses/{id}`); passing a SQL Analytics Endpoint will return a 404. Use `get_sql_endpoint` to retrieve endpoint details.
 
 **Parameters:**
 
@@ -74,6 +100,8 @@ Return details for a single warehouse.
 ---
 
 ### create_warehouse
+
+**Targets:** Data Warehouse only
 
 Create a new Warehouse in a workspace.
 
@@ -90,6 +118,8 @@ Create a new Warehouse in a workspace.
 
 ### rename_warehouse
 
+**Targets:** Data Warehouse only
+
 Rename a Warehouse and optionally update its description.
 
 **Parameters:**
@@ -105,6 +135,8 @@ Rename a Warehouse and optionally update its description.
 
 ### delete_warehouse
 
+**Targets:** Data Warehouse only
+
 Delete a Warehouse.
 
 **Parameters:**
@@ -118,6 +150,8 @@ Delete a Warehouse.
 
 ### takeover_warehouse
 
+**Targets:** Data Warehouse only
+
 Take ownership of a Warehouse. Not supported for SQL analytics endpoints.
 
 **Parameters:**
@@ -130,6 +164,8 @@ Take ownership of a Warehouse. Not supported for SQL analytics endpoints.
 ---
 
 ### get_warehouse_permissions
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
 Return all principals (users, groups, service principals) with access to a Warehouse, including their effective permissions.
 
@@ -148,6 +184,8 @@ Return all principals (users, groups, service principals) with access to a Wareh
 
 ### list_sql_endpoints
 
+**Targets:** SQL Analytics Endpoint
+
 List all SQL analytics endpoints in a workspace, or across all visible workspaces.
 
 **Parameters:**
@@ -160,6 +198,8 @@ List all SQL analytics endpoints in a workspace, or across all visible workspace
 ---
 
 ### get_sql_endpoint
+
+**Targets:** SQL Analytics Endpoint
 
 Return details for a single SQL analytics endpoint.
 
@@ -174,6 +214,8 @@ Return details for a single SQL analytics endpoint.
 
 ### refresh_sql_endpoint_metadata
 
+**Targets:** SQL Analytics Endpoint
+
 Refresh metadata for a SQL analytics endpoint by syncing from the underlying Lakehouse delta tables. This is a long-running operation (LRO) polled to completion.
 
 **Parameters:**
@@ -187,6 +229,8 @@ Refresh metadata for a SQL analytics endpoint by syncing from the underlying Lak
 ---
 
 ### get_sql_endpoint_permissions
+
+**Targets:** SQL Analytics Endpoint
 
 Return all principals (users, groups, service principals) with access to a SQL Analytics Endpoint, including their effective permissions.
 
@@ -205,6 +249,8 @@ Return all principals (users, groups, service principals) with access to a SQL A
 
 ### get_audit_settings
 
+**Targets:** Data Warehouse only
+
 Fetch the current SQL audit settings for a warehouse.
 
 **Parameters:**
@@ -217,6 +263,8 @@ Fetch the current SQL audit settings for a warehouse.
 ---
 
 ### enable_audit
+
+**Targets:** Data Warehouse only
 
 Enable SQL auditing on a warehouse.
 
@@ -232,6 +280,8 @@ Enable SQL auditing on a warehouse.
 
 ### disable_audit
 
+**Targets:** Data Warehouse only
+
 Disable SQL auditing on a warehouse.
 
 **Parameters:**
@@ -244,6 +294,8 @@ Disable SQL auditing on a warehouse.
 ---
 
 ### set_audit_action_groups
+
+**Targets:** Data Warehouse only
 
 Replace the audited action groups for a warehouse. This overwrites the existing list of groups.
 
@@ -259,6 +311,8 @@ Replace the audited action groups for a warehouse. This overwrites the existing 
 
 ### add_audit_group
 
+**Targets:** Data Warehouse only
+
 Add a single audit action group without overwriting the others. Idempotent — if the group is already present the current settings are returned unchanged. Auditing must already be enabled.
 
 **Parameters:**
@@ -273,6 +327,8 @@ Add a single audit action group without overwriting the others. Idempotent — i
 
 ### remove_audit_group
 
+**Targets:** Data Warehouse only
+
 Remove a single audit action group without overwriting the others. Idempotent — if the group is not present the current settings are returned unchanged. Auditing must already be enabled.
 
 **Parameters:**
@@ -286,6 +342,8 @@ Remove a single audit action group without overwriting the others. Idempotent �
 ---
 
 ### set_audit_retention
+
+**Targets:** Data Warehouse only
 
 Update the audit log retention period without changing the audit enabled/disabled state. Audit must already be enabled; if it is disabled, enable it first with `enable_audit`.
 
@@ -303,6 +361,8 @@ Update the audit log retention period without changing the audit enabled/disable
 
 ### list_running_queries
 
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
 Return all currently-executing queries on a warehouse.
 
 **Parameters:**
@@ -316,6 +376,8 @@ Return all currently-executing queries on a warehouse.
 
 ### list_connections
 
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
 Return all active SQL connections on a warehouse or SQL Analytics Endpoint. Queries `sys.dm_exec_connections`, which includes idle connections not visible via `list_running_queries`.
 
 **Parameters:**
@@ -328,6 +390,8 @@ Return all active SQL connections on a warehouse or SQL Analytics Endpoint. Quer
 ---
 
 ### kill_session
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
 Terminate a session on a warehouse.
 
@@ -344,6 +408,8 @@ Terminate a session on a warehouse.
 ## SQL
 
 ### execute_sql
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
 Execute an arbitrary SQL statement or batch against a warehouse or SQL Analytics Endpoint.
 
@@ -369,6 +435,8 @@ Restore point IDs are timestamp-based strings (e.g. `"1726617378000"`), not GUID
 
 ### list_restore_points
 
+**Targets:** Data Warehouse only
+
 Return all restore points for a warehouse.
 
 **Parameters:**
@@ -381,6 +449,8 @@ Return all restore points for a warehouse.
 ---
 
 ### get_restore_point
+
+**Targets:** Data Warehouse only
 
 Return a single restore point by ID.
 
@@ -396,6 +466,8 @@ Return a single restore point by ID.
 
 ### create_restore_point
 
+**Targets:** Data Warehouse only
+
 Create a restore point for a warehouse at the current timestamp.
 
 **Parameters:**
@@ -410,6 +482,8 @@ Create a restore point for a warehouse at the current timestamp.
 ---
 
 ### update_restore_point
+
+**Targets:** Data Warehouse only
 
 Rename and/or update the description of a restore point. At least one of `name` or `description` must be supplied.
 
@@ -427,6 +501,8 @@ Rename and/or update the description of a restore point. At least one of `name` 
 
 ### delete_restore_point
 
+**Targets:** Data Warehouse only
+
 Delete a user-defined restore point. System-created restore points cannot be deleted.
 
 **Parameters:**
@@ -440,6 +516,8 @@ Delete a user-defined restore point. System-created restore points cannot be del
 ---
 
 ### restore_warehouse_in_place
+
+**Targets:** Data Warehouse only
 
 Restore a warehouse in-place to a restore point. **This is a destructive, long-running operation** — the warehouse will be unavailable for approximately 10 minutes while the restore completes.
 
@@ -457,6 +535,8 @@ Restore a warehouse in-place to a restore point. **This is a destructive, long-r
 
 ### list_snapshots
 
+**Targets:** Data Warehouse only
+
 Return all snapshots belonging to a warehouse.
 
 **Parameters:**
@@ -469,6 +549,8 @@ Return all snapshots belonging to a warehouse.
 ---
 
 ### create_snapshot
+
+**Targets:** Data Warehouse only
 
 Create a new warehouse snapshot.
 
@@ -486,6 +568,8 @@ Create a new warehouse snapshot.
 
 ### rename_snapshot
 
+**Targets:** Data Warehouse only
+
 Rename a warehouse snapshot and optionally update its description.
 
 **Parameters:**
@@ -501,6 +585,8 @@ Rename a warehouse snapshot and optionally update its description.
 
 ### delete_snapshot
 
+**Targets:** Data Warehouse only
+
 Delete a warehouse snapshot.
 
 **Parameters:**
@@ -513,6 +599,8 @@ Delete a warehouse snapshot.
 ---
 
 ### roll_snapshot_timestamp
+
+**Targets:** Data Warehouse only
 
 Roll a snapshot's timestamp forward, or reset it to the current time.
 
@@ -531,6 +619,8 @@ Roll a snapshot's timestamp forward, or reset it to the current time.
 
 ### list_views
 
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
 List SQL views on a warehouse or SQL Analytics Endpoint, optionally filtered to a single schema.
 
 **Parameters:**
@@ -545,6 +635,8 @@ List SQL views on a warehouse or SQL Analytics Endpoint, optionally filtered to 
 
 ### get_view
 
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
 Fetch the full definition of a single SQL view.
 
 **Parameters:**
@@ -558,6 +650,8 @@ Fetch the full definition of a single SQL view.
 ---
 
 ### create_view
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
 Create a new SQL view.
 
@@ -574,6 +668,8 @@ Create a new SQL view.
 
 ### update_view
 
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
 Redefine an existing SQL view using `CREATE OR ALTER VIEW`.
 
 **Parameters:**
@@ -589,6 +685,8 @@ Redefine an existing SQL view using `CREATE OR ALTER VIEW`.
 
 ### drop_view
 
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
 Drop a SQL view.
 
 **Parameters:**
@@ -602,6 +700,8 @@ Drop a SQL view.
 ---
 
 ### read_view
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
 Return up to `count` rows from a view as JSON-serialisable columns and rows.
 
@@ -622,6 +722,8 @@ Return up to `count` rows from a view as JSON-serialisable columns and rows.
 
 ### list_tables
 
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
 List SQL tables on a warehouse or SQL Analytics Endpoint.
 
 **Parameters:**
@@ -635,6 +737,8 @@ List SQL tables on a warehouse or SQL Analytics Endpoint.
 ---
 
 ### read_table
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
 Return up to `count` rows from a table as JSON-serialisable columns and rows.
 
@@ -650,6 +754,8 @@ Return up to `count` rows from a table as JSON-serialisable columns and rows.
 ---
 
 ### create_table
+
+**Targets:** Data Warehouse only
 
 Create a new SQL table via CTAS (`CREATE TABLE … AS SELECT`).
 
@@ -668,6 +774,8 @@ Create a new SQL table via CTAS (`CREATE TABLE … AS SELECT`).
 
 ### delete_table
 
+**Targets:** Data Warehouse only
+
 Drop a SQL table.
 
 **CAUTION**: This is a destructive, irreversible operation. All data will be permanently deleted. Confirm with the user before calling.
@@ -683,6 +791,8 @@ Drop a SQL table.
 ---
 
 ### clear_table
+
+**Targets:** Data Warehouse only
 
 Truncate a SQL table (remove all rows, preserve structure).
 
@@ -706,6 +816,8 @@ Truncate a SQL table (remove all rows, preserve structure).
 
 ### list_schemas
 
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
 List user-defined SQL schemas on a warehouse or SQL Analytics Endpoint. System schemas are excluded automatically.
 
 **Parameters:**
@@ -719,14 +831,14 @@ List user-defined SQL schemas on a warehouse or SQL Analytics Endpoint. System s
 
 ### create_schema
 
-Create a new SQL schema on a Fabric Data Warehouse.
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
-**CAUTION**: SQL Analytics Endpoints are read-only — this tool raises a `ToolError` if `item` resolves to a SQL Analytics Endpoint.
+Create a new SQL schema on a Fabric Data Warehouse or SQL Analytics Endpoint.
 
 **Parameters:**
 
 - `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse name or GUID.
+- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
 - `name` (`str`) — the schema name; must be a valid SQL identifier.
 
 **Returns:** `Schema` — the newly-created schema record with `name` and `principal_id`.
@@ -735,18 +847,18 @@ Create a new SQL schema on a Fabric Data Warehouse.
 
 ### delete_schema
 
-Drop a SQL schema from a Fabric Data Warehouse.
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Drop a SQL schema from a Fabric Data Warehouse or SQL Analytics Endpoint.
 
 **CAUTION**: This is a destructive, irreversible operation. The schema will be permanently deleted. If the schema still contains tables or views the operation will fail unless `cascade=True`.
 
 **CAUTION**: When `cascade=True`, **all tables and views in the schema are permanently deleted along with their data**. Confirm explicitly with the user before calling with `cascade=True`.
 
-SQL Analytics Endpoints are read-only — this tool raises a `ToolError` if `item` resolves to a SQL Analytics Endpoint.
-
 **Parameters:**
 
 - `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse name or GUID.
+- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
 - `name` (`str`) — the schema name to drop.
 - `cascade` (`bool`, default `False`) — when `True`, drop all tables and views in the schema first.
 
@@ -761,6 +873,8 @@ SQL Analytics Endpoints are read-only — this tool raises a `ToolError` if `ite
 
 ### get_sql_pools_configuration
 
+**Targets:** Workspace (not item-specific)
+
 Fetch the full SQL Pools configuration (enabled flag + pool list) for a workspace.
 
 **Parameters:**
@@ -772,6 +886,8 @@ Fetch the full SQL Pools configuration (enabled flag + pool list) for a workspac
 ---
 
 ### list_sql_pools
+
+**Targets:** Workspace (not item-specific)
 
 Return the list of SQL pools for a workspace.
 
@@ -785,6 +901,8 @@ Return the list of SQL pools for a workspace.
 
 ### get_sql_pool
 
+**Targets:** Workspace (not item-specific)
+
 Return details for a single SQL pool by name.
 
 **Parameters:**
@@ -797,6 +915,8 @@ Return details for a single SQL pool by name.
 ---
 
 ### create_sql_pool
+
+**Targets:** Workspace (not item-specific)
 
 Add a new SQL pool to a workspace.
 
@@ -816,6 +936,8 @@ Add a new SQL pool to a workspace.
 
 ### update_sql_pool
 
+**Targets:** Workspace (not item-specific)
+
 Update an existing SQL pool.  Only the parameters you supply are changed; all other fields are preserved.
 
 **Parameters:**
@@ -834,6 +956,8 @@ Update an existing SQL pool.  Only the parameters you supply are changed; all ot
 
 ### delete_sql_pool
 
+**Targets:** Workspace (not item-specific)
+
 Delete an SQL pool from a workspace.
 
 **Parameters:**
@@ -847,6 +971,8 @@ Delete an SQL pool from a workspace.
 
 ### reset_sql_pools
 
+**Targets:** Workspace (not item-specific)
+
 Clear all SQL pools for a workspace.  The `customSQLPoolsEnabled` flag is preserved.
 
 **Parameters:**
@@ -859,6 +985,8 @@ Clear all SQL pools for a workspace.  The `customSQLPoolsEnabled` flag is preser
 
 ### enable_sql_pools
 
+**Targets:** Workspace (not item-specific)
+
 Enable custom SQL Pools for a workspace without modifying pool definitions.
 
 **Parameters:**
@@ -870,6 +998,8 @@ Enable custom SQL Pools for a workspace without modifying pool definitions.
 ---
 
 ### disable_sql_pools
+
+**Targets:** Workspace (not item-specific)
 
 Disable custom SQL Pools for a workspace, preserving the pool configuration. Re-enabling with `enable_sql_pools` restores the previously saved configuration.
 
@@ -884,6 +1014,8 @@ Disable custom SQL Pools for a workspace, preserving the pool configuration. Re-
 ## Cache
 
 ### clear_cache
+
+**Targets:** Workspace (not item-specific)
 
 Erase all cached workspace and item name-to-UUID mappings.
 

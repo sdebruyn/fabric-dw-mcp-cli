@@ -16,6 +16,22 @@ fabric-dw [GLOBAL OPTIONS] <noun> <verb> [ARGS] [OPTIONS]
 
 ---
 
+## Item targets: Data Warehouse vs SQL Analytics Endpoint
+
+Fabric has two SQL-surface item kinds:
+
+- **Data Warehouse** — read-write, supports full DDL (CREATE/DROP/TRUNCATE TABLE, CREATE/DROP SCHEMA, CREATE/ALTER VIEW, etc.).
+- **SQL Analytics Endpoint** — read-only SQL surface auto-generated over a Lakehouse. DDL and mutating operations are not supported; only read/query operations are allowed.
+
+Each command below is labelled with one of:
+
+- **`Targets: Data Warehouse · SQL Analytics Endpoint`** — the command works on both item kinds.
+- **`Targets: Data Warehouse only`** — the command is blocked on SQL Analytics Endpoints (either by an explicit client-side guard in the source code, because it requires write/DDL capability that endpoints do not have, or because it calls warehouse-scoped REST API paths that are not available for SQL Analytics Endpoints).
+- **`Targets: SQL Analytics Endpoint`** — the command operates on SQL Analytics Endpoints specifically (not on Data Warehouses).
+- **`Targets: Workspace (not item-specific)`** — the command operates at the workspace level and does not target a specific DW or SQL Analytics Endpoint item.
+
+---
+
 ## Global options
 
 These options can be placed immediately after `fabric-dw`, before the noun.
@@ -83,6 +99,8 @@ Manage Microsoft Fabric workspaces.
 
 ### workspaces list
 
+**Targets:** Workspace (not item-specific)
+
 List all workspaces the authenticated principal has access to.
 
 **Synopsis**
@@ -106,6 +124,8 @@ fabric-dw workspaces list
 ---
 
 ### workspaces get
+
+**Targets:** Workspace (not item-specific)
 
 Get details for a workspace, including its default Data Warehouse collation.
 
@@ -132,6 +152,8 @@ defaultDataWarehouseCollation     Latin1_General_100_CI_AS_KS_WS_SC_UTF8
 
 ### workspaces set-collation
 
+**Targets:** Workspace (not item-specific)
+
 Set the default Data Warehouse collation for a workspace. `COLLATION` must be one of the supported Fabric collations.
 
 **Synopsis**
@@ -154,7 +176,9 @@ Manage Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
 
 ### warehouses list
 
-List all warehouses in a workspace. Pass `-A` / `--all-workspaces` to aggregate across every visible workspace. `WORKSPACE` and `--all-workspaces` are mutually exclusive.
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+List all Data Warehouses and SQL Analytics Endpoints in a workspace. Pass `-A` / `--all-workspaces` to aggregate across every visible workspace. `WORKSPACE` and `--all-workspaces` are mutually exclusive.
 
 **Synopsis**
 
@@ -183,7 +207,9 @@ fabric-dw warehouses list --all-workspaces
 
 ### warehouses get
 
-Get details for a specific warehouse.
+**Targets:** Data Warehouse only
+
+Get details for a specific Data Warehouse. Uses the warehouse-scoped REST path (`GET /workspaces/{ws}/warehouses/{id}`); passing a SQL Analytics Endpoint GUID will return a 404. Use `sql-endpoints get` to retrieve endpoint details.
 
 **Synopsis**
 
@@ -206,6 +232,8 @@ description    Main sales warehouse
 ---
 
 ### warehouses create
+
+**Targets:** Data Warehouse only
 
 Create a new warehouse in a workspace.
 
@@ -230,6 +258,8 @@ fabric-dw warehouses create MyWorkspace NewWH --description "Staging warehouse"
 
 ### warehouses rename
 
+**Targets:** Data Warehouse only
+
 Rename a warehouse and optionally update its description.
 
 **Synopsis**
@@ -252,6 +282,8 @@ fabric-dw warehouses rename MyWorkspace SalesWH SalesWH_v2 --description "Rename
 
 ### warehouses delete
 
+**Targets:** Data Warehouse only
+
 Delete a warehouse. You will be asked to confirm unless `--yes` is passed.
 
 **Synopsis**
@@ -270,6 +302,8 @@ fabric-dw --yes warehouses delete MyWorkspace OldWH
 
 ### warehouses takeover
 
+**Targets:** Data Warehouse only
+
 Take ownership of a warehouse. Not supported for SQL Analytics Endpoints.
 
 **Synopsis**
@@ -287,6 +321,8 @@ fabric-dw warehouses takeover MyWorkspace SalesWH
 ---
 
 ### warehouses permissions
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
 List all principals (users, groups, service principals) with access to a warehouse, including their effective permissions. Requires **Fabric Administrator** role.
 
@@ -325,6 +361,8 @@ Manage Microsoft Fabric SQL Analytics Endpoints.
 
 ### sql-endpoints list
 
+**Targets:** SQL Analytics Endpoint
+
 List all SQL Analytics Endpoints in a workspace. Supports `-A` / `--all-workspaces` to scan every visible workspace.
 
 **Synopsis**
@@ -353,6 +391,8 @@ fabric-dw sql-endpoints list MyWorkspace
 
 ### sql-endpoints get
 
+**Targets:** SQL Analytics Endpoint
+
 Get details for a specific SQL Analytics Endpoint.
 
 **Synopsis**
@@ -370,6 +410,8 @@ fabric-dw sql-endpoints get MyWorkspace MyLakehouseEP
 ---
 
 ### sql-endpoints refresh
+
+**Targets:** SQL Analytics Endpoint
 
 Refresh metadata for a SQL Analytics Endpoint by triggering a sync from the underlying Lakehouse delta tables. This is a long-running operation (LRO) that is polled to completion.
 
@@ -403,6 +445,8 @@ fabric-dw --json sql-endpoints refresh MyWorkspace MyLakehouseEP
 ---
 
 ### sql-endpoints permissions
+
+**Targets:** SQL Analytics Endpoint
 
 List all principals (users, groups, service principals) with access to a SQL Analytics Endpoint, including their effective permissions. Requires **Fabric Administrator** role.
 
@@ -440,6 +484,8 @@ fabric-dw --json sql-endpoints permissions MyWorkspace MyLakehouseEP
 Execute SQL against a Fabric Data Warehouse or SQL Analytics Endpoint.
 
 ### sql exec
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
 Execute a SQL statement or file against a warehouse or SQL Analytics Endpoint. Provide the query via `-q`/`--query` or `-f`/`--file` (not both). Multi-statement batches are supported; only the last result set is returned. DDL/DML statements return empty columns and rows.
 
@@ -479,6 +525,8 @@ Manage SQL audit settings for Microsoft Fabric Data Warehouses.
 
 ### audit get
 
+**Targets:** Data Warehouse only
+
 Get the current audit settings for a warehouse.
 
 **Synopsis**
@@ -503,6 +551,8 @@ actionGroups     BATCH_COMPLETED_GROUP
 
 ### audit enable
 
+**Targets:** Data Warehouse only
+
 Enable SQL auditing on a warehouse.
 
 **Synopsis**
@@ -525,6 +575,8 @@ fabric-dw audit enable --retention-days 90 MyWorkspace SalesWH
 
 ### audit disable
 
+**Targets:** Data Warehouse only
+
 Disable SQL auditing on a warehouse.
 
 **Synopsis**
@@ -542,6 +594,8 @@ fabric-dw audit disable MyWorkspace SalesWH
 ---
 
 ### audit set-retention
+
+**Targets:** Data Warehouse only
 
 Update the audit log retention period without changing the audit enabled/disabled state. Audit must already be enabled; if it is disabled, run `audit enable` first.
 
@@ -564,6 +618,8 @@ fabric-dw audit set-retention --days 90 MyWorkspace SalesWH
 ---
 
 ### audit set-groups
+
+**Targets:** Data Warehouse only
 
 Set the audit action groups for a warehouse. Pass `--group` / `-g` once per action group. This replaces the existing list of groups.
 
@@ -590,6 +646,8 @@ fabric-dw audit set-groups \
 
 ### audit add-group
 
+**Targets:** Data Warehouse only
+
 Add a single audit action group without overwriting the others. Idempotent — if the group is already present the command succeeds without modifying the configuration. Auditing must already be enabled.
 
 **Synopsis**
@@ -607,6 +665,8 @@ fabric-dw audit add-group MyWorkspace SalesWH BATCH_COMPLETED_GROUP
 ---
 
 ### audit remove-group
+
+**Targets:** Data Warehouse only
 
 Remove a single audit action group without overwriting the others. Idempotent — if the group is not present the command succeeds without modifying the configuration. Auditing must already be enabled.
 
@@ -629,6 +689,8 @@ fabric-dw audit remove-group MyWorkspace SalesWH BATCH_COMPLETED_GROUP
 Inspect and manage running queries on Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
 
 ### queries list
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
 List all currently running queries on a warehouse or SQL Analytics Endpoint.
 
@@ -653,6 +715,8 @@ fabric-dw queries list MyWorkspace SalesWH
 ---
 
 ### queries list-connections
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
 List all active SQL connections on a warehouse or SQL Analytics Endpoint. This queries `sys.dm_exec_connections` and shows lower-level connection info (including idle connections) that is not visible in `queries list`.
 
@@ -679,6 +743,8 @@ fabric-dw queries list-connections MyWorkspace SalesWH
 
 ### queries kill
 
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
 Kill a specific session on a warehouse or SQL Analytics Endpoint. You will be asked to confirm unless `--yes` is passed.
 
 **Synopsis**
@@ -702,6 +768,8 @@ Manage Microsoft Fabric Warehouse restore points.
 A restore point captures the state of a warehouse at a point in time. User-defined restore points can be created, renamed, and deleted. System-created restore points are managed automatically by Fabric and cannot be deleted. Restore point IDs are timestamp-based strings (e.g. `"1726617378000"`), not GUIDs.
 
 ### restore-points list
+
+**Targets:** Data Warehouse only
 
 List all restore points for a warehouse.
 
@@ -727,6 +795,8 @@ fabric-dw restore-points list MyWorkspace SalesWH
 
 ### restore-points get
 
+**Targets:** Data Warehouse only
+
 Get details for a single restore point by ID.
 
 **Synopsis**
@@ -744,6 +814,8 @@ fabric-dw restore-points get MyWorkspace SalesWH 1726617378000
 ---
 
 ### restore-points create
+
+**Targets:** Data Warehouse only
 
 Create a new restore point for a warehouse at the current timestamp.
 
@@ -770,6 +842,8 @@ fabric-dw restore-points create MyWorkspace SalesWH \
 
 ### restore-points rename
 
+**Targets:** Data Warehouse only
+
 Rename a restore point and optionally update its description.
 
 **Synopsis**
@@ -792,6 +866,8 @@ fabric-dw restore-points rename MyWorkspace SalesWH 1726617378000 "Post-migratio
 
 ### restore-points delete
 
+**Targets:** Data Warehouse only
+
 Delete a user-defined restore point. System-created restore points cannot be deleted. You will be asked to confirm unless `--yes` is passed.
 
 **Synopsis**
@@ -809,6 +885,8 @@ fabric-dw --yes restore-points delete MyWorkspace SalesWH 1726617378000
 ---
 
 ### restore-points restore
+
+**Targets:** Data Warehouse only
 
 Restore a warehouse in-place to a restore point. **This is a destructive operation** — the warehouse will be unavailable for approximately 10 minutes. You will be asked to confirm unless `--yes` is passed.
 
@@ -831,6 +909,8 @@ fabric-dw --yes restore-points restore MyWorkspace SalesWH 1726617378000
 Manage SQL views on Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
 
 ### views list
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
 List all views on a warehouse or SQL Analytics Endpoint. Pass `--schema` to filter to a single schema.
 
@@ -861,6 +941,8 @@ fabric-dw views list MyWorkspace SalesWH --schema dbo
 
 ### views get
 
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
 Get the full definition of a single view.
 
 **Synopsis**
@@ -890,6 +972,8 @@ definition     SELECT id, amount FROM dbo.sales
 
 ### views create
 
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
 Create a new SQL view.
 
 **Synopsis**
@@ -911,6 +995,8 @@ fabric-dw views create MyWorkspace SalesWH dbo.vw_recent \
 
 ### views update
 
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
 Redefine an existing view using `CREATE OR ALTER VIEW`.
 
 **Synopsis**
@@ -930,6 +1016,8 @@ fabric-dw views update MyWorkspace SalesWH dbo.vw_recent \
 
 ### views drop
 
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
 Drop a SQL view. You will be asked to confirm unless `--yes` is passed.
 
 **Synopsis**
@@ -947,6 +1035,8 @@ fabric-dw --yes views drop MyWorkspace SalesWH dbo.vw_recent
 ---
 
 ### views read
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
 Read up to `--count` rows from a view and emit them as JSON (default), CSV, or Parquet.
 
@@ -987,6 +1077,8 @@ Manage SQL tables on Microsoft Fabric Data Warehouses and SQL Analytics Endpoint
 
 ### tables list
 
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
 List all tables on a warehouse or SQL Analytics Endpoint. Pass `--schema` to filter to a single schema.
 
 **Synopsis**
@@ -1015,6 +1107,8 @@ fabric-dw tables list MyWorkspace SalesWH --schema dbo
 ---
 
 ### tables read
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
 Read up to `--count` rows from a table and emit them as JSON (default), CSV, or Parquet.
 
@@ -1049,6 +1143,8 @@ fabric-dw tables read MyWorkspace SalesWH dbo.orders --count 5
 
 ### tables create
 
+**Targets:** Data Warehouse only
+
 Create a new table via CTAS (`CREATE TABLE … AS SELECT`). The body must start with `SELECT` (leading block and line comments are allowed).
 
 **Synopsis**
@@ -1077,6 +1173,8 @@ fabric-dw tables create MyWorkspace SalesWH \
 
 ### tables delete
 
+**Targets:** Data Warehouse only
+
 Drop a table. You will be asked to confirm unless `--yes` is passed.
 
 **Synopsis**
@@ -1094,6 +1192,8 @@ fabric-dw --yes tables delete MyWorkspace SalesWH dbo.orders_2026
 ---
 
 ### tables clear
+
+**Targets:** Data Warehouse only
 
 Truncate a table (delete all rows, keep structure). You will be asked to confirm unless `--yes` is passed.
 
@@ -1121,6 +1221,8 @@ Manage SQL schemas on Microsoft Fabric Data Warehouses.
 
 ### schemas list
 
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
 List all user-defined schemas on a warehouse or SQL Analytics Endpoint. System schemas are excluded.
 
 **Usage**
@@ -1145,6 +1247,8 @@ fabric-dw schemas list MyWorkspace SalesWH
 
 ### schemas create
 
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
 Create a new SQL schema on a warehouse.
 
 **Usage**
@@ -1160,6 +1264,8 @@ fabric-dw schemas create MyWorkspace SalesWH reporting
 ```
 
 ### schemas delete
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
 Drop a schema from a warehouse. You will be asked to confirm unless `--yes` is passed.
 
@@ -1193,6 +1299,8 @@ Manage Microsoft Fabric Data Warehouse snapshots.
 
 ### snapshots list
 
+**Targets:** Data Warehouse only
+
 List all snapshots for a warehouse.
 
 **Synopsis**
@@ -1216,6 +1324,8 @@ fabric-dw snapshots list MyWorkspace SalesWH
 ---
 
 ### snapshots create
+
+**Targets:** Data Warehouse only
 
 Create a new snapshot for a warehouse. Optionally pin it to a specific point in time.
 
@@ -1241,6 +1351,8 @@ fabric-dw snapshots create MyWorkspace SalesWH snap-2026-06-08 \
 
 ### snapshots rename
 
+**Targets:** Data Warehouse only
+
 Rename a snapshot and optionally update its description.
 
 **Synopsis**
@@ -1263,6 +1375,8 @@ fabric-dw snapshots rename MyWorkspace snap-2026-06-01 snap-june-2026
 
 ### snapshots delete
 
+**Targets:** Data Warehouse only
+
 Delete a snapshot. You will be asked to confirm unless `--yes` is passed.
 
 **Synopsis**
@@ -1280,6 +1394,8 @@ fabric-dw --yes snapshots delete MyWorkspace snap-old
 ---
 
 ### snapshots roll
+
+**Targets:** Data Warehouse only
 
 Roll a snapshot on a warehouse to a new timestamp. `SNAPSHOT_NAME` must be the display name of the snapshot database. `WORKSPACE` and `WAREHOUSE` accept name or GUID.
 
@@ -1311,6 +1427,8 @@ Manage custom SQL Pools at the workspace level with sub-resource commands that m
 
 ### sql-pools get
 
+**Targets:** Workspace (not item-specific)
+
 Fetch the full SQL Pools configuration (enabled flag + pool list) for a workspace.
 
 **Synopsis**
@@ -1329,6 +1447,8 @@ fabric-dw sql-pools get MyWorkspace
 
 ### sql-pools list
 
+**Targets:** Workspace (not item-specific)
+
 List all SQL pools in a workspace.
 
 **Synopsis**
@@ -1346,6 +1466,8 @@ fabric-dw sql-pools list MyWorkspace
 ---
 
 ### sql-pools show
+
+**Targets:** Workspace (not item-specific)
 
 Show details for a single SQL pool.
 
@@ -1368,6 +1490,8 @@ fabric-dw sql-pools show MyWorkspace --name ETL
 ---
 
 ### sql-pools create
+
+**Targets:** Workspace (not item-specific)
 
 Add a new SQL pool to a workspace.
 
@@ -1402,6 +1526,8 @@ fabric-dw sql-pools create MyWorkspace \
 
 ### sql-pools update
 
+**Targets:** Workspace (not item-specific)
+
 Update an existing SQL pool. Only the flags you provide are changed; all other fields are preserved.
 
 **Synopsis**
@@ -1429,6 +1555,8 @@ fabric-dw sql-pools update MyWorkspace --name ETL --max-percent 40
 
 ### sql-pools delete
 
+**Targets:** Workspace (not item-specific)
+
 Remove a SQL pool from a workspace. You will be asked to confirm unless `--yes` is passed.
 
 **Synopsis**
@@ -1452,6 +1580,8 @@ fabric-dw --yes sql-pools delete MyWorkspace --name ETL
 
 ### sql-pools enable
 
+**Targets:** Workspace (not item-specific)
+
 Enable custom SQL Pools for a workspace. Preserves the existing pool configuration.
 
 **Synopsis**
@@ -1470,6 +1600,8 @@ fabric-dw sql-pools enable MyWorkspace
 
 ### sql-pools disable
 
+**Targets:** Workspace (not item-specific)
+
 Disable custom SQL Pools for a workspace without deleting pool definitions. Re-enabling with `sql-pools enable` restores the previously saved configuration.
 
 **Synopsis**
@@ -1487,6 +1619,8 @@ fabric-dw sql-pools disable MyWorkspace
 ---
 
 ### sql-pools reset
+
+**Targets:** Workspace (not item-specific)
 
 Clear all SQL pools for a workspace. The enabled/disabled state is preserved. You will be asked to confirm unless `--yes` is passed.
 
@@ -1514,6 +1648,8 @@ Manage the local name-to-UUID lookup cache. `fabric-dw` caches workspace and ite
 
 ### cache clear
 
+**Targets:** Workspace (not item-specific)
+
 Clear all cached entries.
 
 **Synopsis**
@@ -1539,6 +1675,8 @@ Cache cleared.
 Manage shell completion scripts. See [Shell Completion](completion.md) for full installation details.
 
 ### completion install
+
+**Targets:** Workspace (not item-specific)
 
 Generate and optionally install the tab-completion script for `bash`, `zsh`, or `fish`. Without `--print`, the script is written to the conventional location for the chosen shell (idempotent for bash and zsh). With `--print`, the script is sent to stdout so you can inspect or source it manually.
 
