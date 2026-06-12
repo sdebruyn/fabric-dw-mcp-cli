@@ -104,43 +104,63 @@ async def ephemeral_lakehouse(
         "creationPayload": {"enableSchemas": True},
     }
 
-    resp = await http.request(
-        "POST",
-        HttpBase.FABRIC,
-        f"/workspaces/{workspace_id}/lakehouses",
-        json=body,
-    )
-
-    location = resp.headers.get("Location")
-    if location is not None:
-        # 202 Accepted — poll the LRO then fetch the created item
-        lro_result = await http.poll_operation(location)
-        resource_location = lro_result.get("resourceLocation")
-        if not isinstance(resource_location, str) or not resource_location:
-            pytest.skip(
-                f"create lakehouse LRO completed but no resourceLocation returned: {lro_result}"
-            )
-        lakehouse_id = resource_location.rsplit("/", 1)[-1]
-        get_resp = await http.request(
-            "GET",
-            HttpBase.FABRIC,
-            f"/workspaces/{workspace_id}/lakehouses/{lakehouse_id}",
-        )
-        lakehouse = get_resp.json()
-    else:
-        # 201 Created — body contains the new item directly
-        lakehouse = resp.json()
+    # ``lakehouse_id`` is set as soon as we know the created resource's id so
+    # that the finally block can clean up on every exit path — including any
+    # pytest.skip() that fires after creation but before the yield.
+    lakehouse_id: str | None = None
+    lakehouse: dict[str, object] = {}
 
     try:
+        resp = await http.request(
+            "POST",
+            HttpBase.FABRIC,
+            f"/workspaces/{workspace_id}/lakehouses",
+            json=body,
+        )
+
+        location = resp.headers.get("Location")
+        if location:
+            # 202 Accepted — poll the LRO then fetch the created item
+            lro_result = await http.poll_operation(location)
+            resource_location = lro_result.get("resourceLocation")
+            if isinstance(resource_location, str) and resource_location:
+                lakehouse_id = resource_location.rsplit("/", 1)[-1]
+            else:
+                # resourceLocation may be absent; fall back to GET /result
+                # which returns the created resource directly.
+                result_resp = await http.request(
+                    "GET",
+                    HttpBase.FABRIC,
+                    f"{location}/result",
+                )
+                result_body = result_resp.json()
+                raw_id = result_body.get("id")
+                fallback = result_body.get("resourceLocation", "").rsplit("/", 1)[-1]
+                lakehouse_id = raw_id or fallback or None
+            if not lakehouse_id:
+                pytest.skip(
+                    "create lakehouse LRO completed but could not resolve "
+                    f"lakehouse id: {lro_result}"
+                )
+            get_resp = await http.request(
+                "GET",
+                HttpBase.FABRIC,
+                f"/workspaces/{workspace_id}/lakehouses/{lakehouse_id}",
+            )
+            lakehouse = get_resp.json()
+        else:
+            # 201 Created — body contains the new item directly
+            lakehouse = resp.json()
+            lakehouse_id = lakehouse.get("id") or None  # type: ignore[assignment]
+
         yield lakehouse
     finally:
-        lh_id = lakehouse.get("id")
-        if lh_id:
+        if lakehouse_id:
             with contextlib.suppress(NotFoundError):
                 await http.request(
                     "DELETE",
                     HttpBase.FABRIC,
-                    f"/workspaces/{workspace_id}/lakehouses/{lh_id}",
+                    f"/workspaces/{workspace_id}/lakehouses/{lakehouse_id}",
                 )
 
 
@@ -190,7 +210,13 @@ async def ephemeral_sql_endpoint(
             if not ep_id_raw:
                 pytest.skip(f"SQL endpoint provisioned but id is missing for lakehouse {lh_id}")
             # Construct a Warehouse-shaped dict so we can use model_validate
-            ep_uuid = UUID(str(ep_id_raw))
+            try:
+                ep_uuid = UUID(str(ep_id_raw))
+            except ValueError:
+                pytest.skip(
+                    f"SQL endpoint provisioned but id is not a valid UUID "
+                    f"for lakehouse {lh_id}: {ep_id_raw!r}"
+                )
             wh = Warehouse.model_validate(
                 {
                     "id": str(ep_uuid),
