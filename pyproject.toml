@@ -147,6 +147,7 @@ docstring-code-format = true
 markers = ["integration: hits real Fabric APIs"]
 addopts = "-ra --strict-markers -m 'not integration'"
 asyncio_mode = "auto"
+filterwarnings = ["error::RuntimeWarning"]
 
 [tool.coverage.run]
 source_pkgs = ["fabric_dw"]
