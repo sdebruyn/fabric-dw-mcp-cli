@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from fabric_dw.exceptions import AuthError, ItemKindError, NotFoundError, PermissionDeniedError
+from fabric_dw.exceptions import AuthError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import Schema, WarehouseKind
 from fabric_dw.services import schemas
 from fabric_dw.services.schemas import validate_identifier
@@ -46,6 +46,9 @@ _LIST_COLS = ["name", "principal_id"]
 _SCHEMA_ROW_1: tuple[object, ...] = ("dbo", 1)
 _SCHEMA_ROW_2: tuple[object, ...] = ("sales", 5)
 _SCHEMA_ROW_SYS: tuple[object, ...] = ("sys", 4)
+
+# Object rows for cascade tests: (obj_name, obj_type)
+_OBJ_COLS = ["obj_name", "obj_type"]
 
 
 # ===========================================================================
@@ -344,17 +347,15 @@ class TestDeleteSchema:
 
 
 # ===========================================================================
-# delete_schema — cascade
+# delete_schema — cascade (Warehouse: all types)
 # ===========================================================================
 
 
 class TestDeleteSchemaCascade:
     async def test_cascade_drops_table_then_schema(self) -> None:
-        """cascade=True: list → run_statements (DROP TABLE) → DROP SCHEMA.
-        run_statements uses a single connection for all object drops."""
+        """cascade=True on WAREHOUSE: list → run_statements (DROP TABLE) → DROP SCHEMA."""
         target = _make_target()
-        list_conn = _make_conn([("orders", "TABLE")], ["obj_name", "obj_type"])
-        # run_statements uses ONE connection for all object drops
+        list_conn = _make_conn([("orders", "U")], _OBJ_COLS)
         drop_objects_conn = _make_conn_for_ddl()
         drop_schema_conn = _make_conn_for_ddl()
         with patch(
@@ -362,15 +363,14 @@ class TestDeleteSchemaCascade:
             side_effect=[list_conn, drop_objects_conn, drop_schema_conn],
         ):
             await schemas.delete_schema(target, "sales", cascade=True)
-        # drop_objects_conn handles all object drops (here just one table)
         cursor = drop_objects_conn.cursor.return_value
         drop_sql: str = cursor.execute.call_args[0][0].upper()
         assert "DROP TABLE" in drop_sql
 
     async def test_cascade_drops_view_then_schema(self) -> None:
-        """cascade=True: list → run_statements (DROP VIEW) → DROP SCHEMA."""
+        """cascade=True on WAREHOUSE: list → run_statements (DROP VIEW) → DROP SCHEMA."""
         target = _make_target()
-        list_conn = _make_conn([("vw_orders", "VIEW")], ["obj_name", "obj_type"])
+        list_conn = _make_conn([("vw_orders", "V")], _OBJ_COLS)
         drop_objects_conn = _make_conn_for_ddl()
         drop_schema_conn = _make_conn_for_ddl()
         with patch(
@@ -382,17 +382,49 @@ class TestDeleteSchemaCascade:
         drop_sql: str = cursor.execute.call_args[0][0].upper()
         assert "DROP VIEW" in drop_sql
 
+    async def test_cascade_drops_procedure_then_schema(self) -> None:
+        """cascade=True on WAREHOUSE: DROP PROCEDURE for stored procs (type P)."""
+        target = _make_target()
+        list_conn = _make_conn([("usp_load", "P")], _OBJ_COLS)
+        drop_objects_conn = _make_conn_for_ddl()
+        drop_schema_conn = _make_conn_for_ddl()
+        with patch(
+            "fabric_dw.sql.open_connection",
+            side_effect=[list_conn, drop_objects_conn, drop_schema_conn],
+        ):
+            await schemas.delete_schema(target, "sales", cascade=True)
+        cursor = drop_objects_conn.cursor.return_value
+        drop_sql: str = cursor.execute.call_args[0][0].upper()
+        assert "DROP PROCEDURE" in drop_sql
+
+    async def test_cascade_drops_function_then_schema(self) -> None:
+        """cascade=True on WAREHOUSE: DROP FUNCTION for scalar functions (type FN)."""
+        target = _make_target()
+        list_conn = _make_conn([("fn_calc", "FN")], _OBJ_COLS)
+        drop_objects_conn = _make_conn_for_ddl()
+        drop_schema_conn = _make_conn_for_ddl()
+        with patch(
+            "fabric_dw.sql.open_connection",
+            side_effect=[list_conn, drop_objects_conn, drop_schema_conn],
+        ):
+            await schemas.delete_schema(target, "sales", cascade=True)
+        cursor = drop_objects_conn.cursor.return_value
+        drop_sql: str = cursor.execute.call_args[0][0].upper()
+        assert "DROP FUNCTION" in drop_sql
+
     async def test_cascade_drops_multiple_objects(self) -> None:
-        """Multiple objects (t1 TABLE, v1 VIEW) are dropped on ONE connection.
+        """Multiple objects (table + view + proc + function) all dropped on ONE connection.
 
         Connection count:
         - 1: list objects (run_query)
         - 2: ALL DROP statements (run_statements — single connection)
         - 3: DROP SCHEMA (run_query)
-        Total: 3 (not 4 as with the old per-statement approach).
+        Total: 3.
         """
         target = _make_target()
-        list_conn = _make_conn([("t1", "TABLE"), ("v1", "VIEW")], ["obj_name", "obj_type"])
+        list_conn = _make_conn(
+            [("t1", "U"), ("v1", "V"), ("usp_p", "P"), ("fn_f", "FN")], _OBJ_COLS
+        )
         drop_objects_conn = _make_conn_for_ddl()
         drop_schema_conn = _make_conn_for_ddl()
         with patch(
@@ -402,28 +434,30 @@ class TestDeleteSchemaCascade:
             await schemas.delete_schema(target, "sales", cascade=True)
         # 3 connections total: list + all-object-drops + schema-drop
         assert mock_open.call_count == 3
-        # Both DROP statements were executed on the single drop_objects_conn cursor
         cursor = drop_objects_conn.cursor.return_value
-        assert cursor.execute.call_count == 2
+        assert cursor.execute.call_count == 4
         sqls = [str(c[0][0]).upper() for c in cursor.execute.call_args_list]
         assert any("DROP TABLE" in s and "[T1]" in s for s in sqls)
         assert any("DROP VIEW" in s and "[V1]" in s for s in sqls)
+        assert any("DROP PROCEDURE" in s and "[USP_P]" in s for s in sqls)
+        assert any("DROP FUNCTION" in s and "[FN_F]" in s for s in sqls)
 
     async def test_cascade_false_does_not_enumerate_objects(self) -> None:
+        """cascade=False must not enumerate or drop any objects."""
         target = _make_target()
         drop_schema_conn = _make_conn_for_ddl()
         with patch(
             "fabric_dw.sql.open_connection",
             side_effect=[drop_schema_conn],
-        ):
+        ) as mock_open:
             await schemas.delete_schema(target, "sales", cascade=False)
         # Only one connection opened (the DROP SCHEMA itself)
-        assert True
+        assert mock_open.call_count == 1
 
     async def test_cascade_empty_schema_drops_schema(self) -> None:
         """When schema has no objects, skip run_statements and only DROP SCHEMA."""
         target = _make_target()
-        list_conn = _make_conn([], ["obj_name", "obj_type"])
+        list_conn = _make_conn([], _OBJ_COLS)
         drop_schema_conn = _make_conn_for_ddl()
         with patch(
             "fabric_dw.sql.open_connection",
@@ -437,7 +471,7 @@ class TestDeleteSchemaCascade:
     async def test_cascade_uses_bracket_quoting_for_objects(self) -> None:
         """Object DROP statements must use bracket-quoted names."""
         target = _make_target()
-        list_conn = _make_conn([("my_table", "TABLE")], ["obj_name", "obj_type"])
+        list_conn = _make_conn([("my_table", "U")], _OBJ_COLS)
         drop_objects_conn = _make_conn_for_ddl()
         drop_schema_conn = _make_conn_for_ddl()
         with patch(
@@ -450,33 +484,144 @@ class TestDeleteSchemaCascade:
         assert "[sales]" in drop_sql
         assert "[my_table]" in drop_sql
 
-
-# ===========================================================================
-# delete_schema — SQL Analytics Endpoint cascade guard
-# ===========================================================================
-
-
-class TestDeleteSchemaCascadeEndpointGuard:
-    async def test_cascade_true_on_sql_endpoint_raises_item_kind_error(self) -> None:
-        """cascade=True on a SQL Analytics Endpoint must raise ItemKindError
-        before any SQL is executed (DROP TABLE is Warehouse-only)."""
+    async def test_cascade_default_kind_is_warehouse(self) -> None:
+        """Default kind=WAREHOUSE means cascade=True drops tables without passing kind."""
         target = _make_target()
-        with (
-            patch("fabric_dw.sql.open_connection") as mock_open,
-            pytest.raises(ItemKindError, match="cascade=True is not supported"),
+        list_conn = _make_conn([("t1", "U")], _OBJ_COLS)
+        drop_objects_conn = _make_conn_for_ddl()
+        drop_schema_conn = _make_conn_for_ddl()
+        with patch(
+            "fabric_dw.sql.open_connection",
+            side_effect=[list_conn, drop_objects_conn, drop_schema_conn],
+        ):
+            # kind defaults to WAREHOUSE — must drop the table
+            await schemas.delete_schema(target, "sales", cascade=True)
+        cursor = drop_objects_conn.cursor.return_value
+        drop_sql: str = cursor.execute.call_args[0][0].upper()
+        assert "DROP TABLE" in drop_sql
+
+
+# ===========================================================================
+# delete_schema — cascade on SQL Analytics Endpoint (tables excluded)
+# ===========================================================================
+
+
+class TestDeleteSchemaCascadeEndpoint:
+    async def test_cascade_endpoint_drops_view_not_table(self) -> None:
+        """cascade=True on SQL_ENDPOINT: views ARE dropped, tables are NOT.
+
+        Mock returns a mix of a table and a view.  Only DROP VIEW must be issued.
+        """
+        target = _make_target()
+        # Schema contains one table and one view
+        list_conn = _make_conn([("orders", "U"), ("vw_orders", "V")], _OBJ_COLS)
+        drop_objects_conn = _make_conn_for_ddl()
+        drop_schema_conn = _make_conn_for_ddl()
+        with patch(
+            "fabric_dw.sql.open_connection",
+            side_effect=[list_conn, drop_objects_conn, drop_schema_conn],
+        ):
+            # Must not raise — cascade on endpoint is allowed
+            await schemas.delete_schema(
+                target, "sales", cascade=True, kind=WarehouseKind.SQL_ENDPOINT
+            )
+        cursor = drop_objects_conn.cursor.return_value
+        sqls = [str(c[0][0]).upper() for c in cursor.execute.call_args_list]
+        # VIEW must be dropped
+        assert any("DROP VIEW" in s for s in sqls)
+        # TABLE must NOT be dropped
+        assert not any("DROP TABLE" in s for s in sqls)
+
+    async def test_cascade_endpoint_drops_procedure(self) -> None:
+        """cascade=True on SQL_ENDPOINT: stored procedures ARE dropped."""
+        target = _make_target()
+        list_conn = _make_conn([("usp_load", "P")], _OBJ_COLS)
+        drop_objects_conn = _make_conn_for_ddl()
+        drop_schema_conn = _make_conn_for_ddl()
+        with patch(
+            "fabric_dw.sql.open_connection",
+            side_effect=[list_conn, drop_objects_conn, drop_schema_conn],
         ):
             await schemas.delete_schema(
                 target, "sales", cascade=True, kind=WarehouseKind.SQL_ENDPOINT
             )
-        # Guard fires before any connection is opened.
-        mock_open.assert_not_called()
+        cursor = drop_objects_conn.cursor.return_value
+        drop_sql: str = cursor.execute.call_args[0][0].upper()
+        assert "DROP PROCEDURE" in drop_sql
 
-    async def test_cascade_true_error_message_mentions_warehouse(self) -> None:
-        """The error message should suggest using a Warehouse or cascade=False."""
+    async def test_cascade_endpoint_drops_function(self) -> None:
+        """cascade=True on SQL_ENDPOINT: functions (FN/IF/TF) ARE dropped."""
         target = _make_target()
-        with pytest.raises(ItemKindError, match="Fabric Data Warehouse"):
+        list_conn = _make_conn([("fn_calc", "FN")], _OBJ_COLS)
+        drop_objects_conn = _make_conn_for_ddl()
+        drop_schema_conn = _make_conn_for_ddl()
+        with patch(
+            "fabric_dw.sql.open_connection",
+            side_effect=[list_conn, drop_objects_conn, drop_schema_conn],
+        ):
             await schemas.delete_schema(
                 target, "sales", cascade=True, kind=WarehouseKind.SQL_ENDPOINT
+            )
+        cursor = drop_objects_conn.cursor.return_value
+        drop_sql: str = cursor.execute.call_args[0][0].upper()
+        assert "DROP FUNCTION" in drop_sql
+
+    async def test_cascade_endpoint_only_tables_skips_object_drop_connection(self) -> None:
+        """If schema only has tables on an endpoint, no object-drop connection is opened.
+
+        All tables are excluded → ddl_statements is empty → run_statements is not called.
+        Connection count: list (1) + DROP SCHEMA (2) = 2 total.
+        """
+        target = _make_target()
+        list_conn = _make_conn([("orders", "U"), ("customers", "U")], _OBJ_COLS)
+        drop_schema_conn = _make_conn_for_ddl()
+        with patch(
+            "fabric_dw.sql.open_connection",
+            side_effect=[list_conn, drop_schema_conn],
+        ) as mock_open:
+            await schemas.delete_schema(
+                target, "sales", cascade=True, kind=WarehouseKind.SQL_ENDPOINT
+            )
+        # Only 2 connections: list objects + DROP SCHEMA (no object-drop connection)
+        assert mock_open.call_count == 2
+
+    async def test_cascade_endpoint_mixed_objects_drops_only_non_tables(self) -> None:
+        """Mixed schema on endpoint: only non-table objects are dropped."""
+        target = _make_target()
+        list_conn = _make_conn(
+            [("t1", "U"), ("vw1", "V"), ("usp1", "P"), ("fn1", "FN")],
+            _OBJ_COLS,
+        )
+        drop_objects_conn = _make_conn_for_ddl()
+        drop_schema_conn = _make_conn_for_ddl()
+        with patch(
+            "fabric_dw.sql.open_connection",
+            side_effect=[list_conn, drop_objects_conn, drop_schema_conn],
+        ):
+            await schemas.delete_schema(
+                target, "sales", cascade=True, kind=WarehouseKind.SQL_ENDPOINT
+            )
+        cursor = drop_objects_conn.cursor.return_value
+        # 3 DROP statements: VIEW + PROCEDURE + FUNCTION (not TABLE)
+        assert cursor.execute.call_count == 3
+        sqls = [str(c[0][0]).upper() for c in cursor.execute.call_args_list]
+        assert not any("DROP TABLE" in s for s in sqls)
+        assert any("DROP VIEW" in s for s in sqls)
+        assert any("DROP PROCEDURE" in s for s in sqls)
+        assert any("DROP FUNCTION" in s for s in sqls)
+
+    async def test_cascade_true_on_sql_endpoint_does_not_raise(self) -> None:
+        """cascade=True on a SQL_ENDPOINT must NOT raise — the blanket guard is gone."""
+        target = _make_target()
+        list_conn = _make_conn([], _OBJ_COLS)
+        drop_schema_conn = _make_conn_for_ddl()
+        with patch(
+            "fabric_dw.sql.open_connection",
+            side_effect=[list_conn, drop_schema_conn],
+        ):
+            # Must succeed without any exception
+            await schemas.delete_schema(
+                target, "empty_schema", cascade=True, kind=WarehouseKind.SQL_ENDPOINT
             )
 
     async def test_cascade_false_on_sql_endpoint_is_allowed(self) -> None:
@@ -492,30 +637,23 @@ class TestDeleteSchemaCascadeEndpointGuard:
         drop_sql: str = cursor.execute.call_args[0][0].upper()
         assert "DROP SCHEMA" in drop_sql
 
-    async def test_cascade_true_on_warehouse_is_allowed(self) -> None:
-        """cascade=True on a Warehouse must proceed normally (no guard)."""
+    async def test_cascade_true_on_warehouse_drops_all_types(self) -> None:
+        """cascade=True on a Warehouse must drop ALL object types including tables."""
         target = _make_target()
-        list_conn = _make_conn([("orders", "TABLE")], ["obj_name", "obj_type"])
+        list_conn = _make_conn(
+            [("t1", "U"), ("vw1", "V"), ("usp1", "P"), ("fn1", "FN")],
+            _OBJ_COLS,
+        )
         drop_objects_conn = _make_conn_for_ddl()
         drop_schema_conn = _make_conn_for_ddl()
         with patch(
             "fabric_dw.sql.open_connection",
             side_effect=[list_conn, drop_objects_conn, drop_schema_conn],
         ):
-            # Must not raise
             await schemas.delete_schema(target, "sales", cascade=True, kind=WarehouseKind.WAREHOUSE)
         cursor = drop_objects_conn.cursor.return_value
-        drop_sql: str = cursor.execute.call_args[0][0].upper()
-        assert "DROP TABLE" in drop_sql
-
-    async def test_cascade_true_default_kind_is_warehouse(self) -> None:
-        """Default kind=WAREHOUSE means cascade=True works without passing kind."""
-        target = _make_target()
-        list_conn = _make_conn([], ["obj_name", "obj_type"])
-        drop_schema_conn = _make_conn_for_ddl()
-        with patch(
-            "fabric_dw.sql.open_connection",
-            side_effect=[list_conn, drop_schema_conn],
-        ):
-            # Must not raise (kind defaults to WAREHOUSE)
-            await schemas.delete_schema(target, "empty_schema", cascade=True)
+        sqls = [str(c[0][0]).upper() for c in cursor.execute.call_args_list]
+        assert any("DROP TABLE" in s for s in sqls)
+        assert any("DROP VIEW" in s for s in sqls)
+        assert any("DROP PROCEDURE" in s for s in sqls)
+        assert any("DROP FUNCTION" in s for s in sqls)

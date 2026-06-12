@@ -1244,15 +1244,12 @@ async def test_list_schemas_works_on_sql_endpoint(mock_ctx, ctx_patch) -> None:
     assert result[0]["name"] == "dbo"
 
 
-async def test_delete_schema_cascade_sql_endpoint_raises_tool_error(mock_ctx, ctx_patch) -> None:
-    """delete_schema with cascade=True on a SQL Analytics Endpoint must raise ToolError.
+async def test_delete_schema_cascade_sql_endpoint_succeeds(mock_ctx, ctx_patch) -> None:
+    """delete_schema with cascade=True on a SQL Analytics Endpoint must SUCCEED.
 
-    DROP TABLE is Warehouse-only; the service raises ItemKindError which the MCP
-    tool converts to a ToolError via tool_err().
+    The service drops views/procedures/functions and skips tables (Warehouse-only).
+    No error is raised at the MCP layer.
     """
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
-
-    from fabric_dw.exceptions import ItemKindError  # noqa: PLC0415
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     ep_entry = _make_sql_endpoint_entry()
@@ -1264,18 +1261,15 @@ async def test_delete_schema_cascade_sql_endpoint_raises_tool_error(mock_ctx, ct
         patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
         patch(
             "fabric_dw.services.schemas.delete_schema",
-            new=AsyncMock(
-                side_effect=ItemKindError(
-                    "cascade=True is not supported on SQL Analytics Endpoints"
-                )
-            ),
+            new=AsyncMock(return_value=None),
         ),
-        pytest.raises(ToolError, match="cascade=True is not supported"),
     ):
-        await mcp._tool_manager.call_tool(
+        result = await mcp._tool_manager.call_tool(
             "delete_schema",
             {"workspace": _WS_NAME, "item": "MySqlEndpoint", "name": "oldschema", "cascade": True},
         )
+
+    assert result == {"deleted": True}
 
 
 async def test_delete_schema_no_cascade_sql_endpoint_succeeds(mock_ctx, ctx_patch) -> None:

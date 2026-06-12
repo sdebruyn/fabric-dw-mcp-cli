@@ -15,7 +15,7 @@ from click.testing import CliRunner
 
 from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._main import cli
-from fabric_dw.exceptions import ItemKindError, NotFoundError, PermissionDeniedError
+from fabric_dw.exceptions import NotFoundError, PermissionDeniedError
 from fabric_dw.models import Schema, WarehouseKind
 from fabric_dw.sql import SqlTarget
 
@@ -423,10 +423,8 @@ class TestSchemasDelete:
             result = runner.invoke(cli, ["-y", "schemas", "delete", WS_GUID, WH_GUID, "sales"])
         assert result.exit_code != 0
 
-    def test_delete_cascade_sql_endpoint_returns_nonzero(
-        self, runner: CliRunner, cache_env: Path
-    ) -> None:
-        """--cascade on a SQL Analytics Endpoint must be rejected (ItemKindError → nonzero)."""
+    def test_delete_cascade_sql_endpoint_succeeds(self, runner: CliRunner, cache_env: Path) -> None:
+        """--cascade on a SQL Analytics Endpoint must SUCCEED (tables excluded, others dropped)."""
         _ = cache_env
         mock_http = AsyncMock()
         with (
@@ -440,19 +438,15 @@ class TestSchemasDelete:
             ),
             patch(
                 "fabric_dw.services.schemas.delete_schema",
-                new=AsyncMock(
-                    side_effect=ItemKindError(
-                        "cascade=True is not supported on SQL Analytics Endpoints"
-                    )
-                ),
+                new=AsyncMock(return_value=None),
             ),
         ):
             result = runner.invoke(
                 cli,
                 ["-y", "schemas", "delete", WS_GUID, WH_GUID, "sales", "--cascade"],
             )
-        assert result.exit_code != 0
-        assert "cascade" in result.output.lower() or "cascade" in (result.output or "").lower()
+        assert result.exit_code == 0
+        assert "dropped" in result.output
 
     def test_delete_no_cascade_sql_endpoint_succeeds(
         self, runner: CliRunner, cache_env: Path
