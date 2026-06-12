@@ -198,3 +198,44 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
         return {"dropped": True}
+
+    @mcp.tool(name="rename_view")
+    async def rename_view(
+        workspace: str, item: str, qualified_name: str, new_name: str
+    ) -> dict[str, Any]:
+        """Rename a SQL view via sp_rename.
+
+        Works on both Data Warehouses and SQL Analytics Endpoints.
+
+        The new name must be a bare (unqualified) identifier — ``sp_rename``
+        cannot move a view across schemas.
+
+        Args:
+            workspace: Workspace name or GUID.
+            item: Warehouse or SQL endpoint name or GUID.
+            qualified_name: Current dot-separated qualified view name,
+                e.g. ``dbo.vw_sales``.
+            new_name: New bare view name (no schema prefix), e.g. ``vw_revenue``.
+        """
+        assert_writes_allowed("rename_view")
+        assert_workspace_allowed(workspace)
+        ctx = get_context()
+        schema, old_view_name = parse_qualified_name(qualified_name, kind="view")
+        try:
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
+            assert_workspace_allowed(workspace, str(ws_id))
+            _log.debug(
+                "rename_view ws=%s item=%s view=%s.%s -> %s",
+                ws_id,
+                entry.id,
+                schema,
+                old_view_name,
+                new_name,
+            )
+            target = make_sql_target(ws_id, entry, item)
+            result = await views_svc.rename_view(
+                target, qualified_name, new_name, mode=ctx.auth_mode
+            )
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        return result.model_dump(mode="json")

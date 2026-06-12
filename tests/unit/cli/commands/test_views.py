@@ -732,3 +732,169 @@ class TestViewsDrop:
                 cli, ["--yes", "views", "drop", WS_GUID, WH_GUID, "dbo.vw_sales"]
             )
         assert result.exit_code != 0
+
+
+# ===========================================================================
+# views rename
+# ===========================================================================
+
+
+class TestViewsRename:
+    def _make_renamed_view(self) -> View:
+        return View(
+            schema_name="dbo",
+            name="vw_revenue",
+            qualified_name="dbo.vw_revenue",
+            definition=None,
+            created=_NOW,
+            modified=_NOW,
+        )
+
+    def test_rename_with_yes_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.views.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.views.rename_view",
+                new=AsyncMock(return_value=self._make_renamed_view()),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "--yes",
+                    "views",
+                    "rename",
+                    WS_GUID,
+                    WH_GUID,
+                    "dbo.vw_sales",
+                    "--new-name",
+                    "vw_revenue",
+                ],
+            )
+        assert result.exit_code == 0
+
+    def test_rename_json_output_contains_new_name(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.views.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.views.rename_view",
+                new=AsyncMock(return_value=self._make_renamed_view()),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "--yes",
+                    "--json",
+                    "views",
+                    "rename",
+                    WS_GUID,
+                    WH_GUID,
+                    "dbo.vw_sales",
+                    "--new-name",
+                    "vw_revenue",
+                ],
+            )
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["name"] == "vw_revenue"
+
+    def test_rename_declined_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        """Declining rename is a clean no-op (exit 0)."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.views.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "views",
+                    "rename",
+                    WS_GUID,
+                    WH_GUID,
+                    "dbo.vw_sales",
+                    "--new-name",
+                    "vw_revenue",
+                ],
+                input="n\n",
+            )
+        assert result.exit_code == 0
+        assert "Aborted." in result.output
+
+    def test_rename_bad_qualified_name_exits_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        result = runner.invoke(
+            cli,
+            ["views", "rename", WS_GUID, WH_GUID, "nodot", "--new-name", "vw_revenue"],
+        )
+        assert result.exit_code != 0
+
+    def test_rename_missing_new_name_exits_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        result = runner.invoke(
+            cli,
+            ["views", "rename", WS_GUID, WH_GUID, "dbo.vw_sales"],
+        )
+        assert result.exit_code != 0
+
+    def test_rename_service_error_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.views.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.views.rename_view",
+                new=AsyncMock(side_effect=ValueError("new_name must be a bare identifier")),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "--yes",
+                    "views",
+                    "rename",
+                    WS_GUID,
+                    WH_GUID,
+                    "dbo.vw_sales",
+                    "--new-name",
+                    "other.vw_revenue",
+                ],
+            )
+        assert result.exit_code != 0

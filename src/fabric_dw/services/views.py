@@ -8,6 +8,7 @@ Public API
 - :func:`create_view`         — issue CREATE VIEW … AS <select_body>.
 - :func:`update_view`         — issue CREATE OR ALTER VIEW … AS <select_body>.
 - :func:`drop_view`           — issue DROP VIEW.
+- :func:`rename_view`         — rename a view via sp_rename (both DW and SQL endpoint).
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from typing import cast
 
 from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import NotFoundError
-from fabric_dw.identifiers import quote_identifier, validate_identifier
+from fabric_dw.identifiers import parse_qualified_name, quote_identifier, validate_identifier
 from fabric_dw.models import View
 from fabric_dw.sql import SqlTarget, run_query
 
@@ -28,6 +29,7 @@ __all__ = [
     "get_view",
     "list_views",
     "read_view",
+    "rename_view",
     "update_view",
     "validate_identifier",
 ]
@@ -63,6 +65,11 @@ JOIN sys.schemas s ON s.schema_id = v.schema_id
 JOIN sys.sql_modules m ON m.object_id = v.object_id
 WHERE s.name = ? AND v.name = ?;
 """
+
+# sp_rename takes string arguments (not identifiers) → bind as ? parameters.
+# @objname = qualified old name ('schema.old_view'), @newname = bare new name.
+# sp_rename cannot move across schemas, so @newname must be unqualified.
+_SP_RENAME_SQL = "EXEC sp_rename ?, ?, 'OBJECT'"
 
 
 # ---------------------------------------------------------------------------
@@ -336,3 +343,72 @@ async def drop_view(
         run_query(target, ddl, mode=mode, commit=True, fetch="none")
 
     await asyncio.to_thread(_run)
+
+
+async def rename_view(
+    target: SqlTarget,
+    qualified: str,
+    new_name: str,
+    *,
+    mode: CredentialMode = CredentialMode.DEFAULT,
+) -> View:
+    """Rename a view via ``EXEC sp_rename @objname, @newname, 'OBJECT'``.
+
+    Works on both Data Warehouses and SQL Analytics Endpoints — no DW-only guard
+    is applied.
+
+    ``sp_rename`` takes names as STRING ARGUMENTS (not SQL identifiers), so both
+    the old qualified name and the new bare name are bound as ``?`` parameters.
+    The new name must be unqualified (no dot) because ``sp_rename`` cannot move
+    a view across schemas.
+
+    Args:
+        target: The warehouse or SQL Analytics Endpoint to connect to.
+        qualified: Current qualified name of the view, e.g. ``dbo.vw_sales``.
+            Parsed via :func:`~fabric_dw.identifiers.parse_qualified_name`.
+        new_name: New bare (unqualified) view name.  Must pass
+            :func:`validate_identifier` and must not contain a dot.
+        mode: The credential mode for Entra authentication.
+
+    Returns:
+        The renamed :class:`~fabric_dw.models.View` (fetched after rename using
+        the original schema and the new name).
+
+    Raises:
+        ValueError: If *qualified* cannot be parsed, if either identifier part
+            fails validation, or if *new_name* is schema-qualified (contains a
+            dot).
+        NotFoundError: If the renamed view cannot be found after the rename.
+        PermissionDeniedError: If the driver reports a permission error.
+    """
+    schema, old_view = parse_qualified_name(qualified)
+    validate_identifier(schema)
+    validate_identifier(old_view)
+
+    if "." in new_name:
+        msg = (
+            f"New name {new_name!r} must not be schema-qualified; "
+            "sp_rename cannot move a view to a different schema"
+        )
+        raise ValueError(msg)
+    validate_identifier(new_name)
+
+    # @objname = 'schema.oldview', @newname = 'newview' — bound as ? params.
+    old_qualified = f"{schema}.{old_view}"
+
+    def _run() -> None:
+        run_query(
+            target,
+            _SP_RENAME_SQL,
+            params=[old_qualified, new_name],
+            mode=mode,
+            commit=True,
+            fetch="none",
+        )
+
+    await asyncio.to_thread(_run)
+    try:
+        return await get_view(target, schema, new_name, mode=mode)
+    except NotFoundError:
+        msg = f"View [{schema}].[{new_name}] not found after rename"
+        raise NotFoundError(msg) from None

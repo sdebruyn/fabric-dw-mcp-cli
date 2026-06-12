@@ -687,3 +687,167 @@ class TestDropView:
             pytest.raises(RuntimeError, match="connection reset"),
         ):
             await views.drop_view(target, "dbo", "vw_sales")
+
+
+# ===========================================================================
+# rename_view
+# ===========================================================================
+
+
+class TestRenameView:
+    async def test_executes_sp_rename_sql(self) -> None:
+        """sp_rename must be called with 'EXEC sp_rename' in the SQL."""
+        target = _make_target()
+        rename_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([("dbo", "vw_revenue", _NOW, _LATER, "SELECT 1")], _GET_COLS)
+
+        with patch("fabric_dw.sql.open_connection", side_effect=[rename_conn, fetch_conn]):
+            await views.rename_view(target, "dbo.vw_sales", "vw_revenue")
+
+        cursor = rename_conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0].upper()
+        assert "SP_RENAME" in call_sql
+
+    async def test_binds_old_qualified_name_and_new_name_as_params(self) -> None:
+        """Both old qualified name and new bare name must be bound as ? parameters."""
+        target = _make_target()
+        rename_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([("dbo", "vw_revenue", _NOW, _LATER, "SELECT 1")], _GET_COLS)
+
+        with patch("fabric_dw.sql.open_connection", side_effect=[rename_conn, fetch_conn]):
+            await views.rename_view(target, "dbo.vw_sales", "vw_revenue")
+
+        cursor = rename_conn.cursor.return_value
+        call_args = cursor.execute.call_args[0]
+        params = list(call_args[1])
+        assert params[0] == "dbo.vw_sales"
+        assert params[1] == "vw_revenue"
+
+    async def test_sp_rename_sql_uses_question_mark_placeholders(self) -> None:
+        """The SQL template must use ? placeholders, not interpolated identifiers."""
+        target = _make_target()
+        rename_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([("dbo", "vw_revenue", _NOW, _LATER, "SELECT 1")], _GET_COLS)
+
+        with patch("fabric_dw.sql.open_connection", side_effect=[rename_conn, fetch_conn]):
+            await views.rename_view(target, "dbo.vw_sales", "vw_revenue")
+
+        cursor = rename_conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        # Neither the old name nor the new name should appear directly in the SQL
+        assert "vw_sales" not in call_sql
+        assert "vw_revenue" not in call_sql
+        assert "?" in call_sql
+
+    async def test_sp_rename_includes_object_type(self) -> None:
+        """The call must include 'OBJECT' as the third sp_rename argument."""
+        target = _make_target()
+        rename_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([("dbo", "vw_revenue", _NOW, _LATER, "SELECT 1")], _GET_COLS)
+
+        with patch("fabric_dw.sql.open_connection", side_effect=[rename_conn, fetch_conn]):
+            await views.rename_view(target, "dbo.vw_sales", "vw_revenue")
+
+        cursor = rename_conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert "'OBJECT'" in call_sql
+
+    async def test_returns_view_with_new_name(self) -> None:
+        """rename_view must return the renamed View object."""
+        target = _make_target()
+        rename_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([("dbo", "vw_revenue", _NOW, _LATER, "SELECT 1")], _GET_COLS)
+
+        with patch("fabric_dw.sql.open_connection", side_effect=[rename_conn, fetch_conn]):
+            result = await views.rename_view(target, "dbo.vw_sales", "vw_revenue")
+
+        assert isinstance(result, View)
+        assert result.name == "vw_revenue"
+        assert result.schema_name == "dbo"
+        assert result.qualified_name == "dbo.vw_revenue"
+
+    async def test_commits_after_sp_rename(self) -> None:
+        """rename_view must commit after executing sp_rename."""
+        target = _make_target()
+        rename_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([("dbo", "vw_revenue", _NOW, _LATER, "SELECT 1")], _GET_COLS)
+
+        with patch("fabric_dw.sql.open_connection", side_effect=[rename_conn, fetch_conn]):
+            await views.rename_view(target, "dbo.vw_sales", "vw_revenue")
+
+        rename_conn.commit.assert_called_once()
+
+    async def test_rejects_schema_qualified_new_name(self) -> None:
+        """new_name must be a bare identifier; schema.view is rejected."""
+        target = _make_target()
+        with pytest.raises(ValueError, match="schema-qualified"):
+            await views.rename_view(target, "dbo.vw_sales", "other.vw_revenue")
+
+    async def test_rejects_invalid_new_name_identifier(self) -> None:
+        """new_name must pass validate_identifier."""
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await views.rename_view(target, "dbo.vw_sales", "vw--injection")
+
+    async def test_rejects_invalid_schema_in_qualified(self) -> None:
+        """Schema part of qualified must pass validate_identifier."""
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await views.rename_view(target, "bad;schema.vw_sales", "vw_revenue")
+
+    async def test_rejects_invalid_view_name_in_qualified(self) -> None:
+        """Old view name part of qualified must pass validate_identifier."""
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await views.rename_view(target, "dbo.vw--injection", "vw_revenue")
+
+    async def test_rejects_qualified_without_dot(self) -> None:
+        """qualified without a dot raises ValueError."""
+        target = _make_target()
+        with pytest.raises(ValueError, match="qualified"):
+            await views.rename_view(target, "nodot", "vw_revenue")
+
+    async def test_raises_not_found_when_renamed_view_missing(self) -> None:
+        """View not found after rename raises NotFoundError with rename-specific message."""
+        from fabric_dw.exceptions import NotFoundError  # noqa: PLC0415
+
+        target = _make_target()
+        rename_conn = _make_conn_for_ddl()
+        # Empty row set → get_view raises NotFoundError; rename_view wraps it.
+        fetch_conn = _make_conn([], _GET_COLS)
+
+        with (
+            patch("fabric_dw.sql.open_connection", side_effect=[rename_conn, fetch_conn]),
+            pytest.raises(NotFoundError, match="not found after rename"),
+        ):
+            await views.rename_view(target, "dbo.vw_sales", "vw_revenue")
+
+    async def test_maps_permission_denied(self) -> None:
+        """Driver permission errors must be mapped to PermissionDeniedError."""
+        target = _make_target()
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.execute.side_effect = Exception("permission was denied on object vw_sales")
+        conn.cursor.return_value = cursor
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(PermissionDeniedError),
+        ):
+            await views.rename_view(target, "dbo.vw_sales", "vw_revenue")
+
+    async def test_does_not_reject_sql_endpoint_target(self) -> None:
+        """rename_view must NOT raise for a SQL-endpoint target (no DW-only guard)."""
+        from fabric_dw.models import WarehouseKind  # noqa: PLC0415
+
+        # Construct a mock target that looks like a SQL Analytics Endpoint.
+        target = MagicMock()
+        target.kind = WarehouseKind.SQL_ENDPOINT
+
+        rename_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([("dbo", "vw_revenue", _NOW, _LATER, "SELECT 1")], _GET_COLS)
+
+        with patch("fabric_dw.sql.open_connection", side_effect=[rename_conn, fetch_conn]):
+            # Must not raise — no DW-only guard is applied.
+            result = await views.rename_view(target, "dbo.vw_sales", "vw_revenue")
+
+        assert result.name == "vw_revenue"

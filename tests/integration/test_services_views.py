@@ -219,3 +219,48 @@ async def test_create_view_full_roundtrip(ephemeral_sql_target: SqlTarget) -> No
     finally:
         with contextlib.suppress(Exception):
             await views.drop_view(ephemeral_sql_target, schema, view_name)
+
+
+async def test_rename_view_creates_new_and_removes_old(ephemeral_sql_target: SqlTarget) -> None:
+    """rename_view must make the old name disappear and the new name appear."""
+    schema = "dbo"
+    old_name = "pytest_views_rename_old"
+    new_name = "pytest_views_rename_new"
+    qualified = f"{schema}.{old_name}"
+    select_body = "SELECT 42 AS the_answer"
+
+    try:
+        # Create with old name
+        await views.create_view(ephemeral_sql_target, schema, old_name, select_body)
+
+        # Confirm old name exists
+        before = await views.list_views(ephemeral_sql_target)
+        assert any(v.name == old_name for v in before)
+
+        # Rename
+        renamed = await views.rename_view(ephemeral_sql_target, qualified, new_name)
+        assert isinstance(renamed, View)
+        assert renamed.name == new_name
+        assert renamed.schema_name == schema
+        assert renamed.qualified_name == f"{schema}.{new_name}"
+
+        # Old name must be gone
+        after = await views.list_views(ephemeral_sql_target)
+        assert not any(v.name == old_name for v in after)
+
+        # New name must exist
+        assert any(v.name == new_name for v in after)
+
+        # get_view on old name must raise NotFoundError
+        with pytest.raises(NotFoundError):
+            await views.get_view(ephemeral_sql_target, schema, old_name)
+
+        # get_view on new name must succeed
+        fetched = await views.get_view(ephemeral_sql_target, schema, new_name)
+        assert fetched.name == new_name
+
+    finally:
+        with contextlib.suppress(Exception):
+            await views.drop_view(ephemeral_sql_target, schema, old_name)
+        with contextlib.suppress(Exception):
+            await views.drop_view(ephemeral_sql_target, schema, new_name)
