@@ -390,6 +390,17 @@ class View(_FabricBase):
     modified: datetime
 
 
+class StoredProcedure(_FabricBase):
+    """A stored procedure on a Fabric Data Warehouse or SQL Analytics Endpoint."""
+
+    schema_name: str
+    name: str
+    qualified_name: str
+    definition: str | None = None
+    created: datetime
+    modified: datetime
+
+
 class Schema(_FabricBase):
     """A SQL schema on a Fabric Data Warehouse."""
 

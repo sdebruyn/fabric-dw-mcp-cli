@@ -46,7 +46,7 @@ from tests.unit.mcp.conftest import WS_ID, WS_NAME, make_item_entry
 # Expected tool count (sync with test_server.EXPECTED_TOOL_NAMES)
 # ---------------------------------------------------------------------------
 
-_EXPECTED_TOOL_COUNT = 68  # as documented in server.py docstring
+_EXPECTED_TOOL_COUNT = 73  # as documented in server.py docstring
 
 
 # ---------------------------------------------------------------------------

@@ -109,6 +109,12 @@ EXPECTED_TOOL_NAMES: frozenset[str] = frozenset(
         "update_view",
         "drop_view",
         "rename_view",
+        # Stored Procedures
+        "list_procedures",
+        "get_procedure",
+        "create_procedure",
+        "update_procedure",
+        "drop_procedure",
         # Tables
         "list_tables",
         "read_table",
