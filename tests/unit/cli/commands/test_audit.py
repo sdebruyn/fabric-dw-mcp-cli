@@ -250,13 +250,18 @@ class TestAuditSetRetention:
             )
         assert result.exit_code != 0
 
-    def test_set_retention_disabled_audit_returns_nonzero(
+    def test_set_retention_no_precheck_sends_patch_directly(
         self, runner: CliRunner, cache_env: Path
     ) -> None:
+        """set-retention no longer pre-checks audit state; PATCH is sent regardless.
+
+        The old pre-flight GET was racy.  The new behaviour sends the PATCH and lets
+        the server reject invalid states.  This test verifies the command succeeds when
+        both PATCH and the follow-up GET return valid responses.
+        """
         _ = cache_env
         mock_http = AsyncMock()
-        disabled_payload = '{"state": "Disabled", "retentionDays": 0, "auditActionsAndGroups": []}'
-        mock_http.request = AsyncMock(return_value=_make_response(200, disabled_payload))
+        mock_http.request = AsyncMock(return_value=_make_response(200, AUDIT_SETTINGS_PAYLOAD))
         with (
             patch(
                 "fabric_dw.cli.commands.audit._build_clients",
@@ -270,7 +275,7 @@ class TestAuditSetRetention:
             result = runner.invoke(
                 cli, ["audit", "set-retention", WS_GUID, WH_GUID, "--days", "30"]
             )
-        assert result.exit_code != 0
+        assert result.exit_code == 0
 
 
 class TestAuditSetGroups:

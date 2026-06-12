@@ -26,6 +26,12 @@ _ADMIN_HINT = (
     "?WT.mc_id=MVP_310840 for how to request it."
 )
 
+# The admin items/users endpoint paginates under "accessDetails" instead of the
+# default "value" key used by most Fabric list endpoints.  Named here so that a
+# future schema change is caught at review time rather than silently yielding
+# zero results.
+_ACCESS_DETAILS_KEY = "accessDetails"
+
 
 async def list_item_access(
     http: FabricHttpClient,
@@ -55,7 +61,7 @@ async def list_item_access(
     try:
         return [
             ItemAccess.from_api(raw)
-            async for raw in http.iter_paginated(HttpBase.FABRIC, path, key="accessDetails")
+            async for raw in http.iter_paginated(HttpBase.FABRIC, path, key=_ACCESS_DETAILS_KEY)
         ]
     except PermissionDenied as exc:
         raise PermissionDenied(_ADMIN_HINT) from exc
