@@ -46,14 +46,14 @@ jobs:
           python -c "import json,sys; d=json.load(open('dist/sbom.cdx.json')); print(f'SBOM: {len(d.get(\"components\",[]))} components')"
 
       - name: Upload SBOM artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sbom-cyclonedx
           path: dist/sbom.cdx.json
           if-no-files-found: error
 
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             dist/*.whl
