@@ -1569,8 +1569,6 @@ async def test_read_view_bad_qualified_name_raises_tool_error(mock_ctx, ctx_patc
         )
 
 
-
-
 # ---------------------------------------------------------------------------
 # rename_table MCP tool tests
 # ---------------------------------------------------------------------------
@@ -1716,6 +1714,7 @@ async def test_rename_table_undotted_qualified_name_raises_tool_error(
                 "new_name": "sales_v2",
             },
         )
+
 
 # ---------------------------------------------------------------------------
 # rename_view MCP tool tests

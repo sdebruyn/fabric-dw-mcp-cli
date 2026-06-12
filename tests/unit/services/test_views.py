@@ -808,12 +808,12 @@ class TestRenameView:
             await views.rename_view(target, "nodot", "vw_revenue")
 
     async def test_raises_not_found_when_renamed_view_missing(self) -> None:
-        """If the renamed view is not found in the re-fetch, NotFoundError with rename-specific message propagates."""
+        """View not found after rename raises NotFoundError with rename-specific message."""
         from fabric_dw.exceptions import NotFoundError  # noqa: PLC0415
 
         target = _make_target()
         rename_conn = _make_conn_for_ddl()
-        # Empty row set → get_view raises NotFoundError, rename_view wraps with rename-specific message
+        # Empty row set → get_view raises NotFoundError; rename_view wraps it.
         fetch_conn = _make_conn([], _GET_COLS)
 
         with (
