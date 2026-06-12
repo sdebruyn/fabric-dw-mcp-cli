@@ -17,7 +17,7 @@ from datetime import datetime
 from typing import cast
 
 from fabric_dw.auth import CredentialMode
-from fabric_dw.exceptions import NotFound
+from fabric_dw.exceptions import NotFoundError
 from fabric_dw.identifiers import quote_identifier, validate_identifier
 from fabric_dw.models import View
 from fabric_dw.sql import SqlTarget, run_query
@@ -111,7 +111,7 @@ async def list_views(
 
     Raises:
         ValueError: If *schema* fails identifier validation.
-        PermissionDenied: If the driver reports a permission error.
+        PermissionDeniedError: If the driver reports a permission error.
         AuthError: If the driver reports an authentication failure.
     """
     if schema is not None:
@@ -167,8 +167,8 @@ async def read_view(
 
     Raises:
         ValueError: If *schema* or *view_name* fails identifier validation.
-        NotFound: If the view does not exist (zero rows AND zero columns).
-        PermissionDenied: If the driver reports a permission error.
+        NotFoundError: If the view does not exist (zero rows AND zero columns).
+        PermissionDeniedError: If the driver reports a permission error.
     """
     validate_identifier(schema)
     validate_identifier(view_name)
@@ -185,7 +185,7 @@ async def read_view(
         cols, rows = run_query(target, read_sql, mode=mode)
         if not cols:
             msg = f"View [{schema}].[{view_name}] not found"
-            raise NotFound(msg)
+            raise NotFoundError(msg)
         return cols, list(rows)
 
     return await asyncio.to_thread(_run)
@@ -211,8 +211,8 @@ async def get_view(
 
     Raises:
         ValueError: If *schema* or *view_name* fails identifier validation.
-        NotFound: If no view with that schema/name exists.
-        PermissionDenied: If the driver reports a permission error.
+        NotFoundError: If no view with that schema/name exists.
+        PermissionDeniedError: If the driver reports a permission error.
     """
     validate_identifier(schema)
     validate_identifier(view_name)
@@ -226,7 +226,7 @@ async def get_view(
         )
         if not rows:
             msg = f"View [{schema}].[{view_name}] not found"
-            raise NotFound(msg)
+            raise NotFoundError(msg)
         return _row_to_view(cols, rows[0])
 
     return await asyncio.to_thread(_run)
@@ -255,7 +255,7 @@ async def create_view(
 
     Raises:
         ValueError: If *schema* or *view_name* fails identifier validation.
-        PermissionDenied: If the driver reports a CREATE VIEW permission error.
+        PermissionDeniedError: If the driver reports a CREATE VIEW permission error.
     """
     validate_identifier(schema)
     validate_identifier(view_name)
@@ -291,7 +291,7 @@ async def update_view(
 
     Raises:
         ValueError: If *schema* or *view_name* fails identifier validation.
-        PermissionDenied: If the driver reports an ALTER VIEW permission error.
+        PermissionDeniedError: If the driver reports an ALTER VIEW permission error.
     """
     validate_identifier(schema)
     validate_identifier(view_name)
@@ -325,7 +325,7 @@ async def drop_view(
 
     Raises:
         ValueError: If *schema* or *view_name* fails identifier validation.
-        PermissionDenied: If the driver reports a DROP VIEW permission error.
+        PermissionDeniedError: If the driver reports a DROP VIEW permission error.
     """
     validate_identifier(schema)
     validate_identifier(view_name)

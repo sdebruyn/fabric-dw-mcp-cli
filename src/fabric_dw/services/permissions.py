@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fabric_dw.exceptions import PermissionDenied
+from fabric_dw.exceptions import PermissionDeniedError
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import ItemAccess
 
@@ -51,8 +51,8 @@ async def list_item_access(
         A list of :class:`~fabric_dw.models.ItemAccess` objects, one per principal.
 
     Raises:
-        PermissionDenied: If the caller is not a Fabric Administrator (HTTP 403).
-        NotFound: If the workspace or item does not exist (HTTP 404).
+        PermissionDeniedError: If the caller is not a Fabric Administrator (HTTP 403).
+        NotFoundError: If the workspace or item does not exist (HTTP 404).
     """
     # The optional ?type= query param is intentionally omitted: Warehouse and
     # SQLEndpoint items do not filter by type, and omitting it returns all principals.
@@ -63,5 +63,5 @@ async def list_item_access(
             ItemAccess.from_api(raw)
             async for raw in http.iter_paginated(HttpBase.FABRIC, path, key=_ACCESS_DETAILS_KEY)
         ]
-    except PermissionDenied as exc:
-        raise PermissionDenied(_ADMIN_HINT) from exc
+    except PermissionDeniedError as exc:
+        raise PermissionDeniedError(_ADMIN_HINT) from exc

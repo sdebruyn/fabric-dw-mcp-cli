@@ -15,7 +15,7 @@ from click.testing import CliRunner
 
 from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._main import cli
-from fabric_dw.exceptions import NotFound, PermissionDenied
+from fabric_dw.exceptions import NotFoundError, PermissionDeniedError
 from fabric_dw.models import Table, WarehouseKind
 from fabric_dw.sql import SqlTarget
 
@@ -164,7 +164,7 @@ class TestTablesList:
             ),
             patch(
                 "fabric_dw.cli.commands.tables.build_sql_target",
-                new=AsyncMock(side_effect=NotFound("not found")),
+                new=AsyncMock(side_effect=NotFoundError("not found")),
             ),
         ):
             result = runner.invoke(cli, ["tables", "list", WS_GUID, WH_GUID])
@@ -289,7 +289,7 @@ class TestTablesRead:
             ),
             patch(
                 "fabric_dw.services.tables.read_table",
-                new=AsyncMock(side_effect=NotFound("table not found")),
+                new=AsyncMock(side_effect=NotFoundError("table not found")),
             ),
         ):
             result = runner.invoke(cli, ["tables", "read", WS_GUID, WH_GUID, "dbo.missing"])
@@ -415,7 +415,7 @@ class TestTablesCreate:
             ),
             patch(
                 "fabric_dw.services.tables.create_table",
-                new=AsyncMock(side_effect=PermissionDenied("no permission")),
+                new=AsyncMock(side_effect=PermissionDeniedError("no permission")),
             ),
         ):
             result = runner.invoke(
@@ -570,7 +570,7 @@ class TestTablesDelete:
             ),
             patch(
                 "fabric_dw.services.tables.delete_table",
-                new=AsyncMock(side_effect=PermissionDenied("no permission")),
+                new=AsyncMock(side_effect=PermissionDeniedError("no permission")),
             ),
         ):
             result = runner.invoke(
@@ -693,7 +693,7 @@ class TestTablesClear:
             ),
             patch(
                 "fabric_dw.services.tables.clear_table",
-                new=AsyncMock(side_effect=PermissionDenied("no permission")),
+                new=AsyncMock(side_effect=PermissionDeniedError("no permission")),
             ),
         ):
             result = runner.invoke(cli, ["--yes", "tables", "clear", WS_GUID, WH_GUID, "dbo.sales"])

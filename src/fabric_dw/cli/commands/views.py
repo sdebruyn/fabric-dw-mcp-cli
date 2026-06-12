@@ -87,8 +87,7 @@ async def read_cmd(
     output_path = Path(output) if output else None
 
     if fmt in (OutputFormat.CSV, OutputFormat.PARQUET) and output_path is None:
-        raise click.UsageError(f"--output PATH is required for {fmt!r} format.")  # noqa: TRY003
-
+        raise click.UsageError(f"--output PATH is required for {fmt!r} format.")
     try:
         async with build_http_client(ctx) as http:
             target, _entry = await build_sql_target(http, ws, wh)

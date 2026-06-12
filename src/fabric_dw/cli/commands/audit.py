@@ -76,9 +76,9 @@ async def enable_cmd(
     Omitting both --retention-days and --unlimited defaults to unlimited retention.
     """
     if retention_days is not None and unlimited:
-        raise click.UsageError("--retention-days and --unlimited are mutually exclusive.")  # noqa: TRY003
+        raise click.UsageError("--retention-days and --unlimited are mutually exclusive.")
     if retention_days is not None and retention_days < 1:
-        raise click.UsageError("--retention-days must be >= 1; use --unlimited for no limit.")  # noqa: TRY003
+        raise click.UsageError("--retention-days must be >= 1; use --unlimited for no limit.")
     # Map to service value: 0 means unlimited.
     effective_days: int = 0
     if retention_days is not None:

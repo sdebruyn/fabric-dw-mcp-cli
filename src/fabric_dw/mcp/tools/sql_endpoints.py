@@ -36,7 +36,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         """
         _workspaces_allowlist = os.environ.get("FABRIC_MCP_WORKSPACES", "").strip()
         if all_workspaces and _workspaces_allowlist:
-            raise ToolError(  # noqa: TRY003
+            raise ToolError(
                 "all_workspaces=True is not permitted when FABRIC_MCP_WORKSPACES is configured; "
                 "specify an individual workspace instead"
             )

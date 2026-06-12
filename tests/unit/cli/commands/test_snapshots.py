@@ -15,7 +15,7 @@ from click.testing import CliRunner
 
 from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.cli._main import cli
-from fabric_dw.exceptions import NotFound, PermissionDenied
+from fabric_dw.exceptions import NotFoundError, PermissionDeniedError
 from fabric_dw.models import WarehouseKind
 from fabric_dw.sql import SqlTarget
 
@@ -138,7 +138,7 @@ class TestSnapshotsList:
             ),
             patch(
                 "fabric_dw.cli.commands.snapshots._resolve_item",
-                new=AsyncMock(side_effect=NotFound("not found")),
+                new=AsyncMock(side_effect=NotFoundError("not found")),
             ),
         ):
             result = runner.invoke(cli, ["snapshots", "list", WS_GUID, WH_GUID])
@@ -403,7 +403,7 @@ class TestSnapshotsRoll:
             ),
             patch(
                 "fabric_dw.services.snapshots.roll_timestamp",
-                new=AsyncMock(side_effect=PermissionDenied("no permission")),
+                new=AsyncMock(side_effect=PermissionDeniedError("no permission")),
             ),
         ):
             result = runner.invoke(

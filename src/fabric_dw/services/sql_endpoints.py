@@ -6,7 +6,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from fabric_dw.exceptions import NotFound, PermissionDenied
+from fabric_dw.exceptions import NotFoundError, PermissionDeniedError
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import TableSyncStatus, Warehouse, WarehouseKind
 from fabric_dw.services._concurrency import bounded_gather
@@ -51,8 +51,8 @@ async def list_all_workspaces(http: FabricHttpClient) -> list[Warehouse]:
     Iterates all workspaces returned by :func:`~fabric_dw.services.workspaces.list_all`
     and aggregates their SQL analytics endpoints using bounded concurrency (up to
     8 workspaces in parallel).  Workspaces that raise
-    :class:`~fabric_dw.exceptions.PermissionDenied` or
-    :class:`~fabric_dw.exceptions.NotFound` are skipped with a per-workspace
+    :class:`~fabric_dw.exceptions.PermissionDeniedError` or
+    :class:`~fabric_dw.exceptions.NotFoundError` are skipped with a per-workspace
     warning; a summary warning is logged after the scan.
 
     Args:
@@ -73,7 +73,7 @@ async def list_all_workspaces(http: FabricHttpClient) -> list[Warehouse]:
     out: list[Warehouse] = []
     skipped = 0
     for ws, result in zip(workspaces, raw, strict=True):
-        if isinstance(result, (PermissionDenied, NotFound)):
+        if isinstance(result, (PermissionDeniedError, NotFoundError)):
             _log.warning("skipping workspace %s: %s", ws.name, result)
             skipped += 1
         elif isinstance(result, BaseException):
@@ -102,7 +102,7 @@ async def get_endpoint(http: FabricHttpClient, workspace_id: UUID, endpoint_id: 
         ``kind == WarehouseKind.SQL_ENDPOINT``.
 
     Raises:
-        NotFound: If the endpoint does not exist (404).
+        NotFoundError: If the endpoint does not exist (404).
     """
     resp = await http.request(
         "GET",
@@ -140,7 +140,7 @@ async def refresh_metadata(
 
     Raises:
         FabricServerError: If the LRO fails or times out.
-        NotFound: If the endpoint does not exist (404).
+        NotFoundError: If the endpoint does not exist (404).
     """
     json_body: dict[str, Any] | None = {"recreateTables": True} if recreate_tables else None
 

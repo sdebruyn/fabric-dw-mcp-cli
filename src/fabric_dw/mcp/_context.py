@@ -79,7 +79,7 @@ def get_context() -> ServerContext:
             or after shutdown).
     """
     if _SERVER_CTX is None:
-        raise RuntimeError(  # noqa: TRY003
+        raise RuntimeError(
             "ServerContext is not initialised — get_context() called outside the server lifespan"
         )
     return _SERVER_CTX
@@ -109,7 +109,7 @@ def build_context(environ: Mapping[str, str] | None = None) -> ServerContext:
     try:
         mode = _auth.CredentialMode(raw_mode)
     except ValueError as exc:
-        raise ConfigError(  # noqa: TRY003
+        raise ConfigError(
             f"invalid FABRIC_AUTH value {raw_mode!r}; "
             f"expected one of {[m.value for m in _auth.CredentialMode]}"
         ) from exc

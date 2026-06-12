@@ -8,7 +8,7 @@ from uuid import UUID
 import pytest
 import respx
 
-from fabric_dw.exceptions import NotFound, PermissionDenied
+from fabric_dw.exceptions import NotFoundError, PermissionDeniedError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.services.ownership import takeover
 from tests.unit.services._helpers import _make_credential
@@ -61,21 +61,21 @@ async def test_takeover_204_returns_none() -> None:
 
 @respx.mock
 async def test_takeover_403_raises_permission_denied() -> None:
-    """A 403 response should raise PermissionDenied with a helpful message."""
+    """A 403 response should raise PermissionDeniedError with a helpful message."""
     respx.post(_EXPECTED_URL).mock(return_value=respx.MockResponse(403))
 
     async with FabricHttpClient(credential=_make_credential(), rps=10) as http:
-        with pytest.raises(PermissionDenied, match="Admin/Member/Contributor"):
+        with pytest.raises(PermissionDeniedError, match="Admin/Member/Contributor"):
             await takeover(http, _WORKSPACE_ID, _WAREHOUSE_ID)
 
 
 @respx.mock
 async def test_takeover_404_raises_not_found() -> None:
-    """A 404 response should raise NotFound."""
+    """A 404 response should raise NotFoundError."""
     respx.post(_EXPECTED_URL).mock(return_value=respx.MockResponse(404))
 
     async with FabricHttpClient(credential=_make_credential(), rps=10) as http:
-        with pytest.raises(NotFound):
+        with pytest.raises(NotFoundError):
             await takeover(http, _WORKSPACE_ID, _WAREHOUSE_ID)
 
 

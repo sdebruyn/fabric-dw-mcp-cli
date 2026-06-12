@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from fabric_dw.exceptions import AuthError, NotFound, PermissionDenied
+from fabric_dw.exceptions import AuthError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import Schema
 from fabric_dw.services import schemas
 from fabric_dw.services.schemas import validate_identifier
@@ -166,7 +166,7 @@ class TestListSchemas:
         conn.cursor.return_value = cursor
         with (
             patch("fabric_dw.sql.open_connection", return_value=conn),
-            pytest.raises(PermissionDenied),
+            pytest.raises(PermissionDeniedError),
         ):
             await schemas.list_schemas(target)
 
@@ -255,7 +255,7 @@ class TestCreateSchema:
         conn.cursor.return_value = cursor
         with (
             patch("fabric_dw.sql.open_connection", return_value=conn),
-            pytest.raises(PermissionDenied),
+            pytest.raises(PermissionDeniedError),
         ):
             await schemas.create_schema(target, "dbo")
 
@@ -265,7 +265,7 @@ class TestCreateSchema:
         fetch_conn = _make_conn([], _LIST_COLS)
         with (
             patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]),
-            pytest.raises(NotFound),
+            pytest.raises(NotFoundError),
         ):
             await schemas.create_schema(target, "dbo")
 
@@ -326,7 +326,7 @@ class TestDeleteSchema:
         conn.cursor.return_value = cursor
         with (
             patch("fabric_dw.sql.open_connection", return_value=conn),
-            pytest.raises(PermissionDenied),
+            pytest.raises(PermissionDeniedError),
         ):
             await schemas.delete_schema(target, "dbo")
 

@@ -208,23 +208,23 @@ async def takeover_cmd(ctx: CliContext, workspace: str | None, warehouse: str | 
     try:
         async with build_http_client(ctx) as http:
             ws_id, entry = await _resolve_item(http, ws, wh)
-            if entry.kind == WarehouseKind.SQL_ENDPOINT:
-                raise click.UsageError(  # noqa: TRY003, TRY301
-                    "takeover is not supported for SQL Analytics Endpoints"
-                )
-            confirmed = confirm(
-                f"Take over warehouse {entry.display_name!r} ({entry.id})?",
-                yes=ctx.yes,
-            )
-            if not confirmed:
-                click.echo("Aborted.")
-                return
-            await _ownership_svc.takeover(http, ws_id, entry.id)
-            click.echo(f"Ownership of warehouse {entry.display_name!r} ({entry.id}) taken.")
-    except click.UsageError:
-        raise
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc
+    if entry.kind == WarehouseKind.SQL_ENDPOINT:
+        raise click.UsageError("takeover is not supported for SQL Analytics Endpoints")
+    confirmed = confirm(
+        f"Take over warehouse {entry.display_name!r} ({entry.id})?",
+        yes=ctx.yes,
+    )
+    if not confirmed:
+        click.echo("Aborted.")
+        return
+    try:
+        async with build_http_client(ctx) as http:
+            await _ownership_svc.takeover(http, ws_id, entry.id)
+    except FabricError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Ownership of warehouse {entry.display_name!r} ({entry.id}) taken.")
 
 
 @warehouses_group.command("permissions")

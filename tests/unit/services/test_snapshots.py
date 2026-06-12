@@ -14,7 +14,7 @@ import pytest
 import respx
 
 from fabric_dw.cache import ItemEntry, LookupCache
-from fabric_dw.exceptions import NotFound, PermissionDenied
+from fabric_dw.exceptions import NotFoundError, PermissionDeniedError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import WarehouseKind, WarehouseSnapshot
 from fabric_dw.services import snapshots
@@ -535,11 +535,11 @@ async def test_delete_204_returns_none() -> None:
 
 @respx.mock
 async def test_delete_404_raises_not_found() -> None:
-    """delete should propagate NotFound on 404."""
+    """delete should propagate NotFoundError on 404."""
     respx.delete(f"{_ITEMS_URL}/{_SNAP_ID}").mock(return_value=httpx.Response(404))
 
     async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
-        with pytest.raises(NotFound):
+        with pytest.raises(NotFoundError):
             await snapshots.delete(http, _WS_ID, _SNAP_ID)
 
 
@@ -661,7 +661,7 @@ async def test_roll_timestamp_name_injection_newline() -> None:
 
 
 async def test_roll_timestamp_maps_permission_error() -> None:
-    """roll_timestamp should map driver permission failures to PermissionDenied."""
+    """roll_timestamp should map driver permission failures to PermissionDeniedError."""
     target = _make_sql_target()
     conn = MagicMock()
     cursor = MagicMock()
@@ -670,7 +670,7 @@ async def test_roll_timestamp_maps_permission_error() -> None:
 
     with (
         patch("fabric_dw.sql.open_connection", return_value=conn),
-        pytest.raises(PermissionDenied),
+        pytest.raises(PermissionDeniedError),
     ):
         await snapshots.roll_timestamp(target, "MySnapshot")
 

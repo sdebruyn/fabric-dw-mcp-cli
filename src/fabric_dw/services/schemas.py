@@ -35,7 +35,7 @@ from __future__ import annotations
 import asyncio
 
 from fabric_dw.auth import CredentialMode
-from fabric_dw.exceptions import NotFound
+from fabric_dw.exceptions import NotFoundError
 from fabric_dw.identifiers import quote_identifier, validate_identifier
 from fabric_dw.models import Schema
 from fabric_dw.sql import SqlTarget, run_query, run_statements
@@ -146,7 +146,7 @@ async def list_schemas(
         A (possibly empty) list of :class:`~fabric_dw.models.Schema` instances.
 
     Raises:
-        PermissionDenied: If the driver reports a permission error.
+        PermissionDeniedError: If the driver reports a permission error.
         AuthError: If the driver reports an authentication failure.
     """
 
@@ -181,7 +181,7 @@ async def create_schema(
 
     Raises:
         ValueError: If *name* fails identifier validation.
-        PermissionDenied: If the driver reports a CREATE SCHEMA permission error.
+        PermissionDeniedError: If the driver reports a CREATE SCHEMA permission error.
     """
     validate_identifier(name)
     ddl = f"CREATE SCHEMA {quote_identifier(name)}"
@@ -222,7 +222,7 @@ async def delete_schema(
 
     Raises:
         ValueError: If *name* fails identifier validation.
-        PermissionDenied: If the driver reports a DROP SCHEMA permission error.
+        PermissionDeniedError: If the driver reports a DROP SCHEMA permission error.
     """
     validate_identifier(name)
 
@@ -260,7 +260,7 @@ async def _fetch_schema(
 
     Raises:
         ValueError: If *name* fails identifier validation (belt-and-suspenders).
-        NotFound: If the schema is not found after creation.
+        NotFoundError: If the schema is not found after creation.
     """
     # Belt-and-suspenders: validate even though callers should have validated already.
     validate_identifier(name)
@@ -274,7 +274,7 @@ async def _fetch_schema(
         )
         if not rows:
             msg = f"Schema [{name}] not found after creation"
-            raise NotFound(msg)
+            raise NotFoundError(msg)
         return _row_to_schema(cols, rows[0])
 
     return await asyncio.to_thread(_run)

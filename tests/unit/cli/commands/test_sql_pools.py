@@ -13,7 +13,7 @@ import pytest
 from click.testing import CliRunner
 
 from fabric_dw.cli._main import cli
-from fabric_dw.exceptions import AlreadyExists, NotFound, PermissionDenied
+from fabric_dw.exceptions import AlreadyExistsError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import SqlPool, SqlPoolsConfiguration
 
 WS_GUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
@@ -148,7 +148,7 @@ class TestSqlPoolsGet:
             ),
             patch(
                 "fabric_dw.cli.commands.sql_pools._svc.get_configuration",
-                new=AsyncMock(side_effect=PermissionDenied("403")),
+                new=AsyncMock(side_effect=PermissionDeniedError("403")),
             ),
         ):
             result = runner.invoke(cli, ["sql-pools", "get", WS_GUID])
@@ -335,7 +335,7 @@ class TestSqlPoolsCreate:
             ),
             patch(
                 "fabric_dw.cli.commands.sql_pools._svc.create_pool",
-                new=AsyncMock(side_effect=AlreadyExists("pool 'Default' already exists")),
+                new=AsyncMock(side_effect=AlreadyExistsError("pool 'Default' already exists")),
             ),
         ):
             result = runner.invoke(
@@ -435,7 +435,7 @@ class TestSqlPoolsUpdate:
             ),
             patch(
                 "fabric_dw.cli.commands.sql_pools._svc.update_pool",
-                new=AsyncMock(side_effect=NotFound("pool 'NoPool' not found")),
+                new=AsyncMock(side_effect=NotFoundError("pool 'NoPool' not found")),
             ),
         ):
             result = runner.invoke(
@@ -558,7 +558,7 @@ class TestSqlPoolsDelete:
             ),
             patch(
                 "fabric_dw.cli.commands.sql_pools._svc.delete_pool",
-                new=AsyncMock(side_effect=NotFound("pool 'NoPool' not found")),
+                new=AsyncMock(side_effect=NotFoundError("pool 'NoPool' not found")),
             ),
         ):
             result = runner.invoke(
@@ -580,7 +580,7 @@ class TestSqlPoolsDelete:
             ),
             patch(
                 "fabric_dw.cli.commands.sql_pools._svc.delete_pool",
-                new=AsyncMock(side_effect=PermissionDenied("403")),
+                new=AsyncMock(side_effect=PermissionDeniedError("403")),
             ),
         ):
             result = runner.invoke(
@@ -624,7 +624,7 @@ class TestSqlPoolsEnable:
             ),
             patch(
                 "fabric_dw.cli.commands.sql_pools._svc.enable",
-                new=AsyncMock(side_effect=PermissionDenied("403")),
+                new=AsyncMock(side_effect=PermissionDeniedError("403")),
             ),
         ):
             result = runner.invoke(cli, ["sql-pools", "enable", WS_GUID])
@@ -688,7 +688,7 @@ class TestSqlPoolsReset:
             ),
             patch(
                 "fabric_dw.cli.commands.sql_pools._svc.reset_pools",
-                new=AsyncMock(side_effect=PermissionDenied("403")),
+                new=AsyncMock(side_effect=PermissionDeniedError("403")),
             ),
         ):
             result = runner.invoke(cli, ["-y", "sql-pools", "reset", WS_GUID])

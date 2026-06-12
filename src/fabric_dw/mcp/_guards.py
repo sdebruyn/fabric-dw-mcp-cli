@@ -201,7 +201,7 @@ def assert_readonly_sql(statement: str) -> None:
 
     # Reject unbalanced block-comment delimiters left after stripping.
     if "/*" in sanitised or "*/" in sanitised:
-        raise ToolError(  # noqa: TRY003
+        raise ToolError(
             "read-only mode (FABRIC_MCP_READONLY) blocks statements with unbalanced block comments"
         )
 
@@ -209,15 +209,13 @@ def assert_readonly_sql(statement: str) -> None:
 
     # Reject multi-statement batches: a ';' followed by non-whitespace.
     if re.search(r";\s*\S", sanitised):
-        raise ToolError(  # noqa: TRY003
-            "read-only mode (FABRIC_MCP_READONLY) blocks multi-statement batches"
-        )
+        raise ToolError("read-only mode (FABRIC_MCP_READONLY) blocks multi-statement batches")
 
     tokens = _TOKEN_RE.findall(sanitised)
     first_token = tokens[0].upper() if tokens else ""
 
     if first_token not in _ALLOWED_FIRST_TOKENS:
-        raise ToolError(  # noqa: TRY003
+        raise ToolError(
             f"read-only mode (FABRIC_MCP_READONLY) blocks non-SELECT statements "
             f"(got {first_token!r})"
         )
@@ -225,7 +223,7 @@ def assert_readonly_sql(statement: str) -> None:
     # Scan every token for forbidden keywords.
     for tok in tokens:
         if tok.upper() in _FORBIDDEN_TOKENS:
-            raise ToolError(  # noqa: TRY003
+            raise ToolError(
                 f"read-only mode (FABRIC_MCP_READONLY) blocks statements containing "
                 f"forbidden keyword {tok.upper()!r}"
             )
@@ -311,6 +309,6 @@ def assert_workspace_allowed(workspace_arg: str, resolved_id: str | None = None)
         candidates.add(resolved_id.strip().lower())
 
     if candidates.isdisjoint(allowed):
-        raise ToolError(  # noqa: TRY003
+        raise ToolError(
             f"workspace {workspace_arg!r} is not in the FABRIC_MCP_WORKSPACES allowlist"
         )

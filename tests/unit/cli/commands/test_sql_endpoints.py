@@ -18,7 +18,7 @@ from rich.console import Console
 from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._main import cli
 from fabric_dw.cli._render import render_refresh_table as _render_refresh_table
-from fabric_dw.exceptions import NotFound
+from fabric_dw.exceptions import NotFoundError
 from fabric_dw.models import TableSyncStatus, WarehouseKind
 
 WS_GUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
@@ -219,7 +219,7 @@ class TestEndpointsGet:
             ),
             patch(
                 "fabric_dw.cli.commands.sql_endpoints._resolve_item",
-                new=AsyncMock(side_effect=NotFound("endpoint not found")),
+                new=AsyncMock(side_effect=NotFoundError("endpoint not found")),
             ),
         ):
             result = runner.invoke(cli, ["sql-endpoints", "get", WS_GUID, EP_GUID])
@@ -399,7 +399,7 @@ class TestEndpointsRefresh:
             ),
             patch(
                 "fabric_dw.cli.commands.sql_endpoints._resolve_item",
-                new=AsyncMock(side_effect=NotFound("endpoint not found")),
+                new=AsyncMock(side_effect=NotFoundError("endpoint not found")),
             ),
         ):
             result = runner.invoke(cli, ["sql-endpoints", "refresh", WS_GUID, EP_GUID])

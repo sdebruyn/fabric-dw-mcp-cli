@@ -120,7 +120,7 @@ def require_warehouse(entry: _ItemEntry, item: str) -> None:
         ToolError: If the resolved item is a SQL Analytics Endpoint.
     """
     if entry.kind == WarehouseKind.SQL_ENDPOINT:
-        raise ToolError(f"{item!r}: {_SQL_ENDPOINT_DDL_ERROR}")  # noqa: TRY003
+        raise ToolError(f"{item!r}: {_SQL_ENDPOINT_DDL_ERROR}")
 
 
 def parse_qualified_name(qualified_name: str, kind: str = "object") -> tuple[str, str]:
@@ -140,9 +140,7 @@ def parse_qualified_name(qualified_name: str, kind: str = "object") -> tuple[str
     """
     schema, _, name = qualified_name.partition(".")
     if not schema or not name:
-        raise ToolError(  # noqa: TRY003
-            f"qualified_name must be <schema>.<{kind}>, got {qualified_name!r}"
-        )
+        raise ToolError(f"qualified_name must be <schema>.<{kind}>, got {qualified_name!r}")
     return schema, name
 
 
@@ -166,9 +164,7 @@ def make_sql_target(ws_id: UUID, entry: _ItemEntry, item: str) -> SqlTarget:
         ToolError: When *entry* has no connection string.
     """
     if entry.connection_string is None:
-        raise ToolError(  # noqa: TRY003
-            f"item {item!r} has no connection string; cannot execute SQL"
-        )
+        raise ToolError(f"item {item!r} has no connection string; cannot execute SQL")
     return SqlTarget(
         workspace_id=str(ws_id),
         database=entry.display_name,
@@ -184,7 +180,7 @@ async def resolve_item(resolver: Resolver, workspace: str, item: str) -> tuple[U
     throughout the tool handlers::
 
         ws_id = await resolver.workspace_id(workspace)  # lookup 1
-        entry = await resolver.item(workspace, item)     # lookup 2 (internal)
+        entry = await resolver.item(workspace, item)  # lookup 2 (internal)
 
     By calling ``workspace_id`` once and exposing the result alongside the
     entry, callers can pass ``ws_id`` to ``assert_workspace_allowed`` and

@@ -13,7 +13,7 @@ import contextlib
 
 import pytest
 
-from fabric_dw.exceptions import NotFound
+from fabric_dw.exceptions import NotFoundError
 from fabric_dw.models import Table
 from fabric_dw.services import tables
 from fabric_dw.sql import SqlTarget
@@ -55,5 +55,5 @@ async def test_create_read_clear_delete_roundtrip(ephemeral_sql_target: SqlTarge
         with contextlib.suppress(Exception):
             await tables.delete_table(ephemeral_sql_target, schema, table_name)
 
-    with pytest.raises((NotFound, Exception)):
+    with pytest.raises((NotFoundError, Exception)):
         await tables.read_table(ephemeral_sql_target, schema, table_name)

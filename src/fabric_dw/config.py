@@ -159,7 +159,7 @@ def set_default(key: str, value: str | None, path: Path | None = None) -> None:
     """
     allowed = {"workspace", "warehouse"}
     if key not in allowed:
-        raise ValueError(f"Unknown config key {key!r}; must be one of {sorted(allowed)}")  # noqa: TRY003
+        raise ValueError(f"Unknown config key {key!r}; must be one of {sorted(allowed)}")
     cfg = load_config(path)
     current = cfg.defaults
     new_defaults = Defaults(

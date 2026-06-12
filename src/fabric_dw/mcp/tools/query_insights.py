@@ -28,9 +28,7 @@ def _parse_dt(value: str | None, param: str) -> datetime | None:
     try:
         return datetime.fromisoformat(value)
     except ValueError as exc:
-        raise ToolError(  # noqa: TRY003
-            f"invalid {param} {value!r}: expected ISO-8601"
-        ) from exc
+        raise ToolError(f"invalid {param} {value!r}: expected ISO-8601") from exc
 
 
 def register(mcp: FastMCP) -> None:  # noqa: PLR0915

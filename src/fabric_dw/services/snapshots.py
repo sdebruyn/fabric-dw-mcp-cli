@@ -286,7 +286,7 @@ async def delete(
         name: The display name of the snapshot; used to evict the name-keyed entry.
 
     Raises:
-        NotFound: If the snapshot does not exist (HTTP 404).
+        NotFoundError: If the snapshot does not exist (HTTP 404).
     """
     await http.request(
         "DELETE",
@@ -324,7 +324,7 @@ async def roll_timestamp(
 
     Raises:
         ValueError: If *snapshot_name* contains any forbidden character.
-        PermissionDenied: If the driver reports a permission failure.
+        PermissionDeniedError: If the driver reports a permission failure.
     """
     _validate_snapshot_name(snapshot_name, param="snapshot_name")
 

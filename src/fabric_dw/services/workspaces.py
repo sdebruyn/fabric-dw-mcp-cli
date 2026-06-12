@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import http as http_module
 from uuid import UUID
 
-from fabric_dw.exceptions import FabricError, NotFound
+from fabric_dw.exceptions import FabricError, NotFoundError
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import Workspace
 
@@ -97,12 +98,16 @@ async def set_collation(
             f"/workspaces/{workspace_id}",
             json={"defaultDataWarehouseCollation": collation},
         )
-    except NotFound as exc:
+    except NotFoundError as exc:
         raise FabricError(portal_msg) from exc
     except FabricError:
         raise
 
     # http_client returns non-error responses (including 400) without raising;
     # treat any remaining 4xx as a portal-redirect case.
-    if 400 <= resp.status_code < 500:  # noqa: PLR2004
+    if (
+        http_module.HTTPStatus.BAD_REQUEST
+        <= resp.status_code
+        < http_module.HTTPStatus.INTERNAL_SERVER_ERROR
+    ):
         raise FabricError(portal_msg)

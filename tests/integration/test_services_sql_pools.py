@@ -10,7 +10,7 @@ from uuid import UUID
 
 import pytest
 
-from fabric_dw.exceptions import AlreadyExists, NotFound
+from fabric_dw.exceptions import AlreadyExistsError, NotFoundError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import SqlPool, SqlPoolsConfiguration
 from fabric_dw.services import sql_pools
@@ -82,8 +82,8 @@ async def test_create_update_delete_roundtrip(http: FabricHttpClient, workspace_
         assert created.max_resource_percentage == 10
         assert created.optimize_for_reads is True
 
-        # Duplicate name must raise AlreadyExists
-        with pytest.raises(AlreadyExists):
+        # Duplicate name must raise AlreadyExistsError
+        with pytest.raises(AlreadyExistsError):
             await sql_pools.create_pool(http, workspace_id, new_pool)
 
         # Update
@@ -101,8 +101,8 @@ async def test_create_update_delete_roundtrip(http: FabricHttpClient, workspace_
         after_delete = await sql_pools.delete_pool(http, workspace_id, pool_name)
         assert not any(p.name == pool_name for p in after_delete.custom_sql_pools)
 
-        # Missing name must raise NotFound
-        with pytest.raises(NotFound):
+        # Missing name must raise NotFoundError
+        with pytest.raises(NotFoundError):
             await sql_pools.delete_pool(http, workspace_id, pool_name)
 
     finally:

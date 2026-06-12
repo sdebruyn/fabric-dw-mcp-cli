@@ -9,7 +9,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from pydantic import Field
 
-from fabric_dw.exceptions import AlreadyExists, FabricError, NotFound
+from fabric_dw.exceptions import AlreadyExistsError, FabricError, NotFoundError
 from fabric_dw.mcp._context import get_context
 from fabric_dw.mcp._guards import (
     assert_destructive_allowed,
@@ -84,7 +84,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             raise fabric_err(exc) from exc
         pool = next((p for p in config.custom_sql_pools if p.name == pool_name), None)
         if pool is None:
-            raise ToolError(f"pool {pool_name!r} not found")  # noqa: TRY003
+            raise ToolError(f"pool {pool_name!r} not found")
         return pool.model_dump(by_alias=True, mode="json")
 
     @mcp.tool(name="create_sql_pool")
@@ -131,7 +131,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 }
             )
         except Exception as exc:
-            raise ToolError(f"Invalid pool: {exc}") from exc  # noqa: TRY003
+            raise ToolError(f"Invalid pool: {exc}") from exc
 
         ctx = get_context()
         try:
@@ -139,13 +139,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             assert_workspace_allowed(workspace, str(ws_id))
             _log.debug("create_sql_pool ws=%s name=%r max_percent=%d", ws_id, name, max_percent)
             result = await sql_pools_svc.create_pool(ctx.http, ws_id, pool)
-        except AlreadyExists as exc:
+        except AlreadyExistsError as exc:
             raise ToolError(str(exc)) from exc
         except FabricError as exc:
             raise fabric_err(exc) from exc
         created = next((p for p in result.custom_sql_pools if p.name == name), None)
         if created is None:
-            raise ToolError(  # noqa: TRY003
+            raise ToolError(
                 f"pool {name!r} was not found in the API response after creation; "
                 "the pool may have been created but is not yet visible (eventual consistency)"
             )
@@ -192,13 +192,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 classifier_type=classifier_type,
                 classifier_values=classifier_values,
             )
-        except NotFound as exc:
+        except NotFoundError as exc:
             raise ToolError(str(exc)) from exc
         except FabricError as exc:
             raise fabric_err(exc) from exc
         updated = next((p for p in result.custom_sql_pools if p.name == name), None)
         if updated is None:
-            raise ToolError(  # noqa: TRY003
+            raise ToolError(
                 f"pool {name!r} was not found in the API response after update; "
                 "the pool may have been updated but is not yet visible (eventual consistency)"
             )
@@ -223,7 +223,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             assert_workspace_allowed(workspace, str(ws_id))
             _log.debug("delete_sql_pool ws=%s pool=%r", ws_id, pool_name)
             await sql_pools_svc.delete_pool(ctx.http, ws_id, pool_name)
-        except NotFound as exc:
+        except NotFoundError as exc:
             raise ToolError(str(exc)) from exc
         except FabricError as exc:
             raise fabric_err(exc) from exc

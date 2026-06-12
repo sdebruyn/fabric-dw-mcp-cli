@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from fabric_dw.exceptions import AuthError, PermissionDenied
+from fabric_dw.exceptions import AuthError, PermissionDeniedError
 from fabric_dw.models import Connection, RunningQuery
 from fabric_dw.services import queries
 
@@ -184,7 +184,7 @@ async def test_list_running_closes_connection_after_success() -> None:
 
 
 async def test_list_running_maps_permission_denied() -> None:
-    """cursor.execute raising a 'permission was denied' fragment → PermissionDenied."""
+    """cursor.execute raising a 'permission was denied' fragment → PermissionDeniedError."""
     target = _make_target()
     conn = MagicMock()
     cursor = MagicMock()
@@ -193,7 +193,7 @@ async def test_list_running_maps_permission_denied() -> None:
 
     with (
         patch("fabric_dw.sql.open_connection", return_value=conn),
-        pytest.raises(PermissionDenied),
+        pytest.raises(PermissionDeniedError),
     ):
         await queries.list_running(target)
 
@@ -339,13 +339,13 @@ async def test_kill_maps_permission_denied_from_cursor() -> None:
 
     with (
         patch("fabric_dw.sql.open_connection", return_value=conn),
-        pytest.raises(PermissionDenied),
+        pytest.raises(PermissionDeniedError),
     ):
         await queries.kill(target, 42)
 
 
 async def test_kill_maps_auth_error_to_permission_denied() -> None:
-    """kill should map AuthError → PermissionDenied."""
+    """kill should map AuthError → PermissionDeniedError."""
     target = _make_target()
     conn = MagicMock()
     cursor = MagicMock()
@@ -354,7 +354,7 @@ async def test_kill_maps_auth_error_to_permission_denied() -> None:
 
     with (
         patch("fabric_dw.sql.open_connection", return_value=conn),
-        pytest.raises(PermissionDenied),
+        pytest.raises(PermissionDeniedError),
     ):
         await queries.kill(target, 42)
 
@@ -368,7 +368,7 @@ async def test_kill_permission_denied_message_contains_session_id() -> None:
 
     with (
         patch("fabric_dw.sql.open_connection", return_value=conn),
-        pytest.raises(PermissionDenied, match="42"),
+        pytest.raises(PermissionDeniedError, match="42"),
     ):
         await queries.kill(target, 42)
 
@@ -534,7 +534,7 @@ async def test_list_connections_maps_permission_denied() -> None:
 
     with (
         patch("fabric_dw.sql.open_connection", return_value=conn),
-        pytest.raises(PermissionDenied),
+        pytest.raises(PermissionDeniedError),
     ):
         await queries.list_connections(target)
 

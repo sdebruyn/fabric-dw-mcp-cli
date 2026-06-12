@@ -159,9 +159,7 @@ async def build_sql_target(
     """
     ws_id, entry = await resolve_item(http, workspace, item)
     if entry.connection_string is None:
-        raise click.ClickException(  # noqa: TRY003
-            f"Item {entry.display_name!r} has no connection string."
-        )
+        raise click.ClickException(f"Item {entry.display_name!r} has no connection string.")
     target = SqlTarget(
         workspace_id=str(ws_id),
         database=entry.display_name,
@@ -191,9 +189,7 @@ def parse_qualified_name(qualified_name: str, *, kind: str = "object") -> tuple[
     try:
         return _parse_qn(qualified_name)
     except ValueError:
-        raise click.UsageError(  # noqa: TRY003
-            f"Expected <schema>.{kind}, got {qualified_name!r}"
-        ) from None
+        raise click.UsageError(f"Expected <schema>.{kind}, got {qualified_name!r}") from None
 
 
 def load_select_body(select: str | None, from_file: str | None) -> str:
@@ -203,15 +199,15 @@ def load_select_body(select: str | None, from_file: str | None) -> str:
         click.UsageError: If neither or both are provided, or file is missing.
     """
     if select and from_file:
-        raise click.UsageError("Provide either --select or --from-file, not both.")  # noqa: TRY003
+        raise click.UsageError("Provide either --select or --from-file, not both.")
     if from_file:
         path = Path(from_file)
         if not path.is_file():
-            raise click.UsageError(f"File not found: {from_file}")  # noqa: TRY003
+            raise click.UsageError(f"File not found: {from_file}")
         return path.read_text(encoding="utf-8-sig").strip()
     if select:
         return select
-    raise click.UsageError("Provide --select or --from-file.")  # noqa: TRY003
+    raise click.UsageError("Provide --select or --from-file.")
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +230,7 @@ def parse_iso_datetime(value: str, param_name: str, *, assume_utc: bool = True) 
     try:
         dt = datetime.fromisoformat(value)
     except ValueError as exc:
-        raise click.UsageError(  # noqa: TRY003
+        raise click.UsageError(
             f"invalid {param_name} {value!r}: expected ISO-8601 (e.g. 2024-01-01T00:00:00)"
         ) from exc
     if assume_utc:
@@ -243,7 +239,7 @@ def parse_iso_datetime(value: str, param_name: str, *, assume_utc: bool = True) 
     _DT_YEAR_MAX = 2100  # noqa: N806
     # Sanity range check: reject obviously wrong years (e.g. epoch 0 or year 9999).
     if not (_DT_YEAR_MIN <= dt.year <= _DT_YEAR_MAX):
-        raise click.UsageError(  # noqa: TRY003
+        raise click.UsageError(
             f"invalid {param_name} {value!r}: year {dt.year} is out of the expected range "
             "(2000-2100). Check the timestamp."
         )
@@ -314,7 +310,7 @@ def resolve_workspace_arg(ctx: CliContext, value: str | None) -> str:
     cfg_val = ctx.config.defaults.workspace
     if cfg_val is not None:
         return cfg_val
-    raise click.UsageError(  # noqa: TRY003
+    raise click.UsageError(
         "no workspace specified; pass as argument or run 'fabric-dw config set workspace ...'"
     )
 
@@ -335,7 +331,7 @@ def resolve_warehouse_arg(ctx: CliContext, value: str | None) -> str:
     cfg_val = ctx.config.defaults.warehouse
     if cfg_val is not None:
         return cfg_val
-    raise click.UsageError(  # noqa: TRY003
+    raise click.UsageError(
         "no warehouse specified; pass as argument or run 'fabric-dw config set warehouse ...'"
     )
 
@@ -361,8 +357,6 @@ def validate_workspace_or_all_workspaces(workspace: str | None, all_workspaces: 
         click.UsageError: If both or neither are provided.
     """
     if workspace and all_workspaces:
-        raise click.UsageError("WORKSPACE and --all-workspaces are mutually exclusive.")  # noqa: TRY003
+        raise click.UsageError("WORKSPACE and --all-workspaces are mutually exclusive.")
     if not workspace and not all_workspaces:
-        raise click.UsageError(  # noqa: TRY003
-            "Provide WORKSPACE or pass --all-workspaces / -A."
-        )
+        raise click.UsageError("Provide WORKSPACE or pass --all-workspaces / -A.")

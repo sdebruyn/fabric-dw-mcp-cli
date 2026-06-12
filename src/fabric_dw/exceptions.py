@@ -36,11 +36,11 @@ class AuthError(FabricError):
     """Raised on HTTP 401 - authentication token missing or invalid."""
 
 
-class PermissionDenied(FabricError):  # noqa: N818
+class PermissionDeniedError(FabricError):
     """Raised on HTTP 403 - caller lacks the required permission."""
 
 
-class NotFound(FabricError):  # noqa: N818
+class NotFoundError(FabricError):
     """Raised on HTTP 404 - requested resource does not exist."""
 
 
@@ -52,7 +52,7 @@ class FabricServerError(FabricError):
     """Raised on persistent 5xx errors or a failed LRO operation."""
 
 
-class AlreadyExists(FabricError):  # noqa: N818
+class AlreadyExistsError(FabricError):
     """Raised when a resource with the given name already exists."""
 
 
@@ -75,3 +75,9 @@ class ConfigError(FabricError):
 
 class ItemKindError(FabricError):
     """Raised when an operation is not valid for the resolved item kind."""
+
+
+# Deprecated aliases — remove after next release.
+PermissionDenied = PermissionDeniedError
+NotFound = NotFoundError
+AlreadyExists = AlreadyExistsError

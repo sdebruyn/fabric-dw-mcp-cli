@@ -52,8 +52,8 @@ async def get_settings(
         The current :class:`~fabric_dw.models.AuditSettings`.
 
     Raises:
-        PermissionDenied: If the caller lacks the required permission (HTTP 403).
-        NotFound: If the warehouse does not exist (HTTP 404).
+        PermissionDeniedError: If the caller lacks the required permission (HTTP 403).
+        NotFoundError: If the warehouse does not exist (HTTP 404).
     """
     path = _audit_path(workspace_id, warehouse_id)
     resp = await http.request("GET", HttpBase.FABRIC, path)
@@ -81,7 +81,7 @@ async def enable(
 
     Raises:
         ValueError: If *retention_days* is negative.
-        PermissionDenied: If the caller lacks the required permission (HTTP 403).
+        PermissionDeniedError: If the caller lacks the required permission (HTTP 403).
     """
     if retention_days < 0:
         msg = f"retention_days must be >= 0; got {retention_days}"
@@ -114,7 +114,7 @@ async def disable(
         The fresh :class:`~fabric_dw.models.AuditSettings` after the update.
 
     Raises:
-        PermissionDenied: If the caller lacks the required permission (HTTP 403).
+        PermissionDeniedError: If the caller lacks the required permission (HTTP 403).
     """
     path = _audit_path(workspace_id, warehouse_id)
     await http.request("PATCH", HttpBase.FABRIC, path, json={"state": "Disabled"})
@@ -150,7 +150,7 @@ async def set_retention(
 
     Raises:
         ValueError: If *days* is less than 1.
-        PermissionDenied: If the caller lacks the required permission (HTTP 403).
+        PermissionDeniedError: If the caller lacks the required permission (HTTP 403).
     """
     if days < 1:
         msg = f"days must be >= 1; got {days}"
@@ -192,7 +192,7 @@ async def set_action_groups(
 
     Raises:
         ValueError: If any name in *action_groups* does not match ``^[A-Z0-9_]+$``.
-        PermissionDenied: If the caller lacks the required permission (HTTP 403).
+        PermissionDeniedError: If the caller lacks the required permission (HTTP 403).
     """
     for name in action_groups:
         if not _ACTION_GROUP_RE.match(name):
@@ -261,8 +261,8 @@ async def add_action_group(
         ValueError: If *group* does not match ``^[A-Z0-9_]+$``.
         ValueError: If auditing is currently disabled (``state == "Disabled"``).
             Enable auditing first with :func:`enable`.
-        PermissionDenied: If the caller lacks the required permission (HTTP 403).
-        NotFound: If the warehouse does not exist (HTTP 404).
+        PermissionDeniedError: If the caller lacks the required permission (HTTP 403).
+        NotFoundError: If the warehouse does not exist (HTTP 404).
     """
     if not _ACTION_GROUP_RE.match(group):
         msg = (
@@ -331,8 +331,8 @@ async def remove_action_group(
         ValueError: If *group* does not match ``^[A-Z0-9_]+$``.
         ValueError: If auditing is currently disabled (``state == "Disabled"``).
             Enable auditing first with :func:`enable`.
-        PermissionDenied: If the caller lacks the required permission (HTTP 403).
-        NotFound: If the warehouse does not exist (HTTP 404).
+        PermissionDeniedError: If the caller lacks the required permission (HTTP 403).
+        NotFoundError: If the warehouse does not exist (HTTP 404).
     """
     if not _ACTION_GROUP_RE.match(group):
         msg = (

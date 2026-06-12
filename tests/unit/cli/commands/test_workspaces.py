@@ -13,7 +13,7 @@ import pytest
 from click.testing import CliRunner
 
 from fabric_dw.cli._main import cli
-from fabric_dw.exceptions import NotFound
+from fabric_dw.exceptions import NotFoundError
 from tests.fixtures.api_payloads import WORKSPACE_GET_PAYLOAD
 
 WS_GUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
@@ -174,7 +174,7 @@ class TestWorkspacesGet:
     def test_get_not_found_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
-        mock_http.request = AsyncMock(side_effect=NotFound("not found"))
+        mock_http.request = AsyncMock(side_effect=NotFoundError("not found"))
         with patch(
             "fabric_dw.cli.commands.workspaces.build_http_client",
             new=_make_cm(mock_http, None),

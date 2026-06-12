@@ -15,7 +15,7 @@ from click.testing import CliRunner
 
 from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._main import cli
-from fabric_dw.exceptions import NotFound, PermissionDenied
+from fabric_dw.exceptions import NotFoundError, PermissionDeniedError
 from fabric_dw.models import Schema, WarehouseKind
 from fabric_dw.sql import SqlTarget
 
@@ -137,7 +137,7 @@ class TestSchemasList:
             ),
             patch(
                 "fabric_dw.cli.commands.schemas.build_sql_target",
-                new=AsyncMock(side_effect=NotFound("not found")),
+                new=AsyncMock(side_effect=NotFoundError("not found")),
             ),
         ):
             result = runner.invoke(cli, ["schemas", "list", WS_GUID, WH_GUID])
@@ -159,7 +159,7 @@ class TestSchemasList:
             ),
             patch(
                 "fabric_dw.services.schemas.list_schemas",
-                new=AsyncMock(side_effect=PermissionDenied("access denied")),
+                new=AsyncMock(side_effect=PermissionDeniedError("access denied")),
             ),
         ):
             result = runner.invoke(cli, ["schemas", "list", WS_GUID, WH_GUID])
@@ -246,7 +246,7 @@ class TestSchemasCreate:
             ),
             patch(
                 "fabric_dw.services.schemas.create_schema",
-                new=AsyncMock(side_effect=PermissionDenied("access denied")),
+                new=AsyncMock(side_effect=PermissionDeniedError("access denied")),
             ),
         ):
             result = runner.invoke(cli, ["schemas", "create", WS_GUID, WH_GUID, "sales"])
@@ -406,7 +406,7 @@ class TestSchemasDelete:
             ),
             patch(
                 "fabric_dw.services.schemas.delete_schema",
-                new=AsyncMock(side_effect=PermissionDenied("access denied")),
+                new=AsyncMock(side_effect=PermissionDeniedError("access denied")),
             ),
         ):
             result = runner.invoke(cli, ["-y", "schemas", "delete", WS_GUID, WH_GUID, "sales"])

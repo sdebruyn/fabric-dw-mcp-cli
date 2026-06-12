@@ -12,7 +12,7 @@ import httpx
 import pytest
 import respx
 
-from fabric_dw.exceptions import NotFound, PermissionDenied
+from fabric_dw.exceptions import NotFoundError, PermissionDeniedError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import CreationModeType, RestorePoint
 from fabric_dw.services import restore
@@ -181,11 +181,11 @@ async def test_list_points_follows_pagination() -> None:
 
 @respx.mock
 async def test_list_points_403_raises_permission_denied() -> None:
-    """list_points should propagate PermissionDenied on 403."""
+    """list_points should propagate PermissionDeniedError on 403."""
     respx.get(url__regex=rf"{_RP_LIST_URL}(\?.*)?$").mock(return_value=httpx.Response(403))
 
     async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
-        with pytest.raises(PermissionDenied):
+        with pytest.raises(PermissionDeniedError):
             await restore.list_points(http, _WS_ID, _WH_ID)
 
 
@@ -209,21 +209,21 @@ async def test_get_point_returns_restore_point() -> None:
 
 @respx.mock
 async def test_get_point_404_raises_not_found() -> None:
-    """get_point should raise NotFound on 404."""
+    """get_point should raise NotFoundError on 404."""
     respx.get(_RP_URL).mock(return_value=httpx.Response(404))
 
     async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
-        with pytest.raises(NotFound):
+        with pytest.raises(NotFoundError):
             await restore.get_point(http, _WS_ID, _WH_ID, _RP_ID)
 
 
 @respx.mock
 async def test_get_point_403_raises_permission_denied() -> None:
-    """get_point should raise PermissionDenied on 403."""
+    """get_point should raise PermissionDeniedError on 403."""
     respx.get(_RP_URL).mock(return_value=httpx.Response(403))
 
     async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
-        with pytest.raises(PermissionDenied):
+        with pytest.raises(PermissionDeniedError):
             await restore.get_point(http, _WS_ID, _WH_ID, _RP_ID)
 
 
@@ -435,11 +435,11 @@ def test_update_point_no_args_raises_value_error() -> None:
 
 @respx.mock
 async def test_update_point_404_raises_not_found() -> None:
-    """update_point should raise NotFound on 404."""
+    """update_point should raise NotFoundError on 404."""
     respx.patch(_RP_URL).mock(return_value=httpx.Response(404))
 
     async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
-        with pytest.raises(NotFound):
+        with pytest.raises(NotFoundError):
             await restore.update_point(http, _WS_ID, _WH_ID, _RP_ID, name="X")
 
 
@@ -461,21 +461,21 @@ async def test_delete_point_200_returns_none() -> None:
 
 @respx.mock
 async def test_delete_point_404_raises_not_found() -> None:
-    """delete_point should raise NotFound on 404."""
+    """delete_point should raise NotFoundError on 404."""
     respx.delete(_RP_URL).mock(return_value=httpx.Response(404))
 
     async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
-        with pytest.raises(NotFound):
+        with pytest.raises(NotFoundError):
             await restore.delete_point(http, _WS_ID, _WH_ID, _RP_ID)
 
 
 @respx.mock
 async def test_delete_point_403_raises_permission_denied() -> None:
-    """delete_point should raise PermissionDenied on 403."""
+    """delete_point should raise PermissionDeniedError on 403."""
     respx.delete(_RP_URL).mock(return_value=httpx.Response(403))
 
     async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
-        with pytest.raises(PermissionDenied):
+        with pytest.raises(PermissionDeniedError):
             await restore.delete_point(http, _WS_ID, _WH_ID, _RP_ID)
 
 
@@ -516,19 +516,19 @@ async def test_restore_in_place_lro_202_polls_to_completion() -> None:
 
 @respx.mock
 async def test_restore_in_place_404_raises_not_found() -> None:
-    """restore_in_place should raise NotFound on 404."""
+    """restore_in_place should raise NotFoundError on 404."""
     respx.post(f"{_RP_URL}/restore").mock(return_value=httpx.Response(404))
 
     async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
-        with pytest.raises(NotFound):
+        with pytest.raises(NotFoundError):
             await restore.restore_in_place(http, _WS_ID, _WH_ID, _RP_ID)
 
 
 @respx.mock
 async def test_restore_in_place_403_raises_permission_denied() -> None:
-    """restore_in_place should raise PermissionDenied on 403."""
+    """restore_in_place should raise PermissionDeniedError on 403."""
     respx.post(f"{_RP_URL}/restore").mock(return_value=httpx.Response(403))
 
     async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
-        with pytest.raises(PermissionDenied):
+        with pytest.raises(PermissionDeniedError):
             await restore.restore_in_place(http, _WS_ID, _WH_ID, _RP_ID)

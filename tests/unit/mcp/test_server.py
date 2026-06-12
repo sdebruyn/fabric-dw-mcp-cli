@@ -24,7 +24,7 @@ from uuid import UUID
 import pytest
 
 from fabric_dw.cache import ItemEntry
-from fabric_dw.exceptions import NotFound, PermissionDenied
+from fabric_dw.exceptions import NotFoundError, PermissionDeniedError
 from fabric_dw.models import (
     AuditSettings,
     ItemAccess,
@@ -378,7 +378,7 @@ async def test_fabric_error_becomes_tool_error(ctx_patch) -> None:
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
-    not_found_error = NotFound("workspace 'x' not found")
+    not_found_error = NotFoundError("workspace 'x' not found")
 
     with (
         ctx_patch,
@@ -391,7 +391,7 @@ async def test_fabric_error_becomes_tool_error(ctx_patch) -> None:
         await mcp._tool_manager.call_tool("list_workspaces", {})
 
     err = exc_info.value
-    assert "NotFound" in str(err) or "not found" in str(err).lower()
+    assert "NotFoundError" in str(err) or "not found" in str(err).lower()
 
 
 # ---------------------------------------------------------------------------
@@ -538,17 +538,19 @@ async def test_list_running_queries_happy_path(mock_ctx, ctx_patch) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 12. NotFound error becomes ToolError
+# 12. NotFoundError error becomes ToolError
 # ---------------------------------------------------------------------------
 
 
 async def test_not_found_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
-    """NotFound (a FabricError subclass) must become a ToolError."""
+    """NotFoundError (a FabricError subclass) must become a ToolError."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
-    mock_ctx.resolver.workspace_id = AsyncMock(side_effect=NotFound("workspace 'boom' not found"))
+    mock_ctx.resolver.workspace_id = AsyncMock(
+        side_effect=NotFoundError("workspace 'boom' not found")
+    )
 
     with (
         ctx_patch,
@@ -1036,7 +1038,7 @@ async def test_get_sql_endpoint_permissions_happy_path(mock_ctx, ctx_patch) -> N
 async def test_get_warehouse_permissions_permission_denied_becomes_tool_error(
     mock_ctx, ctx_patch
 ) -> None:
-    """get_warehouse_permissions wraps PermissionDenied into ToolError."""
+    """get_warehouse_permissions wraps PermissionDeniedError into ToolError."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -1049,7 +1051,7 @@ async def test_get_warehouse_permissions_permission_denied_becomes_tool_error(
         ctx_patch,
         patch(
             "fabric_dw.services.permissions.list_item_access",
-            new=AsyncMock(side_effect=PermissionDenied("Fabric Administrator")),
+            new=AsyncMock(side_effect=PermissionDeniedError("Fabric Administrator")),
         ),
         pytest.raises(ToolError),
     ):
