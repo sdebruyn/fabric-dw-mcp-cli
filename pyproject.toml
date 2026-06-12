@@ -114,7 +114,7 @@ select = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["ANN", "S101", "PLR2004"]
+"tests/**" = ["ANN", "S101", "PLR2004", "TRY003", "FBT001"]
 "src/fabric_dw/services/**" = ["PLR0913"]
 # Click injects bool flags via decorators; FBT001 is a false-positive for Click commands.
 # PLR0913 fires on commands with --limit/--since/--until; suppress at the CLI layer.
