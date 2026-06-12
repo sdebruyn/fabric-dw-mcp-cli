@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
-from typing import Any
+import logging
+from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
+from pydantic import Field
 
 from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
 from fabric_dw.mcp._guards import assert_workspace_allowed, assert_writes_allowed
-from fabric_dw.mcp._helpers import fabric_err
+from fabric_dw.mcp._helpers import fabric_err, resolve_item
 from fabric_dw.services import audit
 
 __all__ = ["register"]
+
+_log = logging.getLogger(__name__)
 
 
 def register(mcp: FastMCP) -> None:  # noqa: PLR0915
@@ -25,9 +29,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
             assert_workspace_allowed(workspace, str(ws_id))
-            item = await ctx.resolver.item(workspace, warehouse)
+            _log.debug("get_audit_settings ws=%s item=%s", ws_id, item.id)
             result = await audit.get_settings(ctx.http, ws_id, item.id)
         except FabricError as exc:
             raise fabric_err(exc) from exc
@@ -35,16 +39,24 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
 
     @mcp.tool(name="enable_audit")
     async def enable_audit(
-        workspace: str, warehouse: str, retention_days: int = 0
+        workspace: str,
+        warehouse: str,
+        retention_days: Annotated[int, Field(ge=0, le=3650)] = 0,
     ) -> dict[str, Any]:
-        """Enable SQL auditing on a warehouse."""
+        """Enable SQL auditing on a warehouse.
+
+        Args:
+            workspace: Workspace name or GUID.
+            warehouse: Warehouse name or GUID.
+            retention_days: Log retention in days (0-3650; 0 = unlimited). Default 0.
+        """
         assert_writes_allowed("enable_audit")
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
             assert_workspace_allowed(workspace, str(ws_id))
-            item = await ctx.resolver.item(workspace, warehouse)
+            _log.debug("enable_audit ws=%s item=%s retention=%d", ws_id, item.id, retention_days)
             result = await audit.enable(ctx.http, ws_id, item.id, retention_days=retention_days)
         except FabricError as exc:
             raise fabric_err(exc) from exc
@@ -57,9 +69,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
             assert_workspace_allowed(workspace, str(ws_id))
-            item = await ctx.resolver.item(workspace, warehouse)
+            _log.debug("disable_audit ws=%s item=%s", ws_id, item.id)
             result = await audit.disable(ctx.http, ws_id, item.id)
         except FabricError as exc:
             raise fabric_err(exc) from exc
@@ -74,9 +86,11 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
             assert_workspace_allowed(workspace, str(ws_id))
-            item = await ctx.resolver.item(workspace, warehouse)
+            _log.debug(
+                "set_audit_action_groups ws=%s item=%s groups=%s", ws_id, item.id, action_groups
+            )
             result = await audit.set_action_groups(ctx.http, ws_id, item.id, action_groups)
         except FabricError as exc:
             raise fabric_err(exc) from exc
@@ -100,9 +114,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
             assert_workspace_allowed(workspace, str(ws_id))
-            item = await ctx.resolver.item(workspace, warehouse)
+            _log.debug("add_audit_group ws=%s item=%s group=%r", ws_id, item.id, group)
             result = await audit.add_action_group(ctx.http, ws_id, item.id, group)
         except ValueError as exc:
             raise ToolError(str(exc)) from exc
@@ -128,9 +142,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
             assert_workspace_allowed(workspace, str(ws_id))
-            item = await ctx.resolver.item(workspace, warehouse)
+            _log.debug("remove_audit_group ws=%s item=%s group=%r", ws_id, item.id, group)
             result = await audit.remove_action_group(ctx.http, ws_id, item.id, group)
         except ValueError as exc:
             raise ToolError(str(exc)) from exc
@@ -139,7 +153,11 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         return result.model_dump(by_alias=True, mode="json")
 
     @mcp.tool(name="set_audit_retention")
-    async def set_audit_retention(workspace: str, warehouse: str, days: int) -> dict[str, Any]:
+    async def set_audit_retention(
+        workspace: str,
+        warehouse: str,
+        days: Annotated[int, Field(ge=1, le=3650)],
+    ) -> dict[str, Any]:
         """Update the audit log retention period without changing the audit enabled/disabled state.
 
         Audit must already be enabled; if disabled, enable it first with ``enable_audit``.
@@ -147,15 +165,15 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         Args:
             workspace: Workspace name or GUID.
             warehouse: Warehouse name or GUID.
-            days: Retention period in days (>= 1). The API enforces its own upper bound.
+            days: Retention period in days (1-3650). The API enforces its own upper bound.
         """
         assert_writes_allowed("set_audit_retention")
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
             assert_workspace_allowed(workspace, str(ws_id))
-            item = await ctx.resolver.item(workspace, warehouse)
+            _log.debug("set_audit_retention ws=%s item=%s days=%d", ws_id, item.id, days)
             result = await audit.set_retention(ctx.http, ws_id, item.id, days=days)
         except ValueError as exc:
             raise ToolError(str(exc)) from exc

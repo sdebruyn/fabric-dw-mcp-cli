@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
@@ -16,11 +17,12 @@ from fabric_dw.mcp._guards import (
     assert_readonly_sql,
     assert_workspace_allowed,
 )
-from fabric_dw.mcp._helpers import fabric_err
+from fabric_dw.mcp._helpers import fabric_err, make_sql_target, resolve_item
 from fabric_dw.services import sql_exec as _sql_exec_svc
-from fabric_dw.sql import SqlTarget
 
 __all__ = ["register"]
+
+_log = logging.getLogger(__name__)
 
 
 def register(mcp: FastMCP) -> None:
@@ -72,17 +74,10 @@ def register(mcp: FastMCP) -> None:
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
             assert_workspace_allowed(workspace, str(ws_id))
-            entry = await ctx.resolver.item(workspace, item)
-            if entry.connection_string is None:
-                msg = f"item {item!r} has no connection string; cannot execute SQL"
-                raise FabricError(msg)  # noqa: TRY301
-            target = SqlTarget(
-                workspace_id=str(ws_id),
-                database=entry.display_name,
-                connection_string=entry.connection_string,
-            )
+            _log.debug("execute_sql ws=%s item=%s max_rows=%d", ws_id, entry.id, max_rows)
+            target = make_sql_target(ws_id, entry, item)
             result = await _sql_exec_svc.execute(
                 target, query, mode=ctx.auth_mode, row_limit=max_rows
             )

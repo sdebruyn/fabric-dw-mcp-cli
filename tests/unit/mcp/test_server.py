@@ -317,14 +317,58 @@ async def test_list_workspaces_happy_path(ctx_patch) -> None:
 
 @pytest.mark.asyncio
 async def test_clear_cache_side_effect(mock_ctx, ctx_patch) -> None:
-    """clear_cache must call LookupCache.clear() exactly once."""
+    """clear_cache(scope='all') must call LookupCache.clear() and clear_negative_cache."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     with ctx_patch:
         result = await mcp._tool_manager.call_tool("clear_cache", {})
 
     mock_ctx.cache.clear.assert_called_once()
-    assert result == {"cleared": True}
+    mock_ctx.resolver.clear_negative_cache.assert_called_once()
+    assert result["scope"] == "all"
+    assert result["negative_cache_cleared"] is True
+
+
+@pytest.mark.asyncio
+async def test_clear_cache_scope_workspaces(mock_ctx, ctx_patch) -> None:
+    """clear_cache(scope='workspaces') must NOT call full clear() or clear_negative_cache."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    # Provide a minimal _read/_write implementation on the mock cache so the
+    # scoped clear can interact with it.
+    mock_ctx.cache._lock = __import__("threading").Lock()
+    mock_ctx.cache._read = lambda: {"version": 1, "workspaces": {"ws1": {}}, "items": {}}
+    mock_ctx.cache._write = lambda _: None
+
+    with ctx_patch:
+        result = await mcp._tool_manager.call_tool("clear_cache", {"scope": "workspaces"})
+
+    mock_ctx.cache.clear.assert_not_called()
+    mock_ctx.resolver.clear_negative_cache.assert_not_called()
+    assert result["scope"] == "workspaces"
+    assert result["negative_cache_cleared"] is False
+
+
+@pytest.mark.asyncio
+async def test_clear_cache_scope_items(mock_ctx, ctx_patch) -> None:
+    """clear_cache(scope='items') must NOT call full clear() or clear_negative_cache."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.cache._lock = __import__("threading").Lock()
+    mock_ctx.cache._read = lambda: {
+        "version": 1,
+        "workspaces": {},
+        "items": {"ws-id": {"item1": {}}},
+    }
+    mock_ctx.cache._write = lambda _: None
+
+    with ctx_patch:
+        result = await mcp._tool_manager.call_tool("clear_cache", {"scope": "items"})
+
+    mock_ctx.cache.clear.assert_not_called()
+    mock_ctx.resolver.clear_negative_cache.assert_not_called()
+    assert result["scope"] == "items"
+    assert result["negative_cache_cleared"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -468,7 +512,7 @@ async def test_get_audit_settings_happy_path(mock_ctx, ctx_patch) -> None:
     assert isinstance(result, dict)
     assert result["state"] == "Enabled"
     assert result["retentionDays"] == 30
-    mock_ctx.resolver.item.assert_called_once_with(_WS_NAME, _WH_NAME)
+    mock_ctx.resolver.item.assert_called_once_with(str(_WS_ID), _WH_NAME)
 
 
 # ---------------------------------------------------------------------------
@@ -806,7 +850,7 @@ async def test_add_audit_group_happy_path(mock_ctx, ctx_patch) -> None:
 
     assert isinstance(result, dict)
     assert result["state"] == "Enabled"
-    mock_ctx.resolver.item.assert_called_once_with(_WS_NAME, _WH_NAME)
+    mock_ctx.resolver.item.assert_called_once_with(str(_WS_ID), _WH_NAME)
 
 
 @pytest.mark.asyncio
@@ -833,7 +877,7 @@ async def test_remove_audit_group_happy_path(mock_ctx, ctx_patch) -> None:
 
     assert isinstance(result, dict)
     assert result["state"] == "Enabled"
-    mock_ctx.resolver.item.assert_called_once_with(_WS_NAME, _WH_NAME)
+    mock_ctx.resolver.item.assert_called_once_with(str(_WS_ID), _WH_NAME)
 
 
 # ---------------------------------------------------------------------------

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -14,10 +15,12 @@ from fabric_dw.mcp._guards import (
     assert_workspace_allowed,
     assert_writes_allowed,
 )
-from fabric_dw.mcp._helpers import fabric_err
+from fabric_dw.mcp._helpers import fabric_err, resolve_item, tool_err
 from fabric_dw.services import restore as restore_svc
 
 __all__ = ["register"]
+
+_log = logging.getLogger(__name__)
 
 
 def register(mcp: FastMCP) -> None:  # noqa: PLR0915
@@ -29,9 +32,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
             assert_workspace_allowed(workspace, str(ws_id))
-            item = await ctx.resolver.item(workspace, warehouse)
+            _log.debug("list_restore_points ws=%s item=%s", ws_id, item.id)
             result = await restore_svc.list_points(ctx.http, ws_id, item.id)
         except FabricError as exc:
             raise fabric_err(exc) from exc
@@ -51,9 +54,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
             assert_workspace_allowed(workspace, str(ws_id))
-            item = await ctx.resolver.item(workspace, warehouse)
+            _log.debug("get_restore_point ws=%s item=%s rp=%r", ws_id, item.id, restore_point_id)
             result = await restore_svc.get_point(ctx.http, ws_id, item.id, restore_point_id)
         except FabricError as exc:
             raise fabric_err(exc) from exc
@@ -78,9 +81,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
             assert_workspace_allowed(workspace, str(ws_id))
-            item = await ctx.resolver.item(workspace, warehouse)
+            _log.debug("create_restore_point ws=%s item=%s name=%r", ws_id, item.id, name)
             result = await restore_svc.create_point(
                 ctx.http, ws_id, item.id, name=name, description=description
             )
@@ -111,9 +114,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
             assert_workspace_allowed(workspace, str(ws_id))
-            item = await ctx.resolver.item(workspace, warehouse)
+            _log.debug("update_restore_point ws=%s item=%s rp=%r", ws_id, item.id, restore_point_id)
             result = await restore_svc.update_point(
                 ctx.http,
                 ws_id,
@@ -146,9 +149,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
             assert_workspace_allowed(workspace, str(ws_id))
-            item = await ctx.resolver.item(workspace, warehouse)
+            _log.debug("delete_restore_point ws=%s item=%s rp=%r", ws_id, item.id, restore_point_id)
             await restore_svc.delete_point(ctx.http, ws_id, item.id, restore_point_id)
         except FabricError as exc:
             raise fabric_err(exc) from exc
@@ -174,10 +177,15 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
             assert_workspace_allowed(workspace, str(ws_id))
-            item = await ctx.resolver.item(workspace, warehouse)
+            _log.debug(
+                "restore_warehouse_in_place ws=%s item=%s rp=%r",
+                ws_id,
+                item.id,
+                restore_point_id,
+            )
             await restore_svc.restore_in_place(ctx.http, ws_id, item.id, restore_point_id)
-        except FabricError as exc:
-            raise fabric_err(exc) from exc
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
         return {"restored": True, "restore_point_id": restore_point_id}

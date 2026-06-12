@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -9,11 +10,12 @@ from mcp.server.fastmcp import FastMCP
 from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
 from fabric_dw.mcp._guards import assert_workspace_allowed, assert_writes_allowed
-from fabric_dw.mcp._helpers import fabric_err
+from fabric_dw.mcp._helpers import fabric_err, make_sql_target, resolve_item, tool_err
 from fabric_dw.services import queries
-from fabric_dw.sql import SqlTarget
 
 __all__ = ["register"]
+
+_log = logging.getLogger(__name__)
 
 
 def register(mcp: FastMCP) -> None:
@@ -25,17 +27,10 @@ def register(mcp: FastMCP) -> None:
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
             assert_workspace_allowed(workspace, str(ws_id))
-            item = await ctx.resolver.item(workspace, warehouse)
-            if item.connection_string is None:
-                msg = f"warehouse {warehouse!r} has no connection string; cannot query DMVs"
-                raise FabricError(msg)  # noqa: TRY301
-            target = SqlTarget(
-                workspace_id=str(ws_id),
-                database=item.display_name,
-                connection_string=item.connection_string,
-            )
+            _log.debug("list_running_queries ws=%s item=%s", ws_id, item.id)
+            target = make_sql_target(ws_id, item, warehouse)
             result = await queries.list_running(target, mode=ctx.auth_mode)
         except FabricError as exc:
             raise fabric_err(exc) from exc
@@ -47,17 +42,10 @@ def register(mcp: FastMCP) -> None:
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
             assert_workspace_allowed(workspace, str(ws_id))
-            item = await ctx.resolver.item(workspace, warehouse)
-            if item.connection_string is None:
-                msg = f"warehouse {warehouse!r} has no connection string; cannot query DMVs"
-                raise FabricError(msg)  # noqa: TRY301
-            target = SqlTarget(
-                workspace_id=str(ws_id),
-                database=item.display_name,
-                connection_string=item.connection_string,
-            )
+            _log.debug("list_connections ws=%s item=%s", ws_id, item.id)
+            target = make_sql_target(ws_id, item, warehouse)
             result = await queries.list_connections(target, mode=ctx.auth_mode)
         except FabricError as exc:
             raise fabric_err(exc) from exc
@@ -70,18 +58,11 @@ def register(mcp: FastMCP) -> None:
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
             assert_workspace_allowed(workspace, str(ws_id))
-            item = await ctx.resolver.item(workspace, warehouse)
-            if item.connection_string is None:
-                msg = f"warehouse {warehouse!r} has no connection string; cannot kill sessions"
-                raise FabricError(msg)  # noqa: TRY301
-            target = SqlTarget(
-                workspace_id=str(ws_id),
-                database=item.display_name,
-                connection_string=item.connection_string,
-            )
+            _log.debug("kill_session ws=%s item=%s session=%s", ws_id, item.id, session_id)
+            target = make_sql_target(ws_id, item, warehouse)
             await queries.kill(target, session_id, mode=ctx.auth_mode)
-        except FabricError as exc:
-            raise fabric_err(exc) from exc
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
         return {"killed": True, "session_id": session_id}

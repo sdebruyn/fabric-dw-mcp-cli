@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any
+import logging
+from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
+from pydantic import Field
 
 from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
@@ -14,12 +15,18 @@ from fabric_dw.mcp._guards import (
     assert_workspace_allowed,
     assert_writes_allowed,
 )
-from fabric_dw.mcp._helpers import fabric_err, parse_qualified_name
+from fabric_dw.mcp._helpers import (
+    make_sql_target,
+    parse_qualified_name,
+    resolve_item,
+    safe_rows,
+    tool_err,
+)
 from fabric_dw.services import tables as tables_svc
-from fabric_dw.sql import SqlTarget
-from fabric_dw.sql_io import json_safe as _json_safe_value
 
 __all__ = ["register"]
+
+_log = logging.getLogger(__name__)
 
 
 def register(mcp: FastMCP) -> None:  # noqa: PLR0915
@@ -39,25 +46,21 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
             assert_workspace_allowed(workspace, str(ws_id))
-            entry = await ctx.resolver.item(workspace, item)
-            if entry.connection_string is None:
-                msg = f"item {item!r} has no connection string; cannot query tables"
-                raise FabricError(msg)  # noqa: TRY301
-            target = SqlTarget(
-                workspace_id=str(ws_id),
-                database=entry.display_name,
-                connection_string=entry.connection_string,
-            )
+            _log.debug("list_tables ws=%s item=%s schema=%r", ws_id, entry.id, schema)
+            target = make_sql_target(ws_id, entry, item)
             result = await tables_svc.list_tables(target, schema=schema, mode=ctx.auth_mode)
         except (ValueError, FabricError) as exc:
-            raise fabric_err(exc) if isinstance(exc, FabricError) else ToolError(str(exc)) from exc
+            raise tool_err(exc) from exc
         return [t.model_dump(mode="json") for t in result]
 
     @mcp.tool(name="read_table")
     async def read_table(
-        workspace: str, item: str, qualified_name: str, count: int = 10
+        workspace: str,
+        item: str,
+        qualified_name: str,
+        count: Annotated[int, Field(ge=1, le=10000)] = 10,
     ) -> dict[str, Any]:
         """Return up to *count* rows from a table as JSON-serialisable columns + rows.
 
@@ -65,31 +68,31 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             workspace: Workspace name or GUID.
             item: Warehouse or SQL endpoint name or GUID.
             qualified_name: Dot-separated qualified table name, e.g. ``dbo.sales``.
-            count: Maximum number of rows to return (default 10).
+            count: Maximum number of rows to return (1-10000, default 10).
         """
         schema, table_name = parse_qualified_name(qualified_name, kind="table")
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
             assert_workspace_allowed(workspace, str(ws_id))
-            entry = await ctx.resolver.item(workspace, item)
-            if entry.connection_string is None:
-                msg = f"item {item!r} has no connection string; cannot read tables"
-                raise FabricError(msg)  # noqa: TRY301
-            target = SqlTarget(
-                workspace_id=str(ws_id),
-                database=entry.display_name,
-                connection_string=entry.connection_string,
+            _log.debug(
+                "read_table ws=%s item=%s table=%s.%s count=%d",
+                ws_id,
+                entry.id,
+                schema,
+                table_name,
+                count,
             )
+            target = make_sql_target(ws_id, entry, item)
             columns, rows = await tables_svc.read_table(
                 target, schema, table_name, count=count, mode=ctx.auth_mode
             )
         except (ValueError, FabricError) as exc:
-            raise fabric_err(exc) if isinstance(exc, FabricError) else ToolError(str(exc)) from exc
+            raise tool_err(exc) from exc
         return {
             "columns": columns,
-            "rows": [[_json_safe_value(v) for v in row] for row in rows],
+            "rows": safe_rows(rows),
         }
 
     @mcp.tool(name="create_table")
@@ -113,22 +116,18 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
             assert_workspace_allowed(workspace, str(ws_id))
-            entry = await ctx.resolver.item(workspace, item)
-            if entry.connection_string is None:
-                msg = f"item {item!r} has no connection string; cannot create tables"
-                raise FabricError(msg)  # noqa: TRY301
-            target = SqlTarget(
-                workspace_id=str(ws_id),
-                database=entry.display_name,
-                connection_string=entry.connection_string,
+            _log.debug(
+                "create_table ws=%s item=%s table=%s.%s", ws_id, entry.id, schema, table_name
             )
+            target = make_sql_target(ws_id, entry, item)
             result = await tables_svc.create_table(
                 target, schema, table_name, select_body, kind=entry.kind, mode=ctx.auth_mode
             )
         except (ValueError, FabricError) as exc:
-            raise fabric_err(exc) if isinstance(exc, FabricError) else ToolError(str(exc)) from exc
+            raise tool_err(exc) from exc
+        ctx.resolver.clear_negative_cache()
         return result.model_dump(mode="json")
 
     @mcp.tool(name="delete_table")
@@ -149,22 +148,17 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
             assert_workspace_allowed(workspace, str(ws_id))
-            entry = await ctx.resolver.item(workspace, item)
-            if entry.connection_string is None:
-                msg = f"item {item!r} has no connection string; cannot delete tables"
-                raise FabricError(msg)  # noqa: TRY301
-            target = SqlTarget(
-                workspace_id=str(ws_id),
-                database=entry.display_name,
-                connection_string=entry.connection_string,
+            _log.debug(
+                "delete_table ws=%s item=%s table=%s.%s", ws_id, entry.id, schema, table_name
             )
+            target = make_sql_target(ws_id, entry, item)
             await tables_svc.delete_table(
                 target, schema, table_name, kind=entry.kind, mode=ctx.auth_mode
             )
         except (ValueError, FabricError) as exc:
-            raise fabric_err(exc) if isinstance(exc, FabricError) else ToolError(str(exc)) from exc
+            raise tool_err(exc) from exc
         return {"dropped": True}
 
     @mcp.tool(name="clear_table")
@@ -186,20 +180,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
             assert_workspace_allowed(workspace, str(ws_id))
-            entry = await ctx.resolver.item(workspace, item)
-            if entry.connection_string is None:
-                msg = f"item {item!r} has no connection string; cannot clear tables"
-                raise FabricError(msg)  # noqa: TRY301
-            target = SqlTarget(
-                workspace_id=str(ws_id),
-                database=entry.display_name,
-                connection_string=entry.connection_string,
-            )
+            _log.debug("clear_table ws=%s item=%s table=%s.%s", ws_id, entry.id, schema, table_name)
+            target = make_sql_target(ws_id, entry, item)
             await tables_svc.clear_table(
                 target, schema, table_name, kind=entry.kind, mode=ctx.auth_mode
             )
         except (ValueError, FabricError) as exc:
-            raise fabric_err(exc) if isinstance(exc, FabricError) else ToolError(str(exc)) from exc
+            raise tool_err(exc) from exc
         return {"truncated": True}

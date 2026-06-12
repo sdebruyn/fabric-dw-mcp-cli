@@ -2,20 +2,27 @@
 
 from __future__ import annotations
 
-from typing import Any
+import logging
+from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
+from pydantic import Field
 
 from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
 from fabric_dw.mcp._guards import assert_workspace_allowed, assert_writes_allowed
-from fabric_dw.mcp._helpers import fabric_err, parse_qualified_name
+from fabric_dw.mcp._helpers import (
+    make_sql_target,
+    parse_qualified_name,
+    resolve_item,
+    safe_rows,
+    tool_err,
+)
 from fabric_dw.services import views as views_svc
-from fabric_dw.sql import SqlTarget
-from fabric_dw.sql_io import json_safe as _json_safe_value
 
 __all__ = ["register"]
+
+_log = logging.getLogger(__name__)
 
 
 def register(mcp: FastMCP) -> None:  # noqa: PLR0915
@@ -35,25 +42,21 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
             assert_workspace_allowed(workspace, str(ws_id))
-            entry = await ctx.resolver.item(workspace, item)
-            if entry.connection_string is None:
-                msg = f"item {item!r} has no connection string; cannot query views"
-                raise FabricError(msg)  # noqa: TRY301
-            target = SqlTarget(
-                workspace_id=str(ws_id),
-                database=entry.display_name,
-                connection_string=entry.connection_string,
-            )
+            _log.debug("list_views ws=%s item=%s schema=%r", ws_id, entry.id, schema)
+            target = make_sql_target(ws_id, entry, item)
             result = await views_svc.list_views(target, schema=schema, mode=ctx.auth_mode)
         except (ValueError, FabricError) as exc:
-            raise fabric_err(exc) if isinstance(exc, FabricError) else ToolError(str(exc)) from exc
+            raise tool_err(exc) from exc
         return [v.model_dump(mode="json") for v in result]
 
     @mcp.tool(name="read_view")
     async def read_view(
-        workspace: str, item: str, qualified_name: str, count: int = 10
+        workspace: str,
+        item: str,
+        qualified_name: str,
+        count: Annotated[int, Field(ge=1, le=10000)] = 10,
     ) -> dict[str, Any]:
         """Return up to *count* rows from a view as JSON-serialisable columns + rows.
 
@@ -61,31 +64,31 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             workspace: Workspace name or GUID.
             item: Warehouse or SQL endpoint name or GUID.
             qualified_name: Dot-separated qualified view name, e.g. ``dbo.vw_sales``.
-            count: Maximum number of rows to return (default 10).
+            count: Maximum number of rows to return (1-10000, default 10).
         """
         schema, view_name = parse_qualified_name(qualified_name, kind="view")
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
             assert_workspace_allowed(workspace, str(ws_id))
-            entry = await ctx.resolver.item(workspace, item)
-            if entry.connection_string is None:
-                msg = f"item {item!r} has no connection string; cannot read views"
-                raise FabricError(msg)  # noqa: TRY301
-            target = SqlTarget(
-                workspace_id=str(ws_id),
-                database=entry.display_name,
-                connection_string=entry.connection_string,
+            _log.debug(
+                "read_view ws=%s item=%s view=%s.%s count=%d",
+                ws_id,
+                entry.id,
+                schema,
+                view_name,
+                count,
             )
+            target = make_sql_target(ws_id, entry, item)
             columns, rows = await views_svc.read_view(
                 target, schema, view_name, count=count, mode=ctx.auth_mode
             )
         except (ValueError, FabricError) as exc:
-            raise fabric_err(exc) if isinstance(exc, FabricError) else ToolError(str(exc)) from exc
+            raise tool_err(exc) from exc
         return {
             "columns": columns,
-            "rows": [[_json_safe_value(v) for v in row] for row in rows],
+            "rows": safe_rows(rows),
         }
 
     @mcp.tool(name="get_view")
@@ -101,20 +104,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
             assert_workspace_allowed(workspace, str(ws_id))
-            entry = await ctx.resolver.item(workspace, item)
-            if entry.connection_string is None:
-                msg = f"item {item!r} has no connection string; cannot query views"
-                raise FabricError(msg)  # noqa: TRY301
-            target = SqlTarget(
-                workspace_id=str(ws_id),
-                database=entry.display_name,
-                connection_string=entry.connection_string,
-            )
+            _log.debug("get_view ws=%s item=%s view=%s.%s", ws_id, entry.id, schema, view_name)
+            target = make_sql_target(ws_id, entry, item)
             result = await views_svc.get_view(target, schema, view_name, mode=ctx.auth_mode)
         except (ValueError, FabricError) as exc:
-            raise fabric_err(exc) if isinstance(exc, FabricError) else ToolError(str(exc)) from exc
+            raise tool_err(exc) from exc
         return result.model_dump(mode="json")
 
     @mcp.tool(name="create_view")
@@ -137,22 +133,16 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
             assert_workspace_allowed(workspace, str(ws_id))
-            entry = await ctx.resolver.item(workspace, item)
-            if entry.connection_string is None:
-                msg = f"item {item!r} has no connection string; cannot create views"
-                raise FabricError(msg)  # noqa: TRY301
-            target = SqlTarget(
-                workspace_id=str(ws_id),
-                database=entry.display_name,
-                connection_string=entry.connection_string,
-            )
+            _log.debug("create_view ws=%s item=%s view=%s.%s", ws_id, entry.id, schema, view_name)
+            target = make_sql_target(ws_id, entry, item)
             result = await views_svc.create_view(
                 target, schema, view_name, select_body, mode=ctx.auth_mode
             )
         except (ValueError, FabricError) as exc:
-            raise fabric_err(exc) if isinstance(exc, FabricError) else ToolError(str(exc)) from exc
+            raise tool_err(exc) from exc
+        ctx.resolver.clear_negative_cache()
         return result.model_dump(mode="json")
 
     @mcp.tool(name="update_view")
@@ -175,22 +165,15 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
             assert_workspace_allowed(workspace, str(ws_id))
-            entry = await ctx.resolver.item(workspace, item)
-            if entry.connection_string is None:
-                msg = f"item {item!r} has no connection string; cannot update views"
-                raise FabricError(msg)  # noqa: TRY301
-            target = SqlTarget(
-                workspace_id=str(ws_id),
-                database=entry.display_name,
-                connection_string=entry.connection_string,
-            )
+            _log.debug("update_view ws=%s item=%s view=%s.%s", ws_id, entry.id, schema, view_name)
+            target = make_sql_target(ws_id, entry, item)
             result = await views_svc.update_view(
                 target, schema, view_name, select_body, mode=ctx.auth_mode
             )
         except (ValueError, FabricError) as exc:
-            raise fabric_err(exc) if isinstance(exc, FabricError) else ToolError(str(exc)) from exc
+            raise tool_err(exc) from exc
         return result.model_dump(mode="json")
 
     @mcp.tool(name="drop_view")
@@ -207,18 +190,11 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
             assert_workspace_allowed(workspace, str(ws_id))
-            entry = await ctx.resolver.item(workspace, item)
-            if entry.connection_string is None:
-                msg = f"item {item!r} has no connection string; cannot drop views"
-                raise FabricError(msg)  # noqa: TRY301
-            target = SqlTarget(
-                workspace_id=str(ws_id),
-                database=entry.display_name,
-                connection_string=entry.connection_string,
-            )
+            _log.debug("drop_view ws=%s item=%s view=%s.%s", ws_id, entry.id, schema, view_name)
+            target = make_sql_target(ws_id, entry, item)
             await views_svc.drop_view(target, schema, view_name, mode=ctx.auth_mode)
         except (ValueError, FabricError) as exc:
-            raise fabric_err(exc) if isinstance(exc, FabricError) else ToolError(str(exc)) from exc
+            raise tool_err(exc) from exc
         return {"dropped": True}
