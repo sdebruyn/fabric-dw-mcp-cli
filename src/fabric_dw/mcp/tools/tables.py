@@ -214,8 +214,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 window (30 days by default).  When omitted, the clone reflects the
                 current state of the source table.
         """
-        parse_qualified_name(source, kind="table")
-        parse_qualified_name(new_table, kind="table")
         assert_writes_allowed("clone_table")
         assert_workspace_allowed(workspace)
 

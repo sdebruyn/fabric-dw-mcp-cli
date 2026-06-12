@@ -14,12 +14,28 @@ from datetime import UTC, datetime
 
 import pytest
 
-from fabric_dw.exceptions import NotFoundError
+from fabric_dw.exceptions import FabricError, NotFoundError
 from fabric_dw.models import Table
 from fabric_dw.services import tables
 from fabric_dw.sql import SqlTarget
 
 pytestmark = pytest.mark.integration
+
+# Fragments that indicate the SQL engine rejected an AT timestamp because the
+# table has no committed history at the requested point in time.  These are
+# expected and trigger a pytest.skip rather than a test failure.
+_CLONE_AT_SKIP_FRAGMENTS = (
+    ("clone", "point in time"),
+    ("no version",),
+    ("history",),
+    ("at time",),
+)
+
+
+def _is_clone_at_unavailable(exc: BaseException) -> bool:
+    """Return True when *exc* is a SQL engine rejection of an AT timestamp."""
+    msg = str(exc).lower()
+    return any(all(frag in msg for frag in frags) for frags in _CLONE_AT_SKIP_FRAGMENTS)
 
 
 async def test_list_tables_returns_list(ephemeral_sql_target: SqlTarget) -> None:
@@ -128,8 +144,12 @@ async def test_clone_table_at_point_in_time(ephemeral_sql_target: SqlTarget) -> 
             )
         except Exception as exc:
             # A freshly-created table may have no committed history older than
-            # the AT timestamp; skip gracefully rather than marking the whole
-            # test as a hard failure.
+            # the AT timestamp; the engine raises a SQL error when the AT time
+            # predates any committed version.  Skip only for those expected
+            # SQL/driver rejections; re-raise Python-level bugs (TypeError etc.)
+            # so regressions are not silently hidden.
+            if not isinstance(exc, FabricError) and not _is_clone_at_unavailable(exc):
+                raise
             pytest.skip(
                 f"Point-in-time clone not feasible on a freshly created table "
                 f"(no history at {at_dt.isoformat()}): {exc}"
