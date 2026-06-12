@@ -1,29 +1,24 @@
-"""Tests for the MCP server — written BEFORE the implementation (TDD).
+"""Tests for the MCP server — testing after the context-split refactor.
 
 Testing strategy
 ----------------
-FastMCP 1.x ships no in-process test transport in its public API (as of
-mcp==1.27.2), so we fall back to **unit-style mocking**:
+FastMCP 1.x ships no in-process test transport in its public API, so we use
+unit-style mocking via the shared ``mock_ctx`` / ``ctx_patch`` fixtures defined
+in ``conftest.py``.
 
-1. ``test_tools_registered`` — import ``mcp`` from the server module, inspect
-   ``_tool_manager._tools`` and assert every expected tool name is present.
-2. ``test_list_workspaces_happy_path`` — call the tool function directly via
-   ``mcp._tool_manager.call_tool(...)`` with a mocked service layer. Verify
-   the returned value is a ``list[dict]`` with the expected keys.
-3. ``test_clear_cache_side_effect`` — call ``clear_cache`` tool and assert
-   that the underlying ``LookupCache.clear()`` method was called once.
-4. ``test_fabric_error_becomes_tool_error`` — inject a service that raises
-   ``FabricError`` and assert the tool re-raises ``ToolError``.
-5. ``test_run_exposes_stdio_as_default`` — ensure ``run()`` from
-   ``fabric_dw.mcp`` invokes ``FastMCP.run`` with transport="stdio".
-6. ``test_run_accepts_http_transport`` — ensure ``--transport http`` calls
-   ``FastMCP.run`` with transport="streamable-http".
+Tools are called via ``mcp._tool_manager.call_tool(name, args)`` which is the
+same call path FastMCP uses at runtime, giving realistic coverage of the
+``@mcp.tool`` decorator, Pydantic validation, and guard logic.
+
+The ``ServerContext`` (http / cache / resolver) is injected by patching
+``fabric_dw.mcp._context._SERVER_CTX`` with a ``ServerContext`` instance
+that has mocked service objects.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+import os
+from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
 import pytest
@@ -39,6 +34,14 @@ from fabric_dw.models import (
     WarehouseKind,
     WarehouseSnapshot,
     Workspace,
+)
+from tests.unit.mcp.conftest import (
+    WH_ID,
+    WH_NAME,
+    WS_ID,
+    WS_NAME,
+    make_item_entry,
+    make_sql_endpoint_entry,
 )
 
 # ---------------------------------------------------------------------------
@@ -109,19 +112,37 @@ EXPECTED_TOOL_NAMES: frozenset[str] = frozenset(
         "create_table",
         "delete_table",
         "clear_table",
+        # Restore Points
+        "list_restore_points",
+        "get_restore_point",
+        "create_restore_point",
+        "update_restore_point",
+        "delete_restore_point",
+        "restore_warehouse_in_place",
+        # SQL Pools
+        "get_sql_pools_configuration",
+        "list_sql_pools",
+        "get_sql_pool",
+        "create_sql_pool",
+        "update_sql_pool",
+        "delete_sql_pool",
+        "reset_sql_pools",
+        "enable_sql_pools",
+        "disable_sql_pools",
+        # Connections
+        "list_connections",
     }
 )
 
 # ---------------------------------------------------------------------------
-# Fixtures
+# Shared test helpers
 # ---------------------------------------------------------------------------
 
-_WS_ID = UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
-_WH_ID = UUID("d4e5f6a7-b8c9-0123-def0-123456789abc")
+_WS_ID = WS_ID
+_WH_ID = WH_ID
 _SNAP_ID = UUID("e5f6a7b8-c9d0-1234-ef01-23456789abcd")
-
-_WS_NAME = "my-workspace"
-_WH_NAME = "my-warehouse"
+_WS_NAME = WS_NAME
+_WH_NAME = WH_NAME
 
 
 def _make_workspace() -> Workspace:
@@ -153,11 +174,9 @@ def _make_item_entry(
     connection_string: str | None = "wh.fabric.microsoft.com",
     display_name: str = _WH_NAME,
 ) -> ItemEntry:
-    return ItemEntry(
-        id=item_id,
-        kind=WarehouseKind.WAREHOUSE,
+    return make_item_entry(
+        item_id=item_id,
         connection_string=connection_string,
-        fetched_at=datetime.now(tz=UTC),
         display_name=display_name,
     )
 
@@ -168,11 +187,9 @@ def _make_sql_endpoint_entry(
     connection_string: str | None = "ep.fabric.microsoft.com",
     display_name: str = "MySqlEndpoint",
 ) -> ItemEntry:
-    return ItemEntry(
-        id=item_id,
-        kind=WarehouseKind.SQL_ENDPOINT,
+    return make_sql_endpoint_entry(
+        item_id=item_id,
         connection_string=connection_string,
-        fetched_at=datetime.now(tz=UTC),
         display_name=display_name,
     )
 
@@ -213,6 +230,48 @@ def _make_running_query() -> RunningQuery:
     )
 
 
+def _make_table_sync_statuses() -> list[TableSyncStatus]:
+    return [
+        TableSyncStatus.model_validate(
+            {
+                "tableName": "Table1",
+                "status": "Success",
+                "startDateTime": "2025-08-08T10:31:22.270Z",
+                "endDateTime": "2025-08-08T10:36:54.965Z",
+                "lastSuccessfulSyncDateTime": "2025-08-08T10:36:54.965Z",
+            }
+        ),
+        TableSyncStatus.model_validate(
+            {
+                "tableName": "Table2",
+                "status": "Failure",
+                "startDateTime": "2025-08-08T10:31:22.270Z",
+                "endDateTime": "2025-08-08T10:43:02.532Z",
+                "error": {"errorCode": "TokenError", "message": "Auth failed"},
+                "lastSuccessfulSyncDateTime": "2025-08-07T10:44:27.263Z",
+            }
+        ),
+    ]
+
+
+def _make_item_access() -> ItemAccess:
+    return ItemAccess.model_validate(
+        {
+            "principal": {
+                "id": str(_WH_ID),
+                "displayName": "Jacob Hancock",
+                "type": "User",
+                "userDetails": {"userPrincipalName": "jacob@example.com"},
+            },
+            "itemAccessDetails": {
+                "type": "Warehouse",
+                "permissions": ["Read", "Write"],
+                "additionalPermissions": ["ReadAll"],
+            },
+        }
+    )
+
+
 # ---------------------------------------------------------------------------
 # 1. Tool registration
 # ---------------------------------------------------------------------------
@@ -233,20 +292,14 @@ def test_tools_registered() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_workspaces_happy_path() -> None:
+async def test_list_workspaces_happy_path(ctx_patch) -> None:
     """list_workspaces returns a list of serialised workspace dicts."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     ws = _make_workspace()
 
-    mock_resolver = MagicMock()
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
-
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         patch("fabric_dw.services.workspaces.list_all", new=AsyncMock(return_value=[ws])),
     ):
         result = await mcp._tool_manager.call_tool("list_workspaces", {})
@@ -263,16 +316,14 @@ async def test_list_workspaces_happy_path() -> None:
 
 
 @pytest.mark.asyncio
-async def test_clear_cache_side_effect() -> None:
+async def test_clear_cache_side_effect(mock_ctx, ctx_patch) -> None:
     """clear_cache must call LookupCache.clear() exactly once."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
-    mock_cache = MagicMock()
-
-    with patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache):
+    with ctx_patch:
         result = await mcp._tool_manager.call_tool("clear_cache", {})
 
-    mock_cache.clear.assert_called_once()
+    mock_ctx.cache.clear.assert_called_once()
     assert result == {"cleared": True}
 
 
@@ -282,22 +333,16 @@ async def test_clear_cache_side_effect() -> None:
 
 
 @pytest.mark.asyncio
-async def test_fabric_error_becomes_tool_error() -> None:
+async def test_fabric_error_becomes_tool_error(ctx_patch) -> None:
     """A FabricError raised by the service layer must become a ToolError."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
-    mock_http = AsyncMock()
-    mock_resolver = MagicMock()
-    mock_cache = MagicMock()
-
     not_found_error = NotFound("workspace 'x' not found")
 
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         patch(
             "fabric_dw.services.workspaces.list_all",
             new=AsyncMock(side_effect=not_found_error),
@@ -316,28 +361,22 @@ async def test_fabric_error_becomes_tool_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_workspace_happy_path() -> None:
+async def test_get_workspace_happy_path(mock_ctx, ctx_patch) -> None:
     """get_workspace resolves the name via Resolver and returns a dict."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     ws = _make_workspace()
-
-    mock_resolver = AsyncMock()
-    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
 
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         patch("fabric_dw.services.workspaces.get", new=AsyncMock(return_value=ws)),
     ):
         result = await mcp._tool_manager.call_tool("get_workspace", {"workspace": _WS_NAME})
 
     assert isinstance(result, dict)
     assert result["id"] == str(_WS_ID)
-    mock_resolver.workspace_id.assert_called_once_with(_WS_NAME)
+    mock_ctx.resolver.workspace_id.assert_called_once_with(_WS_NAME)
 
 
 # ---------------------------------------------------------------------------
@@ -346,21 +385,15 @@ async def test_get_workspace_happy_path() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_warehouses_happy_path() -> None:
+async def test_list_warehouses_happy_path(mock_ctx, ctx_patch) -> None:
     """list_warehouses resolves workspace and returns list of warehouse dicts."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     wh = _make_warehouse()
-
-    mock_resolver = AsyncMock()
-    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
 
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         patch(
             "fabric_dw.services.warehouses.list_warehouses",
             new=AsyncMock(return_value=[wh]),
@@ -390,7 +423,7 @@ def test_run_uses_stdio_by_default() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 9. run() accepts --transport http → streamable-http
+# 9. run() accepts --transport http -> streamable-http
 # ---------------------------------------------------------------------------
 
 
@@ -411,23 +444,17 @@ def test_run_accepts_http_transport() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_audit_settings_happy_path() -> None:
+async def test_get_audit_settings_happy_path(mock_ctx, ctx_patch) -> None:
     """get_audit_settings resolves workspace + warehouse and returns a dict."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     settings = _make_audit_settings()
     item = _make_item_entry()
-
-    mock_resolver = AsyncMock()
-    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-    mock_resolver.item = AsyncMock(return_value=item)
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
 
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         patch(
             "fabric_dw.services.audit.get_settings",
             new=AsyncMock(return_value=settings),
@@ -441,7 +468,7 @@ async def test_get_audit_settings_happy_path() -> None:
     assert isinstance(result, dict)
     assert result["state"] == "Enabled"
     assert result["retentionDays"] == 30
-    mock_resolver.item.assert_called_once_with(_WS_NAME, _WH_NAME)
+    mock_ctx.resolver.item.assert_called_once_with(_WS_NAME, _WH_NAME)
 
 
 # ---------------------------------------------------------------------------
@@ -450,23 +477,17 @@ async def test_get_audit_settings_happy_path() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_running_queries_happy_path() -> None:
+async def test_list_running_queries_happy_path(mock_ctx, ctx_patch) -> None:
     """list_running_queries returns list of dicts from the SQL service."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     query = _make_running_query()
     item = _make_item_entry()
-
-    mock_resolver = AsyncMock()
-    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-    mock_resolver.item = AsyncMock(return_value=item)
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
 
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         patch(
             "fabric_dw.services.queries.list_running",
             new=AsyncMock(return_value=[query]),
@@ -482,52 +503,40 @@ async def test_list_running_queries_happy_path() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 12. Service ValueError does NOT become ToolError (propagates as-is per FastMCP)
-#     but a FabricError does.
+# 12. NotFound error becomes ToolError
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_not_found_error_becomes_tool_error() -> None:
+async def test_not_found_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
     """NotFound (a FabricError subclass) must become a ToolError."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
-    mock_resolver = AsyncMock()
-    mock_resolver.workspace_id = AsyncMock(side_effect=NotFound("workspace 'boom' not found"))
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
+    mock_ctx.resolver.workspace_id = AsyncMock(side_effect=NotFound("workspace 'boom' not found"))
 
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         pytest.raises(ToolError),
     ):
         await mcp._tool_manager.call_tool("get_workspace", {"workspace": "boom"})
 
 
 # ---------------------------------------------------------------------------
-# 13. Bad ISO-8601 input → ToolError (not raw ValueError)
+# 13. Bad ISO-8601 input -> ToolError
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_create_snapshot_bad_datetime_becomes_tool_error() -> None:
+async def test_create_snapshot_bad_datetime_becomes_tool_error(ctx_patch) -> None:
     """create_snapshot raises ToolError when snapshot_dt is not ISO-8601."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
-    mock_resolver = AsyncMock()
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
-
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         pytest.raises(ToolError) as exc_info,
     ):
         await mcp._tool_manager.call_tool(
@@ -544,20 +553,16 @@ async def test_create_snapshot_bad_datetime_becomes_tool_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_roll_snapshot_timestamp_bad_datetime_becomes_tool_error() -> None:
+async def test_roll_snapshot_timestamp_bad_datetime_becomes_tool_error(
+    ctx_patch,
+) -> None:
     """roll_snapshot_timestamp raises ToolError when new_dt is not ISO-8601."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
-    mock_resolver = AsyncMock()
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
-
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         pytest.raises(ToolError) as exc_info,
     ):
         await mcp._tool_manager.call_tool(
@@ -579,7 +584,7 @@ async def test_roll_snapshot_timestamp_bad_datetime_becomes_tool_error() -> None
 
 
 @pytest.mark.asyncio
-async def test_list_sql_endpoints_happy_path() -> None:
+async def test_list_sql_endpoints_happy_path(mock_ctx, ctx_patch) -> None:
     """list_sql_endpoints resolves workspace and returns list of SQL endpoint dicts."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -593,16 +598,10 @@ async def test_list_sql_endpoints_happy_path() -> None:
             "connectionString": "lakehouse-sql-ep.datawarehouse.fabric.microsoft.com",
         }
     )
-
-    mock_resolver = AsyncMock()
-    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
 
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         patch(
             "fabric_dw.services.sql_endpoints.list_endpoints",
             new=AsyncMock(return_value=[ep]),
@@ -617,7 +616,7 @@ async def test_list_sql_endpoints_happy_path() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_sql_endpoint_happy_path() -> None:
+async def test_get_sql_endpoint_happy_path(mock_ctx, ctx_patch) -> None:
     """get_sql_endpoint resolves workspace + endpoint and returns a dict."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -632,17 +631,11 @@ async def test_get_sql_endpoint_happy_path() -> None:
         }
     )
     item = _make_item_entry(item_id=ep_id, display_name="SalesLakehouse")
-
-    mock_resolver = AsyncMock()
-    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-    mock_resolver.item = AsyncMock(return_value=item)
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
 
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         patch(
             "fabric_dw.services.sql_endpoints.get_endpoint",
             new=AsyncMock(return_value=ep),
@@ -658,48 +651,18 @@ async def test_get_sql_endpoint_happy_path() -> None:
     assert result["kind"] == "SQLEndpoint"
 
 
-def _make_table_sync_statuses() -> list[TableSyncStatus]:
-    return [
-        TableSyncStatus.model_validate(
-            {
-                "tableName": "Table1",
-                "status": "Success",
-                "startDateTime": "2025-08-08T10:31:22.270Z",
-                "endDateTime": "2025-08-08T10:36:54.965Z",
-                "lastSuccessfulSyncDateTime": "2025-08-08T10:36:54.965Z",
-            }
-        ),
-        TableSyncStatus.model_validate(
-            {
-                "tableName": "Table2",
-                "status": "Failure",
-                "startDateTime": "2025-08-08T10:31:22.270Z",
-                "endDateTime": "2025-08-08T10:43:02.532Z",
-                "error": {"errorCode": "TokenError", "message": "Auth failed"},
-                "lastSuccessfulSyncDateTime": "2025-08-07T10:44:27.263Z",
-            }
-        ),
-    ]
-
-
 @pytest.mark.asyncio
-async def test_refresh_sql_endpoint_metadata_happy_path() -> None:
+async def test_refresh_sql_endpoint_metadata_happy_path(mock_ctx, ctx_patch) -> None:
     """refresh_sql_endpoint_metadata resolves workspace + endpoint and returns a list of dicts."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     ep_id = UUID("e5f6a7b8-c9d0-1234-ef01-234567890abc")
     item = _make_item_entry(item_id=ep_id, display_name="SalesLakehouse")
-
-    mock_resolver = AsyncMock()
-    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-    mock_resolver.item = AsyncMock(return_value=item)
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
 
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         patch(
             "fabric_dw.services.sql_endpoints.refresh_metadata",
             new=AsyncMock(return_value=_make_table_sync_statuses()),
@@ -718,24 +681,18 @@ async def test_refresh_sql_endpoint_metadata_happy_path() -> None:
 
 
 @pytest.mark.asyncio
-async def test_refresh_sql_endpoint_metadata_recreate_tables() -> None:
+async def test_refresh_sql_endpoint_metadata_recreate_tables(mock_ctx, ctx_patch) -> None:
     """refresh_sql_endpoint_metadata passes recreate_tables=True to the service."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     ep_id = UUID("e5f6a7b8-c9d0-1234-ef01-234567890abc")
     item = _make_item_entry(item_id=ep_id, display_name="SalesLakehouse")
-
-    mock_resolver = AsyncMock()
-    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-    mock_resolver.item = AsyncMock(return_value=item)
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
     mock_refresh = AsyncMock(return_value=_make_table_sync_statuses())
 
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         patch(
             "fabric_dw.services.sql_endpoints.refresh_metadata",
             new=mock_refresh,
@@ -758,20 +715,14 @@ async def test_refresh_sql_endpoint_metadata_recreate_tables() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_warehouses_all_workspaces() -> None:
+async def test_list_warehouses_all_workspaces(ctx_patch) -> None:
     """list_warehouses with all_workspaces=True dispatches to list_all_workspaces."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     wh = _make_warehouse()
 
-    mock_resolver = AsyncMock()
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
-
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         patch(
             "fabric_dw.services.warehouses.list_all_workspaces",
             new=AsyncMock(return_value=[wh]),
@@ -793,7 +744,7 @@ async def test_list_warehouses_all_workspaces() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_sql_endpoints_all_workspaces() -> None:
+async def test_list_sql_endpoints_all_workspaces(ctx_patch) -> None:
     """list_sql_endpoints with all_workspaces=True dispatches to list_all_workspaces."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -808,14 +759,8 @@ async def test_list_sql_endpoints_all_workspaces() -> None:
         }
     )
 
-    mock_resolver = AsyncMock()
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
-
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         patch(
             "fabric_dw.services.sql_endpoints.list_all_workspaces",
             new=AsyncMock(return_value=[ep]),
@@ -838,23 +783,17 @@ async def test_list_sql_endpoints_all_workspaces() -> None:
 
 
 @pytest.mark.asyncio
-async def test_add_audit_group_happy_path() -> None:
+async def test_add_audit_group_happy_path(mock_ctx, ctx_patch) -> None:
     """add_audit_group resolves workspace + warehouse and returns a dict."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     settings = _make_audit_settings()
     item = _make_item_entry()
-
-    mock_resolver = AsyncMock()
-    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-    mock_resolver.item = AsyncMock(return_value=item)
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
 
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         patch(
             "fabric_dw.services.audit.add_action_group",
             new=AsyncMock(return_value=settings),
@@ -867,27 +806,21 @@ async def test_add_audit_group_happy_path() -> None:
 
     assert isinstance(result, dict)
     assert result["state"] == "Enabled"
-    mock_resolver.item.assert_called_once_with(_WS_NAME, _WH_NAME)
+    mock_ctx.resolver.item.assert_called_once_with(_WS_NAME, _WH_NAME)
 
 
 @pytest.mark.asyncio
-async def test_remove_audit_group_happy_path() -> None:
+async def test_remove_audit_group_happy_path(mock_ctx, ctx_patch) -> None:
     """remove_audit_group resolves workspace + warehouse and returns a dict."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     settings = _make_audit_settings()
     item = _make_item_entry()
-
-    mock_resolver = AsyncMock()
-    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-    mock_resolver.item = AsyncMock(return_value=item)
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
 
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         patch(
             "fabric_dw.services.audit.remove_action_group",
             new=AsyncMock(return_value=settings),
@@ -900,7 +833,7 @@ async def test_remove_audit_group_happy_path() -> None:
 
     assert isinstance(result, dict)
     assert result["state"] == "Enabled"
-    mock_resolver.item.assert_called_once_with(_WS_NAME, _WH_NAME)
+    mock_ctx.resolver.item.assert_called_once_with(_WS_NAME, _WH_NAME)
 
 
 # ---------------------------------------------------------------------------
@@ -909,7 +842,7 @@ async def test_remove_audit_group_happy_path() -> None:
 
 
 @pytest.mark.asyncio
-async def test_set_audit_retention_happy_path() -> None:
+async def test_set_audit_retention_happy_path(mock_ctx, ctx_patch) -> None:
     """set_audit_retention resolves workspace + warehouse and returns updated AuditSettings."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -921,17 +854,11 @@ async def test_set_audit_retention_happy_path() -> None:
         }
     )
     item = _make_item_entry()
-
-    mock_resolver = AsyncMock()
-    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-    mock_resolver.item = AsyncMock(return_value=item)
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
 
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         patch(
             "fabric_dw.services.audit.set_retention",
             new=AsyncMock(return_value=updated),
@@ -948,24 +875,18 @@ async def test_set_audit_retention_happy_path() -> None:
 
 
 @pytest.mark.asyncio
-async def test_set_audit_retention_value_error_becomes_tool_error() -> None:
+async def test_set_audit_retention_value_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
     """set_audit_retention converts ValueError (disabled audit or out-of-range) to ToolError."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     item = _make_item_entry()
-
-    mock_resolver = AsyncMock()
-    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-    mock_resolver.item = AsyncMock(return_value=item)
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
 
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         patch(
             "fabric_dw.services.audit.set_retention",
             new=AsyncMock(side_effect=ValueError("audit is disabled; enable first")),
@@ -986,24 +907,18 @@ async def test_set_audit_retention_value_error_becomes_tool_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_execute_sql_happy_path() -> None:
+async def test_execute_sql_happy_path(mock_ctx, ctx_patch) -> None:
     """execute_sql calls sql_exec.execute and returns a dict with columns/rows/rowcount."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
     from fabric_dw.models import SqlResult  # noqa: PLC0415
 
     sql_result = SqlResult(columns=["id", "name"], rows=[[1, "foo"], [2, "bar"]], rowcount=2)
     item = _make_item_entry()
-
-    mock_resolver = AsyncMock()
-    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-    mock_resolver.item = AsyncMock(return_value=item)
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
 
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         patch(
             "fabric_dw.services.sql_exec.execute",
             new=AsyncMock(return_value=sql_result),
@@ -1021,24 +936,18 @@ async def test_execute_sql_happy_path() -> None:
 
 
 @pytest.mark.asyncio
-async def test_execute_sql_no_connection_string_raises_tool_error() -> None:
+async def test_execute_sql_no_connection_string_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """execute_sql raises ToolError when the item has no connection string."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     item = _make_item_entry(connection_string=None)
-
-    mock_resolver = AsyncMock()
-    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-    mock_resolver.item = AsyncMock(return_value=item)
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
 
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         pytest.raises(ToolError),
     ):
         await mcp._tool_manager.call_tool(
@@ -1052,42 +961,18 @@ async def test_execute_sql_no_connection_string_raises_tool_error() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_item_access() -> ItemAccess:
-    return ItemAccess.model_validate(
-        {
-            "principal": {
-                "id": str(_WH_ID),
-                "displayName": "Jacob Hancock",
-                "type": "User",
-                "userDetails": {"userPrincipalName": "jacob@example.com"},
-            },
-            "itemAccessDetails": {
-                "type": "Warehouse",
-                "permissions": ["Read", "Write"],
-                "additionalPermissions": ["ReadAll"],
-            },
-        }
-    )
-
-
 @pytest.mark.asyncio
-async def test_get_warehouse_permissions_happy_path() -> None:
+async def test_get_warehouse_permissions_happy_path(mock_ctx, ctx_patch) -> None:
     """get_warehouse_permissions returns a list of serialised ItemAccess dicts."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     access = _make_item_access()
     item = _make_item_entry()
-
-    mock_resolver = AsyncMock()
-    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-    mock_resolver.item = AsyncMock(return_value=item)
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
 
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         patch(
             "fabric_dw.services.permissions.list_item_access",
             new=AsyncMock(return_value=[access]),
@@ -1104,23 +989,17 @@ async def test_get_warehouse_permissions_happy_path() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_sql_endpoint_permissions_happy_path() -> None:
+async def test_get_sql_endpoint_permissions_happy_path(mock_ctx, ctx_patch) -> None:
     """get_sql_endpoint_permissions returns a list of serialised ItemAccess dicts."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     access = _make_item_access()
     item = _make_item_entry()
-
-    mock_resolver = AsyncMock()
-    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-    mock_resolver.item = AsyncMock(return_value=item)
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
 
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         patch(
             "fabric_dw.services.permissions.list_item_access",
             new=AsyncMock(return_value=[access]),
@@ -1137,24 +1016,20 @@ async def test_get_sql_endpoint_permissions_happy_path() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_warehouse_permissions_permission_denied_becomes_tool_error() -> None:
+async def test_get_warehouse_permissions_permission_denied_becomes_tool_error(
+    mock_ctx, ctx_patch
+) -> None:
     """get_warehouse_permissions wraps PermissionDenied into ToolError."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     item = _make_item_entry()
-
-    mock_resolver = AsyncMock()
-    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-    mock_resolver.item = AsyncMock(return_value=item)
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
 
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         patch(
             "fabric_dw.services.permissions.list_item_access",
             new=AsyncMock(side_effect=PermissionDenied("Fabric Administrator")),
@@ -1168,7 +1043,7 @@ async def test_get_warehouse_permissions_permission_denied_becomes_tool_error() 
 
 
 # ---------------------------------------------------------------------------
-# SQL Endpoint guard — create_table / delete_table / clear_table via MCP
+# SQL Endpoint guard -- create_table / delete_table / clear_table via MCP
 # ---------------------------------------------------------------------------
 
 _SE_NAME = "SalesLakehouse"
@@ -1176,24 +1051,19 @@ _SE_ID = UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
 
 
 @pytest.mark.asyncio
-async def test_create_table_sql_endpoint_raises_tool_error() -> None:
+async def test_create_table_sql_endpoint_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """create_table must raise ToolError when the item is a SQL Endpoint."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
-    mock_resolver = AsyncMock()
-    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-    mock_resolver.item = AsyncMock(
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(
         return_value=_make_sql_endpoint_entry(item_id=_SE_ID, display_name=_SE_NAME)
     )
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
 
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         pytest.raises(ToolError) as exc_info,
     ):
         await mcp._tool_manager.call_tool(
@@ -1210,30 +1080,23 @@ async def test_create_table_sql_endpoint_raises_tool_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_delete_table_sql_endpoint_raises_tool_error() -> None:
+async def test_delete_table_sql_endpoint_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """delete_table must raise ToolError when the item is a SQL Endpoint.
 
     FABRIC_MCP_ALLOW_DESTRUCTIVE=1 is set so the destructive guard passes and
     the SQL-endpoint read-only guard fires instead.
     """
-    import os  # noqa: PLC0415
-
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
-    mock_resolver = AsyncMock()
-    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-    mock_resolver.item = AsyncMock(
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(
         return_value=_make_sql_endpoint_entry(item_id=_SE_ID, display_name=_SE_NAME)
     )
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
 
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
@@ -1246,30 +1109,23 @@ async def test_delete_table_sql_endpoint_raises_tool_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_clear_table_sql_endpoint_raises_tool_error() -> None:
+async def test_clear_table_sql_endpoint_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """clear_table must raise ToolError when the item is a SQL Endpoint.
 
     FABRIC_MCP_ALLOW_DESTRUCTIVE=1 is set so the destructive guard passes and
     the SQL-endpoint read-only guard fires instead.
     """
-    import os  # noqa: PLC0415
-
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
-    mock_resolver = AsyncMock()
-    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-    mock_resolver.item = AsyncMock(
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(
         return_value=_make_sql_endpoint_entry(item_id=_SE_ID, display_name=_SE_NAME)
     )
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
 
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
@@ -1287,24 +1143,18 @@ async def test_clear_table_sql_endpoint_raises_tool_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_schema_rejects_sql_endpoint() -> None:
+async def test_create_schema_rejects_sql_endpoint(mock_ctx, ctx_patch) -> None:
     """create_schema must raise ToolError when called against a SQL Analytics Endpoint."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     ep_entry = _make_sql_endpoint_entry()
-
-    mock_resolver = AsyncMock()
-    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-    mock_resolver.item = AsyncMock(return_value=ep_entry)
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=ep_entry)
 
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         pytest.raises(ToolError) as exc_info,
     ):
         await mcp._tool_manager.call_tool(
@@ -1318,30 +1168,22 @@ async def test_create_schema_rejects_sql_endpoint() -> None:
 
 
 @pytest.mark.asyncio
-async def test_delete_schema_rejects_sql_endpoint() -> None:
+async def test_delete_schema_rejects_sql_endpoint(mock_ctx, ctx_patch) -> None:
     """delete_schema must raise ToolError when called against a SQL Analytics Endpoint.
 
     FABRIC_MCP_ALLOW_DESTRUCTIVE=1 is set so the destructive guard passes and
     the SQL-endpoint read-only guard fires instead.
     """
-    import os  # noqa: PLC0415
-
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     ep_entry = _make_sql_endpoint_entry()
-
-    mock_resolver = AsyncMock()
-    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-    mock_resolver.item = AsyncMock(return_value=ep_entry)
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=ep_entry)
 
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
@@ -1356,24 +1198,18 @@ async def test_delete_schema_rejects_sql_endpoint() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_schemas_works_on_sql_endpoint() -> None:
+async def test_list_schemas_works_on_sql_endpoint(mock_ctx, ctx_patch) -> None:
     """list_schemas is a read-only operation and must work on SQL Analytics Endpoints."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
     from fabric_dw.models import Schema  # noqa: PLC0415
 
     ep_entry = _make_sql_endpoint_entry()
     schemas_result = [Schema(name="dbo", principal_id=1)]
-
-    mock_resolver = AsyncMock()
-    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-    mock_resolver.item = AsyncMock(return_value=ep_entry)
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=ep_entry)
 
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         patch(
             "fabric_dw.services.schemas.list_schemas",
             new=AsyncMock(return_value=schemas_result),
@@ -1389,22 +1225,16 @@ async def test_list_schemas_works_on_sql_endpoint() -> None:
 
 
 @pytest.mark.asyncio
-async def test_read_view_happy_path() -> None:
+async def test_read_view_happy_path(mock_ctx, ctx_patch) -> None:
     """read_view calls views_svc.read_view and returns {columns, rows}."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     item = _make_item_entry()
-
-    mock_resolver = AsyncMock()
-    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-    mock_resolver.item = AsyncMock(return_value=item)
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
 
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         patch(
             "fabric_dw.services.views.read_view",
             new=AsyncMock(return_value=(["id", "amount"], [(1, 100), (2, 200)])),
@@ -1421,24 +1251,18 @@ async def test_read_view_happy_path() -> None:
 
 
 @pytest.mark.asyncio
-async def test_read_view_no_connection_string_raises_tool_error() -> None:
+async def test_read_view_no_connection_string_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """read_view raises ToolError when the item has no connection string."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     item = _make_item_entry(connection_string=None)
-
-    mock_resolver = AsyncMock()
-    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-    mock_resolver.item = AsyncMock(return_value=item)
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
 
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         pytest.raises(ToolError),
     ):
         await mcp._tool_manager.call_tool(
@@ -1448,24 +1272,18 @@ async def test_read_view_no_connection_string_raises_tool_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_read_view_bad_qualified_name_raises_tool_error() -> None:
+async def test_read_view_bad_qualified_name_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """read_view raises ToolError when qualified_name has no dot."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     item = _make_item_entry()
-
-    mock_resolver = AsyncMock()
-    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-    mock_resolver.item = AsyncMock(return_value=item)
-    mock_http = AsyncMock()
-    mock_cache = MagicMock()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
 
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        ctx_patch,
         pytest.raises(ToolError),
     ):
         await mcp._tool_manager.call_tool(

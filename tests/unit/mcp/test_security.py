@@ -429,7 +429,9 @@ async def test_execute_sql_max_rows_truncation() -> None:
     """execute_sql slices rows to max_rows and sets truncated=True."""
     from datetime import UTC, datetime  # noqa: PLC0415
 
+    from fabric_dw import auth as _auth  # noqa: PLC0415
     from fabric_dw.cache import ItemEntry  # noqa: PLC0415
+    from fabric_dw.mcp._context import ServerContext  # noqa: PLC0415
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
     from fabric_dw.models import SqlResult, WarehouseKind  # noqa: PLC0415
 
@@ -450,10 +452,15 @@ async def test_execute_sql_max_rows_truncation() -> None:
     mock_http = AsyncMock()
     mock_cache = MagicMock()
 
+    ctx = ServerContext(
+        http=mock_http,
+        cache=mock_cache,
+        resolver=mock_resolver,
+        auth_mode=_auth.CredentialMode.DEFAULT,
+    )
+
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        patch("fabric_dw.mcp._context._SERVER_CTX", ctx),
         patch(
             "fabric_dw.services.sql_exec.execute",
             new=AsyncMock(return_value=sql_result),
@@ -474,7 +481,9 @@ async def test_execute_sql_no_truncation_when_under_limit() -> None:
     """execute_sql sets truncated=False when rows fit within max_rows."""
     from datetime import UTC, datetime  # noqa: PLC0415
 
+    from fabric_dw import auth as _auth  # noqa: PLC0415
     from fabric_dw.cache import ItemEntry  # noqa: PLC0415
+    from fabric_dw.mcp._context import ServerContext  # noqa: PLC0415
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
     from fabric_dw.models import SqlResult, WarehouseKind  # noqa: PLC0415
 
@@ -495,10 +504,15 @@ async def test_execute_sql_no_truncation_when_under_limit() -> None:
     mock_http = AsyncMock()
     mock_cache = MagicMock()
 
+    ctx = ServerContext(
+        http=mock_http,
+        cache=mock_cache,
+        resolver=mock_resolver,
+        auth_mode=_auth.CredentialMode.DEFAULT,
+    )
+
     with (
-        patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        patch("fabric_dw.mcp._context._SERVER_CTX", ctx),
         patch(
             "fabric_dw.services.sql_exec.execute",
             new=AsyncMock(return_value=sql_result),
@@ -541,7 +555,9 @@ async def test_execute_sql_allowed_in_readonly_mode_for_select() -> None:
     """execute_sql SELECT queries pass the readonly gate."""
     from datetime import UTC, datetime  # noqa: PLC0415
 
+    from fabric_dw import auth as _auth  # noqa: PLC0415
     from fabric_dw.cache import ItemEntry  # noqa: PLC0415
+    from fabric_dw.mcp._context import ServerContext  # noqa: PLC0415
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
     from fabric_dw.models import SqlResult, WarehouseKind  # noqa: PLC0415
 
@@ -558,11 +574,16 @@ async def test_execute_sql_allowed_in_readonly_mode_for_select() -> None:
     mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
     mock_resolver.item = AsyncMock(return_value=entry)
 
+    ctx = ServerContext(
+        http=AsyncMock(),
+        cache=MagicMock(),
+        resolver=mock_resolver,
+        auth_mode=_auth.CredentialMode.DEFAULT,
+    )
+
     with (
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
-        patch("fabric_dw.mcp.server._get_http", return_value=AsyncMock()),
-        patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
-        patch("fabric_dw.mcp.server._get_cache", return_value=MagicMock()),
+        patch("fabric_dw.mcp._context._SERVER_CTX", ctx),
         patch(
             "fabric_dw.services.sql_exec.execute",
             new=AsyncMock(return_value=sql_result),
