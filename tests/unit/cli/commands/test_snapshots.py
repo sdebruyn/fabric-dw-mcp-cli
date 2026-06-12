@@ -274,7 +274,8 @@ class TestSnapshotsDelete:
             result = runner.invoke(cli, ["--yes", "snapshots", "delete", WS_GUID, SNAP_GUID])
         assert result.exit_code == 0
 
-    def test_delete_declined_aborts(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_delete_declined_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        """Declining delete is a clean no-op (exit 0, policy: decline != error)."""
         _ = cache_env
         mock_http = AsyncMock()
         _cache = LookupCache(path=cache_env / "lookup.json")
@@ -289,7 +290,8 @@ class TestSnapshotsDelete:
             ),
         ):
             result = runner.invoke(cli, ["snapshots", "delete", WS_GUID, SNAP_GUID], input="n\n")
-        assert result.exit_code != 0
+        assert result.exit_code == 0
+        assert "Aborted." in result.output
 
 
 class TestSnapshotsRoll:
@@ -357,7 +359,8 @@ class TestSnapshotsRoll:
             )
         assert result.exit_code == 0
 
-    def test_roll_declined_aborts(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_roll_declined_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        """Declining roll is a clean no-op (exit 0, policy: decline != error)."""
         _ = cache_env
         mock_http = AsyncMock()
         with (
@@ -381,7 +384,8 @@ class TestSnapshotsRoll:
                 ],
                 input="n\n",
             )
-        assert result.exit_code != 0
+        assert result.exit_code == 0
+        assert "Aborted." in result.output
 
     def test_roll_permission_denied_returns_nonzero(
         self, runner: CliRunner, cache_env: Path

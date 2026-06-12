@@ -17,7 +17,7 @@ from rich.console import Console
 
 from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._main import cli
-from fabric_dw.cli.commands.sql_endpoints import _render_refresh_table
+from fabric_dw.cli._render import render_refresh_table as _render_refresh_table
 from fabric_dw.exceptions import NotFound
 from fabric_dw.models import TableSyncStatus, WarehouseKind
 

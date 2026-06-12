@@ -12,6 +12,23 @@ _SUPPORTED_SHELLS = ("bash", "zsh", "fish")
 _COMPLETE_VAR = "_FABRIC_DW_COMPLETE"
 _PROG_NAME = "fabric-dw"
 
+# Single source-of-truth for shell → completion class mapping.
+# Used by both _completion_script() and install() so new shells only
+# need to be added in one place.
+_SHELL_CLS_MAP = {
+    "bash": BashComplete,
+    "zsh": ZshComplete,
+    "fish": FishComplete,
+}
+
+# Shell → (rc-file path relative to HOME, write mode) for install targets.
+# "append" shells get idempotent append; "write" shells overwrite each time.
+_SHELL_INSTALL_MAP: dict[str, tuple[str, str]] = {
+    "bash": (".bashrc", "append"),
+    "zsh": (".zshrc", "append"),
+    "fish": (".config/fish/completions/fabric-dw.fish", "write"),
+}
+
 
 def _completion_script(shell: str) -> str:
     """Return the Click-generated completion script for *shell*.
@@ -22,12 +39,7 @@ def _completion_script(shell: str) -> str:
     # Import here to avoid a circular import at module load time.
     from fabric_dw.cli._main import cli  # noqa: PLC0415
 
-    cls_map = {
-        "bash": BashComplete,
-        "zsh": ZshComplete,
-        "fish": FishComplete,
-    }
-    cls = cls_map[shell.lower()]
+    cls = _SHELL_CLS_MAP[shell.lower()]
     complete = cls(cli, {}, _PROG_NAME, _COMPLETE_VAR)
     return complete.source()
 
@@ -67,17 +79,13 @@ def install(shell: str, print_only: bool) -> None:
         return
 
     home = Path.home()
+    rel_path, mode = _SHELL_INSTALL_MAP[shell]
+    target = home / rel_path
 
-    if shell == "bash":
-        target = home / ".bashrc"
+    if mode == "append":
         _append_idempotent(target, script)
         click.echo(f"Completion script appended to {target}. Reload with: source {target}")
-    elif shell == "zsh":
-        target = home / ".zshrc"
-        _append_idempotent(target, script)
-        click.echo(f"Completion script appended to {target}. Reload with: source {target}")
-    elif shell == "fish":
-        target = home / ".config" / "fish" / "completions" / "fabric-dw.fish"
+    else:  # "write"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(script)
         click.echo(f"Completion script written to {target}. Reload with: source {target}")

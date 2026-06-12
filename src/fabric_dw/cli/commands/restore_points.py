@@ -28,13 +28,13 @@ def restore_points_group() -> None:
 
 @restore_points_group.command("list")
 @click.argument("workspace", required=False, default=None)
-@click.argument("warehouse", required=False, default=None)
+@click.argument("item", required=False, default=None)
 @click.pass_obj
 @_coro
-async def list_cmd(ctx: CliContext, workspace: str | None, warehouse: str | None) -> None:
-    """List all restore points for WAREHOUSE in WORKSPACE."""
+async def list_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> None:
+    """List all restore points for ITEM (warehouse) in WORKSPACE."""
     ws = resolve_workspace_arg(ctx, workspace)
-    wh = resolve_warehouse_arg(ctx, warehouse)
+    wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
             ws_id, entry = await resolve_item(http, ws, wh)
@@ -50,21 +50,23 @@ async def list_cmd(ctx: CliContext, workspace: str | None, warehouse: str | None
 
 
 @restore_points_group.command("get")
-@click.argument("workspace")
-@click.argument("warehouse")
+@click.argument("workspace", required=False, default=None)
+@click.argument("item", required=False, default=None)
 @click.argument("restore_point_id")
 @click.pass_obj
 @_coro
 async def get_cmd(
     ctx: CliContext,
-    workspace: str,
-    warehouse: str,
+    workspace: str | None,
+    item: str | None,
     restore_point_id: str,
 ) -> None:
-    """Get a restore point by RESTORE_POINT_ID for WAREHOUSE in WORKSPACE."""
+    """Get a restore point by RESTORE_POINT_ID for ITEM (warehouse) in WORKSPACE."""
+    ws = resolve_workspace_arg(ctx, workspace)
+    wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
-            ws_id, entry = await resolve_item(http, workspace, warehouse)
+            ws_id, entry = await resolve_item(http, ws, wh)
             wh_id = entry.id
             rp = await _restore_svc.get_point(http, ws_id, wh_id, restore_point_id)
             render(rp.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
@@ -74,7 +76,7 @@ async def get_cmd(
 
 @restore_points_group.command("create")
 @click.argument("workspace", required=False, default=None)
-@click.argument("warehouse", required=False, default=None)
+@click.argument("item", required=False, default=None)
 @click.option("--name", default=None, help="Optional display name (max 128 chars).")
 @click.option("--description", default=None, help="Optional description (max 512 chars).")
 @click.pass_obj
@@ -82,13 +84,13 @@ async def get_cmd(
 async def create_cmd(
     ctx: CliContext,
     workspace: str | None,
-    warehouse: str | None,
+    item: str | None,
     name: str | None,
     description: str | None,
 ) -> None:
-    """Create a restore point for WAREHOUSE in WORKSPACE at the current timestamp."""
+    """Create a restore point for ITEM (warehouse) in WORKSPACE at the current timestamp."""
     ws = resolve_workspace_arg(ctx, workspace)
-    wh = resolve_warehouse_arg(ctx, warehouse)
+    wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
             ws_id, entry = await resolve_item(http, ws, wh)
@@ -102,8 +104,8 @@ async def create_cmd(
 
 
 @restore_points_group.command("rename")
-@click.argument("workspace")
-@click.argument("warehouse")
+@click.argument("workspace", required=False, default=None)
+@click.argument("item", required=False, default=None)
 @click.argument("restore_point_id")
 @click.argument("new_name")
 @click.option("--description", default=None, help="Optional new description.")
@@ -111,16 +113,18 @@ async def create_cmd(
 @_coro
 async def rename_cmd(
     ctx: CliContext,
-    workspace: str,
-    warehouse: str,
+    workspace: str | None,
+    item: str | None,
     restore_point_id: str,
     new_name: str,
     description: str | None,
 ) -> None:
-    """Rename RESTORE_POINT_ID to NEW_NAME on WAREHOUSE in WORKSPACE."""
+    """Rename RESTORE_POINT_ID to NEW_NAME on ITEM (warehouse) in WORKSPACE."""
+    ws = resolve_workspace_arg(ctx, workspace)
+    wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
-            ws_id, entry = await resolve_item(http, workspace, warehouse)
+            ws_id, entry = await resolve_item(http, ws, wh)
             wh_id = entry.id
             rp = await _restore_svc.update_point(
                 http,
@@ -136,84 +140,86 @@ async def rename_cmd(
 
 
 @restore_points_group.command("delete")
-@click.argument("workspace")
-@click.argument("warehouse")
+@click.argument("workspace", required=False, default=None)
+@click.argument("item", required=False, default=None)
 @click.argument("restore_point_id")
 @click.pass_obj
 @_coro
 async def delete_cmd(
     ctx: CliContext,
-    workspace: str,
-    warehouse: str,
+    workspace: str | None,
+    item: str | None,
     restore_point_id: str,
 ) -> None:
-    """Delete RESTORE_POINT_ID on WAREHOUSE in WORKSPACE.
+    """Delete RESTORE_POINT_ID on ITEM (warehouse) in WORKSPACE.
 
     Only user-defined restore points can be deleted; system-created points
     are automatically managed by the service.
     You will be asked to confirm unless --yes is passed.
     """
+    ws = resolve_workspace_arg(ctx, workspace)
+    wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
-            ws_id, entry = await resolve_item(http, workspace, warehouse)
+            ws_id, entry = await resolve_item(http, ws, wh)
             wh_id = entry.id
             confirmed = confirm(
-                f"Delete restore point {restore_point_id!r} on warehouse in {workspace!r}?",
+                f"Delete restore point {restore_point_id!r} on warehouse in {ws!r}?",
                 yes=ctx.yes,
             )
             if not confirmed:
-                raise click.Abort()  # noqa: TRY301
+                click.echo("Aborted.")
+                return
             await _restore_svc.delete_point(http, ws_id, wh_id, restore_point_id)
             click.echo(f"Restore point {restore_point_id!r} deleted.")
-    except click.Abort:
-        raise
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc
 
 
 @restore_points_group.command("restore")
-@click.argument("workspace")
-@click.argument("warehouse")
+@click.argument("workspace", required=False, default=None)
+@click.argument("item", required=False, default=None)
 @click.argument("restore_point_id")
 @click.pass_obj
 @_coro
 async def restore_cmd(
     ctx: CliContext,
-    workspace: str,
-    warehouse: str,
+    workspace: str | None,
+    item: str | None,
     restore_point_id: str,
 ) -> None:
-    """Restore WAREHOUSE in-place to RESTORE_POINT_ID in WORKSPACE.
+    """Restore ITEM (warehouse) in-place to RESTORE_POINT_ID in WORKSPACE.
 
     WARNING: This is a destructive operation. The warehouse will be
     unavailable for approximately 10 minutes while the restore completes.
     In interactive mode you must type the warehouse name to confirm.
     Pass --yes to skip the prompt for automation.
     """
+    ws = resolve_workspace_arg(ctx, workspace)
+    wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
-            ws_id, entry = await resolve_item(http, workspace, warehouse)
+            ws_id, entry = await resolve_item(http, ws, wh)
             wh_id = entry.id
             if not ctx.yes:
                 rp = await _restore_svc.get_point(http, ws_id, wh_id, restore_point_id)
                 when = rp.event_date_time.isoformat() if rp.event_date_time else "unknown"
                 click.echo(
-                    f"\nWARNING: This will REPLACE all data in warehouse {warehouse!r} "
+                    f"\nWARNING: This will REPLACE all data in warehouse {wh!r} "
                     f"with the state at restore point {restore_point_id!r} "
                     f"(created {when}).\n"
                     f"The warehouse will be UNAVAILABLE for ~10 minutes.\n",
                     err=True,
                 )
                 typed = click.prompt(
-                    f"To restore warehouse {warehouse!r} to restore point "
+                    f"To restore warehouse {wh!r} to restore point "
                     f"{restore_point_id!r} (created {when}), "
                     f"type the warehouse name to confirm"
                 )
-                if typed != warehouse:
-                    raise click.Abort()  # noqa: TRY301
+                if typed != wh:
+                    click.echo("Aborted.")
+                    return
             await _restore_svc.restore_in_place(http, ws_id, wh_id, restore_point_id)
             click.echo(f"Warehouse restored to restore point {restore_point_id!r} successfully.")
-    except click.Abort:
-        raise
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc

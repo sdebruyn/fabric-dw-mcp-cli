@@ -49,9 +49,18 @@ async def get_cmd(ctx: CliContext, workspace: str | None, warehouse: str | None)
 @click.argument("warehouse", required=False, default=None)
 @click.option(
     "--retention-days",
-    default=0,
-    show_default=True,
-    help="Audit log retention in days (0 = unlimited).",
+    "retention_days",
+    default=None,
+    type=int,
+    help="Audit log retention in days (>= 1). Mutually exclusive with --unlimited.",
+)
+@click.option(
+    "--unlimited",
+    "unlimited",
+    is_flag=True,
+    default=False,
+    help="Set unlimited audit log retention (maps to 0 on the service). "
+    "Mutually exclusive with --retention-days.",
 )
 @click.pass_obj
 @_coro
@@ -59,15 +68,25 @@ async def enable_cmd(
     ctx: CliContext,
     workspace: str | None,
     warehouse: str | None,
-    retention_days: int,
+    retention_days: int | None,
+    unlimited: bool,
 ) -> None:
-    """Enable SQL auditing on WAREHOUSE in WORKSPACE."""
+    """Enable SQL auditing on WAREHOUSE in WORKSPACE.
+
+    Omitting both --retention-days and --unlimited defaults to unlimited retention.
+    """
+    if retention_days is not None and unlimited:
+        raise click.UsageError("--retention-days and --unlimited are mutually exclusive.")  # noqa: TRY003
+    # Map to service value: 0 means unlimited.
+    effective_days: int = 0
+    if retention_days is not None:
+        effective_days = retention_days
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, warehouse)
     try:
         async with build_http_client(ctx) as http:
             ws_id, entry = await _resolve_item(http, ws, wh)
-            obj = await _audit_svc.enable(http, ws_id, entry.id, retention_days=retention_days)
+            obj = await _audit_svc.enable(http, ws_id, entry.id, retention_days=effective_days)
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -90,11 +109,10 @@ async def disable_cmd(ctx: CliContext, workspace: str | None, warehouse: str | N
                 yes=ctx.yes,
             )
             if not confirmed:
-                raise click.Abort()  # noqa: TRY301
+                click.echo("Aborted.")
+                return
             obj = await _audit_svc.disable(http, ws_id, entry.id)
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
-    except click.Abort:
-        raise
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc
 

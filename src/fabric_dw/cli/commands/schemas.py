@@ -42,7 +42,7 @@ async def list_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> 
             target, _entry = await build_sql_target(http, ws, wh)
             items = await _schemas_svc.list_schemas(target, mode=ctx.auth)
             render(
-                [s.model_dump(mode="json") for s in items],
+                [s.model_dump(by_alias=True, mode="json") for s in items],
                 json_output=ctx.json_output,
                 table_title="Schemas",
             )
@@ -70,7 +70,7 @@ async def create_cmd(
             target, entry = await build_sql_target(http, ws, wh)
             _guard_not_sql_endpoint(entry)
             s = await _schemas_svc.create_schema(target, name, mode=ctx.auth)
-            render(s.model_dump(mode="json"), json_output=ctx.json_output)
+            render(s.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -114,10 +114,10 @@ async def delete_cmd(
                     f"--cascade will permanently drop all tables and views "
                     f"in schema [{name}] on {entry.display_name!r}. " + prompt
                 )
-            confirm_destructive(prompt, yes=ctx.yes)
+            if not confirm_destructive(prompt, yes=ctx.yes):
+                click.echo("Aborted.")
+                return
             await _schemas_svc.delete_schema(target, name, cascade=cascade, mode=ctx.auth)
             click.echo(f"Schema [{name}] dropped.")
-    except click.Abort:
-        raise
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc

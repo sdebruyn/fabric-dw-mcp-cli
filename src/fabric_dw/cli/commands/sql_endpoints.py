@@ -2,25 +2,22 @@
 
 from __future__ import annotations
 
-import json as _json
 import logging
 
 import click
-from rich.console import Console
-from rich.table import Table
 
 from fabric_dw.cli._context import CliContext
-from fabric_dw.cli._render import render
+from fabric_dw.cli._render import render, render_permissions_table, render_refresh_table
 from fabric_dw.cli.commands._utils import (
     _coro,
     _resolve_item,
     build_http_client,
     make_resolver,
-    render_permissions_table,
+    resolve_warehouse_arg,
     resolve_workspace_arg,
+    validate_workspace_or_all_workspaces,
 )
 from fabric_dw.exceptions import FabricError
-from fabric_dw.models import TableSyncStatus
 from fabric_dw.services import permissions as _permissions_svc
 from fabric_dw.services import sql_endpoints as _sql_endpoints_svc
 
@@ -48,12 +45,9 @@ async def list_cmd(ctx: CliContext, workspace: str | None, all_workspaces: bool)
     """List all SQL analytics endpoints in WORKSPACE (name or GUID).
 
     Pass -A / --all-workspaces to scan every visible workspace instead.
-    WORKSPACE and --all-workspaces are mutually exclusive.
+    WORKSPACE and --all-workspaces are mutually exclusive; exactly one is required.
     """
-    if workspace and all_workspaces:
-        raise click.UsageError("WORKSPACE and --all-workspaces are mutually exclusive.")  # noqa: TRY003
-    if not workspace and not all_workspaces:
-        raise click.UsageError("Provide WORKSPACE or pass --all-workspaces / -A.")  # noqa: TRY003
+    validate_workspace_or_all_workspaces(workspace, all_workspaces)
     try:
         async with build_http_client(ctx) as http:
             if all_workspaces:
@@ -73,68 +67,26 @@ async def list_cmd(ctx: CliContext, workspace: str | None, all_workspaces: bool)
 
 
 @sql_endpoints_group.command("get")
-@click.argument("workspace")
-@click.argument("endpoint")
+@click.argument("workspace", required=False, default=None)
+@click.argument("item", required=False, default=None)
 @click.pass_obj
 @_coro
-async def get_cmd(ctx: CliContext, workspace: str, endpoint: str) -> None:
-    """Get details for ENDPOINT in WORKSPACE (both accept name or GUID)."""
+async def get_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> None:
+    """Get details for ITEM (SQL analytics endpoint) in WORKSPACE (both accept name or GUID)."""
+    ws = resolve_workspace_arg(ctx, workspace)
+    ep = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
-            ws_id, entry = await _resolve_item(http, workspace, endpoint)
+            ws_id, entry = await _resolve_item(http, ws, ep)
             obj = await _sql_endpoints_svc.get_endpoint(http, ws_id, entry.id)
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc
 
 
-_STATUS_STYLES: dict[str, str] = {
-    "Success": "green",
-    "Failure": "red",
-    "NotRun": "yellow",
-}
-
-_ERROR_MAX_LEN = 60
-
-
-def _render_refresh_table(
-    statuses: list[TableSyncStatus], *, console: Console | None = None
-) -> None:
-    """Render a list of :class:`TableSyncStatus` as a Rich table."""
-    con = console or Console()
-    table = Table(title="Metadata Refresh Results", show_header=True, header_style="bold")
-    table.add_column("Table", no_wrap=True)
-    table.add_column("Status")
-    table.add_column("End Time")
-    table.add_column("Error", max_width=_ERROR_MAX_LEN)
-
-    for s in statuses:
-        status_text = s.status
-        style = _STATUS_STYLES.get(s.status, "")
-        end_dt = s.end_date_time.isoformat() if s.end_date_time else ""
-
-        error_text = ""
-        if s.error:
-            parts = []
-            if s.error.error_code:
-                parts.append(s.error.error_code)
-            if s.error.message:
-                parts.append(s.error.message)
-            error_text = ": ".join(parts)
-
-        table.add_row(
-            s.table_name,
-            f"[{style}]{status_text}[/{style}]" if style else status_text,
-            end_dt,
-            error_text,
-        )
-
-    con.print(table)
-
-
 @sql_endpoints_group.command("refresh")
-@click.argument("workspace")
-@click.argument("endpoint")
+@click.argument("workspace", required=False, default=None)
+@click.argument("item", required=False, default=None)
 @click.option(
     "--recreate-tables",
     "recreate_tables",
@@ -149,9 +101,9 @@ def _render_refresh_table(
 @click.pass_obj
 @_coro
 async def refresh_cmd(
-    ctx: CliContext, workspace: str, endpoint: str, recreate_tables: bool
+    ctx: CliContext, workspace: str | None, item: str | None, recreate_tables: bool
 ) -> None:
-    """Refresh metadata for ENDPOINT in WORKSPACE (both accept name or GUID).
+    """Refresh metadata for ITEM (SQL endpoint) in WORKSPACE (both accept name or GUID).
 
     Triggers a metadata sync from the underlying Lakehouse delta tables.
     This is a long-running operation (LRO) that is polled to completion.
@@ -159,51 +111,46 @@ async def refresh_cmd(
     By default, results are shown as a Rich table.  Pass --json (on the root
     command) to emit raw JSON instead.
     """
+    ws = resolve_workspace_arg(ctx, workspace)
+    ep = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
-            ws_id, entry = await _resolve_item(http, workspace, endpoint)
+            ws_id, entry = await _resolve_item(http, ws, ep)
             statuses = await _sql_endpoints_svc.refresh_metadata(
                 http, ws_id, entry.id, recreate_tables=recreate_tables
             )
             if ctx.json_output:
-                click.echo(
-                    _json.dumps(
-                        [s.model_dump(by_alias=True, mode="json") for s in statuses],
-                        indent=2,
-                        default=str,
-                    )
+                render(
+                    [s.model_dump(by_alias=True, mode="json") for s in statuses],
+                    json_output=True,
                 )
             else:
-                _render_refresh_table(statuses)
+                render_refresh_table(statuses)
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc
 
 
 @sql_endpoints_group.command("permissions")
 @click.argument("workspace", required=False, default=None)
-@click.argument("endpoint")
+@click.argument("item", required=False, default=None)
 @click.pass_obj
 @_coro
-async def permissions_cmd(ctx: CliContext, workspace: str | None, endpoint: str) -> None:
-    """List principals with access to ENDPOINT in WORKSPACE (both accept name or GUID).
+async def permissions_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> None:
+    """List principals with access to ITEM (SQL endpoint) in WORKSPACE (both accept name or GUID).
 
     Requires Fabric Administrator role.
     See https://learn.microsoft.com/en-us/fabric/admin/microsoft-fabric-admin for details.
     """
     ws = resolve_workspace_arg(ctx, workspace)
+    ep = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
-            ws_id, entry = await _resolve_item(http, ws, endpoint)
+            ws_id, entry = await _resolve_item(http, ws, ep)
             items = await _permissions_svc.list_item_access(http, ws_id, entry.id)
-            if ctx.json_output:
-                click.echo(
-                    _json.dumps(
-                        [a.model_dump(by_alias=True, mode="json") for a in items],
-                        indent=2,
-                        default=str,
-                    )
-                )
-            else:
-                render_permissions_table(items, title="SQL Analytics Endpoint Permissions")
+            render_permissions_table(
+                items,
+                title="SQL Analytics Endpoint Permissions",
+                json_output=ctx.json_output,
+            )
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc

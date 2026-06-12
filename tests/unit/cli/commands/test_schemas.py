@@ -280,7 +280,8 @@ class TestSchemasDelete:
         assert result.exit_code == 0
         assert "dropped" in result.output
 
-    def test_delete_aborts_without_yes(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_delete_declined_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        """Declining delete is a clean no-op (exit 0, policy: decline != error)."""
         _ = cache_env
         mock_http = AsyncMock()
         with (
@@ -300,7 +301,8 @@ class TestSchemasDelete:
             result = runner.invoke(
                 cli, ["schemas", "delete", WS_GUID, WH_GUID, "sales"], input="n\n"
             )
-        assert result.exit_code != 0
+        assert result.exit_code == 0
+        assert "Aborted." in result.output
 
     def test_delete_cascade_passes_cascade_true(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env

@@ -48,7 +48,7 @@ async def list_cmd(
             target, _entry = await build_sql_target(http, ws, wh)
             items = await _tables_svc.list_tables(target, schema=schema, mode=ctx.auth)
             render(
-                [t.model_dump(mode="json") for t in items],
+                [t.model_dump(by_alias=True, mode="json") for t in items],
                 json_output=ctx.json_output,
                 table_title="Tables",
             )
@@ -129,7 +129,7 @@ async def create_cmd(
             t = await _tables_svc.create_table(
                 target, schema, table_name, body, kind=entry.kind, mode=ctx.auth
             )
-            render(t.model_dump(mode="json"), json_output=ctx.json_output)
+            render(t.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -153,16 +153,16 @@ async def delete_cmd(
     try:
         async with build_http_client(ctx) as http:
             target, entry = await build_sql_target(http, ws, wh)
-            confirm_destructive(
+            if not confirm_destructive(
                 f"Drop table [{schema}].[{table_name}] from {entry.display_name!r} ({entry.id})?",
                 yes=ctx.yes,
-            )
+            ):
+                click.echo("Aborted.")
+                return
             await _tables_svc.delete_table(
                 target, schema, table_name, kind=entry.kind, mode=ctx.auth
             )
             click.echo(f"Table [{schema}].[{table_name}] dropped.")
-    except click.Abort:
-        raise
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -186,15 +186,15 @@ async def clear_cmd(
     try:
         async with build_http_client(ctx) as http:
             target, entry = await build_sql_target(http, ws, wh)
-            confirm_destructive(
+            if not confirm_destructive(
                 f"Truncate table [{schema}].[{table_name}] on {entry.display_name!r}?",
                 yes=ctx.yes,
-            )
+            ):
+                click.echo("Aborted.")
+                return
             await _tables_svc.clear_table(
                 target, schema, table_name, kind=entry.kind, mode=ctx.auth
             )
             click.echo(f"Table [{schema}].[{table_name}] truncated.")
-    except click.Abort:
-        raise
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc

@@ -10,10 +10,28 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from fabric_dw.models import ItemAccess, TableSyncStatus
+
 __all__ = [
     "confirm",
     "render",
+    "render_permissions_table",
+    "render_refresh_table",
 ]
+
+# ---------------------------------------------------------------------------
+# Presentation constants (kept here so re-skinning touches one file)
+# ---------------------------------------------------------------------------
+
+#: Status label → Rich colour mapping used in metadata refresh result tables.
+STATUS_STYLES: dict[str, str] = {
+    "Success": "green",
+    "Failure": "red",
+    "NotRun": "yellow",
+}
+
+#: Maximum character width for error text in the metadata refresh result table.
+ERROR_MAX_LEN = 60
 
 _DEFAULT_CONSOLE = Console()
 
@@ -101,6 +119,87 @@ def _render_panel(data: dict[str, object], *, console: Console, title: str | Non
     lines = "\n".join(f"[bold]{k}[/bold]: {_cell(v)}" for k, v in data.items())
     panel = Panel(lines, title=title)
     console.print(panel)
+
+
+def render_permissions_table(
+    accesses: Sequence[ItemAccess],
+    *,
+    title: str,
+    json_output: bool = False,
+    console: Console | None = None,
+) -> None:
+    """Render a sequence of :class:`~fabric_dw.models.ItemAccess` objects.
+
+    Routes through the central rendering infrastructure so both JSON and table
+    output share a single entry point.
+
+    Args:
+        accesses: The list of item access records to display.
+        title: Table title shown in the Rich header.
+        json_output: When *True*, emit indented JSON via ``click.echo`` using
+            :func:`render`.  When *False*, render a Rich table.
+        console: Optional Rich console; ignored when *json_output=True*.
+    """
+    if json_output:
+        render(
+            [a.model_dump(by_alias=True, mode="json") for a in accesses],
+            json_output=True,
+        )
+        return
+
+    con = console or Console()
+    table = Table(title=title, show_header=True, header_style="bold")
+    table.add_column("Display Name", no_wrap=True)
+    table.add_column("UPN / App ID")
+    table.add_column("Type")
+    table.add_column("Permissions")
+    table.add_column("Additional Permissions")
+
+    for entry in accesses:
+        p = entry.principal
+        display = p.display_name or ""
+        identity = p.user_principal_name or (str(p.aad_app_id) if p.aad_app_id else "")
+        ptype = p.type
+        perms = ", ".join(entry.item_access_details.permissions)
+        additional = ", ".join(entry.item_access_details.additional_permissions)
+        table.add_row(display, identity, ptype, perms, additional)
+
+    con.print(table)
+
+
+def render_refresh_table(
+    statuses: list[TableSyncStatus], *, console: Console | None = None
+) -> None:
+    """Render a list of :class:`~fabric_dw.models.TableSyncStatus` as a Rich table."""
+    con = console or Console()
+    table = Table(title="Metadata Refresh Results", show_header=True, header_style="bold")
+    table.add_column("Table", no_wrap=True)
+    table.add_column("Status")
+    table.add_column("End Time")
+    table.add_column("Error", max_width=ERROR_MAX_LEN)
+
+    for s in statuses:
+        status_text = s.status
+        style = STATUS_STYLES.get(s.status, "")
+        end_dt = s.end_date_time.isoformat() if s.end_date_time else ""
+
+        error_text = ""
+        if s.error:
+            parts = []
+            if s.error.error_code:
+                parts.append(s.error.error_code)
+            if s.error.message:
+                parts.append(s.error.message)
+            error_text = ": ".join(parts)
+
+        table.add_row(
+            s.table_name,
+            f"[{style}]{status_text}[/{style}]" if style else status_text,
+            end_dt,
+            error_text,
+        )
+
+    con.print(table)
 
 
 def confirm(message: str, *, yes: bool) -> bool:

@@ -28,13 +28,13 @@ def queries_group() -> None:
 
 @queries_group.command("list")
 @click.argument("workspace", required=False, default=None)
-@click.argument("warehouse", required=False, default=None)
+@click.argument("item", required=False, default=None)
 @click.pass_obj
 @_coro
-async def list_cmd(ctx: CliContext, workspace: str | None, warehouse: str | None) -> None:
-    """List currently running queries on WAREHOUSE_OR_ENDPOINT in WORKSPACE."""
+async def list_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> None:
+    """List currently running queries on ITEM (warehouse or endpoint) in WORKSPACE."""
     ws = resolve_workspace_arg(ctx, workspace)
-    wh = resolve_warehouse_arg(ctx, warehouse)
+    wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
             target, _entry = await build_sql_target(http, ws, wh)
@@ -50,15 +50,13 @@ async def list_cmd(ctx: CliContext, workspace: str | None, warehouse: str | None
 
 @queries_group.command("list-connections")
 @click.argument("workspace", required=False, default=None)
-@click.argument("warehouse", required=False, default=None)
+@click.argument("item", required=False, default=None)
 @click.pass_obj
 @_coro
-async def list_connections_cmd(
-    ctx: CliContext, workspace: str | None, warehouse: str | None
-) -> None:
-    """List active SQL connections on WAREHOUSE_OR_ENDPOINT in WORKSPACE."""
+async def list_connections_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> None:
+    """List active SQL connections on ITEM (warehouse or endpoint) in WORKSPACE."""
     ws = resolve_workspace_arg(ctx, workspace)
-    wh = resolve_warehouse_arg(ctx, warehouse)
+    wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
             target, _entry = await build_sql_target(http, ws, wh)
@@ -74,16 +72,16 @@ async def list_connections_cmd(
 
 @queries_group.command("kill")
 @click.argument("workspace", required=False, default=None)
-@click.argument("warehouse", required=False, default=None)
+@click.argument("item", required=False, default=None)
 @click.argument("session_id", type=int)
 @click.pass_obj
 @_coro
 async def kill_cmd(
-    ctx: CliContext, workspace: str | None, warehouse: str | None, session_id: int
+    ctx: CliContext, workspace: str | None, item: str | None, session_id: int
 ) -> None:
-    """Kill the session SESSION_ID on WAREHOUSE_OR_ENDPOINT in WORKSPACE."""
+    """Kill the session SESSION_ID on ITEM (warehouse or endpoint) in WORKSPACE."""
     ws = resolve_workspace_arg(ctx, workspace)
-    wh = resolve_warehouse_arg(ctx, warehouse)
+    wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
             target, entry = await build_sql_target(http, ws, wh)
@@ -92,10 +90,9 @@ async def kill_cmd(
                 yes=ctx.yes,
             )
             if not confirmed:
-                raise click.Abort()  # noqa: TRY301
+                click.echo("Aborted.")
+                return
             await _queries_svc.kill(target, session_id, mode=ctx.auth)
             click.echo(f"Session {session_id} killed.")
-    except click.Abort:
-        raise
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc

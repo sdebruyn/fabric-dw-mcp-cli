@@ -149,11 +149,13 @@ class TestConfigClear:
         cfg = load_config(default_path())
         assert cfg == UserConfig(defaults=Defaults())
 
-    def test_clear_without_yes_prompts(self, runner: CliRunner, config_env: Path) -> None:
+    def test_clear_declined_exits_zero(self, runner: CliRunner, config_env: Path) -> None:
+        """Declining config clear is a clean no-op (exit 0, policy: decline != error)."""
         _ = config_env
         runner.invoke(cli, ["config", "set", "workspace", "WS"])
         result = runner.invoke(cli, ["config", "clear"], input="n\n")
-        assert result.exit_code != 0
+        assert result.exit_code == 0
+        assert "Aborted." in result.output
 
     def test_clear_confirms_yes_input(self, runner: CliRunner, config_env: Path) -> None:
         _ = config_env

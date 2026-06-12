@@ -138,10 +138,12 @@ async def delete_cmd(ctx: CliContext, workspace: str, snapshot: str) -> None:
     try:
         async with build_http_client(ctx) as http:
             ws_id, entry, cache = await _resolve_item_with_cache(http, workspace, snapshot)
-            confirm_destructive(
+            if not confirm_destructive(
                 f"Delete snapshot {entry.display_name!r} ({entry.id})?",
                 yes=ctx.yes,
-            )
+            ):
+                click.echo("Aborted.")
+                return
             await _snapshots_svc.delete(
                 http,
                 ws_id,
@@ -150,8 +152,6 @@ async def delete_cmd(ctx: CliContext, workspace: str, snapshot: str) -> None:
                 name=entry.display_name or None,
             )
             click.echo(f"Snapshot {entry.display_name!r} ({entry.id}) deleted.")
-    except click.Abort:
-        raise
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -189,14 +189,14 @@ async def roll_cmd(
     try:
         async with build_http_client(ctx) as http:
             target, entry = await build_sql_target(http, ws, wh)
-            confirm_destructive(
+            if not confirm_destructive(
                 f"Roll snapshot {snapshot_name!r} on warehouse "
                 f"{entry.display_name!r} ({entry.id})?",
                 yes=ctx.yes,
-            )
+            ):
+                click.echo("Aborted.")
+                return
             await _snapshots_svc.roll_timestamp(target, snapshot_name, parsed_dt, mode=ctx.auth)
             click.echo(f"Snapshot {snapshot_name!r} rolled.")
-    except click.Abort:
-        raise
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc

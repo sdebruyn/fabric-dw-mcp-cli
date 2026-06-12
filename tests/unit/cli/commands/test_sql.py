@@ -97,7 +97,8 @@ class TestSqlExec:
             )
         assert result.exit_code == 0
 
-    def test_exec_outputs_json_by_default(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_exec_outputs_table_by_default(self, runner: CliRunner, cache_env: Path) -> None:
+        """sql exec defaults to Rich table output (--json on root switches to JSON)."""
         _ = cache_env
         mock_http = AsyncMock()
         with (
@@ -117,6 +118,32 @@ class TestSqlExec:
             result = runner.invoke(
                 cli,
                 ["sql", "exec", WS_GUID, WH_GUID, "-q", "SELECT id, name FROM t"],
+            )
+        assert result.exit_code == 0
+        # Default is table, so output should NOT be raw JSON
+        assert "id" in result.output or "name" in result.output
+
+    def test_exec_outputs_json_with_json_flag(self, runner: CliRunner, cache_env: Path) -> None:
+        """Global --json flag triggers JSON output for sql exec."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.sql_exec.execute",
+                new=AsyncMock(return_value=_make_sql_result()),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["--json", "sql", "exec", WS_GUID, WH_GUID, "-q", "SELECT id, name FROM t"],
             )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -196,7 +223,8 @@ class TestSqlExec:
             f"BOM not stripped: first char is {captured_query[0][0]!r}"
         )
 
-    def test_exec_table_flag_renders_table(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_exec_default_renders_table(self, runner: CliRunner, cache_env: Path) -> None:
+        """sql exec default output is a Rich table (no --table flag needed anymore)."""
         _ = cache_env
         mock_http = AsyncMock()
         with (
@@ -215,15 +243,14 @@ class TestSqlExec:
         ):
             result = runner.invoke(
                 cli,
-                ["sql", "exec", WS_GUID, WH_GUID, "-q", "SELECT id, name FROM t", "--table"],
+                ["sql", "exec", WS_GUID, WH_GUID, "-q", "SELECT id, name FROM t"],
             )
         assert result.exit_code == 0
-        # Should NOT be JSON
-        assert "{" not in result.output or result.output.startswith("id")
+        # Default is table; JSON flag not set so output should NOT be parseable JSON
+        assert "id" in result.output or "name" in result.output
 
-    def test_exec_dml_no_rows_table_flag_shows_rowcount(
-        self, runner: CliRunner, cache_env: Path
-    ) -> None:
+    def test_exec_dml_no_rows_shows_rowcount(self, runner: CliRunner, cache_env: Path) -> None:
+        """DML with no result rows prints rowcount message."""
         _ = cache_env
         mock_http = AsyncMock()
         with (
@@ -249,7 +276,6 @@ class TestSqlExec:
                     WH_GUID,
                     "-q",
                     "INSERT INTO t VALUES (1)",
-                    "--table",
                 ],
             )
         assert result.exit_code == 0

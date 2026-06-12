@@ -525,7 +525,8 @@ class TestTablesDelete:
             )
         assert result.exit_code == 0
 
-    def test_delete_declined_aborts(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_delete_declined_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        """Declining delete is a clean no-op (exit 0, policy: decline != error)."""
         _ = cache_env
         mock_http = AsyncMock()
         with (
@@ -543,7 +544,8 @@ class TestTablesDelete:
                 ["tables", "delete", WS_GUID, WH_GUID, "dbo.sales"],
                 input="n\n",
             )
-        assert result.exit_code != 0
+        assert result.exit_code == 0
+        assert "Aborted." in result.output
 
     def test_delete_bad_qualified_name_exits_nonzero(
         self, runner: CliRunner, cache_env: Path
@@ -646,7 +648,8 @@ class TestTablesClear:
             result = runner.invoke(cli, ["--yes", "tables", "clear", WS_GUID, WH_GUID, "dbo.sales"])
         assert result.exit_code == 0
 
-    def test_clear_declined_aborts(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_clear_declined_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        """Declining clear is a clean no-op (exit 0, policy: decline != error)."""
         _ = cache_env
         mock_http = AsyncMock()
         with (
@@ -664,7 +667,8 @@ class TestTablesClear:
                 ["tables", "clear", WS_GUID, WH_GUID, "dbo.sales"],
                 input="n\n",
             )
-        assert result.exit_code != 0
+        assert result.exit_code == 0
+        assert "Aborted." in result.output
 
     def test_clear_bad_qualified_name_exits_nonzero(
         self, runner: CliRunner, cache_env: Path
