@@ -14,11 +14,29 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
-from typing import TypeVar
+from typing import Literal, TypeVar, overload
 
 __all__ = ["bounded_gather"]
 
 T = TypeVar("T")
+
+
+@overload
+async def bounded_gather(
+    factories: Sequence[Callable[[], Awaitable[T]]],
+    *,
+    concurrency: int = ...,
+    return_exceptions: Literal[False] = ...,
+) -> list[T]: ...
+
+
+@overload
+async def bounded_gather(
+    factories: Sequence[Callable[[], Awaitable[T]]],
+    *,
+    concurrency: int = ...,
+    return_exceptions: Literal[True],
+) -> list[T | BaseException]: ...
 
 
 async def bounded_gather(
@@ -26,7 +44,7 @@ async def bounded_gather(
     *,
     concurrency: int = 8,
     return_exceptions: bool = False,
-) -> list[T | BaseException]:
+) -> list[T] | list[T | BaseException]:
     """Run coroutine factories with bounded concurrency, preserving input order.
 
     Takes *zero-argument callables* that each return a coroutine (factories),
@@ -76,6 +94,7 @@ async def bounded_gather(
         except BaseException:
             for t in tasks:
                 t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
             raise
 
     return results

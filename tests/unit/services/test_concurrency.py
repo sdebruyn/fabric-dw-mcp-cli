@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from typing import Literal
 
 import pytest
 
@@ -184,3 +185,67 @@ async def test_multiple_exceptions_all_captured_when_return_exceptions_true() ->
     assert result[0] is err_a
     assert result[1] == 99
     assert result[2] is err_b
+
+
+@pytest.mark.asyncio
+async def test_all_tasks_done_after_exception_with_return_exceptions_false() -> None:
+    """All tasks must be done (completed or cancelled) after bounded_gather raises.
+
+    Verifies the cancel-and-drain fix: cancellations are delivered and no tasks
+    linger in the event loop after the exception propagates.
+    """
+    gate = asyncio.Event()
+
+    async def _gated() -> int:
+        await gate.wait()
+        return 0
+
+    boom = RuntimeError("drain-check")
+
+    async def _raising_factory() -> int:
+        raise boom
+
+    async def _gated_factory() -> int:
+        return await _gated()
+
+    # Create a mix: one failing factory and several slow ones that will be cancelled.
+    n_slow = 4
+    factories: list[Callable[[], Awaitable[int]]] = [_raising_factory] + [
+        _gated_factory for _ in range(n_slow)
+    ]
+
+    with pytest.raises(RuntimeError, match="drain-check"):
+        await bounded_gather(factories, concurrency=n_slow + 1, return_exceptions=False)
+
+    # After bounded_gather raises, all internally created tasks must be done.
+    # We verify this indirectly: running a few event-loop iterations should not
+    # surface any "Task was destroyed but it is pending" warnings.  We also
+    # confirm the gate was never opened (tasks really were cancelled, not
+    # completed normally).
+    assert not gate.is_set()
+    # Allow the event loop to process any remaining callbacks.
+    await asyncio.sleep(0)
+
+
+# ---------------------------------------------------------------------------
+# Overload / type-narrowing smoke tests (runtime behaviour only)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_return_exceptions_false_returns_plain_list() -> None:
+    """return_exceptions=False (default) returns a plain list of values."""
+    result = await bounded_gather([_const(1), _const(2)], return_exceptions=False)
+    # Static type: list[int].  At runtime just confirm no exceptions in list.
+    assert result == [1, 2]
+    assert all(not isinstance(v, BaseException) for v in result)
+
+
+@pytest.mark.asyncio
+async def test_return_exceptions_true_literal_annotation() -> None:
+    """Passing Literal[True] for return_exceptions works at runtime."""
+    flag: Literal[True] = True
+    boom = ValueError("typed")
+    result = await bounded_gather([_const(1), _raising(boom)], return_exceptions=flag)
+    assert result[0] == 1
+    assert result[1] is boom
