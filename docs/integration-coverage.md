@@ -36,7 +36,7 @@ during these tests.
 | Feature | Integration test | CLI | MCP |
 |---|---|---|---|
 | `sql-endpoints list` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_sql_endpoints.py#L44) | ✅ | ✅ |
-| `sql-endpoints get` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_sql_endpoints.py#L81) | ✅ | ✅ |
+| `sql-endpoints get` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_sql_endpoints.py#L95) | ✅ | ✅ |
 | `sql-endpoints refresh` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_sql_endpoints.py#L131) | ✅ | ✅ |
 | `sql-endpoints permissions` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_permissions.py#L70) [^endpoint-permissions] | ✅ | ✅ |
 
@@ -85,14 +85,14 @@ during these tests.
 
 | Feature | Integration test | CLI | MCP |
 |---|---|---|---|
-| `restore-points list` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_restore.py#L28) | ✅ | ✅ |
-| `restore-points get` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_restore.py#L28) | ✅ | ✅ |
-| `restore-points create` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_restore.py#L28) | ✅ | ✅ |
-| `restore-points rename` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_restore.py#L28) | ✅ | ✅ |
-| `restore-points delete` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_restore.py#L28) | ✅ | ✅ |
+| `restore-points list` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_restore.py#L44) | ✅ | ✅ |
+| `restore-points get` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_restore.py#L44) | ✅ | ✅ |
+| `restore-points create` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_restore.py#L44) | ✅ | ✅ |
+| `restore-points rename` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_restore.py#L44) | ✅ | ✅ |
+| `restore-points delete` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_restore.py#L44) | ✅ | ✅ |
 | `restore-points restore` (restore in place) | ❌ [^restore-in-place] | ✅ | ✅ |
 
-[^restore-in-place]: `restore_in_place` is intentionally excluded from integration tests because it mutates the warehouse for ~10 minutes, breaking concurrent tests. It is covered by unit tests with full LRO mocking.
+[^restore-in-place]: `restore_in_place` is not run in standard CI: the integration test `test_restore_in_place_reverts_warehouse_state` (`tests/integration/test_services_restore.py#L119`) is skip-guarded behind the `FABRIC_RESTORE_IN_PLACE_TESTS` environment variable because `restore_in_place` takes ~10 minutes for the LRO to complete, making it impractical as an automated gate. It is covered by unit tests with full LRO mocking, and can be run manually by setting `FABRIC_RESTORE_IN_PLACE_TESTS=1`.
 
 ### Tables
 
@@ -189,9 +189,9 @@ The integration tests provision two ephemeral fixtures:
 - An **ephemeral Data Warehouse** (`ephemeral_warehouse` / `ephemeral_sql_target` in `conftest.py`) used by warehouse-focused tests (tables, views, schemas, stored procedures, audit, snapshots, restore points, queries, query insights, sql exec).
 - A **schema-enabled Lakehouse** with its paired **SQL Analytics Endpoint** (`ephemeral_lakehouse` / `ephemeral_sql_endpoint` in `conftest.py`) used by the SQL Analytics Endpoint tests. The Lakehouse is created with `enableSchemas=true`; Fabric auto-provisions the SQL endpoint alongside it. The fixture polls until provisioning reaches `Success` (up to 5 minutes) and skips rather than fails if it does not complete in time.
 
-The one remaining ❌ in the coverage table (`restore-points restore`) is intentionally excluded:
+The one remaining ❌ in the coverage table (`restore-points restore`) is not run in standard CI:
 
-- **`restore_in_place`** mutates the warehouse for ~10 minutes and would break concurrent tests. It is covered by unit tests with full LRO mocking.
+- **`restore_in_place`** has an integration test (`test_restore_in_place_reverts_warehouse_state`) but it is skip-guarded behind `FABRIC_RESTORE_IN_PLACE_TESTS` because the LRO takes ~10 minutes, making it impractical as an automated gate. It is covered by unit tests with full LRO mocking.
 
 The integration tests do **not** exercise the upper adapter layers:
 
