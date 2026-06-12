@@ -18,7 +18,7 @@ Fabric has two SQL-surface item kinds:
 Each tool below is labelled with one of:
 
 - **`Targets: Data Warehouse · SQL Analytics Endpoint`** — the tool works on both item kinds.
-- **`Targets: Data Warehouse only`** — the tool is blocked on SQL Analytics Endpoints (either by an explicit guard in the source code, or because it requires write/DDL capability that endpoints do not have).
+- **`Targets: Data Warehouse only`** — the tool is blocked on SQL Analytics Endpoints (either by an explicit guard in the source code, because it requires write/DDL capability that endpoints do not have, or because it calls warehouse-scoped REST API paths that are not available for SQL Analytics Endpoints).
 - **`Targets: SQL Analytics Endpoint`** — the tool operates on SQL Analytics Endpoints specifically (not on Data Warehouses).
 - **`Targets: Workspace (not item-specific)`** — the tool operates at the workspace level and does not target a specific DW or SQL Analytics Endpoint item.
 
@@ -86,9 +86,9 @@ List all warehouses and SQL analytics endpoints in a workspace, or across all vi
 
 ### get_warehouse
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse only
 
-Return details for a single warehouse.
+Return details for a single Data Warehouse. Uses the warehouse-scoped REST path (`GET /workspaces/{ws}/warehouses/{id}`); passing a SQL Analytics Endpoint will return a 404. Use `get_sql_endpoint` to retrieve endpoint details.
 
 **Parameters:**
 

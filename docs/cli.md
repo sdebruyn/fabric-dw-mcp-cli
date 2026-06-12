@@ -26,7 +26,7 @@ Fabric has two SQL-surface item kinds:
 Each command below is labelled with one of:
 
 - **`Targets: Data Warehouse · SQL Analytics Endpoint`** — the command works on both item kinds.
-- **`Targets: Data Warehouse only`** — the command is blocked on SQL Analytics Endpoints (either by an explicit client-side guard in the source code, or because it requires write/DDL capability that endpoints do not have).
+- **`Targets: Data Warehouse only`** — the command is blocked on SQL Analytics Endpoints (either by an explicit client-side guard in the source code, because it requires write/DDL capability that endpoints do not have, or because it calls warehouse-scoped REST API paths that are not available for SQL Analytics Endpoints).
 - **`Targets: SQL Analytics Endpoint`** — the command operates on SQL Analytics Endpoints specifically (not on Data Warehouses).
 - **`Targets: Workspace (not item-specific)`** — the command operates at the workspace level and does not target a specific DW or SQL Analytics Endpoint item.
 
@@ -178,7 +178,7 @@ Manage Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
-List all warehouses in a workspace. Pass `-A` / `--all-workspaces` to aggregate across every visible workspace. `WORKSPACE` and `--all-workspaces` are mutually exclusive.
+List all Data Warehouses and SQL Analytics Endpoints in a workspace. Pass `-A` / `--all-workspaces` to aggregate across every visible workspace. `WORKSPACE` and `--all-workspaces` are mutually exclusive.
 
 **Synopsis**
 
@@ -207,9 +207,9 @@ fabric-dw warehouses list --all-workspaces
 
 ### warehouses get
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse only
 
-Get details for a specific warehouse.
+Get details for a specific Data Warehouse. Uses the warehouse-scoped REST path (`GET /workspaces/{ws}/warehouses/{id}`); passing a SQL Analytics Endpoint GUID will return a 404. Use `sql-endpoints get` to retrieve endpoint details.
 
 **Synopsis**
 
