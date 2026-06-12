@@ -10,7 +10,6 @@ from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import render
 from fabric_dw.cli.commands._utils import (
     _coro,
-    _guard_not_sql_endpoint,
     build_http_client,
     build_sql_target,
     confirm_destructive,
@@ -67,8 +66,7 @@ async def create_cmd(
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
-            target, entry = await build_sql_target(http, ws, wh)
-            _guard_not_sql_endpoint(entry)
+            target, _entry = await build_sql_target(http, ws, wh)
             s = await _schemas_svc.create_schema(target, name, mode=ctx.auth)
             render(s.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
@@ -107,7 +105,6 @@ async def delete_cmd(
     try:
         async with build_http_client(ctx) as http:
             target, entry = await build_sql_target(http, ws, wh)
-            _guard_not_sql_endpoint(entry)
             prompt = f"Drop schema [{name}] from {entry.display_name!r} ({entry.id})?"
             if cascade:
                 prompt = (

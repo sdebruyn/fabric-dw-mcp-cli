@@ -18,7 +18,6 @@ from fabric_dw import auth as _auth
 from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.identifiers import parse_qualified_name as _parse_qn
-from fabric_dw.models import WarehouseKind
 from fabric_dw.resolver import Resolver
 from fabric_dw.sql import SqlTarget
 
@@ -28,28 +27,16 @@ if TYPE_CHECKING:
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
-_SQL_ENDPOINT_READ_ONLY = "SQL Endpoints are read-only; CREATE/DROP SCHEMA not supported"
-
-
 # ---------------------------------------------------------------------------
-# guard_not_sql_endpoint
+# Note on SQL Analytics Endpoint DDL support
 # ---------------------------------------------------------------------------
-
-
-def guard_not_sql_endpoint(entry: ItemEntry) -> None:
-    """Raise ValueError if *entry* is a SQL Analytics Endpoint.
-
-    SQL Analytics Endpoints are read-only; DDL operations are not supported.
-
-    Raises:
-        ValueError: If the resolved item is a SQL Analytics Endpoint.
-    """
-    if entry.kind == WarehouseKind.SQL_ENDPOINT:
-        raise ValueError(_SQL_ENDPOINT_READ_ONLY)
-
-
-# Private alias kept for backward compatibility with existing imports.
-_guard_not_sql_endpoint = guard_not_sql_endpoint
+# CREATE/DROP SCHEMA, CREATE/ALTER/DROP VIEW, and CREATE/ALTER/DROP PROCEDURE
+# are all explicitly supported on SQL Analytics Endpoints per the Microsoft
+# Fabric T-SQL reference (Applies-to: "SQL analytics endpoint in Microsoft
+# Fabric").  Only table DDL and DML (CREATE/DROP/TRUNCATE TABLE, INSERT/
+# UPDATE/DELETE) are Warehouse-only.  No client-side guard is needed for
+# schema or view operations.
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------

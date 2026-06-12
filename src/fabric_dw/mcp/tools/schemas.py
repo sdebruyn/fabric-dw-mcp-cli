@@ -16,7 +16,6 @@ from fabric_dw.mcp._guards import (
 )
 from fabric_dw.mcp._helpers import (
     make_sql_target,
-    require_warehouse,
     resolve_item,
     tool_err,
 )
@@ -59,14 +58,14 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(name="create_schema")
     async def create_schema(workspace: str, item: str, name: str) -> dict[str, Any]:
-        """Create a new SQL schema on a warehouse.
+        """Create a new SQL schema on a warehouse or SQL Analytics Endpoint.
 
-        Only Fabric Data Warehouses are supported; SQL Analytics Endpoints are
-        rejected because they are read-only views over Lakehouse data.
+        Both Fabric Data Warehouses and SQL Analytics Endpoints support
+        ``CREATE SCHEMA`` per the Microsoft Fabric T-SQL reference.
 
         Args:
             workspace: Workspace name or GUID.
-            item: Warehouse name or GUID.
+            item: Warehouse or SQL Analytics Endpoint name or GUID.
             name: The schema name.  Must be a valid SQL identifier.
         """
         assert_writes_allowed("create_schema")
@@ -75,7 +74,6 @@ def register(mcp: FastMCP) -> None:
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
             assert_workspace_allowed(workspace, str(ws_id))
-            require_warehouse(entry, item)
             _log.debug("create_schema ws=%s item=%s name=%r", ws_id, entry.id, name)
             target = make_sql_target(ws_id, entry, item)
             result = await schemas_svc.create_schema(target, name, mode=ctx.auth_mode)
@@ -100,12 +98,12 @@ def register(mcp: FastMCP) -> None:
         are permanently deleted along with their data**.  Confirm explicitly with
         the user before calling with ``cascade=True``.
 
-        Only Fabric Data Warehouses are supported; SQL Analytics Endpoints are
-        rejected.
+        Both Fabric Data Warehouses and SQL Analytics Endpoints support
+        ``DROP SCHEMA`` per the Microsoft Fabric T-SQL reference.
 
         Args:
             workspace: Workspace name or GUID.
-            item: Warehouse name or GUID.
+            item: Warehouse or SQL Analytics Endpoint name or GUID.
             name: The schema name to drop.
             cascade: When ``True``, drop all tables and views in the schema first.
                 Defaults to ``False``.
@@ -117,7 +115,6 @@ def register(mcp: FastMCP) -> None:
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
             assert_workspace_allowed(workspace, str(ws_id))
-            require_warehouse(entry, item)
             _log.debug("delete_schema ws=%s item=%s name=%r", ws_id, entry.id, name)
             target = make_sql_target(ws_id, entry, item)
             await schemas_svc.delete_schema(target, name, cascade=cascade, mode=ctx.auth_mode)

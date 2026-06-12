@@ -6,8 +6,6 @@ This module provides utilities imported by every domain tool module:
   to a :class:`~mcp.server.fastmcp.exceptions.ToolError` with structured data.
 - :func:`tool_err` — uniform error funnel mapping FabricError / ValueError /
   Exception to ToolError without inline ternaries.
-- :func:`require_warehouse` — reject SQL Analytics Endpoint items for DDL
-  operations.
 - :func:`parse_qualified_name` — split ``"schema.object"`` strings, raising
   :class:`~mcp.server.fastmcp.exceptions.ToolError` on bad input.
 - :func:`make_sql_target` — build a :class:`~fabric_dw.sql.SqlTarget` from a
@@ -28,7 +26,6 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw.cache import ItemEntry as _ItemEntry
 from fabric_dw.exceptions import FabricError
-from fabric_dw.models import WarehouseKind
 from fabric_dw.resolver import Resolver
 from fabric_dw.sql import SqlTarget
 from fabric_dw.sql_io import json_safe as _json_safe
@@ -37,7 +34,6 @@ __all__ = [
     "fabric_err",
     "make_sql_target",
     "parse_qualified_name",
-    "require_warehouse",
     "resolve_item",
     "safe_rows",
     "tool_err",
@@ -45,7 +41,9 @@ __all__ = [
 
 _log = logging.getLogger(__name__)
 
-_SQL_ENDPOINT_DDL_ERROR = "SQL Analytics Endpoints are read-only; CREATE/DROP SCHEMA not supported"
+# Note: CREATE/DROP SCHEMA, views, procedures, and functions are all supported
+# on SQL Analytics Endpoints — see T-SQL Applies-to reference for Fabric.
+# No DDL guard is needed for these operations; only table DML/DDL is blocked.
 
 
 def fabric_err(exc: FabricError | Exception) -> ToolError:
@@ -103,24 +101,6 @@ def tool_err(exc: FabricError | Exception) -> ToolError:
     if isinstance(exc, FabricError):
         return fabric_err(exc)
     return ToolError(str(exc))
-
-
-def require_warehouse(entry: _ItemEntry, item: str) -> None:
-    """Raise :class:`ToolError` if *entry* is a SQL Analytics Endpoint.
-
-    DDL operations (CREATE SCHEMA, DROP SCHEMA) are not supported on SQL
-    Analytics Endpoints, which are read-only views over Lakehouse data.
-
-    Args:
-        entry: The resolved item entry.
-        item: The item name/GUID as supplied by the caller (used in the error
-            message).
-
-    Raises:
-        ToolError: If the resolved item is a SQL Analytics Endpoint.
-    """
-    if entry.kind == WarehouseKind.SQL_ENDPOINT:
-        raise ToolError(f"{item!r}: {_SQL_ENDPOINT_DDL_ERROR}")
 
 
 def parse_qualified_name(qualified_name: str, kind: str = "object") -> tuple[str, str]:
