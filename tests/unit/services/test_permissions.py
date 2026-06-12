@@ -9,7 +9,7 @@ import httpx
 import pytest
 import respx
 
-from fabric_dw.exceptions import NotFound, PermissionDenied
+from fabric_dw.exceptions import NotFoundError, PermissionDeniedError
 from fabric_dw.models import ItemAccess, PrincipalType
 from fabric_dw.services import permissions
 from tests.fixtures.api_payloads import (
@@ -208,7 +208,7 @@ async def test_list_item_access_pagination_returns_all_items_as_item_access() ->
 
 
 async def test_list_item_access_403_raises_permission_denied_with_hint() -> None:
-    """list_item_access must raise PermissionDenied with admin-role hint on 403."""
+    """list_item_access must raise PermissionDeniedError with admin-role hint on 403."""
     with respx.mock:
         respx.get(_ACCESS_URL).mock(
             return_value=httpx.Response(403, json={"errorCode": "Forbidden"})
@@ -216,12 +216,12 @@ async def test_list_item_access_403_raises_permission_denied_with_hint() -> None
 
         client = await _make_client()
         async with client:
-            with pytest.raises(PermissionDenied, match="Fabric Administrator"):
+            with pytest.raises(PermissionDeniedError, match="Fabric Administrator"):
                 await permissions.list_item_access(client, _WORKSPACE_ID, _ITEM_ID)
 
 
 async def test_list_item_access_404_raises_not_found() -> None:
-    """list_item_access must propagate NotFound on 404."""
+    """list_item_access must propagate NotFoundError on 404."""
     with respx.mock:
         respx.get(_ACCESS_URL).mock(
             return_value=httpx.Response(404, json={"errorCode": "ItemNotFound"})
@@ -229,5 +229,5 @@ async def test_list_item_access_404_raises_not_found() -> None:
 
         client = await _make_client()
         async with client:
-            with pytest.raises(NotFound):
+            with pytest.raises(NotFoundError):
                 await permissions.list_item_access(client, _WORKSPACE_ID, _ITEM_ID)

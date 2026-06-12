@@ -14,7 +14,7 @@ from azure.core.credentials import AccessToken
 from azure.core.credentials_async import AsyncTokenCredential
 
 from fabric_dw.cache import LookupCache
-from fabric_dw.exceptions import FabricError, NotFound
+from fabric_dw.exceptions import FabricError, NotFoundError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import WarehouseKind
 from fabric_dw.resolver import (
@@ -184,7 +184,7 @@ async def test_workspace_id_name_not_found(tmp_path: Path) -> None:
             return_value=httpx.Response(200, json=_pbi_empty_response())
         )
         async with client:
-            with pytest.raises(NotFound, match="workspace"):
+            with pytest.raises(NotFoundError, match="workspace"):
                 await resolver.workspace_id("NonExistentWorkspace")
 
 
@@ -303,7 +303,7 @@ async def test_item_name_not_found(tmp_path: Path) -> None:
     with respx.mock:
         respx.get(_FABRIC_ITEMS_URL).mock(return_value=httpx.Response(200, json=list_payload))
         async with client:
-            with pytest.raises(NotFound):
+            with pytest.raises(NotFoundError):
                 await resolver.item(WS_GUID, "NonExistentWarehouse")
 
 
@@ -537,7 +537,7 @@ async def test_item_guid_unknown_type_raises_fabric_error(tmp_path: Path) -> Non
 
 
 # ---------------------------------------------------------------------------
-# Negative cache: repeated NotFound avoids API call
+# Negative cache: repeated NotFoundError avoids API call
 # ---------------------------------------------------------------------------
 
 
@@ -549,10 +549,10 @@ async def test_workspace_negative_cache_avoids_second_api_call(tmp_path: Path) -
             return_value=httpx.Response(200, json=_pbi_empty_response())
         )
         async with client:
-            with pytest.raises(NotFound):
+            with pytest.raises(NotFoundError):
                 await resolver.workspace_id("GhostWorkspace")
             # Second call: negative cache should fire before the HTTP route
-            with pytest.raises(NotFound):
+            with pytest.raises(NotFoundError):
                 await resolver.workspace_id("GhostWorkspace")
     # The real API should only have been called once
     assert route.call_count == 1, "negative cache must suppress the second API call"
@@ -572,7 +572,7 @@ async def test_workspace_negative_cache_clears_on_success(tmp_path: Path) -> Non
             return_value=httpx.Response(200, json=_pbi_empty_response())
         )
         async with client:
-            with pytest.raises(NotFound):
+            with pytest.raises(NotFoundError):
                 await resolver.workspace_id("GhostWorkspace")
 
         # Verify the entry was recorded
@@ -604,10 +604,10 @@ async def test_item_negative_cache_avoids_second_api_call(tmp_path: Path) -> Non
             return_value=httpx.Response(200, json=list_payload)
         )
         async with client:
-            with pytest.raises(NotFound):
+            with pytest.raises(NotFoundError):
                 await resolver.item(WS_GUID, "GhostItem")
             # Second call: negative cache should fire before hitting the list endpoint
-            with pytest.raises(NotFound):
+            with pytest.raises(NotFoundError):
                 await resolver.item(WS_GUID, "GhostItem")
     assert route.call_count == 1, "negative cache must suppress the second items-list call"
 
@@ -739,7 +739,7 @@ async def test_negative_cache_expired_entry_pruned_on_check(tmp_path: Path) -> N
             return_value=httpx.Response(200, json=_pbi_group_response(WS_GUID, "ghost"))
         )
         async with client:
-            # Should NOT raise NotFound (entry is expired), and must prune it
+            # Should NOT raise NotFoundError (entry is expired), and must prune it
             result = await resolver.workspace_id("ghost")
     assert result == WS_UUID
     # Expired entry must have been pruned
@@ -754,9 +754,9 @@ async def test_clear_negative_cache_empties_all_entries(tmp_path: Path) -> None:
             return_value=httpx.Response(200, json=_pbi_empty_response())
         )
         async with client:
-            with pytest.raises(NotFound):
+            with pytest.raises(NotFoundError):
                 await resolver.workspace_id("Ghost1")
-            with pytest.raises(NotFound):
+            with pytest.raises(NotFoundError):
                 await resolver.workspace_id("Ghost2")
     assert len(resolver._negative) == 2
     resolver.clear_negative_cache()

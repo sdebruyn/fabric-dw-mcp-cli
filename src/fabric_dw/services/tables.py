@@ -25,7 +25,7 @@ from datetime import datetime
 from typing import cast
 
 from fabric_dw.auth import CredentialMode
-from fabric_dw.exceptions import ItemKindError, NotFound
+from fabric_dw.exceptions import ItemKindError, NotFoundError
 from fabric_dw.identifiers import quote_identifier, validate_identifier
 from fabric_dw.models import Table, WarehouseKind
 from fabric_dw.sql import SqlTarget, run_query
@@ -159,7 +159,7 @@ async def list_tables(
 
     Raises:
         ValueError: If *schema* fails identifier validation.
-        PermissionDenied: If the driver reports a permission error.
+        PermissionDeniedError: If the driver reports a permission error.
         AuthError: If the driver reports an authentication failure.
     """
     if schema is not None:
@@ -212,8 +212,8 @@ async def read_table(
 
     Raises:
         ValueError: If *schema* or *table_name* fails identifier validation.
-        NotFound: If the table does not exist (zero rows AND zero columns).
-        PermissionDenied: If the driver reports a permission error.
+        NotFoundError: If the table does not exist (zero rows AND zero columns).
+        PermissionDeniedError: If the driver reports a permission error.
     """
     validate_identifier(schema)
     validate_identifier(table_name)
@@ -228,7 +228,7 @@ async def read_table(
         cols, rows = run_query(target, read_sql, mode=mode)
         if not cols:
             msg = f"Table [{schema}].[{table_name}] not found"
-            raise NotFound(msg)
+            raise NotFoundError(msg)
         return cols, list(rows)
 
     return await asyncio.to_thread(_run)
@@ -264,7 +264,7 @@ async def create_table(
         ItemKindError: If *kind* is :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
         ValueError: If *schema* or *table_name* fails identifier validation, or
             if *select_body* does not start with SELECT or WITH (CTE).
-        PermissionDenied: If the driver reports a CREATE TABLE permission error.
+        PermissionDeniedError: If the driver reports a CREATE TABLE permission error.
     """
     _assert_not_sql_endpoint(kind)
     validate_identifier(schema)
@@ -301,7 +301,7 @@ async def delete_table(
     Raises:
         ItemKindError: If *kind* is :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
         ValueError: If *schema* or *table_name* fails identifier validation.
-        PermissionDenied: If the driver reports a DROP TABLE permission error.
+        PermissionDeniedError: If the driver reports a DROP TABLE permission error.
     """
     _assert_not_sql_endpoint(kind)
     validate_identifier(schema)
@@ -336,7 +336,7 @@ async def clear_table(
     Raises:
         ItemKindError: If *kind* is :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
         ValueError: If *schema* or *table_name* fails identifier validation.
-        PermissionDenied: If the driver reports a TRUNCATE TABLE permission error.
+        PermissionDeniedError: If the driver reports a TRUNCATE TABLE permission error.
     """
     _assert_not_sql_endpoint(kind)
     validate_identifier(schema)
@@ -374,7 +374,7 @@ async def _fetch_table(
         A :class:`~fabric_dw.models.Table` instance.
 
     Raises:
-        NotFound: If the table is not found after creation.
+        NotFoundError: If the table is not found after creation.
     """
 
     def _run() -> Table:
@@ -386,7 +386,7 @@ async def _fetch_table(
         )
         if not rows:
             msg = f"Table [{schema}].[{table_name}] not found after creation"
-            raise NotFound(msg)
+            raise NotFoundError(msg)
         return _row_to_table(cols, rows[0])
 
     return await asyncio.to_thread(_run)

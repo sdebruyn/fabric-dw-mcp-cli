@@ -25,7 +25,7 @@ import types
 from collections.abc import Mapping
 from uuid import UUID
 
-from fabric_dw.exceptions import AlreadyExists, NotFound
+from fabric_dw.exceptions import AlreadyExistsError, NotFoundError
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import SqlPool, SqlPoolsConfiguration
 
@@ -64,7 +64,7 @@ async def get_configuration(
         The current :class:`~fabric_dw.models.SqlPoolsConfiguration`.
 
     Raises:
-        PermissionDenied: If the caller does not have the workspace admin role
+        PermissionDeniedError: If the caller does not have the workspace admin role
             (HTTP 403).
     """
     resp = await http.request(
@@ -103,7 +103,7 @@ async def update_configuration(
         via a follow-up GET after the PATCH.
 
     Raises:
-        PermissionDenied: If the caller does not have the workspace admin role
+        PermissionDeniedError: If the caller does not have the workspace admin role
             (HTTP 403).
         ValueError: If ``config`` violates client-side constraints (sum > 100,
             multiple defaults, etc.).
@@ -143,7 +143,7 @@ async def enable(
         The updated :class:`~fabric_dw.models.SqlPoolsConfiguration`.
 
     Raises:
-        PermissionDenied: If the caller does not have the workspace admin role
+        PermissionDeniedError: If the caller does not have the workspace admin role
             (HTTP 403).
     """
     current = await get_configuration(http, workspace_id)
@@ -184,7 +184,7 @@ async def disable(
         The updated :class:`~fabric_dw.models.SqlPoolsConfiguration`.
 
     Raises:
-        PermissionDenied: If the caller does not have the workspace admin role
+        PermissionDeniedError: If the caller does not have the workspace admin role
             (HTTP 403).
     """
     current = await get_configuration(http, workspace_id)
@@ -208,7 +208,7 @@ async def create_pool(
     """Add a new pool to the workspace SQL Pools configuration.
 
     Fetches the current pool list, appends the new pool, and PATCHes the full
-    list back.  Raises :class:`~fabric_dw.exceptions.AlreadyExists` if a pool
+    list back.  Raises :class:`~fabric_dw.exceptions.AlreadyExistsError` if a pool
     with the same name already exists.
 
     Note:
@@ -226,13 +226,13 @@ async def create_pool(
         The updated :class:`~fabric_dw.models.SqlPoolsConfiguration`.
 
     Raises:
-        AlreadyExists: If a pool with ``pool.name`` already exists.
-        PermissionDenied: If the caller does not have the workspace admin role.
+        AlreadyExistsError: If a pool with ``pool.name`` already exists.
+        PermissionDeniedError: If the caller does not have the workspace admin role.
     """
     current = await get_configuration(http, workspace_id)
     if any(p.name == pool.name for p in current.custom_sql_pools):
         msg = f"pool {pool.name!r} already exists; use update to modify it"
-        raise AlreadyExists(msg)
+        raise AlreadyExistsError(msg)
     new_pools = [*current.custom_sql_pools, pool]
     new_config = SqlPoolsConfiguration.model_validate(
         {
@@ -295,8 +295,8 @@ async def update_pool(
     Raises:
         ValueError: If exactly one of *classifier_type* / *classifier_values*
             is supplied without the other.
-        NotFound: If no pool named *name* exists.
-        PermissionDenied: If the caller does not have the workspace admin role.
+        NotFoundError: If no pool named *name* exists.
+        PermissionDeniedError: If the caller does not have the workspace admin role.
     """
     if (classifier_type is None) != (classifier_values is None):
         msg = "classifier_type and classifier_values must be provided together (or neither)"
@@ -305,7 +305,7 @@ async def update_pool(
     existing = next((p for p in current.custom_sql_pools if p.name == name), None)
     if existing is None:
         msg = f"pool {name!r} not found; use create to add it"
-        raise NotFound(msg)
+        raise NotFoundError(msg)
 
     raw = existing.model_dump(by_alias=True, mode="json")
     if max_resource_percentage is not None:
@@ -341,7 +341,7 @@ async def delete_pool(
     """Remove a pool from the workspace SQL Pools configuration.
 
     Fetches the current pool list, drops the named pool, and PATCHes the
-    remaining list back.  Raises :class:`~fabric_dw.exceptions.NotFound` if no
+    remaining list back.  Raises :class:`~fabric_dw.exceptions.NotFoundError` if no
     pool with that name exists.
 
     Note:
@@ -359,13 +359,13 @@ async def delete_pool(
         The updated :class:`~fabric_dw.models.SqlPoolsConfiguration`.
 
     Raises:
-        NotFound: If no pool named ``name`` exists.
-        PermissionDenied: If the caller does not have the workspace admin role.
+        NotFoundError: If no pool named ``name`` exists.
+        PermissionDeniedError: If the caller does not have the workspace admin role.
     """
     current = await get_configuration(http, workspace_id)
     if not any(p.name == name for p in current.custom_sql_pools):
         msg = f"pool {name!r} not found"
-        raise NotFound(msg)
+        raise NotFoundError(msg)
     new_pools = [p for p in current.custom_sql_pools if p.name != name]
     new_config = SqlPoolsConfiguration.model_validate(
         {
@@ -399,11 +399,11 @@ async def reset_pools(
         provisioned — GET returned 404).
 
     Raises:
-        PermissionDenied: If the caller does not have the workspace admin role.
+        PermissionDeniedError: If the caller does not have the workspace admin role.
     """
     try:
         current = await get_configuration(http, workspace_id)
-    except NotFound:
+    except NotFoundError:
         return None
     new_config = SqlPoolsConfiguration.model_validate(
         {

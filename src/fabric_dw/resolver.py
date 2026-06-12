@@ -19,7 +19,7 @@ from typing import Any, NamedTuple
 from uuid import UUID
 
 from fabric_dw.cache import ItemEntry, LookupCache
-from fabric_dw.exceptions import FabricError, NotFound
+from fabric_dw.exceptions import FabricError, NotFoundError
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import WarehouseKind
 
@@ -118,9 +118,9 @@ class Resolver:
 
     In addition to the persistent filesystem cache (``LookupCache``), each
     ``Resolver`` instance keeps an **in-memory** negative cache.  When a
-    workspace or item lookup raises ``NotFound``, the failed key is recorded
+    workspace or item lookup raises ``NotFoundError``, the failed key is recorded
     with a monotonic timestamp; subsequent lookups within ``_NEGATIVE_TTL``
-    seconds re-raise ``NotFound`` without hitting the API.
+    seconds re-raise ``NotFoundError`` without hitting the API.
 
     The negative cache is intentionally *not* persisted.  "Not found" is a
     transient condition (the resource may be created moments later), and
@@ -137,12 +137,12 @@ class Resolver:
         self._negative: dict[tuple[str, str], float] = {}
 
     def _negative_check(self, scope: str, key: str) -> None:
-        """Raise NotFound immediately if *key* is in the negative cache and still fresh."""
+        """Raise NotFoundError immediately if *key* is in the negative cache and still fresh."""
         ts = self._negative.get((scope, key))
         if ts is not None:
             age = time.monotonic() - ts
             if age < _NEGATIVE_TTL:
-                raise NotFound(f"{scope}/{key!r} not found")  # noqa: TRY003
+                raise NotFoundError(f"{scope}/{key!r} not found")
             # Entry has expired; prune it now to keep the dict bounded.
             del self._negative[(scope, key)]
 
@@ -184,7 +184,7 @@ class Resolver:
             The workspace UUID.
 
         Raises:
-            NotFound: If no workspace matches *value*.
+            NotFoundError: If no workspace matches *value*.
             FabricError: If *value* matches more than one workspace.
         """
         value = value.strip()
@@ -213,13 +213,11 @@ class Resolver:
 
         if not results:
             self._negative_record("workspace", value.lower())
-            raise NotFound(f"workspace {value!r} not found")  # noqa: TRY003
+            raise NotFoundError(f"workspace {value!r} not found")
 
         if len(results) > 1:
             ids = ", ".join(str(r.get("id", "?")) for r in results)
-            raise FabricError(  # noqa: TRY003
-                f"workspace name {value!r} is ambiguous: ids = {ids}"
-            )
+            raise FabricError(f"workspace name {value!r} is ambiguous: ids = {ids}")
 
         ws_id = UUID(str(results[0]["id"]))
         self._cache.put_workspace(value, ws_id)
@@ -246,7 +244,7 @@ class Resolver:
             The resolved ItemEntry with ``connection_string`` populated.
 
         Raises:
-            NotFound: If the item is not found in the workspace.
+            NotFoundError: If the item is not found in the workspace.
         """
         value = value.strip()
         ws_id = await self.workspace_id(workspace)
@@ -261,7 +259,7 @@ class Resolver:
             self._negative_check(ws_key, value.lower())
             try:
                 result = await self._fetch_item_detail(ws_id, item_uuid)
-            except NotFound:
+            except NotFoundError:
                 self._negative_record(ws_key, value.lower())
                 raise
             self._negative_clear(ws_key, value.lower())
@@ -296,14 +294,14 @@ class Resolver:
             item_id = UUID(str(raw_item["id"]))
             try:
                 result = await self._fetch_item_detail(ws_id, item_id)
-            except NotFound:
+            except NotFoundError:
                 self._negative_record(ws_key, value.lower())
                 raise
             self._negative_clear(ws_key, value.lower())
             return result
 
         self._negative_record(ws_key, value.lower())
-        raise NotFound(f"item {value!r} not found in workspace {ws_id}")  # noqa: TRY003
+        raise NotFoundError(f"item {value!r} not found in workspace {ws_id}")
 
     async def _fetch_item_detail(self, workspace_id: UUID, item_id: UUID) -> ItemEntry:
         """Fetch a single item's full detail, build ItemEntry, cache and return it.
@@ -327,7 +325,7 @@ class Resolver:
         item_type = str(generic_payload.get("type", ""))
 
         if item_type not in _ITEM_TYPE_INFO:
-            raise FabricError(  # noqa: TRY003
+            raise FabricError(
                 f"item {item_id} has unsupported type {item_type!r}; "
                 "expected Warehouse, SQLEndpoint or WarehouseSnapshot"
             )

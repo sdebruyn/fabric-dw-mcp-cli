@@ -112,15 +112,30 @@ select = [
     "C4", "DTZ", "ARG", "PT", "TRY", "LOG", "S", "FBT", "RET", "PIE",
     "TID", "ICN", "T20", "ERA", "PERF", "FURB",
 ]
+ignore = [
+    # TRY003: the project favours descriptive inline exception messages over an
+    # exception-message-constants module. Suppressing globally removes ~30 inline noqa comments.
+    "TRY003",
+    # D/DOC: docstring rules are intentionally deferred until the public API stabilises.
+    # Re-evaluate when the service and MCP layers solidify. Enable D419 (empty docstring)
+    # at minimum once the deferral is lifted.
+]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["ANN", "S101", "PLR2004", "TRY003", "FBT001"]
+# ANN: test functions do not require full type annotations.
+# S101: pytest asserts are intentional.
+# PLR2004: test fixtures use concrete numeric values that are inherent to the test spec
+#   (retention_days=14, page_size=10, etc.) — these are not magic numbers in the
+#   refactoring sense. HTTP status codes in src/ use http.HTTPStatus instead.
+"tests/**" = ["ANN", "S101", "PLR2004"]
+# PLR0913: service functions have many parameters by design (workspace_id, client, etc.).
 "src/fabric_dw/services/**" = ["PLR0913"]
-# Click injects bool flags via decorators; FBT001 is a false-positive for Click commands.
-# PLR0913 fires on commands with --limit/--since/--until; suppress at the CLI layer.
+# FBT001: Click injects bool flags via decorators; positional-bool check is a false-positive.
+# PLR0913: CLI commands grow many options (--limit/--since/--until/etc.); suppress at CLI layer.
 "src/fabric_dw/cli/**" = ["FBT001", "PLR0913"]
 
 [tool.ruff.format]
+docstring-code-format = true
 
 [tool.ty]
 # ty 0.0.44 is in alpha; no meaningful strictness settings are stable yet.

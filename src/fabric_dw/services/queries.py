@@ -14,7 +14,7 @@ from contextlib import closing
 
 from fabric_dw import sql
 from fabric_dw.auth import CredentialMode
-from fabric_dw.exceptions import AuthError, PermissionDenied
+from fabric_dw.exceptions import AuthError, PermissionDeniedError
 from fabric_dw.models import Connection, RunningQuery
 from fabric_dw.sql import SqlTarget, run_query
 
@@ -113,7 +113,7 @@ async def list_connections(
         instances, one per result row.
 
     Raises:
-        PermissionDenied: If the caller lacks VIEW SERVER STATE.
+        PermissionDeniedError: If the caller lacks VIEW SERVER STATE.
     """
 
     def _run() -> list[Connection]:
@@ -138,7 +138,7 @@ async def kill(
 
     Raises:
         ValueError: If *session_id* is not a positive integer (i.e. <= 0).
-        PermissionDenied: If the driver raises a permission or auth error
+        PermissionDeniedError: If the driver raises a permission or auth error
             (KILL requires Monitor or Admin permission on Fabric DW).
     """
     if session_id <= 0:
@@ -160,13 +160,13 @@ async def kill(
                 mapped = sql.map_driver_error(exc)
                 if mapped:
                     msg = f"Permission denied when trying to KILL session {session_id}: {mapped}"
-                    raise PermissionDenied(
+                    raise PermissionDeniedError(
                         msg,
                         hint="KILL requires Monitor or Admin permission on Fabric DW.",
                     ) from exc
-                if isinstance(exc, (PermissionDenied, AuthError)):
+                if isinstance(exc, (PermissionDeniedError, AuthError)):
                     msg = f"Permission denied when trying to KILL session {session_id}: {exc}"
-                    raise PermissionDenied(msg) from exc
+                    raise PermissionDeniedError(msg) from exc
                 raise
 
     await asyncio.to_thread(_run)

@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
 from fabric_dw.auth import CredentialMode
-from fabric_dw.exceptions import AuthError, PermissionDenied
+from fabric_dw.exceptions import AuthError, PermissionDeniedError
 
 # ---------------------------------------------------------------------------
 # Lazy driver import — @functools.cache avoids the module-level global and the
@@ -233,13 +233,13 @@ def map_driver_error(exc: BaseException) -> Exception | None:
 
     Permission-denied is checked before auth-failure in both strategies so a
     message containing both fragments resolves to
-    :class:`~fabric_dw.exceptions.PermissionDenied`.
+    :class:`~fabric_dw.exceptions.PermissionDeniedError`.
 
     Args:
         exc: The raw exception raised by the driver.
 
     Returns:
-        A :class:`~fabric_dw.exceptions.PermissionDenied` or
+        A :class:`~fabric_dw.exceptions.PermissionDeniedError` or
         :class:`~fabric_dw.exceptions.AuthError` instance if the error message
         matches a known fragment or error number, otherwise ``None``.
     """
@@ -251,14 +251,14 @@ def map_driver_error(exc: BaseException) -> Exception | None:
             if raw_num:
                 err_num = int(raw_num)
                 if err_num in _PERMISSION_DENIED_ERROR_NUMBERS:
-                    return PermissionDenied(str(exc))
+                    return PermissionDeniedError(str(exc))
                 if err_num in _AUTH_FAILED_ERROR_NUMBERS:
                     return AuthError(str(exc))
 
     # --- Strategy 2: message-fragment fallback (locale-dependent, documented) ---
     msg = str(exc).lower()
     if any(fragment in msg for fragment in _PERMISSION_DENIED_FRAGMENTS):
-        return PermissionDenied(str(exc))
+        return PermissionDeniedError(str(exc))
     if any(fragment in msg for fragment in _AUTH_FAILED_FRAGMENTS):
         return AuthError(str(exc))
     return None
@@ -311,7 +311,7 @@ def run_query(  # noqa: PLR0913
         strings and *rows* is a list of row tuples.
 
     Raises:
-        PermissionDenied: If the driver reports a permission error.
+        PermissionDeniedError: If the driver reports a permission error.
         AuthError: If the driver reports an authentication failure.
         Exception: Any other driver error is propagated unchanged.
     """
@@ -363,7 +363,7 @@ def run_statements(
         mode: The credential mode for Entra authentication.
 
     Raises:
-        PermissionDenied: If the driver reports a permission error on any statement.
+        PermissionDeniedError: If the driver reports a permission error on any statement.
         AuthError: If the driver reports an authentication failure.
         Exception: Any other driver error is propagated unchanged.
     """

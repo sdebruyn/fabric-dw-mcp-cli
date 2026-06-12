@@ -8,19 +8,17 @@ JSON shape::
 
     {
         "version": 1,
-        "workspaces": {
-            "<name_lower>": {"id": "<guid>", "fetched_at": "<iso8601>"}
-        },
+        "workspaces": {"<name_lower>": {"id": "<guid>", "fetched_at": "<iso8601>"}},
         "items": {
             "<ws_uuid>": {
                 "<name_lower_or_guid_lower>": {
                     "id": "<guid>",
                     "kind": "<WarehouseKind>",
                     "connection_string": "<str | null>",
-                    "fetched_at": "<iso8601>"
+                    "fetched_at": "<iso8601>",
                 }
             }
-        }
+        },
     }
 
 Names are stripped of leading/trailing whitespace and lower-cased at the

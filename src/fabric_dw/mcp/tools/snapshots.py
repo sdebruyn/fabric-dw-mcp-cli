@@ -65,9 +65,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             try:
                 parsed_dt = datetime.fromisoformat(snapshot_dt)
             except ValueError as exc:
-                raise ToolError(  # noqa: TRY003
-                    f"invalid snapshot_dt {snapshot_dt!r}: expected ISO-8601"
-                ) from exc
+                raise ToolError(f"invalid snapshot_dt {snapshot_dt!r}: expected ISO-8601") from exc
         ctx = get_context()
         try:
             ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
@@ -151,9 +149,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             try:
                 parsed_dt = datetime.fromisoformat(new_dt)
             except ValueError as exc:
-                raise ToolError(  # noqa: TRY003
-                    f"invalid new_dt {new_dt!r}: expected ISO-8601"
-                ) from exc
+                raise ToolError(f"invalid new_dt {new_dt!r}: expected ISO-8601") from exc
         ctx = get_context()
         try:
             ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)

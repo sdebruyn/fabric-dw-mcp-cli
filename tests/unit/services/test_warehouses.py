@@ -14,7 +14,7 @@ import pytest
 import respx
 
 from fabric_dw.cache import ItemEntry, LookupCache
-from fabric_dw.exceptions import FabricServerError, NotFound, PermissionDenied
+from fabric_dw.exceptions import FabricServerError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import Warehouse, WarehouseKind, Workspace
 from fabric_dw.services import warehouses
 from tests.fixtures.api_payloads import (
@@ -175,7 +175,7 @@ async def test_get_returns_populated_warehouse() -> None:
 
 
 async def test_get_not_found_propagates() -> None:
-    """get_warehouse must propagate NotFound on a 404 response."""
+    """get_warehouse must propagate NotFoundError on a 404 response."""
     with respx.mock:
         respx.get(_WAREHOUSE_URL).mock(
             return_value=httpx.Response(404, json={"error": {"code": "ItemNotFound"}})
@@ -183,7 +183,7 @@ async def test_get_not_found_propagates() -> None:
 
         client = await _make_client()
         async with client:
-            with pytest.raises(NotFound):
+            with pytest.raises(NotFoundError):
                 await warehouses.get_warehouse(client, _WORKSPACE_ID, _WAREHOUSE_ID)
 
 
@@ -581,7 +581,7 @@ async def test_delete_204_returns_none() -> None:
 
 
 async def test_delete_404_propagates_not_found() -> None:
-    """delete must propagate NotFound on a 404 response."""
+    """delete must propagate NotFoundError on a 404 response."""
     with respx.mock:
         respx.delete(_WAREHOUSE_URL).mock(
             return_value=httpx.Response(404, json={"error": {"code": "ItemNotFound"}})
@@ -589,7 +589,7 @@ async def test_delete_404_propagates_not_found() -> None:
 
         client = await _make_client()
         async with client:
-            with pytest.raises(NotFound):
+            with pytest.raises(NotFoundError):
                 await warehouses.delete(client, _WORKSPACE_ID, _WAREHOUSE_ID)
 
 
@@ -680,7 +680,7 @@ async def test_list_all_workspaces_aggregates_across_workspaces() -> None:
 async def test_list_all_workspaces_skips_permission_denied(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """list_all_workspaces must skip workspaces where PermissionDenied is raised and warn."""
+    """list_all_workspaces must skip workspaces where PermissionDeniedError is raised and warn."""
     ws_a = _make_workspace(_WS_A)
     ws_b = _make_workspace(_WS_B)
     ws_c = _make_workspace(_WS_C)
@@ -700,7 +700,7 @@ async def test_list_all_workspaces_skips_permission_denied(
             new=AsyncMock(
                 side_effect=[
                     [wh_a],
-                    PermissionDenied("no access"),
+                    PermissionDeniedError("no access"),
                     [wh_c],
                 ]
             ),
@@ -718,7 +718,7 @@ async def test_list_all_workspaces_skips_permission_denied(
 
 
 async def test_list_all_workspaces_skips_not_found(caplog: pytest.LogCaptureFixture) -> None:
-    """list_all_workspaces must skip workspaces where NotFound is raised and warn."""
+    """list_all_workspaces must skip workspaces where NotFoundError is raised and warn."""
     ws_a = _make_workspace(_WS_A)
     ws_b = _make_workspace(_WS_B)
     ws_c = _make_workspace(_WS_C)
@@ -738,7 +738,7 @@ async def test_list_all_workspaces_skips_not_found(caplog: pytest.LogCaptureFixt
             new=AsyncMock(
                 side_effect=[
                     [wh_a],
-                    NotFound("workspace gone"),
+                    NotFoundError("workspace gone"),
                     [wh_c],
                 ]
             ),

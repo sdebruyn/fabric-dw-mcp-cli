@@ -12,7 +12,7 @@ import httpx
 import pytest
 import respx
 
-from fabric_dw.exceptions import FabricServerError, NotFound, PermissionDenied
+from fabric_dw.exceptions import FabricServerError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import TableSyncStatus, Warehouse, WarehouseKind, Workspace
 from fabric_dw.services.sql_endpoints import list_all_workspaces
 from tests.fixtures.api_payloads import (
@@ -168,7 +168,7 @@ async def test_get_endpoint_returns_populated_warehouse() -> None:
 
 
 async def test_get_endpoint_404_propagates_not_found() -> None:
-    """get_endpoint must propagate NotFound on a 404 response."""
+    """get_endpoint must propagate NotFoundError on a 404 response."""
     from fabric_dw.services.sql_endpoints import get_endpoint  # noqa: PLC0415
 
     with respx.mock:
@@ -180,7 +180,7 @@ async def test_get_endpoint_404_propagates_not_found() -> None:
 
         client = await _make_client()
         async with client:
-            with pytest.raises(NotFound):
+            with pytest.raises(NotFoundError):
                 await get_endpoint(client, _WORKSPACE_ID, _ENDPOINT_ID)
 
 
@@ -410,7 +410,7 @@ async def test_list_all_workspaces_endpoints_aggregates_across_workspaces() -> N
 async def test_list_all_workspaces_endpoints_skips_permission_denied(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """list_all_workspaces must skip workspaces where PermissionDenied is raised and warn."""
+    """list_all_workspaces must skip workspaces where PermissionDeniedError is raised and warn."""
     ws_a = _make_workspace(_EP_WS_A)
     ws_b = _make_workspace(_EP_WS_B)
     ws_c = _make_workspace(_EP_WS_C)
@@ -430,7 +430,7 @@ async def test_list_all_workspaces_endpoints_skips_permission_denied(
             new=AsyncMock(
                 side_effect=[
                     [ep_a],
-                    PermissionDenied("no access"),
+                    PermissionDeniedError("no access"),
                     [ep_c],
                 ]
             ),
@@ -448,7 +448,7 @@ async def test_list_all_workspaces_endpoints_skips_permission_denied(
 async def test_list_all_workspaces_endpoints_skips_not_found(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """list_all_workspaces must skip workspaces where NotFound is raised and warn."""
+    """list_all_workspaces must skip workspaces where NotFoundError is raised and warn."""
     ws_a = _make_workspace(_EP_WS_A)
     ws_b = _make_workspace(_EP_WS_B)
     ws_c = _make_workspace(_EP_WS_C)
@@ -468,7 +468,7 @@ async def test_list_all_workspaces_endpoints_skips_not_found(
             new=AsyncMock(
                 side_effect=[
                     [ep_a],
-                    NotFound("workspace gone"),
+                    NotFoundError("workspace gone"),
                     [ep_c],
                 ]
             ),

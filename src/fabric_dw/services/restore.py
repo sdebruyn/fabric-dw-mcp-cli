@@ -76,8 +76,8 @@ async def get_point(
         The :class:`~fabric_dw.models.RestorePoint`.
 
     Raises:
-        NotFound: If the restore point does not exist.
-        PermissionDenied: If the caller has insufficient permissions.
+        NotFoundError: If the restore point does not exist.
+        PermissionDeniedError: If the caller has insufficient permissions.
     """
     resp = await http.request(
         "GET",
@@ -186,8 +186,8 @@ async def update_point(
 
     Raises:
         ValueError: If neither *name* nor *description* is supplied.
-        NotFound: If the restore point does not exist.
-        PermissionDenied: If the caller has insufficient permissions.
+        NotFoundError: If the restore point does not exist.
+        PermissionDeniedError: If the caller has insufficient permissions.
     """
     if name is None and description is None:
         msg = "At least one of name or description must be provided"
@@ -224,8 +224,8 @@ async def delete_point(
         point_id: The restore point ID string.
 
     Raises:
-        NotFound: If the restore point does not exist.
-        PermissionDenied: If the caller has insufficient permissions.
+        NotFoundError: If the restore point does not exist.
+        PermissionDeniedError: If the caller has insufficient permissions.
     """
     await http.request(
         "DELETE",
@@ -253,8 +253,8 @@ async def restore_in_place(
         point_id: The restore point ID string.
 
     Raises:
-        NotFound: If the restore point does not exist.
-        PermissionDenied: If the caller has insufficient permissions.
+        NotFoundError: If the restore point does not exist.
+        PermissionDeniedError: If the caller has insufficient permissions.
         FabricServerError: If the LRO fails or times out.
     """
     resp = await http.request(

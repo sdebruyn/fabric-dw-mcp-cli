@@ -19,14 +19,19 @@ from fabric_dw.cli.commands._utils import (
     resolve_workspace_arg,
     resolve_workspace_id,
 )
-from fabric_dw.exceptions import AlreadyExists, FabricError, NotFound, PermissionDenied
+from fabric_dw.exceptions import (
+    AlreadyExistsError,
+    FabricError,
+    NotFoundError,
+    PermissionDeniedError,
+)
 from fabric_dw.models import SqlPool, SqlPoolClassifier
 from fabric_dw.services import sql_pools as _svc
 
 _log = logging.getLogger(__name__)
 
 
-def _permission_hint(exc: PermissionDenied) -> click.ClickException:
+def _permission_hint(exc: PermissionDeniedError) -> click.ClickException:
     return click.ClickException(f"{exc}  (Hint: the caller must have the workspace admin role.)")
 
 
@@ -55,7 +60,7 @@ async def get_cmd(ctx: CliContext, workspace: str | None) -> None:
                 config.model_dump(by_alias=True, mode="json"),
                 json_output=ctx.json_output,
             )
-    except PermissionDenied as exc:
+    except PermissionDeniedError as exc:
         raise _permission_hint(exc) from exc
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -79,7 +84,7 @@ async def list_cmd(ctx: CliContext, workspace: str | None) -> None:
             config = await _svc.get_configuration(http, ws_id)
             pools = [p.model_dump(by_alias=True, mode="json") for p in config.custom_sql_pools]
             render(pools, json_output=ctx.json_output)
-    except PermissionDenied as exc:
+    except PermissionDeniedError as exc:
         raise _permission_hint(exc) from exc
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -102,16 +107,14 @@ async def show_cmd(ctx: CliContext, workspace: str | None, name: str) -> None:
         async with build_http_client(ctx) as http:
             ws_id = await resolve_workspace_id(http, ws)
             config = await _svc.get_configuration(http, ws_id)
-            pool = next((p for p in config.custom_sql_pools if p.name == name), None)
-            if pool is None:
-                raise click.ClickException(f"pool {name!r} not found")  # noqa: TRY003, TRY301
-            render(pool.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
-    except click.ClickException:
-        raise
-    except PermissionDenied as exc:
+    except PermissionDeniedError as exc:
         raise _permission_hint(exc) from exc
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc
+    pool = next((p for p in config.custom_sql_pools if p.name == name), None)
+    if pool is None:
+        raise click.ClickException(f"pool {name!r} not found")
+    render(pool.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
 
 
 # ---------------------------------------------------------------------------
@@ -191,11 +194,11 @@ async def create_cmd(
             ws_id = await resolve_workspace_id(http, ws)
             result = await _svc.create_pool(http, ws_id, pool)
             render(result.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
-    except AlreadyExists as exc:
+    except AlreadyExistsError as exc:
         raise click.ClickException(str(exc)) from exc
     except ValueError as exc:
-        raise click.ClickException(f"Invalid pool configuration: {exc}") from exc  # noqa: TRY003
-    except PermissionDenied as exc:
+        raise click.ClickException(f"Invalid pool configuration: {exc}") from exc
+    except PermissionDeniedError as exc:
         raise _permission_hint(exc) from exc
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -272,11 +275,11 @@ async def update_cmd(
                 classifier_values=cv,
             )
             render(result.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
-    except NotFound as exc:
+    except NotFoundError as exc:
         raise click.ClickException(str(exc)) from exc
     except ValueError as exc:
-        raise click.ClickException(f"Invalid pool configuration: {exc}") from exc  # noqa: TRY003
-    except PermissionDenied as exc:
+        raise click.ClickException(f"Invalid pool configuration: {exc}") from exc
+    except PermissionDeniedError as exc:
         raise _permission_hint(exc) from exc
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -303,9 +306,9 @@ async def delete_cmd(ctx: CliContext, workspace: str | None, name: str) -> None:
             ws_id = await resolve_workspace_id(http, ws)
             result = await _svc.delete_pool(http, ws_id, name)
             render(result.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
-    except NotFound as exc:
+    except NotFoundError as exc:
         raise click.ClickException(str(exc)) from exc
-    except PermissionDenied as exc:
+    except PermissionDeniedError as exc:
         raise _permission_hint(exc) from exc
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -331,7 +334,7 @@ async def enable_cmd(ctx: CliContext, workspace: str | None) -> None:
                 result.model_dump(by_alias=True, mode="json"),
                 json_output=ctx.json_output,
             )
-    except PermissionDenied as exc:
+    except PermissionDeniedError as exc:
         raise _permission_hint(exc) from exc
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -355,7 +358,7 @@ async def disable_cmd(ctx: CliContext, workspace: str | None) -> None:
                 result.model_dump(by_alias=True, mode="json"),
                 json_output=ctx.json_output,
             )
-    except PermissionDenied as exc:
+    except PermissionDeniedError as exc:
         raise _permission_hint(exc) from exc
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -384,7 +387,7 @@ async def reset_cmd(ctx: CliContext, workspace: str | None) -> None:
                 click.echo("Workspace has no SQL pools configuration (never provisioned).")
             else:
                 render(result.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
-    except PermissionDenied as exc:
+    except PermissionDeniedError as exc:
         raise _permission_hint(exc) from exc
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc

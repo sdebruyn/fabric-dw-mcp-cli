@@ -465,7 +465,8 @@ class SqlPoolsConfiguration(_FabricBase):
             return
 
         total = sum(p.max_resource_percentage for p in pools)
-        if total > 100:  # noqa: PLR2004
+        max_resource_percentage = 100
+        if total > max_resource_percentage:
             msg = (
                 f"Sum of maxResourcePercentage across all SQL pools is {total}, which exceeds 100."
             )

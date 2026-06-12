@@ -11,7 +11,7 @@ Public API
 All functions accept an optional *limit* (default 100, cap 10 000) and
 ISO-8601 *since* / *until* window where the view has a datetime column to
 filter on.  A 403 driver error is surfaced as
-:class:`~fabric_dw.exceptions.PermissionDenied` with a documentation link.
+:class:`~fabric_dw.exceptions.PermissionDeniedError` with a documentation link.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from datetime import datetime
 from typing import Any
 
 from fabric_dw.auth import CredentialMode
-from fabric_dw.exceptions import PermissionDenied
+from fabric_dw.exceptions import PermissionDeniedError
 from fabric_dw.models import (
     ExecRequestHistory,
     ExecSessionHistory,
@@ -193,8 +193,8 @@ def _execute_sql(
     """Execute *sql_text* synchronously and return rows as list of dicts."""
     try:
         cols, rows = run_query(target, sql_text, mode=mode)
-    except PermissionDenied as exc:
-        raise PermissionDenied(str(exc), hint=_PERMISSION_DENIED_DOCS) from exc
+    except PermissionDeniedError as exc:
+        raise PermissionDeniedError(str(exc), hint=_PERMISSION_DENIED_DOCS) from exc
     return [dict(zip(cols, r, strict=True)) for r in rows]
 
 
@@ -257,7 +257,7 @@ async def list_request_history(
         ordered by ``submit_time`` descending.
 
     Raises:
-        PermissionDenied: If the caller lacks Contributor or above permission.
+        PermissionDeniedError: If the caller lacks Contributor or above permission.
     """
     clamped = _clamp_limit(limit)
     where_fragment = _build_where(since=since, until=until, column="submit_time")
@@ -334,7 +334,7 @@ async def list_session_history(
         ordered by ``session_start_time`` descending.
 
     Raises:
-        PermissionDenied: If the caller lacks Contributor or above permission.
+        PermissionDeniedError: If the caller lacks Contributor or above permission.
     """
     clamped = _clamp_limit(limit)
     where_fragment = _build_where(since=since, until=until, column="session_start_time")
@@ -389,7 +389,7 @@ async def list_frequent_queries(
         ordered by ``number_of_runs`` descending.
 
     Raises:
-        PermissionDenied: If the caller lacks Contributor or above permission.
+        PermissionDeniedError: If the caller lacks Contributor or above permission.
     """
     clamped = _clamp_limit(limit)
     where_fragment = _build_where(since=since, until=until, column="last_run_start_time")
@@ -439,7 +439,7 @@ async def list_long_running_queries(
         ordered by ``median_total_elapsed_time_ms`` descending.
 
     Raises:
-        PermissionDenied: If the caller lacks Contributor or above permission.
+        PermissionDeniedError: If the caller lacks Contributor or above permission.
     """
     clamped = _clamp_limit(limit)
     where_fragment = _build_where(since=since, until=until, column="last_run_start_time")
@@ -488,7 +488,7 @@ async def list_sql_pool_insights(
         ordered by ``timestamp`` descending.
 
     Raises:
-        PermissionDenied: If the caller lacks Contributor or above permission.
+        PermissionDeniedError: If the caller lacks Contributor or above permission.
     """
     clamped = _clamp_limit(limit)
     where_fragment = _build_where(since=since, until=until, column="timestamp")

@@ -12,14 +12,14 @@ from __future__ import annotations
 import pytest
 
 from fabric_dw.exceptions import (
-    AlreadyExists,
+    AlreadyExistsError,
     AuthError,
     ConfigError,
     FabricError,
     FabricServerError,
     ItemKindError,
-    NotFound,
-    PermissionDenied,
+    NotFoundError,
+    PermissionDeniedError,
     RateLimitedError,
 )
 
@@ -137,11 +137,11 @@ class TestSubclasses:
         "exc_cls",
         [
             AuthError,
-            PermissionDenied,
-            NotFound,
+            PermissionDeniedError,
+            NotFoundError,
             RateLimitedError,
             FabricServerError,
-            AlreadyExists,
+            AlreadyExistsError,
             ItemKindError,
         ],
     )
@@ -153,11 +153,11 @@ class TestSubclasses:
         "exc_cls",
         [
             AuthError,
-            PermissionDenied,
-            NotFound,
+            PermissionDeniedError,
+            NotFoundError,
             RateLimitedError,
             FabricServerError,
-            AlreadyExists,
+            AlreadyExistsError,
             ItemKindError,
         ],
     )
@@ -177,11 +177,11 @@ class TestSubclasses:
         "exc_cls",
         [
             AuthError,
-            PermissionDenied,
-            NotFound,
+            PermissionDeniedError,
+            NotFoundError,
             RateLimitedError,
             FabricServerError,
-            AlreadyExists,
+            AlreadyExistsError,
             ItemKindError,
         ],
     )
@@ -193,11 +193,11 @@ class TestSubclasses:
         "exc_cls",
         [
             AuthError,
-            PermissionDenied,
-            NotFound,
+            PermissionDeniedError,
+            NotFoundError,
             RateLimitedError,
             FabricServerError,
-            AlreadyExists,
+            AlreadyExistsError,
             ItemKindError,
         ],
     )

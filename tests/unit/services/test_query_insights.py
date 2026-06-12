@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from fabric_dw.exceptions import AuthError, PermissionDenied
+from fabric_dw.exceptions import AuthError, PermissionDeniedError
 from fabric_dw.models import (
     ExecRequestHistory,
     ExecSessionHistory,
@@ -181,7 +181,7 @@ async def test_list_request_history_maps_permission_denied() -> None:
     conn.cursor.return_value = cursor
     with (
         patch("fabric_dw.sql.open_connection", return_value=conn),
-        pytest.raises(PermissionDenied),
+        pytest.raises(PermissionDeniedError),
     ):
         await query_insights.list_request_history(target)
 
@@ -194,7 +194,7 @@ async def test_list_request_history_permission_denied_message_has_docs_link() ->
     conn.cursor.return_value = cursor
     with (
         patch("fabric_dw.sql.open_connection", return_value=conn),
-        pytest.raises(PermissionDenied, match="query-insights"),
+        pytest.raises(PermissionDeniedError, match="query-insights"),
     ):
         await query_insights.list_request_history(target)
 
@@ -309,7 +309,7 @@ async def test_list_session_history_maps_permission_denied() -> None:
     conn.cursor.return_value = cursor
     with (
         patch("fabric_dw.sql.open_connection", return_value=conn),
-        pytest.raises(PermissionDenied),
+        pytest.raises(PermissionDeniedError),
     ):
         await query_insights.list_session_history(target)
 
@@ -402,7 +402,7 @@ async def test_list_frequent_queries_maps_permission_denied() -> None:
     conn.cursor.return_value = cursor
     with (
         patch("fabric_dw.sql.open_connection", return_value=conn),
-        pytest.raises(PermissionDenied),
+        pytest.raises(PermissionDeniedError),
     ):
         await query_insights.list_frequent_queries(target)
 
@@ -490,7 +490,7 @@ async def test_list_long_running_maps_permission_denied() -> None:
     conn.cursor.return_value = cursor
     with (
         patch("fabric_dw.sql.open_connection", return_value=conn),
-        pytest.raises(PermissionDenied),
+        pytest.raises(PermissionDeniedError),
     ):
         await query_insights.list_long_running_queries(target)
 
@@ -578,7 +578,7 @@ async def test_list_sql_pool_insights_maps_permission_denied() -> None:
     conn.cursor.return_value = cursor
     with (
         patch("fabric_dw.sql.open_connection", return_value=conn),
-        pytest.raises(PermissionDenied),
+        pytest.raises(PermissionDeniedError),
     ):
         await query_insights.list_sql_pool_insights(target)
 

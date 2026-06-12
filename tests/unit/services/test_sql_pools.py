@@ -11,7 +11,7 @@ import pytest
 import respx
 from pydantic import ValidationError
 
-from fabric_dw.exceptions import AlreadyExists, NotFound, PermissionDenied
+from fabric_dw.exceptions import AlreadyExistsError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import SqlPool, SqlPoolsConfiguration
 from fabric_dw.services import sql_pools
 from tests.unit.services._helpers import _make_client
@@ -118,12 +118,12 @@ async def test_get_configuration_disabled_workspace() -> None:
 
 
 async def test_get_configuration_403_raises_permission_denied() -> None:
-    """get_configuration propagates PermissionDenied on 403 with hint."""
+    """get_configuration propagates PermissionDeniedError on 403 with hint."""
     with respx.mock:
         respx.get(_CONFIG_URL).mock(return_value=httpx.Response(403, json={"error": "forbidden"}))
         client = await _make_client()
         async with client:
-            with pytest.raises(PermissionDenied):
+            with pytest.raises(PermissionDeniedError):
                 await sql_pools.get_configuration(client, _WS_ID)
 
 
@@ -185,14 +185,14 @@ async def test_update_configuration_destructive_semantics_reflected_in_body() ->
 
 
 async def test_update_configuration_403_raises_permission_denied() -> None:
-    """update_configuration propagates PermissionDenied on 403."""
+    """update_configuration propagates PermissionDeniedError on 403."""
     config = SqlPoolsConfiguration.model_validate(POOLS_ENABLED_PAYLOAD)
 
     with respx.mock:
         respx.patch(_CONFIG_URL).mock(return_value=httpx.Response(403, json={"error": "forbidden"}))
         client = await _make_client()
         async with client:
-            with pytest.raises(PermissionDenied):
+            with pytest.raises(PermissionDeniedError):
                 await sql_pools.update_configuration(client, _WS_ID, config)
 
 
@@ -267,7 +267,7 @@ async def test_disable_patches_enabled_false_preserving_pools() -> None:
 
 
 async def test_enable_propagates_not_found_on_404() -> None:
-    """enable propagates NotFound when get_configuration returns 404.
+    """enable propagates NotFoundError when get_configuration returns 404.
 
     There is no fallback that PATCHes an empty configuration — if the workspace
     configuration endpoint is absent, the error surfaces to the caller.
@@ -276,12 +276,12 @@ async def test_enable_propagates_not_found_on_404() -> None:
         respx.get(_CONFIG_URL).mock(return_value=httpx.Response(404, json={"error": "not found"}))
         client = await _make_client()
         async with client:
-            with pytest.raises(NotFound):
+            with pytest.raises(NotFoundError):
                 await sql_pools.enable(client, _WS_ID)
 
 
 async def test_disable_propagates_not_found_on_404() -> None:
-    """disable propagates NotFound when get_configuration returns 404.
+    """disable propagates NotFoundError when get_configuration returns 404.
 
     There is no fallback that PATCHes an empty configuration — if the workspace
     configuration endpoint is absent, the error surfaces to the caller.
@@ -290,7 +290,7 @@ async def test_disable_propagates_not_found_on_404() -> None:
         respx.get(_CONFIG_URL).mock(return_value=httpx.Response(404, json={"error": "not found"}))
         client = await _make_client()
         async with client:
-            with pytest.raises(NotFound):
+            with pytest.raises(NotFoundError):
                 await sql_pools.disable(client, _WS_ID)
 
 
@@ -518,7 +518,7 @@ async def test_create_pool_appends_and_patches() -> None:
 
 
 async def test_create_pool_raises_already_exists_on_duplicate() -> None:
-    """create_pool should raise AlreadyExists when the pool name already exists."""
+    """create_pool should raise AlreadyExistsError when the pool name already exists."""
     duplicate_pool = SqlPool.model_validate(
         {
             "name": "ETL",
@@ -530,7 +530,7 @@ async def test_create_pool_raises_already_exists_on_duplicate() -> None:
         respx.get(_CONFIG_URL).mock(return_value=httpx.Response(200, json=POOLS_ENABLED_PAYLOAD))
         client = await _make_client()
         async with client:
-            with pytest.raises(AlreadyExists, match="ETL"):
+            with pytest.raises(AlreadyExistsError, match="ETL"):
                 await sql_pools.create_pool(client, _WS_ID, duplicate_pool)
 
 
@@ -594,12 +594,12 @@ async def test_create_pool_multiple_classifier_values() -> None:
 
 
 async def test_update_pool_raises_not_found_for_missing_name() -> None:
-    """update_pool should raise NotFound when the pool name does not exist."""
+    """update_pool should raise NotFoundError when the pool name does not exist."""
     with respx.mock:
         respx.get(_CONFIG_URL).mock(return_value=httpx.Response(200, json=POOLS_ENABLED_PAYLOAD))
         client = await _make_client()
         async with client:
-            with pytest.raises(NotFound, match="NonExistent"):
+            with pytest.raises(NotFoundError, match="NonExistent"):
                 await sql_pools.update_pool(
                     client, _WS_ID, "NonExistent", max_resource_percentage=50
                 )
@@ -707,12 +707,12 @@ async def test_delete_pool_removes_named_pool() -> None:
 
 
 async def test_delete_pool_raises_not_found_for_missing_name() -> None:
-    """delete_pool should raise NotFound when the pool name does not exist."""
+    """delete_pool should raise NotFoundError when the pool name does not exist."""
     with respx.mock:
         respx.get(_CONFIG_URL).mock(return_value=httpx.Response(200, json=POOLS_ENABLED_PAYLOAD))
         client = await _make_client()
         async with client:
-            with pytest.raises(NotFound, match="DoesNotExist"):
+            with pytest.raises(NotFoundError, match="DoesNotExist"):
                 await sql_pools.delete_pool(client, _WS_ID, "DoesNotExist")
 
 

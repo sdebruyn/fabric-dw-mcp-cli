@@ -15,7 +15,7 @@ from click.testing import CliRunner
 
 from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._main import cli
-from fabric_dw.exceptions import NotFound
+from fabric_dw.exceptions import NotFoundError
 from fabric_dw.models import WarehouseKind
 from tests.fixtures.api_payloads import AUDIT_SETTINGS_PAYLOAD
 
@@ -103,7 +103,7 @@ class TestAuditGet:
             ),
             patch(
                 "fabric_dw.cli.commands.audit._resolve_item",
-                new=AsyncMock(side_effect=NotFound("not found")),
+                new=AsyncMock(side_effect=NotFoundError("not found")),
             ),
         ):
             result = runner.invoke(cli, ["audit", "get", WS_GUID, WH_GUID])

@@ -2,7 +2,7 @@ import uuid
 
 import pytest
 
-from fabric_dw.exceptions import NotFound
+from fabric_dw.exceptions import NotFoundError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import Warehouse
 from fabric_dw.services import warehouses
@@ -38,5 +38,5 @@ async def test_delete_nonexistent_warehouse_raises(
     http: FabricHttpClient, workspace_id: uuid.UUID
 ) -> None:
     bogus = uuid.uuid4()
-    with pytest.raises(NotFound):
+    with pytest.raises(NotFoundError):
         await warehouses.delete(http, workspace_id, bogus)

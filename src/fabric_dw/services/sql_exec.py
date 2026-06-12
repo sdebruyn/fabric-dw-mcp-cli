@@ -15,7 +15,7 @@ from decimal import Decimal
 
 from fabric_dw import sql
 from fabric_dw.auth import CredentialMode
-from fabric_dw.exceptions import PermissionDenied
+from fabric_dw.exceptions import PermissionDeniedError
 from fabric_dw.models import SqlResult
 from fabric_dw.sql import SqlTarget
 
@@ -159,7 +159,7 @@ async def execute(
     Raises:
         AuthError: If the driver raises an authentication failure (expired or
             missing token).
-        PermissionDenied: If the driver raises a SQL permission-denial error.
+        PermissionDeniedError: If the driver raises a SQL permission-denial error.
             The exception message contains a hint pointing to the
             documentation for the required permissions.
         Exception: Any other driver error is propagated unchanged.
@@ -174,8 +174,8 @@ async def execute(
                 except Exception as exc:
                     mapped = sql.map_driver_error(exc)
                     if mapped is not None:
-                        if isinstance(mapped, PermissionDenied):
-                            raise PermissionDenied(
+                        if isinstance(mapped, PermissionDeniedError):
+                            raise PermissionDeniedError(
                                 str(mapped),
                                 hint=(
                                     "The caller must have at least READ permission on the "

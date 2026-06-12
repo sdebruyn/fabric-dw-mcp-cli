@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from fabric_dw.exceptions import AuthError, PermissionDenied
+from fabric_dw.exceptions import AuthError, PermissionDeniedError
 from fabric_dw.models import SqlResult
 from fabric_dw.services import sql_exec
 
@@ -239,13 +239,13 @@ async def test_execute_permission_denied_raises_permission_denied() -> None:
 
     with (
         patch("fabric_dw.sql.open_connection", return_value=conn),
-        pytest.raises(PermissionDenied),
+        pytest.raises(PermissionDeniedError),
     ):
         await sql_exec.execute(target, "SELECT * FROM SensitiveTable")
 
 
 async def test_execute_permission_denied_message_contains_hint() -> None:
-    """PermissionDenied message must mention a documentation hint."""
+    """PermissionDeniedError message must mention a documentation hint."""
     target = _make_target()
     conn = MagicMock()
     cursor = MagicMock()
@@ -254,7 +254,7 @@ async def test_execute_permission_denied_message_contains_hint() -> None:
 
     with (
         patch("fabric_dw.sql.open_connection", return_value=conn),
-        pytest.raises(PermissionDenied, match="Hint"),
+        pytest.raises(PermissionDeniedError, match="Hint"),
     ):
         await sql_exec.execute(target, "SELECT * FROM X")
 
@@ -275,7 +275,7 @@ async def test_execute_auth_error_raises_auth_error() -> None:
 
 
 async def test_execute_perm_denied_driver_raises_permission_denied() -> None:
-    """SQL permission-denial errors are re-raised as PermissionDenied."""
+    """SQL permission-denial errors are re-raised as PermissionDeniedError."""
     target = _make_target()
     conn = MagicMock()
     cursor = MagicMock()
@@ -284,7 +284,7 @@ async def test_execute_perm_denied_driver_raises_permission_denied() -> None:
 
     with (
         patch("fabric_dw.sql.open_connection", return_value=conn),
-        pytest.raises(PermissionDenied),
+        pytest.raises(PermissionDeniedError),
     ):
         await sql_exec.execute(target, "SELECT * FROM SensitiveTable")
 

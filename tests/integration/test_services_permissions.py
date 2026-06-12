@@ -15,7 +15,7 @@ from uuid import UUID
 
 import pytest
 
-from fabric_dw.exceptions import PermissionDenied
+from fabric_dw.exceptions import PermissionDeniedError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import ItemAccess, Warehouse
 from fabric_dw.services import permissions
@@ -72,7 +72,7 @@ async def test_list_item_access_non_admin_raises_permission_denied(
     workspace_id: UUID,
     ephemeral_warehouse: Warehouse,
 ) -> None:
-    """list_item_access must raise PermissionDenied (with admin hint) when not an admin.
+    """list_item_access must raise PermissionDeniedError (with admin hint) when not an admin.
 
     This test is expected to run even without admin access; it just verifies
     the error is surfaced correctly.  If the caller IS an admin the test is
@@ -81,5 +81,5 @@ async def test_list_item_access_non_admin_raises_permission_denied(
     if _IS_ADMIN:
         pytest.skip("caller has admin access; cannot test non-admin path")
 
-    with pytest.raises(PermissionDenied, match="Fabric Administrator"):
+    with pytest.raises(PermissionDeniedError, match="Fabric Administrator"):
         await permissions.list_item_access(http, workspace_id, ephemeral_warehouse.id)

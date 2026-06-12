@@ -693,7 +693,9 @@ class TestRestorePointFlatteningParametric:
         ],
         ids=["nested", "already_flat", "no_details", "empty_details"],
     )
-    def test_event_date_time_resolved(self, payload: dict, expected_event_dt_is_none: bool) -> None:
+    def test_event_date_time_resolved(
+        self, payload: dict, *, expected_event_dt_is_none: bool
+    ) -> None:
         obj = RestorePoint.model_validate(payload)
         if expected_event_dt_is_none:
             assert obj.event_date_time is None

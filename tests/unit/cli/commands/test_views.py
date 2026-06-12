@@ -15,7 +15,7 @@ from click.testing import CliRunner
 
 from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._main import cli
-from fabric_dw.exceptions import NotFound, PermissionDenied
+from fabric_dw.exceptions import NotFoundError, PermissionDeniedError
 from fabric_dw.models import View, WarehouseKind
 from fabric_dw.sql import SqlTarget
 
@@ -152,7 +152,7 @@ class TestViewsList:
             ),
             patch(
                 "fabric_dw.cli.commands.views.build_sql_target",
-                new=AsyncMock(side_effect=NotFound("not found")),
+                new=AsyncMock(side_effect=NotFoundError("not found")),
             ),
         ):
             result = runner.invoke(cli, ["views", "list", WS_GUID, WH_GUID])
@@ -277,7 +277,7 @@ class TestViewsRead:
             ),
             patch(
                 "fabric_dw.services.views.read_view",
-                new=AsyncMock(side_effect=NotFound("view not found")),
+                new=AsyncMock(side_effect=NotFoundError("view not found")),
             ),
         ):
             result = runner.invoke(cli, ["views", "read", WS_GUID, WH_GUID, "dbo.vw_missing"])
@@ -353,7 +353,7 @@ class TestViewsGet:
             ),
             patch(
                 "fabric_dw.services.views.get_view",
-                new=AsyncMock(side_effect=NotFound("not found")),
+                new=AsyncMock(side_effect=NotFoundError("not found")),
             ),
         ):
             result = runner.invoke(cli, ["views", "get", WS_GUID, WH_GUID, "dbo.vw_missing"])
@@ -522,7 +522,7 @@ class TestViewsCreate:
             ),
             patch(
                 "fabric_dw.services.views.create_view",
-                new=AsyncMock(side_effect=PermissionDenied("no permission")),
+                new=AsyncMock(side_effect=PermissionDeniedError("no permission")),
             ),
         ):
             result = runner.invoke(
@@ -725,7 +725,7 @@ class TestViewsDrop:
             ),
             patch(
                 "fabric_dw.services.views.drop_view",
-                new=AsyncMock(side_effect=PermissionDenied("no permission")),
+                new=AsyncMock(side_effect=PermissionDeniedError("no permission")),
             ),
         ):
             result = runner.invoke(

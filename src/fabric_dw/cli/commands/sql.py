@@ -72,9 +72,9 @@ async def exec_cmd(
     for machine-readable JSON ({columns: [...], rows: [...], rowcount: N}).
     """
     if query_text is not None and query_file is not None:
-        raise click.UsageError("Use -q/--query OR -f/--file, not both.")  # noqa: TRY003
+        raise click.UsageError("Use -q/--query OR -f/--file, not both.")
     if query_text is None and query_file is None:
-        raise click.UsageError("Provide a query via -q/--query or -f/--file.")  # noqa: TRY003
+        raise click.UsageError("Provide a query via -q/--query or -f/--file.")
 
     if query_file is not None:
         query_text = Path(query_file).read_text(encoding="utf-8-sig")

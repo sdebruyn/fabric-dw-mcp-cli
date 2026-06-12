@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from fabric_dw.exceptions import AuthError, ItemKindError, NotFound, PermissionDenied
+from fabric_dw.exceptions import AuthError, ItemKindError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import Table, WarehouseKind
 from fabric_dw.services import tables
 from fabric_dw.services.tables import validate_identifier
@@ -226,7 +226,7 @@ class TestListTables:
         conn.cursor.return_value = cursor
         with (
             patch("fabric_dw.sql.open_connection", return_value=conn),
-            pytest.raises(PermissionDenied),
+            pytest.raises(PermissionDeniedError),
         ):
             await tables.list_tables(target)
 
@@ -310,7 +310,7 @@ class TestReadTable:
         conn.cursor.return_value = cursor
         with (
             patch("fabric_dw.sql.open_connection", return_value=conn),
-            pytest.raises(NotFound),
+            pytest.raises(NotFoundError),
         ):
             await tables.read_table(target, "dbo", "nonexistent")
 
@@ -322,7 +322,7 @@ class TestReadTable:
         conn.cursor.return_value = cursor
         with (
             patch("fabric_dw.sql.open_connection", return_value=conn),
-            pytest.raises(PermissionDenied),
+            pytest.raises(PermissionDeniedError),
         ):
             await tables.read_table(target, "dbo", "sales")
 
@@ -414,7 +414,7 @@ class TestCreateTable:
         conn.cursor.return_value = cursor
         with (
             patch("fabric_dw.sql.open_connection", return_value=conn),
-            pytest.raises(PermissionDenied),
+            pytest.raises(PermissionDeniedError),
         ):
             await tables.create_table(target, "dbo", "sales", "SELECT 1")
 
@@ -481,7 +481,7 @@ class TestDeleteTable:
         conn.cursor.return_value = cursor
         with (
             patch("fabric_dw.sql.open_connection", return_value=conn),
-            pytest.raises(PermissionDenied),
+            pytest.raises(PermissionDeniedError),
         ):
             await tables.delete_table(target, "dbo", "sales")
 
@@ -565,7 +565,7 @@ class TestClearTable:
         conn.cursor.return_value = cursor
         with (
             patch("fabric_dw.sql.open_connection", return_value=conn),
-            pytest.raises(PermissionDenied),
+            pytest.raises(PermissionDeniedError),
         ):
             await tables.clear_table(target, "dbo", "sales")
 

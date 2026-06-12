@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from fabric_dw.exceptions import AuthError, NotFound, PermissionDenied
+from fabric_dw.exceptions import AuthError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import View
 from fabric_dw.services import views
 from fabric_dw.services.views import read_view, validate_identifier
@@ -244,7 +244,7 @@ class TestListViews:
         conn.cursor.return_value = cursor
         with (
             patch("fabric_dw.sql.open_connection", return_value=conn),
-            pytest.raises(PermissionDenied),
+            pytest.raises(PermissionDeniedError),
         ):
             await views.list_views(target)
 
@@ -328,7 +328,7 @@ class TestReadView:
         conn.cursor.return_value = cursor
         with (
             patch("fabric_dw.sql.open_connection", return_value=conn),
-            pytest.raises(NotFound),
+            pytest.raises(NotFoundError),
         ):
             await read_view(target, "dbo", "vw_nonexistent")
 
@@ -340,7 +340,7 @@ class TestReadView:
         conn.cursor.return_value = cursor
         with (
             patch("fabric_dw.sql.open_connection", return_value=conn),
-            pytest.raises(PermissionDenied),
+            pytest.raises(PermissionDeniedError),
         ):
             await read_view(target, "dbo", "vw_sales")
 
@@ -400,7 +400,7 @@ class TestGetView:
         conn = _make_conn([], _GET_COLS)
         with (
             patch("fabric_dw.sql.open_connection", return_value=conn),
-            pytest.raises(NotFound),
+            pytest.raises(NotFoundError),
         ):
             await views.get_view(target, "dbo", "nonexistent")
 
@@ -437,7 +437,7 @@ class TestGetView:
         conn.cursor.return_value = cursor
         with (
             patch("fabric_dw.sql.open_connection", return_value=conn),
-            pytest.raises(PermissionDenied),
+            pytest.raises(PermissionDeniedError),
         ):
             await views.get_view(target, "dbo", "vw_sales")
 
@@ -514,7 +514,7 @@ class TestCreateView:
         conn.cursor.return_value = cursor
         with (
             patch("fabric_dw.sql.open_connection", return_value=conn),
-            pytest.raises(PermissionDenied),
+            pytest.raises(PermissionDeniedError),
         ):
             await views.create_view(target, "dbo", "vw_sales", "SELECT 1")
 
@@ -600,7 +600,7 @@ class TestUpdateView:
         conn.cursor.return_value = cursor
         with (
             patch("fabric_dw.sql.open_connection", return_value=conn),
-            pytest.raises(PermissionDenied),
+            pytest.raises(PermissionDeniedError),
         ):
             await views.update_view(target, "dbo", "vw_sales", "SELECT 1")
 
@@ -662,7 +662,7 @@ class TestDropView:
         conn.cursor.return_value = cursor
         with (
             patch("fabric_dw.sql.open_connection", return_value=conn),
-            pytest.raises(PermissionDenied),
+            pytest.raises(PermissionDeniedError),
         ):
             await views.drop_view(target, "dbo", "vw_sales")
 

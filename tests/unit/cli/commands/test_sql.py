@@ -16,7 +16,7 @@ from click.testing import CliRunner
 
 from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._main import cli
-from fabric_dw.exceptions import NotFound, PermissionDenied
+from fabric_dw.exceptions import NotFoundError, PermissionDeniedError
 from fabric_dw.models import SqlResult, WarehouseKind
 from fabric_dw.sql import SqlTarget
 
@@ -320,7 +320,7 @@ class TestSqlExecErrors:
             ),
             patch(
                 "fabric_dw.services.sql_exec.execute",
-                new=AsyncMock(side_effect=PermissionDenied("no perms")),
+                new=AsyncMock(side_effect=PermissionDeniedError("no perms")),
             ),
         ):
             result = runner.invoke(
@@ -339,7 +339,7 @@ class TestSqlExecErrors:
             ),
             patch(
                 "fabric_dw.cli.commands.sql.build_sql_target",
-                new=AsyncMock(side_effect=NotFound("not found")),
+                new=AsyncMock(side_effect=NotFoundError("not found")),
             ),
         ):
             result = runner.invoke(

@@ -20,8 +20,8 @@ from fabric_dw.exceptions import (
     AuthError,
     FabricError,
     FabricServerError,
-    NotFound,
-    PermissionDenied,
+    NotFoundError,
+    PermissionDeniedError,
     RateLimitedError,
 )
 from fabric_dw.http_client import FabricHttpClient, HttpBase, _parse_retry_after
@@ -166,26 +166,26 @@ async def test_401_raises_auth_error() -> None:
 
 
 async def test_403_raises_permission_denied() -> None:
-    """HTTP 403 should raise PermissionDenied."""
+    """HTTP 403 should raise PermissionDeniedError."""
     with respx.mock:
         respx.get("https://api.fabric.microsoft.com/v1/items").mock(
             return_value=httpx.Response(403, json={"error": "forbidden"})
         )
         client = await _get_client()
         async with client:
-            with pytest.raises(PermissionDenied):
+            with pytest.raises(PermissionDeniedError):
                 await client.request("GET", HttpBase.FABRIC, "/items")
 
 
 async def test_404_raises_not_found() -> None:
-    """HTTP 404 should raise NotFound."""
+    """HTTP 404 should raise NotFoundError."""
     with respx.mock:
         respx.get("https://api.fabric.microsoft.com/v1/items").mock(
             return_value=httpx.Response(404, json={"error": "not found"})
         )
         client = await _get_client()
         async with client:
-            with pytest.raises(NotFound):
+            with pytest.raises(NotFoundError):
                 await client.request("GET", HttpBase.FABRIC, "/items")
 
 
@@ -484,7 +484,7 @@ async def test_get_operation_result_returns_body() -> None:
 
 
 async def test_get_operation_result_not_found_propagates() -> None:
-    """get_operation_result should propagate NotFound when the result endpoint returns 404."""
+    """get_operation_result should propagate NotFoundError when the result endpoint returns 404."""
     op_id = "no-such-op"
     result_url = f"https://api.fabric.microsoft.com/v1/operations/{op_id}/result"
 
@@ -493,7 +493,7 @@ async def test_get_operation_result_not_found_propagates() -> None:
 
         client = await _get_client()
         async with client:
-            with pytest.raises(NotFound):
+            with pytest.raises(NotFoundError):
                 await client.get_operation_result(op_id)
 
 
@@ -634,7 +634,7 @@ async def test_status_mapping_fills_exception_attributes() -> None:
         )
         client = await _get_client()
         async with client:
-            with pytest.raises(NotFound) as exc_info:
+            with pytest.raises(NotFoundError) as exc_info:
                 await client.request("GET", HttpBase.FABRIC, "/items")
 
     err = exc_info.value

@@ -10,7 +10,7 @@ import pytest
 
 import fabric_dw.sql as _sql_module
 from fabric_dw.auth import CredentialMode
-from fabric_dw.exceptions import AuthError, PermissionDenied
+from fabric_dw.exceptions import AuthError, PermissionDeniedError
 from fabric_dw.sql import (
     SqlTarget,
     build_connection_string,
@@ -275,12 +275,12 @@ class TestMapDriverError:
     def test_permission_denied_fragment_returns_permission_denied(self) -> None:
         exc = Exception("The principal does not have permission was denied on object X")
         result = map_driver_error(exc)
-        assert isinstance(result, PermissionDenied)
+        assert isinstance(result, PermissionDeniedError)
 
     def test_denied_the_right_to_fragment_returns_permission_denied(self) -> None:
         exc = Exception("denied the right to execute")
         result = map_driver_error(exc)
-        assert isinstance(result, PermissionDenied)
+        assert isinstance(result, PermissionDeniedError)
 
     def test_auth_failed_fragment_returns_auth_error(self) -> None:
         exc = Exception("Authentication failed for user '' (token-based)")
@@ -302,12 +302,12 @@ class TestMapDriverError:
         # Permission-denied check must come first (as in the issue spec).
         exc = Exception("permission was denied authentication failed")
         result = map_driver_error(exc)
-        assert isinstance(result, PermissionDenied)
+        assert isinstance(result, PermissionDeniedError)
 
     def test_case_insensitive_matching(self) -> None:
         exc = Exception("PERMISSION WAS DENIED on the object")
         result = map_driver_error(exc)
-        assert isinstance(result, PermissionDenied)
+        assert isinstance(result, PermissionDeniedError)
 
     def test_result_message_contains_original(self) -> None:
         original_msg = "permission was denied on SELECT"
@@ -327,22 +327,22 @@ class TestMapDriverError:
         return exc  # type: ignore[return-value]
 
     def test_native_error_229_returns_permission_denied(self) -> None:
-        """Error number 229 (SELECT permission denied) → PermissionDenied."""
+        """Error number 229 (SELECT permission denied) → PermissionDeniedError."""
         exc = self._make_driver_exc("some driver error", "Error: 229 SELECT permission denied")
         result = map_driver_error(exc)
-        assert isinstance(result, PermissionDenied)
+        assert isinstance(result, PermissionDeniedError)
 
     def test_native_error_230_returns_permission_denied(self) -> None:
-        """Error number 230 (INSERT permission denied) → PermissionDenied."""
+        """Error number 230 (INSERT permission denied) → PermissionDeniedError."""
         exc = self._make_driver_exc("some driver error", "(230) INSERT permission denied")
         result = map_driver_error(exc)
-        assert isinstance(result, PermissionDenied)
+        assert isinstance(result, PermissionDeniedError)
 
     def test_native_error_297_returns_permission_denied(self) -> None:
-        """Error number 297 (execute permission denied) → PermissionDenied."""
+        """Error number 297 (execute permission denied) → PermissionDeniedError."""
         exc = self._make_driver_exc("some driver error", "Error: 297 execute permission denied")
         result = map_driver_error(exc)
-        assert isinstance(result, PermissionDenied)
+        assert isinstance(result, PermissionDeniedError)
 
     def test_native_error_18456_returns_auth_error(self) -> None:
         """Error number 18456 (login failed) → AuthError."""
@@ -354,13 +354,13 @@ class TestMapDriverError:
         """Native error 229 beats an auth fragment in the message string."""
         exc = self._make_driver_exc("authentication failed error", "Error: 229 permission")
         result = map_driver_error(exc)
-        assert isinstance(result, PermissionDenied)
+        assert isinstance(result, PermissionDeniedError)
 
     def test_unrecognised_native_error_falls_through_to_fragment(self) -> None:
         """An unrecognised native error number falls through to fragment matching."""
         exc = self._make_driver_exc("permission was denied for this object", "Error: 9999 unknown")
         result = map_driver_error(exc)
-        assert isinstance(result, PermissionDenied)
+        assert isinstance(result, PermissionDeniedError)
 
 
 # ---------------------------------------------------------------------------
@@ -448,7 +448,7 @@ class TestRunQuery:
         mock_cursor.execute.side_effect = Exception("permission was denied on object X")
         _patch_mssql(monkeypatch, mock_mssql)
 
-        with pytest.raises(PermissionDenied):
+        with pytest.raises(PermissionDeniedError):
             run_query(_make_target(), "SELECT * FROM X")
 
     def test_auth_error_fragment_mapped(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -526,7 +526,7 @@ class TestRunStatements:
         mock_cursor.execute.side_effect = Exception("permission was denied")
         _patch_mssql(monkeypatch, mock_mssql)
 
-        with pytest.raises(PermissionDenied):
+        with pytest.raises(PermissionDeniedError):
             run_statements(_make_target(), ["DROP TABLE [dbo].[t]"])
 
         mock_conn.close.assert_called_once()

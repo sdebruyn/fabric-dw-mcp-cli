@@ -15,7 +15,7 @@ from click.testing import CliRunner
 
 from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.cli._main import cli
-from fabric_dw.exceptions import NotFound
+from fabric_dw.exceptions import NotFoundError
 from fabric_dw.models import WarehouseKind
 from tests.fixtures.api_payloads import (
     WAREHOUSE_CREATE_202_PAYLOAD,
@@ -146,7 +146,7 @@ class TestWarehousesGet:
             ),
             patch(
                 "fabric_dw.cli.commands.warehouses._resolve_item",
-                new=AsyncMock(side_effect=NotFound("not found")),
+                new=AsyncMock(side_effect=NotFoundError("not found")),
             ),
         ):
             result = runner.invoke(cli, ["warehouses", "get", WS_GUID, WH_GUID])

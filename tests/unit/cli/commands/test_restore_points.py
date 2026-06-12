@@ -20,7 +20,7 @@ from click.testing import CliRunner
 
 from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._main import cli
-from fabric_dw.exceptions import FabricError, NotFound, PermissionDenied
+from fabric_dw.exceptions import FabricError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import RestorePoint, WarehouseKind
 
 # ---------------------------------------------------------------------------
@@ -170,7 +170,7 @@ class TestRestorePointsList:
             ),
             patch(
                 "fabric_dw.cli.commands.restore_points.resolve_item",
-                new=AsyncMock(side_effect=NotFound("warehouse not found")),
+                new=AsyncMock(side_effect=NotFoundError("warehouse not found")),
             ),
         ):
             result = runner.invoke(cli, ["restore-points", "list", WS_GUID, WH_GUID])
@@ -186,7 +186,7 @@ class TestRestorePointsList:
             ),
             patch(
                 "fabric_dw.cli.commands.restore_points.resolve_item",
-                new=AsyncMock(side_effect=PermissionDenied("forbidden")),
+                new=AsyncMock(side_effect=PermissionDeniedError("forbidden")),
             ),
         ):
             result = runner.invoke(cli, ["restore-points", "list", WS_GUID, WH_GUID])
@@ -261,7 +261,7 @@ class TestRestorePointsGet:
             ),
             patch(
                 "fabric_dw.services.restore.get_point",
-                new=AsyncMock(side_effect=NotFound("restore point not found")),
+                new=AsyncMock(side_effect=NotFoundError("restore point not found")),
             ),
         ):
             result = runner.invoke(cli, ["restore-points", "get", WS_GUID, WH_GUID, RP_ID])

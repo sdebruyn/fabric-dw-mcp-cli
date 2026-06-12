@@ -4,7 +4,7 @@ Provides:
 - Global rate-limiting via aiolimiter (default 2 RPS).
 - 429 Retry-After handling with a monotonic deadline (``_pause_until``).
 - 5xx retry with tenacity exponential back-off (max 3 attempts).
-- Standard error mapping (401 -> AuthError, 403 -> PermissionDenied, 404 -> NotFound).
+- Standard error mapping (401 -> AuthError, 403 -> PermissionDeniedError, 404 -> NotFoundError).
 - continuationUri pagination.
 - LRO (202 + Location) polling with jitter.
 
@@ -42,8 +42,8 @@ from fabric_dw.exceptions import (
     AuthError,
     FabricError,
     FabricServerError,
-    NotFound,
-    PermissionDenied,
+    NotFoundError,
+    PermissionDeniedError,
     RateLimitedError,
 )
 from fabric_dw.logging import redact_auth_header
@@ -66,8 +66,8 @@ _TOKEN_REFRESH_BUFFER: float = 300.0  # seconds before expiry to refresh
 # Status code → exception class mapping (4xx errors only; 5xx handled separately)
 _STATUS_TO_EXC: dict[int, type[FabricError]] = {
     http.HTTPStatus.UNAUTHORIZED: AuthError,
-    http.HTTPStatus.FORBIDDEN: PermissionDenied,
-    http.HTTPStatus.NOT_FOUND: NotFound,
+    http.HTTPStatus.FORBIDDEN: PermissionDeniedError,
+    http.HTTPStatus.NOT_FOUND: NotFoundError,
 }
 
 
@@ -208,8 +208,8 @@ class FabricHttpClient:
 
         Raises:
             AuthError: On 401.
-            PermissionDenied: On 403.
-            NotFound: On 404.
+            PermissionDeniedError: On 403.
+            NotFoundError: On 404.
             RateLimitedError: After exactly ``max_429_retries`` consecutive 429 responses.
             FabricServerError: On persistent 5xx errors.
         """
@@ -264,7 +264,7 @@ class FabricHttpClient:
             if resp.status_code == http.HTTPStatus.TOO_MANY_REQUESTS:
                 consecutive_429 += 1
                 if consecutive_429 >= self._max_429_retries:
-                    raise RateLimitedError(  # noqa: TRY003
+                    raise RateLimitedError(
                         f"Received 429 {consecutive_429} consecutive times for {url}",
                         status=429,
                         request_id=resp.headers.get("x-ms-request-id"),
@@ -371,7 +371,7 @@ class FabricHttpClient:
 
         exc_class = _STATUS_TO_EXC.get(status)
         if exc_class is not None:
-            raise exc_class(  # noqa: TRY003
+            raise exc_class(
                 f"HTTP {status} for {url}: {resp.text}",
                 status=status,
                 request_id=request_id,
@@ -379,7 +379,7 @@ class FabricHttpClient:
             )
 
         if status >= http.HTTPStatus.INTERNAL_SERVER_ERROR:
-            raise FabricServerError(  # noqa: TRY003
+            raise FabricServerError(
                 f"Server error {status} for {url}: {resp.text}",
                 status=status,
                 request_id=request_id,
@@ -447,7 +447,7 @@ class FabricHttpClient:
             The result body, e.g. ``{"id": "...", "type": "WarehouseSnapshot", ...}``.
 
         Raises:
-            NotFound: If the result is not available (404).
+            NotFoundError: If the result is not available (404).
             FabricServerError: On 5xx errors.
         """
         result_url = f"{HttpBase.FABRIC}/operations/{operation_id}/result"
@@ -477,9 +477,7 @@ class FabricHttpClient:
 
         while True:
             if _time.monotonic() >= deadline:
-                raise FabricServerError(  # noqa: TRY003
-                    f"LRO timed out after {timeout_s}s for {location}"
-                )
+                raise FabricServerError(f"LRO timed out after {timeout_s}s for {location}")
 
             resp = await self._request_with_retry("GET", location)
             body: dict[str, object] = resp.json()
@@ -488,9 +486,7 @@ class FabricHttpClient:
             if status == "Succeeded":
                 return body
             if status == "Failed":
-                raise FabricServerError(  # noqa: TRY003
-                    f"LRO failed for {location}: {body.get('error', body)}"
-                )
+                raise FabricServerError(f"LRO failed for {location}: {body.get('error', body)}")
 
             # Not finished yet - honour Retry-After or fall back to default, with jitter
             retry_after_raw = resp.headers.get("Retry-After")
