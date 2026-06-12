@@ -68,7 +68,6 @@ class TestValidateIdentifierReexport:
 
 
 class TestListSchemas:
-    @pytest.mark.asyncio
     async def test_returns_empty_when_no_rows(self) -> None:
         target = _make_target()
         conn = _make_conn([], _LIST_COLS)
@@ -76,7 +75,6 @@ class TestListSchemas:
             result = await schemas.list_schemas(target)
         assert result == []
 
-    @pytest.mark.asyncio
     async def test_returns_schema_instances(self) -> None:
         target = _make_target()
         conn = _make_conn([_SCHEMA_ROW_1], _LIST_COLS)
@@ -85,7 +83,6 @@ class TestListSchemas:
         assert len(result) == 1
         assert isinstance(result[0], Schema)
 
-    @pytest.mark.asyncio
     async def test_parses_fields_correctly(self) -> None:
         target = _make_target()
         conn = _make_conn([_SCHEMA_ROW_1], _LIST_COLS)
@@ -95,7 +92,6 @@ class TestListSchemas:
         assert s.name == "dbo"
         assert s.principal_id == 1
 
-    @pytest.mark.asyncio
     async def test_returns_all_rows(self) -> None:
         target = _make_target()
         conn = _make_conn([_SCHEMA_ROW_1, _SCHEMA_ROW_2], _LIST_COLS)
@@ -103,7 +99,6 @@ class TestListSchemas:
             result = await schemas.list_schemas(target)
         assert len(result) == 2
 
-    @pytest.mark.asyncio
     async def test_sql_references_sys_schemas(self) -> None:
         target = _make_target()
         conn = _make_conn([], _LIST_COLS)
@@ -113,7 +108,6 @@ class TestListSchemas:
         call_sql: str = cursor.execute.call_args[0][0]
         assert "sys.schemas" in call_sql
 
-    @pytest.mark.asyncio
     async def test_sql_excludes_sys_schema(self) -> None:
         target = _make_target()
         conn = _make_conn([], _LIST_COLS)
@@ -127,7 +121,6 @@ class TestListSchemas:
         params = call_args[0][1] if len(call_args[0]) > 1 else []
         assert "sys" in list(params)
 
-    @pytest.mark.asyncio
     async def test_sql_excludes_information_schema(self) -> None:
         target = _make_target()
         conn = _make_conn([], _LIST_COLS)
@@ -138,7 +131,6 @@ class TestListSchemas:
         params = call_args[0][1] if len(call_args[0]) > 1 else []
         assert "INFORMATION_SCHEMA" in list(params)
 
-    @pytest.mark.asyncio
     async def test_sql_excludes_db_prefix_via_like(self) -> None:
         target = _make_target()
         conn = _make_conn([], _LIST_COLS)
@@ -148,7 +140,6 @@ class TestListSchemas:
         call_sql: str = cursor.execute.call_args[0][0]
         assert "db[_]%" in call_sql
 
-    @pytest.mark.asyncio
     async def test_sql_excludes_guest_schema(self) -> None:
         target = _make_target()
         conn = _make_conn([], _LIST_COLS)
@@ -160,7 +151,6 @@ class TestListSchemas:
         # 'guest' must appear in the NOT IN params
         assert "guest" in list(params)
 
-    @pytest.mark.asyncio
     async def test_closes_connection(self) -> None:
         target = _make_target()
         conn = _make_conn([_SCHEMA_ROW_1], _LIST_COLS)
@@ -168,7 +158,6 @@ class TestListSchemas:
             await schemas.list_schemas(target)
         conn.close.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_maps_permission_denied(self) -> None:
         target = _make_target()
         conn = MagicMock()
@@ -181,7 +170,6 @@ class TestListSchemas:
         ):
             await schemas.list_schemas(target)
 
-    @pytest.mark.asyncio
     async def test_maps_auth_error(self) -> None:
         target = _make_target()
         conn = MagicMock()
@@ -194,7 +182,6 @@ class TestListSchemas:
         ):
             await schemas.list_schemas(target)
 
-    @pytest.mark.asyncio
     async def test_unrelated_error_propagates(self) -> None:
         target = _make_target()
         conn = MagicMock()
@@ -214,7 +201,6 @@ class TestListSchemas:
 
 
 class TestCreateSchema:
-    @pytest.mark.asyncio
     async def test_emits_create_schema(self) -> None:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
@@ -225,7 +211,6 @@ class TestCreateSchema:
         call_sql: str = cursor.execute.call_args[0][0].upper()
         assert "CREATE SCHEMA" in call_sql
 
-    @pytest.mark.asyncio
     async def test_uses_bracket_quoting(self) -> None:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
@@ -236,7 +221,6 @@ class TestCreateSchema:
         call_sql: str = cursor.execute.call_args[0][0]
         assert "[dbo]" in call_sql
 
-    @pytest.mark.asyncio
     async def test_returns_schema_object(self) -> None:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
@@ -245,7 +229,6 @@ class TestCreateSchema:
             result = await schemas.create_schema(target, "dbo")
         assert isinstance(result, Schema)
 
-    @pytest.mark.asyncio
     async def test_commits_after_execute(self) -> None:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
@@ -254,19 +237,16 @@ class TestCreateSchema:
             await schemas.create_schema(target, "dbo")
         ddl_conn.commit.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_validates_name_identifier(self) -> None:
         target = _make_target()
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await schemas.create_schema(target, "bad]schema")
 
-    @pytest.mark.asyncio
     async def test_rejects_injection_in_name(self) -> None:
         target = _make_target()
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await schemas.create_schema(target, "x]; DROP TABLE users--")
 
-    @pytest.mark.asyncio
     async def test_maps_permission_denied(self) -> None:
         target = _make_target()
         conn = MagicMock()
@@ -279,7 +259,6 @@ class TestCreateSchema:
         ):
             await schemas.create_schema(target, "dbo")
 
-    @pytest.mark.asyncio
     async def test_fetch_raises_not_found_when_no_rows(self) -> None:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
@@ -297,7 +276,6 @@ class TestCreateSchema:
 
 
 class TestDeleteSchema:
-    @pytest.mark.asyncio
     async def test_emits_drop_schema(self) -> None:
         target = _make_target()
         conn = _make_conn_for_ddl()
@@ -307,7 +285,6 @@ class TestDeleteSchema:
         call_sql: str = cursor.execute.call_args[0][0].upper()
         assert "DROP SCHEMA" in call_sql
 
-    @pytest.mark.asyncio
     async def test_uses_bracket_quoting(self) -> None:
         target = _make_target()
         conn = _make_conn_for_ddl()
@@ -317,7 +294,6 @@ class TestDeleteSchema:
         call_sql: str = cursor.execute.call_args[0][0]
         assert "[dbo]" in call_sql
 
-    @pytest.mark.asyncio
     async def test_commits_after_execute(self) -> None:
         target = _make_target()
         conn = _make_conn_for_ddl()
@@ -325,7 +301,6 @@ class TestDeleteSchema:
             await schemas.delete_schema(target, "dbo")
         conn.commit.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_closes_connection(self) -> None:
         target = _make_target()
         conn = _make_conn_for_ddl()
@@ -333,19 +308,16 @@ class TestDeleteSchema:
             await schemas.delete_schema(target, "dbo")
         conn.close.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_validates_name_identifier(self) -> None:
         target = _make_target()
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await schemas.delete_schema(target, "bad]schema")
 
-    @pytest.mark.asyncio
     async def test_rejects_injection_in_name(self) -> None:
         target = _make_target()
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await schemas.delete_schema(target, "x]; DROP TABLE users--")
 
-    @pytest.mark.asyncio
     async def test_maps_permission_denied(self) -> None:
         target = _make_target()
         conn = MagicMock()
@@ -358,7 +330,6 @@ class TestDeleteSchema:
         ):
             await schemas.delete_schema(target, "dbo")
 
-    @pytest.mark.asyncio
     async def test_unrelated_error_propagates(self) -> None:
         target = _make_target()
         conn = MagicMock()
@@ -378,7 +349,6 @@ class TestDeleteSchema:
 
 
 class TestDeleteSchemaCascade:
-    @pytest.mark.asyncio
     async def test_cascade_drops_table_then_schema(self) -> None:
         """cascade=True: list → run_statements (DROP TABLE) → DROP SCHEMA.
         run_statements uses a single connection for all object drops."""
@@ -397,7 +367,6 @@ class TestDeleteSchemaCascade:
         drop_sql: str = cursor.execute.call_args[0][0].upper()
         assert "DROP TABLE" in drop_sql
 
-    @pytest.mark.asyncio
     async def test_cascade_drops_view_then_schema(self) -> None:
         """cascade=True: list → run_statements (DROP VIEW) → DROP SCHEMA."""
         target = _make_target()
@@ -413,7 +382,6 @@ class TestDeleteSchemaCascade:
         drop_sql: str = cursor.execute.call_args[0][0].upper()
         assert "DROP VIEW" in drop_sql
 
-    @pytest.mark.asyncio
     async def test_cascade_drops_multiple_objects(self) -> None:
         """Multiple objects (t1 TABLE, v1 VIEW) are dropped on ONE connection.
 
@@ -441,7 +409,6 @@ class TestDeleteSchemaCascade:
         assert any("DROP TABLE" in s and "[T1]" in s for s in sqls)
         assert any("DROP VIEW" in s and "[V1]" in s for s in sqls)
 
-    @pytest.mark.asyncio
     async def test_cascade_false_does_not_enumerate_objects(self) -> None:
         target = _make_target()
         drop_schema_conn = _make_conn_for_ddl()
@@ -453,7 +420,6 @@ class TestDeleteSchemaCascade:
         # Only one connection opened (the DROP SCHEMA itself)
         assert True
 
-    @pytest.mark.asyncio
     async def test_cascade_empty_schema_drops_schema(self) -> None:
         """When schema has no objects, skip run_statements and only DROP SCHEMA."""
         target = _make_target()
@@ -468,7 +434,6 @@ class TestDeleteSchemaCascade:
         drop_sql: str = cursor.execute.call_args[0][0].upper()
         assert "DROP SCHEMA" in drop_sql
 
-    @pytest.mark.asyncio
     async def test_cascade_uses_bracket_quoting_for_objects(self) -> None:
         """Object DROP statements must use bracket-quoted names."""
         target = _make_target()

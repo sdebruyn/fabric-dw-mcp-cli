@@ -76,7 +76,6 @@ _ROW_2_TUPLE = (
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_list_running_returns_empty_when_no_rows() -> None:
     target = _make_target()
     conn = _make_conn([], _COLS)
@@ -87,7 +86,6 @@ async def test_list_running_returns_empty_when_no_rows() -> None:
     assert result == []
 
 
-@pytest.mark.asyncio
 async def test_list_running_returns_running_query_instances() -> None:
     target = _make_target()
     conn = _make_conn([_ROW_1_TUPLE], _COLS)
@@ -99,7 +97,6 @@ async def test_list_running_returns_running_query_instances() -> None:
     assert isinstance(result[0], RunningQuery)
 
 
-@pytest.mark.asyncio
 async def test_list_running_parses_fields_correctly() -> None:
     target = _make_target()
     conn = _make_conn([_ROW_1_TUPLE], _COLS)
@@ -118,7 +115,6 @@ async def test_list_running_parses_fields_correctly() -> None:
     assert q.query_text == "SELECT TOP 10 * FROM dbo.sales"
 
 
-@pytest.mark.asyncio
 async def test_list_running_handles_null_query_text() -> None:
     target = _make_target()
     conn = _make_conn([_ROW_2_TUPLE], _COLS)
@@ -129,7 +125,6 @@ async def test_list_running_handles_null_query_text() -> None:
     assert result[0].query_text is None
 
 
-@pytest.mark.asyncio
 async def test_list_running_returns_all_rows() -> None:
     target = _make_target()
     conn = _make_conn([_ROW_1_TUPLE, _ROW_2_TUPLE], _COLS)
@@ -142,7 +137,6 @@ async def test_list_running_returns_all_rows() -> None:
     assert result[1].session_id == 99
 
 
-@pytest.mark.asyncio
 async def test_list_running_sql_references_dm_exec_sessions() -> None:
     target = _make_target()
     conn = _make_conn([], _COLS)
@@ -155,7 +149,6 @@ async def test_list_running_sql_references_dm_exec_sessions() -> None:
     assert "sys.dm_exec_sessions" in call_sql
 
 
-@pytest.mark.asyncio
 async def test_list_running_sql_references_dm_exec_requests() -> None:
     target = _make_target()
     conn = _make_conn([], _COLS)
@@ -168,7 +161,6 @@ async def test_list_running_sql_references_dm_exec_requests() -> None:
     assert "sys.dm_exec_requests" in call_sql
 
 
-@pytest.mark.asyncio
 async def test_list_running_sql_filters_by_status() -> None:
     target = _make_target()
     conn = _make_conn([], _COLS)
@@ -181,7 +173,6 @@ async def test_list_running_sql_filters_by_status() -> None:
     assert "r.status IN" in call_sql
 
 
-@pytest.mark.asyncio
 async def test_list_running_closes_connection_after_success() -> None:
     target = _make_target()
     conn = _make_conn([_ROW_1_TUPLE], _COLS)
@@ -192,7 +183,6 @@ async def test_list_running_closes_connection_after_success() -> None:
     conn.close.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_list_running_maps_permission_denied() -> None:
     """cursor.execute raising a 'permission was denied' fragment → PermissionDenied."""
     target = _make_target()
@@ -208,7 +198,6 @@ async def test_list_running_maps_permission_denied() -> None:
         await queries.list_running(target)
 
 
-@pytest.mark.asyncio
 async def test_list_running_maps_auth_error() -> None:
     """cursor.execute raising an auth fragment → AuthError."""
     target = _make_target()
@@ -224,7 +213,6 @@ async def test_list_running_maps_auth_error() -> None:
         await queries.list_running(target)
 
 
-@pytest.mark.asyncio
 async def test_list_running_unrelated_error_propagates() -> None:
     """Non-mapped driver errors propagate unchanged."""
     target = _make_target()
@@ -245,7 +233,6 @@ async def test_list_running_unrelated_error_propagates() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_kill_issues_kill_statement() -> None:
     target = _make_target()
     conn = MagicMock()
@@ -260,7 +247,6 @@ async def test_kill_issues_kill_statement() -> None:
     assert "42" in call_sql
 
 
-@pytest.mark.asyncio
 async def test_kill_commits_after_execute() -> None:
     target = _make_target()
     conn = MagicMock()
@@ -273,7 +259,6 @@ async def test_kill_commits_after_execute() -> None:
     conn.commit.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_kill_closes_connection_after_success() -> None:
     target = _make_target()
     conn = MagicMock()
@@ -286,7 +271,6 @@ async def test_kill_closes_connection_after_success() -> None:
     conn.close.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_kill_returns_none_on_success() -> None:
     target = _make_target()
     conn = MagicMock()
@@ -302,7 +286,6 @@ async def test_kill_returns_none_on_success() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_kill_raises_value_error_for_zero() -> None:
     target = _make_target()
     conn = MagicMock()
@@ -316,7 +299,6 @@ async def test_kill_raises_value_error_for_zero() -> None:
     conn.cursor.assert_not_called()
 
 
-@pytest.mark.asyncio
 async def test_kill_raises_value_error_for_negative() -> None:
     target = _make_target()
     conn = MagicMock()
@@ -330,7 +312,6 @@ async def test_kill_raises_value_error_for_negative() -> None:
     conn.cursor.assert_not_called()
 
 
-@pytest.mark.asyncio
 async def test_kill_raises_value_error_for_large_negative() -> None:
     target = _make_target()
     conn = MagicMock()
@@ -349,7 +330,6 @@ async def test_kill_raises_value_error_for_large_negative() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_kill_maps_permission_denied_from_cursor() -> None:
     target = _make_target()
     conn = MagicMock()
@@ -364,7 +344,6 @@ async def test_kill_maps_permission_denied_from_cursor() -> None:
         await queries.kill(target, 42)
 
 
-@pytest.mark.asyncio
 async def test_kill_maps_auth_error_to_permission_denied() -> None:
     """kill should map AuthError → PermissionDenied."""
     target = _make_target()
@@ -380,7 +359,6 @@ async def test_kill_maps_auth_error_to_permission_denied() -> None:
         await queries.kill(target, 42)
 
 
-@pytest.mark.asyncio
 async def test_kill_permission_denied_message_contains_session_id() -> None:
     target = _make_target()
     conn = MagicMock()
@@ -441,7 +419,6 @@ _CONN_ROW_NULL_SESSION = (
 )
 
 
-@pytest.mark.asyncio
 async def test_list_connections_returns_empty_when_no_rows() -> None:
     target = _make_target()
     conn = _make_conn([], _CONN_COLS)
@@ -452,7 +429,6 @@ async def test_list_connections_returns_empty_when_no_rows() -> None:
     assert result == []
 
 
-@pytest.mark.asyncio
 async def test_list_connections_returns_connection_instances() -> None:
     target = _make_target()
     conn = _make_conn([_CONN_ROW_1], _CONN_COLS)
@@ -464,7 +440,6 @@ async def test_list_connections_returns_connection_instances() -> None:
     assert isinstance(result[0], Connection)
 
 
-@pytest.mark.asyncio
 async def test_list_connections_parses_fields_correctly() -> None:
     target = _make_target()
     conn = _make_conn([_CONN_ROW_1], _CONN_COLS)
@@ -482,7 +457,6 @@ async def test_list_connections_parses_fields_correctly() -> None:
     assert c.most_recent_session_id == 10
 
 
-@pytest.mark.asyncio
 async def test_list_connections_handles_null_client_net_address() -> None:
     target = _make_target()
     conn = _make_conn([_CONN_ROW_2], _CONN_COLS)
@@ -493,7 +467,6 @@ async def test_list_connections_handles_null_client_net_address() -> None:
     assert result[0].client_net_address is None
 
 
-@pytest.mark.asyncio
 async def test_list_connections_returns_all_rows() -> None:
     target = _make_target()
     conn = _make_conn([_CONN_ROW_1, _CONN_ROW_2], _CONN_COLS)
@@ -506,7 +479,6 @@ async def test_list_connections_returns_all_rows() -> None:
     assert result[1].session_id == 20
 
 
-@pytest.mark.asyncio
 async def test_list_connections_sql_references_dm_exec_connections() -> None:
     target = _make_target()
     conn = _make_conn([], _CONN_COLS)
@@ -519,7 +491,6 @@ async def test_list_connections_sql_references_dm_exec_connections() -> None:
     assert "sys.dm_exec_connections" in call_sql
 
 
-@pytest.mark.asyncio
 async def test_list_connections_sql_selects_expected_columns() -> None:
     target = _make_target()
     conn = _make_conn([], _CONN_COLS)
@@ -542,7 +513,6 @@ async def test_list_connections_sql_selects_expected_columns() -> None:
         assert col in call_sql
 
 
-@pytest.mark.asyncio
 async def test_list_connections_closes_connection_after_success() -> None:
     target = _make_target()
     conn = _make_conn([_CONN_ROW_1], _CONN_COLS)
@@ -553,7 +523,6 @@ async def test_list_connections_closes_connection_after_success() -> None:
     conn.close.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_list_connections_maps_permission_denied() -> None:
     target = _make_target()
     conn = MagicMock()
@@ -570,7 +539,6 @@ async def test_list_connections_maps_permission_denied() -> None:
         await queries.list_connections(target)
 
 
-@pytest.mark.asyncio
 async def test_list_connections_maps_auth_error() -> None:
     target = _make_target()
     conn = MagicMock()
@@ -585,7 +553,6 @@ async def test_list_connections_maps_auth_error() -> None:
         await queries.list_connections(target)
 
 
-@pytest.mark.asyncio
 async def test_list_connections_unrelated_error_propagates() -> None:
     target = _make_target()
     conn = MagicMock()
@@ -600,7 +567,6 @@ async def test_list_connections_unrelated_error_propagates() -> None:
         await queries.list_connections(target)
 
 
-@pytest.mark.asyncio
 async def test_list_connections_handles_null_session_id() -> None:
     """Pre-login pooled connections return NULL for session_id (IS NULLABLE per MS docs)."""
     target = _make_target()
@@ -614,7 +580,6 @@ async def test_list_connections_handles_null_session_id() -> None:
     assert result[0].most_recent_session_id == 99
 
 
-@pytest.mark.asyncio
 async def test_list_connections_parses_most_recent_session_id() -> None:
     """most_recent_session_id is parsed from the DMV result (disambiguates pooled connections)."""
     target = _make_target()
@@ -627,7 +592,6 @@ async def test_list_connections_parses_most_recent_session_id() -> None:
     assert result[1].most_recent_session_id == 20
 
 
-@pytest.mark.asyncio
 async def test_list_connections_most_recent_session_id_can_be_none() -> None:
     """most_recent_session_id defaults to None when not present in result row."""
     target = _make_target()
@@ -647,7 +611,6 @@ async def test_list_connections_most_recent_session_id_can_be_none() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_list_running_sql_uses_inner_join() -> None:
     """The SQL must use INNER JOIN (not LEFT JOIN) so that the WHERE predicate
     on the right-side table is semantically correct rather than implied.
@@ -670,7 +633,6 @@ async def test_list_running_sql_uses_inner_join() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_kill_sql_contains_bare_integer() -> None:
     """KILL statement must embed a bare integer, not a quoted or f-string value."""
     target = _make_target()
@@ -686,7 +648,6 @@ async def test_kill_sql_contains_bare_integer() -> None:
     assert call_sql.strip() == "KILL 123"
 
 
-@pytest.mark.asyncio
 async def test_kill_sql_session_id_is_integer_not_string() -> None:
     """The embedded session_id must be a plain integer (not a quoted string)."""
     target = _make_target()

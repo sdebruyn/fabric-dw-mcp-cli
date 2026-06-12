@@ -24,7 +24,7 @@ cov-html:
     uv run pytest tests/unit --cov --cov-report=html
 
 integration:
-    uv run pytest tests/integration -q
+    uv run pytest tests/integration -q -m integration
 
 build:
     uv build

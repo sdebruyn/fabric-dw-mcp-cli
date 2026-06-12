@@ -132,7 +132,6 @@ def _sql_endpoint_list_item(item_id: str, name: str) -> dict[str, object]:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_workspace_id_guid_no_api_call(tmp_path: Path) -> None:
     resolver, client, _ = _make_resolver(tmp_path)
     with respx.mock:
@@ -148,7 +147,6 @@ async def test_workspace_id_guid_no_api_call(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_workspace_id_name_hits_api(tmp_path: Path) -> None:
     resolver, client, _ = _make_resolver(tmp_path)
     with respx.mock:
@@ -162,7 +160,6 @@ async def test_workspace_id_name_hits_api(tmp_path: Path) -> None:
     assert result == WS_UUID
 
 
-@pytest.mark.asyncio
 async def test_workspace_id_name_cached_after_first_call(tmp_path: Path) -> None:
     resolver, client, _cache = _make_resolver(tmp_path)
     with respx.mock:
@@ -180,7 +177,6 @@ async def test_workspace_id_name_cached_after_first_call(tmp_path: Path) -> None
     assert first == second == WS_UUID
 
 
-@pytest.mark.asyncio
 async def test_workspace_id_name_not_found(tmp_path: Path) -> None:
     resolver, client, _ = _make_resolver(tmp_path)
     with respx.mock:
@@ -192,7 +188,6 @@ async def test_workspace_id_name_not_found(tmp_path: Path) -> None:
                 await resolver.workspace_id("NonExistentWorkspace")
 
 
-@pytest.mark.asyncio
 async def test_workspace_id_name_multiple_matches_raises_fabric_error(tmp_path: Path) -> None:
     resolver, client, _ = _make_resolver(tmp_path)
     with respx.mock:
@@ -204,7 +199,6 @@ async def test_workspace_id_name_multiple_matches_raises_fabric_error(tmp_path: 
                 await resolver.workspace_id("Ambiguous")
 
 
-@pytest.mark.asyncio
 async def test_workspace_id_multiple_matches_error_mentions_all_ids(tmp_path: Path) -> None:
     resolver, client, _ = _make_resolver(tmp_path)
     with respx.mock:
@@ -224,7 +218,6 @@ async def test_workspace_id_multiple_matches_error_mentions_all_ids(tmp_path: Pa
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_item_guid_fetches_detail_endpoint(tmp_path: Path) -> None:
     resolver, client, _ = _make_resolver(tmp_path)
     generic_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "SalesWarehouse")
@@ -243,7 +236,6 @@ async def test_item_guid_fetches_detail_endpoint(tmp_path: Path) -> None:
     assert result.connection_string == "mywarehouse.datawarehouse.fabric.microsoft.com"
 
 
-@pytest.mark.asyncio
 async def test_item_guid_sql_endpoint_connection_string(tmp_path: Path) -> None:
     resolver, client, _ = _make_resolver(tmp_path)
     generic_payload = _sql_endpoint_detail_payload(ITEM_GUID, WS_GUID, "MySQLEndpoint")
@@ -264,7 +256,6 @@ async def test_item_guid_sql_endpoint_connection_string(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_item_name_pages_items_and_fetches_detail(tmp_path: Path) -> None:
     resolver, client, _ = _make_resolver(tmp_path)
     list_payload = _items_list_payload(
@@ -285,7 +276,6 @@ async def test_item_name_pages_items_and_fetches_detail(tmp_path: Path) -> None:
     assert result.connection_string == "mywarehouse.datawarehouse.fabric.microsoft.com"
 
 
-@pytest.mark.asyncio
 async def test_item_name_case_insensitive_match(tmp_path: Path) -> None:
     resolver, client, _ = _make_resolver(tmp_path)
     list_payload = _items_list_payload(
@@ -304,7 +294,6 @@ async def test_item_name_case_insensitive_match(tmp_path: Path) -> None:
     assert result.id == ITEM_UUID
 
 
-@pytest.mark.asyncio
 async def test_item_name_not_found(tmp_path: Path) -> None:
     resolver, client, _ = _make_resolver(tmp_path)
     # Return a list with no matching items
@@ -318,7 +307,6 @@ async def test_item_name_not_found(tmp_path: Path) -> None:
                 await resolver.item(WS_GUID, "NonExistentWarehouse")
 
 
-@pytest.mark.asyncio
 async def test_item_name_cached_after_first_call(tmp_path: Path) -> None:
     resolver, client, _ = _make_resolver(tmp_path)
     list_payload = _items_list_payload(
@@ -345,7 +333,6 @@ async def test_item_name_cached_after_first_call(tmp_path: Path) -> None:
     assert first.id == second.id
 
 
-@pytest.mark.asyncio
 async def test_item_name_sql_endpoint(tmp_path: Path) -> None:
     resolver, client, _ = _make_resolver(tmp_path)
     list_payload = _items_list_payload(
@@ -365,7 +352,6 @@ async def test_item_name_sql_endpoint(tmp_path: Path) -> None:
     assert result.connection_string == "mysqlep.datawarehouse.fabric.microsoft.com"
 
 
-@pytest.mark.asyncio
 async def test_item_name_workspace_resolved_first(tmp_path: Path) -> None:
     """When workspace is given as a name, it gets resolved via PBI first."""
     resolver, client, _ = _make_resolver(tmp_path)
@@ -395,7 +381,6 @@ async def test_item_name_workspace_resolved_first(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_workspace_id_name_with_single_quote_escaped(tmp_path: Path) -> None:
     """Workspace names containing a single quote are properly OData-escaped."""
     resolver, client, _ = _make_resolver(tmp_path)
@@ -416,7 +401,6 @@ async def test_workspace_id_name_with_single_quote_escaped(tmp_path: Path) -> No
     assert "O%27%27Brien" in called_request.url.query.decode()
 
 
-@pytest.mark.asyncio
 async def test_workspace_id_name_with_double_apostrophe_escaped(tmp_path: Path) -> None:
     """Names with consecutive apostrophes are double-escaped correctly."""
     resolver, client, _ = _make_resolver(tmp_path)
@@ -444,7 +428,6 @@ _FABRIC_SQL_ENDPOINT_URL = (
 )
 
 
-@pytest.mark.asyncio
 async def test_item_guid_second_call_hits_cache_not_api(tmp_path: Path) -> None:
     """GUID input: first call hits API, second call within TTL hits cache (no extra HTTP)."""
     resolver, client, _ = _make_resolver(tmp_path)
@@ -471,7 +454,6 @@ async def test_item_guid_second_call_hits_cache_not_api(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_item_guid_warehouse_uses_type_specific_endpoint(tmp_path: Path) -> None:
     """Warehouse items: detail fetch uses /warehouses/{id}, not generic /items/{id}."""
     resolver, client, _ = _make_resolver(tmp_path)
@@ -492,7 +474,6 @@ async def test_item_guid_warehouse_uses_type_specific_endpoint(tmp_path: Path) -
     assert warehouse_route.call_count == 1
 
 
-@pytest.mark.asyncio
 async def test_item_guid_sql_endpoint_uses_type_specific_endpoint(tmp_path: Path) -> None:
     """SQLEndpoint items: detail fetch uses /sqlEndpoints/{id}, not generic /items/{id}."""
     resolver, client, _ = _make_resolver(tmp_path)
@@ -513,7 +494,6 @@ async def test_item_guid_sql_endpoint_uses_type_specific_endpoint(tmp_path: Path
     assert sql_route.call_count == 1
 
 
-@pytest.mark.asyncio
 async def test_item_guid_snapshot_uses_generic_endpoint_only(tmp_path: Path) -> None:
     """WarehouseSnapshot: no type-specific endpoint; uses generic /items/{id} only."""
     resolver, client, _ = _make_resolver(tmp_path)
@@ -540,7 +520,6 @@ async def test_item_guid_snapshot_uses_generic_endpoint_only(tmp_path: Path) -> 
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_item_guid_unknown_type_raises_fabric_error(tmp_path: Path) -> None:
     """An unsupported item type (e.g. Lakehouse) must raise FabricError, not silently default."""
     resolver, client, _ = _make_resolver(tmp_path)
@@ -562,7 +541,6 @@ async def test_item_guid_unknown_type_raises_fabric_error(tmp_path: Path) -> Non
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_workspace_negative_cache_avoids_second_api_call(tmp_path: Path) -> None:
     """Second lookup of a missing workspace must not hit the API (negative cache)."""
     resolver, client, _ = _make_resolver(tmp_path)
@@ -580,7 +558,6 @@ async def test_workspace_negative_cache_avoids_second_api_call(tmp_path: Path) -
     assert route.call_count == 1, "negative cache must suppress the second API call"
 
 
-@pytest.mark.asyncio
 async def test_workspace_negative_cache_clears_on_success(tmp_path: Path) -> None:
     """After a successful lookup the negative cache entry must be cleared.
 
@@ -617,7 +594,6 @@ async def test_workspace_negative_cache_clears_on_success(tmp_path: Path) -> Non
     assert result == WS_UUID
 
 
-@pytest.mark.asyncio
 async def test_item_negative_cache_avoids_second_api_call(tmp_path: Path) -> None:
     """Second lookup of a missing item must not page through items again."""
     resolver, client, _ = _make_resolver(tmp_path)
@@ -651,7 +627,6 @@ def test_odata_escape_rejects_oversized_value() -> None:
         _odata_escape(too_long)
 
 
-@pytest.mark.asyncio
 async def test_workspace_id_oversized_name_raises_fabric_error(tmp_path: Path) -> None:
     """workspace_id must raise FabricError (not ValueError) for names exceeding _ODATA_MAX_LEN."""
     resolver, client, _ = _make_resolver(tmp_path)
@@ -666,7 +641,6 @@ async def test_workspace_id_oversized_name_raises_fabric_error(tmp_path: Path) -
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_item_name_passes_type_param_to_items_api(tmp_path: Path) -> None:
     """item() with item_type kwarg must send type= query param to the items API."""
     resolver, client, _ = _make_resolver(tmp_path)
@@ -690,7 +664,6 @@ async def test_item_name_passes_type_param_to_items_api(tmp_path: Path) -> None:
     assert "type=Warehouse" in str(called_url) or "type" in called_url.params
 
 
-@pytest.mark.asyncio
 async def test_item_name_no_type_param_when_item_type_not_provided(tmp_path: Path) -> None:
     """item() without item_type must not send a type= param to the items API."""
     resolver, client, _ = _make_resolver(tmp_path)
@@ -716,7 +689,6 @@ async def test_item_name_no_type_param_when_item_type_not_provided(tmp_path: Pat
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_fetch_item_detail_uses_put_items(tmp_path: Path) -> None:
     """_fetch_item_detail must call put_items (not two separate put_item calls)."""
     resolver, client, cache = _make_resolver(tmp_path)
@@ -757,7 +729,6 @@ def test_negative_ttl_is_five_seconds() -> None:
     )
 
 
-@pytest.mark.asyncio
 async def test_negative_cache_expired_entry_pruned_on_check(tmp_path: Path) -> None:
     """_negative_check must prune expired entries to keep the dict bounded."""
     resolver, client, _ = _make_resolver(tmp_path)
@@ -775,7 +746,6 @@ async def test_negative_cache_expired_entry_pruned_on_check(tmp_path: Path) -> N
     assert ("workspace", "ghost") not in resolver._negative
 
 
-@pytest.mark.asyncio
 async def test_clear_negative_cache_empties_all_entries(tmp_path: Path) -> None:
     """clear_negative_cache() must discard all in-memory negative entries."""
     resolver, client, _ = _make_resolver(tmp_path)
@@ -793,7 +763,6 @@ async def test_clear_negative_cache_empties_all_entries(tmp_path: Path) -> None:
     assert len(resolver._negative) == 0
 
 
-@pytest.mark.asyncio
 async def test_item_fetch_clears_workspace_negative_entries(tmp_path: Path) -> None:
     """After _fetch_item_detail succeeds, negative entries for that workspace are cleared."""
     resolver, client, _ = _make_resolver(tmp_path)

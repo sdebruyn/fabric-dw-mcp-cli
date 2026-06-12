@@ -4,21 +4,17 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
 import httpx
 import pytest
 import respx
-from azure.core.credentials import AccessToken
-from azure.core.credentials_async import AsyncTokenCredential
 
 from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.exceptions import FabricServerError, NotFound, PermissionDenied
-from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import Warehouse, WarehouseKind, Workspace
 from fabric_dw.services import warehouses
 from tests.fixtures.api_payloads import (
@@ -33,12 +29,11 @@ from tests.fixtures.api_payloads import (
     WAREHOUSE_SQL_ENDPOINTS_PAGE2_PAYLOAD,
     WAREHOUSE_SQL_ENDPOINTS_PAYLOAD,
 )
+from tests.unit.services._helpers import _make_client
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Constants
 # ---------------------------------------------------------------------------
-
-_FAKE_TOKEN = AccessToken(token="fake-token", expires_on=int(time.time()) + 3600)  # noqa: S106
 
 _WORKSPACE_ID = UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
 _WAREHOUSE_ID = UUID("d4e5f6a7-b8c9-0123-def0-123456789abc")
@@ -52,22 +47,11 @@ _ITEMS_URL = f"{_BASE}/workspaces/{_WORKSPACE_ID}/items"
 _OPERATION_URL = f"{_BASE}/operations/op-abc123"
 
 
-def _make_credential(token: AccessToken = _FAKE_TOKEN) -> AsyncTokenCredential:
-    cred = MagicMock(spec=AsyncTokenCredential)
-    cred.get_token = AsyncMock(return_value=token)
-    return cred
-
-
-async def _make_client(rps: int = 10) -> FabricHttpClient:
-    return FabricHttpClient(credential=_make_credential(), rps=rps)
-
-
 # ---------------------------------------------------------------------------
 # list
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_list_merges_warehouses_and_sql_endpoints() -> None:
     """list_warehouses must combine items from /warehouses and /sqlEndpoints with correct kind."""
     wh_payload = json.loads(WAREHOUSE_LIST_PAYLOAD)
@@ -93,7 +77,6 @@ async def test_list_merges_warehouses_and_sql_endpoints() -> None:
     assert len(ep_items) == 1
 
 
-@pytest.mark.asyncio
 async def test_list_follows_continuation_uri_for_warehouses() -> None:
     """list_warehouses must follow continuationUri for the warehouses endpoint."""
     call_count = 0
@@ -122,7 +105,6 @@ async def test_list_follows_continuation_uri_for_warehouses() -> None:
     assert len(result) == 3  # 2 from page 1 + 1 from page 2 (all warehouses, no endpoints)
 
 
-@pytest.mark.asyncio
 async def test_list_follows_continuation_uri_for_sql_endpoints() -> None:
     """list_warehouses must follow continuationUri for the sqlEndpoints endpoint."""
     ep_call_count = 0
@@ -151,7 +133,6 @@ async def test_list_follows_continuation_uri_for_sql_endpoints() -> None:
     assert len(ep_items) == 2  # 1 from page 1 + 1 from page 2
 
 
-@pytest.mark.asyncio
 async def test_list_all_items_are_warehouse_instances() -> None:
     """list_warehouses must return only Warehouse instances."""
     wh_payload = json.loads(WAREHOUSE_LIST_PAYLOAD)
@@ -174,7 +155,6 @@ async def test_list_all_items_are_warehouse_instances() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_get_returns_populated_warehouse() -> None:
     """get_warehouse must return a single populated Warehouse with WAREHOUSE kind."""
     wh_payload = json.loads(WAREHOUSE_GET_PAYLOAD)
@@ -194,7 +174,6 @@ async def test_get_returns_populated_warehouse() -> None:
     assert result.collation == "Latin1_General_100_BIN2_UTF8"
 
 
-@pytest.mark.asyncio
 async def test_get_not_found_propagates() -> None:
     """get_warehouse must propagate NotFound on a 404 response."""
     with respx.mock:
@@ -213,7 +192,6 @@ async def test_get_not_found_propagates() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_create_with_collation_polls_lro_and_returns_warehouse() -> None:
     """create must POST with collation, poll the LRO, then GET and return the warehouse."""
     create_resp = json.loads(WAREHOUSE_CREATE_202_PAYLOAD)
@@ -258,7 +236,6 @@ async def test_create_with_collation_polls_lro_and_returns_warehouse() -> None:
     assert sent_body["creationPayload"]["defaultCollation"] == "Latin1_General_100_BIN2_UTF8"
 
 
-@pytest.mark.asyncio
 async def test_create_without_collation_omits_creation_payload() -> None:
     """create without collation must omit creationPayload from the POST body."""
     op_succeeded = json.loads(WAREHOUSE_OPERATION_SUCCEEDED_PAYLOAD)
@@ -286,7 +263,6 @@ async def test_create_without_collation_omits_creation_payload() -> None:
     assert "creationPayload" not in sent_body
 
 
-@pytest.mark.asyncio
 async def test_create_with_description() -> None:
     """create with description must include it in the POST body."""
     op_succeeded = json.loads(WAREHOUSE_OPERATION_SUCCEEDED_PAYLOAD)
@@ -319,7 +295,6 @@ async def test_create_with_description() -> None:
     assert sent_body["description"] == "My warehouse"
 
 
-@pytest.mark.asyncio
 async def test_create_invalid_collation_raises_value_error() -> None:
     """create must raise ValueError for unsupported collation before any HTTP call."""
     with respx.mock:  # any HTTP call here is a bug
@@ -334,7 +309,6 @@ async def test_create_invalid_collation_raises_value_error() -> None:
                 )
 
 
-@pytest.mark.asyncio
 async def test_create_empty_name_raises_value_error() -> None:
     """create must raise ValueError for an empty name before any HTTP call."""
     with respx.mock:  # any HTTP call here is a bug
@@ -344,7 +318,6 @@ async def test_create_empty_name_raises_value_error() -> None:
                 await warehouses.create(client, _WORKSPACE_ID, "")
 
 
-@pytest.mark.asyncio
 async def test_create_whitespace_only_name_raises_value_error() -> None:
     """create must raise ValueError for a whitespace-only name before any HTTP call."""
     with respx.mock:  # any HTTP call here is a bug
@@ -354,7 +327,6 @@ async def test_create_whitespace_only_name_raises_value_error() -> None:
                 await warehouses.create(client, _WORKSPACE_ID, "   ")
 
 
-@pytest.mark.asyncio
 async def test_create_missing_resource_location_raises_fabric_server_error() -> None:
     """create must raise FabricServerError when LRO completes with null resourceLocation."""
     op_no_location = json.loads(WAREHOUSE_OPERATION_SUCCEEDED_NO_LOCATION_PAYLOAD)
@@ -375,7 +347,6 @@ async def test_create_missing_resource_location_raises_fabric_server_error() -> 
                 await warehouses.create(client, _WORKSPACE_ID, "SalesWarehouse")
 
 
-@pytest.mark.asyncio
 async def test_create_no_location_header_but_body_present_returns_warehouse() -> None:
     """create must do a follow-up GET when 201 body is present (no Location header).
 
@@ -409,7 +380,6 @@ async def test_create_no_location_header_but_body_present_returns_warehouse() ->
     assert result.connection_string == "saleswarehouse.datawarehouse.fabric.microsoft.com"
 
 
-@pytest.mark.asyncio
 async def test_create_no_location_header_and_empty_body_raises_fabric_server_error() -> None:
     """create must raise FabricServerError (after exhausting retries) when body is always empty.
 
@@ -432,7 +402,6 @@ async def test_create_no_location_header_and_empty_body_raises_fabric_server_err
     assert post_route.call_count == 4
 
 
-@pytest.mark.asyncio
 async def test_create_empty_2xx_retries_then_succeeds() -> None:
     """create must retry up to 3 times on 2xx + no Location + no usable body, then succeed.
 
@@ -472,7 +441,6 @@ async def test_create_empty_2xx_retries_then_succeeds() -> None:
     assert call_count == 4  # 3 empty retries + 1 successful
 
 
-@pytest.mark.asyncio
 async def test_create_4xx_is_not_retried() -> None:
     """create must NOT retry on 4xx errors — they propagate immediately.
 
@@ -503,7 +471,6 @@ async def test_create_4xx_is_not_retried() -> None:
     mock_sleep.assert_not_called()
 
 
-@pytest.mark.asyncio
 async def test_create_existing_path_with_location_header_still_works() -> None:
     """create must still work correctly (LRO poll + final GET) when a Location header is present."""
     op_succeeded = json.loads(WAREHOUSE_OPERATION_SUCCEEDED_PAYLOAD)
@@ -536,7 +503,6 @@ async def test_create_existing_path_with_location_header_still_works() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_rename_returns_updated_warehouse() -> None:
     """rename must PATCH and return the updated Warehouse from the response body."""
     wh_payload = json.loads(WAREHOUSE_GET_PAYLOAD)
@@ -562,7 +528,6 @@ async def test_rename_returns_updated_warehouse() -> None:
     assert "description" not in sent_body
 
 
-@pytest.mark.asyncio
 async def test_rename_with_description_includes_it_in_body() -> None:
     """rename with description must include it in the PATCH body."""
     wh_payload = json.loads(WAREHOUSE_GET_PAYLOAD)
@@ -590,7 +555,6 @@ async def test_rename_with_description_includes_it_in_body() -> None:
     assert sent_body["description"] == "New desc"
 
 
-@pytest.mark.asyncio
 async def test_rename_empty_name_raises_value_error() -> None:
     """rename must raise ValueError for an empty new_name before any HTTP call."""
     with respx.mock:  # any HTTP call here is a bug
@@ -605,7 +569,6 @@ async def test_rename_empty_name_raises_value_error() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_delete_204_returns_none() -> None:
     """delete must return None on 204 No Content."""
     with respx.mock:
@@ -617,7 +580,6 @@ async def test_delete_204_returns_none() -> None:
             await warehouses.delete(client, _WORKSPACE_ID, _WAREHOUSE_ID)
 
 
-@pytest.mark.asyncio
 async def test_delete_404_propagates_not_found() -> None:
     """delete must propagate NotFound on a 404 response."""
     with respx.mock:
@@ -681,7 +643,6 @@ _WH_B = UUID("bbbbbbbb-1111-0000-0000-000000000002")
 _WH_C = UUID("cccccccc-1111-0000-0000-000000000003")
 
 
-@pytest.mark.asyncio
 async def test_list_all_workspaces_aggregates_across_workspaces() -> None:
     """list_all_workspaces must collect warehouses from every visible workspace."""
     ws_a = _make_workspace(_WS_A)
@@ -716,7 +677,6 @@ async def test_list_all_workspaces_aggregates_across_workspaces() -> None:
     assert ids == {_WH_A, _WH_B, _WH_C}
 
 
-@pytest.mark.asyncio
 async def test_list_all_workspaces_skips_permission_denied(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -757,7 +717,6 @@ async def test_list_all_workspaces_skips_permission_denied(
     assert any("skipped 1 of 3" in r.message for r in caplog.records)
 
 
-@pytest.mark.asyncio
 async def test_list_all_workspaces_skips_not_found(caplog: pytest.LogCaptureFixture) -> None:
     """list_all_workspaces must skip workspaces where NotFound is raised and warn."""
     ws_a = _make_workspace(_WS_A)
@@ -813,7 +772,6 @@ def _make_item_entry_for_cache(tmp_path: Path) -> tuple[LookupCache, ItemEntry]:
     return cache, entry
 
 
-@pytest.mark.asyncio
 async def test_rename_evicts_old_name_and_inserts_new_name(tmp_path: Path) -> None:
     """rename with cache must evict old name and populate new name."""
     cache, _entry = _make_item_entry_for_cache(tmp_path)
@@ -841,7 +799,6 @@ async def test_rename_evicts_old_name_and_inserts_new_name(tmp_path: Path) -> No
     assert renamed_entry.display_name == "RenamedWarehouse"
 
 
-@pytest.mark.asyncio
 async def test_rename_without_cache_does_not_raise(tmp_path: Path) -> None:
     """rename without cache= must still complete successfully."""
     _ = tmp_path
@@ -865,7 +822,6 @@ async def test_rename_without_cache_does_not_raise(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_delete_evicts_name_from_cache(tmp_path: Path) -> None:
     """delete with cache= must evict both the name entry and the GUID entry."""
     cache, _entry = _make_item_entry_for_cache(tmp_path)
@@ -887,7 +843,6 @@ async def test_delete_evicts_name_from_cache(tmp_path: Path) -> None:
     assert cache.get_item(_WORKSPACE_ID, str(_WAREHOUSE_ID)) is None
 
 
-@pytest.mark.asyncio
 async def test_delete_without_cache_does_not_raise(tmp_path: Path) -> None:
     """delete without cache= must still complete successfully."""
     _ = tmp_path

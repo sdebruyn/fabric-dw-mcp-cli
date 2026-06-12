@@ -424,7 +424,6 @@ class TestAssertWorkspaceAllowed:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_execute_sql_max_rows_truncation() -> None:
     """execute_sql slices rows to max_rows and sets truncated=True."""
     from datetime import UTC, datetime  # noqa: PLC0415
@@ -476,7 +475,6 @@ async def test_execute_sql_max_rows_truncation() -> None:
     assert len(result["rows"]) == 10
 
 
-@pytest.mark.asyncio
 async def test_execute_sql_no_truncation_when_under_limit() -> None:
     """execute_sql sets truncated=False when rows fit within max_rows."""
     from datetime import UTC, datetime  # noqa: PLC0415
@@ -533,7 +531,6 @@ async def test_execute_sql_no_truncation_when_under_limit() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_execute_sql_blocked_by_readonly_mode() -> None:
     """execute_sql raises ToolError when FABRIC_MCP_READONLY is set and query is DROP."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
@@ -550,7 +547,6 @@ async def test_execute_sql_blocked_by_readonly_mode() -> None:
         )
 
 
-@pytest.mark.asyncio
 async def test_execute_sql_allowed_in_readonly_mode_for_select() -> None:
     """execute_sql SELECT queries pass the readonly gate."""
     from datetime import UTC, datetime  # noqa: PLC0415
@@ -602,7 +598,6 @@ async def test_execute_sql_allowed_in_readonly_mode_for_select() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_delete_warehouse_blocked_without_destructive_flag() -> None:
     """delete_warehouse raises ToolError when FABRIC_MCP_ALLOW_DESTRUCTIVE is not set."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
@@ -621,7 +616,6 @@ async def test_delete_warehouse_blocked_without_destructive_flag() -> None:
         )
 
 
-@pytest.mark.asyncio
 async def test_delete_snapshot_blocked_without_destructive_flag() -> None:
     """delete_snapshot raises ToolError when FABRIC_MCP_ALLOW_DESTRUCTIVE is not set."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
@@ -639,7 +633,6 @@ async def test_delete_snapshot_blocked_without_destructive_flag() -> None:
         )
 
 
-@pytest.mark.asyncio
 async def test_reset_sql_pools_blocked_without_destructive_flag() -> None:
     """reset_sql_pools raises ToolError when FABRIC_MCP_ALLOW_DESTRUCTIVE is not set."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
@@ -662,7 +655,6 @@ async def test_reset_sql_pools_blocked_without_destructive_flag() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_get_workspace_blocked_by_workspace_allowlist() -> None:
     """get_workspace raises ToolError when workspace not in FABRIC_MCP_WORKSPACES."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
@@ -679,7 +671,6 @@ async def test_get_workspace_blocked_by_workspace_allowlist() -> None:
         )
 
 
-@pytest.mark.asyncio
 async def test_list_warehouses_all_workspaces_blocked_when_allowlist_set() -> None:
     """list_warehouses(all_workspaces=True) raises ToolError when FABRIC_MCP_WORKSPACES is set."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
@@ -696,7 +687,6 @@ async def test_list_warehouses_all_workspaces_blocked_when_allowlist_set() -> No
         )
 
 
-@pytest.mark.asyncio
 async def test_list_sql_endpoints_all_workspaces_blocked_when_allowlist_set() -> None:
     """list_sql_endpoints(all_workspaces=True) raises ToolError when allowlist is set."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415

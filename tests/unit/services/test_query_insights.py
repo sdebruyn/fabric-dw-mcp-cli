@@ -81,7 +81,6 @@ _REQ_HIST_ROW = (
 )
 
 
-@pytest.mark.asyncio
 async def test_list_request_history_returns_empty_when_no_rows() -> None:
     target = _make_target()
     conn = _make_conn([], _REQ_HIST_COLS)
@@ -90,7 +89,6 @@ async def test_list_request_history_returns_empty_when_no_rows() -> None:
     assert result == []
 
 
-@pytest.mark.asyncio
 async def test_list_request_history_returns_model_instances() -> None:
     target = _make_target()
     conn = _make_conn([_REQ_HIST_ROW], _REQ_HIST_COLS)
@@ -100,7 +98,6 @@ async def test_list_request_history_returns_model_instances() -> None:
     assert isinstance(result[0], ExecRequestHistory)
 
 
-@pytest.mark.asyncio
 async def test_list_request_history_parses_fields() -> None:
     target = _make_target()
     conn = _make_conn([_REQ_HIST_ROW], _REQ_HIST_COLS)
@@ -113,7 +110,6 @@ async def test_list_request_history_parses_fields() -> None:
     assert row.total_elapsed_time_ms == 1500
 
 
-@pytest.mark.asyncio
 async def test_list_request_history_sql_references_exec_requests_history() -> None:
     target = _make_target()
     conn = _make_conn([], _REQ_HIST_COLS)
@@ -124,7 +120,6 @@ async def test_list_request_history_sql_references_exec_requests_history() -> No
     assert "queryinsights.exec_requests_history" in call_sql
 
 
-@pytest.mark.asyncio
 async def test_list_request_history_sql_has_top_clause() -> None:
     target = _make_target()
     conn = _make_conn([], _REQ_HIST_COLS)
@@ -135,7 +130,6 @@ async def test_list_request_history_sql_has_top_clause() -> None:
     assert "TOP (50)" in call_sql
 
 
-@pytest.mark.asyncio
 async def test_list_request_history_default_limit_100() -> None:
     target = _make_target()
     conn = _make_conn([], _REQ_HIST_COLS)
@@ -146,7 +140,6 @@ async def test_list_request_history_default_limit_100() -> None:
     assert "TOP (100)" in call_sql
 
 
-@pytest.mark.asyncio
 async def test_list_request_history_limit_clamped_to_10000() -> None:
     target = _make_target()
     conn = _make_conn([], _REQ_HIST_COLS)
@@ -157,7 +150,6 @@ async def test_list_request_history_limit_clamped_to_10000() -> None:
     assert "TOP (10000)" in call_sql
 
 
-@pytest.mark.asyncio
 async def test_list_request_history_since_adds_where_clause() -> None:
     target = _make_target()
     conn = _make_conn([], _REQ_HIST_COLS)
@@ -170,7 +162,6 @@ async def test_list_request_history_since_adds_where_clause() -> None:
     assert "submit_time" in call_sql
 
 
-@pytest.mark.asyncio
 async def test_list_request_history_until_adds_where_clause() -> None:
     target = _make_target()
     conn = _make_conn([], _REQ_HIST_COLS)
@@ -182,7 +173,6 @@ async def test_list_request_history_until_adds_where_clause() -> None:
     assert "WHERE" in call_sql
 
 
-@pytest.mark.asyncio
 async def test_list_request_history_maps_permission_denied() -> None:
     target = _make_target()
     conn = MagicMock()
@@ -196,7 +186,6 @@ async def test_list_request_history_maps_permission_denied() -> None:
         await query_insights.list_request_history(target)
 
 
-@pytest.mark.asyncio
 async def test_list_request_history_permission_denied_message_has_docs_link() -> None:
     target = _make_target()
     conn = MagicMock()
@@ -210,7 +199,6 @@ async def test_list_request_history_permission_denied_message_has_docs_link() ->
         await query_insights.list_request_history(target)
 
 
-@pytest.mark.asyncio
 async def test_list_request_history_maps_auth_error() -> None:
     target = _make_target()
     conn = MagicMock()
@@ -224,7 +212,6 @@ async def test_list_request_history_maps_auth_error() -> None:
         await query_insights.list_request_history(target)
 
 
-@pytest.mark.asyncio
 async def test_list_request_history_closes_connection() -> None:
     target = _make_target()
     conn = _make_conn([_REQ_HIST_ROW], _REQ_HIST_COLS)
@@ -277,7 +264,6 @@ _SESS_HIST_ROW = (
 )
 
 
-@pytest.mark.asyncio
 async def test_list_session_history_returns_empty_when_no_rows() -> None:
     target = _make_target()
     conn = _make_conn([], _SESS_HIST_COLS)
@@ -286,7 +272,6 @@ async def test_list_session_history_returns_empty_when_no_rows() -> None:
     assert result == []
 
 
-@pytest.mark.asyncio
 async def test_list_session_history_returns_model_instances() -> None:
     target = _make_target()
     conn = _make_conn([_SESS_HIST_ROW], _SESS_HIST_COLS)
@@ -296,7 +281,6 @@ async def test_list_session_history_returns_model_instances() -> None:
     assert isinstance(result[0], ExecSessionHistory)
 
 
-@pytest.mark.asyncio
 async def test_list_session_history_sql_references_view() -> None:
     target = _make_target()
     conn = _make_conn([], _SESS_HIST_COLS)
@@ -307,7 +291,6 @@ async def test_list_session_history_sql_references_view() -> None:
     assert "queryinsights.exec_sessions_history" in call_sql
 
 
-@pytest.mark.asyncio
 async def test_list_session_history_top_default_100() -> None:
     target = _make_target()
     conn = _make_conn([], _SESS_HIST_COLS)
@@ -318,7 +301,6 @@ async def test_list_session_history_top_default_100() -> None:
     assert "TOP (100)" in call_sql
 
 
-@pytest.mark.asyncio
 async def test_list_session_history_maps_permission_denied() -> None:
     target = _make_target()
     conn = MagicMock()
@@ -332,7 +314,6 @@ async def test_list_session_history_maps_permission_denied() -> None:
         await query_insights.list_session_history(target)
 
 
-@pytest.mark.asyncio
 async def test_list_session_history_since_adds_where() -> None:
     target = _make_target()
     conn = _make_conn([], _SESS_HIST_COLS)
@@ -366,7 +347,6 @@ _FREQ_ROW = (
 )
 
 
-@pytest.mark.asyncio
 async def test_list_frequent_queries_returns_empty_when_no_rows() -> None:
     target = _make_target()
     conn = _make_conn([], _FREQ_COLS)
@@ -375,7 +355,6 @@ async def test_list_frequent_queries_returns_empty_when_no_rows() -> None:
     assert result == []
 
 
-@pytest.mark.asyncio
 async def test_list_frequent_queries_returns_model_instances() -> None:
     target = _make_target()
     conn = _make_conn([_FREQ_ROW], _FREQ_COLS)
@@ -385,7 +364,6 @@ async def test_list_frequent_queries_returns_model_instances() -> None:
     assert isinstance(result[0], FrequentlyRunQuery)
 
 
-@pytest.mark.asyncio
 async def test_list_frequent_queries_parses_fields() -> None:
     target = _make_target()
     conn = _make_conn([_FREQ_ROW], _FREQ_COLS)
@@ -396,7 +374,6 @@ async def test_list_frequent_queries_parses_fields() -> None:
     assert row.avg_total_elapsed_time_ms == 1500
 
 
-@pytest.mark.asyncio
 async def test_list_frequent_queries_sql_references_view() -> None:
     target = _make_target()
     conn = _make_conn([], _FREQ_COLS)
@@ -407,7 +384,6 @@ async def test_list_frequent_queries_sql_references_view() -> None:
     assert "queryinsights.frequently_run_queries" in call_sql
 
 
-@pytest.mark.asyncio
 async def test_list_frequent_queries_top_default_100() -> None:
     target = _make_target()
     conn = _make_conn([], _FREQ_COLS)
@@ -418,7 +394,6 @@ async def test_list_frequent_queries_top_default_100() -> None:
     assert "TOP (100)" in call_sql
 
 
-@pytest.mark.asyncio
 async def test_list_frequent_queries_maps_permission_denied() -> None:
     target = _make_target()
     conn = MagicMock()
@@ -432,7 +407,6 @@ async def test_list_frequent_queries_maps_permission_denied() -> None:
         await query_insights.list_frequent_queries(target)
 
 
-@pytest.mark.asyncio
 async def test_list_frequent_queries_since_adds_where() -> None:
     target = _make_target()
     conn = _make_conn([], _FREQ_COLS)
@@ -461,7 +435,6 @@ _LONG_ROW = (
 )
 
 
-@pytest.mark.asyncio
 async def test_list_long_running_returns_empty_when_no_rows() -> None:
     target = _make_target()
     conn = _make_conn([], _LONG_COLS)
@@ -470,7 +443,6 @@ async def test_list_long_running_returns_empty_when_no_rows() -> None:
     assert result == []
 
 
-@pytest.mark.asyncio
 async def test_list_long_running_returns_model_instances() -> None:
     target = _make_target()
     conn = _make_conn([_LONG_ROW], _LONG_COLS)
@@ -480,7 +452,6 @@ async def test_list_long_running_returns_model_instances() -> None:
     assert isinstance(result[0], LongRunningQuery)
 
 
-@pytest.mark.asyncio
 async def test_list_long_running_parses_fields() -> None:
     target = _make_target()
     conn = _make_conn([_LONG_ROW], _LONG_COLS)
@@ -491,7 +462,6 @@ async def test_list_long_running_parses_fields() -> None:
     assert row.number_of_runs == 5
 
 
-@pytest.mark.asyncio
 async def test_list_long_running_sql_references_view() -> None:
     target = _make_target()
     conn = _make_conn([], _LONG_COLS)
@@ -502,7 +472,6 @@ async def test_list_long_running_sql_references_view() -> None:
     assert "queryinsights.long_running_queries" in call_sql
 
 
-@pytest.mark.asyncio
 async def test_list_long_running_top_default_100() -> None:
     target = _make_target()
     conn = _make_conn([], _LONG_COLS)
@@ -513,7 +482,6 @@ async def test_list_long_running_top_default_100() -> None:
     assert "TOP (100)" in call_sql
 
 
-@pytest.mark.asyncio
 async def test_list_long_running_maps_permission_denied() -> None:
     target = _make_target()
     conn = MagicMock()
@@ -527,7 +495,6 @@ async def test_list_long_running_maps_permission_denied() -> None:
         await query_insights.list_long_running_queries(target)
 
 
-@pytest.mark.asyncio
 async def test_list_long_running_since_adds_where() -> None:
     target = _make_target()
     conn = _make_conn([], _LONG_COLS)
@@ -555,7 +522,6 @@ _POOL_ROW = (
 )
 
 
-@pytest.mark.asyncio
 async def test_list_sql_pool_insights_returns_empty_when_no_rows() -> None:
     target = _make_target()
     conn = _make_conn([], _POOL_COLS)
@@ -564,7 +530,6 @@ async def test_list_sql_pool_insights_returns_empty_when_no_rows() -> None:
     assert result == []
 
 
-@pytest.mark.asyncio
 async def test_list_sql_pool_insights_returns_model_instances() -> None:
     target = _make_target()
     conn = _make_conn([_POOL_ROW], _POOL_COLS)
@@ -574,7 +539,6 @@ async def test_list_sql_pool_insights_returns_model_instances() -> None:
     assert isinstance(result[0], SqlPoolInsight)
 
 
-@pytest.mark.asyncio
 async def test_list_sql_pool_insights_parses_fields() -> None:
     target = _make_target()
     conn = _make_conn([_POOL_ROW], _POOL_COLS)
@@ -586,7 +550,6 @@ async def test_list_sql_pool_insights_parses_fields() -> None:
     assert row.is_pool_under_pressure is False
 
 
-@pytest.mark.asyncio
 async def test_list_sql_pool_insights_sql_references_view() -> None:
     target = _make_target()
     conn = _make_conn([], _POOL_COLS)
@@ -597,7 +560,6 @@ async def test_list_sql_pool_insights_sql_references_view() -> None:
     assert "queryinsights.sql_pool_insights" in call_sql
 
 
-@pytest.mark.asyncio
 async def test_list_sql_pool_insights_top_default_100() -> None:
     target = _make_target()
     conn = _make_conn([], _POOL_COLS)
@@ -608,7 +570,6 @@ async def test_list_sql_pool_insights_top_default_100() -> None:
     assert "TOP (100)" in call_sql
 
 
-@pytest.mark.asyncio
 async def test_list_sql_pool_insights_maps_permission_denied() -> None:
     target = _make_target()
     conn = MagicMock()
@@ -622,7 +583,6 @@ async def test_list_sql_pool_insights_maps_permission_denied() -> None:
         await query_insights.list_sql_pool_insights(target)
 
 
-@pytest.mark.asyncio
 async def test_list_sql_pool_insights_since_adds_where() -> None:
     target = _make_target()
     conn = _make_conn([], _POOL_COLS)
@@ -634,7 +594,6 @@ async def test_list_sql_pool_insights_since_adds_where() -> None:
     assert "timestamp" in call_sql
 
 
-@pytest.mark.asyncio
 async def test_list_sql_pool_insights_closes_connection() -> None:
     target = _make_target()
     conn = _make_conn([_POOL_ROW], _POOL_COLS)
@@ -648,7 +607,6 @@ async def test_list_sql_pool_insights_closes_connection() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_limit_clamped_min_1() -> None:
     """Negative or zero limit is treated as 1."""
     target = _make_target()
@@ -660,7 +618,6 @@ async def test_limit_clamped_min_1() -> None:
     assert "TOP (1)" in call_sql
 
 
-@pytest.mark.asyncio
 async def test_limit_clamped_max_10000_for_frequent() -> None:
     target = _make_target()
     conn = _make_conn([], _FREQ_COLS)
@@ -676,7 +633,6 @@ async def test_limit_clamped_max_10000_for_frequent() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_request_history_since_and_until_produce_and_clause() -> None:
     target = _make_target()
     conn = _make_conn([], _REQ_HIST_COLS)

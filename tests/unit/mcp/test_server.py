@@ -291,7 +291,6 @@ def test_tools_registered() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_list_workspaces_happy_path(ctx_patch) -> None:
     """list_workspaces returns a list of serialised workspace dicts."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -315,7 +314,6 @@ async def test_list_workspaces_happy_path(ctx_patch) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_clear_cache_side_effect(mock_ctx, ctx_patch) -> None:
     """clear_cache(scope='all') must call LookupCache.clear() and clear_negative_cache."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -329,7 +327,6 @@ async def test_clear_cache_side_effect(mock_ctx, ctx_patch) -> None:
     assert result["negative_cache_cleared"] is True
 
 
-@pytest.mark.asyncio
 async def test_clear_cache_scope_workspaces(mock_ctx, ctx_patch) -> None:
     """clear_cache(scope='workspaces') must NOT call full clear() or clear_negative_cache."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -349,7 +346,6 @@ async def test_clear_cache_scope_workspaces(mock_ctx, ctx_patch) -> None:
     assert result["negative_cache_cleared"] is False
 
 
-@pytest.mark.asyncio
 async def test_clear_cache_scope_items(mock_ctx, ctx_patch) -> None:
     """clear_cache(scope='items') must NOT call full clear() or clear_negative_cache."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -376,7 +372,6 @@ async def test_clear_cache_scope_items(mock_ctx, ctx_patch) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_fabric_error_becomes_tool_error(ctx_patch) -> None:
     """A FabricError raised by the service layer must become a ToolError."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
@@ -404,7 +399,6 @@ async def test_fabric_error_becomes_tool_error(ctx_patch) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_get_workspace_happy_path(mock_ctx, ctx_patch) -> None:
     """get_workspace resolves the name via Resolver and returns a dict."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -428,7 +422,6 @@ async def test_get_workspace_happy_path(mock_ctx, ctx_patch) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_list_warehouses_happy_path(mock_ctx, ctx_patch) -> None:
     """list_warehouses resolves workspace and returns list of warehouse dicts."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -487,7 +480,6 @@ def test_run_accepts_http_transport() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_get_audit_settings_happy_path(mock_ctx, ctx_patch) -> None:
     """get_audit_settings resolves workspace + warehouse and returns a dict."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -520,7 +512,6 @@ async def test_get_audit_settings_happy_path(mock_ctx, ctx_patch) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_list_running_queries_happy_path(mock_ctx, ctx_patch) -> None:
     """list_running_queries returns list of dicts from the SQL service."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -551,7 +542,6 @@ async def test_list_running_queries_happy_path(mock_ctx, ctx_patch) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_not_found_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
     """NotFound (a FabricError subclass) must become a ToolError."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
@@ -572,7 +562,6 @@ async def test_not_found_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_create_snapshot_bad_datetime_becomes_tool_error(ctx_patch) -> None:
     """create_snapshot raises ToolError when snapshot_dt is not ISO-8601."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
@@ -596,7 +585,6 @@ async def test_create_snapshot_bad_datetime_becomes_tool_error(ctx_patch) -> Non
     assert "ISO-8601" in str(exc_info.value)
 
 
-@pytest.mark.asyncio
 async def test_roll_snapshot_timestamp_bad_datetime_becomes_tool_error(
     ctx_patch,
 ) -> None:
@@ -627,7 +615,6 @@ async def test_roll_snapshot_timestamp_bad_datetime_becomes_tool_error(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_list_sql_endpoints_happy_path(mock_ctx, ctx_patch) -> None:
     """list_sql_endpoints resolves workspace and returns list of SQL endpoint dicts."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -659,7 +646,6 @@ async def test_list_sql_endpoints_happy_path(mock_ctx, ctx_patch) -> None:
     assert result[0]["kind"] == "SQLEndpoint"
 
 
-@pytest.mark.asyncio
 async def test_get_sql_endpoint_happy_path(mock_ctx, ctx_patch) -> None:
     """get_sql_endpoint resolves workspace + endpoint and returns a dict."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -695,7 +681,6 @@ async def test_get_sql_endpoint_happy_path(mock_ctx, ctx_patch) -> None:
     assert result["kind"] == "SQLEndpoint"
 
 
-@pytest.mark.asyncio
 async def test_refresh_sql_endpoint_metadata_happy_path(mock_ctx, ctx_patch) -> None:
     """refresh_sql_endpoint_metadata resolves workspace + endpoint and returns a list of dicts."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -724,7 +709,6 @@ async def test_refresh_sql_endpoint_metadata_happy_path(mock_ctx, ctx_patch) -> 
     assert result[1]["status"] == "Failure"
 
 
-@pytest.mark.asyncio
 async def test_refresh_sql_endpoint_metadata_recreate_tables(mock_ctx, ctx_patch) -> None:
     """refresh_sql_endpoint_metadata passes recreate_tables=True to the service."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -758,7 +742,6 @@ async def test_refresh_sql_endpoint_metadata_recreate_tables(mock_ctx, ctx_patch
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_list_warehouses_all_workspaces(ctx_patch) -> None:
     """list_warehouses with all_workspaces=True dispatches to list_all_workspaces."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -787,7 +770,6 @@ async def test_list_warehouses_all_workspaces(ctx_patch) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_list_sql_endpoints_all_workspaces(ctx_patch) -> None:
     """list_sql_endpoints with all_workspaces=True dispatches to list_all_workspaces."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -826,7 +808,6 @@ async def test_list_sql_endpoints_all_workspaces(ctx_patch) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_add_audit_group_happy_path(mock_ctx, ctx_patch) -> None:
     """add_audit_group resolves workspace + warehouse and returns a dict."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -853,7 +834,6 @@ async def test_add_audit_group_happy_path(mock_ctx, ctx_patch) -> None:
     mock_ctx.resolver.item.assert_called_once_with(str(_WS_ID), _WH_NAME)
 
 
-@pytest.mark.asyncio
 async def test_remove_audit_group_happy_path(mock_ctx, ctx_patch) -> None:
     """remove_audit_group resolves workspace + warehouse and returns a dict."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -885,7 +865,6 @@ async def test_remove_audit_group_happy_path(mock_ctx, ctx_patch) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_set_audit_retention_happy_path(mock_ctx, ctx_patch) -> None:
     """set_audit_retention resolves workspace + warehouse and returns updated AuditSettings."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -918,7 +897,6 @@ async def test_set_audit_retention_happy_path(mock_ctx, ctx_patch) -> None:
     assert result["state"] == "Enabled"
 
 
-@pytest.mark.asyncio
 async def test_set_audit_retention_value_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
     """set_audit_retention converts ValueError (disabled audit or out-of-range) to ToolError."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
@@ -950,7 +928,6 @@ async def test_set_audit_retention_value_error_becomes_tool_error(mock_ctx, ctx_
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_execute_sql_happy_path(mock_ctx, ctx_patch) -> None:
     """execute_sql calls sql_exec.execute and returns a dict with columns/rows/rowcount."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -979,7 +956,6 @@ async def test_execute_sql_happy_path(mock_ctx, ctx_patch) -> None:
     assert result["rowcount"] == 2
 
 
-@pytest.mark.asyncio
 async def test_execute_sql_no_connection_string_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """execute_sql raises ToolError when the item has no connection string."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
@@ -1005,7 +981,6 @@ async def test_execute_sql_no_connection_string_raises_tool_error(mock_ctx, ctx_
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_get_warehouse_permissions_happy_path(mock_ctx, ctx_patch) -> None:
     """get_warehouse_permissions returns a list of serialised ItemAccess dicts."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -1032,7 +1007,6 @@ async def test_get_warehouse_permissions_happy_path(mock_ctx, ctx_patch) -> None
     assert result[0]["principal"]["displayName"] == "Jacob Hancock"
 
 
-@pytest.mark.asyncio
 async def test_get_sql_endpoint_permissions_happy_path(mock_ctx, ctx_patch) -> None:
     """get_sql_endpoint_permissions returns a list of serialised ItemAccess dicts."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -1059,7 +1033,6 @@ async def test_get_sql_endpoint_permissions_happy_path(mock_ctx, ctx_patch) -> N
     assert result[0]["principal"]["type"] == "User"
 
 
-@pytest.mark.asyncio
 async def test_get_warehouse_permissions_permission_denied_becomes_tool_error(
     mock_ctx, ctx_patch
 ) -> None:
@@ -1094,7 +1067,6 @@ _SE_NAME = "SalesLakehouse"
 _SE_ID = UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
 
 
-@pytest.mark.asyncio
 async def test_create_table_sql_endpoint_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """create_table must raise ToolError when the item is a SQL Endpoint."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
@@ -1123,7 +1095,6 @@ async def test_create_table_sql_endpoint_raises_tool_error(mock_ctx, ctx_patch) 
     assert "read-only" in str(exc_info.value).lower()
 
 
-@pytest.mark.asyncio
 async def test_delete_table_sql_endpoint_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """delete_table must raise ToolError when the item is a SQL Endpoint.
 
@@ -1152,7 +1123,6 @@ async def test_delete_table_sql_endpoint_raises_tool_error(mock_ctx, ctx_patch) 
     assert "read-only" in str(exc_info.value).lower()
 
 
-@pytest.mark.asyncio
 async def test_clear_table_sql_endpoint_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """clear_table must raise ToolError when the item is a SQL Endpoint.
 
@@ -1186,7 +1156,6 @@ async def test_clear_table_sql_endpoint_raises_tool_error(mock_ctx, ctx_patch) -
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_create_schema_rejects_sql_endpoint(mock_ctx, ctx_patch) -> None:
     """create_schema must raise ToolError when called against a SQL Analytics Endpoint."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
@@ -1211,7 +1180,6 @@ async def test_create_schema_rejects_sql_endpoint(mock_ctx, ctx_patch) -> None:
     )
 
 
-@pytest.mark.asyncio
 async def test_delete_schema_rejects_sql_endpoint(mock_ctx, ctx_patch) -> None:
     """delete_schema must raise ToolError when called against a SQL Analytics Endpoint.
 
@@ -1241,7 +1209,6 @@ async def test_delete_schema_rejects_sql_endpoint(mock_ctx, ctx_patch) -> None:
     )
 
 
-@pytest.mark.asyncio
 async def test_list_schemas_works_on_sql_endpoint(mock_ctx, ctx_patch) -> None:
     """list_schemas is a read-only operation and must work on SQL Analytics Endpoints."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -1268,7 +1235,6 @@ async def test_list_schemas_works_on_sql_endpoint(mock_ctx, ctx_patch) -> None:
     assert result[0]["name"] == "dbo"
 
 
-@pytest.mark.asyncio
 async def test_read_view_happy_path(mock_ctx, ctx_patch) -> None:
     """read_view calls views_svc.read_view and returns {columns, rows}."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -1294,7 +1260,6 @@ async def test_read_view_happy_path(mock_ctx, ctx_patch) -> None:
     assert result["rows"] == [[1, 100], [2, 200]]
 
 
-@pytest.mark.asyncio
 async def test_read_view_no_connection_string_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """read_view raises ToolError when the item has no connection string."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
@@ -1315,7 +1280,6 @@ async def test_read_view_no_connection_string_raises_tool_error(mock_ctx, ctx_pa
         )
 
 
-@pytest.mark.asyncio
 async def test_read_view_bad_qualified_name_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """read_view raises ToolError when qualified_name has no dot."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415

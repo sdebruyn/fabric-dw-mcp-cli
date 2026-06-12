@@ -154,7 +154,6 @@ class TestValidateIdentifier:
 
 
 class TestListViews:
-    @pytest.mark.asyncio
     async def test_returns_empty_when_no_rows(self) -> None:
         target = _make_target()
         conn = _make_conn([], _LIST_COLS)
@@ -162,7 +161,6 @@ class TestListViews:
             result = await views.list_views(target)
         assert result == []
 
-    @pytest.mark.asyncio
     async def test_returns_view_instances(self) -> None:
         target = _make_target()
         conn = _make_conn([_VIEW_ROW_1], _LIST_COLS)
@@ -171,7 +169,6 @@ class TestListViews:
         assert len(result) == 1
         assert isinstance(result[0], View)
 
-    @pytest.mark.asyncio
     async def test_parses_fields_correctly(self) -> None:
         target = _make_target()
         conn = _make_conn([_VIEW_ROW_1], _LIST_COLS)
@@ -185,7 +182,6 @@ class TestListViews:
         assert v.modified == _LATER
         assert v.definition is None
 
-    @pytest.mark.asyncio
     async def test_returns_all_rows(self) -> None:
         target = _make_target()
         conn = _make_conn([_VIEW_ROW_1, _VIEW_ROW_2], _LIST_COLS)
@@ -193,7 +189,6 @@ class TestListViews:
             result = await views.list_views(target)
         assert len(result) == 2
 
-    @pytest.mark.asyncio
     async def test_sql_references_sys_views(self) -> None:
         target = _make_target()
         conn = _make_conn([], _LIST_COLS)
@@ -203,7 +198,6 @@ class TestListViews:
         call_sql: str = cursor.execute.call_args[0][0]
         assert "sys.views" in call_sql
 
-    @pytest.mark.asyncio
     async def test_sql_references_sys_schemas(self) -> None:
         target = _make_target()
         conn = _make_conn([], _LIST_COLS)
@@ -213,7 +207,6 @@ class TestListViews:
         call_sql: str = cursor.execute.call_args[0][0]
         assert "sys.schemas" in call_sql
 
-    @pytest.mark.asyncio
     async def test_filters_by_schema_when_provided(self) -> None:
         target = _make_target()
         conn = _make_conn([_VIEW_ROW_1], _LIST_COLS)
@@ -227,7 +220,6 @@ class TestListViews:
         params = call_args[0][1] if len(call_args[0]) > 1 else []
         assert "dbo" in list(params)
 
-    @pytest.mark.asyncio
     async def test_schema_filter_validates_identifier(self) -> None:
         target = _make_target()
         conn = _make_conn([], _LIST_COLS)
@@ -237,7 +229,6 @@ class TestListViews:
         ):
             await views.list_views(target, schema="bad]schema")
 
-    @pytest.mark.asyncio
     async def test_closes_connection_after_success(self) -> None:
         target = _make_target()
         conn = _make_conn([_VIEW_ROW_1], _LIST_COLS)
@@ -245,7 +236,6 @@ class TestListViews:
             await views.list_views(target)
         conn.close.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_maps_permission_denied(self) -> None:
         target = _make_target()
         conn = MagicMock()
@@ -258,7 +248,6 @@ class TestListViews:
         ):
             await views.list_views(target)
 
-    @pytest.mark.asyncio
     async def test_maps_auth_error(self) -> None:
         target = _make_target()
         conn = MagicMock()
@@ -271,7 +260,6 @@ class TestListViews:
         ):
             await views.list_views(target)
 
-    @pytest.mark.asyncio
     async def test_unrelated_error_propagates(self) -> None:
         target = _make_target()
         conn = MagicMock()
@@ -291,7 +279,6 @@ class TestListViews:
 
 
 class TestReadView:
-    @pytest.mark.asyncio
     async def test_returns_columns_and_rows(self) -> None:
         target = _make_target()
         cols = ["id", "name"]
@@ -302,7 +289,6 @@ class TestReadView:
         assert result_cols == cols
         assert list(result_rows) == rows
 
-    @pytest.mark.asyncio
     async def test_sql_uses_select_top(self) -> None:
         target = _make_target()
         conn = _make_conn([(1,)], ["id"])
@@ -313,7 +299,6 @@ class TestReadView:
         assert "SELECT TOP" in call_sql
         assert "5" in call_sql
 
-    @pytest.mark.asyncio
     async def test_sql_uses_bracket_quoting(self) -> None:
         target = _make_target()
         conn = _make_conn([(1,)], ["id"])
@@ -324,19 +309,16 @@ class TestReadView:
         assert "[dbo]" in call_sql
         assert "[vw_sales]" in call_sql
 
-    @pytest.mark.asyncio
     async def test_validates_schema_identifier(self) -> None:
         target = _make_target()
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await read_view(target, "bad;schema", "vw_sales")
 
-    @pytest.mark.asyncio
     async def test_validates_view_name_identifier(self) -> None:
         target = _make_target()
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await read_view(target, "dbo", "vw--injection")
 
-    @pytest.mark.asyncio
     async def test_raises_not_found_when_no_columns(self) -> None:
         target = _make_target()
         cursor = MagicMock()
@@ -350,7 +332,6 @@ class TestReadView:
         ):
             await read_view(target, "dbo", "vw_nonexistent")
 
-    @pytest.mark.asyncio
     async def test_maps_permission_denied(self) -> None:
         target = _make_target()
         conn = MagicMock()
@@ -363,7 +344,6 @@ class TestReadView:
         ):
             await read_view(target, "dbo", "vw_sales")
 
-    @pytest.mark.asyncio
     async def test_closes_connection(self) -> None:
         target = _make_target()
         conn = _make_conn([(1,)], ["id"])
@@ -371,7 +351,6 @@ class TestReadView:
             await read_view(target, "dbo", "vw_sales")
         conn.close.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_default_count_is_ten(self) -> None:
         target = _make_target()
         conn = _make_conn([(1,)], ["id"])
@@ -388,7 +367,6 @@ class TestReadView:
 
 
 class TestGetView:
-    @pytest.mark.asyncio
     async def test_returns_view_with_definition(self) -> None:
         target = _make_target()
         conn = _make_conn([_VIEW_ROW_GET], _GET_COLS)
@@ -397,7 +375,6 @@ class TestGetView:
         assert isinstance(result, View)
         assert result.definition == "SELECT id, amount FROM dbo.sales"
 
-    @pytest.mark.asyncio
     async def test_parses_all_fields(self) -> None:
         target = _make_target()
         conn = _make_conn([_VIEW_ROW_GET], _GET_COLS)
@@ -409,7 +386,6 @@ class TestGetView:
         assert result.created == _NOW
         assert result.modified == _LATER
 
-    @pytest.mark.asyncio
     async def test_sql_includes_sys_sql_modules(self) -> None:
         target = _make_target()
         conn = _make_conn([_VIEW_ROW_GET], _GET_COLS)
@@ -419,7 +395,6 @@ class TestGetView:
         call_sql: str = cursor.execute.call_args[0][0]
         assert "sys.sql_modules" in call_sql
 
-    @pytest.mark.asyncio
     async def test_raises_not_found_when_no_rows(self) -> None:
         target = _make_target()
         conn = _make_conn([], _GET_COLS)
@@ -429,7 +404,6 @@ class TestGetView:
         ):
             await views.get_view(target, "dbo", "nonexistent")
 
-    @pytest.mark.asyncio
     async def test_validates_schema_identifier(self) -> None:
         target = _make_target()
         conn = _make_conn([], _GET_COLS)
@@ -439,7 +413,6 @@ class TestGetView:
         ):
             await views.get_view(target, "bad;schema", "vw_sales")
 
-    @pytest.mark.asyncio
     async def test_validates_view_name_identifier(self) -> None:
         target = _make_target()
         conn = _make_conn([], _GET_COLS)
@@ -449,7 +422,6 @@ class TestGetView:
         ):
             await views.get_view(target, "dbo", "vw--injection")
 
-    @pytest.mark.asyncio
     async def test_closes_connection_after_success(self) -> None:
         target = _make_target()
         conn = _make_conn([_VIEW_ROW_GET], _GET_COLS)
@@ -457,7 +429,6 @@ class TestGetView:
             await views.get_view(target, "dbo", "vw_sales")
         conn.close.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_maps_permission_denied(self) -> None:
         target = _make_target()
         conn = MagicMock()
@@ -477,7 +448,6 @@ class TestGetView:
 
 
 class TestCreateView:
-    @pytest.mark.asyncio
     async def test_emits_create_view_ddl(self) -> None:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
@@ -492,7 +462,6 @@ class TestCreateView:
         assert "[dbo]" in call_sql
         assert "[vw_sales]" in call_sql
 
-    @pytest.mark.asyncio
     async def test_includes_select_body(self) -> None:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
@@ -505,7 +474,6 @@ class TestCreateView:
         call_sql: str = cursor.execute.call_args[0][0]
         assert "SELECT id FROM dbo.sales" in call_sql
 
-    @pytest.mark.asyncio
     async def test_returns_view_object(self) -> None:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
@@ -518,19 +486,16 @@ class TestCreateView:
         assert result.schema_name == "dbo"
         assert result.name == "vw_sales"
 
-    @pytest.mark.asyncio
     async def test_validates_schema_identifier(self) -> None:
         target = _make_target()
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await views.create_view(target, "bad]schema", "vw_sales", "SELECT 1")
 
-    @pytest.mark.asyncio
     async def test_validates_view_name_identifier(self) -> None:
         target = _make_target()
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await views.create_view(target, "dbo", "vw;drop", "SELECT 1")
 
-    @pytest.mark.asyncio
     async def test_commits_after_execute(self) -> None:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
@@ -541,7 +506,6 @@ class TestCreateView:
 
         ddl_conn.commit.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_maps_permission_denied_on_ddl(self) -> None:
         target = _make_target()
         conn = MagicMock()
@@ -554,14 +518,12 @@ class TestCreateView:
         ):
             await views.create_view(target, "dbo", "vw_sales", "SELECT 1")
 
-    @pytest.mark.asyncio
     async def test_rejects_identifier_injection_via_schema(self) -> None:
         """Bracket injection in schema name must be rejected before SQL is formed."""
         target = _make_target()
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await views.create_view(target, "x]; DROP TABLE users--", "vw_ok", "SELECT 1")
 
-    @pytest.mark.asyncio
     async def test_rejects_identifier_injection_via_view_name(self) -> None:
         """Bracket injection in view name must be rejected before SQL is formed."""
         target = _make_target()
@@ -575,7 +537,6 @@ class TestCreateView:
 
 
 class TestUpdateView:
-    @pytest.mark.asyncio
     async def test_emits_create_or_alter_view_ddl(self) -> None:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
@@ -588,7 +549,6 @@ class TestUpdateView:
         call_sql: str = cursor.execute.call_args[0][0].upper()
         assert "CREATE OR ALTER VIEW" in call_sql
 
-    @pytest.mark.asyncio
     async def test_uses_brackets_for_schema_and_name(self) -> None:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
@@ -602,7 +562,6 @@ class TestUpdateView:
         assert "[dbo]" in call_sql
         assert "[vw_sales]" in call_sql
 
-    @pytest.mark.asyncio
     async def test_returns_view_object(self) -> None:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
@@ -613,19 +572,16 @@ class TestUpdateView:
 
         assert isinstance(result, View)
 
-    @pytest.mark.asyncio
     async def test_validates_schema_identifier(self) -> None:
         target = _make_target()
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await views.update_view(target, "bad--schema", "vw_sales", "SELECT 1")
 
-    @pytest.mark.asyncio
     async def test_validates_view_name_identifier(self) -> None:
         target = _make_target()
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await views.update_view(target, "dbo", "vw;injection", "SELECT 1")
 
-    @pytest.mark.asyncio
     async def test_commits_after_execute(self) -> None:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
@@ -636,7 +592,6 @@ class TestUpdateView:
 
         ddl_conn.commit.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_maps_permission_denied(self) -> None:
         target = _make_target()
         conn = MagicMock()
@@ -656,7 +611,6 @@ class TestUpdateView:
 
 
 class TestDropView:
-    @pytest.mark.asyncio
     async def test_emits_drop_view_ddl(self) -> None:
         target = _make_target()
         conn = _make_conn_for_ddl()
@@ -666,7 +620,6 @@ class TestDropView:
         call_sql: str = cursor.execute.call_args[0][0].upper()
         assert "DROP VIEW" in call_sql
 
-    @pytest.mark.asyncio
     async def test_uses_brackets_for_schema_and_name(self) -> None:
         target = _make_target()
         conn = _make_conn_for_ddl()
@@ -677,7 +630,6 @@ class TestDropView:
         assert "[dbo]" in call_sql
         assert "[vw_sales]" in call_sql
 
-    @pytest.mark.asyncio
     async def test_commits_after_execute(self) -> None:
         target = _make_target()
         conn = _make_conn_for_ddl()
@@ -685,7 +637,6 @@ class TestDropView:
             await views.drop_view(target, "dbo", "vw_sales")
         conn.commit.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_closes_connection_after_success(self) -> None:
         target = _make_target()
         conn = _make_conn_for_ddl()
@@ -693,19 +644,16 @@ class TestDropView:
             await views.drop_view(target, "dbo", "vw_sales")
         conn.close.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_validates_schema_identifier(self) -> None:
         target = _make_target()
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await views.drop_view(target, "bad]schema", "vw_sales")
 
-    @pytest.mark.asyncio
     async def test_validates_view_name_identifier(self) -> None:
         target = _make_target()
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await views.drop_view(target, "dbo", "vw--bad")
 
-    @pytest.mark.asyncio
     async def test_maps_permission_denied(self) -> None:
         target = _make_target()
         conn = MagicMock()
@@ -718,19 +666,16 @@ class TestDropView:
         ):
             await views.drop_view(target, "dbo", "vw_sales")
 
-    @pytest.mark.asyncio
     async def test_rejects_injection_in_schema(self) -> None:
         target = _make_target()
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await views.drop_view(target, "x]; DROP TABLE users--", "vw_ok")
 
-    @pytest.mark.asyncio
     async def test_rejects_injection_in_view_name(self) -> None:
         target = _make_target()
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await views.drop_view(target, "dbo", "vw_ok] WHERE 1=1--")
 
-    @pytest.mark.asyncio
     async def test_unrelated_error_propagates(self) -> None:
         target = _make_target()
         conn = MagicMock()

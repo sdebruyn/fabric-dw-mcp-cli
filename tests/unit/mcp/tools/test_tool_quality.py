@@ -192,7 +192,6 @@ class TestMakeSqlTarget:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_resolve_item_returns_pair() -> None:
     mock_resolver = AsyncMock()
     mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
@@ -281,7 +280,6 @@ class TestParseQualifiedName:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_read_table_count_bound_rejection() -> None:
     """read_table must reject count > 10000 at the FastMCP schema layer."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -302,7 +300,6 @@ async def test_read_table_count_bound_rejection() -> None:
         )
 
 
-@pytest.mark.asyncio
 async def test_read_view_count_bound_rejection() -> None:
     """read_view must reject count > 10000 at the FastMCP schema layer."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -323,7 +320,6 @@ async def test_read_view_count_bound_rejection() -> None:
         )
 
 
-@pytest.mark.asyncio
 async def test_execute_sql_max_rows_bound_rejection() -> None:
     """execute_sql must reject max_rows > 10000."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -344,7 +340,6 @@ async def test_execute_sql_max_rows_bound_rejection() -> None:
         )
 
 
-@pytest.mark.asyncio
 async def test_list_request_history_limit_bound_rejection() -> None:
     """list_request_history must reject limit > 10000."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -364,7 +359,6 @@ async def test_list_request_history_limit_bound_rejection() -> None:
         )
 
 
-@pytest.mark.asyncio
 async def test_create_sql_pool_max_percent_bound_rejection() -> None:
     """create_sql_pool must reject max_percent > 100."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -389,7 +383,6 @@ async def test_create_sql_pool_max_percent_bound_rejection() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_create_sql_pool_next_fallback() -> None:
     """create_sql_pool raises ToolError (not StopIteration) when pool absent after create."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -417,7 +410,6 @@ async def test_create_sql_pool_next_fallback() -> None:
         )
 
 
-@pytest.mark.asyncio
 async def test_update_sql_pool_next_fallback() -> None:
     """update_sql_pool raises ToolError (not StopIteration) when pool absent after update."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -447,7 +439,6 @@ async def test_update_sql_pool_next_fallback() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_clear_cache_all_returns_stats() -> None:
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -473,7 +464,6 @@ async def test_clear_cache_all_returns_stats() -> None:
     resolver_mock.clear_negative_cache.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_clear_cache_workspaces_scope() -> None:
     from typing import cast as _cast  # noqa: PLC0415
 
@@ -495,7 +485,6 @@ async def test_clear_cache_workspaces_scope() -> None:
     cache_mock.clear.assert_not_called()
 
 
-@pytest.mark.asyncio
 async def test_clear_cache_items_scope() -> None:
     from typing import cast as _cast  # noqa: PLC0415
 
@@ -526,7 +515,6 @@ async def test_clear_cache_items_scope() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_create_warehouse_clears_negative_cache() -> None:
     """create_warehouse must call resolver.clear_negative_cache() on success."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -559,7 +547,6 @@ async def test_create_warehouse_clears_negative_cache() -> None:
     resolver_mock.clear_negative_cache.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_create_table_clears_negative_cache() -> None:
     """create_table must call resolver.clear_negative_cache() on success."""
     from typing import cast as _cast  # noqa: PLC0415
@@ -590,7 +577,6 @@ async def test_create_table_clears_negative_cache() -> None:
     resolver_mock.clear_negative_cache.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_create_view_clears_negative_cache() -> None:
     """create_view must call resolver.clear_negative_cache() on success."""
     from typing import cast as _cast  # noqa: PLC0415
@@ -625,7 +611,6 @@ async def test_create_view_clears_negative_cache() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_list_tables_raises_tool_error_on_no_connection() -> None:
     """list_tables must raise ToolError (not FabricError) when no connection string."""
     from typing import cast as _cast  # noqa: PLC0415
@@ -645,7 +630,6 @@ async def test_list_tables_raises_tool_error_on_no_connection() -> None:
         )
 
 
-@pytest.mark.asyncio
 async def test_list_running_queries_raises_tool_error_on_no_connection() -> None:
     """list_running_queries must raise ToolError when no connection string."""
     from typing import cast as _cast  # noqa: PLC0415

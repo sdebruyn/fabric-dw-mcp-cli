@@ -2,35 +2,18 @@
 
 from __future__ import annotations
 
-import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
-import pytest
-from azure.core.credentials import AccessToken
-from azure.core.credentials_async import AsyncTokenCredential
-
-from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.services._lro import (
     LRO_DETAIL_WAIT_S,
     LRO_MAX_DETAIL_RETRIES,
     extract_operation_id,
     resolve_lro_item_id,
 )
-
-_FAKE_TOKEN = AccessToken(token="fake-token", expires_on=int(time.time()) + 3600)  # noqa: S106
+from tests.unit.services._helpers import _make_client
 
 _OP_ID = "abc-def-123"
 _LOCATION = f"https://api.fabric.microsoft.com/v1/operations/{_OP_ID}"
-
-
-def _make_credential() -> AsyncTokenCredential:
-    cred = MagicMock(spec=AsyncTokenCredential)
-    cred.get_token = AsyncMock(return_value=_FAKE_TOKEN)
-    return cred
-
-
-async def _make_client() -> FabricHttpClient:
-    return FabricHttpClient(credential=_make_credential(), rps=100)
 
 
 # ---------------------------------------------------------------------------
@@ -70,7 +53,6 @@ def test_extract_operation_id_simple_path() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_resolve_lro_item_id_path_a_resourceid() -> None:
     """resolve_lro_item_id returns the id from resourceId in the status body (Path A)."""
     client = await _make_client()
@@ -83,7 +65,6 @@ async def test_resolve_lro_item_id_path_a_resourceid() -> None:
     assert result == "res-123"
 
 
-@pytest.mark.asyncio
 async def test_resolve_lro_item_id_path_a_id() -> None:
     """resolve_lro_item_id returns the id from 'id' in the status body (Path A fallback)."""
     client = await _make_client()
@@ -96,7 +77,6 @@ async def test_resolve_lro_item_id_path_a_id() -> None:
     assert result == "item-456"
 
 
-@pytest.mark.asyncio
 async def test_resolve_lro_item_id_path_a_custom_keys() -> None:
     """resolve_lro_item_id checks custom result_id_keys in order."""
     client = await _make_client()
@@ -115,7 +95,6 @@ async def test_resolve_lro_item_id_path_a_custom_keys() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_resolve_lro_item_id_path_b_result_endpoint() -> None:
     """resolve_lro_item_id falls back to /result endpoint when status body has no id."""
     client = await _make_client()
@@ -132,7 +111,6 @@ async def test_resolve_lro_item_id_path_b_result_endpoint() -> None:
     mock_result.assert_awaited_once_with(_OP_ID)
 
 
-@pytest.mark.asyncio
 async def test_resolve_lro_item_id_returns_none_when_both_paths_fail() -> None:
     """resolve_lro_item_id returns None when neither Path A nor Path B yields an id."""
     client = await _make_client()
@@ -148,7 +126,6 @@ async def test_resolve_lro_item_id_returns_none_when_both_paths_fail() -> None:
     assert result is None
 
 
-@pytest.mark.asyncio
 async def test_resolve_lro_item_id_path_a_takes_priority_over_path_b() -> None:
     """Path A (status body) should be checked before Path B (/result endpoint)."""
     client = await _make_client()

@@ -2,25 +2,21 @@
 
 from __future__ import annotations
 
-import time
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import pytest
 import respx
-from azure.core.credentials import AccessToken
-from azure.core.credentials_async import AsyncTokenCredential
 
 from fabric_dw.exceptions import NotFound, PermissionDenied
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.services.ownership import takeover
+from tests.unit.services._helpers import _make_credential
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-_FAKE_TOKEN = AccessToken(token="fake-token", expires_on=int(time.time()) + 3600)  # noqa: S106
 
 _WORKSPACE_ID = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 _WAREHOUSE_ID = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
@@ -29,13 +25,6 @@ _EXPECTED_URL = (
     f"https://api.powerbi.com/v1.0/myorg"
     f"/groups/{_WORKSPACE_ID}/datawarehouses/{_WAREHOUSE_ID}/takeover"
 )
-
-
-def _make_credential(token: AccessToken = _FAKE_TOKEN) -> AsyncTokenCredential:
-    """Build a mock credential that returns *token*."""
-    cred = MagicMock(spec=AsyncTokenCredential)
-    cred.get_token = AsyncMock(return_value=token)
-    return cred
 
 
 # ---------------------------------------------------------------------------

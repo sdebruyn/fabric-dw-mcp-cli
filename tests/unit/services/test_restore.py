@@ -3,22 +3,20 @@
 from __future__ import annotations
 
 import json as _json
-import time
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
 import anyio
 import httpx
 import pytest
 import respx
-from azure.core.credentials import AccessToken
-from azure.core.credentials_async import AsyncTokenCredential
 
 from fabric_dw.exceptions import NotFound, PermissionDenied
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import CreationModeType, RestorePoint
 from fabric_dw.services import restore
+from tests.unit.services._helpers import _make_credential
 
 # ---------------------------------------------------------------------------
 # Constants & Fixtures
@@ -31,7 +29,6 @@ _WH_ID = UUID("d4e5f6a7-b8c9-0123-def0-123456789abc")
 _RP_ID = "1726617378000"
 _RP_ID_2 = "1726617379000"
 
-_FAKE_TOKEN = AccessToken(token="fake-token", expires_on=int(time.time()) + 3600)  # noqa: S106
 
 _BASE_URL = "https://api.fabric.microsoft.com/v1"
 _RP_LIST_URL = f"{_BASE_URL}/workspaces/{_WS_ID}/warehouses/{_WH_ID}/restorePoints"
@@ -81,12 +78,6 @@ LRO_SUCCEEDED: dict[str, Any] = {
     "percentComplete": 100,
     "error": None,
 }
-
-
-def _make_credential() -> AsyncTokenCredential:
-    cred = MagicMock(spec=AsyncTokenCredential)
-    cred.get_token = AsyncMock(return_value=_FAKE_TOKEN)
-    return cred
 
 
 @pytest.fixture(autouse=True)

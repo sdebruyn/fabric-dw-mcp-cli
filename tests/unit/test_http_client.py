@@ -68,7 +68,6 @@ def test_parse_retry_after_http_date() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_rps_limiter_timing() -> None:
     """6 requests at 2 RPS complete in ~2.0s.
 
@@ -100,7 +99,6 @@ async def test_rps_limiter_timing() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_429_retry_after_honored() -> None:
     """A 429 with Retry-After: 1 should retry once and succeed; elapsed >= ~0.9 s."""
     call_count = 0
@@ -126,7 +124,6 @@ async def test_429_retry_after_honored() -> None:
     assert elapsed >= 0.9, f"Retry-After not honored: {elapsed:.2f}s"
 
 
-@pytest.mark.asyncio
 async def test_429_raises_after_five_in_a_row() -> None:
     """Exactly 5 consecutive 429 responses must trigger RateLimitedError (_MAX_429_RETRIES = 5).
 
@@ -156,7 +153,6 @@ async def test_429_raises_after_five_in_a_row() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_401_raises_auth_error() -> None:
     """HTTP 401 should raise AuthError."""
     with respx.mock:
@@ -169,7 +165,6 @@ async def test_401_raises_auth_error() -> None:
                 await client.request("GET", HttpBase.FABRIC, "/items")
 
 
-@pytest.mark.asyncio
 async def test_403_raises_permission_denied() -> None:
     """HTTP 403 should raise PermissionDenied."""
     with respx.mock:
@@ -182,7 +177,6 @@ async def test_403_raises_permission_denied() -> None:
                 await client.request("GET", HttpBase.FABRIC, "/items")
 
 
-@pytest.mark.asyncio
 async def test_404_raises_not_found() -> None:
     """HTTP 404 should raise NotFound."""
     with respx.mock:
@@ -200,7 +194,6 @@ async def test_404_raises_not_found() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_500_retried_then_raises() -> None:
     """HTTP 500 should be retried (tenacity) and finally raise FabricServerError."""
     with respx.mock:
@@ -218,7 +211,6 @@ async def test_500_retried_then_raises() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_iter_paginated_follows_continuation_uri() -> None:
     """iter_paginated should follow continuationUri across pages and yield all items."""
     page1 = {
@@ -251,7 +243,6 @@ async def test_iter_paginated_follows_continuation_uri() -> None:
         assert call_count == 2
 
 
-@pytest.mark.asyncio
 async def test_iter_paginated_single_page() -> None:
     """iter_paginated should yield all items from a single-page response."""
     page: dict[str, Any] = {"value": [{"id": "x"}, {"id": "y"}]}
@@ -268,7 +259,6 @@ async def test_iter_paginated_single_page() -> None:
     assert items == [{"id": "x"}, {"id": "y"}]
 
 
-@pytest.mark.asyncio
 async def test_iter_paginated_two_pages_follows_continuation_uri() -> None:
     """iter_paginated should follow continuationUri and yield items from both pages."""
     continuation_url = "https://api.fabric.microsoft.com/v1/items?continuation=abc"
@@ -300,7 +290,6 @@ async def test_iter_paginated_two_pages_follows_continuation_uri() -> None:
     assert call_count == 2
 
 
-@pytest.mark.asyncio
 async def test_iter_paginated_empty_value_list() -> None:
     """iter_paginated should yield nothing when the value list is empty."""
     with respx.mock:
@@ -315,7 +304,6 @@ async def test_iter_paginated_empty_value_list() -> None:
     assert items == []
 
 
-@pytest.mark.asyncio
 async def test_iter_paginated_custom_key() -> None:
     """iter_paginated with key='someOtherKey' must yield items from that key, not from 'value'.
 
@@ -344,7 +332,6 @@ async def test_iter_paginated_custom_key() -> None:
     assert items == [{"id": 1}], f"Expected only id=1 from 'someOtherKey'; got {items}"
 
 
-@pytest.mark.asyncio
 async def test_iter_paginated_params_only_on_first_request() -> None:
     """params must be sent on the first request only, not on continuation requests.
 
@@ -402,7 +389,6 @@ async def test_iter_paginated_params_only_on_first_request() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_poll_operation_succeeded() -> None:
     """poll_operation should return the body when status == 'Succeeded'."""
     poll_count = 0
@@ -434,7 +420,6 @@ async def test_poll_operation_succeeded() -> None:
         assert poll_count == 2
 
 
-@pytest.mark.asyncio
 async def test_poll_operation_failed_raises() -> None:
     """poll_operation should raise FabricServerError when status == 'Failed'."""
     with respx.mock:
@@ -448,7 +433,6 @@ async def test_poll_operation_failed_raises() -> None:
                 await client.poll_operation("https://api.fabric.microsoft.com/v1/operations/op-456")
 
 
-@pytest.mark.asyncio
 async def test_poll_operation_timeout_raises() -> None:
     """poll_operation should raise FabricServerError when timeout_s is exceeded.
 
@@ -474,7 +458,6 @@ async def test_poll_operation_timeout_raises() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_get_operation_result_returns_body() -> None:
     """get_operation_result should GET /operations/{op_id}/result and return the body.
 
@@ -500,7 +483,6 @@ async def test_get_operation_result_returns_body() -> None:
     assert result == expected
 
 
-@pytest.mark.asyncio
 async def test_get_operation_result_not_found_propagates() -> None:
     """get_operation_result should propagate NotFound when the result endpoint returns 404."""
     op_id = "no-such-op"
@@ -520,7 +502,6 @@ async def test_get_operation_result_not_found_propagates() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_request_params_int_value_serialized() -> None:
     """request() must accept int param values and serialize them correctly (e.g. ?top=100)."""
     captured_url: str | None = None
@@ -548,7 +529,6 @@ async def test_request_params_int_value_serialized() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_concurrent_requests_fetch_token_once() -> None:
     """Five concurrent requests before any token is fetched must call get_token exactly once."""
     cred = MagicMock(spec=AsyncTokenCredential)
@@ -577,7 +557,6 @@ async def test_concurrent_requests_fetch_token_once() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_debug_log_emitted_on_request(caplog: pytest.LogCaptureFixture) -> None:
     """A successful request at DEBUG must emit a log record from fabric_dw.http.
 
@@ -611,7 +590,6 @@ async def test_debug_log_emitted_on_request(caplog: pytest.LogCaptureFixture) ->
     assert "fake-token" not in msg
 
 
-@pytest.mark.asyncio
 async def test_debug_log_contains_elapsed_ms(caplog: pytest.LogCaptureFixture) -> None:
     """Log record should contain elapsed_ms as a numeric attribute or in message."""
     with respx.mock:
@@ -642,7 +620,6 @@ async def test_debug_log_contains_elapsed_ms(caplog: pytest.LogCaptureFixture) -
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_status_mapping_fills_exception_attributes() -> None:
     """Error exceptions must carry status, request_id, and body attributes."""
     req_id = "test-req-id-001"
@@ -667,7 +644,6 @@ async def test_status_mapping_fills_exception_attributes() -> None:
     assert err.body.get("error") is not None
 
 
-@pytest.mark.asyncio
 async def test_auth_error_carries_status() -> None:
     """AuthError must have status=401."""
     with respx.mock:
@@ -682,7 +658,6 @@ async def test_auth_error_carries_status() -> None:
     assert exc_info.value.status == 401
 
 
-@pytest.mark.asyncio
 async def test_server_error_carries_status() -> None:
     """FabricServerError must have status=500."""
     with respx.mock:
@@ -697,7 +672,6 @@ async def test_server_error_carries_status() -> None:
     assert exc_info.value.status == 500
 
 
-@pytest.mark.asyncio
 async def test_rate_limited_error_carries_status() -> None:
     """RateLimitedError raised after consecutive 429s must carry status=429."""
 
@@ -751,7 +725,6 @@ def test_fabric_error_str_with_hint_and_request_id() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_429_deadline_aggregated_for_concurrent_requests() -> None:
     """Two concurrent 429s with Retry-After values aggregate to the MAX deadline.
 
@@ -790,7 +763,6 @@ async def test_429_deadline_aggregated_for_concurrent_requests() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_429_deadline_single_request_honors_retry_after() -> None:
     """429 with Retry-After: 1 sets _pause_until and waits before retry."""
     call_count = 0
@@ -821,7 +793,6 @@ async def test_429_deadline_single_request_honors_retry_after() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_debug_log_includes_request_id_when_present(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -872,7 +843,6 @@ def test_constructor_parameters_are_stored() -> None:
     assert client._token_refresh_buffer == 600.0
 
 
-@pytest.mark.asyncio
 async def test_timeout_wired_into_http_client() -> None:
     """The timeout parameter must be forwarded to the underlying httpx.AsyncClient."""
     cred = _make_credential()
@@ -887,7 +857,6 @@ async def test_timeout_wired_into_http_client() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_poll_operation_jitter_within_bounds() -> None:
     """poll_operation sleep must add the jitter produced by random.uniform.
 
@@ -947,7 +916,6 @@ async def test_poll_operation_jitter_within_bounds() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_429_with_garbage_retry_after_falls_back_and_succeeds() -> None:
     """A malformed Retry-After value must NOT raise ValueError.
 
@@ -975,7 +943,6 @@ async def test_429_with_garbage_retry_after_falls_back_and_succeeds() -> None:
     assert call_count == 2
 
 
-@pytest.mark.asyncio
 async def test_429_garbage_retry_after_emits_warning(caplog: pytest.LogCaptureFixture) -> None:
     """A malformed Retry-After must emit a WARNING log with the raw header value."""
     call_count = 0
@@ -1009,7 +976,6 @@ async def test_429_garbage_retry_after_emits_warning(caplog: pytest.LogCaptureFi
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_send_once_deadline_sleep_happens_before_get_token() -> None:
     """_send_once must sleep for the pause deadline BEFORE calling _get_token.
 
@@ -1074,7 +1040,6 @@ async def test_send_once_deadline_sleep_happens_before_get_token() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_send_once_re_sleeps_when_pause_until_extended_mid_sleep() -> None:
     """_send_once must re-check _pause_until after waking and sleep again if extended.
 
