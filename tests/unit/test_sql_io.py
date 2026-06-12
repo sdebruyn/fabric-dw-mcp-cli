@@ -139,6 +139,19 @@ class TestWriteArrowJson:
         parsed = json.loads(buf.getvalue())
         assert parsed[0]["id"] == 1
 
+    def test_json_output_takes_priority_over_out_stream(self, tmp_path: Path) -> None:
+        """When both output (file) and out (stream) are supplied for JSON format,
+        output wins: the file is written and the stream is left untouched."""
+        table = columns_rows_to_arrow(["id"], [(99,)])
+        out_file = tmp_path / "out.json"
+        buf = io.StringIO()
+        write_arrow(table, OutputFormat.JSON, output=out_file, out=buf)
+        # File must contain the payload
+        parsed = json.loads(out_file.read_text(encoding="utf-8"))
+        assert parsed[0]["id"] == 99
+        # Stream must not have been written to
+        assert buf.getvalue() == ""
+
 
 # ===========================================================================
 # write_arrow — CSV format

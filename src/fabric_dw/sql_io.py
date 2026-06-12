@@ -140,8 +140,7 @@ def write_arrow(
         ValueError: If *fmt* is not a known format, or if *output* is ``None``
             for a format that requires a file path.
     """
-    _all_formats = list(OutputFormat)
-    if fmt not in _all_formats:
+    if fmt not in OutputFormat:
         msg = f"Unknown output format {fmt!r}; expected one of {[f.value for f in OutputFormat]}"
         raise ValueError(msg)
 
