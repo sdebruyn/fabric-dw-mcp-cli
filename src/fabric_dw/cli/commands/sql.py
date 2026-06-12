@@ -90,7 +90,7 @@ async def exec_cmd(
 
             if ctx.json_output:
                 render(
-                    result.model_dump(mode="json"),
+                    result.model_dump(by_alias=True, mode="json"),
                     json_output=True,
                 )
             elif result.rows:

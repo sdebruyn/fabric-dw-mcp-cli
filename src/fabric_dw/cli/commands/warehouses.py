@@ -30,6 +30,8 @@ _log = logging.getLogger(__name__)
 @click.group("warehouses")
 def warehouses_group() -> None:
     """Manage Microsoft Fabric Data Warehouses and SQL Analytics Endpoints."""
+    # NOTE: positional argument is named 'warehouse' throughout this group (not 'item') because
+    # every command here is warehouse-specific; this is a deliberate exception to the item-rename.
 
 
 @warehouses_group.command("list")

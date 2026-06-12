@@ -120,8 +120,9 @@ class TestSqlExec:
                 ["sql", "exec", WS_GUID, WH_GUID, "-q", "SELECT id, name FROM t"],
             )
         assert result.exit_code == 0
-        # Default is table, so output should NOT be raw JSON
-        assert "id" in result.output or "name" in result.output
+        # Default is table — output must NOT be parseable as JSON
+        with pytest.raises(json.JSONDecodeError):
+            json.loads(result.output)
 
     def test_exec_outputs_json_with_json_flag(self, runner: CliRunner, cache_env: Path) -> None:
         """Global --json flag triggers JSON output for sql exec."""
@@ -246,8 +247,9 @@ class TestSqlExec:
                 ["sql", "exec", WS_GUID, WH_GUID, "-q", "SELECT id, name FROM t"],
             )
         assert result.exit_code == 0
-        # Default is table; JSON flag not set so output should NOT be parseable JSON
-        assert "id" in result.output or "name" in result.output
+        # Default is table; JSON flag not set so output must NOT be parseable as JSON
+        with pytest.raises(json.JSONDecodeError):
+            json.loads(result.output)
 
     def test_exec_dml_no_rows_shows_rowcount(self, runner: CliRunner, cache_env: Path) -> None:
         """DML with no result rows prints rowcount message."""

@@ -188,6 +188,23 @@ class TestAuditEnable:
         )
         assert result.exit_code != 0
 
+    def test_enable_retention_days_zero_is_rejected(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """--retention-days 0 must be rejected with a usage error (use --unlimited instead)."""
+        _ = cache_env
+        result = runner.invoke(cli, ["audit", "enable", WS_GUID, WH_GUID, "--retention-days", "0"])
+        assert result.exit_code != 0
+        assert "--unlimited" in result.output
+
+    def test_enable_retention_days_negative_is_rejected(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """Negative --retention-days must be rejected with a usage error."""
+        _ = cache_env
+        result = runner.invoke(cli, ["audit", "enable", WS_GUID, WH_GUID, "--retention-days", "-1"])
+        assert result.exit_code != 0
+
 
 class TestAuditDisable:
     """audit disable — happy path and confirmation."""
