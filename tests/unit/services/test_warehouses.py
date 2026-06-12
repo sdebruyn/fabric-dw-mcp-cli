@@ -14,7 +14,12 @@ import pytest
 import respx
 
 from fabric_dw.cache import ItemEntry, LookupCache
-from fabric_dw.exceptions import FabricServerError, NotFoundError, PermissionDeniedError
+from fabric_dw.exceptions import (
+    BadRequestError,
+    FabricServerError,
+    NotFoundError,
+    PermissionDeniedError,
+)
 from fabric_dw.models import Warehouse, WarehouseKind, Workspace
 from fabric_dw.services import warehouses
 from tests.fixtures.api_payloads import (
@@ -43,7 +48,6 @@ _BASE = "https://api.fabric.microsoft.com/v1"
 _WAREHOUSES_URL = f"{_BASE}/workspaces/{_WORKSPACE_ID}/warehouses"
 _SQL_ENDPOINTS_URL = f"{_BASE}/workspaces/{_WORKSPACE_ID}/sqlEndpoints"
 _WAREHOUSE_URL = f"{_WAREHOUSES_URL}/{_WAREHOUSE_ID}"
-_ITEMS_URL = f"{_BASE}/workspaces/{_WORKSPACE_ID}/items"
 _OPERATION_URL = f"{_BASE}/operations/op-abc123"
 
 
@@ -204,7 +208,7 @@ async def test_create_with_collation_polls_lro_and_returns_warehouse() -> None:
 
     with respx.mock:
         # POST to create
-        post_route = respx.post(_ITEMS_URL).mock(
+        post_route = respx.post(_WAREHOUSES_URL).mock(
             return_value=httpx.Response(
                 202,
                 json=create_resp,
@@ -231,9 +235,9 @@ async def test_create_with_collation_polls_lro_and_returns_warehouse() -> None:
 
     # Verify the POST body included creationPayload with collation
     sent_body = json.loads(post_route.calls[0].request.content)
-    assert sent_body["type"] == "Warehouse"
+    assert "type" not in sent_body  # type-specific endpoint — no type field needed
     assert sent_body["displayName"] == "SalesWarehouse"
-    assert sent_body["creationPayload"]["defaultCollation"] == "Latin1_General_100_BIN2_UTF8"
+    assert sent_body["creationPayload"]["collationType"] == "Latin1_General_100_BIN2_UTF8"
 
 
 async def test_create_without_collation_omits_creation_payload() -> None:
@@ -244,7 +248,7 @@ async def test_create_without_collation_omits_creation_payload() -> None:
     new_wh_url = f"{_WAREHOUSES_URL}/{new_wh_id}"
 
     with respx.mock:
-        post_route = respx.post(_ITEMS_URL).mock(
+        post_route = respx.post(_WAREHOUSES_URL).mock(
             return_value=httpx.Response(
                 202,
                 json={},
@@ -271,7 +275,7 @@ async def test_create_with_description() -> None:
     new_wh_url = f"{_WAREHOUSES_URL}/{new_wh_id}"
 
     with respx.mock:
-        post_route = respx.post(_ITEMS_URL).mock(
+        post_route = respx.post(_WAREHOUSES_URL).mock(
             return_value=httpx.Response(
                 202,
                 json={},
@@ -332,7 +336,7 @@ async def test_create_missing_resource_location_raises_fabric_server_error() -> 
     op_no_location = json.loads(WAREHOUSE_OPERATION_SUCCEEDED_NO_LOCATION_PAYLOAD)
 
     with respx.mock:
-        respx.post(_ITEMS_URL).mock(
+        respx.post(_WAREHOUSES_URL).mock(
             return_value=httpx.Response(
                 202,
                 json={},
@@ -361,7 +365,7 @@ async def test_create_no_location_header_but_body_present_returns_warehouse() ->
     new_wh_url = f"{_WAREHOUSES_URL}/{new_wh_id}"
 
     with respx.mock:
-        respx.post(_ITEMS_URL).mock(
+        respx.post(_WAREHOUSES_URL).mock(
             # 201, no Location header, body contains id + displayName
             return_value=httpx.Response(201, json=body)
         )
@@ -387,7 +391,7 @@ async def test_create_no_location_header_and_empty_body_raises_fabric_server_err
     that FabricServerError is raised with a reference to issue #204.
     """
     with respx.mock:
-        post_route = respx.post(_ITEMS_URL).mock(
+        post_route = respx.post(_WAREHOUSES_URL).mock(
             return_value=httpx.Response(202, json={})  # no Location header, empty body, always
         )
 
@@ -425,7 +429,7 @@ async def test_create_empty_2xx_retries_then_succeeds() -> None:
         return httpx.Response(202, json={}, headers={"Location": _OPERATION_URL})
 
     with respx.mock:
-        respx.post(_ITEMS_URL).mock(side_effect=post_side_effect)
+        respx.post(_WAREHOUSES_URL).mock(side_effect=post_side_effect)
         respx.get(_OPERATION_URL).mock(return_value=httpx.Response(200, json=op_succeeded))
         respx.get(new_wh_url).mock(return_value=httpx.Response(200, json=wh_payload))
 
@@ -442,33 +446,33 @@ async def test_create_empty_2xx_retries_then_succeeds() -> None:
 
 
 async def test_create_4xx_is_not_retried() -> None:
-    """create must NOT retry on 4xx errors — they propagate immediately.
+    """create must NOT retry on 4xx errors — they propagate immediately as BadRequestError.
 
+    The HTTP client now raises BadRequestError for unmapped 4xx (including 400)
+    before the response even reaches warehouses.create, so the retry loop never fires.
     Mocks a single 400 response and verifies that only 1 POST is made and
-    the exception is raised without any retry.
+    BadRequestError (with the Fabric error body) is raised without any retry.
     """
     with respx.mock:
-        post_route = respx.post(_ITEMS_URL).mock(
+        post_route = respx.post(_WAREHOUSES_URL).mock(
             return_value=httpx.Response(
-                400, json={"error": {"code": "InvalidRequest", "message": "bad input"}}
+                400, json={"errorCode": "InvalidItemType", "message": "bad input"}
             )
         )
 
         client = await _make_client()
         async with client:
-            # 400 falls through http_client without raising (no mapping) — the response is returned
-            # and warehouses.create will see an empty/useless body; but the key assertion
-            # is that the retry loop only fires for 2xx+empty-body, not for 4xx.
-            # The http_client only raises for 401, 403, 404, 5xx — a bare 400 is returned.
-            # warehouses.create will try to parse the body (no Location, no id), but since
-            # the status is 4xx the retry must NOT fire.
             with patch("fabric_dw.services.warehouses.asyncio.sleep") as mock_sleep:
-                with pytest.raises(FabricServerError):
+                with pytest.raises(BadRequestError) as exc_info:
                     await warehouses.create(client, _WORKSPACE_ID, "SalesWarehouse")
 
     # Only 1 POST attempt — no retries
     assert post_route.call_count == 1
     mock_sleep.assert_not_called()
+    # The error body (Fabric error detail) must be surfaced
+    assert exc_info.value.status == 400
+    assert exc_info.value.body is not None
+    assert exc_info.value.body.get("errorCode") == "InvalidItemType"
 
 
 async def test_create_existing_path_with_location_header_still_works() -> None:
@@ -479,7 +483,7 @@ async def test_create_existing_path_with_location_header_still_works() -> None:
     new_wh_url = f"{_WAREHOUSES_URL}/{new_wh_id}"
 
     with respx.mock:
-        respx.post(_ITEMS_URL).mock(
+        respx.post(_WAREHOUSES_URL).mock(
             return_value=httpx.Response(
                 202,
                 json={},

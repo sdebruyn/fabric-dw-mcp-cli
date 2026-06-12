@@ -18,6 +18,7 @@ from freezegun import freeze_time
 
 from fabric_dw.exceptions import (
     AuthError,
+    BadRequestError,
     FabricError,
     FabricServerError,
     NotFoundError,
@@ -1079,3 +1080,95 @@ async def test_send_once_re_sleeps_when_pause_until_extended_mid_sleep() -> None
     assert len(sleep_durations) >= 2, (
         f"Expected >=2 sleeps (original + extended deadline); got {sleep_durations}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 4xx body surfacing (BadRequestError for unmapped 4xx)
+# ---------------------------------------------------------------------------
+
+
+async def test_400_raises_bad_request_error_with_json_body() -> None:
+    """HTTP 400 must raise BadRequestError and include the parsed JSON error body.
+
+    Before this fix, 400 passed through _map_status silently, causing the Fabric
+    errorCode/message to be discarded.  Now the body is surfaced on the exception.
+    """
+    error_payload = {
+        "errorCode": "InvalidItemType",
+        "message": "The item type 'Warehouse' is not valid for this endpoint.",
+        "requestId": "req-abc-123",
+    }
+    with respx.mock:
+        respx.post("https://api.fabric.microsoft.com/v1/items").mock(
+            return_value=httpx.Response(400, json=error_payload)
+        )
+        client = await _get_client()
+        async with client:
+            with pytest.raises(BadRequestError) as exc_info:
+                await client.request("POST", HttpBase.FABRIC, "/items", json={"x": 1})
+
+    err = exc_info.value
+    assert err.status == 400
+    assert err.body is not None
+    assert err.body.get("errorCode") == "InvalidItemType"
+    assert "InvalidItemType" in str(err)
+
+
+async def test_400_raises_bad_request_error_with_plain_text_body() -> None:
+    """HTTP 400 with a non-JSON body must still raise BadRequestError (body=None)."""
+    with respx.mock:
+        respx.get("https://api.fabric.microsoft.com/v1/items").mock(
+            return_value=httpx.Response(400, text="Bad Request")
+        )
+        client = await _get_client()
+        async with client:
+            with pytest.raises(BadRequestError) as exc_info:
+                await client.request("GET", HttpBase.FABRIC, "/items")
+
+    assert exc_info.value.status == 400
+    assert exc_info.value.body is None  # non-JSON body → body not parsed
+
+
+async def test_422_raises_bad_request_error() -> None:
+    """Any unmapped 4xx (e.g. 422) must raise BadRequestError, not pass through silently."""
+    with respx.mock:
+        respx.post("https://api.fabric.microsoft.com/v1/items").mock(
+            return_value=httpx.Response(422, json={"errorCode": "ValidationFailed"})
+        )
+        client = await _get_client()
+        async with client:
+            with pytest.raises(BadRequestError) as exc_info:
+                await client.request("POST", HttpBase.FABRIC, "/items", json={})
+
+    assert exc_info.value.status == 422
+
+
+async def test_bad_request_error_includes_request_id_header() -> None:
+    """BadRequestError must capture x-ms-request-id when present in the response headers."""
+    with respx.mock:
+        respx.get("https://api.fabric.microsoft.com/v1/items").mock(
+            return_value=httpx.Response(
+                400,
+                json={"errorCode": "SomeError"},
+                headers={"x-ms-request-id": "req-id-xyz"},
+            )
+        )
+        client = await _get_client()
+        async with client:
+            with pytest.raises(BadRequestError) as exc_info:
+                await client.request("GET", HttpBase.FABRIC, "/items")
+
+    assert exc_info.value.request_id == "req-id-xyz"
+    assert "req-id-xyz" in str(exc_info.value)
+
+
+async def test_401_still_raises_auth_error_not_bad_request() -> None:
+    """HTTP 401 must still raise AuthError (mapped in _STATUS_TO_EXC), not BadRequestError."""
+    with respx.mock:
+        respx.get("https://api.fabric.microsoft.com/v1/items").mock(
+            return_value=httpx.Response(401, json={"error": "unauthorized"})
+        )
+        client = await _get_client()
+        async with client:
+            with pytest.raises(AuthError):
+                await client.request("GET", HttpBase.FABRIC, "/items")
