@@ -15,7 +15,7 @@ from click.testing import CliRunner
 
 from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._main import cli
-from fabric_dw.exceptions import NotFoundError, PermissionDeniedError
+from fabric_dw.exceptions import ItemKindError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import Schema, WarehouseKind
 from fabric_dw.sql import SqlTarget
 
@@ -422,3 +422,78 @@ class TestSchemasDelete:
         ):
             result = runner.invoke(cli, ["-y", "schemas", "delete", WS_GUID, WH_GUID, "sales"])
         assert result.exit_code != 0
+
+    def test_delete_cascade_sql_endpoint_returns_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """--cascade on a SQL Analytics Endpoint must be rejected (ItemKindError → nonzero)."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.schemas.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.schemas.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch(
+                "fabric_dw.services.schemas.delete_schema",
+                new=AsyncMock(
+                    side_effect=ItemKindError(
+                        "cascade=True is not supported on SQL Analytics Endpoints"
+                    )
+                ),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-y", "schemas", "delete", WS_GUID, WH_GUID, "sales", "--cascade"],
+            )
+        assert result.exit_code != 0
+        assert "cascade" in result.output.lower() or "cascade" in (result.output or "").lower()
+
+    def test_delete_no_cascade_sql_endpoint_succeeds(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """DROP SCHEMA without cascade on a SQL Analytics Endpoint must succeed."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.schemas.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.schemas.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch(
+                "fabric_dw.services.schemas.delete_schema",
+                new=AsyncMock(return_value=None),
+            ),
+        ):
+            result = runner.invoke(cli, ["-y", "schemas", "delete", WS_GUID, WH_GUID, "sales"])
+        assert result.exit_code == 0
+        assert "dropped" in result.output
+
+    def test_delete_passes_kind_to_service(self, runner: CliRunner, cache_env: Path) -> None:
+        """delete_cmd must pass entry.kind to the service."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_delete = AsyncMock(return_value=None)
+        with (
+            patch(
+                "fabric_dw.cli.commands.schemas.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.schemas.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch("fabric_dw.services.schemas.delete_schema", new=mock_delete),
+        ):
+            runner.invoke(cli, ["-y", "schemas", "delete", WS_GUID, WH_GUID, "sales"])
+        _, kwargs = mock_delete.call_args
+        assert kwargs.get("kind") == WarehouseKind.WAREHOUSE

@@ -35,9 +35,9 @@ from __future__ import annotations
 import asyncio
 
 from fabric_dw.auth import CredentialMode
-from fabric_dw.exceptions import NotFoundError
+from fabric_dw.exceptions import ItemKindError, NotFoundError
 from fabric_dw.identifiers import quote_identifier, validate_identifier
-from fabric_dw.models import Schema
+from fabric_dw.models import Schema, WarehouseKind
 from fabric_dw.sql import SqlTarget, run_query, run_statements
 
 __all__ = [
@@ -46,6 +46,35 @@ __all__ = [
     "list_schemas",
     "validate_identifier",
 ]
+
+# ---------------------------------------------------------------------------
+# Guards
+# ---------------------------------------------------------------------------
+
+_CASCADE_SQL_ENDPOINT_MSG = (
+    "cascade=True is not supported on SQL Analytics Endpoints: "
+    "DROP TABLE is a Warehouse-only operation. "
+    "Use cascade=False to drop an empty schema, or target a Fabric Data Warehouse."
+)
+
+
+def _assert_cascade_not_sql_endpoint(kind: WarehouseKind, *, cascade: bool) -> None:
+    """Raise :class:`~fabric_dw.exceptions.ItemKindError` when *cascade* is ``True``
+    and the target is a SQL Analytics Endpoint.
+
+    Plain ``DROP SCHEMA`` (cascade=False) is allowed on endpoints.
+
+    Args:
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the resolved item.
+        cascade: Whether cascade drop was requested.
+
+    Raises:
+        ItemKindError: If *cascade* is ``True`` and *kind* is
+            :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
+    """
+    if cascade and kind == WarehouseKind.SQL_ENDPOINT:
+        raise ItemKindError(_CASCADE_SQL_ENDPOINT_MSG)
+
 
 # ---------------------------------------------------------------------------
 # SQL templates
@@ -198,6 +227,7 @@ async def delete_schema(
     name: str,
     *,
     cascade: bool = False,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
     mode: CredentialMode = CredentialMode.DEFAULT,
 ) -> None:
     """Drop a schema via ``DROP SCHEMA [<name>]``.
@@ -218,12 +248,19 @@ async def delete_schema(
         name: The schema name.  Must pass :func:`validate_identifier`.
         cascade: When ``True``, drop all tables and views in the schema
             before dropping the schema itself.  Defaults to ``False``.
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
+            ``cascade=True`` is rejected for SQL Analytics Endpoints because
+            ``DROP TABLE`` is a Warehouse-only operation; ``cascade=False``
+            is still allowed on endpoints.
         mode: The credential mode for Entra authentication.
 
     Raises:
+        ItemKindError: If *cascade* is ``True`` and *kind* is
+            :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
         ValueError: If *name* fails identifier validation.
         PermissionDeniedError: If the driver reports a DROP SCHEMA permission error.
     """
+    _assert_cascade_not_sql_endpoint(kind, cascade=cascade)
     validate_identifier(name)
 
     if cascade:

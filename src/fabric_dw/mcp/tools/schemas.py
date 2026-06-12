@@ -117,7 +117,9 @@ def register(mcp: FastMCP) -> None:
             assert_workspace_allowed(workspace, str(ws_id))
             _log.debug("delete_schema ws=%s item=%s name=%r", ws_id, entry.id, name)
             target = make_sql_target(ws_id, entry, item)
-            await schemas_svc.delete_schema(target, name, cascade=cascade, mode=ctx.auth_mode)
+            await schemas_svc.delete_schema(
+                target, name, cascade=cascade, kind=entry.kind, mode=ctx.auth_mode
+            )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
         return {"deleted": True}

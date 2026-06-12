@@ -6,8 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from fabric_dw.exceptions import AuthError, NotFoundError, PermissionDeniedError
-from fabric_dw.models import Schema
+from fabric_dw.exceptions import AuthError, ItemKindError, NotFoundError, PermissionDeniedError
+from fabric_dw.models import Schema, WarehouseKind
 from fabric_dw.services import schemas
 from fabric_dw.services.schemas import validate_identifier
 
@@ -449,3 +449,73 @@ class TestDeleteSchemaCascade:
         drop_sql: str = cursor.execute.call_args[0][0]
         assert "[sales]" in drop_sql
         assert "[my_table]" in drop_sql
+
+
+# ===========================================================================
+# delete_schema — SQL Analytics Endpoint cascade guard
+# ===========================================================================
+
+
+class TestDeleteSchemaCascadeEndpointGuard:
+    async def test_cascade_true_on_sql_endpoint_raises_item_kind_error(self) -> None:
+        """cascade=True on a SQL Analytics Endpoint must raise ItemKindError
+        before any SQL is executed (DROP TABLE is Warehouse-only)."""
+        target = _make_target()
+        with (
+            patch("fabric_dw.sql.open_connection") as mock_open,
+            pytest.raises(ItemKindError, match="cascade=True is not supported"),
+        ):
+            await schemas.delete_schema(
+                target, "sales", cascade=True, kind=WarehouseKind.SQL_ENDPOINT
+            )
+        # Guard fires before any connection is opened.
+        mock_open.assert_not_called()
+
+    async def test_cascade_true_error_message_mentions_warehouse(self) -> None:
+        """The error message should suggest using a Warehouse or cascade=False."""
+        target = _make_target()
+        with pytest.raises(ItemKindError, match="Fabric Data Warehouse"):
+            await schemas.delete_schema(
+                target, "sales", cascade=True, kind=WarehouseKind.SQL_ENDPOINT
+            )
+
+    async def test_cascade_false_on_sql_endpoint_is_allowed(self) -> None:
+        """DROP SCHEMA without cascade must succeed on a SQL Analytics Endpoint."""
+        target = _make_target()
+        conn = _make_conn_for_ddl()
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            # Must not raise
+            await schemas.delete_schema(
+                target, "sales", cascade=False, kind=WarehouseKind.SQL_ENDPOINT
+            )
+        cursor = conn.cursor.return_value
+        drop_sql: str = cursor.execute.call_args[0][0].upper()
+        assert "DROP SCHEMA" in drop_sql
+
+    async def test_cascade_true_on_warehouse_is_allowed(self) -> None:
+        """cascade=True on a Warehouse must proceed normally (no guard)."""
+        target = _make_target()
+        list_conn = _make_conn([("orders", "TABLE")], ["obj_name", "obj_type"])
+        drop_objects_conn = _make_conn_for_ddl()
+        drop_schema_conn = _make_conn_for_ddl()
+        with patch(
+            "fabric_dw.sql.open_connection",
+            side_effect=[list_conn, drop_objects_conn, drop_schema_conn],
+        ):
+            # Must not raise
+            await schemas.delete_schema(target, "sales", cascade=True, kind=WarehouseKind.WAREHOUSE)
+        cursor = drop_objects_conn.cursor.return_value
+        drop_sql: str = cursor.execute.call_args[0][0].upper()
+        assert "DROP TABLE" in drop_sql
+
+    async def test_cascade_true_default_kind_is_warehouse(self) -> None:
+        """Default kind=WAREHOUSE means cascade=True works without passing kind."""
+        target = _make_target()
+        list_conn = _make_conn([], ["obj_name", "obj_type"])
+        drop_schema_conn = _make_conn_for_ddl()
+        with patch(
+            "fabric_dw.sql.open_connection",
+            side_effect=[list_conn, drop_schema_conn],
+        ):
+            # Must not raise (kind defaults to WAREHOUSE)
+            await schemas.delete_schema(target, "empty_schema", cascade=True)
