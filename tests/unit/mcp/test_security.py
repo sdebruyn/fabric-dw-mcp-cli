@@ -122,6 +122,99 @@ class TestAssertReadonlySql:
         with pytest.raises(ToolError, match="non-SELECT"):
             self._call("/* safe */ DROP TABLE t")
 
+    # ------------------------------------------------------------------
+    # Confirmed bypass regression tests
+    # ------------------------------------------------------------------
+
+    def test_rejects_cte_then_insert(self) -> None:
+        """CRITICAL: WITH ... INSERT must be rejected (CTE-wrapped DML bypass)."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError):
+            self._call("WITH x AS (SELECT 1) INSERT INTO t VALUES (1)")
+
+    def test_rejects_cte_then_update(self) -> None:
+        """WITH ... UPDATE must be rejected."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError):
+            self._call("WITH cte AS (SELECT id FROM t) UPDATE t SET x=1")
+
+    def test_rejects_cte_then_delete(self) -> None:
+        """WITH ... DELETE must be rejected."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError):
+            self._call("WITH cte AS (SELECT 1) DELETE FROM t WHERE 1=1")
+
+    def test_rejects_cte_then_merge(self) -> None:
+        """WITH ... MERGE must be rejected."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError):
+            self._call(
+                "WITH cte AS (SELECT 1 AS n)"
+                " MERGE t USING cte ON 1=0 WHEN NOT MATCHED THEN INSERT VALUES (1)"
+            )
+
+    def test_rejects_nested_block_comment_payload(self) -> None:
+        """HIGH: nested block comment leaves residual code: /* /* */ DROP TABLE t."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError):
+            self._call("/* /* */ SELECT */ DROP TABLE t")
+
+    def test_rejects_select_into(self) -> None:
+        """MEDIUM: SELECT * INTO dbo.backup FROM t must be rejected (INTO forbidden)."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError):
+            self._call("SELECT * INTO dbo.backup FROM t")
+
+    def test_rejects_unbalanced_block_comment_open(self) -> None:
+        """Unbalanced /* must be rejected."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError):
+            self._call("/* unterminated SELECT 1")
+
+    def test_rejects_unbalanced_block_comment_close(self) -> None:
+        """Residual */ (after stripping outer comment) must be rejected."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError):
+            self._call("SELECT 1 */ DROP TABLE t")
+
+    def test_accepts_string_literal_with_semicolon(self) -> None:
+        """LOW: WHERE name = 'a;b' must NOT be rejected as multi-statement."""
+        self._call("SELECT id FROM t WHERE name = 'a;b'")
+
+    def test_accepts_string_literal_with_escaped_quote(self) -> None:
+        """String literal with escaped single-quote must be accepted."""
+        self._call("SELECT 'it''s' FROM t")
+
+    def test_accepts_bracketed_keyword_identifier(self) -> None:
+        """SELECT [delete] FROM t must be accepted (bracketed identifier, not keyword)."""
+        self._call("SELECT [delete] FROM t")
+
+    def test_accepts_with_cte_then_select(self) -> None:
+        """WITH cte AS (SELECT 1) SELECT * FROM cte; is a valid read-only statement."""
+        self._call("WITH cte AS (SELECT 1) SELECT * FROM cte;")
+
+    def test_rejects_exec(self) -> None:
+        """EXEC must be rejected."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError):
+            self._call("EXEC sp_who")
+
+    def test_rejects_xp_cmdshell_token(self) -> None:
+        """xp_cmdshell token must be rejected even inside a WITH."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError):
+            self._call("SELECT xp_cmdshell('dir')")
+
 
 # ---------------------------------------------------------------------------
 # 2. assert_writes_allowed
@@ -491,6 +584,40 @@ async def test_get_workspace_blocked_by_workspace_allowlist() -> None:
         await mcp._tool_manager.call_tool(
             "get_workspace",
             {"workspace": "forbidden-ws"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_list_warehouses_all_workspaces_blocked_when_allowlist_set() -> None:
+    """list_warehouses(all_workspaces=True) raises ToolError when FABRIC_MCP_WORKSPACES is set."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with (
+        patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "prod"}),
+        pytest.raises(ToolError, match="all_workspaces"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "list_warehouses",
+            {"workspace": _WS_NAME, "all_workspaces": True},
+        )
+
+
+@pytest.mark.asyncio
+async def test_list_sql_endpoints_all_workspaces_blocked_when_allowlist_set() -> None:
+    """list_sql_endpoints(all_workspaces=True) raises ToolError when allowlist is set."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with (
+        patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "prod"}),
+        pytest.raises(ToolError, match="all_workspaces"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "list_sql_endpoints",
+            {"workspace": _WS_NAME, "all_workspaces": True},
         )
 
 

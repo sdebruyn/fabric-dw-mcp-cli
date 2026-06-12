@@ -78,6 +78,7 @@ async def execute(
     query: str,
     *,
     mode: CredentialMode = CredentialMode.DEFAULT,
+    row_limit: int | None = None,
 ) -> SqlResult:
     """Execute *query* against *target* and return the last result set.
 
@@ -96,6 +97,10 @@ async def execute(
         query: The SQL batch to execute.  May be a single statement or
             multiple statements separated by semicolons or ``GO`` batches.
         mode: The credential mode for Entra authentication.
+        row_limit: When set, fetch at most ``row_limit + 1`` rows from the
+            driver so the caller can detect truncation without loading the
+            entire result set into memory.  Pass ``None`` (default) to
+            fetch all rows (``cursor.fetchall()``).
 
     Returns:
         A :class:`~fabric_dw.models.SqlResult` with ``columns``, ``rows``,
@@ -145,7 +150,14 @@ async def execute(
                     return SqlResult(columns=[], rows=[], rowcount=rowcount)
 
                 raw_cols = [col[0] for col in cursor.description]
-                raw_rows: list[tuple[object, ...]] = cursor.fetchall()
+                # When a row_limit is provided fetch only limit+1 rows from the
+                # driver so we avoid loading the entire result set into memory.
+                # The caller can detect truncation by comparing len(rows) to the
+                # requested limit.
+                if row_limit is not None:
+                    raw_rows: list[tuple[object, ...]] = cursor.fetchmany(row_limit + 1)
+                else:
+                    raw_rows = cursor.fetchall()
                 tagged_cols, serialised_rows = _tag_binary_columns(raw_cols, raw_rows)
                 if rowcount == -1:
                     rowcount = len(serialised_rows)

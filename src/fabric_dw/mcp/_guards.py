@@ -60,18 +60,87 @@ def _env_flag(name: str) -> bool:
 # SQL classifier
 # ---------------------------------------------------------------------------
 
-# Pattern that matches a line comment and everything after it until EOL.
+# Single block-comment pass (non-greedy, no nesting).
+_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+
+# Line comment: -- to end of line.
 _LINE_COMMENT_RE = re.compile(r"--[^\n]*")
 
-# Pattern that matches a C-style block comment (non-greedy).
-_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+# String literal: 'content' with '' as escape for single quote.
+_STRING_LITERAL_RE = re.compile(r"'(?:[^']|'')*'")
+
+# Bracket-quoted identifier: [name] with ]] as escape.
+_BRACKET_IDENT_RE = re.compile(r"\[(?:[^\]]|\]\])*\]")
+
+# Double-quoted identifier: "name" with "" as escape.
+_DQUOTE_IDENT_RE = re.compile(r'"(?:[^"]|"")*"')
+
+# Tokens that must never appear in a read-only statement (case-insensitive).
+_FORBIDDEN_TOKENS = frozenset(
+    {
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "MERGE",
+        "INTO",
+        "EXEC",
+        "EXECUTE",
+        "DROP",
+        "ALTER",
+        "CREATE",
+        "TRUNCATE",
+        "GRANT",
+        "REVOKE",
+        "DENY",
+        "KILL",
+        "BACKUP",
+        "RESTORE",
+        "OPENROWSET",
+        "OPENQUERY",
+        "WRITETEXT",
+        "UPDATETEXT",
+        "SP_EXECUTESQL",
+        "XP_CMDSHELL",
+    }
+)
 
 _ALLOWED_FIRST_TOKENS = frozenset({"SELECT", "WITH"})
 
+# Simple word-token splitter (sequences of word characters).
+_TOKEN_RE = re.compile(r"\w+")
 
-def _strip_comments(sql: str) -> str:
-    """Return *sql* with line comments and block comments removed."""
-    return _LINE_COMMENT_RE.sub(" ", _BLOCK_COMMENT_RE.sub(" ", sql))
+
+def _strip_block_comments(sql: str) -> str:
+    """Iteratively remove C-style block comments until the text is stable.
+
+    Nested or malformed comments such as ``/* /* */ payload */`` are handled
+    by repeating the substitution until no further change occurs.  Any residual
+    ``/*`` or ``*/`` after stabilisation indicates unbalanced delimiters and
+    causes the caller to reject the statement.
+    """
+    prev = None
+    while prev != sql:
+        prev = sql
+        sql = _BLOCK_COMMENT_RE.sub(" ", sql)
+    return sql
+
+
+def _sanitise(statement: str) -> str:
+    """Return a sanitised copy of *statement* suitable for token inspection.
+
+    Steps (in order):
+    1. Iteratively strip block comments.
+    2. Strip line comments (``--`` to EOL).
+    3. Replace string literals with ``''`` so semicolons/keywords inside
+       strings do not trigger false positives.
+    4. Replace bracket-quoted identifiers (``[delete]``) with ``[x]``.
+    5. Replace double-quoted identifiers with ``[x]``.
+    """
+    text = _strip_block_comments(statement)
+    text = _LINE_COMMENT_RE.sub(" ", text)
+    text = _STRING_LITERAL_RE.sub("''", text)
+    text = _BRACKET_IDENT_RE.sub("[x]", text)
+    return _DQUOTE_IDENT_RE.sub("[x]", text)
 
 
 def assert_readonly_sql(statement: str) -> None:
@@ -79,36 +148,75 @@ def assert_readonly_sql(statement: str) -> None:
 
     Called only when ``FABRIC_MCP_READONLY`` is truthy.
 
-    Rules
-    -----
-    1. After stripping leading whitespace and SQL comments the first keyword
-       must be ``SELECT`` or ``WITH``.
-    2. A semicolon anywhere *except* as an optional trailing terminator is
-       treated as a multi-statement batch and rejected (pragmatic heuristic;
-       avoids the complexity of full SQL parsing).
+    Design
+    ------
+    The classifier is **conservative-by-design**: it rejects anything it cannot
+    prove is a plain read-only query, rather than trying to exhaustively parse
+    T-SQL.  Legitimate bracket-quoted identifiers that collide with forbidden
+    keywords (e.g. ``SELECT [delete] FROM t``) are preserved because bracketed
+    names are replaced with ``[x]`` before the token scan.
+
+    Sanitisation pipeline
+    ~~~~~~~~~~~~~~~~~~~~~
+    1. Iteratively strip block comments (non-greedy sub loop until stable).
+       Residual ``/*`` or ``*/`` → rejected ("unbalanced comment").
+    2. Strip ``--`` line comments.
+    3. Replace string literals ``'(?:[^']|'')*'`` → ``''`` (preserves
+       semicolons inside strings from triggering the multi-statement check).
+    4. Replace bracketed identifiers ``[…]`` → ``[x]``; double-quoted
+       identifiers ``"…"`` likewise.
+
+    Checks (all on the sanitised text)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    (a) First token must be ``SELECT`` or ``WITH``.
+    (b) A ``;`` followed by any non-whitespace character is rejected as a
+        multi-statement batch.
+    (c) Any word token (case-insensitive) that matches a forbidden keyword
+        (INSERT, UPDATE, DELETE, MERGE, INTO, EXEC, EXECUTE, DROP, ALTER,
+        CREATE, TRUNCATE, GRANT, REVOKE, DENY, KILL, BACKUP, RESTORE,
+        OPENROWSET, OPENQUERY, WRITETEXT, UPDATETEXT, SP_EXECUTESQL,
+        XP_CMDSHELL) causes the statement to be rejected — regardless of where
+        it appears.  This catches ``WITH x AS (SELECT 1) DELETE …`` as well as
+        ``SELECT * INTO backup FROM t``.
 
     Args:
         statement: The raw SQL string supplied by the caller.
 
     Raises:
-        ToolError: When the statement is not a plain SELECT/WITH query or when
-            it appears to be a multi-statement batch.
+        ToolError: When the statement does not pass all read-only checks.
     """
-    stripped = _strip_comments(statement).strip()
+    sanitised = _sanitise(statement)
 
-    # Reject multi-statement batches: a ';' anywhere except at the very end.
-    inner = stripped.rstrip(";").rstrip()
-    if ";" in inner:
+    # Reject unbalanced block-comment delimiters left after stripping.
+    if "/*" in sanitised or "*/" in sanitised:
+        raise ToolError(  # noqa: TRY003
+            "read-only mode (FABRIC_MCP_READONLY) blocks statements with unbalanced block comments"
+        )
+
+    sanitised = sanitised.strip()
+
+    # Reject multi-statement batches: a ';' followed by non-whitespace.
+    if re.search(r";\s*\S", sanitised):
         raise ToolError(  # noqa: TRY003
             "read-only mode (FABRIC_MCP_READONLY) blocks multi-statement batches"
         )
 
-    first_token = stripped.split()[0].upper() if stripped.split() else ""
+    tokens = _TOKEN_RE.findall(sanitised)
+    first_token = tokens[0].upper() if tokens else ""
+
     if first_token not in _ALLOWED_FIRST_TOKENS:
         raise ToolError(  # noqa: TRY003
             f"read-only mode (FABRIC_MCP_READONLY) blocks non-SELECT statements "
             f"(got {first_token!r})"
         )
+
+    # Scan every token for forbidden keywords.
+    for tok in tokens:
+        if tok.upper() in _FORBIDDEN_TOKENS:
+            raise ToolError(  # noqa: TRY003
+                f"read-only mode (FABRIC_MCP_READONLY) blocks statements containing "
+                f"forbidden keyword {tok.upper()!r}"
+            )
 
 
 # ---------------------------------------------------------------------------

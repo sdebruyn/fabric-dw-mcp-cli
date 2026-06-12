@@ -227,6 +227,12 @@ async def list_warehouses(workspace: str, all_workspaces: bool = False) -> list[
     When *all_workspaces* is ``True``, ignore *workspace* and aggregate results
     across every workspace the caller can see.
     """
+    _workspaces_allowlist = os.environ.get("FABRIC_MCP_WORKSPACES", "").strip()
+    if all_workspaces and _workspaces_allowlist:
+        raise ToolError(  # noqa: TRY003
+            "all_workspaces=True is not permitted when FABRIC_MCP_WORKSPACES is configured; "
+            "specify an individual workspace instead"
+        )
     if not all_workspaces:
         assert_workspace_allowed(workspace)
     try:
@@ -360,6 +366,12 @@ async def list_sql_endpoints(workspace: str, all_workspaces: bool = False) -> li
     When *all_workspaces* is ``True``, ignore *workspace* and aggregate results
     across every workspace the caller can see.
     """
+    _workspaces_allowlist = os.environ.get("FABRIC_MCP_WORKSPACES", "").strip()
+    if all_workspaces and _workspaces_allowlist:
+        raise ToolError(  # noqa: TRY003
+            "all_workspaces=True is not permitted when FABRIC_MCP_WORKSPACES is configured; "
+            "specify an individual workspace instead"
+        )
     if not all_workspaces:
         assert_workspace_allowed(workspace)
     try:
@@ -682,8 +694,9 @@ async def execute_sql(
     suffixed with ``__base64``.
 
     For large tables, add a TOP clause or WHERE predicate to the query rather
-    than relying solely on ``max_rows`` — the server still fetches up to
-    ``max_rows`` rows from the driver before slicing.
+    than relying solely on ``max_rows``.  The driver fetches at most
+    ``max_rows + 1`` rows (enough to detect truncation) so memory is bounded,
+    but pushing the limit into the query itself is always more efficient.
 
     Args:
         workspace: Workspace name or GUID.
@@ -712,9 +725,13 @@ async def execute_sql(
             database=entry.display_name,
             connection_string=entry.connection_string,
         )
-        result = await _sql_exec_svc.execute(target, query, mode=_get_auth_mode())
+        result = await _sql_exec_svc.execute(
+            target, query, mode=_get_auth_mode(), row_limit=max_rows
+        )
     except FabricError as exc:
         raise _fabric_err(exc) from exc
+    # The service fetches max_rows+1 rows so we can detect truncation without
+    # pulling the entire result set over the wire.  Slice back to max_rows here.
     sliced_rows = result.rows[:max_rows]
     out = result.model_dump(mode="json")
     out["rows"] = sliced_rows
