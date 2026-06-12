@@ -3,18 +3,13 @@
 from __future__ import annotations
 
 import json
-import time
-from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import httpx
 import pytest
 import respx
-from azure.core.credentials import AccessToken
-from azure.core.credentials_async import AsyncTokenCredential
 
 from fabric_dw.exceptions import FabricError
-from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import Workspace
 from fabric_dw.services import workspaces
 from tests.fixtures.api_payloads import (
@@ -22,12 +17,11 @@ from tests.fixtures.api_payloads import (
     WORKSPACE_LIST_PAGE2_PAYLOAD,
     WORKSPACE_LIST_PAYLOAD,
 )
+from tests.unit.services._helpers import _make_client
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Constants
 # ---------------------------------------------------------------------------
-
-_FAKE_TOKEN = AccessToken(token="fake-token", expires_on=int(time.time()) + 3600)  # noqa: S106
 
 _WORKSPACE_ID = UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
 _CONTINUATION_URL = (
@@ -35,22 +29,11 @@ _CONTINUATION_URL = (
 )
 
 
-def _make_credential(token: AccessToken = _FAKE_TOKEN) -> AsyncTokenCredential:
-    cred = MagicMock(spec=AsyncTokenCredential)
-    cred.get_token = AsyncMock(return_value=token)
-    return cred
-
-
-async def _make_client(rps: int = 10) -> FabricHttpClient:
-    return FabricHttpClient(credential=_make_credential(), rps=rps)
-
-
 # ---------------------------------------------------------------------------
 # list_all
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_list_all_follows_continuation_uri() -> None:
     """list_all must follow continuationUri for ≥2 pages and return all workspaces."""
     call_count = 0
@@ -80,7 +63,6 @@ async def test_list_all_follows_continuation_uri() -> None:
     assert "MLWorkspace" in names
 
 
-@pytest.mark.asyncio
 async def test_list_all_returns_workspace_instances() -> None:
     """list_all items must be validated Workspace model instances."""
     payload = json.loads(WORKSPACE_LIST_PAYLOAD)
@@ -108,7 +90,6 @@ async def test_list_all_returns_workspace_instances() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_get_returns_populated_workspace() -> None:
     """get must return a single populated Workspace for the given workspace_id."""
     ws_id = _WORKSPACE_ID
@@ -134,7 +115,6 @@ async def test_get_returns_populated_workspace() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_set_collation_happy_path_returns_none() -> None:
     """set_collation must return None on a successful PATCH (200/202)."""
     ws_id = _WORKSPACE_ID
@@ -150,7 +130,6 @@ async def test_set_collation_happy_path_returns_none() -> None:
     # set_collation returns None implicitly on success; no assertion needed beyond no exception
 
 
-@pytest.mark.asyncio
 async def test_set_collation_202_happy_path() -> None:
     """set_collation must also return None on 202 (accepted)."""
     ws_id = _WORKSPACE_ID
@@ -166,7 +145,6 @@ async def test_set_collation_202_happy_path() -> None:
     # set_collation returns None implicitly on success; no assertion needed beyond no exception
 
 
-@pytest.mark.asyncio
 async def test_set_collation_400_raises_fabric_error_with_portal_link() -> None:
     """set_collation must raise FabricError mentioning the portal on a 400 response."""
     ws_id = _WORKSPACE_ID
@@ -183,7 +161,6 @@ async def test_set_collation_400_raises_fabric_error_with_portal_link() -> None:
                 await workspaces.set_collation(client, ws_id, "Latin1_General_100_BIN2_UTF8")
 
 
-@pytest.mark.asyncio
 async def test_set_collation_invalid_value_raises_value_error() -> None:
     """set_collation must raise ValueError for unsupported collation strings."""
     ws_id = _WORKSPACE_ID

@@ -3,6 +3,7 @@ import uuid
 from collections.abc import AsyncIterator
 from uuid import UUID
 
+import pytest
 import pytest_asyncio
 
 from fabric_dw.auth import get_credential
@@ -16,8 +17,10 @@ from fabric_dw.sql import SqlTarget
 async def workspace_id() -> UUID:
     raw = os.environ.get("FABRIC_TEST_WORKSPACE_ID")
     if not raw:
-        msg = "set FABRIC_TEST_WORKSPACE_ID for integration tests"
-        raise RuntimeError(msg)
+        pytest.skip(
+            "set FABRIC_TEST_WORKSPACE_ID to run integration tests",
+            allow_module_level=True,
+        )
     return UUID(raw)
 
 

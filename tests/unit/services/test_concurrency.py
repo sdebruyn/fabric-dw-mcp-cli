@@ -38,21 +38,18 @@ def _raising(exc: BaseException) -> Callable[[], Awaitable[int]]:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_empty_input_returns_empty_list() -> None:
     """bounded_gather with no factories must return an empty list."""
     result = await bounded_gather([])
     assert result == []
 
 
-@pytest.mark.asyncio
 async def test_single_factory_returns_single_result() -> None:
     """A single factory must return a one-element list."""
     result = await bounded_gather([_const(42)])
     assert result == [42]
 
 
-@pytest.mark.asyncio
 async def test_output_preserves_input_order() -> None:
     """Results must appear in the same order as the input factories."""
     factories = [_const(i) for i in range(10)]
@@ -60,7 +57,6 @@ async def test_output_preserves_input_order() -> None:
     assert result == list(range(10))
 
 
-@pytest.mark.asyncio
 async def test_all_factories_called() -> None:
     """Every factory must be invoked exactly once."""
     called: list[int] = []
@@ -80,7 +76,6 @@ async def test_all_factories_called() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_concurrency_cap_not_exceeded() -> None:
     """At most *concurrency* factories may run simultaneously."""
     max_concurrent = 0
@@ -101,7 +96,6 @@ async def test_concurrency_cap_not_exceeded() -> None:
     assert max_concurrent <= cap
 
 
-@pytest.mark.asyncio
 async def test_concurrency_cap_of_one_runs_serially() -> None:
     """concurrency=1 must result in strictly serial execution."""
     order: list[str] = []
@@ -123,7 +117,6 @@ async def test_concurrency_cap_of_one_runs_serially() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_parallel_execution_all_started_before_first_completes() -> None:
     """All factories are started before the first one completes (when concurrency allows)."""
     n = 5
@@ -156,7 +149,6 @@ async def test_parallel_execution_all_started_before_first_completes() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_exception_propagates_when_return_exceptions_false() -> None:
     """An exception must propagate and be raised when return_exceptions=False."""
     boom = ValueError("boom")
@@ -164,7 +156,6 @@ async def test_exception_propagates_when_return_exceptions_false() -> None:
         await bounded_gather([_const(1), _raising(boom), _const(3)], return_exceptions=False)
 
 
-@pytest.mark.asyncio
 async def test_exception_in_result_when_return_exceptions_true() -> None:
     """When return_exceptions=True exceptions appear in the result list."""
     boom = RuntimeError("oops")
@@ -174,7 +165,6 @@ async def test_exception_in_result_when_return_exceptions_true() -> None:
     assert result[2] == 3
 
 
-@pytest.mark.asyncio
 async def test_multiple_exceptions_all_captured_when_return_exceptions_true() -> None:
     """All exceptions are captured when return_exceptions=True."""
     err_a = ValueError("a")
@@ -187,7 +177,6 @@ async def test_multiple_exceptions_all_captured_when_return_exceptions_true() ->
     assert result[2] is err_b
 
 
-@pytest.mark.asyncio
 async def test_all_tasks_done_after_exception_with_return_exceptions_false() -> None:
     """All tasks must be done (completed or cancelled) after bounded_gather raises.
 
@@ -232,7 +221,6 @@ async def test_all_tasks_done_after_exception_with_return_exceptions_false() -> 
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_return_exceptions_false_returns_plain_list() -> None:
     """return_exceptions=False (default) returns a plain list of values."""
     result = await bounded_gather([_const(1), _const(2)], return_exceptions=False)
@@ -241,7 +229,6 @@ async def test_return_exceptions_false_returns_plain_list() -> None:
     assert all(not isinstance(v, BaseException) for v in result)
 
 
-@pytest.mark.asyncio
 async def test_return_exceptions_true_literal_annotation() -> None:
     """Passing Literal[True] for return_exceptions works at runtime."""
     flag: Literal[True] = True

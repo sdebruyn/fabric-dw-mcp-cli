@@ -3,18 +3,13 @@
 from __future__ import annotations
 
 import json
-import time
-from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import httpx
 import pytest
 import respx
-from azure.core.credentials import AccessToken
-from azure.core.credentials_async import AsyncTokenCredential
 
 from fabric_dw.exceptions import NotFound, PermissionDenied
-from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import ItemAccess, PrincipalType
 from fabric_dw.services import permissions
 from tests.fixtures.api_payloads import (
@@ -22,12 +17,11 @@ from tests.fixtures.api_payloads import (
     ITEM_ACCESS_DETAILS_PAGE2_PAYLOAD,
     ITEM_ACCESS_DETAILS_PAYLOAD,
 )
+from tests.unit.services._helpers import _make_client
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Constants
 # ---------------------------------------------------------------------------
-
-_FAKE_TOKEN = AccessToken(token="fake-token", expires_on=int(time.time()) + 3600)  # noqa: S106
 
 _BASE = "https://api.fabric.microsoft.com/v1"
 _WORKSPACE_ID = UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
@@ -39,22 +33,11 @@ _ACCESS_URL = (
 )
 
 
-def _make_credential(token: AccessToken = _FAKE_TOKEN) -> AsyncTokenCredential:
-    cred = MagicMock(spec=AsyncTokenCredential)
-    cred.get_token = AsyncMock(return_value=token)
-    return cred
-
-
-async def _make_client(rps: int = 10) -> FabricHttpClient:
-    return FabricHttpClient(credential=_make_credential(), rps=rps)
-
-
 # ---------------------------------------------------------------------------
 # list_item_access — happy path (single page)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_list_item_access_returns_all_principals() -> None:
     """list_item_access must return one ItemAccess per principal in the response."""
     payload = json.loads(ITEM_ACCESS_DETAILS_PAYLOAD)
@@ -70,7 +53,6 @@ async def test_list_item_access_returns_all_principals() -> None:
     assert all(isinstance(item, ItemAccess) for item in result)
 
 
-@pytest.mark.asyncio
 async def test_list_item_access_user_principal_fields() -> None:
     """User principal must have display_name, type=User, and user_principal_name populated."""
     payload = json.loads(ITEM_ACCESS_DETAILS_PAYLOAD)
@@ -91,7 +73,6 @@ async def test_list_item_access_user_principal_fields() -> None:
     assert user.group_type is None
 
 
-@pytest.mark.asyncio
 async def test_list_item_access_group_principal_fields() -> None:
     """Group principal must have group_type populated from groupDetails."""
     payload = json.loads(ITEM_ACCESS_DETAILS_PAYLOAD)
@@ -111,7 +92,6 @@ async def test_list_item_access_group_principal_fields() -> None:
     assert group.user_principal_name is None
 
 
-@pytest.mark.asyncio
 async def test_list_item_access_service_principal_fields() -> None:
     """ServicePrincipal principal must have aad_app_id populated from servicePrincipalDetails."""
     payload = json.loads(ITEM_ACCESS_DETAILS_PAYLOAD)
@@ -131,7 +111,6 @@ async def test_list_item_access_service_principal_fields() -> None:
     assert sp.user_principal_name is None
 
 
-@pytest.mark.asyncio
 async def test_list_item_access_permissions_populated() -> None:
     """ItemAccess.item_access_details must have permissions and additional_permissions."""
     payload = json.loads(ITEM_ACCESS_DETAILS_PAYLOAD)
@@ -155,7 +134,6 @@ async def test_list_item_access_permissions_populated() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_list_item_access_empty_response_returns_empty_list() -> None:
     """list_item_access must return an empty list when accessDetails is empty."""
     with respx.mock:
@@ -173,7 +151,6 @@ async def test_list_item_access_empty_response_returns_empty_list() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_list_item_access_follows_continuation_uri() -> None:
     """list_item_access must follow continuationUri to fetch all pages."""
     page1 = json.loads(ITEM_ACCESS_DETAILS_PAGE1_PAYLOAD)
@@ -202,7 +179,6 @@ async def test_list_item_access_follows_continuation_uri() -> None:
     assert len(result) == 2  # 1 from page 1 + 1 from page 2
 
 
-@pytest.mark.asyncio
 async def test_list_item_access_pagination_returns_all_items_as_item_access() -> None:
     """All items from all pages must be ItemAccess instances."""
     page1 = json.loads(ITEM_ACCESS_DETAILS_PAGE1_PAYLOAD)
@@ -231,7 +207,6 @@ async def test_list_item_access_pagination_returns_all_items_as_item_access() ->
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_list_item_access_403_raises_permission_denied_with_hint() -> None:
     """list_item_access must raise PermissionDenied with admin-role hint on 403."""
     with respx.mock:
@@ -245,7 +220,6 @@ async def test_list_item_access_403_raises_permission_denied_with_hint() -> None
                 await permissions.list_item_access(client, _WORKSPACE_ID, _ITEM_ID)
 
 
-@pytest.mark.asyncio
 async def test_list_item_access_404_raises_not_found() -> None:
     """list_item_access must propagate NotFound on 404."""
     with respx.mock:

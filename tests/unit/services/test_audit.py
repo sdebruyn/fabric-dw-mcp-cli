@@ -3,21 +3,17 @@
 from __future__ import annotations
 
 import json
-import time
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import httpx
 import pytest
 import respx
-from azure.core.credentials import AccessToken
-from azure.core.credentials_async import AsyncTokenCredential
 
 from fabric_dw.exceptions import PermissionDenied
-from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import AuditSettings
 from fabric_dw.services import audit
+from tests.unit.services._helpers import _make_client
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -44,25 +40,12 @@ AUDIT_SETTINGS_DISABLED_PAYLOAD: dict[str, Any] = {
     "auditActionsAndGroups": [],
 }
 
-_FAKE_TOKEN = AccessToken(token="fake-token", expires_on=int(time.time()) + 3600)  # noqa: S106
-
-
-def _make_credential() -> AsyncTokenCredential:
-    cred = MagicMock(spec=AsyncTokenCredential)
-    cred.get_token = AsyncMock(return_value=_FAKE_TOKEN)
-    return cred
-
-
-async def _make_client() -> FabricHttpClient:
-    return FabricHttpClient(credential=_make_credential(), rps=100)
-
 
 # ---------------------------------------------------------------------------
 # get_settings
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_get_settings_returns_audit_settings() -> None:
     """get_settings should GET /settings/sqlAudit and return AuditSettings."""
     with respx.mock:
@@ -80,7 +63,6 @@ async def test_get_settings_returns_audit_settings() -> None:
     ]
 
 
-@pytest.mark.asyncio
 async def test_get_settings_403_raises_permission_denied() -> None:
     """get_settings should propagate PermissionDenied on 403."""
     with respx.mock:
@@ -96,7 +78,6 @@ async def test_get_settings_403_raises_permission_denied() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_enable_patches_with_enabled_state_and_retention() -> None:
     """enable should PATCH with state=Enabled and retentionDays, then GET and return fresh state."""
     get_response = AUDIT_SETTINGS_PAYLOAD.copy()
@@ -119,7 +100,6 @@ async def test_enable_patches_with_enabled_state_and_retention() -> None:
     assert result.retention_days == 7
 
 
-@pytest.mark.asyncio
 async def test_enable_default_retention_is_zero() -> None:
     """enable with default retention_days=0 (unlimited) should send retentionDays=0."""
     with respx.mock:
@@ -133,7 +113,6 @@ async def test_enable_default_retention_is_zero() -> None:
     assert sent_body == {"state": "Enabled", "retentionDays": 0}
 
 
-@pytest.mark.asyncio
 async def test_enable_negative_retention_raises_value_error() -> None:
     """enable should raise ValueError if retention_days < 0."""
     client = await _make_client()
@@ -142,7 +121,6 @@ async def test_enable_negative_retention_raises_value_error() -> None:
             await audit.enable(client, _WS_ID, _WH_ID, retention_days=-1)
 
 
-@pytest.mark.asyncio
 async def test_enable_403_raises_permission_denied() -> None:
     """enable should propagate PermissionDenied on 403 from PATCH."""
     with respx.mock:
@@ -158,7 +136,6 @@ async def test_enable_403_raises_permission_denied() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_disable_patches_with_disabled_state() -> None:
     """disable should PATCH with state=Disabled, then GET and return fresh state."""
     with respx.mock:
@@ -179,7 +156,6 @@ async def test_disable_patches_with_disabled_state() -> None:
     assert result.state == "Disabled"
 
 
-@pytest.mark.asyncio
 async def test_disable_403_raises_permission_denied() -> None:
     """disable should propagate PermissionDenied on 403 from PATCH."""
     with respx.mock:
@@ -195,7 +171,6 @@ async def test_disable_403_raises_permission_denied() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_set_action_groups_patches_with_enabled_state_and_groups() -> None:
     """set_action_groups should PATCH with state=Enabled + auditActionsAndGroups, then GET."""
     groups = ["BATCH_COMPLETED_GROUP", "FAILED_DATABASE_AUTHENTICATION_GROUP"]
@@ -218,7 +193,6 @@ async def test_set_action_groups_patches_with_enabled_state_and_groups() -> None
     assert result.action_groups == groups
 
 
-@pytest.mark.asyncio
 async def test_set_action_groups_empty_list_is_valid() -> None:
     """set_action_groups with an empty list should be accepted (clears all groups)."""
     with respx.mock:
@@ -233,7 +207,6 @@ async def test_set_action_groups_empty_list_is_valid() -> None:
     assert isinstance(result, AuditSettings)
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "bad_group",
     [
@@ -252,7 +225,6 @@ async def test_set_action_groups_invalid_name_raises_value_error(bad_group: str)
             await audit.set_action_groups(client, _WS_ID, _WH_ID, [bad_group])
 
 
-@pytest.mark.asyncio
 async def test_set_action_groups_403_raises_permission_denied() -> None:
     """set_action_groups should propagate PermissionDenied on 403 from PATCH."""
     with respx.mock:
@@ -263,7 +235,6 @@ async def test_set_action_groups_403_raises_permission_denied() -> None:
                 await audit.set_action_groups(client, _WS_ID, _WH_ID, ["BATCH_COMPLETED_GROUP"])
 
 
-@pytest.mark.asyncio
 async def test_set_action_groups_works_on_fresh_warehouse() -> None:
     """set_action_groups via PATCH works on freshly-created warehouses without a prior enable().
 
@@ -289,7 +260,6 @@ async def test_set_action_groups_works_on_fresh_warehouse() -> None:
     assert result.action_groups == groups
 
 
-@pytest.mark.asyncio
 async def test_set_action_groups_ensure_enabled_false_omits_state() -> None:
     """set_action_groups with ensure_enabled=False should NOT include state=Enabled in the PATCH."""
     groups = ["BATCH_COMPLETED_GROUP"]
@@ -312,7 +282,6 @@ async def test_set_action_groups_ensure_enabled_false_omits_state() -> None:
     assert isinstance(result, AuditSettings)
 
 
-@pytest.mark.asyncio
 async def test_set_action_groups_ensure_enabled_true_default_includes_state() -> None:
     """set_action_groups default (ensure_enabled=True) includes state=Enabled in the PATCH."""
     groups = ["BATCH_COMPLETED_GROUP"]
@@ -334,7 +303,6 @@ async def test_set_action_groups_ensure_enabled_true_default_includes_state() ->
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_add_action_group_adds_missing_group() -> None:
     """add_action_group should GET current groups, append the new one, then PATCH."""
     new_group = "FAILED_DATABASE_AUTHENTICATION_GROUP"
@@ -367,7 +335,6 @@ async def test_add_action_group_adds_missing_group() -> None:
     assert new_group in result.action_groups
 
 
-@pytest.mark.asyncio
 async def test_add_action_group_idempotent_when_already_present() -> None:
     """add_action_group should not PATCH if the group is already present."""
     existing_group = "BATCH_COMPLETED_GROUP"
@@ -386,7 +353,6 @@ async def test_add_action_group_idempotent_when_already_present() -> None:
     assert existing_group in result.action_groups
 
 
-@pytest.mark.asyncio
 async def test_add_action_group_disabled_raises_value_error() -> None:
     """add_action_group should raise ValueError when audit is disabled."""
     disabled = AUDIT_SETTINGS_DISABLED_PAYLOAD.copy()
@@ -399,7 +365,6 @@ async def test_add_action_group_disabled_raises_value_error() -> None:
                 await audit.add_action_group(client, _WS_ID, _WH_ID, "BATCH_COMPLETED_GROUP")
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "bad_group",
     [
@@ -416,7 +381,6 @@ async def test_add_action_group_invalid_name_raises_value_error(bad_group: str) 
             await audit.add_action_group(client, _WS_ID, _WH_ID, bad_group)
 
 
-@pytest.mark.asyncio
 async def test_add_action_group_403_raises_permission_denied() -> None:
     """add_action_group should propagate PermissionDenied on 403 from GET."""
     with respx.mock:
@@ -432,7 +396,6 @@ async def test_add_action_group_403_raises_permission_denied() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_remove_action_group_removes_present_group() -> None:
     """remove_action_group should GET current groups, remove the target, then PATCH."""
     group_to_remove = "SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP"
@@ -460,7 +423,6 @@ async def test_remove_action_group_removes_present_group() -> None:
     assert isinstance(result, AuditSettings)
 
 
-@pytest.mark.asyncio
 async def test_remove_action_group_idempotent_when_not_present() -> None:
     """remove_action_group should not PATCH if the group is not present."""
     absent_group = "FAILED_DATABASE_AUTHENTICATION_GROUP"
@@ -478,7 +440,6 @@ async def test_remove_action_group_idempotent_when_not_present() -> None:
     assert isinstance(result, AuditSettings)
 
 
-@pytest.mark.asyncio
 async def test_remove_action_group_disabled_raises_value_error() -> None:
     """remove_action_group should raise ValueError when audit is disabled."""
     disabled = AUDIT_SETTINGS_DISABLED_PAYLOAD.copy()
@@ -491,7 +452,6 @@ async def test_remove_action_group_disabled_raises_value_error() -> None:
                 await audit.remove_action_group(client, _WS_ID, _WH_ID, "BATCH_COMPLETED_GROUP")
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "bad_group",
     [
@@ -508,7 +468,6 @@ async def test_remove_action_group_invalid_name_raises_value_error(bad_group: st
             await audit.remove_action_group(client, _WS_ID, _WH_ID, bad_group)
 
 
-@pytest.mark.asyncio
 async def test_remove_action_group_403_raises_permission_denied() -> None:
     """remove_action_group should propagate PermissionDenied on 403 from GET."""
     with respx.mock:
@@ -524,7 +483,6 @@ async def test_remove_action_group_403_raises_permission_denied() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_set_retention_patches_with_retention_days_only() -> None:
     """set_retention should PATCH with only retentionDays (no state), then GET and return fresh."""
     updated = AUDIT_SETTINGS_PAYLOAD.copy()
@@ -547,7 +505,6 @@ async def test_set_retention_patches_with_retention_days_only() -> None:
     assert result.retention_days == 90
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("days", [0, -1, -100])
 async def test_set_retention_out_of_range_raises_value_error(days: int) -> None:
     """set_retention should raise ValueError when days < 1."""
@@ -557,7 +514,6 @@ async def test_set_retention_out_of_range_raises_value_error(days: int) -> None:
             await audit.set_retention(client, _WS_ID, _WH_ID, days=days)
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("days", [1, 3650])
 async def test_set_retention_boundary_values_are_accepted(days: int) -> None:
     """set_retention should accept boundary values: 1 (minimum) and 3650 (large plausible value).
@@ -577,7 +533,6 @@ async def test_set_retention_boundary_values_are_accepted(days: int) -> None:
     assert result.retention_days == days
 
 
-@pytest.mark.asyncio
 async def test_set_retention_disabled_audit_sends_patch_to_server() -> None:
     """set_retention no longer pre-checks audit state; it sends PATCH and lets the server decide.
 
@@ -599,7 +554,6 @@ async def test_set_retention_disabled_audit_sends_patch_to_server() -> None:
     assert isinstance(result, AuditSettings)
 
 
-@pytest.mark.asyncio
 async def test_set_retention_403_raises_permission_denied() -> None:
     """set_retention should propagate PermissionDenied on 403 from PATCH."""
     with respx.mock:

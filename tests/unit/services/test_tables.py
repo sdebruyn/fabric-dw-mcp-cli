@@ -136,7 +136,6 @@ class TestRejectNonSelect:
 
 
 class TestListTables:
-    @pytest.mark.asyncio
     async def test_returns_empty_when_no_rows(self) -> None:
         target = _make_target()
         conn = _make_conn([], _LIST_COLS)
@@ -144,7 +143,6 @@ class TestListTables:
             result = await tables.list_tables(target)
         assert result == []
 
-    @pytest.mark.asyncio
     async def test_returns_table_instances(self) -> None:
         target = _make_target()
         conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
@@ -153,7 +151,6 @@ class TestListTables:
         assert len(result) == 1
         assert isinstance(result[0], Table)
 
-    @pytest.mark.asyncio
     async def test_parses_fields_correctly(self) -> None:
         target = _make_target()
         conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
@@ -166,7 +163,6 @@ class TestListTables:
         assert t.created == _NOW
         assert t.modified == _LATER
 
-    @pytest.mark.asyncio
     async def test_returns_all_rows(self) -> None:
         target = _make_target()
         conn = _make_conn([_TABLE_ROW_1, _TABLE_ROW_2], _LIST_COLS)
@@ -174,7 +170,6 @@ class TestListTables:
             result = await tables.list_tables(target)
         assert len(result) == 2
 
-    @pytest.mark.asyncio
     async def test_sql_references_sys_tables(self) -> None:
         target = _make_target()
         conn = _make_conn([], _LIST_COLS)
@@ -184,7 +179,6 @@ class TestListTables:
         call_sql: str = cursor.execute.call_args[0][0]
         assert "sys.tables" in call_sql
 
-    @pytest.mark.asyncio
     async def test_sql_references_sys_schemas(self) -> None:
         target = _make_target()
         conn = _make_conn([], _LIST_COLS)
@@ -194,7 +188,6 @@ class TestListTables:
         call_sql: str = cursor.execute.call_args[0][0]
         assert "sys.schemas" in call_sql
 
-    @pytest.mark.asyncio
     async def test_filters_by_schema_when_provided(self) -> None:
         target = _make_target()
         conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
@@ -209,7 +202,6 @@ class TestListTables:
         assert params is not None
         assert "dbo" in list(params)
 
-    @pytest.mark.asyncio
     async def test_schema_filter_validates_identifier(self) -> None:
         target = _make_target()
         conn = _make_conn([], _LIST_COLS)
@@ -219,7 +211,6 @@ class TestListTables:
         ):
             await tables.list_tables(target, schema="bad]schema")
 
-    @pytest.mark.asyncio
     async def test_closes_connection(self) -> None:
         target = _make_target()
         conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
@@ -227,7 +218,6 @@ class TestListTables:
             await tables.list_tables(target)
         conn.close.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_maps_permission_denied(self) -> None:
         target = _make_target()
         conn = MagicMock()
@@ -240,7 +230,6 @@ class TestListTables:
         ):
             await tables.list_tables(target)
 
-    @pytest.mark.asyncio
     async def test_maps_auth_error(self) -> None:
         target = _make_target()
         conn = MagicMock()
@@ -253,7 +242,6 @@ class TestListTables:
         ):
             await tables.list_tables(target)
 
-    @pytest.mark.asyncio
     async def test_unrelated_error_propagates(self) -> None:
         target = _make_target()
         conn = MagicMock()
@@ -273,7 +261,6 @@ class TestListTables:
 
 
 class TestReadTable:
-    @pytest.mark.asyncio
     async def test_returns_columns_and_rows(self) -> None:
         target = _make_target()
         cols = ["id", "name"]
@@ -284,7 +271,6 @@ class TestReadTable:
         assert result_cols == cols
         assert list(result_rows) == rows
 
-    @pytest.mark.asyncio
     async def test_sql_uses_select_top(self) -> None:
         target = _make_target()
         conn = _make_conn([(1,)], ["id"])
@@ -295,7 +281,6 @@ class TestReadTable:
         assert "SELECT TOP" in call_sql
         assert "5" in call_sql
 
-    @pytest.mark.asyncio
     async def test_sql_uses_bracket_quoting(self) -> None:
         target = _make_target()
         conn = _make_conn([(1,)], ["id"])
@@ -306,19 +291,16 @@ class TestReadTable:
         assert "[dbo]" in call_sql
         assert "[sales]" in call_sql
 
-    @pytest.mark.asyncio
     async def test_validates_schema_identifier(self) -> None:
         target = _make_target()
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await tables.read_table(target, "bad;schema", "sales")
 
-    @pytest.mark.asyncio
     async def test_validates_table_name_identifier(self) -> None:
         target = _make_target()
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await tables.read_table(target, "dbo", "table--injection")
 
-    @pytest.mark.asyncio
     async def test_raises_not_found_when_no_columns(self) -> None:
         target = _make_target()
         cursor = MagicMock()
@@ -332,7 +314,6 @@ class TestReadTable:
         ):
             await tables.read_table(target, "dbo", "nonexistent")
 
-    @pytest.mark.asyncio
     async def test_maps_permission_denied(self) -> None:
         target = _make_target()
         conn = MagicMock()
@@ -345,7 +326,6 @@ class TestReadTable:
         ):
             await tables.read_table(target, "dbo", "sales")
 
-    @pytest.mark.asyncio
     async def test_closes_connection(self) -> None:
         target = _make_target()
         conn = _make_conn([(1,)], ["id"])
@@ -360,7 +340,6 @@ class TestReadTable:
 
 
 class TestCreateTable:
-    @pytest.mark.asyncio
     async def test_emits_create_table_as_select(self) -> None:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
@@ -373,7 +352,6 @@ class TestCreateTable:
         assert "[DBO]" in call_sql
         assert "[SALES]" in call_sql
 
-    @pytest.mark.asyncio
     async def test_includes_select_body(self) -> None:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
@@ -384,7 +362,6 @@ class TestCreateTable:
         call_sql: str = cursor.execute.call_args[0][0]
         assert "SELECT id FROM src.raw" in call_sql
 
-    @pytest.mark.asyncio
     async def test_returns_table_object(self) -> None:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
@@ -393,7 +370,6 @@ class TestCreateTable:
             result = await tables.create_table(target, "dbo", "sales", "SELECT 1 AS id")
         assert isinstance(result, Table)
 
-    @pytest.mark.asyncio
     async def test_commits_after_execute(self) -> None:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
@@ -402,13 +378,11 @@ class TestCreateTable:
             await tables.create_table(target, "dbo", "sales", "SELECT 1")
         ddl_conn.commit.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_rejects_non_select_body(self) -> None:
         target = _make_target()
         with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
             await tables.create_table(target, "dbo", "sales", "INSERT INTO foo SELECT 1")
 
-    @pytest.mark.asyncio
     async def test_accepts_cte_body(self) -> None:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
@@ -422,19 +396,16 @@ class TestCreateTable:
             )
         assert isinstance(result, Table)
 
-    @pytest.mark.asyncio
     async def test_validates_schema_identifier(self) -> None:
         target = _make_target()
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await tables.create_table(target, "bad]schema", "sales", "SELECT 1")
 
-    @pytest.mark.asyncio
     async def test_validates_table_name_identifier(self) -> None:
         target = _make_target()
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await tables.create_table(target, "dbo", "sales;drop", "SELECT 1")
 
-    @pytest.mark.asyncio
     async def test_maps_permission_denied(self) -> None:
         target = _make_target()
         conn = MagicMock()
@@ -447,7 +418,6 @@ class TestCreateTable:
         ):
             await tables.create_table(target, "dbo", "sales", "SELECT 1")
 
-    @pytest.mark.asyncio
     async def test_rejects_injection_in_schema(self) -> None:
         target = _make_target()
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
@@ -460,7 +430,6 @@ class TestCreateTable:
 
 
 class TestDeleteTable:
-    @pytest.mark.asyncio
     async def test_emits_drop_table(self) -> None:
         target = _make_target()
         conn = _make_conn_for_ddl()
@@ -470,7 +439,6 @@ class TestDeleteTable:
         call_sql: str = cursor.execute.call_args[0][0].upper()
         assert "DROP TABLE" in call_sql
 
-    @pytest.mark.asyncio
     async def test_uses_brackets(self) -> None:
         target = _make_target()
         conn = _make_conn_for_ddl()
@@ -481,7 +449,6 @@ class TestDeleteTable:
         assert "[dbo]" in call_sql
         assert "[sales]" in call_sql
 
-    @pytest.mark.asyncio
     async def test_commits_after_execute(self) -> None:
         target = _make_target()
         conn = _make_conn_for_ddl()
@@ -489,7 +456,6 @@ class TestDeleteTable:
             await tables.delete_table(target, "dbo", "sales")
         conn.commit.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_closes_connection(self) -> None:
         target = _make_target()
         conn = _make_conn_for_ddl()
@@ -497,19 +463,16 @@ class TestDeleteTable:
             await tables.delete_table(target, "dbo", "sales")
         conn.close.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_validates_schema_identifier(self) -> None:
         target = _make_target()
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await tables.delete_table(target, "bad]schema", "sales")
 
-    @pytest.mark.asyncio
     async def test_validates_table_name_identifier(self) -> None:
         target = _make_target()
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await tables.delete_table(target, "dbo", "sales--bad")
 
-    @pytest.mark.asyncio
     async def test_maps_permission_denied(self) -> None:
         target = _make_target()
         conn = MagicMock()
@@ -522,19 +485,16 @@ class TestDeleteTable:
         ):
             await tables.delete_table(target, "dbo", "sales")
 
-    @pytest.mark.asyncio
     async def test_rejects_injection_in_schema(self) -> None:
         target = _make_target()
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await tables.delete_table(target, "x]; DROP TABLE users--", "ok")
 
-    @pytest.mark.asyncio
     async def test_rejects_injection_in_table_name(self) -> None:
         target = _make_target()
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await tables.delete_table(target, "dbo", "ok] WHERE 1=1--")
 
-    @pytest.mark.asyncio
     async def test_unrelated_error_propagates(self) -> None:
         target = _make_target()
         conn = MagicMock()
@@ -554,7 +514,6 @@ class TestDeleteTable:
 
 
 class TestClearTable:
-    @pytest.mark.asyncio
     async def test_emits_truncate_table(self) -> None:
         target = _make_target()
         conn = _make_conn_for_ddl()
@@ -564,7 +523,6 @@ class TestClearTable:
         call_sql: str = cursor.execute.call_args[0][0].upper()
         assert "TRUNCATE TABLE" in call_sql
 
-    @pytest.mark.asyncio
     async def test_uses_brackets(self) -> None:
         target = _make_target()
         conn = _make_conn_for_ddl()
@@ -575,7 +533,6 @@ class TestClearTable:
         assert "[dbo]" in call_sql
         assert "[sales]" in call_sql
 
-    @pytest.mark.asyncio
     async def test_commits_after_execute(self) -> None:
         target = _make_target()
         conn = _make_conn_for_ddl()
@@ -583,7 +540,6 @@ class TestClearTable:
             await tables.clear_table(target, "dbo", "sales")
         conn.commit.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_closes_connection(self) -> None:
         target = _make_target()
         conn = _make_conn_for_ddl()
@@ -591,19 +547,16 @@ class TestClearTable:
             await tables.clear_table(target, "dbo", "sales")
         conn.close.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_validates_schema_identifier(self) -> None:
         target = _make_target()
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await tables.clear_table(target, "bad;schema", "sales")
 
-    @pytest.mark.asyncio
     async def test_validates_table_name_identifier(self) -> None:
         target = _make_target()
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await tables.clear_table(target, "dbo", "sales]injection")
 
-    @pytest.mark.asyncio
     async def test_maps_permission_denied(self) -> None:
         target = _make_target()
         conn = MagicMock()
@@ -616,7 +569,6 @@ class TestClearTable:
         ):
             await tables.clear_table(target, "dbo", "sales")
 
-    @pytest.mark.asyncio
     async def test_unrelated_error_propagates(self) -> None:
         target = _make_target()
         conn = MagicMock()
@@ -638,7 +590,6 @@ class TestClearTable:
 class TestSqlEndpointGuard:
     """Verify that create/delete/clear reject SQL Endpoint items before any I/O."""
 
-    @pytest.mark.asyncio
     async def test_create_table_rejects_sql_endpoint(self) -> None:
         target = _make_target()
         with pytest.raises(ItemKindError, match="read-only"):
@@ -650,7 +601,6 @@ class TestSqlEndpointGuard:
                 kind=WarehouseKind.SQL_ENDPOINT,
             )
 
-    @pytest.mark.asyncio
     async def test_delete_table_rejects_sql_endpoint(self) -> None:
         target = _make_target()
         with pytest.raises(ItemKindError, match="read-only"):
@@ -661,7 +611,6 @@ class TestSqlEndpointGuard:
                 kind=WarehouseKind.SQL_ENDPOINT,
             )
 
-    @pytest.mark.asyncio
     async def test_clear_table_rejects_sql_endpoint(self) -> None:
         target = _make_target()
         with pytest.raises(ItemKindError, match="read-only"):
@@ -672,7 +621,6 @@ class TestSqlEndpointGuard:
                 kind=WarehouseKind.SQL_ENDPOINT,
             )
 
-    @pytest.mark.asyncio
     async def test_create_table_warehouse_allowed(self) -> None:
         """WarehouseKind.WAREHOUSE must not be blocked by the guard."""
         target = _make_target()
@@ -688,7 +636,6 @@ class TestSqlEndpointGuard:
             )
         assert isinstance(result, Table)
 
-    @pytest.mark.asyncio
     async def test_guard_fires_before_identifier_validation(self) -> None:
         """ItemKindError must be raised even when schema/table identifiers are invalid."""
         target = _make_target()

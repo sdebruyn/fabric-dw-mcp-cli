@@ -4,19 +4,15 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
 import httpx
 import pytest
 import respx
-from azure.core.credentials import AccessToken
-from azure.core.credentials_async import AsyncTokenCredential
 
 from fabric_dw.exceptions import FabricServerError, NotFound, PermissionDenied
-from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import TableSyncStatus, Warehouse, WarehouseKind, Workspace
 from fabric_dw.services.sql_endpoints import list_all_workspaces
 from tests.fixtures.api_payloads import (
@@ -24,12 +20,11 @@ from tests.fixtures.api_payloads import (
     WAREHOUSE_SQL_ENDPOINTS_PAGE2_PAYLOAD,
     WAREHOUSE_SQL_ENDPOINTS_PAYLOAD,
 )
+from tests.unit.services._helpers import _make_client
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Constants
 # ---------------------------------------------------------------------------
-
-_FAKE_TOKEN = AccessToken(token="fake-token", expires_on=int(time.time()) + 3600)  # noqa: S106
 
 _WORKSPACE_ID = UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
 _ENDPOINT_ID = UUID("e5f6a7b8-c9d0-1234-ef01-234567890abc")
@@ -39,16 +34,6 @@ _SQL_ENDPOINTS_URL = f"{_BASE}/workspaces/{_WORKSPACE_ID}/sqlEndpoints"
 _ENDPOINT_URL = f"{_SQL_ENDPOINTS_URL}/{_ENDPOINT_ID}"
 _REFRESH_URL = f"{_ENDPOINT_URL}/refreshMetadata"
 _OPERATION_URL = f"{_BASE}/operations/op-refresh-123"
-
-
-def _make_credential(token: AccessToken = _FAKE_TOKEN) -> AsyncTokenCredential:
-    cred = MagicMock(spec=AsyncTokenCredential)
-    cred.get_token = AsyncMock(return_value=token)
-    return cred
-
-
-async def _make_client(rps: int = 10) -> FabricHttpClient:
-    return FabricHttpClient(credential=_make_credential(), rps=rps)
 
 
 # Single SQL endpoint GET payload
@@ -100,7 +85,6 @@ _REFRESH_LRO_SUCCEEDED: dict[str, Any] = {
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_list_endpoints_returns_sql_endpoint_items() -> None:
     """list_endpoints must return only SQL_ENDPOINT-kind Warehouse items."""
     from fabric_dw.services.sql_endpoints import list_endpoints  # noqa: PLC0415
@@ -120,7 +104,6 @@ async def test_list_endpoints_returns_sql_endpoint_items() -> None:
     assert all(ep.kind == WarehouseKind.SQL_ENDPOINT for ep in result)
 
 
-@pytest.mark.asyncio
 async def test_list_endpoints_follows_pagination() -> None:
     """list_endpoints must follow continuationUri across pages."""
     from fabric_dw.services.sql_endpoints import list_endpoints  # noqa: PLC0415
@@ -146,7 +129,6 @@ async def test_list_endpoints_follows_pagination() -> None:
     assert all(ep.kind == WarehouseKind.SQL_ENDPOINT for ep in result)
 
 
-@pytest.mark.asyncio
 async def test_list_endpoints_empty_workspace_returns_empty_list() -> None:
     """list_endpoints must return an empty list when there are no SQL endpoints."""
     from fabric_dw.services.sql_endpoints import list_endpoints  # noqa: PLC0415
@@ -166,7 +148,6 @@ async def test_list_endpoints_empty_workspace_returns_empty_list() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_get_endpoint_returns_populated_warehouse() -> None:
     """get_endpoint must return a single populated Warehouse with SQL_ENDPOINT kind."""
     from fabric_dw.services.sql_endpoints import get_endpoint  # noqa: PLC0415
@@ -186,7 +167,6 @@ async def test_get_endpoint_returns_populated_warehouse() -> None:
     assert result.workspace_id == _WORKSPACE_ID
 
 
-@pytest.mark.asyncio
 async def test_get_endpoint_404_propagates_not_found() -> None:
     """get_endpoint must propagate NotFound on a 404 response."""
     from fabric_dw.services.sql_endpoints import get_endpoint  # noqa: PLC0415
@@ -209,7 +189,6 @@ async def test_get_endpoint_404_propagates_not_found() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_refresh_metadata_posts_and_polls_lro() -> None:
     """refresh_metadata must POST to /refreshMetadata and poll the LRO to completion."""
     from fabric_dw.services.sql_endpoints import refresh_metadata  # noqa: PLC0415
@@ -241,7 +220,6 @@ async def test_refresh_metadata_posts_and_polls_lro() -> None:
     assert result[1].error.error_code == "AdalRetryException"
 
 
-@pytest.mark.asyncio
 async def test_refresh_metadata_no_recreate_tables_sends_no_body() -> None:
     """refresh_metadata without recreate_tables must not send a JSON body."""
     from fabric_dw.services.sql_endpoints import refresh_metadata  # noqa: PLC0415
@@ -267,7 +245,6 @@ async def test_refresh_metadata_no_recreate_tables_sends_no_body() -> None:
     assert captured_requests[0].content in (b"", b"null")
 
 
-@pytest.mark.asyncio
 async def test_refresh_metadata_recreate_tables_sends_body() -> None:
     """refresh_metadata with recreate_tables=True must send {recreateTables: true} in the body."""
     from fabric_dw.services.sql_endpoints import refresh_metadata  # noqa: PLC0415
@@ -296,7 +273,6 @@ async def test_refresh_metadata_recreate_tables_sends_body() -> None:
     assert isinstance(result, list)
 
 
-@pytest.mark.asyncio
 async def test_refresh_metadata_lro_poll_multiple_times() -> None:
     """refresh_metadata must poll the LRO until it succeeds (multi-poll path)."""
     from fabric_dw.services.sql_endpoints import refresh_metadata  # noqa: PLC0415
@@ -333,7 +309,6 @@ async def test_refresh_metadata_lro_poll_multiple_times() -> None:
     assert len(result) == 2
 
 
-@pytest.mark.asyncio
 async def test_refresh_metadata_lro_failed_raises_fabric_server_error() -> None:
     """refresh_metadata must raise FabricServerError when LRO status is 'Failed'."""
     from fabric_dw.services.sql_endpoints import refresh_metadata  # noqa: PLC0415
@@ -398,7 +373,6 @@ def _make_ep(ws_id: UUID, ep_id: UUID) -> Warehouse:
     )
 
 
-@pytest.mark.asyncio
 async def test_list_all_workspaces_endpoints_aggregates_across_workspaces() -> None:
     """list_all_workspaces must collect endpoints from every visible workspace."""
     ws_a = _make_workspace(_EP_WS_A)
@@ -433,7 +407,6 @@ async def test_list_all_workspaces_endpoints_aggregates_across_workspaces() -> N
     assert ids == {_EP_A, _EP_B, _EP_C}
 
 
-@pytest.mark.asyncio
 async def test_list_all_workspaces_endpoints_skips_permission_denied(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -472,7 +445,6 @@ async def test_list_all_workspaces_endpoints_skips_permission_denied(
     assert any("skipped 1 of 3" in r.message for r in caplog.records)
 
 
-@pytest.mark.asyncio
 async def test_list_all_workspaces_endpoints_skips_not_found(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

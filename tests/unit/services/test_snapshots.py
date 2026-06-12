@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json as _json
-import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -13,8 +12,6 @@ from uuid import UUID
 import httpx
 import pytest
 import respx
-from azure.core.credentials import AccessToken
-from azure.core.credentials_async import AsyncTokenCredential
 
 from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.exceptions import NotFound, PermissionDenied
@@ -22,6 +19,7 @@ from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import WarehouseKind, WarehouseSnapshot
 from fabric_dw.services import snapshots
 from fabric_dw.sql import SqlTarget
+from tests.unit.services._helpers import _make_credential
 
 # ---------------------------------------------------------------------------
 # Constants & Fixtures
@@ -32,7 +30,6 @@ _PARENT_WH_ID = UUID("d4e5f6a7-b8c9-0123-def0-123456789abc")
 _SNAP_ID = UUID("f6a7b8c9-d0e1-2345-f012-34567890abcd")
 _OTHER_WH_ID = UUID("11111111-2222-3333-4444-555555555555")
 
-_FAKE_TOKEN = AccessToken(token="fake-token", expires_on=int(time.time()) + 3600)  # noqa: S106
 
 _BASE_URL = "https://api.fabric.microsoft.com/v1"
 _ITEMS_URL = f"{_BASE_URL}/workspaces/{_WS_ID}/items"
@@ -128,12 +125,6 @@ WAREHOUSE_SNAPSHOT_CREATE_OPERATION_PAYLOAD: dict[str, Any] = {
 }
 
 _LRO_LOCATION = f"{_BASE_URL}/operations/op-abc-123"
-
-
-def _make_credential() -> AsyncTokenCredential:
-    cred = MagicMock(spec=AsyncTokenCredential)
-    cred.get_token = AsyncMock(return_value=_FAKE_TOKEN)
-    return cred
 
 
 def _make_sql_target() -> SqlTarget:
@@ -726,7 +717,6 @@ _RENAME_TYPED_RESP: dict[str, object] = {
 }
 
 
-@pytest.mark.asyncio
 async def test_rename_evicts_old_name_and_inserts_new_name(tmp_path: Path) -> None:
     """rename with cache must evict old name and populate new name."""
     cache, _entry = _make_snap_cache_entry(tmp_path)
@@ -757,7 +747,6 @@ async def test_rename_evicts_old_name_and_inserts_new_name(tmp_path: Path) -> No
     assert renamed_entry.display_name == "RenamedSnapshot"
 
 
-@pytest.mark.asyncio
 async def test_rename_without_cache_does_not_raise(tmp_path: Path) -> None:
     """rename without cache= must still complete successfully."""
     _ = tmp_path
@@ -780,7 +769,6 @@ async def test_rename_without_cache_does_not_raise(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_delete_evicts_name_from_cache(tmp_path: Path) -> None:
     """delete with cache= must evict both the name entry and the GUID entry."""
     cache, _entry = _make_snap_cache_entry(tmp_path)
@@ -804,7 +792,6 @@ async def test_delete_evicts_name_from_cache(tmp_path: Path) -> None:
     assert cache.get_item(_WS_ID, str(_SNAP_ID)) is None
 
 
-@pytest.mark.asyncio
 async def test_delete_without_cache_does_not_raise(tmp_path: Path) -> None:
     """delete without cache= must still complete successfully."""
     _ = tmp_path

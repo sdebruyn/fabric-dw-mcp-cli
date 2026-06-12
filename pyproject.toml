@@ -130,7 +130,7 @@ select = [
 
 [tool.pytest.ini_options]
 markers = ["integration: hits real Fabric APIs"]
-addopts = "-ra --strict-markers"
+addopts = "-ra --strict-markers -m 'not integration'"
 asyncio_mode = "auto"
 
 [tool.coverage.run]

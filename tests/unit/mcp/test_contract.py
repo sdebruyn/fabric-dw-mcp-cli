@@ -104,7 +104,6 @@ def _make_workspace() -> Workspace:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_list_tools_returns_expected_count(contract_ctx) -> None:
     """list_tools() via the MCP protocol returns all 65 registered tools.
 
@@ -127,7 +126,6 @@ async def test_list_tools_returns_expected_count(contract_ctx) -> None:
     )
 
 
-@pytest.mark.asyncio
 async def test_list_tools_contains_read_tool(contract_ctx) -> None:
     """The tool roster must include the 'list_workspaces' read tool."""
     from mcp.shared.memory import create_connected_server_and_client_session  # noqa: PLC0415
@@ -142,7 +140,6 @@ async def test_list_tools_contains_read_tool(contract_ctx) -> None:
     assert "list_workspaces" in tool_names
 
 
-@pytest.mark.asyncio
 async def test_list_tools_contains_destructive_tool(contract_ctx) -> None:
     """The tool roster must include the guarded 'delete_restore_point' tool."""
     from mcp.shared.memory import create_connected_server_and_client_session  # noqa: PLC0415
@@ -162,7 +159,6 @@ async def test_list_tools_contains_destructive_tool(contract_ctx) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_call_tool_list_workspaces_round_trips(contract_ctx) -> None:
     """Calling list_workspaces via MCP protocol returns serialised workspace data.
 
@@ -204,7 +200,6 @@ async def test_call_tool_list_workspaces_round_trips(contract_ctx) -> None:
     assert str(WS_ID) in json.dumps(workspace_data)
 
 
-@pytest.mark.asyncio
 async def test_call_tool_list_workspaces_empty_returns_list(contract_ctx) -> None:
     """list_workspaces with no workspaces returns a successful result."""
     from mcp.shared.memory import create_connected_server_and_client_session  # noqa: PLC0415
@@ -227,7 +222,6 @@ async def test_call_tool_list_workspaces_empty_returns_list(contract_ctx) -> Non
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_destructive_tool_blocked_without_env_flag(
     contract_ctx, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -264,7 +258,6 @@ async def test_destructive_tool_blocked_without_env_flag(
     )
 
 
-@pytest.mark.asyncio
 async def test_destructive_tool_allowed_with_env_flag(
     contract_ctx, monkeypatch: pytest.MonkeyPatch
 ) -> None:

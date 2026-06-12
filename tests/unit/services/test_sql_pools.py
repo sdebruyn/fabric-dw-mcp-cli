@@ -3,22 +3,18 @@
 from __future__ import annotations
 
 import json
-import time
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import httpx
 import pytest
 import respx
-from azure.core.credentials import AccessToken
-from azure.core.credentials_async import AsyncTokenCredential
 from pydantic import ValidationError
 
 from fabric_dw.exceptions import AlreadyExists, NotFound, PermissionDenied
-from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import SqlPool, SqlPoolsConfiguration
 from fabric_dw.services import sql_pools
+from tests.unit.services._helpers import _make_client
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -27,8 +23,6 @@ from fabric_dw.services import sql_pools
 _WS_ID = UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
 _BASE_URL = "https://api.fabric.microsoft.com/v1"
 _CONFIG_URL = f"{_BASE_URL}/workspaces/{_WS_ID}/warehouses/sqlPoolsConfiguration"
-
-_FAKE_TOKEN = AccessToken(token="fake-token", expires_on=int(time.time()) + 3600)  # noqa: S106
 
 POOLS_ENABLED_PAYLOAD: dict[str, Any] = {
     "customSQLPoolsEnabled": True,
@@ -84,22 +78,11 @@ POOLS_EMPTY_PAYLOAD: dict[str, Any] = {
 }
 
 
-def _make_credential() -> AsyncTokenCredential:
-    cred = MagicMock(spec=AsyncTokenCredential)
-    cred.get_token = AsyncMock(return_value=_FAKE_TOKEN)
-    return cred
-
-
-async def _make_client() -> FabricHttpClient:
-    return FabricHttpClient(credential=_make_credential(), rps=100)
-
-
 # ---------------------------------------------------------------------------
 # get_configuration
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_get_configuration_returns_model() -> None:
     """get_configuration should GET the endpoint with ?beta=True and return a model."""
     with respx.mock:
@@ -122,7 +105,6 @@ async def test_get_configuration_returns_model() -> None:
     assert result.custom_sql_pools[0].classifier.value == ["ETL", "Load"]
 
 
-@pytest.mark.asyncio
 async def test_get_configuration_disabled_workspace() -> None:
     """get_configuration handles disabled pools (customSQLPoolsEnabled=false)."""
     with respx.mock:
@@ -135,7 +117,6 @@ async def test_get_configuration_disabled_workspace() -> None:
     assert len(result.custom_sql_pools) == 1
 
 
-@pytest.mark.asyncio
 async def test_get_configuration_403_raises_permission_denied() -> None:
     """get_configuration propagates PermissionDenied on 403 with hint."""
     with respx.mock:
@@ -151,7 +132,6 @@ async def test_get_configuration_403_raises_permission_denied() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_update_configuration_patches_full_body() -> None:
     """update_configuration should PATCH the full config and then GET fresh state."""
     config = SqlPoolsConfiguration.model_validate(POOLS_ENABLED_PAYLOAD)
@@ -176,7 +156,6 @@ async def test_update_configuration_patches_full_body() -> None:
     assert isinstance(result, SqlPoolsConfiguration)
 
 
-@pytest.mark.asyncio
 async def test_update_configuration_destructive_semantics_reflected_in_body() -> None:
     """Pools absent from the config model must not be in the PATCH body (destructive semantics)."""
     single_pool_config = SqlPoolsConfiguration.model_validate(
@@ -205,7 +184,6 @@ async def test_update_configuration_destructive_semantics_reflected_in_body() ->
     assert pool_names == ["OnlyPool"]
 
 
-@pytest.mark.asyncio
 async def test_update_configuration_403_raises_permission_denied() -> None:
     """update_configuration propagates PermissionDenied on 403."""
     config = SqlPoolsConfiguration.model_validate(POOLS_ENABLED_PAYLOAD)
@@ -223,7 +201,6 @@ async def test_update_configuration_403_raises_permission_denied() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_enable_patches_enabled_true_preserving_pools() -> None:
     """enable should PATCH customSQLPoolsEnabled=true and keep existing pools."""
     with respx.mock:
@@ -248,7 +225,6 @@ async def test_enable_patches_enabled_true_preserving_pools() -> None:
     assert result.custom_sql_pools_enabled is True
 
 
-@pytest.mark.asyncio
 async def test_enable_is_no_op_when_already_enabled() -> None:
     """enable should return current config without PATCH when already enabled."""
     with respx.mock:
@@ -265,7 +241,6 @@ async def test_enable_is_no_op_when_already_enabled() -> None:
     assert result.custom_sql_pools_enabled is True
 
 
-@pytest.mark.asyncio
 async def test_disable_patches_enabled_false_preserving_pools() -> None:
     """disable should PATCH customSQLPoolsEnabled=false and keep existing pools."""
     with respx.mock:
@@ -291,7 +266,6 @@ async def test_disable_patches_enabled_false_preserving_pools() -> None:
     assert isinstance(result, SqlPoolsConfiguration)
 
 
-@pytest.mark.asyncio
 async def test_enable_propagates_not_found_on_404() -> None:
     """enable propagates NotFound when get_configuration returns 404.
 
@@ -306,7 +280,6 @@ async def test_enable_propagates_not_found_on_404() -> None:
                 await sql_pools.enable(client, _WS_ID)
 
 
-@pytest.mark.asyncio
 async def test_disable_propagates_not_found_on_404() -> None:
     """disable propagates NotFound when get_configuration returns 404.
 
@@ -321,7 +294,6 @@ async def test_disable_propagates_not_found_on_404() -> None:
                 await sql_pools.disable(client, _WS_ID)
 
 
-@pytest.mark.asyncio
 async def test_disable_is_no_op_when_already_disabled() -> None:
     """disable should return current config without PATCH when already disabled."""
     with respx.mock:
@@ -515,7 +487,6 @@ _POOLS_WITH_HEADROOM: dict[str, object] = {
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_create_pool_appends_and_patches() -> None:
     """create_pool should GET, append the new pool, and PATCH the full list."""
     new_pool = SqlPool.model_validate(
@@ -546,7 +517,6 @@ async def test_create_pool_appends_and_patches() -> None:
     assert len(pool_names) == 3  # 2 original + 1 new
 
 
-@pytest.mark.asyncio
 async def test_create_pool_raises_already_exists_on_duplicate() -> None:
     """create_pool should raise AlreadyExists when the pool name already exists."""
     duplicate_pool = SqlPool.model_validate(
@@ -564,7 +534,6 @@ async def test_create_pool_raises_already_exists_on_duplicate() -> None:
                 await sql_pools.create_pool(client, _WS_ID, duplicate_pool)
 
 
-@pytest.mark.asyncio
 async def test_create_pool_single_classifier_value() -> None:
     """create_pool should handle a classifier with a single value list."""
     new_pool = SqlPool.model_validate(
@@ -592,7 +561,6 @@ async def test_create_pool_single_classifier_value() -> None:
     assert new["classifier"]["value"] == ["OnlyApp"]
 
 
-@pytest.mark.asyncio
 async def test_create_pool_multiple_classifier_values() -> None:
     """create_pool should preserve multiple classifier values."""
     new_pool = SqlPool.model_validate(
@@ -625,7 +593,6 @@ async def test_create_pool_multiple_classifier_values() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_update_pool_raises_not_found_for_missing_name() -> None:
     """update_pool should raise NotFound when the pool name does not exist."""
     with respx.mock:
@@ -638,7 +605,6 @@ async def test_update_pool_raises_not_found_for_missing_name() -> None:
                 )
 
 
-@pytest.mark.asyncio
 async def test_update_pool_partial_update_preserves_other_fields() -> None:
     """update_pool should preserve omitted fields unchanged."""
     with respx.mock:
@@ -661,7 +627,6 @@ async def test_update_pool_partial_update_preserves_other_fields() -> None:
     assert etl["classifier"]["value"] == ["ETL", "Load"]
 
 
-@pytest.mark.asyncio
 async def test_update_pool_toggle_is_default() -> None:
     """update_pool can toggle the is_default flag."""
     base_payload: dict[str, object] = {
@@ -690,7 +655,6 @@ async def test_update_pool_toggle_is_default() -> None:
     assert pool_b["isDefault"] is False
 
 
-@pytest.mark.asyncio
 async def test_update_pool_classifier_both_fields() -> None:
     """update_pool replaces classifier type and values when both are supplied."""
     with respx.mock:
@@ -722,7 +686,6 @@ async def test_update_pool_classifier_both_fields() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_delete_pool_removes_named_pool() -> None:
     """delete_pool should GET, drop the named pool, and PATCH."""
     with respx.mock:
@@ -743,7 +706,6 @@ async def test_delete_pool_removes_named_pool() -> None:
     assert len(pool_names) == 2
 
 
-@pytest.mark.asyncio
 async def test_delete_pool_raises_not_found_for_missing_name() -> None:
     """delete_pool should raise NotFound when the pool name does not exist."""
     with respx.mock:
@@ -759,7 +721,6 @@ async def test_delete_pool_raises_not_found_for_missing_name() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_reset_pools_patches_empty_list_preserving_enabled_flag() -> None:
     """reset_pools should PATCH with empty customSQLPools and preserve enabled state."""
     with respx.mock:
@@ -779,7 +740,6 @@ async def test_reset_pools_patches_empty_list_preserving_enabled_flag() -> None:
     assert sent_body["customSQLPoolsEnabled"] is True
 
 
-@pytest.mark.asyncio
 async def test_reset_pools_preserves_disabled_state() -> None:
     """reset_pools keeps customSQLPoolsEnabled=false when the workspace is disabled."""
     with respx.mock:
@@ -799,7 +759,6 @@ async def test_reset_pools_preserves_disabled_state() -> None:
     assert sent_body["customSQLPoolsEnabled"] is False
 
 
-@pytest.mark.asyncio
 async def test_reset_pools_404_returns_none_without_patch() -> None:
     """reset_pools returns None when the workspace has no SQL pools config (never provisioned).
 
@@ -825,7 +784,6 @@ async def test_reset_pools_404_returns_none_without_patch() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_update_pool_classifier_type_without_values_raises() -> None:
     """update_pool raises ValueError when classifier_type is given but classifier_values is not."""
     with respx.mock:
@@ -838,7 +796,6 @@ async def test_update_pool_classifier_type_without_values_raises() -> None:
                 )
 
 
-@pytest.mark.asyncio
 async def test_update_pool_classifier_values_without_type_raises() -> None:
     """update_pool raises ValueError when classifier_values is given but classifier_type is not."""
     with respx.mock:

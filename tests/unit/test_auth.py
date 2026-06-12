@@ -97,7 +97,6 @@ def test_get_credential_interactive_returns_sync_adapter() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_sync_adapter_get_token_returns_token_from_inner() -> None:
     """get_token must return the token produced by the inner sync credential."""
     expected_token = AccessToken("my-access-token", 9999999999)
@@ -113,7 +112,6 @@ async def test_sync_adapter_get_token_returns_token_from_inner() -> None:
     )
 
 
-@pytest.mark.asyncio
 async def test_sync_adapter_get_token_runs_in_worker_thread() -> None:
     """get_token must offload the inner call to a worker thread, not the test thread."""
     test_thread = threading.current_thread()
@@ -133,7 +131,6 @@ async def test_sync_adapter_get_token_runs_in_worker_thread() -> None:
     assert inner_thread[0] is not test_thread, "get_token must run in a worker thread"
 
 
-@pytest.mark.asyncio
 async def test_sync_adapter_get_token_dispatches_via_to_thread() -> None:
     """get_token must call asyncio.to_thread with the inner method."""
     inner = MagicMock()
@@ -152,7 +149,6 @@ async def test_sync_adapter_get_token_dispatches_via_to_thread() -> None:
         )
 
 
-@pytest.mark.asyncio
 async def test_sync_adapter_close_dispatches_via_to_thread() -> None:
     """close() must offload the inner close call to a worker thread."""
     inner = MagicMock()
@@ -164,7 +160,6 @@ async def test_sync_adapter_close_dispatches_via_to_thread() -> None:
         mock_to_thread.assert_called_once_with(inner.close)
 
 
-@pytest.mark.asyncio
 async def test_sync_adapter_close_runs_in_worker_thread() -> None:
     """close() must execute inner.close in a worker thread, not the test thread."""
     test_thread = threading.current_thread()
