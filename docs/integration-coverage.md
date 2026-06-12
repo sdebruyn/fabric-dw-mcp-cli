@@ -23,22 +23,24 @@ during these tests.
 |---|---|---|---|
 | `warehouses list` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_warehouses.py#L13) | ✅ | ✅ |
 | `warehouses get` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_warehouses.py#L20) | ✅ | ✅ |
-| `warehouses create` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/conftest.py#L40) [^create-wh] | ✅ | ✅ |
+| `warehouses create` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/conftest.py#L44) [^create-wh] | ✅ | ✅ |
 | `warehouses rename` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_warehouses.py#L29) | ✅ | ✅ |
 | `warehouses delete` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_warehouses.py#L37) | ✅ | ✅ |
 | `warehouses takeover` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_ownership.py#L13) | ✅ | ✅ |
 | `warehouses permissions` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_permissions.py#L44) | ✅ | ✅ |
 
-[^create-wh]: `warehouses.create` is exercised indirectly via the `ephemeral_warehouse` fixture in `conftest.py` (line 40), which is shared by dozens of tests.
+[^create-wh]: `warehouses.create` is exercised indirectly via the `ephemeral_warehouse` fixture in `conftest.py` (line 44), which is shared by dozens of tests.
 
 ### SQL Analytics Endpoints
 
 | Feature | Integration test | CLI | MCP |
 |---|---|---|---|
-| `sql-endpoints list` | ❌ | ✅ | ✅ |
-| `sql-endpoints get` | ❌ | ✅ | ✅ |
-| `sql-endpoints refresh` | ❌ | ✅ | ✅ |
-| `sql-endpoints permissions` | ❌ | ✅ | ✅ |
+| `sql-endpoints list` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_sql_endpoints.py#L44) | ✅ | ✅ |
+| `sql-endpoints get` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_sql_endpoints.py#L81) | ✅ | ✅ |
+| `sql-endpoints refresh` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_sql_endpoints.py#L131) | ✅ | ✅ |
+| `sql-endpoints permissions` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_permissions.py#L70) [^endpoint-permissions] | ✅ | ✅ |
+
+[^endpoint-permissions]: `sql-endpoints permissions` delegates to `permissions.list_item_access`, which is item-type-agnostic. The integration test at line 70 exercises the non-admin error path against a live warehouse item (the same code path the endpoint follows); the admin happy-path (lines 44 and 57) is conditionally skipped unless `FABRIC_TEST_IS_ADMIN=1` is set.
 
 ### SQL Pools
 
@@ -66,18 +68,18 @@ during these tests.
 | `audit disable` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_audit.py#L19) | ✅ | ✅ |
 | `audit set-retention` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_audit.py#L48) | ✅ | ✅ |
 | `audit set-groups` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_audit.py#L30) | ✅ | ✅ |
-| `audit add-group` | ❌ | ✅ | ✅ |
-| `audit remove-group` | ❌ | ✅ | ✅ |
+| `audit add-group` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_audit.py#L67) | ✅ | ✅ |
+| `audit remove-group` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_audit.py#L129) | ✅ | ✅ |
 
 ### Snapshots
 
 | Feature | Integration test | CLI | MCP |
 |---|---|---|---|
-| `snapshots list` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_snapshots.py#L13) | ✅ | ✅ |
-| `snapshots create` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_snapshots.py#L13) | ✅ | ✅ |
-| `snapshots rename` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_snapshots.py#L13) | ✅ | ✅ |
-| `snapshots delete` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_snapshots.py#L13) | ✅ | ✅ |
-| `snapshots roll` (roll timestamp) | ❌ | ✅ | ✅ |
+| `snapshots list` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_snapshots.py#L15) | ✅ | ✅ |
+| `snapshots create` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_snapshots.py#L15) | ✅ | ✅ |
+| `snapshots rename` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_snapshots.py#L15) | ✅ | ✅ |
+| `snapshots delete` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_snapshots.py#L15) | ✅ | ✅ |
+| `snapshots roll` (roll timestamp) | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_snapshots.py#L31) | ✅ | ✅ |
 
 ### Restore Points
 
@@ -96,38 +98,56 @@ during these tests.
 
 | Feature | Integration test | CLI | MCP |
 |---|---|---|---|
-| `tables list` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_tables.py#L24) | ✅ | ✅ |
-| `tables read` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_tables.py#L29) | ✅ | ✅ |
-| `tables create` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_tables.py#L29) | ✅ | ✅ |
-| `tables delete` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_tables.py#L29) | ✅ | ✅ |
-| `tables clear` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_tables.py#L29) | ✅ | ✅ |
+| `tables list` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_tables.py#L41) | ✅ | ✅ |
+| `tables read` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_tables.py#L46) | ✅ | ✅ |
+| `tables create` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_tables.py#L46) | ✅ | ✅ |
+| `tables delete` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_tables.py#L46) | ✅ | ✅ |
+| `tables clear` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_tables.py#L46) | ✅ | ✅ |
+| `tables clone` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_tables.py#L79) | ✅ | ✅ |
+| `tables clone` (point-in-time) | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_tables.py#L118) [^clone-at] | ✅ | ✅ |
+| `tables rename` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_tables.py#L167) | ✅ | ✅ |
+
+[^clone-at]: The point-in-time clone test (`clone_table` with an `AT` timestamp) is skipped at runtime when the engine rejects the timestamp because the freshly-created source table has no committed history at the requested instant. This is an expected SQL engine constraint, not a code defect; the code path is verified on every run where the engine accepts the timestamp.
 
 ### Views
 
 | Feature | Integration test | CLI | MCP |
 |---|---|---|---|
-| `views list` | ❌ | ✅ | ✅ |
-| `views read` | ❌ | ✅ | ✅ |
-| `views get` | ❌ | ✅ | ✅ |
-| `views create` | ❌ | ✅ | ✅ |
-| `views update` | ❌ | ✅ | ✅ |
-| `views drop` | ❌ | ✅ | ✅ |
+| `views list` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_views.py#L24) | ✅ | ✅ |
+| `views read` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_views.py#L103) | ✅ | ✅ |
+| `views get` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_views.py#L75) | ✅ | ✅ |
+| `views create` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_views.py#L30) | ✅ | ✅ |
+| `views update` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_views.py#L136) | ✅ | ✅ |
+| `views drop` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_views.py#L161) | ✅ | ✅ |
+| `views rename` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_views.py#L224) | ✅ | ✅ |
 
 ### Schemas
 
 | Feature | Integration test | CLI | MCP |
 |---|---|---|---|
-| `schemas list` | ❌ | ✅ | ✅ |
-| `schemas create` | ❌ | ✅ | ✅ |
-| `schemas delete` | ❌ | ✅ | ✅ |
+| `schemas list` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_schemas.py#L39) | ✅ | ✅ |
+| `schemas create` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_schemas.py#L70) | ✅ | ✅ |
+| `schemas delete` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_schemas.py#L83) [^schemas-delete] | ✅ | ✅ |
+
+[^schemas-delete]: The `test_create_list_delete_roundtrip` test at line 83 covers plain delete. A dedicated cascade test at line 105 covers `delete_schema(cascade=True)`, which drops contained tables before dropping the schema.
+
+### Stored Procedures
+
+| Feature | Integration test | CLI | MCP |
+|---|---|---|---|
+| `procedures list` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_procedures.py#L30) | ✅ | ✅ |
+| `procedures get` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_procedures.py#L87) | ✅ | ✅ |
+| `procedures create` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_procedures.py#L36) | ✅ | ✅ |
+| `procedures update` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_procedures.py#L115) | ✅ | ✅ |
+| `procedures drop` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_procedures.py#L136) | ✅ | ✅ |
 
 ### Queries
 
 | Feature | Integration test | CLI | MCP |
 |---|---|---|---|
-| `queries list` (running queries) | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_queries.py#L9) | ✅ | ✅ |
-| `queries list-connections` | ❌ | ✅ | ✅ |
-| `queries kill` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_queries.py#L14) [^kill] | ✅ | ✅ |
+| `queries list` (running queries) | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_queries.py#L10) | ✅ | ✅ |
+| `queries list-connections` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_queries.py#L22) | ✅ | ✅ |
+| `queries kill` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_queries.py#L15) [^kill] | ✅ | ✅ |
 
 [^kill]: The integration test for `kill` validates input-validation errors against a live warehouse; it does not kill a running session (none exist on an ephemeral warehouse). The happy-path kill path is covered by unit tests.
 
@@ -164,9 +184,14 @@ So a ✅ in "Integration test" gives confidence that the Fabric API contract is 
 
 ### What is NOT covered by these tests
 
-The integration tests run against an ephemeral **Data Warehouse** only — no SQL Analytics Endpoint is ever provisioned.
-This is why every row in the SQL Analytics Endpoints, Views, and Schemas sections is ❌: those features either require a SQL Analytics Endpoint or depend on schema support that is only available on a Lakehouse SQL Endpoint, neither of which exists in the ephemeral test fixture.
-A schema-enabled Lakehouse fixture to provide SQL-endpoint coverage is being added separately.
+The integration tests provision two ephemeral fixtures:
+
+- An **ephemeral Data Warehouse** (`ephemeral_warehouse` / `ephemeral_sql_target` in `conftest.py`) used by warehouse-focused tests (tables, views, schemas, stored procedures, audit, snapshots, restore points, queries, query insights, sql exec).
+- A **schema-enabled Lakehouse** with its paired **SQL Analytics Endpoint** (`ephemeral_lakehouse` / `ephemeral_sql_endpoint` in `conftest.py`) used by the SQL Analytics Endpoint tests. The Lakehouse is created with `enableSchemas=true`; Fabric auto-provisions the SQL endpoint alongside it. The fixture polls until provisioning reaches `Success` (up to 5 minutes) and skips rather than fails if it does not complete in time.
+
+The one remaining ❌ in the coverage table (`restore-points restore`) is intentionally excluded:
+
+- **`restore_in_place`** mutates the warehouse for ~10 minutes and would break concurrent tests. It is covered by unit tests with full LRO mocking.
 
 The integration tests do **not** exercise the upper adapter layers:
 
