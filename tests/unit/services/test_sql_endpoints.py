@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -17,6 +18,7 @@ from azure.core.credentials_async import AsyncTokenCredential
 from fabric_dw.exceptions import FabricServerError, NotFound, PermissionDenied
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import TableSyncStatus, Warehouse, WarehouseKind, Workspace
+from fabric_dw.services.sql_endpoints import list_all_workspaces
 from tests.fixtures.api_payloads import (
     WAREHOUSE_SQL_ENDPOINTS_PAGE1_PAYLOAD,
     WAREHOUSE_SQL_ENDPOINTS_PAGE2_PAYLOAD,
@@ -399,8 +401,6 @@ def _make_ep(ws_id: UUID, ep_id: UUID) -> Warehouse:
 @pytest.mark.asyncio
 async def test_list_all_workspaces_endpoints_aggregates_across_workspaces() -> None:
     """list_all_workspaces must collect endpoints from every visible workspace."""
-    from fabric_dw.services.sql_endpoints import list_all_workspaces  # noqa: PLC0415
-
     ws_a = _make_workspace(_EP_WS_A)
     ws_b = _make_workspace(_EP_WS_B)
     ws_c = _make_workspace(_EP_WS_C)
@@ -412,7 +412,7 @@ async def test_list_all_workspaces_endpoints_aggregates_across_workspaces() -> N
 
     with (
         patch(
-            "fabric_dw.services.workspaces.list_all",
+            "fabric_dw.services.sql_endpoints._list_all_workspaces",
             new=AsyncMock(return_value=[ws_a, ws_b, ws_c]),
         ),
         patch(
@@ -434,10 +434,10 @@ async def test_list_all_workspaces_endpoints_aggregates_across_workspaces() -> N
 
 
 @pytest.mark.asyncio
-async def test_list_all_workspaces_endpoints_skips_permission_denied() -> None:
-    """list_all_workspaces must skip workspaces where PermissionDenied is raised."""
-    from fabric_dw.services.sql_endpoints import list_all_workspaces  # noqa: PLC0415
-
+async def test_list_all_workspaces_endpoints_skips_permission_denied(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """list_all_workspaces must skip workspaces where PermissionDenied is raised and warn."""
     ws_a = _make_workspace(_EP_WS_A)
     ws_b = _make_workspace(_EP_WS_B)
     ws_c = _make_workspace(_EP_WS_C)
@@ -447,8 +447,9 @@ async def test_list_all_workspaces_endpoints_skips_permission_denied() -> None:
     mock_http = AsyncMock()
 
     with (
+        caplog.at_level(logging.WARNING, logger="fabric_dw.sql_endpoints"),
         patch(
-            "fabric_dw.services.workspaces.list_all",
+            "fabric_dw.services.sql_endpoints._list_all_workspaces",
             new=AsyncMock(return_value=[ws_a, ws_b, ws_c]),
         ),
         patch(
@@ -467,13 +468,15 @@ async def test_list_all_workspaces_endpoints_skips_permission_denied() -> None:
     assert len(result) == 2
     ids = {e.id for e in result}
     assert ids == {_EP_A, _EP_C}
+    assert any(f"WS-{_EP_WS_B}" in r.message for r in caplog.records)
+    assert any("skipped 1 of 3" in r.message for r in caplog.records)
 
 
 @pytest.mark.asyncio
-async def test_list_all_workspaces_endpoints_skips_not_found() -> None:
-    """list_all_workspaces must skip workspaces where NotFound is raised."""
-    from fabric_dw.services.sql_endpoints import list_all_workspaces  # noqa: PLC0415
-
+async def test_list_all_workspaces_endpoints_skips_not_found(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """list_all_workspaces must skip workspaces where NotFound is raised and warn."""
     ws_a = _make_workspace(_EP_WS_A)
     ws_b = _make_workspace(_EP_WS_B)
     ws_c = _make_workspace(_EP_WS_C)
@@ -483,8 +486,9 @@ async def test_list_all_workspaces_endpoints_skips_not_found() -> None:
     mock_http = AsyncMock()
 
     with (
+        caplog.at_level(logging.WARNING, logger="fabric_dw.sql_endpoints"),
         patch(
-            "fabric_dw.services.workspaces.list_all",
+            "fabric_dw.services.sql_endpoints._list_all_workspaces",
             new=AsyncMock(return_value=[ws_a, ws_b, ws_c]),
         ),
         patch(
@@ -503,3 +507,5 @@ async def test_list_all_workspaces_endpoints_skips_not_found() -> None:
     assert len(result) == 2
     ids = {e.id for e in result}
     assert ids == {_EP_A, _EP_C}
+    assert any(f"WS-{_EP_WS_B}" in r.message for r in caplog.records)
+    assert any("skipped 1 of 3" in r.message for r in caplog.records)
