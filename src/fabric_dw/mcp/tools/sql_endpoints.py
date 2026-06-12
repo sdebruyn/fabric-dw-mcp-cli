@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
@@ -11,11 +12,13 @@ from mcp.server.fastmcp.exceptions import ToolError
 from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
 from fabric_dw.mcp._guards import assert_workspace_allowed, assert_writes_allowed
-from fabric_dw.mcp._helpers import fabric_err
+from fabric_dw.mcp._helpers import fabric_err, resolve_item
 from fabric_dw.services import permissions as _permissions_svc
 from fabric_dw.services import sql_endpoints
 
 __all__ = ["register"]
+
+_log = logging.getLogger(__name__)
 
 
 def register(mcp: FastMCP) -> None:  # noqa: PLR0915
@@ -42,10 +45,12 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         ctx = get_context()
         try:
             if all_workspaces:
+                _log.debug("list_sql_endpoints all_workspaces=True")
                 result = await sql_endpoints.list_all_workspaces(ctx.http)
             else:
                 ws_id = await ctx.resolver.workspace_id(workspace)
                 assert_workspace_allowed(workspace, str(ws_id))
+                _log.debug("list_sql_endpoints ws=%s", ws_id)
                 result = await sql_endpoints.list_endpoints(ctx.http, ws_id)
         except FabricError as exc:
             raise fabric_err(exc) from exc
@@ -57,9 +62,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, item = await resolve_item(ctx.resolver, workspace, endpoint)
             assert_workspace_allowed(workspace, str(ws_id))
-            item = await ctx.resolver.item(workspace, endpoint)
+            _log.debug("get_sql_endpoint ws=%s item=%s", ws_id, item.id)
             result = await sql_endpoints.get_endpoint(ctx.http, ws_id, item.id)
         except FabricError as exc:
             raise fabric_err(exc) from exc
@@ -87,9 +92,14 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, item = await resolve_item(ctx.resolver, workspace, endpoint)
             assert_workspace_allowed(workspace, str(ws_id))
-            item = await ctx.resolver.item(workspace, endpoint)
+            _log.debug(
+                "refresh_sql_endpoint_metadata ws=%s item=%s recreate=%s",
+                ws_id,
+                item.id,
+                recreate_tables,
+            )
             statuses = await sql_endpoints.refresh_metadata(
                 ctx.http, ws_id, item.id, recreate_tables=recreate_tables
             )
@@ -110,9 +120,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, item = await resolve_item(ctx.resolver, workspace, sql_endpoint)
             assert_workspace_allowed(workspace, str(ws_id))
-            item = await ctx.resolver.item(workspace, sql_endpoint)
+            _log.debug("get_sql_endpoint_permissions ws=%s item=%s", ws_id, item.id)
             result = await _permissions_svc.list_item_access(ctx.http, ws_id, item.id)
         except FabricError as exc:
             raise fabric_err(exc) from exc

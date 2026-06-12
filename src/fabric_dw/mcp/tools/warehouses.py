@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
@@ -15,12 +16,14 @@ from fabric_dw.mcp._guards import (
     assert_workspace_allowed,
     assert_writes_allowed,
 )
-from fabric_dw.mcp._helpers import fabric_err
+from fabric_dw.mcp._helpers import fabric_err, resolve_item
 from fabric_dw.services import ownership as ownership_svc
 from fabric_dw.services import permissions as _permissions_svc
 from fabric_dw.services import warehouses
 
 __all__ = ["register"]
+
+_log = logging.getLogger(__name__)
 
 
 def register(mcp: FastMCP) -> None:  # noqa: PLR0915
@@ -47,10 +50,12 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         ctx = get_context()
         try:
             if all_workspaces:
+                _log.debug("list_warehouses all_workspaces=True")
                 result = await warehouses.list_all_workspaces(ctx.http)
             else:
                 ws_id = await ctx.resolver.workspace_id(workspace)
                 assert_workspace_allowed(workspace, str(ws_id))
+                _log.debug("list_warehouses ws=%s", ws_id)
                 result = await warehouses.list_warehouses(ctx.http, ws_id)
         except FabricError as exc:
             raise fabric_err(exc) from exc
@@ -62,9 +67,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
             assert_workspace_allowed(workspace, str(ws_id))
-            item = await ctx.resolver.item(workspace, warehouse)
+            _log.debug("get_warehouse ws=%s item=%s", ws_id, item.id)
             result = await warehouses.get_warehouse(ctx.http, ws_id, item.id)
         except FabricError as exc:
             raise fabric_err(exc) from exc
@@ -84,11 +89,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         try:
             ws_id = await ctx.resolver.workspace_id(workspace)
             assert_workspace_allowed(workspace, str(ws_id))
+            _log.debug("create_warehouse ws=%s name=%r", ws_id, name)
             result = await warehouses.create(
                 ctx.http, ws_id, name, collation=collation, description=description
             )
         except FabricError as exc:
             raise fabric_err(exc) from exc
+        ctx.resolver.clear_negative_cache()
         return result.model_dump(by_alias=True, mode="json")
 
     @mcp.tool(name="rename_warehouse")
@@ -103,14 +110,15 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
             assert_workspace_allowed(workspace, str(ws_id))
-            item = await ctx.resolver.item(workspace, warehouse)
+            _log.debug("rename_warehouse ws=%s item=%s new=%r", ws_id, item.id, new_name)
             result = await warehouses.rename(
                 ctx.http, ws_id, item.id, new_name, description=description
             )
         except FabricError as exc:
             raise fabric_err(exc) from exc
+        ctx.resolver.clear_negative_cache()
         return result.model_dump(by_alias=True, mode="json")
 
     @mcp.tool(name="delete_warehouse")
@@ -121,9 +129,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
             assert_workspace_allowed(workspace, str(ws_id))
-            item = await ctx.resolver.item(workspace, warehouse)
+            _log.debug("delete_warehouse ws=%s item=%s", ws_id, item.id)
             await warehouses.delete(ctx.http, ws_id, item.id)
         except FabricError as exc:
             raise fabric_err(exc) from exc
@@ -136,9 +144,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
             assert_workspace_allowed(workspace, str(ws_id))
-            item = await ctx.resolver.item(workspace, warehouse)
+            _log.debug("takeover_warehouse ws=%s item=%s", ws_id, item.id)
             await ownership_svc.takeover(ctx.http, ws_id, item.id)
         except FabricError as exc:
             raise fabric_err(exc) from exc
@@ -155,9 +163,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
             assert_workspace_allowed(workspace, str(ws_id))
-            item = await ctx.resolver.item(workspace, warehouse)
+            _log.debug("get_warehouse_permissions ws=%s item=%s", ws_id, item.id)
             result = await _permissions_svc.list_item_access(ctx.http, ws_id, item.id)
         except FabricError as exc:
             raise fabric_err(exc) from exc

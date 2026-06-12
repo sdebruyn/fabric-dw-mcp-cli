@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Any
 
@@ -15,11 +16,12 @@ from fabric_dw.mcp._guards import (
     assert_workspace_allowed,
     assert_writes_allowed,
 )
-from fabric_dw.mcp._helpers import fabric_err
+from fabric_dw.mcp._helpers import fabric_err, make_sql_target, resolve_item
 from fabric_dw.services import snapshots
-from fabric_dw.sql import SqlTarget
 
 __all__ = ["register"]
+
+_log = logging.getLogger(__name__)
 
 
 def register(mcp: FastMCP) -> None:  # noqa: PLR0915
@@ -31,9 +33,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
             assert_workspace_allowed(workspace, str(ws_id))
-            item = await ctx.resolver.item(workspace, warehouse)
+            _log.debug("list_snapshots ws=%s item=%s", ws_id, item.id)
             result = await snapshots.list_snapshots(ctx.http, ws_id, item.id)
         except FabricError as exc:
             raise fabric_err(exc) from exc
@@ -68,9 +70,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 ) from exc
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
             assert_workspace_allowed(workspace, str(ws_id))
-            item = await ctx.resolver.item(workspace, warehouse)
+            _log.debug("create_snapshot ws=%s item=%s name=%r", ws_id, item.id, name)
             result = await snapshots.create(
                 ctx.http,
                 ws_id,
@@ -81,6 +83,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             )
         except FabricError as exc:
             raise fabric_err(exc) from exc
+        ctx.resolver.clear_negative_cache()
         return result.model_dump(by_alias=True, mode="json")
 
     @mcp.tool(name="rename_snapshot")
@@ -95,9 +98,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, snap_item = await resolve_item(ctx.resolver, workspace, snapshot)
             assert_workspace_allowed(workspace, str(ws_id))
-            snap_item = await ctx.resolver.item(workspace, snapshot)
+            _log.debug("rename_snapshot ws=%s item=%s new=%r", ws_id, snap_item.id, new_name)
             result = await snapshots.rename(
                 ctx.http,
                 ws_id,
@@ -107,6 +110,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             )
         except FabricError as exc:
             raise fabric_err(exc) from exc
+        ctx.resolver.clear_negative_cache()
         return result.model_dump(by_alias=True, mode="json")
 
     @mcp.tool(name="delete_snapshot")
@@ -117,9 +121,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, snap_item = await resolve_item(ctx.resolver, workspace, snapshot)
             assert_workspace_allowed(workspace, str(ws_id))
-            snap_item = await ctx.resolver.item(workspace, snapshot)
+            _log.debug("delete_snapshot ws=%s item=%s", ws_id, snap_item.id)
             await snapshots.delete(ctx.http, ws_id, snap_item.id)
         except FabricError as exc:
             raise fabric_err(exc) from exc
@@ -152,17 +156,12 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 ) from exc
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
             assert_workspace_allowed(workspace, str(ws_id))
-            item = await ctx.resolver.item(workspace, warehouse)
-            if item.connection_string is None:
-                msg = f"warehouse {warehouse!r} has no connection string"
-                raise FabricError(msg)  # noqa: TRY301
-            target = SqlTarget(
-                workspace_id=str(ws_id),
-                database=item.display_name,
-                connection_string=item.connection_string,
+            _log.debug(
+                "roll_snapshot_timestamp ws=%s item=%s snap=%r", ws_id, item.id, snapshot_name
             )
+            target = make_sql_target(ws_id, item, warehouse)
             await snapshots.roll_timestamp(target, snapshot_name, parsed_dt, mode=ctx.auth_mode)
         except FabricError as exc:
             raise fabric_err(exc) from exc

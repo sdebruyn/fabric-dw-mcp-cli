@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
@@ -14,14 +14,20 @@ from fabric_dw.mcp._guards import (
     assert_workspace_allowed,
     assert_writes_allowed,
 )
-from fabric_dw.mcp._helpers import fabric_err, require_warehouse
+from fabric_dw.mcp._helpers import (
+    make_sql_target,
+    require_warehouse,
+    resolve_item,
+    tool_err,
+)
 from fabric_dw.services import schemas as schemas_svc
-from fabric_dw.sql import SqlTarget
 
 __all__ = ["register"]
 
+_log = logging.getLogger(__name__)
 
-def register(mcp: FastMCP) -> None:  # noqa: PLR0915
+
+def register(mcp: FastMCP) -> None:
     """Register schema tools against *mcp*."""
 
     @mcp.tool(name="list_schemas")
@@ -42,20 +48,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
             assert_workspace_allowed(workspace, str(ws_id))
-            entry = await ctx.resolver.item(workspace, item)
-            if entry.connection_string is None:
-                msg = f"item {item!r} has no connection string; cannot query schemas"
-                raise FabricError(msg)  # noqa: TRY301
-            target = SqlTarget(
-                workspace_id=str(ws_id),
-                database=entry.display_name,
-                connection_string=entry.connection_string,
-            )
+            _log.debug("list_schemas ws=%s item=%s", ws_id, entry.id)
+            target = make_sql_target(ws_id, entry, item)
             result = await schemas_svc.list_schemas(target, mode=ctx.auth_mode)
         except (ValueError, FabricError) as exc:
-            raise fabric_err(exc) if isinstance(exc, FabricError) else ToolError(str(exc)) from exc
+            raise tool_err(exc) from exc
         return [s.model_dump(mode="json") for s in result]
 
     @mcp.tool(name="create_schema")
@@ -74,21 +73,14 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
             assert_workspace_allowed(workspace, str(ws_id))
-            entry = await ctx.resolver.item(workspace, item)
             require_warehouse(entry, item)
-            if entry.connection_string is None:
-                msg = f"item {item!r} has no connection string; cannot create schemas"
-                raise FabricError(msg)  # noqa: TRY301
-            target = SqlTarget(
-                workspace_id=str(ws_id),
-                database=entry.display_name,
-                connection_string=entry.connection_string,
-            )
+            _log.debug("create_schema ws=%s item=%s name=%r", ws_id, entry.id, name)
+            target = make_sql_target(ws_id, entry, item)
             result = await schemas_svc.create_schema(target, name, mode=ctx.auth_mode)
         except (ValueError, FabricError) as exc:
-            raise fabric_err(exc) if isinstance(exc, FabricError) else ToolError(str(exc)) from exc
+            raise tool_err(exc) from exc
         return result.model_dump(mode="json")
 
     @mcp.tool(name="delete_schema")
@@ -123,19 +115,12 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
             assert_workspace_allowed(workspace, str(ws_id))
-            entry = await ctx.resolver.item(workspace, item)
             require_warehouse(entry, item)
-            if entry.connection_string is None:
-                msg = f"item {item!r} has no connection string; cannot delete schemas"
-                raise FabricError(msg)  # noqa: TRY301
-            target = SqlTarget(
-                workspace_id=str(ws_id),
-                database=entry.display_name,
-                connection_string=entry.connection_string,
-            )
+            _log.debug("delete_schema ws=%s item=%s name=%r", ws_id, entry.id, name)
+            target = make_sql_target(ws_id, entry, item)
             await schemas_svc.delete_schema(target, name, cascade=cascade, mode=ctx.auth_mode)
         except (ValueError, FabricError) as exc:
-            raise fabric_err(exc) if isinstance(exc, FabricError) else ToolError(str(exc)) from exc
+            raise tool_err(exc) from exc
         return {"deleted": True}

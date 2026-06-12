@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -15,6 +16,8 @@ from fabric_dw.services import workspaces
 
 __all__ = ["register"]
 
+_log = logging.getLogger(__name__)
+
 
 def register(mcp: FastMCP) -> None:
     """Register workspace tools against *mcp*."""
@@ -22,6 +25,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(name="list_workspaces")
     async def list_workspaces() -> list[dict[str, Any]]:
         """List all Fabric workspaces the caller has access to."""
+        _log.debug("list_workspaces called")
         ctx = get_context()
         try:
             result = await workspaces.list_all(ctx.http)
@@ -37,6 +41,7 @@ def register(mcp: FastMCP) -> None:
         try:
             ws_id = await ctx.resolver.workspace_id(workspace)
             assert_workspace_allowed(workspace, str(ws_id))
+            _log.debug("get_workspace ws=%s", ws_id)
             result = await workspaces.get(ctx.http, ws_id)
         except FabricError as exc:
             raise fabric_err(exc) from exc
@@ -51,6 +56,7 @@ def register(mcp: FastMCP) -> None:
         try:
             ws_id = await ctx.resolver.workspace_id(workspace)
             assert_workspace_allowed(workspace, str(ws_id))
+            _log.debug("set_workspace_collation ws=%s collation=%r", ws_id, collation)
             await workspaces.set_collation(ctx.http, ws_id, collation)
         except ValueError as exc:
             raise ToolError(str(exc)) from exc

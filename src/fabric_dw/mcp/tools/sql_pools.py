@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any
+import logging
+from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
+from pydantic import Field
 
 from fabric_dw.exceptions import AlreadyExists, FabricError, NotFound
 from fabric_dw.mcp._context import get_context
@@ -19,6 +21,8 @@ from fabric_dw.models import SqlPool, SqlPoolClassifier
 from fabric_dw.services import sql_pools as sql_pools_svc
 
 __all__ = ["register"]
+
+_log = logging.getLogger(__name__)
 
 
 def register(mcp: FastMCP) -> None:  # noqa: PLR0915
@@ -36,6 +40,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         try:
             ws_id = await ctx.resolver.workspace_id(workspace)
             assert_workspace_allowed(workspace, str(ws_id))
+            _log.debug("get_sql_pools_configuration ws=%s", ws_id)
             result = await sql_pools_svc.get_configuration(ctx.http, ws_id)
         except FabricError as exc:
             raise fabric_err(exc) from exc
@@ -52,6 +57,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         try:
             ws_id = await ctx.resolver.workspace_id(workspace)
             assert_workspace_allowed(workspace, str(ws_id))
+            _log.debug("list_sql_pools ws=%s", ws_id)
             config = await sql_pools_svc.get_configuration(ctx.http, ws_id)
         except FabricError as exc:
             raise fabric_err(exc) from exc
@@ -72,6 +78,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         try:
             ws_id = await ctx.resolver.workspace_id(workspace)
             assert_workspace_allowed(workspace, str(ws_id))
+            _log.debug("get_sql_pool ws=%s pool=%r", ws_id, pool_name)
             config = await sql_pools_svc.get_configuration(ctx.http, ws_id)
         except FabricError as exc:
             raise fabric_err(exc) from exc
@@ -84,7 +91,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
     async def create_sql_pool(  # noqa: PLR0913
         workspace: str,
         name: str,
-        max_percent: int,
+        max_percent: Annotated[int, Field(ge=1, le=100)],
         is_default: bool = False,  # noqa: FBT001, FBT002
         optimize_for_reads: bool = True,  # noqa: FBT001, FBT002
         classifier_type: str | None = None,
@@ -130,19 +137,26 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         try:
             ws_id = await ctx.resolver.workspace_id(workspace)
             assert_workspace_allowed(workspace, str(ws_id))
+            _log.debug("create_sql_pool ws=%s name=%r max_percent=%d", ws_id, name, max_percent)
             result = await sql_pools_svc.create_pool(ctx.http, ws_id, pool)
         except AlreadyExists as exc:
             raise ToolError(str(exc)) from exc
         except FabricError as exc:
             raise fabric_err(exc) from exc
-        created = next(p for p in result.custom_sql_pools if p.name == name)
+        created = next((p for p in result.custom_sql_pools if p.name == name), None)
+        if created is None:
+            raise ToolError(  # noqa: TRY003
+                f"pool {name!r} was not found in the API response after creation; "
+                "the pool may have been created but is not yet visible (eventual consistency)"
+            )
+        ctx.resolver.clear_negative_cache()
         return created.model_dump(by_alias=True, mode="json")
 
     @mcp.tool(name="update_sql_pool")
     async def update_sql_pool(  # noqa: PLR0913
         workspace: str,
         name: str,
-        max_percent: int | None = None,
+        max_percent: Annotated[int, Field(ge=1, le=100)] | None = None,
         is_default: bool | None = None,  # noqa: FBT001
         optimize_for_reads: bool | None = None,  # noqa: FBT001
         classifier_type: str | None = None,
@@ -167,6 +181,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         try:
             ws_id = await ctx.resolver.workspace_id(workspace)
             assert_workspace_allowed(workspace, str(ws_id))
+            _log.debug("update_sql_pool ws=%s name=%r", ws_id, name)
             result = await sql_pools_svc.update_pool(
                 ctx.http,
                 ws_id,
@@ -181,7 +196,12 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             raise ToolError(str(exc)) from exc
         except FabricError as exc:
             raise fabric_err(exc) from exc
-        updated = next(p for p in result.custom_sql_pools if p.name == name)
+        updated = next((p for p in result.custom_sql_pools if p.name == name), None)
+        if updated is None:
+            raise ToolError(  # noqa: TRY003
+                f"pool {name!r} was not found in the API response after update; "
+                "the pool may have been updated but is not yet visible (eventual consistency)"
+            )
         return updated.model_dump(by_alias=True, mode="json")
 
     @mcp.tool(name="delete_sql_pool")
@@ -201,6 +221,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         try:
             ws_id = await ctx.resolver.workspace_id(workspace)
             assert_workspace_allowed(workspace, str(ws_id))
+            _log.debug("delete_sql_pool ws=%s pool=%r", ws_id, pool_name)
             await sql_pools_svc.delete_pool(ctx.http, ws_id, pool_name)
         except NotFound as exc:
             raise ToolError(str(exc)) from exc
@@ -225,6 +246,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         try:
             ws_id = await ctx.resolver.workspace_id(workspace)
             assert_workspace_allowed(workspace, str(ws_id))
+            _log.debug("reset_sql_pools ws=%s", ws_id)
             result = await sql_pools_svc.reset_pools(ctx.http, ws_id)
         except FabricError as exc:
             raise fabric_err(exc) from exc
@@ -242,6 +264,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         try:
             ws_id = await ctx.resolver.workspace_id(workspace)
             assert_workspace_allowed(workspace, str(ws_id))
+            _log.debug("enable_sql_pools ws=%s", ws_id)
             result = await sql_pools_svc.enable(ctx.http, ws_id)
         except FabricError as exc:
             raise fabric_err(exc) from exc
@@ -261,6 +284,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         try:
             ws_id = await ctx.resolver.workspace_id(workspace)
             assert_workspace_allowed(workspace, str(ws_id))
+            _log.debug("disable_sql_pools ws=%s", ws_id)
             result = await sql_pools_svc.disable(ctx.http, ws_id)
         except FabricError as exc:
             raise fabric_err(exc) from exc
