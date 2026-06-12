@@ -55,7 +55,7 @@ dependencies = [
     "tenacity>=9",
     "mssql-python>=0.13",
     "filelock>=3.16",
-    "mcp[cli]>=1.0",
+    "mcp[cli]>=1.0,<2",
     "click>=8.2",
     "rich>=14",
     "anyio>=4",
@@ -114,7 +114,7 @@ select = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["ANN", "S101", "PLR2004"]
+"tests/**" = ["ANN", "S101", "PLR2004", "TRY003", "FBT001"]
 "src/fabric_dw/services/**" = ["PLR0913"]
 # Click injects bool flags via decorators; FBT001 is a false-positive for Click commands.
 # PLR0913 fires on commands with --limit/--since/--until; suppress at the CLI layer.
