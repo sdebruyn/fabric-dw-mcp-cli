@@ -4,41 +4,27 @@ from __future__ import annotations
 
 import json as _json
 import logging
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 
 import click
 from rich.console import Console
 from rich.table import Table
 
-from fabric_dw import auth as _auth
-from fabric_dw.cache import LookupCache
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import render
 from fabric_dw.cli.commands._utils import (
     _coro,
     _resolve_item,
+    build_http_client,
+    make_resolver,
     render_permissions_table,
     resolve_workspace_arg,
 )
 from fabric_dw.exceptions import FabricError
-from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import TableSyncStatus
-from fabric_dw.resolver import Resolver
 from fabric_dw.services import permissions as _permissions_svc
 from fabric_dw.services import sql_endpoints as _sql_endpoints_svc
 
 _log = logging.getLogger(__name__)
-
-
-@asynccontextmanager
-async def _build_clients(
-    ctx: CliContext,
-) -> AsyncIterator[tuple[FabricHttpClient, None]]:
-    """Build and yield an HTTP client for endpoint commands."""
-    credential = _auth.get_credential(ctx.auth)
-    async with FabricHttpClient(credential) as http:
-        yield http, None
 
 
 @click.group("sql-endpoints")
@@ -69,12 +55,11 @@ async def list_cmd(ctx: CliContext, workspace: str | None, all_workspaces: bool)
     if not workspace and not all_workspaces:
         raise click.UsageError("Provide WORKSPACE or pass --all-workspaces / -A.")  # noqa: TRY003
     try:
-        async with _build_clients(ctx) as (http, _):
+        async with build_http_client(ctx) as http:
             if all_workspaces:
                 items = await _sql_endpoints_svc.list_all_workspaces(http)
             else:
-                cache = LookupCache()
-                resolver = Resolver(http=http, cache=cache)
+                resolver, _ = make_resolver(http)
                 assert workspace is not None  # noqa: S101 - guarded above
                 ws_id = await resolver.workspace_id(workspace)
                 items = await _sql_endpoints_svc.list_endpoints(http, ws_id)
@@ -95,7 +80,7 @@ async def list_cmd(ctx: CliContext, workspace: str | None, all_workspaces: bool)
 async def get_cmd(ctx: CliContext, workspace: str, endpoint: str) -> None:
     """Get details for ENDPOINT in WORKSPACE (both accept name or GUID)."""
     try:
-        async with _build_clients(ctx) as (http, _):
+        async with build_http_client(ctx) as http:
             ws_id, entry = await _resolve_item(http, workspace, endpoint)
             obj = await _sql_endpoints_svc.get_endpoint(http, ws_id, entry.id)
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
@@ -175,7 +160,7 @@ async def refresh_cmd(
     command) to emit raw JSON instead.
     """
     try:
-        async with _build_clients(ctx) as (http, _):
+        async with build_http_client(ctx) as http:
             ws_id, entry = await _resolve_item(http, workspace, endpoint)
             statuses = await _sql_endpoints_svc.refresh_metadata(
                 http, ws_id, entry.id, recreate_tables=recreate_tables
@@ -207,7 +192,7 @@ async def permissions_cmd(ctx: CliContext, workspace: str | None, endpoint: str)
     """
     ws = resolve_workspace_arg(ctx, workspace)
     try:
-        async with _build_clients(ctx) as (http, _):
+        async with build_http_client(ctx) as http:
             ws_id, entry = await _resolve_item(http, ws, endpoint)
             items = await _permissions_svc.list_item_access(http, ws_id, entry.id)
             if ctx.json_output:

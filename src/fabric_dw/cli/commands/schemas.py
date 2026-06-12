@@ -3,34 +3,24 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 
 import click
 
-from fabric_dw import auth as _auth
 from fabric_dw.cli._context import CliContext
-from fabric_dw.cli._render import confirm, render
+from fabric_dw.cli._render import render
 from fabric_dw.cli.commands._utils import (
     _coro,
     _guard_not_sql_endpoint,
-    _resolve_item,
+    build_http_client,
+    build_sql_target,
+    confirm_destructive,
     resolve_warehouse_arg,
     resolve_workspace_arg,
 )
 from fabric_dw.exceptions import FabricError
-from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.services import schemas as _schemas_svc
-from fabric_dw.sql import SqlTarget
 
 _log = logging.getLogger(__name__)
-
-
-@asynccontextmanager
-async def _build_http_client(ctx: CliContext) -> AsyncIterator[FabricHttpClient]:
-    credential = _auth.get_credential(ctx.auth)
-    async with FabricHttpClient(credential) as http:
-        yield http
 
 
 @click.group("schemas")
@@ -48,17 +38,8 @@ async def list_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> 
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, item)
     try:
-        async with _build_http_client(ctx) as http:
-            ws_id, entry = await _resolve_item(http, ws, wh)
-            if entry.connection_string is None:
-                raise click.ClickException(  # noqa: TRY003
-                    f"Item {entry.display_name!r} has no connection string."
-                )
-            target = SqlTarget(
-                workspace_id=str(ws_id),
-                database=entry.display_name,
-                connection_string=entry.connection_string,
-            )
+        async with build_http_client(ctx) as http:
+            target, _entry = await build_sql_target(http, ws, wh)
             items = await _schemas_svc.list_schemas(target, mode=ctx.auth)
             render(
                 [s.model_dump(mode="json") for s in items],
@@ -85,18 +66,9 @@ async def create_cmd(
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, item)
     try:
-        async with _build_http_client(ctx) as http:
-            ws_id, entry = await _resolve_item(http, ws, wh)
+        async with build_http_client(ctx) as http:
+            target, entry = await build_sql_target(http, ws, wh)
             _guard_not_sql_endpoint(entry)
-            if entry.connection_string is None:
-                raise click.ClickException(  # noqa: TRY003
-                    f"Item {entry.display_name!r} has no connection string."
-                )
-            target = SqlTarget(
-                workspace_id=str(ws_id),
-                database=entry.display_name,
-                connection_string=entry.connection_string,
-            )
             s = await _schemas_svc.create_schema(target, name, mode=ctx.auth)
             render(s.model_dump(mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
@@ -133,30 +105,16 @@ async def delete_cmd(
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, item)
     try:
-        async with _build_http_client(ctx) as http:
-            ws_id, entry = await _resolve_item(http, ws, wh)
+        async with build_http_client(ctx) as http:
+            target, entry = await build_sql_target(http, ws, wh)
             _guard_not_sql_endpoint(entry)
-            if entry.connection_string is None:
-                raise click.ClickException(  # noqa: TRY003
-                    f"Item {entry.display_name!r} has no connection string."
-                )
+            prompt = f"Drop schema [{name}] from {entry.display_name!r} ({entry.id})?"
             if cascade:
-                click.echo(
-                    f"WARNING: --cascade will permanently drop all tables and views "
-                    f"in schema [{name}] on {entry.display_name!r}.",
-                    err=True,
+                prompt = (
+                    f"--cascade will permanently drop all tables and views "
+                    f"in schema [{name}] on {entry.display_name!r}. " + prompt
                 )
-            confirmed = confirm(
-                f"Drop schema [{name}] from {entry.display_name!r} ({entry.id})?",
-                yes=ctx.yes,
-            )
-            if not confirmed:
-                raise click.Abort()  # noqa: TRY301
-            target = SqlTarget(
-                workspace_id=str(ws_id),
-                database=entry.display_name,
-                connection_string=entry.connection_string,
-            )
+            confirm_destructive(prompt, yes=ctx.yes)
             await _schemas_svc.delete_schema(target, name, cascade=cascade, mode=ctx.auth)
             click.echo(f"Schema [{name}] dropped.")
     except click.Abort:

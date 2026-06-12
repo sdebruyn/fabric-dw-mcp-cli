@@ -32,12 +32,12 @@ def cache_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def _make_cm(http: object, sql: object) -> object:
-    """Return an async context manager that yields (http, sql)."""
+def _make_cm(http: object, _sql: object = None) -> object:
+    """Return an async context manager that yields the http client."""
 
     @asynccontextmanager
-    async def _cm(_ctx: object) -> AsyncIterator[tuple[object, object]]:
-        yield http, sql
+    async def _cm(_ctx: object) -> AsyncIterator[object]:
+        yield http
 
     return _cm
 
@@ -62,7 +62,7 @@ class TestWorkspacesList:
             )
         )
         with patch(
-            "fabric_dw.cli.commands.workspaces._build_clients",
+            "fabric_dw.cli.commands.workspaces.build_http_client",
             new=_make_cm(mock_http, None),
         ):
             result = runner.invoke(cli, ["workspaces", "list"])
@@ -85,7 +85,7 @@ class TestWorkspacesList:
             )
         )
         with patch(
-            "fabric_dw.cli.commands.workspaces._build_clients",
+            "fabric_dw.cli.commands.workspaces.build_http_client",
             new=_make_cm(mock_http, None),
         ):
             result = runner.invoke(cli, ["--json", "workspaces", "list"])
@@ -103,7 +103,7 @@ class TestWorkspacesGet:
         mock_http = AsyncMock()
         mock_http.request = AsyncMock(return_value=_make_response(200, WORKSPACE_GET_PAYLOAD))
         with patch(
-            "fabric_dw.cli.commands.workspaces._build_clients",
+            "fabric_dw.cli.commands.workspaces.build_http_client",
             new=_make_cm(mock_http, None),
         ):
             result = runner.invoke(cli, ["workspaces", "get", WS_GUID])
@@ -127,7 +127,7 @@ class TestWorkspacesGet:
             )
         )
         with patch(
-            "fabric_dw.cli.commands.workspaces._build_clients",
+            "fabric_dw.cli.commands.workspaces.build_http_client",
             new=_make_cm(mock_http, None),
         ):
             result = runner.invoke(cli, ["--json", "workspaces", "get", WS_GUID])
@@ -140,7 +140,7 @@ class TestWorkspacesGet:
         mock_http = AsyncMock()
         mock_http.request = AsyncMock(return_value=_make_response(200, WORKSPACE_GET_PAYLOAD))
         with patch(
-            "fabric_dw.cli.commands.workspaces._build_clients",
+            "fabric_dw.cli.commands.workspaces.build_http_client",
             new=_make_cm(mock_http, None),
         ):
             result = runner.invoke(cli, ["--json", "workspaces", "get", WS_GUID])
@@ -164,7 +164,7 @@ class TestWorkspacesGet:
             )
         )
         with patch(
-            "fabric_dw.cli.commands.workspaces._build_clients",
+            "fabric_dw.cli.commands.workspaces.build_http_client",
             new=_make_cm(mock_http, None),
         ):
             result = runner.invoke(cli, ["workspaces", "get", WS_GUID])
@@ -176,7 +176,7 @@ class TestWorkspacesGet:
         mock_http = AsyncMock()
         mock_http.request = AsyncMock(side_effect=NotFound("not found"))
         with patch(
-            "fabric_dw.cli.commands.workspaces._build_clients",
+            "fabric_dw.cli.commands.workspaces.build_http_client",
             new=_make_cm(mock_http, None),
         ):
             result = runner.invoke(cli, ["workspaces", "get", WS_GUID])
@@ -191,7 +191,7 @@ class TestWorkspacesSetCollation:
         mock_http = AsyncMock()
         mock_http.request = AsyncMock(return_value=_make_response(200, "{}"))
         with patch(
-            "fabric_dw.cli.commands.workspaces._build_clients",
+            "fabric_dw.cli.commands.workspaces.build_http_client",
             new=_make_cm(mock_http, None),
         ):
             result = runner.invoke(
@@ -212,7 +212,7 @@ class TestWorkspacesSetCollation:
         _ = cache_env
         mock_http = AsyncMock()
         with patch(
-            "fabric_dw.cli.commands.workspaces._build_clients",
+            "fabric_dw.cli.commands.workspaces.build_http_client",
             new=_make_cm(mock_http, None),
         ):
             result = runner.invoke(
@@ -231,7 +231,7 @@ class TestWorkspacesSetCollation:
         _ = cache_env
         mock_http = AsyncMock()
         with patch(
-            "fabric_dw.cli.commands.workspaces._build_clients",
+            "fabric_dw.cli.commands.workspaces.build_http_client",
             new=_make_cm(mock_http, None),
         ):
             result = runner.invoke(
@@ -266,11 +266,11 @@ class TestWorkspacesDefaultFallback:
         mock_http.request = AsyncMock(return_value=_make_response(200, WORKSPACE_GET_PAYLOAD))
         with (
             patch(
-                "fabric_dw.cli.commands.workspaces._build_clients",
+                "fabric_dw.cli.commands.workspaces.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.workspaces.Resolver.workspace_id",
+                "fabric_dw.resolver.Resolver.workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
         ):

@@ -8,37 +8,22 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-from uuid import UUID
 
 import click
 
-from fabric_dw import auth as _auth
-from fabric_dw.cache import LookupCache
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import confirm, render
-from fabric_dw.cli.commands._utils import _coro, resolve_workspace_arg
+from fabric_dw.cli.commands._utils import (
+    _coro,
+    build_http_client,
+    resolve_workspace_arg,
+    resolve_workspace_id,
+)
 from fabric_dw.exceptions import AlreadyExists, FabricError, NotFound, PermissionDenied
-from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import SqlPool, SqlPoolClassifier
-from fabric_dw.resolver import Resolver
 from fabric_dw.services import sql_pools as _svc
 
 _log = logging.getLogger(__name__)
-
-
-@asynccontextmanager
-async def _build_http_client(ctx: CliContext) -> AsyncIterator[FabricHttpClient]:
-    credential = _auth.get_credential(ctx.auth)
-    async with FabricHttpClient(credential) as http:
-        yield http
-
-
-async def _resolve_workspace(http: FabricHttpClient, workspace: str) -> UUID:
-    cache = LookupCache()
-    resolver = Resolver(http=http, cache=cache)
-    return await resolver.workspace_id(workspace)
 
 
 def _permission_hint(exc: PermissionDenied) -> click.ClickException:
@@ -63,8 +48,8 @@ async def get_cmd(ctx: CliContext, workspace: str | None) -> None:
     """Fetch the SQL Pools configuration for WORKSPACE."""
     ws = resolve_workspace_arg(ctx, workspace)
     try:
-        async with _build_http_client(ctx) as http:
-            ws_id = await _resolve_workspace(http, ws)
+        async with build_http_client(ctx) as http:
+            ws_id = await resolve_workspace_id(http, ws)
             config = await _svc.get_configuration(http, ws_id)
             render(
                 config.model_dump(by_alias=True, mode="json"),
@@ -89,8 +74,8 @@ async def list_cmd(ctx: CliContext, workspace: str | None) -> None:
     """List all SQL pools in WORKSPACE."""
     ws = resolve_workspace_arg(ctx, workspace)
     try:
-        async with _build_http_client(ctx) as http:
-            ws_id = await _resolve_workspace(http, ws)
+        async with build_http_client(ctx) as http:
+            ws_id = await resolve_workspace_id(http, ws)
             config = await _svc.get_configuration(http, ws_id)
             pools = [p.model_dump(by_alias=True, mode="json") for p in config.custom_sql_pools]
             render(pools, json_output=ctx.json_output)
@@ -114,8 +99,8 @@ async def show_cmd(ctx: CliContext, workspace: str | None, name: str) -> None:
     """Show details for a single SQL pool in WORKSPACE."""
     ws = resolve_workspace_arg(ctx, workspace)
     try:
-        async with _build_http_client(ctx) as http:
-            ws_id = await _resolve_workspace(http, ws)
+        async with build_http_client(ctx) as http:
+            ws_id = await resolve_workspace_id(http, ws)
             config = await _svc.get_configuration(http, ws_id)
             pool = next((p for p in config.custom_sql_pools if p.name == name), None)
             if pool is None:
@@ -202,8 +187,8 @@ async def create_cmd(
     )
 
     try:
-        async with _build_http_client(ctx) as http:
-            ws_id = await _resolve_workspace(http, ws)
+        async with build_http_client(ctx) as http:
+            ws_id = await resolve_workspace_id(http, ws)
             result = await _svc.create_pool(http, ws_id, pool)
             render(result.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except AlreadyExists as exc:
@@ -274,8 +259,8 @@ async def update_cmd(
     ws = resolve_workspace_arg(ctx, workspace)
     cv: list[str] | None = list(classifier_values) if classifier_values else None
     try:
-        async with _build_http_client(ctx) as http:
-            ws_id = await _resolve_workspace(http, ws)
+        async with build_http_client(ctx) as http:
+            ws_id = await resolve_workspace_id(http, ws)
             result = await _svc.update_pool(
                 http,
                 ws_id,
@@ -314,8 +299,8 @@ async def delete_cmd(ctx: CliContext, workspace: str | None, name: str, yes: boo
     if not yes and not ctx.yes and not confirm(f"Delete pool {name!r}?", yes=False):
         raise click.Abort()
     try:
-        async with _build_http_client(ctx) as http:
-            ws_id = await _resolve_workspace(http, ws)
+        async with build_http_client(ctx) as http:
+            ws_id = await resolve_workspace_id(http, ws)
             result = await _svc.delete_pool(http, ws_id, name)
             render(result.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except NotFound as exc:
@@ -339,8 +324,8 @@ async def enable_cmd(ctx: CliContext, workspace: str | None) -> None:
     """Enable custom SQL Pools for WORKSPACE (preserves pool configuration)."""
     ws = resolve_workspace_arg(ctx, workspace)
     try:
-        async with _build_http_client(ctx) as http:
-            ws_id = await _resolve_workspace(http, ws)
+        async with build_http_client(ctx) as http:
+            ws_id = await resolve_workspace_id(http, ws)
             result = await _svc.enable(http, ws_id)
             render(
                 result.model_dump(by_alias=True, mode="json"),
@@ -363,8 +348,8 @@ async def disable_cmd(ctx: CliContext, workspace: str | None) -> None:
     """
     ws = resolve_workspace_arg(ctx, workspace)
     try:
-        async with _build_http_client(ctx) as http:
-            ws_id = await _resolve_workspace(http, ws)
+        async with build_http_client(ctx) as http:
+            ws_id = await resolve_workspace_id(http, ws)
             result = await _svc.disable(http, ws_id)
             render(
                 result.model_dump(by_alias=True, mode="json"),
@@ -392,8 +377,8 @@ async def reset_cmd(ctx: CliContext, workspace: str | None, yes: bool) -> None:
     if not yes and not ctx.yes and not confirm("Clear all SQL pools?", yes=False):
         raise click.Abort()
     try:
-        async with _build_http_client(ctx) as http:
-            ws_id = await _resolve_workspace(http, ws)
+        async with build_http_client(ctx) as http:
+            ws_id = await resolve_workspace_id(http, ws)
             result = await _svc.reset_pools(http, ws_id)
             if result is None:
                 click.echo("Workspace has no SQL pools configuration (never provisioned).")

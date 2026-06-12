@@ -40,10 +40,10 @@ def cache_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def _make_cm(http: object, sql: object) -> object:
+def _make_cm(http: object, _sql: object = None) -> object:
     @asynccontextmanager
-    async def _cm(_ctx: object) -> AsyncIterator[tuple[object, object]]:
-        yield http, sql
+    async def _cm(_ctx: object) -> AsyncIterator[object]:
+        yield http
 
     return _cm
 
@@ -73,11 +73,11 @@ class TestWarehousesList:
         mock_http.iter_paginated = MagicMock(return_value=_async_iter([]))
         with (
             patch(
-                "fabric_dw.cli.commands.warehouses._build_clients",
+                "fabric_dw.cli.commands.warehouses.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.warehouses.Resolver.workspace_id",
+                "fabric_dw.resolver.Resolver.workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
         ):
@@ -102,11 +102,11 @@ class TestWarehousesList:
         )
         with (
             patch(
-                "fabric_dw.cli.commands.warehouses._build_clients",
+                "fabric_dw.cli.commands.warehouses.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.warehouses.Resolver.workspace_id",
+                "fabric_dw.resolver.Resolver.workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
         ):
@@ -125,7 +125,7 @@ class TestWarehousesGet:
         mock_http.request = AsyncMock(return_value=_make_response(200, WAREHOUSE_GET_PAYLOAD))
         with (
             patch(
-                "fabric_dw.cli.commands.warehouses._build_clients",
+                "fabric_dw.cli.commands.warehouses.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -141,7 +141,7 @@ class TestWarehousesGet:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.warehouses._build_clients",
+                "fabric_dw.cli.commands.warehouses.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -172,11 +172,11 @@ class TestWarehousesCreate:
         )
         with (
             patch(
-                "fabric_dw.cli.commands.warehouses._build_clients",
+                "fabric_dw.cli.commands.warehouses.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.warehouses.Resolver.workspace_id",
+                "fabric_dw.resolver.Resolver.workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
         ):
@@ -194,7 +194,7 @@ class TestWarehousesRename:
         _cache = LookupCache(path=cache_env / "lookup.json")
         with (
             patch(
-                "fabric_dw.cli.commands.warehouses._build_clients",
+                "fabric_dw.cli.commands.warehouses.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -214,7 +214,7 @@ class TestWarehousesRename:
         _cache = LookupCache(path=cache_env / "lookup.json")
         with (
             patch(
-                "fabric_dw.cli.commands.warehouses._build_clients",
+                "fabric_dw.cli.commands.warehouses.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -240,7 +240,7 @@ class TestWarehousesDelete:
         _cache = LookupCache(path=cache_env / "lookup.json")
         with (
             patch(
-                "fabric_dw.cli.commands.warehouses._build_clients",
+                "fabric_dw.cli.commands.warehouses.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -257,7 +257,7 @@ class TestWarehousesDelete:
         _cache = LookupCache(path=cache_env / "lookup.json")
         with (
             patch(
-                "fabric_dw.cli.commands.warehouses._build_clients",
+                "fabric_dw.cli.commands.warehouses.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -288,7 +288,7 @@ class TestWarehousesListAllWorkspaces:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.warehouses._build_clients",
+                "fabric_dw.cli.commands.warehouses.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -309,7 +309,7 @@ class TestWarehousesListAllWorkspaces:
         _ = cache_env
         mock_http = AsyncMock()
         with patch(
-            "fabric_dw.cli.commands.warehouses._build_clients",
+            "fabric_dw.cli.commands.warehouses.build_http_client",
             new=_make_cm(mock_http, None),
         ):
             result = runner.invoke(cli, ["warehouses", "list", WS_GUID, "-A"])
@@ -325,7 +325,7 @@ class TestWarehousesTakeover:
         mock_http.request = AsyncMock(return_value=_make_response(200, "{}"))
         with (
             patch(
-                "fabric_dw.cli.commands.warehouses._build_clients",
+                "fabric_dw.cli.commands.warehouses.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -341,7 +341,7 @@ class TestWarehousesTakeover:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.warehouses._build_clients",
+                "fabric_dw.cli.commands.warehouses.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -374,11 +374,11 @@ class TestWarehousesDefaultFallback:
         mock_http.iter_paginated = MagicMock(return_value=_async_iter([]))
         with (
             patch(
-                "fabric_dw.cli.commands.warehouses._build_clients",
+                "fabric_dw.cli.commands.warehouses.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.warehouses.Resolver.workspace_id",
+                "fabric_dw.resolver.Resolver.workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
         ):

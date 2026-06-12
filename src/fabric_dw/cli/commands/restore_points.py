@@ -3,42 +3,22 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-from uuid import UUID
 
 import click
 
-from fabric_dw import auth as _auth
-from fabric_dw.cache import LookupCache
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import confirm, render
 from fabric_dw.cli.commands._utils import (
     _coro,
+    build_http_client,
+    resolve_item,
     resolve_warehouse_arg,
     resolve_workspace_arg,
 )
 from fabric_dw.exceptions import FabricError
-from fabric_dw.http_client import FabricHttpClient
-from fabric_dw.resolver import Resolver
 from fabric_dw.services import restore as _restore_svc
 
 _log = logging.getLogger(__name__)
-
-
-@asynccontextmanager
-async def _build_http_client(ctx: CliContext) -> AsyncIterator[FabricHttpClient]:
-    credential = _auth.get_credential(ctx.auth)
-    async with FabricHttpClient(credential) as http:
-        yield http
-
-
-async def _resolve_wh(http: FabricHttpClient, workspace: str, warehouse: str) -> tuple[UUID, UUID]:
-    cache = LookupCache()
-    resolver = Resolver(http=http, cache=cache)
-    ws_id = await resolver.workspace_id(workspace)
-    entry = await resolver.item(workspace, warehouse)
-    return ws_id, entry.id
 
 
 @click.group("restore-points")
@@ -56,8 +36,9 @@ async def list_cmd(ctx: CliContext, workspace: str | None, warehouse: str | None
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, warehouse)
     try:
-        async with _build_http_client(ctx) as http:
-            ws_id, wh_id = await _resolve_wh(http, ws, wh)
+        async with build_http_client(ctx) as http:
+            ws_id, entry = await resolve_item(http, ws, wh)
+            wh_id = entry.id
             items = await _restore_svc.list_points(http, ws_id, wh_id)
             render(
                 [rp.model_dump(by_alias=True, mode="json") for rp in items],
@@ -82,8 +63,9 @@ async def get_cmd(
 ) -> None:
     """Get a restore point by RESTORE_POINT_ID for WAREHOUSE in WORKSPACE."""
     try:
-        async with _build_http_client(ctx) as http:
-            ws_id, wh_id = await _resolve_wh(http, workspace, warehouse)
+        async with build_http_client(ctx) as http:
+            ws_id, entry = await resolve_item(http, workspace, warehouse)
+            wh_id = entry.id
             rp = await _restore_svc.get_point(http, ws_id, wh_id, restore_point_id)
             render(rp.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except FabricError as exc:
@@ -108,8 +90,9 @@ async def create_cmd(
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, warehouse)
     try:
-        async with _build_http_client(ctx) as http:
-            ws_id, wh_id = await _resolve_wh(http, ws, wh)
+        async with build_http_client(ctx) as http:
+            ws_id, entry = await resolve_item(http, ws, wh)
+            wh_id = entry.id
             rp = await _restore_svc.create_point(
                 http, ws_id, wh_id, name=name, description=description
             )
@@ -136,8 +119,9 @@ async def rename_cmd(
 ) -> None:
     """Rename RESTORE_POINT_ID to NEW_NAME on WAREHOUSE in WORKSPACE."""
     try:
-        async with _build_http_client(ctx) as http:
-            ws_id, wh_id = await _resolve_wh(http, workspace, warehouse)
+        async with build_http_client(ctx) as http:
+            ws_id, entry = await resolve_item(http, workspace, warehouse)
+            wh_id = entry.id
             rp = await _restore_svc.update_point(
                 http,
                 ws_id,
@@ -170,8 +154,9 @@ async def delete_cmd(
     You will be asked to confirm unless --yes is passed.
     """
     try:
-        async with _build_http_client(ctx) as http:
-            ws_id, wh_id = await _resolve_wh(http, workspace, warehouse)
+        async with build_http_client(ctx) as http:
+            ws_id, entry = await resolve_item(http, workspace, warehouse)
+            wh_id = entry.id
             confirmed = confirm(
                 f"Delete restore point {restore_point_id!r} on warehouse in {workspace!r}?",
                 yes=ctx.yes,
@@ -206,8 +191,9 @@ async def restore_cmd(
     Pass --yes to skip the prompt for automation.
     """
     try:
-        async with _build_http_client(ctx) as http:
-            ws_id, wh_id = await _resolve_wh(http, workspace, warehouse)
+        async with build_http_client(ctx) as http:
+            ws_id, entry = await resolve_item(http, workspace, warehouse)
+            wh_id = entry.id
             if not ctx.yes:
                 rp = await _restore_svc.get_point(http, ws_id, wh_id, restore_point_id)
                 when = rp.event_date_time.isoformat() if rp.event_date_time else "unknown"

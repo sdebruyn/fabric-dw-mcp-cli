@@ -113,7 +113,27 @@ class TestParseQualifiedName:
         with pytest.raises(ValueError, match="substring not found"):
             parse_qualified_name("nodothere")
 
-    def test_leading_dot_gives_empty_schema(self) -> None:
-        schema, obj = parse_qualified_name(".table")
-        assert schema == ""
-        assert obj == "table"
+    def test_leading_dot_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="schema part must not be empty"):
+            parse_qualified_name(".table")
+
+    def test_trailing_dot_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="object part must not be empty"):
+            parse_qualified_name("schema.")
+
+    def test_only_dot_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="schema part must not be empty"):
+            parse_qualified_name(".")
+
+    def test_whitespace_schema_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="schema part must not be empty"):
+            parse_qualified_name("  .table")
+
+    def test_whitespace_object_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="object part must not be empty"):
+            parse_qualified_name("schema.  ")
+
+    def test_valid_dbo_table_returns_tuple(self) -> None:
+        schema, obj = parse_qualified_name("dbo.t")
+        assert schema == "dbo"
+        assert obj == "t"

@@ -38,10 +38,10 @@ def cache_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def _make_cm(http: object, sql: object) -> object:
+def _make_cm(http: object, _sql: object = None) -> object:
     @asynccontextmanager
-    async def _cm(_ctx: object) -> AsyncIterator[tuple[object, object]]:
-        yield http, sql
+    async def _cm(_ctx: object) -> AsyncIterator[object]:
+        yield http
 
     return _cm
 
@@ -97,11 +97,11 @@ class TestEndpointsList:
         mock_http.iter_paginated = MagicMock(return_value=_async_iter([]))
         with (
             patch(
-                "fabric_dw.cli.commands.sql_endpoints._build_clients",
+                "fabric_dw.cli.commands.sql_endpoints.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_endpoints.Resolver.workspace_id",
+                "fabric_dw.resolver.Resolver.workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
         ):
@@ -128,11 +128,11 @@ class TestEndpointsList:
         mock_http.iter_paginated = MagicMock(return_value=_async_iter([ep_item]))
         with (
             patch(
-                "fabric_dw.cli.commands.sql_endpoints._build_clients",
+                "fabric_dw.cli.commands.sql_endpoints.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_endpoints.Resolver.workspace_id",
+                "fabric_dw.resolver.Resolver.workspace_id",
                 new=AsyncMock(return_value=WS_UUID),
             ),
         ):
@@ -161,7 +161,7 @@ class TestEndpointsListAllWorkspaces:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.sql_endpoints._build_clients",
+                "fabric_dw.cli.commands.sql_endpoints.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -182,7 +182,7 @@ class TestEndpointsListAllWorkspaces:
         _ = cache_env
         mock_http = AsyncMock()
         with patch(
-            "fabric_dw.cli.commands.sql_endpoints._build_clients",
+            "fabric_dw.cli.commands.sql_endpoints.build_http_client",
             new=_make_cm(mock_http, None),
         ):
             result = runner.invoke(cli, ["sql-endpoints", "list", WS_GUID, "-A"])
@@ -198,7 +198,7 @@ class TestEndpointsGet:
         mock_http.request = AsyncMock(return_value=_make_response(200, _ENDPOINT_JSON))
         with (
             patch(
-                "fabric_dw.cli.commands.sql_endpoints._build_clients",
+                "fabric_dw.cli.commands.sql_endpoints.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -214,7 +214,7 @@ class TestEndpointsGet:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.sql_endpoints._build_clients",
+                "fabric_dw.cli.commands.sql_endpoints.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -259,7 +259,7 @@ class TestEndpointsRefresh:
 
         with (
             patch(
-                "fabric_dw.cli.commands.sql_endpoints._build_clients",
+                "fabric_dw.cli.commands.sql_endpoints.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -281,7 +281,7 @@ class TestEndpointsRefresh:
 
         with (
             patch(
-                "fabric_dw.cli.commands.sql_endpoints._build_clients",
+                "fabric_dw.cli.commands.sql_endpoints.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -310,7 +310,7 @@ class TestEndpointsRefresh:
 
         with (
             patch(
-                "fabric_dw.cli.commands.sql_endpoints._build_clients",
+                "fabric_dw.cli.commands.sql_endpoints.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -340,7 +340,7 @@ class TestEndpointsRefresh:
 
         with (
             patch(
-                "fabric_dw.cli.commands.sql_endpoints._build_clients",
+                "fabric_dw.cli.commands.sql_endpoints.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -371,7 +371,7 @@ class TestEndpointsRefresh:
 
         with (
             patch(
-                "fabric_dw.cli.commands.sql_endpoints._build_clients",
+                "fabric_dw.cli.commands.sql_endpoints.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(
@@ -394,7 +394,7 @@ class TestEndpointsRefresh:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.sql_endpoints._build_clients",
+                "fabric_dw.cli.commands.sql_endpoints.build_http_client",
                 new=_make_cm(mock_http, None),
             ),
             patch(

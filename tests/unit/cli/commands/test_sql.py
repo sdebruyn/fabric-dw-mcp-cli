@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
+import click
 import pytest
 from click.testing import CliRunner
 
@@ -17,6 +18,7 @@ from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._main import cli
 from fabric_dw.exceptions import NotFound, PermissionDenied
 from fabric_dw.models import SqlResult, WarehouseKind
+from fabric_dw.sql import SqlTarget
 
 WS_GUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 WH_GUID = "d4e5f6a7-b8c9-0123-def0-123456789abc"
@@ -33,6 +35,14 @@ def runner() -> CliRunner:
 def cache_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     return tmp_path
+
+
+def _make_sql_target() -> SqlTarget:
+    return SqlTarget(
+        workspace_id=WS_GUID,
+        database="SalesWarehouse",
+        connection_string="wh.datawarehouse.fabric.microsoft.com",
+    )
 
 
 def _make_http_cm(http: object) -> object:
@@ -69,12 +79,12 @@ class TestSqlExec:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.sql._build_http_client",
+                "fabric_dw.cli.commands.sql.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.sql._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.sql.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.sql_exec.execute",
@@ -92,12 +102,12 @@ class TestSqlExec:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.sql._build_http_client",
+                "fabric_dw.cli.commands.sql.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.sql._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.sql.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.sql_exec.execute",
@@ -129,12 +139,12 @@ class TestSqlExec:
 
         with (
             patch(
-                "fabric_dw.cli.commands.sql._build_http_client",
+                "fabric_dw.cli.commands.sql.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.sql._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.sql.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.sql_exec.execute",
@@ -165,12 +175,12 @@ class TestSqlExec:
 
         with (
             patch(
-                "fabric_dw.cli.commands.sql._build_http_client",
+                "fabric_dw.cli.commands.sql.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.sql._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.sql.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.sql_exec.execute",
@@ -191,12 +201,12 @@ class TestSqlExec:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.sql._build_http_client",
+                "fabric_dw.cli.commands.sql.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.sql._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.sql.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.sql_exec.execute",
@@ -218,12 +228,12 @@ class TestSqlExec:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.sql._build_http_client",
+                "fabric_dw.cli.commands.sql.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.sql._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.sql.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.sql_exec.execute",
@@ -273,12 +283,12 @@ class TestSqlExecErrors:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.sql._build_http_client",
+                "fabric_dw.cli.commands.sql.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.sql._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+                "fabric_dw.cli.commands.sql.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
                 "fabric_dw.services.sql_exec.execute",
@@ -296,11 +306,11 @@ class TestSqlExecErrors:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.sql._build_http_client",
+                "fabric_dw.cli.commands.sql.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.sql._resolve_item",
+                "fabric_dw.cli.commands.sql.build_sql_target",
                 new=AsyncMock(side_effect=NotFound("not found")),
             ),
         ):
@@ -315,21 +325,20 @@ class TestSqlExecErrors:
     ) -> None:
         _ = cache_env
         mock_http = AsyncMock()
-        no_conn_item = ItemEntry(
-            id=WH_UUID,
-            kind=WarehouseKind.WAREHOUSE,
-            connection_string=None,
-            fetched_at=datetime.now(tz=UTC),
-            display_name="SalesWarehouse",
-        )
+        # build_sql_target raises ClickException when connection_string is None;
+        # simulate that real behaviour so the test exercises the intended guard path.
         with (
             patch(
-                "fabric_dw.cli.commands.sql._build_http_client",
+                "fabric_dw.cli.commands.sql.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.sql._resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, no_conn_item)),
+                "fabric_dw.cli.commands.sql.build_sql_target",
+                new=AsyncMock(
+                    side_effect=click.ClickException(
+                        "Item 'SalesWarehouse' has no connection string."
+                    )
+                ),
             ),
         ):
             result = runner.invoke(

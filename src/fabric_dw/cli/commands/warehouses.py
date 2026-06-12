@@ -4,42 +4,28 @@ from __future__ import annotations
 
 import json as _json
 import logging
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 
 import click
 
-from fabric_dw import auth as _auth
-from fabric_dw.cache import LookupCache
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import confirm, render
 from fabric_dw.cli.commands._utils import (
     _coro,
     _resolve_item,
     _resolve_item_with_cache,
+    build_http_client,
+    make_resolver,
     render_permissions_table,
     resolve_warehouse_arg,
     resolve_workspace_arg,
 )
 from fabric_dw.exceptions import FabricError
-from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import WarehouseKind
-from fabric_dw.resolver import Resolver
 from fabric_dw.services import ownership as _ownership_svc
 from fabric_dw.services import permissions as _permissions_svc
 from fabric_dw.services import warehouses as _warehouses_svc
 
 _log = logging.getLogger(__name__)
-
-
-@asynccontextmanager
-async def _build_clients(
-    ctx: CliContext,
-) -> AsyncIterator[tuple[FabricHttpClient, None]]:
-    """Build and yield an HTTP client for warehouse commands."""
-    credential = _auth.get_credential(ctx.auth)
-    async with FabricHttpClient(credential) as http:
-        yield http, None
 
 
 @click.group("warehouses")
@@ -70,13 +56,12 @@ async def list_cmd(ctx: CliContext, workspace: str | None, all_workspaces: bool)
     if workspace and all_workspaces:
         raise click.UsageError("WORKSPACE and --all-workspaces are mutually exclusive.")  # noqa: TRY003
     try:
-        async with _build_clients(ctx) as (http, _):
+        async with build_http_client(ctx) as http:
             if all_workspaces:
                 items = await _warehouses_svc.list_all_workspaces(http)
             else:
                 ws = resolve_workspace_arg(ctx, workspace)
-                cache = LookupCache()
-                resolver = Resolver(http=http, cache=cache)
+                resolver, _ = make_resolver(http)
                 ws_id = await resolver.workspace_id(ws)
                 items = await _warehouses_svc.list_warehouses(http, ws_id)
             render(
@@ -98,7 +83,7 @@ async def get_cmd(ctx: CliContext, workspace: str | None, warehouse: str | None)
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, warehouse)
     try:
-        async with _build_clients(ctx) as (http, _):
+        async with build_http_client(ctx) as http:
             ws_id, entry = await _resolve_item(http, ws, wh)
             obj = await _warehouses_svc.get_warehouse(http, ws_id, entry.id)
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
@@ -123,9 +108,8 @@ async def create_cmd(
     """Create a new warehouse named NAME in WORKSPACE (name or GUID)."""
     ws = resolve_workspace_arg(ctx, workspace)
     try:
-        async with _build_clients(ctx) as (http, _):
-            cache = LookupCache()
-            resolver = Resolver(http=http, cache=cache)
+        async with build_http_client(ctx) as http:
+            resolver, _ = make_resolver(http)
             ws_id = await resolver.workspace_id(ws)
             obj = await _warehouses_svc.create(
                 http,
@@ -157,7 +141,7 @@ async def rename_cmd(
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, warehouse)
     try:
-        async with _build_clients(ctx) as (http, _):
+        async with build_http_client(ctx) as http:
             ws_id, entry, cache = await _resolve_item_with_cache(http, ws, wh)
             confirmed = confirm(
                 f"Rename warehouse {entry.display_name!r} ({entry.id}) to {new_name!r}?",
@@ -191,7 +175,7 @@ async def delete_cmd(ctx: CliContext, workspace: str | None, warehouse: str | No
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, warehouse)
     try:
-        async with _build_clients(ctx) as (http, _):
+        async with build_http_client(ctx) as http:
             ws_id, entry, cache = await _resolve_item_with_cache(http, ws, wh)
             confirmed = confirm(
                 f"Delete warehouse {entry.display_name!r} ({entry.id})?",
@@ -226,7 +210,7 @@ async def takeover_cmd(ctx: CliContext, workspace: str | None, warehouse: str | 
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, warehouse)
     try:
-        async with _build_clients(ctx) as (http, _):
+        async with build_http_client(ctx) as http:
             ws_id, entry = await _resolve_item(http, ws, wh)
             if entry.kind == WarehouseKind.SQL_ENDPOINT:
                 raise click.UsageError(  # noqa: TRY003, TRY301
@@ -262,7 +246,7 @@ async def permissions_cmd(ctx: CliContext, workspace: str | None, warehouse: str
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, warehouse)
     try:
-        async with _build_clients(ctx) as (http, _):
+        async with build_http_client(ctx) as http:
             ws_id, entry = await _resolve_item(http, ws, wh)
             items = await _permissions_svc.list_item_access(http, ws_id, entry.id)
             if ctx.json_output:
