@@ -1,5 +1,35 @@
 class FabricError(Exception):
-    """Base error for all fabric-dw errors."""
+    """Base error for all fabric-dw errors.
+
+    Attributes:
+        status:     HTTP status code that triggered this error, or None.
+        request_id: Value of the ``x-ms-request-id`` response header, or None.
+        body:       Best-effort parsed JSON response body, or None.
+        hint:       Optional human-readable remediation hint.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: int | None = None,
+        request_id: str | None = None,
+        body: dict[str, object] | None = None,
+        hint: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status = status
+        self.request_id = request_id
+        self.body = body
+        self.hint = hint
+
+    def __str__(self) -> str:
+        msg = super().__str__()
+        if self.hint:
+            msg = f"{msg}\nHint: {self.hint}"
+        if self.request_id:
+            msg = f"{msg} (request-id: {self.request_id})"
+        return msg
 
 
 class AuthError(FabricError):

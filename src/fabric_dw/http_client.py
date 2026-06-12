@@ -2,18 +2,29 @@
 
 Provides:
 - Global rate-limiting via aiolimiter (default 2 RPS).
-- 429 Retry-After handling with a shared asyncio pause gate.
+- 429 Retry-After handling with a monotonic deadline (``_pause_until``).
 - 5xx retry with tenacity exponential back-off (max 3 attempts).
 - Standard error mapping (401 -> AuthError, 403 -> PermissionDenied, 404 -> NotFound).
 - continuationUri pagination.
-- LRO (202 + Location) polling.
+- LRO (202 + Location) polling with jitter.
+
+Retry arithmetic
+~~~~~~~~~~~~~~~~
+Tenacity wraps ``_request_with_retry`` and retries on ``FabricServerError``
+(5xx) up to 3 attempts with exponential back-off.  Inside each attempt,
+``_do_request`` executes a 429-loop of up to ``max_429_retries`` iterations.
+Worst-case total attempts = 3 tenacity attempts x 5 429-retries = 15 sends.
+In practice the 429-loop resets its counter on any non-429 response, so the
+two mechanisms are largely independent.
 """
 
 from __future__ import annotations
 
 import asyncio
 import datetime
+import http
 import logging
+import random
 import time as _time
 from collections.abc import AsyncIterator, Mapping
 from email.utils import parsedate_to_datetime
@@ -29,6 +40,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 from fabric_dw import auth
 from fabric_dw.exceptions import (
     AuthError,
+    FabricError,
     FabricServerError,
     NotFound,
     PermissionDenied,
@@ -44,9 +56,19 @@ __all__ = [
     "_parse_retry_after",
 ]
 
-_MAX_429_RETRIES = 5
-_DEFAULT_POLL_INTERVAL = 2.0
-_TOKEN_REFRESH_BUFFER = 300  # seconds before expiry to refresh
+# Module-level defaults (used as constructor defaults)
+_DEFAULT_RPS: int = 2
+_DEFAULT_TIMEOUT: float = 30.0
+_MAX_429_RETRIES: int = 5
+_DEFAULT_POLL_INTERVAL: float = 2.0
+_TOKEN_REFRESH_BUFFER: float = 300.0  # seconds before expiry to refresh
+
+# Status code → exception class mapping (4xx errors only; 5xx handled separately)
+_STATUS_TO_EXC: dict[int, type[FabricError]] = {
+    http.HTTPStatus.UNAUTHORIZED: AuthError,
+    http.HTTPStatus.FORBIDDEN: PermissionDenied,
+    http.HTTPStatus.NOT_FOUND: NotFound,
+}
 
 
 class HttpBase(StrEnum):
@@ -88,20 +110,51 @@ class FabricHttpClient:
 
         async with FabricHttpClient(credential) as client:
             resp = await client.request("GET", HttpBase.FABRIC, "/workspaces")
+
+    Retry arithmetic
+    ~~~~~~~~~~~~~~~~
+    Tenacity wraps ``_request_with_retry`` and retries on ``FabricServerError``
+    (5xx) up to 3 attempts.  Inside each tenacity attempt, ``_do_request`` runs
+    a 429-loop of up to ``max_429_retries`` iterations.  Worst-case total sends
+    = 3 x ``max_429_retries`` (default 15).  The 429 counter resets on any
+    non-429 response, so both mechanisms are largely independent in practice.
+
+    Args:
+        credential:          Azure credential used to fetch bearer tokens.
+        rps:                 Maximum requests per second (default 2).
+        timeout:             HTTP request timeout in seconds (default 30.0).
+        max_429_retries:     Maximum consecutive 429 responses before raising
+                             ``RateLimitedError`` (default 5).
+        poll_interval:       Default LRO polling interval in seconds (default 2.0).
+        token_refresh_buffer: Seconds before token expiry at which a refresh is
+                             triggered (default 300.0).
     """
 
-    def __init__(self, credential: AsyncTokenCredential, rps: int = 2) -> None:
+    def __init__(  # noqa: PLR0913
+        self,
+        credential: AsyncTokenCredential,
+        rps: int = _DEFAULT_RPS,
+        *,
+        timeout: float = _DEFAULT_TIMEOUT,
+        max_429_retries: int = _MAX_429_RETRIES,
+        poll_interval: float = _DEFAULT_POLL_INTERVAL,
+        token_refresh_buffer: float = _TOKEN_REFRESH_BUFFER,
+    ) -> None:
         self._credential = credential
         self._limiter = AsyncLimiter(max_rate=rps, time_period=1)
         self._http: httpx.AsyncClient | None = None
         self._token: AccessToken | None = None
         self._token_lock = asyncio.Lock()
-        # Pause gate: set when idle, clear when sleeping for a 429
-        self._pause_event = asyncio.Event()
-        self._pause_event.set()
+        self._timeout = timeout
+        self._max_429_retries = max_429_retries
+        self._poll_interval = poll_interval
+        self._token_refresh_buffer = token_refresh_buffer
+        # Monotonic deadline: sleep until this time before each send.
+        # 0.0 means "no pause needed".
+        self._pause_until: float = 0.0
 
     async def __aenter__(self) -> FabricHttpClient:
-        self._http = httpx.AsyncClient(http2=True, timeout=30)
+        self._http = httpx.AsyncClient(http2=True, timeout=self._timeout)
         return self
 
     async def __aexit__(self, *_exc: object) -> None:
@@ -121,7 +174,10 @@ class FabricHttpClient:
         the same time.
         """
         async with self._token_lock:
-            if self._token is None or self._token.expires_on - _time.time() < _TOKEN_REFRESH_BUFFER:
+            if (
+                self._token is None
+                or self._token.expires_on - _time.time() < self._token_refresh_buffer
+            ):
                 self._token = await self._credential.get_token(auth.FABRIC_SCOPE)
         return self._token.token
 
@@ -154,7 +210,7 @@ class FabricHttpClient:
             AuthError: On 401.
             PermissionDenied: On 403.
             NotFound: On 404.
-            RateLimitedError: When the server returns 429 more than _MAX_429_RETRIES times.
+            RateLimitedError: After exactly ``max_429_retries`` consecutive 429 responses.
             FabricServerError: On persistent 5xx errors.
         """
         url = f"{base}{path}"
@@ -185,7 +241,17 @@ class FabricHttpClient:
         json: object = None,
         params: Mapping[str, Any] | None = None,
     ) -> httpx.Response:
-        """Execute a request with rate limiting and 429 handling."""
+        """Execute a request with rate limiting and 429 handling.
+
+        Delegates to:
+        - ``_send_once``: waits for the pause deadline, acquires the rate
+          limiter, and performs the actual HTTP send.
+        - ``_map_status``: maps error status codes to typed exceptions.
+
+        On 429: updates the shared monotonic deadline and retries up to
+        ``_max_429_retries`` consecutive times before raising
+        ``RateLimitedError``.
+        """
         if self._http is None:
             msg = "Client must be used as an async context manager"
             raise RuntimeError(msg)
@@ -193,69 +259,132 @@ class FabricHttpClient:
         consecutive_429 = 0
 
         while True:
-            # Wait if another coroutine is paused for 429
-            await self._pause_event.wait()
+            resp = await self._send_once(method, url, json=json, params=params)
 
-            # Acquire rate-limit token
-            async with self._limiter:
-                token = await self._get_token()
-                headers = {"Authorization": f"Bearer {token}"}
-
-                t0 = _time.monotonic()
-                resp = await self._http.request(
-                    method,
-                    url,
-                    headers=headers,
-                    json=json,
-                    params=params,
-                )
-                elapsed_ms = (_time.monotonic() - t0) * 1000
-
-            if _logger.isEnabledFor(logging.DEBUG):
-                safe_headers = redact_auth_header(dict(headers))
-                _logger.debug(
-                    "%s %s -> %d elapsed_ms=%.1f headers=%r",
-                    method,
-                    url,
-                    resp.status_code,
-                    elapsed_ms,
-                    safe_headers,
-                )
-
-            if resp.status_code == 429:  # noqa: PLR2004
+            if resp.status_code == http.HTTPStatus.TOO_MANY_REQUESTS:
                 consecutive_429 += 1
-                if consecutive_429 >= _MAX_429_RETRIES:
+                if consecutive_429 >= self._max_429_retries:
                     raise RateLimitedError(  # noqa: TRY003
-                        f"Received 429 {consecutive_429} consecutive times for {url}"
+                        f"Received 429 {consecutive_429} consecutive times for {url}",
+                        status=429,
+                        request_id=resp.headers.get("x-ms-request-id"),
                     )
 
                 retry_after_raw = resp.headers.get("Retry-After", "1")
-                wait_s = _parse_retry_after(retry_after_raw)
-
-                # Pause all other concurrent callers while we sleep
-                self._pause_event.clear()
                 try:
-                    await asyncio.sleep(wait_s)
-                finally:
-                    self._pause_event.set()
+                    wait_s = _parse_retry_after(retry_after_raw)
+                except ValueError:
+                    _logger.warning(
+                        "Malformed Retry-After header %r; falling back to 1.0s",
+                        retry_after_raw,
+                    )
+                    wait_s = 1.0
 
+                # Aggregate concurrent 429s: keep the latest (furthest) deadline.
+                deadline = _time.monotonic() + wait_s
+                self._pause_until = max(self._pause_until, deadline)
                 continue
 
             # Reset counter on non-429
             consecutive_429 = 0
-
-            if resp.status_code == 401:  # noqa: PLR2004
-                raise AuthError(f"Authentication failed for {url}: {resp.text}")  # noqa: TRY003
-            if resp.status_code == 403:  # noqa: PLR2004
-                raise PermissionDenied(f"Permission denied for {url}: {resp.text}")  # noqa: TRY003
-            if resp.status_code == 404:  # noqa: PLR2004
-                raise NotFound(f"Resource not found: {url}: {resp.text}")  # noqa: TRY003
-            if resp.status_code >= 500:  # noqa: PLR2004
-                raise FabricServerError(  # noqa: TRY003
-                    f"Server error {resp.status_code} for {url}: {resp.text}"
-                )
-
+            self._map_status(resp, url)
             return resp
+
+    async def _send_once(
+        self,
+        method: str,
+        url: str,
+        *,
+        json: object = None,
+        params: Mapping[str, Any] | None = None,
+    ) -> httpx.Response:
+        """Wait for any pause deadline, fetch token, acquire the limiter, and send.
+
+        The pause-deadline wait happens first so that the token is fetched (and
+        potentially refreshed) immediately before use, regardless of how long the
+        429-induced pause was.  Token fetch happens BEFORE acquiring the
+        rate-limiter slot so that a cache-miss refresh does not consume RPS budget.
+        """
+        assert self._http is not None  # noqa: S101 — enforced by _do_request
+
+        # Honour the 429 pause deadline (aggregated across all concurrent callers).
+        # This must happen before token fetch so the token is always fresh at send time.
+        # Use a while loop so that if another coroutine extends _pause_until while we
+        # are sleeping, we re-check and sleep again rather than waking up early.
+        while True:
+            now = _time.monotonic()
+            remaining = self._pause_until - now
+            if remaining <= 0:
+                break
+            await asyncio.sleep(remaining)
+
+        # Fetch token outside the limiter to avoid wasting RPS budget on refresh.
+        token = await self._get_token()
+
+        headers = {"Authorization": f"Bearer {token}"}
+
+        async with self._limiter:
+            t0 = _time.monotonic()
+            resp = await self._http.request(
+                method,
+                url,
+                headers=headers,
+                json=json,
+                params=params,
+            )
+            elapsed_ms = (_time.monotonic() - t0) * 1000
+
+        if _logger.isEnabledFor(logging.DEBUG):
+            safe_headers = redact_auth_header(dict(headers))
+            request_id = resp.headers.get("x-ms-request-id")
+            _logger.debug(
+                "%s %s -> %d elapsed_ms=%.1f headers=%r",
+                method,
+                url,
+                resp.status_code,
+                elapsed_ms,
+                safe_headers,
+                extra={"request_id": request_id} if request_id else {},
+            )
+
+        return resp
+
+    def _map_status(self, resp: httpx.Response, url: str) -> None:
+        """Raise a typed ``FabricError`` subclass for error status codes.
+
+        Uses ``_STATUS_TO_EXC`` for known 4xx codes; raises ``FabricServerError``
+        for any 5xx response.  JSON body is parsed best-effort (parse errors
+        are silently swallowed).  The ``x-ms-request-id`` header is captured
+        for all raised exceptions.
+        """
+        status = resp.status_code
+        request_id = resp.headers.get("x-ms-request-id")
+
+        # Best-effort JSON body parse
+        body: dict[str, object] | None = None
+        try:
+            parsed = resp.json()
+            if isinstance(parsed, dict):
+                body = parsed
+        except Exception:  # noqa: S110
+            pass
+
+        exc_class = _STATUS_TO_EXC.get(status)
+        if exc_class is not None:
+            raise exc_class(  # noqa: TRY003
+                f"HTTP {status} for {url}: {resp.text}",
+                status=status,
+                request_id=request_id,
+                body=body,
+            )
+
+        if status >= http.HTTPStatus.INTERNAL_SERVER_ERROR:
+            raise FabricServerError(  # noqa: TRY003
+                f"Server error {status} for {url}: {resp.text}",
+                status=status,
+                request_id=request_id,
+                body=body,
+            )
 
     # ------------------------------------------------------------------
     # Pagination
@@ -363,9 +492,10 @@ class FabricHttpClient:
                     f"LRO failed for {location}: {body.get('error', body)}"
                 )
 
-            # Not finished yet - honour Retry-After or fall back to default
+            # Not finished yet - honour Retry-After or fall back to default, with jitter
             retry_after_raw = resp.headers.get("Retry-After")
-            wait_s = (
-                _parse_retry_after(retry_after_raw) if retry_after_raw else _DEFAULT_POLL_INTERVAL
+            base_wait = (
+                _parse_retry_after(retry_after_raw) if retry_after_raw else self._poll_interval
             )
+            wait_s = base_wait + random.uniform(0, base_wait * 0.25)  # noqa: S311
             await asyncio.sleep(wait_s)

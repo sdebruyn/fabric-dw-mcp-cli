@@ -17,12 +17,30 @@ __all__ = [
 
 _SENTINEL = object()
 
+# Build the set of "standard" LogRecord attribute names by inspecting a fresh
+# instance, then add the keys that are added during formatting.
+_STANDARD_LOGRECORD_ATTRS: frozenset[str] = frozenset(
+    logging.LogRecord(
+        name="",
+        level=logging.DEBUG,
+        pathname="",
+        lineno=0,
+        msg="",
+        args=(),
+        exc_info=None,
+    ).__dict__.keys()
+) | {"message", "asctime"}
+
 
 class _JsonFormatter(logging.Formatter):
     """Minimal JSON log formatter.
 
     Each record is emitted as a single-line JSON object with the keys:
     ``level``, ``name``, ``msg``, and ``time`` (ISO-8601 UTC).
+
+    Any extra fields passed via ``extra={...}`` to the logging call are
+    merged into the payload without overwriting the core keys.  Values that
+    are not JSON-serialisable are coerced to ``str``.
     """
 
     def format(self, record: logging.LogRecord) -> str:
@@ -34,7 +52,14 @@ class _JsonFormatter(logging.Formatter):
             "msg": message,
             "time": self.formatTime(record, self.datefmt),
         }
-        return json.dumps(payload)
+
+        # Merge extra= fields without overwriting core keys.
+        extras = {k: v for k, v in record.__dict__.items() if k not in _STANDARD_LOGRECORD_ATTRS}
+        for key, value in extras.items():
+            if key not in payload:
+                payload[key] = value
+
+        return json.dumps(payload, default=str)
 
     def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:  # noqa: N802
         # Always emit UTC ISO-8601

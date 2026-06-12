@@ -72,3 +72,82 @@ class TestRedactAuthHeader:
         result = redact_auth_header(headers)
         # Non-bearer tokens are left as-is (only Bearer is a concern for this codebase)
         assert result["Authorization"] == "Basic dXNlcjpwYXNz"
+
+
+class TestJsonFormatterExtraFields:
+    """Tests for extra= field propagation in _JsonFormatter."""
+
+    def _make_record(self, msg: str = "hello", extra: dict | None = None) -> logging.LogRecord:
+        logger = logging.getLogger("fabric_dw.test_extra")
+        return logger.makeRecord(
+            name="fabric_dw.test_extra",
+            level=logging.DEBUG,
+            fn="test_file.py",
+            lno=1,
+            msg=msg,
+            args=(),
+            exc_info=None,
+            extra=extra,
+        )
+
+    def test_extra_string_field_included(self) -> None:
+        """A string extra field must appear in the formatted JSON output."""
+        formatter = _JsonFormatter()
+        record = self._make_record(extra={"workspace_id": "ws-abc"})
+        parsed = json.loads(formatter.format(record))
+        assert "workspace_id" in parsed, f"workspace_id missing from {parsed}"
+        assert parsed["workspace_id"] == "ws-abc"
+
+    def test_extra_int_field_included(self) -> None:
+        """An integer extra field must appear in the formatted JSON output."""
+        formatter = _JsonFormatter()
+        record = self._make_record(extra={"count": 42})
+        parsed = json.loads(formatter.format(record))
+        assert parsed.get("count") == 42
+
+    def test_extra_non_standard_field_named_level_does_not_overwrite_core_key(self) -> None:
+        """An extra field named 'level' must not overwrite the core 'level' payload key.
+
+        'level' is NOT in _STANDARD_LOGRECORD_ATTRS (only 'levelname' is), so it
+        reaches the extras merge loop.  The guard ``if key not in payload`` must
+        prevent it from clobbering the real level value derived from levelname.
+        """
+        formatter = _JsonFormatter()
+        # Inject a colliding 'level' key via extra — this is NOT a standard LogRecord
+        # attribute, so the extras loop will encounter it.  The guard must block it.
+        record = self._make_record(msg="real message", extra={"level": "EVIL"})
+        parsed = json.loads(formatter.format(record))
+        # Core key must retain the real level, not "EVIL"
+        assert parsed["level"] == "DEBUG", (
+            f"Guard failed: level was overwritten to {parsed['level']!r}"
+        )
+        assert parsed["msg"] == "real message"
+
+    def test_non_serialisable_extra_coerced_to_str(self) -> None:
+        """Non-JSON-serialisable extra values must be coerced to str, not raise."""
+        formatter = _JsonFormatter()
+
+        class Unserializable:
+            def __repr__(self) -> str:
+                return "Unserializable()"
+
+        record = self._make_record(extra={"obj": Unserializable()})
+        # Must not raise
+        output = formatter.format(record)
+        parsed = json.loads(output)
+        assert "obj" in parsed
+        assert isinstance(parsed["obj"], str)
+
+    def test_no_extra_fields_still_valid_json(self) -> None:
+        """A record with no extra fields still produces valid JSON with core keys."""
+        formatter = _JsonFormatter()
+        record = self._make_record()
+        parsed = json.loads(formatter.format(record))
+        assert set(parsed.keys()) >= {"level", "name", "msg", "time"}
+
+    def test_extra_request_id_lands_in_json(self) -> None:
+        """The request_id extra used by http_client must appear in JSON output."""
+        formatter = _JsonFormatter()
+        record = self._make_record(extra={"request_id": "fabric-req-id-001"})
+        parsed = json.loads(formatter.format(record))
+        assert parsed.get("request_id") == "fabric-req-id-001"
