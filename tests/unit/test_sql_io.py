@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import base64
+import io
 import json
+import logging
 from datetime import UTC, datetime
+from decimal import Decimal
+from enum import StrEnum
 from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from fabric_dw.sql_io import OutputFormat, columns_rows_to_arrow, write_arrow
+from fabric_dw.sql_io import OutputFormat, columns_rows_to_arrow, json_safe, write_arrow
 
 # ===========================================================================
 # columns_rows_to_arrow
@@ -60,6 +65,11 @@ class TestColumnsRowsToArrow:
     def test_mixed_type_column_coerced_to_string(self) -> None:
         result = columns_rows_to_arrow(["val"], [(1,), ("two",), (3.0,)])
         assert result.num_rows == 3
+
+    def test_mixed_type_column_emits_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING, logger="fabric_dw.sql_io"):
+            columns_rows_to_arrow(["mixed_col"], [(1,), ("two",), (3.0,)])
+        assert any("mixed_col" in msg for msg in caplog.messages)
 
     def test_preserves_column_order(self) -> None:
         result = columns_rows_to_arrow(["c", "a", "b"], [(1, 2, 3)])
@@ -114,12 +124,33 @@ class TestWriteArrowJson:
         parsed = json.loads(out)
         assert parsed == []
 
-    def test_json_bytes_serialised_as_hex(self, capsys: pytest.CaptureFixture[str]) -> None:
-        table = pa.table({"data": pa.array([b"\xde\xad"], type=pa.large_binary())})
+    def test_json_bytes_serialised_as_base64(self, capsys: pytest.CaptureFixture[str]) -> None:
+        raw = b"\xde\xad"
+        table = pa.table({"data": pa.array([raw], type=pa.large_binary())})
         write_arrow(table, OutputFormat.JSON)
         out = capsys.readouterr().out
         parsed = json.loads(out)
-        assert isinstance(parsed[0]["data"], str)
+        assert parsed[0]["data"] == base64.b64encode(raw).decode("ascii")
+
+    def test_json_writes_to_out_stream(self) -> None:
+        table = columns_rows_to_arrow(["id"], [(1,)])
+        buf = io.StringIO()
+        write_arrow(table, OutputFormat.JSON, out=buf)
+        parsed = json.loads(buf.getvalue())
+        assert parsed[0]["id"] == 1
+
+    def test_json_output_takes_priority_over_out_stream(self, tmp_path: Path) -> None:
+        """When both output (file) and out (stream) are supplied for JSON format,
+        output wins: the file is written and the stream is left untouched."""
+        table = columns_rows_to_arrow(["id"], [(99,)])
+        out_file = tmp_path / "out.json"
+        buf = io.StringIO()
+        write_arrow(table, OutputFormat.JSON, output=out_file, out=buf)
+        # File must contain the payload
+        parsed = json.loads(out_file.read_text(encoding="utf-8"))
+        assert parsed[0]["id"] == 99
+        # Stream must not have been written to
+        assert buf.getvalue() == ""
 
 
 # ===========================================================================
@@ -187,3 +218,67 @@ class TestWriteArrowUnknownFormat:
         table = columns_rows_to_arrow(["x"], [(1,)])
         with pytest.raises(ValueError, match="Unknown output format"):
             write_arrow(table, "xlsx")
+
+
+# ===========================================================================
+# json_safe — binary encoding contract
+# ===========================================================================
+
+
+class TestJsonSafe:
+    def test_none_returns_none(self) -> None:
+        assert json_safe(None) is None
+
+    def test_bool_passthrough(self) -> None:
+        val = True
+        assert json_safe(val) is True
+
+    def test_int_passthrough(self) -> None:
+        assert json_safe(42) == 42
+
+    def test_float_passthrough(self) -> None:
+        assert json_safe(3.14) == pytest.approx(3.14)
+
+    def test_str_passthrough(self) -> None:
+        assert json_safe("hello") == "hello"
+
+    def test_bytes_base64_encoded(self) -> None:
+        raw = b"\xde\xad\xbe\xef"
+        result = json_safe(raw)
+        assert result == base64.b64encode(raw).decode("ascii")
+
+    def test_bytearray_base64_encoded(self) -> None:
+        raw = bytearray(b"\x01\x02\x03")
+        result = json_safe(raw)
+        assert result == base64.b64encode(raw).decode("ascii")
+
+    def test_memoryview_base64_encoded(self) -> None:
+        raw = memoryview(b"\xff\x00")
+        result = json_safe(raw)
+        assert result == base64.b64encode(raw).decode("ascii")
+
+    def test_other_type_stringified(self) -> None:
+        assert json_safe(Decimal("3.14")) == "3.14"
+
+
+# ===========================================================================
+# OutputFormat — StrEnum contract
+# ===========================================================================
+
+
+class TestOutputFormat:
+    def test_is_str_enum(self) -> None:
+        assert issubclass(OutputFormat, StrEnum)
+
+    def test_values(self) -> None:
+        assert OutputFormat.JSON == "json"
+        assert OutputFormat.CSV == "csv"
+        assert OutputFormat.PARQUET == "parquet"
+
+    def test_iterable(self) -> None:
+        values = [f.value for f in OutputFormat]
+        assert set(values) == {"json", "csv", "parquet"}
+
+    def test_string_comparison(self) -> None:
+        assert OutputFormat.JSON == "json"
+        assert "parquet" == OutputFormat.PARQUET  # noqa: SIM300

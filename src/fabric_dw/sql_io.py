@@ -8,12 +8,15 @@ Designed to be reusable across ``tables read`` and ``views read`` (issue #211).
 
 from __future__ import annotations
 
+import base64
 import io
 import json
-import sys
+import logging
+from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
+import click
 import pyarrow as pa
 import pyarrow.csv as pa_csv
 import pyarrow.parquet as pq
@@ -25,15 +28,15 @@ __all__ = [
     "write_arrow",
 ]
 
+_log = logging.getLogger(__name__)
 
-class OutputFormat:
+
+class OutputFormat(StrEnum):
     """Known output format identifiers."""
 
     JSON = "json"
     CSV = "csv"
     PARQUET = "parquet"
-
-    ALL = (JSON, CSV, PARQUET)
 
 
 def columns_rows_to_arrow(
@@ -68,6 +71,11 @@ def columns_rows_to_arrow(
         try:
             arrays.append(pa.array(values))
         except (pa.ArrowInvalid, pa.ArrowTypeError, TypeError):
+            _log.warning(
+                "column %r could not be represented as a uniform Arrow type; "
+                "falling back to string",
+                col,
+            )
             arrays.append(pa.array([str(v) if v is not None else None for v in values]))
 
     return pa.table(dict(zip(columns, arrays, strict=True)))
@@ -85,7 +93,10 @@ def json_safe(value: Any) -> Any:  # noqa: ANN401
     """Coerce *value* to a JSON-serialisable type.
 
     This is the canonical implementation shared between :mod:`sql_io` and
-    :mod:`fabric_dw.mcp.server`.  Bytes are rendered as lowercase hex strings.
+    :mod:`fabric_dw.mcp.server`.  Binary values (``bytes``, ``bytearray``,
+    ``memoryview``) are rendered as base64-encoded ASCII strings, consistent
+    with the ``__base64`` column-name suffix contract described in
+    :class:`~fabric_dw.models.SqlResult`.
 
     Args:
         value: Any Python value returned from a DBAPI cursor or Arrow column.
@@ -98,8 +109,8 @@ def json_safe(value: Any) -> Any:  # noqa: ANN401
         return None
     if isinstance(value, (bool, int, float, str)):
         return value
-    if isinstance(value, bytes):
-        return value.hex()
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return base64.b64encode(value).decode("ascii")
     return str(value)
 
 
@@ -107,10 +118,12 @@ def write_arrow(
     table: pa.Table,
     fmt: str,
     output: Path | None = None,
+    *,
+    out: IO[str] | None = None,
 ) -> None:
     """Write *table* to the requested format.
 
-    - ``json``: writes JSON array to *stdout* (or *output* if given).
+    - ``json``: writes JSON array to *out* stream (or *output* file if given).
     - ``csv``: writes CSV to *output* (required).
     - ``parquet``: writes Parquet to *output* (required).
 
@@ -118,14 +131,17 @@ def write_arrow(
         table: The Arrow table to write.
         fmt: One of ``"json"``, ``"csv"``, ``"parquet"``.
         output: Path to write to.  Required for ``csv`` and ``parquet``.
-            When ``None`` and format is ``json``, output goes to stdout.
+            When ``None`` and format is ``json``, output goes to *out*.
+        out: Text stream for JSON stdout output.  When ``None``,
+            :func:`click.get_text_stream` is used so Click's pager / redirect
+            handling is respected.  Ignored when *output* is provided.
 
     Raises:
         ValueError: If *fmt* is not a known format, or if *output* is ``None``
             for a format that requires a file path.
     """
-    if fmt not in OutputFormat.ALL:
-        msg = f"Unknown output format {fmt!r}; expected one of {OutputFormat.ALL}"
+    if fmt not in OutputFormat:
+        msg = f"Unknown output format {fmt!r}; expected one of {[f.value for f in OutputFormat]}"
         raise ValueError(msg)
 
     if fmt in (OutputFormat.CSV, OutputFormat.PARQUET) and output is None:
@@ -138,8 +154,9 @@ def write_arrow(
         if output is not None:
             output.write_text(payload, encoding="utf-8")
         else:
-            sys.stdout.write(payload)
-            sys.stdout.write("\n")
+            stream = out if out is not None else click.get_text_stream("stdout")
+            stream.write(payload)
+            stream.write("\n")
 
     elif fmt == OutputFormat.CSV:
         assert output is not None  # noqa: S101 — guarded above

@@ -114,7 +114,7 @@ async def list_cmd(
 @click.option(
     "--format",
     "fmt",
-    type=click.Choice(list(OutputFormat.ALL), case_sensitive=False),
+    type=click.Choice([f.value for f in OutputFormat], case_sensitive=False),
     default=OutputFormat.JSON,
     show_default=True,
     help="Output format.",
