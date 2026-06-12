@@ -276,6 +276,7 @@ async def rename_cmd(
     """
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, item)
+    parse_qualified_name(qualified_name, kind="table")
     try:
         async with build_http_client(ctx) as http:
             target, entry = await build_sql_target(http, ws, wh)

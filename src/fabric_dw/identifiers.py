@@ -98,10 +98,14 @@ def parse_qualified_name(qualified: str) -> tuple[str, str]:
         A ``(schema, object_name)`` tuple.
 
     Raises:
-        ValueError: If *qualified* does not contain a dot, or if either the
-            schema part or the object part is empty or whitespace-only.
+        ValueError: If *qualified* does not contain a dot (clear message is
+            raised), or if either the schema part or the object part is empty
+            or whitespace-only.
     """
-    dot = qualified.index(".")  # raises ValueError when no dot
+    if "." not in qualified:
+        msg = f"Invalid qualified name {qualified!r}: expected <schema>.<object> (missing dot)"
+        raise ValueError(msg)
+    dot = qualified.index(".")
     schema = qualified[:dot]
     obj = qualified[dot + 1 :]
     if not schema.strip():

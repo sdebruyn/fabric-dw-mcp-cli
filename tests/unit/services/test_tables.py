@@ -889,10 +889,20 @@ class TestRenameTable:
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await tables.rename_table(target, "dbo.sales", "")
 
-    async def test_rejects_invalid_qualified_name(self) -> None:
+    async def test_rejects_undotted_qualified_name(self) -> None:
         target = _make_target()
-        with pytest.raises(ValueError, match="substring not found"):
+        with pytest.raises(ValueError, match="qualified"):
             await tables.rename_table(target, "nodot", "sales_v2")
+
+    async def test_rejects_invalid_schema_in_qualified_name(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await tables.rename_table(target, "bad--schema.sales", "sales_v2")
+
+    async def test_rejects_invalid_table_in_qualified_name(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await tables.rename_table(target, "dbo.bad--table", "sales_v2")
 
     async def test_raises_not_found_when_fetch_returns_empty(self) -> None:
         target = _make_target()
@@ -900,7 +910,7 @@ class TestRenameTable:
         fetch_conn = _make_conn([], _LIST_COLS)
         with (
             patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]),
-            pytest.raises(NotFoundError),
+            pytest.raises(NotFoundError, match="not found after rename"),
         ):
             await tables.rename_table(target, "dbo.sales", "sales_v2")
 

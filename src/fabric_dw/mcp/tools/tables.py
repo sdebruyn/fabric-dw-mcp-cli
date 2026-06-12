@@ -276,6 +276,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             new_name: New table name (unqualified, e.g. ``sales_v2``).  Must not
                 contain a dot.
         """
+        parse_qualified_name(qualified_name, kind="table")
         assert_writes_allowed("rename_table")
         assert_workspace_allowed(workspace)
         ctx = get_context()

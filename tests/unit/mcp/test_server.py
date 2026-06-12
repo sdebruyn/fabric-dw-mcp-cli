@@ -1579,3 +1579,27 @@ async def test_rename_table_workspace_allowlist_blocks(mock_ctx, ctx_patch) -> N
                 "new_name": "sales_v2",
             },
         )
+
+
+async def test_rename_table_undotted_qualified_name_raises_tool_error(
+    mock_ctx,  # noqa: ARG001
+    ctx_patch,
+) -> None:
+    """rename_table must raise ToolError immediately for an undotted qualified_name."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with (
+        ctx_patch,
+        pytest.raises(ToolError, match="qualified_name"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "rename_table",
+            {
+                "workspace": _WS_NAME,
+                "item": _WH_NAME,
+                "qualified_name": "nodot",
+                "new_name": "sales_v2",
+            },
+        )

@@ -475,6 +475,8 @@ async def rename_table(
     _assert_not_sql_endpoint(kind)
 
     schema, _old_name = parse_qualified_name(qualified)
+    validate_identifier(schema)
+    validate_identifier(_old_name)
 
     if "." in new_name:
         msg = (
@@ -498,7 +500,11 @@ async def rename_table(
         )
 
     await asyncio.to_thread(_run)
-    return await _fetch_table(target, schema, new_name, mode=mode)
+    try:
+        return await _fetch_table(target, schema, new_name, mode=mode)
+    except NotFoundError:
+        msg = f"Table [{schema}].[{new_name}] not found after rename"
+        raise NotFoundError(msg) from None
 
 
 # ---------------------------------------------------------------------------

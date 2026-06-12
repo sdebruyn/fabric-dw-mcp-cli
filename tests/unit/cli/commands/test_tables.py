@@ -1116,6 +1116,18 @@ class TestTablesRename:
         result = runner.invoke(cli, ["tables", "rename", WS_GUID, WH_GUID, "dbo.sales"])
         assert result.exit_code != 0
 
+    def test_rename_undotted_qualified_name_fails_before_io(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """An undotted QUALIFIED_NAME must yield a UsageError before any I/O is performed."""
+        _ = cache_env
+        result = runner.invoke(
+            cli,
+            ["tables", "rename", WS_GUID, WH_GUID, "nodot", "--new-name", "sales_v2"],
+        )
+        assert result.exit_code != 0
+        assert "table" in result.output.lower() or "Usage" in result.output
+
     def test_rename_schema_qualified_new_name_fails(
         self, runner: CliRunner, cache_env: Path
     ) -> None:
