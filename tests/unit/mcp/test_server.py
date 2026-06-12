@@ -113,6 +113,7 @@ EXPECTED_TOOL_NAMES: frozenset[str] = frozenset(
         "read_table",
         "create_table",
         "clone_table",
+        "rename_table",
         "delete_table",
         "clear_table",
         # Restore Points
@@ -1454,4 +1455,151 @@ async def test_read_view_bad_qualified_name_raises_tool_error(mock_ctx, ctx_patc
         await mcp._tool_manager.call_tool(
             "read_view",
             {"workspace": _WS_NAME, "item": _WH_NAME, "qualified_name": "nodot"},
+        )
+
+
+# ---------------------------------------------------------------------------
+# rename_table MCP tool tests
+# ---------------------------------------------------------------------------
+
+
+async def test_rename_table_happy_path(mock_ctx, ctx_patch) -> None:
+    """rename_table returns the renamed Table model dict on success."""
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+    from fabric_dw.models import Table  # noqa: PLC0415
+
+    renamed = Table(
+        schema_name="dbo",
+        name="sales_v2",
+        qualified_name="dbo.sales_v2",
+        created=datetime(2024, 6, 1, tzinfo=UTC),
+        modified=datetime(2024, 6, 1, tzinfo=UTC),
+    )
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.tables.rename_table",
+            new=AsyncMock(return_value=renamed),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "rename_table",
+            {
+                "workspace": _WS_NAME,
+                "item": _WH_NAME,
+                "qualified_name": "dbo.sales",
+                "new_name": "sales_v2",
+            },
+        )
+
+    assert result["name"] == "sales_v2"
+    assert result["schema_name"] == "dbo"
+
+
+async def test_rename_table_readonly_blocked(mock_ctx, ctx_patch) -> None:
+    """rename_table raises ToolError when FABRIC_MCP_READONLY is set."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
+        pytest.raises(ToolError, match="read-only"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "rename_table",
+            {
+                "workspace": _WS_NAME,
+                "item": _WH_NAME,
+                "qualified_name": "dbo.sales",
+                "new_name": "sales_v2",
+            },
+        )
+
+
+async def test_rename_table_sql_endpoint_raises_tool_error(mock_ctx, ctx_patch) -> None:
+    """rename_table must raise ToolError when the item is a SQL Analytics Endpoint."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    _se_id = UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(
+        return_value=make_sql_endpoint_entry(item_id=_se_id, display_name="SalesLakehouse")
+    )
+
+    with (
+        ctx_patch,
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "rename_table",
+            {
+                "workspace": _WS_NAME,
+                "item": "SalesLakehouse",
+                "qualified_name": "dbo.sales",
+                "new_name": "sales_v2",
+            },
+        )
+
+    assert "read-only" in str(exc_info.value).lower()
+
+
+async def test_rename_table_workspace_allowlist_blocks(mock_ctx, ctx_patch) -> None:
+    """rename_table raises ToolError when workspace is not in FABRIC_MCP_WORKSPACE_ALLOWLIST."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_WORKSPACE_ALLOWLIST": "other-workspace"}),
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "rename_table",
+            {
+                "workspace": _WS_NAME,
+                "item": _WH_NAME,
+                "qualified_name": "dbo.sales",
+                "new_name": "sales_v2",
+            },
+        )
+
+
+async def test_rename_table_undotted_qualified_name_raises_tool_error(
+    mock_ctx,  # noqa: ARG001
+    ctx_patch,
+) -> None:
+    """rename_table must raise ToolError immediately for an undotted qualified_name."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with (
+        ctx_patch,
+        pytest.raises(ToolError, match="qualified_name"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "rename_table",
+            {
+                "workspace": _WS_NAME,
+                "item": _WH_NAME,
+                "qualified_name": "nodot",
+                "new_name": "sales_v2",
+            },
         )

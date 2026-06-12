@@ -9,6 +9,7 @@ Public API
 - :func:`clone_table`          — ``CREATE TABLE … AS CLONE OF …`` (zero-copy clone).
 - :func:`delete_table`         — ``DROP TABLE [schema].[table]``.
 - :func:`clear_table`          — ``TRUNCATE TABLE [schema].[table]``.
+- :func:`rename_table`         — ``EXEC sp_rename`` (Data-Warehouse-only).
 
 List-source note
 ----------------
@@ -38,6 +39,7 @@ __all__ = [
     "delete_table",
     "list_tables",
     "read_table",
+    "rename_table",
     "validate_identifier",
 ]
 
@@ -87,6 +89,10 @@ FROM sys.tables t
 JOIN sys.schemas s ON s.schema_id = t.schema_id
 WHERE s.name = ? AND t.name = ?;
 """
+
+# sp_rename: @objname = 'schema.oldtable', @newname = 'newtable', @objtype = 'OBJECT'
+# Names are bound as ? parameters (string args to the proc, not SQL identifiers).
+_SP_RENAME_SQL = "EXEC sp_rename ?, ?, 'OBJECT'"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -425,6 +431,80 @@ async def clear_table(
         run_query(target, ddl, mode=mode, commit=True, fetch="none")
 
     await asyncio.to_thread(_run)
+
+
+async def rename_table(
+    target: SqlTarget,
+    qualified: str,
+    new_name: str,
+    *,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
+    mode: CredentialMode = CredentialMode.DEFAULT,
+) -> Table:
+    """Rename a table via ``EXEC sp_rename``.
+
+    ``sp_rename`` takes names as string arguments, so both the current
+    qualified name and the new bare name are passed as bound ``?`` parameters
+    — no identifier interpolation is required or performed.
+
+    Args:
+        target: The warehouse to connect to.
+        qualified: The current fully-qualified name of the form ``schema.table``.
+            Parsed with :func:`~fabric_dw.identifiers.parse_qualified_name`.
+        new_name: The new **unqualified** table name.  Must pass
+            :func:`validate_identifier`.  Schema-qualified values (containing a
+            dot) are rejected — ``sp_rename`` cannot move a table to a different
+            schema.
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
+            SQL Endpoint items are rejected with :class:`~fabric_dw.exceptions.ItemKindError`.
+        mode: The credential mode for Entra authentication.
+
+    Returns:
+        A :class:`~fabric_dw.models.Table` reflecting the renamed table
+        (fetched via ``sys.tables`` after the rename).
+
+    Raises:
+        ItemKindError: If *kind* is :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
+        ValueError: If *qualified* cannot be parsed, if *new_name* fails
+            identifier validation, or if *new_name* is schema-qualified (contains
+            a dot).
+        NotFoundError: If the renamed table cannot be found in ``sys.tables``
+            after the rename.
+        PermissionDeniedError: If the driver reports a permission error.
+    """
+    _assert_not_sql_endpoint(kind)
+
+    schema, _old_name = parse_qualified_name(qualified)
+    validate_identifier(schema)
+    validate_identifier(_old_name)
+
+    if "." in new_name:
+        msg = (
+            f"New name {new_name!r} must not be schema-qualified; "
+            "sp_rename cannot move a table to a different schema"
+        )
+        raise ValueError(msg)
+    validate_identifier(new_name)
+
+    # @objname = 'schema.oldtable', @newname = 'newtable' — bound as ? params.
+    old_qualified = f"{schema}.{_old_name}"
+
+    def _run() -> None:
+        run_query(
+            target,
+            _SP_RENAME_SQL,
+            params=[old_qualified, new_name],
+            mode=mode,
+            commit=True,
+            fetch="none",
+        )
+
+    await asyncio.to_thread(_run)
+    try:
+        return await _fetch_table(target, schema, new_name, mode=mode)
+    except NotFoundError:
+        msg = f"Table [{schema}].[{new_name}] not found after rename"
+        raise NotFoundError(msg) from None
 
 
 # ---------------------------------------------------------------------------

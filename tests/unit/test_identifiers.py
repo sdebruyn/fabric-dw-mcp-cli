@@ -110,7 +110,7 @@ class TestParseQualifiedName:
         assert obj == "table.extra"
 
     def test_no_dot_raises_value_error(self) -> None:
-        with pytest.raises(ValueError, match="substring not found"):
+        with pytest.raises(ValueError, match="missing dot"):
             parse_qualified_name("nodothere")
 
     def test_leading_dot_raises_value_error(self) -> None:

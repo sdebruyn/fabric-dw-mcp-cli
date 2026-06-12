@@ -252,3 +252,37 @@ async def clone_cmd(
             render(t.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
+
+
+@tables_group.command("rename")
+@click.argument("workspace", required=False, default=None)
+@click.argument("item", required=False, default=None)
+@click.argument("qualified_name")
+@click.option("--new-name", required=True, help="New (unqualified) table name.")
+@click.pass_obj
+@_coro
+async def rename_cmd(
+    ctx: CliContext,
+    workspace: str | None,
+    item: str | None,
+    qualified_name: str,
+    new_name: str,
+) -> None:
+    """Rename QUALIFIED_NAME (schema.table) on ITEM in WORKSPACE to --new-name.
+
+    ITEM must be a Data Warehouse; SQL Analytics Endpoints are read-only.
+    The new name must be unqualified (bare table name) — sp_rename cannot
+    move a table to a different schema.
+    """
+    ws = resolve_workspace_arg(ctx, workspace)
+    wh = resolve_warehouse_arg(ctx, item)
+    parse_qualified_name(qualified_name, kind="table")
+    try:
+        async with build_http_client(ctx) as http:
+            target, entry = await build_sql_target(http, ws, wh)
+            t = await _tables_svc.rename_table(
+                target, qualified_name, new_name, kind=entry.kind, mode=ctx.auth
+            )
+            render(t.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
+    except (ValueError, FabricError) as exc:
+        raise click.ClickException(str(exc)) from exc
