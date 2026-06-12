@@ -1596,7 +1596,7 @@ fabric-dw tables rename MyWorkspace SalesWH dbo.orders_2025 --new-name orders_ar
 
 ## fabric-dw schemas
 
-Manage SQL schemas on Microsoft Fabric Data Warehouses.
+Manage SQL schemas on Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
 
 > **List-source note** — no public REST API exists for enumerating warehouse schemas. `schemas list` falls back to TDS via `sys.schemas`, filtering out well-known system schemas (`sys`, `INFORMATION_SCHEMA`, `guest`, `db_*` fixed-role schemas). `dbo` is always included because it is user-writable.
 
