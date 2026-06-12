@@ -659,8 +659,6 @@ class WarehouseSnapshotApiPayload(_FabricBase):
     parent_warehouse_id: str | None = Field(default=None, alias="parentWarehouseId")
     snapshot_date_time: str | None = Field(default=None, alias="snapshotDateTime")
 
-    model_config = ConfigDict(extra="ignore", frozen=False, populate_by_name=True)
-
     @classmethod
     def props_from_item(cls, item: dict[str, object]) -> WarehouseSnapshotApiPayload:
         """Parse the ``properties`` sub-object of a snapshot API item response.
