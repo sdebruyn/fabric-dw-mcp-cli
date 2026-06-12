@@ -114,7 +114,9 @@ async def delete_cmd(
             if not confirm_destructive(prompt, yes=ctx.yes):
                 click.echo("Aborted.")
                 return
-            await _schemas_svc.delete_schema(target, name, cascade=cascade, mode=ctx.auth)
+            await _schemas_svc.delete_schema(
+                target, name, cascade=cascade, kind=entry.kind, mode=ctx.auth
+            )
             click.echo(f"Schema [{name}] dropped.")
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc

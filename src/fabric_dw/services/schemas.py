@@ -6,7 +6,8 @@ Public API
 - :func:`list_schemas`         — list all user-defined schemas via TDS ``sys.schemas``.
 - :func:`create_schema`        — ``CREATE SCHEMA [<name>]``.
 - :func:`delete_schema`        — ``DROP SCHEMA [<name>]``. Optionally cascade-drops
-                                  contained tables and views first.
+                                  contained objects (tables, views, procedures, functions)
+                                  first, with target-kind-aware filtering.
 
 List-source note
 ----------------
@@ -28,6 +29,19 @@ they are maintained by the engine and are not user-editable:
 
 ``dbo`` is **not** filtered because it is user-writable and is the default
 schema for warehouse tables.
+
+Cascade behaviour per target kind
+----------------------------------
+When ``cascade=True``:
+
+- **Fabric Data Warehouse** (``WarehouseKind.WAREHOUSE``): drops all contained
+  objects — tables (``U``), views (``V``), stored procedures (``P``), and
+  functions (``FN``/``IF``/``TF``) — before dropping the schema.
+- **SQL Analytics Endpoint** (``WarehouseKind.SQL_ENDPOINT``): drops views,
+  stored procedures, and functions, but **skips tables** because ``DROP TABLE``
+  is a Warehouse-only operation on Fabric.  The schema must therefore contain
+  no tables for the final ``DROP SCHEMA`` to succeed; if it does, the engine
+  will reject the ``DROP SCHEMA`` with a clear error.
 """
 
 from __future__ import annotations
@@ -37,7 +51,7 @@ import asyncio
 from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import NotFoundError
 from fabric_dw.identifiers import quote_identifier, validate_identifier
-from fabric_dw.models import Schema
+from fabric_dw.models import Schema, WarehouseKind
 from fabric_dw.sql import SqlTarget, run_query, run_statements
 
 __all__ = [
@@ -90,23 +104,43 @@ WHERE s.name NOT IN ({_SYSTEM_SCHEMA_PLACEHOLDERS})
 ORDER BY s.name;
 """  # noqa: S608  # nosec B608 - placeholders are ? params; schema names in _SYSTEM_SCHEMA_PARAMS are hardcoded constants.
 
-_LIST_TABLES_IN_SCHEMA_SQL = """\
-SELECT t.name AS obj_name, 'TABLE' AS obj_type
-FROM sys.tables t
-JOIN sys.schemas s ON s.schema_id = t.schema_id
+# Enumerate all droppable user objects in a schema via sys.objects.
+# Object type codes:
+#   U  = USER_TABLE          (DROP TABLE)
+#   V  = VIEW                (DROP VIEW)
+#   P  = SQL_STORED_PROCEDURE (DROP PROCEDURE)
+#   FN = SQL_SCALAR_FUNCTION  (DROP FUNCTION)
+#   IF = SQL_INLINE_TABLE_VALUED_FUNCTION (DROP FUNCTION)
+#   TF = SQL_TABLE_VALUED_FUNCTION        (DROP FUNCTION)
+_LIST_OBJECTS_IN_SCHEMA_SQL = """\
+SELECT o.name AS obj_name, o.type AS obj_type
+FROM sys.objects o
+JOIN sys.schemas s ON s.schema_id = o.schema_id
 WHERE s.name = ?
-UNION ALL
-SELECT v.name AS obj_name, 'VIEW' AS obj_type
-FROM sys.views v
-JOIN sys.schemas s ON s.schema_id = v.schema_id
-WHERE s.name = ?;
-"""
+  AND o.type IN ('U', 'V', 'P', 'FN', 'IF', 'TF')
+ORDER BY o.type, o.name;
+"""  # nosec B608 - schema name is a ? param; type codes are hardcoded constants.
 
 _FETCH_SCHEMA_SQL = """\
 SELECT s.name, s.principal_id
 FROM sys.schemas s
 WHERE s.name = ?;
 """
+
+# Mapping from sys.objects type code to the DDL keyword used in DROP <keyword>.
+_TYPE_TO_DDL_KEYWORD: dict[str, str] = {
+    "U": "TABLE",
+    "V": "VIEW",
+    "P": "PROCEDURE",
+    "FN": "FUNCTION",
+    "IF": "FUNCTION",
+    "TF": "FUNCTION",
+}
+
+# Object types that are NOT droppable on a SQL Analytics Endpoint.
+# DROP TABLE is a Warehouse-only operation on Fabric; tables on an endpoint
+# are read-only projections of the underlying Lakehouse/Warehouse data.
+_ENDPOINT_EXCLUDED_TYPES: frozenset[str] = frozenset({"U"})
 
 
 # ---------------------------------------------------------------------------
@@ -198,26 +232,38 @@ async def delete_schema(
     name: str,
     *,
     cascade: bool = False,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
     mode: CredentialMode = CredentialMode.DEFAULT,
 ) -> None:
     """Drop a schema via ``DROP SCHEMA [<name>]``.
 
-    If *cascade* is ``True``, all tables and views contained in the schema
-    are dropped first via individual ``DROP TABLE`` / ``DROP VIEW`` statements,
-    then the schema itself is dropped.
+    If *cascade* is ``True``, all droppable objects contained in the schema
+    are dropped first, then the schema itself is dropped.  The set of objects
+    dropped depends on *kind*:
+
+    - **Warehouse**: drops tables (``U``), views (``V``), stored procedures
+      (``P``), and functions (``FN``/``IF``/``TF``).
+    - **SQL Analytics Endpoint**: drops views, stored procedures, and
+      functions, but **skips tables** because ``DROP TABLE`` is a
+      Warehouse-only operation on Fabric.  If the schema contains tables, the
+      final ``DROP SCHEMA`` will be rejected by the engine.
 
     .. caution::
 
-        When *cascade* is ``True``, **all tables and views in the schema are
-        permanently deleted along with their data**.  This operation is
-        irreversible.  Confirm with the user before calling this function with
-        ``cascade=True``.
+        When *cascade* is ``True``, **all droppable objects in the schema are
+        permanently deleted**.  This operation is irreversible.  Confirm with
+        the user before calling this function with ``cascade=True``.
 
     Args:
         target: The warehouse to connect to.
         name: The schema name.  Must pass :func:`validate_identifier`.
-        cascade: When ``True``, drop all tables and views in the schema
+        cascade: When ``True``, drop all droppable objects in the schema
             before dropping the schema itself.  Defaults to ``False``.
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
+            Controls which object types are dropped during cascade; tables
+            (type ``U``) are excluded on SQL Analytics Endpoints because
+            ``DROP TABLE`` is Warehouse-only.  Defaults to
+            :attr:`~fabric_dw.models.WarehouseKind.WAREHOUSE`.
         mode: The credential mode for Entra authentication.
 
     Raises:
@@ -227,7 +273,7 @@ async def delete_schema(
     validate_identifier(name)
 
     if cascade:
-        await _drop_schema_objects(target, name, mode=mode)
+        await _drop_schema_objects(target, name, kind=kind, mode=mode)
 
     ddl = f"DROP SCHEMA {quote_identifier(name)}"
 
@@ -284,56 +330,83 @@ async def _drop_schema_objects(
     target: SqlTarget,
     schema_name: str,
     *,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
     mode: CredentialMode = CredentialMode.DEFAULT,
 ) -> None:
-    """Drop all tables and views contained in *schema_name*.
+    """Drop droppable objects contained in *schema_name*, respecting *kind*.
 
-    Enumerates objects via ``sys.tables`` and ``sys.views`` then issues all
-    ``DROP TABLE`` / ``DROP VIEW`` DDL statements on a **single** connection,
-    avoiding the N x TCP+TLS handshake overhead of the previous approach.
+    Enumerates objects via ``sys.objects`` (types ``U``, ``V``, ``P``,
+    ``FN``, ``IF``, ``TF``) joined to ``sys.schemas``, then issues the
+    appropriate ``DROP`` statement for each object on a **single** connection.
 
-    This is a helper for :func:`delete_schema` when ``cascade=True``.
-    The schema name is assumed to have been validated by the caller.
+    Target-kind filtering
+    ~~~~~~~~~~~~~~~~~~~~~
+    - **Warehouse** (``WarehouseKind.WAREHOUSE``): all enumerated types are
+      dropped (``DROP TABLE``, ``DROP VIEW``, ``DROP PROCEDURE``,
+      ``DROP FUNCTION``).
+    - **SQL Analytics Endpoint** (``WarehouseKind.SQL_ENDPOINT``): objects of
+      type ``U`` (tables) are **excluded** because ``DROP TABLE`` is a
+      Warehouse-only operation on Fabric.  Views, stored procedures, and
+      functions are still dropped.  If the schema still contains tables after
+      this pass, the subsequent ``DROP SCHEMA`` issued by
+      :func:`delete_schema` will be rejected by the engine with a clear error
+      about remaining objects — this is intentional and acceptable.
 
     .. note::
 
-        **View-on-view dependency caveat**: objects are dropped in catalog order
-        (the order returned by ``sys.tables``/``sys.views``), without analysing
-        inter-object dependencies.  If the schema contains views that reference
-        other views in the same schema, the drop may fail with a dependency
-        error depending on the order in which the engine returns them.  In that
-        case, re-run the operation or drop the dependent views manually first.
+        **Object-dependency caveat**: objects are dropped in the order
+        returned by ``sys.objects`` (by type then name), without analysing
+        inter-object dependencies.  If the schema contains views or functions
+        that reference other views/functions in the same schema, the drop may
+        fail with a dependency error.  In that case, re-run the operation or
+        drop the dependent objects manually first.
 
     Args:
         target: The warehouse to connect to.
         schema_name: The schema whose objects will be dropped (already validated).
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
+            Controls which object types are eligible for dropping.
         mode: The credential mode for Entra authentication.
     """
 
     def _run() -> list[tuple[str, str]]:
-        # Use schema_name twice: once for sys.tables, once for sys.views (UNION ALL).
         _cols, rows = run_query(
             target,
-            _LIST_TABLES_IN_SCHEMA_SQL,
-            params=[schema_name, schema_name],
+            _LIST_OBJECTS_IN_SCHEMA_SQL,
+            params=[schema_name],
             mode=mode,
         )
-        return [(str(r[0]), str(r[1])) for r in rows]
+        return [(str(r[0]), str(r[1]).strip()) for r in rows]
 
     objects = await asyncio.to_thread(_run)
 
     if not objects:
         return
 
+    # Determine which object types to exclude based on the target kind.
+    excluded_types: frozenset[str] = (
+        _ENDPOINT_EXCLUDED_TYPES if kind == WarehouseKind.SQL_ENDPOINT else frozenset()
+    )
+
     # Build all DROP statements then execute them on ONE connection.
     ddl_statements: list[str] = []
     for obj_name, obj_type in objects:
-        # Object names come from sys.tables/sys.views — catalog names.
+        if obj_type in excluded_types:
+            # Skip objects that cannot be dropped on this target kind.
+            # e.g. tables (U) on SQL Analytics Endpoints.
+            continue
+        ddl_keyword = _TYPE_TO_DDL_KEYWORD.get(obj_type)
+        if ddl_keyword is None:
+            # Unknown type — skip rather than generate invalid SQL.
+            continue
+        # Object names come from sys.objects — catalog names.
         # Validate anyway to be defensive (belt-and-suspenders).
         validate_identifier(obj_name)
-        ddl_keyword = "TABLE" if obj_type == "TABLE" else "VIEW"
         ddl_statements.append(
             f"DROP {ddl_keyword} {quote_identifier(schema_name)}.{quote_identifier(obj_name)}"
         )
+
+    if not ddl_statements:
+        return
 
     await asyncio.to_thread(run_statements, target, ddl_statements, mode=mode)
