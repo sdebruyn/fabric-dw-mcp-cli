@@ -88,7 +88,7 @@ FROM sys.schemas s
 WHERE s.name NOT IN ({_SYSTEM_SCHEMA_PLACEHOLDERS})
   AND s.name NOT LIKE 'db[_]%'
 ORDER BY s.name;
-"""  # noqa: S608 — placeholders are ? params; schema names in _SYSTEM_SCHEMA_PARAMS are hardcoded constants.
+"""  # noqa: S608  # nosec B608 - placeholders are ? params; schema names in _SYSTEM_SCHEMA_PARAMS are hardcoded constants.
 
 _LIST_TABLES_IN_SCHEMA_SQL = """\
 SELECT t.name AS obj_name, 'TABLE' AS obj_type
