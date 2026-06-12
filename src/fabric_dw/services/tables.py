@@ -6,6 +6,7 @@ Public API
 - :func:`list_tables`          — list all tables via TDS ``sys.tables JOIN sys.schemas``.
 - :func:`read_table`           — ``SELECT TOP (N) * FROM [schema].[table]``.
 - :func:`create_table`         — ``CREATE TABLE … AS <select_body>`` (CTAS).
+- :func:`clone_table`          — ``CREATE TABLE … AS CLONE OF …`` (zero-copy clone).
 - :func:`delete_table`         — ``DROP TABLE [schema].[table]``.
 - :func:`clear_table`          — ``TRUNCATE TABLE [schema].[table]``.
 
@@ -26,12 +27,13 @@ from typing import cast
 
 from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import ItemKindError, NotFoundError
-from fabric_dw.identifiers import quote_identifier, validate_identifier
+from fabric_dw.identifiers import parse_qualified_name, quote_identifier, validate_identifier
 from fabric_dw.models import Table, WarehouseKind
 from fabric_dw.sql import SqlTarget, run_query
 
 __all__ = [
     "clear_table",
+    "clone_table",
     "create_table",
     "delete_table",
     "list_tables",
@@ -278,6 +280,81 @@ async def create_table(
 
     await asyncio.to_thread(_run_ddl)
     return await _fetch_table(target, schema, table_name, mode=mode)
+
+
+async def clone_table(
+    target: SqlTarget,
+    source: str,
+    new_table: str,
+    *,
+    at: datetime | None = None,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
+    mode: CredentialMode = CredentialMode.DEFAULT,
+) -> Table:
+    """Create a zero-copy clone of *source* table as *new_table*.
+
+    Executes ``CREATE TABLE [new_schema].[new_table] AS CLONE OF
+    [src_schema].[src_table]`` (with an optional ``AT '<timestamp>'`` suffix).
+
+    Both *source* and *new_table* are dot-separated qualified names
+    (``schema.table``).  Every identifier component is validated via
+    :func:`validate_identifier` and bracket-quoted via :func:`quote_identifier`
+    before being embedded in the DDL string.
+
+    The ``AT`` timestamp — when provided — is a :class:`~datetime.datetime`
+    that has already been parsed and validated at the CLI/MCP boundary.  It is
+    formatted to a fixed safe literal (``YYYY-MM-DDTHH:MM:SSS.mmm``) so no
+    raw user string is ever interpolated into the DDL.
+
+    Args:
+        target: The warehouse to connect to.
+        source: Qualified source table name (``schema.table``).
+            Both parts must pass :func:`validate_identifier`.
+        new_table: Qualified name for the new cloned table (``schema.table``).
+            Both parts must pass :func:`validate_identifier`.
+        at: Optional point-in-time (UTC) for a historical clone.
+            When provided, the ``AT '<literal>'`` clause is appended.
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
+            SQL Endpoint items are rejected with :class:`~fabric_dw.exceptions.ItemKindError`.
+        mode: The credential mode for Entra authentication.
+
+    Returns:
+        A :class:`~fabric_dw.models.Table` reflecting the newly-cloned table
+        (fetched via ``sys.tables`` after DDL).
+
+    Raises:
+        ItemKindError: If *kind* is :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
+        ValueError: If any identifier component fails validation, or if *source*
+            or *new_table* are not dot-separated qualified names.
+        PermissionDeniedError: If the driver reports a CREATE TABLE permission error.
+    """
+    _assert_not_sql_endpoint(kind)
+
+    src_schema, src_name = parse_qualified_name(source)
+    new_schema, new_name = parse_qualified_name(new_table)
+
+    validate_identifier(src_schema)
+    validate_identifier(src_name)
+    validate_identifier(new_schema)
+    validate_identifier(new_name)
+
+    src_q = f"{quote_identifier(src_schema)}.{quote_identifier(src_name)}"
+    new_q = f"{quote_identifier(new_schema)}.{quote_identifier(new_name)}"
+
+    ddl = f"CREATE TABLE {new_q} AS CLONE OF {src_q}"
+    if at is not None:
+        # Format the datetime as a millisecond-precision UTC literal.
+        # The AT clause does not support bound parameters in T-SQL DDL, so we
+        # embed a fixed-format literal derived from the already-validated datetime
+        # object — never an arbitrary user string.
+        at_literal = at.strftime("%Y-%m-%dT%H:%M:%S.") + f"{at.microsecond // 1000:03d}"
+        ddl = f"{ddl} AT '{at_literal}'"
+
+    def _run_ddl() -> None:
+        run_query(target, ddl, mode=mode, commit=True, fetch="none")
+
+    await asyncio.to_thread(_run_ddl)
+    return await _fetch_table(target, new_schema, new_name, mode=mode)
 
 
 async def delete_table(

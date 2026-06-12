@@ -18,6 +18,7 @@ that has mocked service objects.
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
@@ -29,6 +30,7 @@ from fabric_dw.models import (
     AuditSettings,
     ItemAccess,
     RunningQuery,
+    Table,
     TableSyncStatus,
     Warehouse,
     WarehouseKind,
@@ -110,6 +112,7 @@ EXPECTED_TOOL_NAMES: frozenset[str] = frozenset(
         "list_tables",
         "read_table",
         "create_table",
+        "clone_table",
         "delete_table",
         "clear_table",
         # Restore Points
@@ -1148,6 +1151,151 @@ async def test_clear_table_sql_endpoint_raises_tool_error(mock_ctx, ctx_patch) -
         await mcp._tool_manager.call_tool(
             "clear_table",
             {"workspace": _WS_NAME, "item": _SE_NAME, "qualified_name": "dbo.sales"},
+        )
+
+    assert "read-only" in str(exc_info.value).lower()
+
+
+def _make_clone_table() -> Table:
+    _now = datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC)
+    return Table(
+        schema_name="dbo",
+        name="sales_clone",
+        qualified_name="dbo.sales_clone",
+        created=_now,
+        modified=_now,
+    )
+
+
+async def test_clone_table_happy_path(mock_ctx, ctx_patch) -> None:
+    """clone_table resolves workspace + item and returns a Table dict."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=_make_item_entry())
+    mock_clone = AsyncMock(return_value=_make_clone_table())
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.tables.clone_table", new=mock_clone),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "clone_table",
+            {
+                "workspace": _WS_NAME,
+                "item": _WH_NAME,
+                "source": "dbo.sales",
+                "new_table": "dbo.sales_clone",
+            },
+        )
+
+    assert isinstance(result, dict)
+    assert result["name"] == "sales_clone"
+    mock_clone.assert_called_once()
+    _, kwargs = mock_clone.call_args
+    assert kwargs.get("at") is None
+
+
+async def test_clone_table_with_at_timestamp(mock_ctx, ctx_patch) -> None:
+    """clone_table passes a parsed datetime to the service when --at is supplied."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=_make_item_entry())
+    mock_clone = AsyncMock(return_value=_make_clone_table())
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.tables.clone_table", new=mock_clone),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "clone_table",
+            {
+                "workspace": _WS_NAME,
+                "item": _WH_NAME,
+                "source": "dbo.sales",
+                "new_table": "dbo.sales_clone",
+                "at": "2024-05-20T14:00:00",
+            },
+        )
+
+    assert isinstance(result, dict)
+    mock_clone.assert_called_once()
+    _, kwargs = mock_clone.call_args
+    assert kwargs.get("at") is not None
+
+
+async def test_clone_table_readonly_mode_blocked(ctx_patch) -> None:
+    """clone_table must raise ToolError in readonly mode (FABRIC_MCP_READONLY=1)."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "clone_table",
+            {
+                "workspace": _WS_NAME,
+                "item": _WH_NAME,
+                "source": "dbo.sales",
+                "new_table": "dbo.sales_clone",
+            },
+        )
+
+    assert "read-only" in str(exc_info.value).lower()
+
+
+async def test_clone_table_workspace_not_in_allowlist(ctx_patch) -> None:
+    """clone_table must raise ToolError when workspace is not in FABRIC_MCP_WORKSPACES."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "clone_table",
+            {
+                "workspace": _WS_NAME,
+                "item": _WH_NAME,
+                "source": "dbo.sales",
+                "new_table": "dbo.sales_clone",
+            },
+        )
+
+    assert "allowlist" in str(exc_info.value).lower()
+
+
+async def test_clone_table_sql_endpoint_raises_tool_error(mock_ctx, ctx_patch) -> None:
+    """clone_table must raise ToolError when the item is a SQL Endpoint."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(
+        return_value=_make_sql_endpoint_entry(item_id=_SE_ID, display_name=_SE_NAME)
+    )
+
+    with (
+        ctx_patch,
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "clone_table",
+            {
+                "workspace": _WS_NAME,
+                "item": _SE_NAME,
+                "source": "dbo.sales",
+                "new_table": "dbo.sales_clone",
+            },
         )
 
     assert "read-only" in str(exc_info.value).lower()

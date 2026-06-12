@@ -647,3 +647,156 @@ class TestSqlEndpointGuard:
                 "SELECT 1",
                 kind=WarehouseKind.SQL_ENDPOINT,
             )
+
+
+# ===========================================================================
+# clone_table
+# ===========================================================================
+
+
+class TestCloneTable:
+    async def test_emits_create_table_as_clone_of(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await tables.clone_table(target, "dbo.source_tbl", "dbo.sales")
+        cursor = ddl_conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0].upper()
+        assert "CREATE TABLE" in call_sql
+        assert "CLONE OF" in call_sql
+
+    async def test_bracket_quotes_all_identifiers(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await tables.clone_table(target, "dbo.source_tbl", "dbo.sales")
+        cursor = ddl_conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert "[dbo].[sales]" in call_sql
+        assert "[dbo].[source_tbl]" in call_sql
+
+    async def test_cross_schema_clone_quotes_correctly(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_row: tuple[object, ...] = ("staging", "copy_tbl", _NOW, _NOW)
+        fetch_conn = _make_conn([fetch_row], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await tables.clone_table(target, "dbo.source_tbl", "staging.copy_tbl")
+        cursor = ddl_conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert "[staging].[copy_tbl]" in call_sql
+        assert "[dbo].[source_tbl]" in call_sql
+
+    async def test_no_at_clause_without_timestamp(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await tables.clone_table(target, "dbo.source_tbl", "dbo.sales")
+        cursor = ddl_conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0].upper()
+        assert " AT " not in call_sql
+
+    async def test_at_clause_appended_when_provided(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        at_dt = datetime(2024, 5, 20, 14, 0, 0, tzinfo=UTC)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await tables.clone_table(target, "dbo.source_tbl", "dbo.sales", at=at_dt)
+        cursor = ddl_conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert "AT '2024-05-20T14:00:00.000'" in call_sql
+
+    async def test_at_clause_formats_milliseconds(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        # 123456 microseconds → 123 milliseconds in the literal
+        at_dt = datetime(2024, 5, 20, 14, 0, 0, 123456, tzinfo=UTC)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await tables.clone_table(target, "dbo.source_tbl", "dbo.sales", at=at_dt)
+        cursor = ddl_conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert "AT '2024-05-20T14:00:00.123'" in call_sql
+
+    async def test_returns_table_object(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            result = await tables.clone_table(target, "dbo.source_tbl", "dbo.sales")
+        assert isinstance(result, Table)
+
+    async def test_commits_after_execute(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await tables.clone_table(target, "dbo.source_tbl", "dbo.sales")
+        ddl_conn.commit.assert_called_once()
+
+    async def test_rejects_sql_endpoint(self) -> None:
+        target = _make_target()
+        with pytest.raises(ItemKindError, match="read-only"):
+            await tables.clone_table(
+                target,
+                "dbo.source_tbl",
+                "dbo.sales",
+                kind=WarehouseKind.SQL_ENDPOINT,
+            )
+
+    async def test_endpoint_guard_fires_before_io(self) -> None:
+        """Guard fires without touching the network even if identifiers are invalid."""
+        target = _make_target()
+        with pytest.raises(ItemKindError):
+            await tables.clone_table(
+                target,
+                "bad]schema.src",
+                "dbo.sales",
+                kind=WarehouseKind.SQL_ENDPOINT,
+            )
+
+    async def test_validates_source_schema_identifier(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await tables.clone_table(target, "bad]schema.src", "dbo.sales")
+
+    async def test_validates_source_table_identifier(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await tables.clone_table(target, "dbo.src--bad", "dbo.sales")
+
+    async def test_validates_new_schema_identifier(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await tables.clone_table(target, "dbo.src", "bad]schema.sales")
+
+    async def test_validates_new_table_identifier(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await tables.clone_table(target, "dbo.src", "dbo.sales;drop")
+
+    async def test_rejects_missing_dot_in_source(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match=r"substring not found|qualified"):
+            await tables.clone_table(target, "nodot", "dbo.sales")
+
+    async def test_rejects_missing_dot_in_new_table(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match=r"substring not found|qualified"):
+            await tables.clone_table(target, "dbo.src", "nodot")
+
+    async def test_maps_permission_denied(self) -> None:
+        target = _make_target()
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.execute.side_effect = Exception("permission was denied on database")
+        conn.cursor.return_value = cursor
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(PermissionDeniedError),
+        ):
+            await tables.clone_table(target, "dbo.source_tbl", "dbo.sales")

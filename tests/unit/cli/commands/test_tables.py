@@ -737,3 +737,295 @@ class TestTablesClear:
             result = runner.invoke(cli, ["--yes", "tables", "clear", WS_GUID, SE_GUID, "dbo.sales"])
         assert result.exit_code != 0
         assert "read-only" in result.output
+
+
+# ===========================================================================
+# tables clone
+# ===========================================================================
+
+
+class TestTablesClone:
+    def test_clone_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.clone_table",
+                new=AsyncMock(return_value=_make_table()),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "tables",
+                    "clone",
+                    WS_GUID,
+                    WH_GUID,
+                    "--source",
+                    "dbo.source_tbl",
+                    "--name",
+                    "dbo.sales_clone",
+                ],
+            )
+        assert result.exit_code == 0
+
+    def test_clone_json_output(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.clone_table",
+                new=AsyncMock(return_value=_make_table()),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "--json",
+                    "tables",
+                    "clone",
+                    WS_GUID,
+                    WH_GUID,
+                    "--source",
+                    "dbo.source_tbl",
+                    "--name",
+                    "dbo.sales_clone",
+                ],
+            )
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["name"] == "sales"
+
+    def test_clone_with_at_timestamp(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_clone = AsyncMock(return_value=_make_table())
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch("fabric_dw.services.tables.clone_table", new=mock_clone),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "tables",
+                    "clone",
+                    WS_GUID,
+                    WH_GUID,
+                    "--source",
+                    "dbo.source_tbl",
+                    "--name",
+                    "dbo.sales_clone",
+                    "--at",
+                    "2024-05-20T14:00:00",
+                ],
+            )
+        assert result.exit_code == 0
+        _, kwargs = mock_clone.call_args
+        assert kwargs["at"] is not None
+
+    def test_clone_bad_at_timestamp_exits_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        result = runner.invoke(
+            cli,
+            [
+                "tables",
+                "clone",
+                WS_GUID,
+                WH_GUID,
+                "--source",
+                "dbo.source_tbl",
+                "--name",
+                "dbo.sales_clone",
+                "--at",
+                "not-a-date",
+            ],
+        )
+        assert result.exit_code != 0
+
+    def test_clone_missing_source_exits_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        result = runner.invoke(
+            cli,
+            [
+                "tables",
+                "clone",
+                WS_GUID,
+                WH_GUID,
+                "--name",
+                "dbo.sales_clone",
+            ],
+        )
+        assert result.exit_code != 0
+
+    def test_clone_missing_name_exits_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        result = runner.invoke(
+            cli,
+            [
+                "tables",
+                "clone",
+                WS_GUID,
+                WH_GUID,
+                "--source",
+                "dbo.source_tbl",
+            ],
+        )
+        assert result.exit_code != 0
+
+    def test_clone_bad_source_qualified_name_exits_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        result = runner.invoke(
+            cli,
+            [
+                "tables",
+                "clone",
+                WS_GUID,
+                WH_GUID,
+                "--source",
+                "nodot",
+                "--name",
+                "dbo.sales_clone",
+            ],
+        )
+        assert result.exit_code != 0
+
+    def test_clone_bad_name_qualified_name_exits_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        result = runner.invoke(
+            cli,
+            [
+                "tables",
+                "clone",
+                WS_GUID,
+                WH_GUID,
+                "--source",
+                "dbo.source_tbl",
+                "--name",
+                "nodot",
+            ],
+        )
+        assert result.exit_code != 0
+
+    def test_clone_sql_endpoint_rejected(self, runner: CliRunner, cache_env: Path) -> None:
+        """SQL Endpoint items must be rejected before issuing DDL."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "tables",
+                    "clone",
+                    WS_GUID,
+                    SE_GUID,
+                    "--source",
+                    "dbo.source_tbl",
+                    "--name",
+                    "dbo.sales_clone",
+                ],
+            )
+        assert result.exit_code != 0
+        assert "read-only" in result.output
+
+    def test_clone_warehouse_item_allowed(self, runner: CliRunner, cache_env: Path) -> None:
+        """Warehouse items should not be blocked by the SQL Endpoint guard."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.clone_table",
+                new=AsyncMock(return_value=_make_table()),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "tables",
+                    "clone",
+                    WS_GUID,
+                    WH_GUID,
+                    "--source",
+                    "dbo.source_tbl",
+                    "--name",
+                    "dbo.sales_clone",
+                ],
+            )
+        assert result.exit_code == 0
+
+    def test_clone_permission_denied_returns_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.clone_table",
+                new=AsyncMock(side_effect=PermissionDeniedError("no permission")),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "tables",
+                    "clone",
+                    WS_GUID,
+                    WH_GUID,
+                    "--source",
+                    "dbo.source_tbl",
+                    "--name",
+                    "dbo.sales_clone",
+                ],
+            )
+        assert result.exit_code != 0
