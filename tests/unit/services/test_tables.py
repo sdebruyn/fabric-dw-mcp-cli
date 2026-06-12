@@ -201,8 +201,13 @@ class TestListTables:
         with patch("fabric_dw.sql.open_connection", return_value=conn):
             await tables.list_tables(target, schema="dbo")
         cursor = conn.cursor.return_value
-        call_sql: str = cursor.execute.call_args[0][0]
-        assert "s.name = 'dbo'" in call_sql
+        call_args = cursor.execute.call_args
+        call_sql: str = call_args[0][0]
+        # Schema is now bound as a ? parameter, not interpolated.
+        assert "s.name = ?" in call_sql
+        params = call_args[0][1] if len(call_args[0]) > 1 else (call_args[1] or {}).get("params")
+        assert params is not None
+        assert "dbo" in list(params)
 
     @pytest.mark.asyncio
     async def test_schema_filter_validates_identifier(self) -> None:

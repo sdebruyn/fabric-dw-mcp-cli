@@ -42,28 +42,78 @@ def _serialize_value(value: object) -> object:
     return value
 
 
+def _detect_binary_indices(
+    description: list[tuple[str, object]] | None,
+    rows: list[tuple[object, ...]],
+) -> set[int]:
+    """Return the set of column indices whose values are binary (bytes/bytearray).
+
+    Detection strategy (in priority order):
+
+    1. **cursor.description type code** — if the driver populates ``type_code``
+       (``description[i][1]``) as the ``Binary`` type object, use it.  This is
+       reliable and does not require scanning rows.
+    2. **All-row scan fallback** — scan every row for any ``bytes``/``bytearray``
+       value.  This catches columns where the first row is ``NULL`` but later
+       rows carry binary data — the first-row-only heuristic would miss these.
+
+    Args:
+        description: The ``cursor.description`` list, or ``None`` if unavailable.
+        rows: The fetched rows.
+
+    Returns:
+        A set of column indices that contain binary data.
+    """
+    # Strategy 1: type code from cursor.description
+    if description:
+        binary_indices: set[int] = set()
+        for i, col_desc in enumerate(description):
+            # DB-API 2.0: col_desc[1] is the type_code.
+            # mssql_python exposes a Binary type object; we check for it by
+            # comparing against both the canonical name and a bytes-based sentinel.
+            type_code = col_desc[1] if len(col_desc) > 1 else None
+            if type_code is not None:
+                type_name = getattr(type_code, "__name__", None) or str(type_code)
+                if "binary" in type_name.lower() or "bytes" in type_name.lower():
+                    binary_indices.add(i)
+        if binary_indices:
+            return binary_indices
+
+    # Strategy 2: all-row scan fallback
+    all_row_binary: set[int] = set()
+    for row in rows:
+        for i, val in enumerate(row):
+            if isinstance(val, (bytes, bytearray)):
+                all_row_binary.add(i)
+    return all_row_binary
+
+
 def _tag_binary_columns(
     raw_columns: list[str],
     rows: list[tuple[object, ...]],
+    *,
+    description: list[tuple[str, object]] | None = None,
 ) -> tuple[list[str], list[list[object]]]:
     """Return tagged column names and serialised rows.
 
-    Columns whose corresponding values are ``bytes``/``bytearray`` in the
-    *first non-None row* are renamed with the ``__base64`` suffix so callers
-    can identify binary columns without inspecting every cell.
+    Columns that contain binary (``bytes``/``bytearray``) data are renamed
+    with the ``__base64`` suffix so callers can identify binary columns without
+    inspecting every cell.
 
-    If *rows* is empty the column names are returned unchanged (we have no
-    type information without a result set).
+    Binary detection uses :func:`_detect_binary_indices`, which first tries
+    ``cursor.description`` type codes (locale-independent, no row scan) and
+    falls back to scanning *all* rows (not just the first, so ``NULL``-prefixed
+    binary columns are correctly detected).
+
+    Args:
+        raw_columns: The raw column-name list.
+        rows: The fetched rows.
+        description: Optional ``cursor.description`` for type-code detection.
+
+    Returns:
+        A ``(tagged_cols, serialised_rows)`` tuple.
     """
-    if not rows:
-        return list(raw_columns), []
-
-    # Determine which column indices are binary by inspecting the first row.
-    binary_indices: set[int] = set()
-    first_row = next(iter(rows))
-    for i, val in enumerate(first_row):
-        if isinstance(val, (bytes, bytearray)):
-            binary_indices.add(i)
+    binary_indices = _detect_binary_indices(description, rows)
 
     tagged_cols = [
         f"{col}{_BINARY_SUFFIX}" if i in binary_indices else col
@@ -158,7 +208,11 @@ async def execute(
                     raw_rows: list[tuple[object, ...]] = cursor.fetchmany(row_limit + 1)
                 else:
                     raw_rows = cursor.fetchall()
-                tagged_cols, serialised_rows = _tag_binary_columns(raw_cols, raw_rows)
+                tagged_cols, serialised_rows = _tag_binary_columns(
+                    raw_cols,
+                    raw_rows,
+                    description=list(cursor.description),
+                )
                 if rowcount == -1:
                     rowcount = len(serialised_rows)
                 return SqlResult(columns=tagged_cols, rows=serialised_rows, rowcount=rowcount)

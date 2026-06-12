@@ -2,7 +2,7 @@
 
 Public API
 ----------
-- :func:`validate_identifier` — reject dangerous/malformed SQL identifiers.
+- :func:`validate_identifier` — re-exported from :mod:`fabric_dw.identifiers`.
 - :func:`list_views`          — list all views (optionally filtered by schema).
 - :func:`get_view`            — fetch a single view with its definition.
 - :func:`create_view`         — issue CREATE VIEW … AS <select_body>.
@@ -13,16 +13,14 @@ Public API
 from __future__ import annotations
 
 import asyncio
-import re
-from contextlib import closing
 from datetime import datetime
 from typing import cast
 
-from fabric_dw import sql
 from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import NotFound
+from fabric_dw.identifiers import quote_identifier, validate_identifier
 from fabric_dw.models import View
-from fabric_dw.sql import SqlTarget
+from fabric_dw.sql import SqlTarget, run_query
 
 __all__ = [
     "create_view",
@@ -35,51 +33,11 @@ __all__ = [
 ]
 
 # ---------------------------------------------------------------------------
-# Identifier validator
-# ---------------------------------------------------------------------------
-
-_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
-
-
-def validate_identifier(name: str) -> str:
-    """Validate that *name* is a safe SQL identifier segment.
-
-    Accepted pattern: ``[A-Za-z_][A-Za-z0-9_]{0,127}`` (max 128 chars).
-
-    Explicit fast-path rejections before the regex (belt-and-suspenders):
-    - ``]`` — closes a bracket-quoted identifier; enables injection.
-    - ``;`` — statement separator.
-    - ``--`` — line comment.
-
-    ASCII identifiers only (regex excludes unicode).  This is a deliberate
-    conservative choice: widening the regex without switching to parameterised
-    queries would reintroduce injection risk.  Use bracket-quoted names with
-    permitted characters only.
-
-    Args:
-        name: The raw identifier string supplied by the caller.
-
-    Returns:
-        *name* unchanged if valid.
-
-    Raises:
-        ValueError: If *name* contains dangerous characters or does not match
-            the allowed pattern.
-    """
-    if "]" in name or ";" in name or "--" in name:
-        msg = f"Invalid SQL identifier {name!r}: contains forbidden character(s)"
-        raise ValueError(msg)
-    if not _IDENTIFIER_RE.match(name):
-        msg = f"Invalid SQL identifier {name!r}: must match [A-Za-z_][A-Za-z0-9_]{{0,127}}"
-        raise ValueError(msg)
-    return name
-
-
-# ---------------------------------------------------------------------------
 # SQL templates
 # ---------------------------------------------------------------------------
 
-_READ_VIEW_SQL = "SELECT TOP ({count}) * FROM [{schema}].[{view}];"
+# TOP count is injected as a literal int (not user input) — safe.
+_READ_VIEW_SQL = "SELECT TOP ({count}) * FROM {schema_q}.{view_q};"
 
 _LIST_VIEWS_SQL = """\
 SELECT
@@ -103,7 +61,7 @@ SELECT
 FROM sys.views v
 JOIN sys.schemas s ON s.schema_id = v.schema_id
 JOIN sys.sql_modules m ON m.object_id = v.object_id
-WHERE s.name = '{schema}' AND v.name = '{view}';
+WHERE s.name = ? AND v.name = ?;
 """
 
 
@@ -159,23 +117,26 @@ async def list_views(
     if schema is not None:
         validate_identifier(schema)
 
-    schema_filter = f"s.name = '{schema}'" if schema is not None else "1=1"
-    # Safe: schema identifier passes validate_identifier() above.
+    # Identifier is validated above; safe to embed via parameter binding.
+    # For schema filter we use ? binding; for the "all schemas" branch we use a
+    # tautology literal that is never user-controlled.
+    if schema is not None:
+        schema_filter = "s.name = ?"
+        filter_params: list[object] = [schema]
+    else:
+        schema_filter = "1=1"
+        filter_params = []
+
     list_sql = _LIST_VIEWS_SQL.format(schema_filter=schema_filter)
 
     def _run() -> list[View]:
-        with closing(sql.open_connection(target, mode=mode)) as conn:
-            cursor = conn.cursor()
-            try:
-                cursor.execute(list_sql)
-                cols = [c[0] for c in (cursor.description or [])]
-                rows = cursor.fetchall()
-            except Exception as exc:
-                mapped = sql.map_driver_error(exc)
-                if mapped:
-                    raise mapped from exc
-                raise
-            return [_row_to_view(cols, r) for r in rows]
+        cols, rows = run_query(
+            target,
+            list_sql,
+            params=filter_params or None,
+            mode=mode,
+        )
+        return [_row_to_view(cols, r) for r in rows]
 
     return await asyncio.to_thread(_run)
 
@@ -212,24 +173,20 @@ async def read_view(
     validate_identifier(schema)
     validate_identifier(view_name)
 
-    read_sql = _READ_VIEW_SQL.format(count=int(count), schema=schema, view=view_name)
+    # Identifiers are validated; bracket-quote them for the FROM clause.
+    # TOP count is an internal int (not user-supplied string), safe to embed.
+    read_sql = _READ_VIEW_SQL.format(
+        count=int(count),
+        schema_q=quote_identifier(schema),
+        view_q=quote_identifier(view_name),
+    )
 
     def _run() -> tuple[list[str], list[tuple[object, ...]]]:
-        with closing(sql.open_connection(target, mode=mode)) as conn:
-            cursor = conn.cursor()
-            try:
-                cursor.execute(read_sql)
-                cols = [c[0] for c in (cursor.description or [])]
-                rows = cursor.fetchall()
-            except Exception as exc:
-                mapped = sql.map_driver_error(exc)
-                if mapped:
-                    raise mapped from exc
-                raise
-            if not cols:
-                msg = f"View [{schema}].[{view_name}] not found"
-                raise NotFound(msg)
-            return cols, list(rows)
+        cols, rows = run_query(target, read_sql, mode=mode)
+        if not cols:
+            msg = f"View [{schema}].[{view_name}] not found"
+            raise NotFound(msg)
+        return cols, list(rows)
 
     return await asyncio.to_thread(_run)
 
@@ -260,25 +217,17 @@ async def get_view(
     validate_identifier(schema)
     validate_identifier(view_name)
 
-    # Safe: schema and view_name identifiers pass validate_identifier() above.
-    get_sql = _GET_VIEW_SQL.format(schema=schema, view=view_name)
-
     def _run() -> View:
-        with closing(sql.open_connection(target, mode=mode)) as conn:
-            cursor = conn.cursor()
-            try:
-                cursor.execute(get_sql)
-                cols = [c[0] for c in (cursor.description or [])]
-                rows = cursor.fetchall()
-            except Exception as exc:
-                mapped = sql.map_driver_error(exc)
-                if mapped:
-                    raise mapped from exc
-                raise
-            if not rows:
-                msg = f"View [{schema}].[{view_name}] not found"
-                raise NotFound(msg)
-            return _row_to_view(cols, rows[0])
+        cols, rows = run_query(
+            target,
+            _GET_VIEW_SQL,
+            params=[schema, view_name],
+            mode=mode,
+        )
+        if not rows:
+            msg = f"View [{schema}].[{view_name}] not found"
+            raise NotFound(msg)
+        return _row_to_view(cols, rows[0])
 
     return await asyncio.to_thread(_run)
 
@@ -311,19 +260,10 @@ async def create_view(
     validate_identifier(schema)
     validate_identifier(view_name)
 
-    ddl = f"CREATE VIEW [{schema}].[{view_name}] AS {select_body}"
+    ddl = f"CREATE VIEW {quote_identifier(schema)}.{quote_identifier(view_name)} AS {select_body}"
 
     def _run() -> None:
-        with closing(sql.open_connection(target, mode=mode)) as conn:
-            cursor = conn.cursor()
-            try:
-                cursor.execute(ddl)
-                conn.commit()
-            except Exception as exc:
-                mapped = sql.map_driver_error(exc)
-                if mapped:
-                    raise mapped from exc
-                raise
+        run_query(target, ddl, mode=mode, commit=True, fetch="none")
 
     await asyncio.to_thread(_run)
     return await get_view(target, schema, view_name, mode=mode)
@@ -356,19 +296,13 @@ async def update_view(
     validate_identifier(schema)
     validate_identifier(view_name)
 
-    ddl = f"CREATE OR ALTER VIEW [{schema}].[{view_name}] AS {select_body}"
+    ddl = (
+        f"CREATE OR ALTER VIEW {quote_identifier(schema)}.{quote_identifier(view_name)}"
+        f" AS {select_body}"
+    )
 
     def _run() -> None:
-        with closing(sql.open_connection(target, mode=mode)) as conn:
-            cursor = conn.cursor()
-            try:
-                cursor.execute(ddl)
-                conn.commit()
-            except Exception as exc:
-                mapped = sql.map_driver_error(exc)
-                if mapped:
-                    raise mapped from exc
-                raise
+        run_query(target, ddl, mode=mode, commit=True, fetch="none")
 
     await asyncio.to_thread(_run)
     return await get_view(target, schema, view_name, mode=mode)
@@ -396,18 +330,9 @@ async def drop_view(
     validate_identifier(schema)
     validate_identifier(view_name)
 
-    ddl = f"DROP VIEW [{schema}].[{view_name}]"
+    ddl = f"DROP VIEW {quote_identifier(schema)}.{quote_identifier(view_name)}"
 
     def _run() -> None:
-        with closing(sql.open_connection(target, mode=mode)) as conn:
-            cursor = conn.cursor()
-            try:
-                cursor.execute(ddl)
-                conn.commit()
-            except Exception as exc:
-                mapped = sql.map_driver_error(exc)
-                if mapped:
-                    raise mapped from exc
-                raise
+        run_query(target, ddl, mode=mode, commit=True, fetch="none")
 
     await asyncio.to_thread(_run)

@@ -369,3 +369,61 @@ async def test_execute_closes_connection_on_error() -> None:
         await sql_exec.execute(target, "SELECT 1")
 
     conn.close.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Binary detection: cursor.description type codes + all-row fallback
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_binary_null_first_row_detected_via_later_rows() -> None:
+    """If the first row has NULL for a binary column, later rows with bytes
+    must still cause the column to be tagged.  The old first-row-only heuristic
+    would miss this; the all-row-scan fallback must catch it."""
+    target = _make_target()
+    # Column 0 is NULL in row 0 but bytes in row 1.
+    conn = _make_conn([(None,), (b"\x01\x02",)], ["blob"])
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await sql_exec.execute(target, "SELECT blob FROM t")
+
+    assert result.columns == ["blob__base64"]
+
+
+@pytest.mark.asyncio
+async def test_binary_all_null_rows_not_tagged() -> None:
+    """A column that is NULL in every row is not binary and must not be tagged."""
+    target = _make_target()
+    conn = _make_conn([(None,), (None,)], ["blob"])
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await sql_exec.execute(target, "SELECT blob FROM t")
+
+    assert result.columns == ["blob"]
+
+
+@pytest.mark.asyncio
+async def test_binary_type_code_in_description_tags_column() -> None:
+    """When cursor.description carries a type_code whose __name__ contains
+    'binary', the column is tagged without scanning any row."""
+    target = _make_target()
+
+    # Simulate a binary type object that the driver would expose.
+    class _BinaryType:
+        __name__ = "Binary"
+
+    cursor = MagicMock()
+    # description entry: (name, type_code, ...)
+    cursor.description = [("data", _BinaryType(), None, None, None, None, None)]
+    cursor.fetchall.return_value = [(None,)]  # first row is NULL
+    cursor.nextset.return_value = False
+    cursor.rowcount = -1
+
+    conn = MagicMock()
+    conn.cursor.return_value = cursor
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await sql_exec.execute(target, "SELECT data FROM t")
+
+    assert result.columns == ["data__base64"]

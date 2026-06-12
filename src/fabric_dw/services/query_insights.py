@@ -17,11 +17,9 @@ filter on.  A 403 driver error is surfaced as
 from __future__ import annotations
 
 import asyncio
-from contextlib import closing
 from datetime import datetime
 from typing import Any
 
-from fabric_dw import sql
 from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import PermissionDenied
 from fabric_dw.models import (
@@ -31,7 +29,7 @@ from fabric_dw.models import (
     LongRunningQuery,
     SqlPoolInsight,
 )
-from fabric_dw.sql import SqlTarget
+from fabric_dw.sql import SqlTarget, run_query
 
 __all__ = [
     "EXEC_REQUESTS_HISTORY_COLUMNS",
@@ -193,21 +191,12 @@ def _execute_sql(
     mode: CredentialMode,
 ) -> list[dict[str, Any]]:
     """Execute *sql_text* synchronously and return rows as list of dicts."""
-    with closing(sql.open_connection(target, mode=mode)) as conn:
-        cursor = conn.cursor()
-        try:
-            cursor.execute(sql_text)
-            cols = [c[0] for c in (cursor.description or [])]
-            rows = cursor.fetchall()
-        except Exception as exc:
-            mapped = sql.map_driver_error(exc)
-            if mapped:
-                if isinstance(mapped, PermissionDenied):
-                    msg = f"{mapped} — {_PERMISSION_DENIED_DOCS}"
-                    raise PermissionDenied(msg) from exc
-                raise mapped from exc
-            raise
-        return [dict(zip(cols, r, strict=True)) for r in rows]
+    try:
+        cols, rows = run_query(target, sql_text, mode=mode)
+    except PermissionDenied as exc:
+        msg = f"{exc} — {_PERMISSION_DENIED_DOCS}"
+        raise PermissionDenied(msg) from exc
+    return [dict(zip(cols, r, strict=True)) for r in rows]
 
 
 # ---------------------------------------------------------------------------

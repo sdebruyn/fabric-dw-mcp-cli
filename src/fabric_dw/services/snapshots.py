@@ -3,17 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import closing
 from datetime import UTC, datetime
 from typing import cast
 from uuid import UUID
 
-from fabric_dw import sql
 from fabric_dw.auth import CredentialMode
 from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import WarehouseKind, WarehouseSnapshot
-from fabric_dw.sql import SqlTarget
+from fabric_dw.sql import SqlTarget, run_query
 
 __all__ = [
     "create",
@@ -24,6 +22,11 @@ __all__ = [
 ]
 
 # Characters / sequences that could enable SQL injection in a bracket-quoted name.
+# This is a strict blocklist: snapshot names are NOT passed through
+# :func:`~fabric_dw.identifiers.validate_identifier` because they may contain
+# spaces and mixed-case characters that the identifier regex would reject.
+# The blocklist covers the characters that could break out of a bracket-quoted
+# name or terminate a statement.
 _FORBIDDEN_NAME_CHARS = ("]", ";", "\\", "'", '"', "--", "\n")
 
 
@@ -360,15 +363,6 @@ async def roll_timestamp(
         sql_str = f"ALTER DATABASE [{snapshot_name}] SET TIMESTAMP = '{formatted}';"
 
     def _run() -> None:
-        with closing(sql.open_connection(parent_target, mode=mode)) as conn:
-            cursor = conn.cursor()
-            try:
-                cursor.execute(sql_str)
-                conn.commit()
-            except Exception as exc:
-                mapped = sql.map_driver_error(exc)
-                if mapped:
-                    raise mapped from exc
-                raise
+        run_query(parent_target, sql_str, mode=mode, commit=True, fetch="none")
 
     await asyncio.to_thread(_run)

@@ -14,9 +14,9 @@ from contextlib import closing
 
 from fabric_dw import sql
 from fabric_dw.auth import CredentialMode
-from fabric_dw.exceptions import PermissionDenied
+from fabric_dw.exceptions import AuthError, PermissionDenied
 from fabric_dw.models import Connection, RunningQuery
-from fabric_dw.sql import SqlTarget
+from fabric_dw.sql import SqlTarget, run_query
 
 __all__ = [
     "kill",
@@ -28,6 +28,12 @@ __all__ = [
 # Analytics uses a different execution engine), so the OUTER APPLY for
 # query_text is omitted.  The query_text column is included in the SELECT as a
 # literal NULL so the RunningQuery model field is populated with None.
+#
+# The LEFT JOIN was changed to INNER JOIN: the feature intent is to return only
+# sessions that have an *active* request (status in running/runnable/suspended).
+# A LEFT JOIN with a WHERE predicate on the right-side table is logically
+# equivalent to INNER JOIN and misleads the reader.  Using INNER JOIN makes the
+# intent explicit.
 _LIST_RUNNING_SQL = """\
 SELECT
     r.session_id,
@@ -39,7 +45,7 @@ SELECT
     r.command,
     NULL AS query_text
 FROM sys.dm_exec_sessions s
-LEFT JOIN sys.dm_exec_requests r ON r.session_id = s.session_id
+INNER JOIN sys.dm_exec_requests r ON r.session_id = s.session_id
 WHERE r.status IN ('running', 'runnable', 'suspended')
 ORDER BY r.total_elapsed_time DESC;
 """
@@ -66,18 +72,8 @@ async def list_running(
     """
 
     def _run() -> list[RunningQuery]:
-        with closing(sql.open_connection(target, mode=mode)) as conn:
-            cursor = conn.cursor()
-            try:
-                cursor.execute(_LIST_RUNNING_SQL)
-                cols = [c[0] for c in (cursor.description or [])]
-                rows = cursor.fetchall()
-            except Exception as exc:
-                mapped = sql.map_driver_error(exc)
-                if mapped:
-                    raise mapped from exc
-                raise
-            return [RunningQuery.model_validate(dict(zip(cols, r, strict=True))) for r in rows]
+        cols, rows = run_query(target, _LIST_RUNNING_SQL, mode=mode)
+        return [RunningQuery.model_validate(dict(zip(cols, r, strict=True))) for r in rows]
 
     return await asyncio.to_thread(_run)
 
@@ -121,18 +117,8 @@ async def list_connections(
     """
 
     def _run() -> list[Connection]:
-        with closing(sql.open_connection(target, mode=mode)) as conn:
-            cursor = conn.cursor()
-            try:
-                cursor.execute(_LIST_CONNECTIONS_SQL)
-                cols = [c[0] for c in (cursor.description or [])]
-                rows = cursor.fetchall()
-            except Exception as exc:
-                mapped = sql.map_driver_error(exc)
-                if mapped:
-                    raise mapped from exc
-                raise
-            return [Connection.model_validate(dict(zip(cols, r, strict=True))) for r in rows]
+        cols, rows = run_query(target, _LIST_CONNECTIONS_SQL, mode=mode)
+        return [Connection.model_validate(dict(zip(cols, r, strict=True))) for r in rows]
 
     return await asyncio.to_thread(_run)
 
@@ -159,8 +145,10 @@ async def kill(
         msg = f"session_id must be a positive integer; got {session_id}"
         raise ValueError(msg)
 
+    # KILL requires a bare integer (no quotes, no parameter binding).
+    # We validate and cast to int to prevent injection before embedding.
     safe_id = int(session_id)
-    kill_sql = f"KILL '{safe_id}'"
+    kill_sql = f"KILL {safe_id}"
 
     def _run() -> None:
         with closing(sql.open_connection(target, mode=mode)) as conn:
@@ -172,6 +160,9 @@ async def kill(
                 mapped = sql.map_driver_error(exc)
                 if mapped:
                     msg = f"Permission denied when trying to KILL session {session_id}: {mapped}"
+                    raise PermissionDenied(msg) from exc
+                if isinstance(exc, (PermissionDenied, AuthError)):
+                    msg = f"Permission denied when trying to KILL session {session_id}: {exc}"
                     raise PermissionDenied(msg) from exc
                 raise
 

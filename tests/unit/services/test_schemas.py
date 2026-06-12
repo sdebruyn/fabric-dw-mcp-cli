@@ -120,9 +120,12 @@ class TestListSchemas:
         with patch("fabric_dw.sql.open_connection", return_value=conn):
             await schemas.list_schemas(target)
         cursor = conn.cursor.return_value
-        call_sql: str = cursor.execute.call_args[0][0]
-        # The NOT IN clause must include 'sys'
-        assert "'sys'" in call_sql
+        call_args = cursor.execute.call_args
+        call_sql: str = call_args[0][0]
+        # The NOT IN clause uses ? placeholders; 'sys' is in the params.
+        assert "NOT IN" in call_sql
+        params = call_args[0][1] if len(call_args[0]) > 1 else []
+        assert "sys" in list(params)
 
     @pytest.mark.asyncio
     async def test_sql_excludes_information_schema(self) -> None:
@@ -131,8 +134,9 @@ class TestListSchemas:
         with patch("fabric_dw.sql.open_connection", return_value=conn):
             await schemas.list_schemas(target)
         cursor = conn.cursor.return_value
-        call_sql: str = cursor.execute.call_args[0][0]
-        assert "'INFORMATION_SCHEMA'" in call_sql
+        call_args = cursor.execute.call_args
+        params = call_args[0][1] if len(call_args[0]) > 1 else []
+        assert "INFORMATION_SCHEMA" in list(params)
 
     @pytest.mark.asyncio
     async def test_sql_excludes_db_prefix_via_like(self) -> None:
@@ -151,9 +155,10 @@ class TestListSchemas:
         with patch("fabric_dw.sql.open_connection", return_value=conn):
             await schemas.list_schemas(target)
         cursor = conn.cursor.return_value
-        call_sql: str = cursor.execute.call_args[0][0]
-        # 'guest' must appear in the NOT IN clause
-        assert "'guest'" in call_sql
+        call_args = cursor.execute.call_args
+        params = call_args[0][1] if len(call_args[0]) > 1 else []
+        # 'guest' must appear in the NOT IN params
+        assert "guest" in list(params)
 
     @pytest.mark.asyncio
     async def test_closes_connection(self) -> None:
@@ -375,54 +380,66 @@ class TestDeleteSchema:
 class TestDeleteSchemaCascade:
     @pytest.mark.asyncio
     async def test_cascade_drops_table_then_schema(self) -> None:
+        """cascade=True: list → run_statements (DROP TABLE) → DROP SCHEMA.
+        run_statements uses a single connection for all object drops."""
         target = _make_target()
         list_conn = _make_conn([("orders", "TABLE")], ["obj_name", "obj_type"])
-        drop_table_conn = _make_conn_for_ddl()
+        # run_statements uses ONE connection for all object drops
+        drop_objects_conn = _make_conn_for_ddl()
         drop_schema_conn = _make_conn_for_ddl()
         with patch(
             "fabric_dw.sql.open_connection",
-            side_effect=[list_conn, drop_table_conn, drop_schema_conn],
+            side_effect=[list_conn, drop_objects_conn, drop_schema_conn],
         ):
             await schemas.delete_schema(target, "sales", cascade=True)
-        cursor = drop_table_conn.cursor.return_value
+        # drop_objects_conn handles all object drops (here just one table)
+        cursor = drop_objects_conn.cursor.return_value
         drop_sql: str = cursor.execute.call_args[0][0].upper()
         assert "DROP TABLE" in drop_sql
 
     @pytest.mark.asyncio
     async def test_cascade_drops_view_then_schema(self) -> None:
+        """cascade=True: list → run_statements (DROP VIEW) → DROP SCHEMA."""
         target = _make_target()
         list_conn = _make_conn([("vw_orders", "VIEW")], ["obj_name", "obj_type"])
-        drop_view_conn = _make_conn_for_ddl()
+        drop_objects_conn = _make_conn_for_ddl()
         drop_schema_conn = _make_conn_for_ddl()
         with patch(
             "fabric_dw.sql.open_connection",
-            side_effect=[list_conn, drop_view_conn, drop_schema_conn],
+            side_effect=[list_conn, drop_objects_conn, drop_schema_conn],
         ):
             await schemas.delete_schema(target, "sales", cascade=True)
-        cursor = drop_view_conn.cursor.return_value
+        cursor = drop_objects_conn.cursor.return_value
         drop_sql: str = cursor.execute.call_args[0][0].upper()
         assert "DROP VIEW" in drop_sql
 
     @pytest.mark.asyncio
     async def test_cascade_drops_multiple_objects(self) -> None:
+        """Multiple objects (t1 TABLE, v1 VIEW) are dropped on ONE connection.
+
+        Connection count:
+        - 1: list objects (run_query)
+        - 2: ALL DROP statements (run_statements — single connection)
+        - 3: DROP SCHEMA (run_query)
+        Total: 3 (not 4 as with the old per-statement approach).
+        """
         target = _make_target()
         list_conn = _make_conn([("t1", "TABLE"), ("v1", "VIEW")], ["obj_name", "obj_type"])
-        drop1_conn = _make_conn_for_ddl()
-        drop2_conn = _make_conn_for_ddl()
+        drop_objects_conn = _make_conn_for_ddl()
         drop_schema_conn = _make_conn_for_ddl()
         with patch(
             "fabric_dw.sql.open_connection",
-            side_effect=[list_conn, drop1_conn, drop2_conn, drop_schema_conn],
+            side_effect=[list_conn, drop_objects_conn, drop_schema_conn],
         ) as mock_open:
             await schemas.delete_schema(target, "sales", cascade=True)
-        # Should have opened 4 connections total: list + DROP TABLE + DROP VIEW + DROP SCHEMA
-        assert mock_open.call_count == 4
-        drop_table_sql_raw: str = drop1_conn.cursor.return_value.execute.call_args[0][0]
-        drop_view_sql_raw: str = drop2_conn.cursor.return_value.execute.call_args[0][0]
-        assert "DROP TABLE" in drop_table_sql_raw.upper()
-        assert "[t1]" in drop_table_sql_raw
-        assert "DROP VIEW" in drop_view_sql_raw.upper()
-        assert "[v1]" in drop_view_sql_raw
+        # 3 connections total: list + all-object-drops + schema-drop
+        assert mock_open.call_count == 3
+        # Both DROP statements were executed on the single drop_objects_conn cursor
+        cursor = drop_objects_conn.cursor.return_value
+        assert cursor.execute.call_count == 2
+        sqls = [str(c[0][0]).upper() for c in cursor.execute.call_args_list]
+        assert any("DROP TABLE" in s and "[T1]" in s for s in sqls)
+        assert any("DROP VIEW" in s and "[V1]" in s for s in sqls)
 
     @pytest.mark.asyncio
     async def test_cascade_false_does_not_enumerate_objects(self) -> None:
@@ -438,6 +455,7 @@ class TestDeleteSchemaCascade:
 
     @pytest.mark.asyncio
     async def test_cascade_empty_schema_drops_schema(self) -> None:
+        """When schema has no objects, skip run_statements and only DROP SCHEMA."""
         target = _make_target()
         list_conn = _make_conn([], ["obj_name", "obj_type"])
         drop_schema_conn = _make_conn_for_ddl()
@@ -452,16 +470,17 @@ class TestDeleteSchemaCascade:
 
     @pytest.mark.asyncio
     async def test_cascade_uses_bracket_quoting_for_objects(self) -> None:
+        """Object DROP statements must use bracket-quoted names."""
         target = _make_target()
         list_conn = _make_conn([("my_table", "TABLE")], ["obj_name", "obj_type"])
-        drop_table_conn = _make_conn_for_ddl()
+        drop_objects_conn = _make_conn_for_ddl()
         drop_schema_conn = _make_conn_for_ddl()
         with patch(
             "fabric_dw.sql.open_connection",
-            side_effect=[list_conn, drop_table_conn, drop_schema_conn],
+            side_effect=[list_conn, drop_objects_conn, drop_schema_conn],
         ):
             await schemas.delete_schema(target, "sales", cascade=True)
-        cursor = drop_table_conn.cursor.return_value
+        cursor = drop_objects_conn.cursor.return_value
         drop_sql: str = cursor.execute.call_args[0][0]
         assert "[sales]" in drop_sql
         assert "[my_table]" in drop_sql
