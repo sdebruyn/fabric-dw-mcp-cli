@@ -84,6 +84,25 @@ Dev images (built from every main merge): `ghcr.io/sdebruyn/fabric-dw:main` or `
 
 Package page: [ghcr.io/sdebruyn/fabric-dw](https://github.com/sdebruyn/fabric-dw-mcp-cli/pkgs/container/fabric-dw)
 
+#### Security environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `FABRIC_MCP_READONLY` | unset | Set to `1` to restrict `execute_sql` to SELECT/WITH and block all mutating tools. |
+| `FABRIC_MCP_ALLOW_DESTRUCTIVE` | unset | Set to `1` to enable permanently-destructive tools (`delete_*`, `clear_table`, `restore_warehouse_in_place`, `reset_sql_pools`). Disabled by default. |
+| `FABRIC_MCP_WORKSPACES` | unset | Comma-separated workspace names or GUIDs the server may touch. Unset = all workspaces allowed. |
+| `FABRIC_MCP_ALLOW_REMOTE` | unset | Set to `1` to allow the HTTP transport (`--transport http`) to bind on a non-loopback address. A warning is logged; ensure an authenticating reverse proxy with TLS fronts the endpoint. |
+
+#### HTTP transport
+
+The MCP server can be started in HTTP mode for remote clients:
+
+```bash
+fabric-dw-mcp --transport http [--host 127.0.0.1] [--port 8000]
+```
+
+Binding to non-loopback addresses requires `FABRIC_MCP_ALLOW_REMOTE=1`. The HTTP transport has **no built-in authentication or TLS** — always front it with an authenticating reverse proxy.
+
 ## Develop in a container
 
 Open the repo in [GitHub Codespaces](https://github.com/codespaces) or VS Code's Remote-Containers extension — the devcontainer pre-installs Python 3.13, uv, Azure CLI, and the GitHub CLI.

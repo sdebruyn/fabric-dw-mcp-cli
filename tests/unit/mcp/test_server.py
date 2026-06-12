@@ -1211,7 +1211,13 @@ async def test_create_table_sql_endpoint_raises_tool_error() -> None:
 
 @pytest.mark.asyncio
 async def test_delete_table_sql_endpoint_raises_tool_error() -> None:
-    """delete_table must raise ToolError when the item is a SQL Endpoint."""
+    """delete_table must raise ToolError when the item is a SQL Endpoint.
+
+    FABRIC_MCP_ALLOW_DESTRUCTIVE=1 is set so the destructive guard passes and
+    the SQL-endpoint read-only guard fires instead.
+    """
+    import os  # noqa: PLC0415
+
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -1228,6 +1234,7 @@ async def test_delete_table_sql_endpoint_raises_tool_error() -> None:
         patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
         patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
         patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
         await mcp._tool_manager.call_tool(
@@ -1240,7 +1247,13 @@ async def test_delete_table_sql_endpoint_raises_tool_error() -> None:
 
 @pytest.mark.asyncio
 async def test_clear_table_sql_endpoint_raises_tool_error() -> None:
-    """clear_table must raise ToolError when the item is a SQL Endpoint."""
+    """clear_table must raise ToolError when the item is a SQL Endpoint.
+
+    FABRIC_MCP_ALLOW_DESTRUCTIVE=1 is set so the destructive guard passes and
+    the SQL-endpoint read-only guard fires instead.
+    """
+    import os  # noqa: PLC0415
+
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -1257,6 +1270,7 @@ async def test_clear_table_sql_endpoint_raises_tool_error() -> None:
         patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
         patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
         patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
         await mcp._tool_manager.call_tool(
@@ -1305,7 +1319,13 @@ async def test_create_schema_rejects_sql_endpoint() -> None:
 
 @pytest.mark.asyncio
 async def test_delete_schema_rejects_sql_endpoint() -> None:
-    """delete_schema must raise ToolError when called against a SQL Analytics Endpoint."""
+    """delete_schema must raise ToolError when called against a SQL Analytics Endpoint.
+
+    FABRIC_MCP_ALLOW_DESTRUCTIVE=1 is set so the destructive guard passes and
+    the SQL-endpoint read-only guard fires instead.
+    """
+    import os  # noqa: PLC0415
+
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -1322,6 +1342,7 @@ async def test_delete_schema_rejects_sql_endpoint() -> None:
         patch("fabric_dw.mcp.server._get_http", return_value=mock_http),
         patch("fabric_dw.mcp.server._get_resolver", return_value=mock_resolver),
         patch("fabric_dw.mcp.server._get_cache", return_value=mock_cache),
+        patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
         await mcp._tool_manager.call_tool(
