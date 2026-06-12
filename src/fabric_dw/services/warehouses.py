@@ -11,7 +11,9 @@ from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.exceptions import FabricServerError, NotFound, PermissionDenied
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import Warehouse, WarehouseKind
+from fabric_dw.services._concurrency import bounded_gather
 from fabric_dw.services.workspaces import SUPPORTED_COLLATIONS
+from fabric_dw.services.workspaces import list_all as _list_all_workspaces
 
 _logger = logging.getLogger("fabric_dw.warehouses")
 
@@ -62,9 +64,11 @@ async def list_all_workspaces(http: FabricHttpClient) -> list[Warehouse]:
     """Scan every visible workspace and collect its warehouses.
 
     Iterates all workspaces returned by :func:`~fabric_dw.services.workspaces.list_all`
-    and aggregates their warehouses. Workspaces that raise
+    and aggregates their warehouses using bounded concurrency (up to 8 workspaces
+    in parallel).  Workspaces that raise
     :class:`~fabric_dw.exceptions.PermissionDenied` or
-    :class:`~fabric_dw.exceptions.NotFound` are silently skipped.
+    :class:`~fabric_dw.exceptions.NotFound` are skipped with a per-workspace
+    warning; a summary warning is logged after the scan.
 
     Args:
         http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
@@ -73,16 +77,28 @@ async def list_all_workspaces(http: FabricHttpClient) -> list[Warehouse]:
         A flat list of :class:`~fabric_dw.models.Warehouse` instances from all
         accessible workspaces.
     """
-    from fabric_dw.services import (  # noqa: PLC0415
-        workspaces as _ws,  # avoid circular at module level
+    workspaces = await _list_all_workspaces(http)
+    total = len(workspaces)
+
+    raw = await bounded_gather(
+        [lambda ws=ws: list_warehouses(http, ws.id) for ws in workspaces],
+        return_exceptions=True,
     )
 
     out: list[Warehouse] = []
-    for ws in await _ws.list_all(http):
-        try:
-            out.extend(await list_warehouses(http, ws.id))
-        except (PermissionDenied, NotFound):
-            continue
+    skipped = 0
+    for ws, result in zip(workspaces, raw, strict=True):
+        if isinstance(result, (PermissionDenied, NotFound)):
+            _logger.warning("skipping workspace %s: %s", ws.name, result)
+            skipped += 1
+        elif isinstance(result, BaseException):
+            raise result
+        else:
+            out.extend(result)
+
+    if skipped:
+        _logger.warning("skipped %d of %d workspaces due to access errors", skipped, total)
+
     return out
 
 
