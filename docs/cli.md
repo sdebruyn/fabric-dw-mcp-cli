@@ -972,7 +972,7 @@ definition     SELECT id, amount FROM dbo.sales
 
 ### views create
 
-**Targets:** Data Warehouse only
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
 Create a new SQL view.
 
@@ -995,7 +995,7 @@ fabric-dw views create MyWorkspace SalesWH dbo.vw_recent \
 
 ### views update
 
-**Targets:** Data Warehouse only
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
 Redefine an existing view using `CREATE OR ALTER VIEW`.
 
@@ -1016,7 +1016,7 @@ fabric-dw views update MyWorkspace SalesWH dbo.vw_recent \
 
 ### views drop
 
-**Targets:** Data Warehouse only
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
 Drop a SQL view. You will be asked to confirm unless `--yes` is passed.
 
@@ -1247,7 +1247,7 @@ fabric-dw schemas list MyWorkspace SalesWH
 
 ### schemas create
 
-**Targets:** Data Warehouse only
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
 Create a new SQL schema on a warehouse.
 
@@ -1265,7 +1265,7 @@ fabric-dw schemas create MyWorkspace SalesWH reporting
 
 ### schemas delete
 
-**Targets:** Data Warehouse only
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
 Drop a schema from a warehouse. You will be asked to confirm unless `--yes` is passed.
 
