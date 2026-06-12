@@ -228,7 +228,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             result = await sql_pools_svc.reset_pools(ctx.http, ws_id)
         except FabricError as exc:
             raise fabric_err(exc) from exc
-        return result.model_dump(by_alias=True, mode="json")
+        return result.model_dump(by_alias=True, mode="json")  # ty: ignore[unresolved-attribute]
 
     @mcp.tool(name="enable_sql_pools")
     async def enable_sql_pools(workspace: str) -> dict[str, Any]:

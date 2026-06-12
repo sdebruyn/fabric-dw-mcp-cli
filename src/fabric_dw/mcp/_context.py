@@ -16,9 +16,10 @@ module-level sentinel (``_SERVER_CTX``) that is set during the
 :func:`get_context` accessor raises ``RuntimeError`` when called outside the
 lifespan (i.e. before startup or after shutdown), making mis-use visible.
 
-The :class:`FabricHttpClient` is closed (``await ctx.http.aclose()``) in the
-lifespan's cleanup block, ensuring that open sockets are drained on SIGTERM /
-CTRL-C rather than leaking.
+The :class:`FabricHttpClient` is closed via ``async with ctx.http:`` inside the
+lifespan.  :class:`FabricHttpClient` has no standalone ``aclose()`` method;
+cleanup is handled by its ``__aexit__``, which drains open sockets on normal
+exit, SIGTERM, or CTRL-C.
 """
 
 from __future__ import annotations
@@ -51,7 +52,7 @@ class ServerContext:
     """Bundles the shared service objects needed by every MCP tool.
 
     Attributes:
-        http: The shared HTTP client (must be ``aclose()``'d on shutdown).
+        http: The shared HTTP client (closed via ``async with ctx.http:`` in the lifespan).
         cache: Name-to-UUID lookup cache.
         resolver: Workspace / item resolver backed by *http* and *cache*.
         auth_mode: The active credential mode (e.g. ``"default"``).
@@ -140,9 +141,9 @@ async def fabric_lifespan(app: FastMCP) -> AsyncIterator[None]:  # noqa: ARG001
     2. Enters the HTTP client as an async context manager (``async with ctx.http``),
        which initialises the underlying ``httpx.AsyncClient``.
     3. Yields control to the server.
-    4. On exit (normal or via exception / signal), the HTTP client context manager
-       calls ``aclose()`` on the underlying ``httpx.AsyncClient`` to drain open
-       connections, then clears the sentinel.
+    4. On exit (normal or via exception / signal), ``__aexit__`` of ``ctx.http``
+       drains open connections (the lifespan uses ``async with ctx.http:``;
+       there is no standalone ``aclose()`` call), then clears the sentinel.
     """
     global _SERVER_CTX  # noqa: PLW0603
     ctx = build_context()

@@ -13,8 +13,8 @@ it calls :func:`~fabric_dw.mcp._context.build_context` to construct one
 :class:`~fabric_dw.mcp._context.ServerContext` (HTTP client, cache, resolver,
 auth mode) and stores it in a module-level sentinel accessible via
 :func:`~fabric_dw.mcp._context.get_context`.  On shutdown (normal exit,
-SIGTERM, CTRL-C) it ``await ctx.http.aclose()``'s the HTTP client to drain
-open sockets and credential caches before the process exits.
+SIGTERM, CTRL-C) the lifespan uses ``async with ctx.http:`` so the HTTP client
+is closed by its ``__aexit__`` (no standalone ``aclose()`` call needed).
 
 Context access
 --------------
