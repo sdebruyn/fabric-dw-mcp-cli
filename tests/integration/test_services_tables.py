@@ -162,3 +162,33 @@ async def test_clone_table_at_point_in_time(ephemeral_sql_target: SqlTarget) -> 
             await tables.delete_table(ephemeral_sql_target, schema, source_name)
         with contextlib.suppress(Exception):
             await tables.delete_table(ephemeral_sql_target, schema, clone_name)
+
+
+async def test_rename_table_roundtrip(ephemeral_sql_target: SqlTarget) -> None:
+    """Create a table, rename it, assert the old name is gone and the new name exists."""
+    schema = "dbo"
+    old_name = "pytest_tables_rename_src"
+    new_name = "pytest_tables_rename_dst"
+    select_body = "SELECT 42 AS answer"
+
+    try:
+        created = await tables.create_table(ephemeral_sql_target, schema, old_name, select_body)
+        assert isinstance(created, Table)
+        assert created.name == old_name
+
+        renamed = await tables.rename_table(ephemeral_sql_target, f"{schema}.{old_name}", new_name)
+        assert isinstance(renamed, Table)
+        assert renamed.name == new_name
+        assert renamed.schema_name == schema
+        assert renamed.qualified_name == f"{schema}.{new_name}"
+
+        all_tables = await tables.list_tables(ephemeral_sql_target)
+        names = {t.name for t in all_tables}
+        assert new_name in names, f"New table {new_name!r} not found after rename"
+        assert old_name not in names, f"Old table {old_name!r} still present after rename"
+
+    finally:
+        with contextlib.suppress(Exception):
+            await tables.delete_table(ephemeral_sql_target, schema, old_name)
+        with contextlib.suppress(Exception):
+            await tables.delete_table(ephemeral_sql_target, schema, new_name)

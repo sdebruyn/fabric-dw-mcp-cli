@@ -648,6 +648,16 @@ class TestSqlEndpointGuard:
                 kind=WarehouseKind.SQL_ENDPOINT,
             )
 
+    async def test_rename_table_rejects_sql_endpoint(self) -> None:
+        target = _make_target()
+        with pytest.raises(ItemKindError, match="read-only"):
+            await tables.rename_table(
+                target,
+                "dbo.sales",
+                "sales_v2",
+                kind=WarehouseKind.SQL_ENDPOINT,
+            )
+
 
 # ===========================================================================
 # clone_table
@@ -800,3 +810,106 @@ class TestCloneTable:
             pytest.raises(PermissionDeniedError),
         ):
             await tables.clone_table(target, "dbo.source_tbl", "dbo.sales")
+
+
+# ===========================================================================
+# rename_table
+# ===========================================================================
+
+
+class TestRenameTable:
+    async def test_emits_sp_rename(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await tables.rename_table(target, "dbo.sales", "sales_v2")
+        cursor = ddl_conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0].upper()
+        assert "SP_RENAME" in call_sql
+
+    async def test_passes_old_qualified_and_new_name_as_params(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await tables.rename_table(target, "dbo.sales", "sales_v2")
+        cursor = ddl_conn.cursor.return_value
+        call_args = cursor.execute.call_args
+        # params is the second positional arg to cursor.execute
+        params = call_args[0][1] if len(call_args[0]) > 1 else (call_args[1] or {}).get("params")
+        assert params is not None
+        params_list = list(params)
+        assert "dbo.sales" in params_list
+        assert "sales_v2" in params_list
+
+    async def test_object_type_is_embedded_in_sql(self) -> None:
+        """'OBJECT' must appear literally in the SQL (not as a param)."""
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await tables.rename_table(target, "dbo.sales", "sales_v2")
+        cursor = ddl_conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert "'OBJECT'" in call_sql or "OBJECT" in call_sql.upper()
+
+    async def test_returns_renamed_table_object(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        renamed_row: tuple[object, ...] = ("dbo", "sales_v2", _NOW, _LATER)
+        fetch_conn = _make_conn([renamed_row], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            result = await tables.rename_table(target, "dbo.sales", "sales_v2")
+        assert isinstance(result, Table)
+        assert result.name == "sales_v2"
+        assert result.schema_name == "dbo"
+        assert result.qualified_name == "dbo.sales_v2"
+
+    async def test_commits_after_execute(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await tables.rename_table(target, "dbo.sales", "sales_v2")
+        ddl_conn.commit.assert_called_once()
+
+    async def test_rejects_schema_qualified_new_name(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="schema-qualified"):
+            await tables.rename_table(target, "dbo.sales", "other.sales_v2")
+
+    async def test_rejects_invalid_new_name(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await tables.rename_table(target, "dbo.sales", "bad--name")
+
+    async def test_rejects_empty_new_name(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await tables.rename_table(target, "dbo.sales", "")
+
+    async def test_rejects_invalid_qualified_name(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="substring not found"):
+            await tables.rename_table(target, "nodot", "sales_v2")
+
+    async def test_raises_not_found_when_fetch_returns_empty(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([], _LIST_COLS)
+        with (
+            patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]),
+            pytest.raises(NotFoundError),
+        ):
+            await tables.rename_table(target, "dbo.sales", "sales_v2")
+
+    async def test_warehouse_kind_allowed(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            result = await tables.rename_table(
+                target, "dbo.sales", "sales_v2", kind=WarehouseKind.WAREHOUSE
+            )
+        assert isinstance(result, Table)

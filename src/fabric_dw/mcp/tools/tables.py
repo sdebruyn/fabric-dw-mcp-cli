@@ -254,3 +254,46 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             raise tool_err(exc) from exc
         ctx.resolver.clear_negative_cache()
         return result.model_dump(mode="json")
+
+    @mcp.tool(name="rename_table")
+    async def rename_table(
+        workspace: str, item: str, qualified_name: str, new_name: str
+    ) -> dict[str, Any]:
+        """Rename a SQL table via ``sp_rename`` (Data-Warehouse-only).
+
+        Renames the table in-place within the same schema using T-SQL
+        ``EXEC sp_rename``.  Both the current qualified name and the new bare
+        name are passed as bound parameters — no SQL injection is possible.
+
+        ``sp_rename`` cannot move a table to a different schema, so *new_name*
+        must be an unqualified (bare) name without a dot.
+
+        Args:
+            workspace: Workspace name or GUID.
+            item: Warehouse name or GUID.  SQL Analytics Endpoints are rejected.
+            qualified_name: Current dot-separated qualified table name, e.g.
+                ``dbo.sales``.
+            new_name: New table name (unqualified, e.g. ``sales_v2``).  Must not
+                contain a dot.
+        """
+        assert_writes_allowed("rename_table")
+        assert_workspace_allowed(workspace)
+        ctx = get_context()
+        try:
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
+            assert_workspace_allowed(workspace, str(ws_id))
+            _log.debug(
+                "rename_table ws=%s item=%s qualified=%r new_name=%r",
+                ws_id,
+                entry.id,
+                qualified_name,
+                new_name,
+            )
+            target = make_sql_target(ws_id, entry, item)
+            result = await tables_svc.rename_table(
+                target, qualified_name, new_name, kind=entry.kind, mode=ctx.auth_mode
+            )
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        ctx.resolver.clear_negative_cache()
+        return result.model_dump(mode="json")

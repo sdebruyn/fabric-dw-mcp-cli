@@ -46,7 +46,7 @@ from tests.unit.mcp.conftest import WS_ID, WS_NAME, make_item_entry
 # Expected tool count (sync with test_server.EXPECTED_TOOL_NAMES)
 # ---------------------------------------------------------------------------
 
-_EXPECTED_TOOL_COUNT = 66  # as documented in server.py docstring
+_EXPECTED_TOOL_COUNT = 67  # as documented in server.py docstring
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +105,7 @@ def _make_workspace() -> Workspace:
 
 
 async def test_list_tools_returns_expected_count(contract_ctx) -> None:
-    """list_tools() via the MCP protocol returns all 65 registered tools.
+    """list_tools() via the MCP protocol returns all 67 registered tools.
 
     This exercises the JSON-RPC ``tools/list`` handshake end-to-end and
     verifies that registration (``register_all``) did not silently drop or

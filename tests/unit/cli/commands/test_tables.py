@@ -15,7 +15,7 @@ from click.testing import CliRunner
 
 from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._main import cli
-from fabric_dw.exceptions import NotFoundError, PermissionDeniedError
+from fabric_dw.exceptions import ItemKindError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import Table, WarehouseKind
 from fabric_dw.sql import SqlTarget
 
@@ -1035,5 +1035,167 @@ class TestTablesClone:
                     "--name",
                     "dbo.sales_clone",
                 ],
+            )
+        assert result.exit_code != 0
+
+
+class TestTablesRename:
+    def test_rename_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        renamed = Table(
+            schema_name="dbo",
+            name="sales_v2",
+            qualified_name="dbo.sales_v2",
+            created=_NOW,
+            modified=_NOW,
+        )
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.rename_table",
+                new=AsyncMock(return_value=renamed),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["tables", "rename", WS_GUID, WH_GUID, "dbo.sales", "--new-name", "sales_v2"],
+            )
+        assert result.exit_code == 0
+
+    def test_rename_json_output(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        renamed = Table(
+            schema_name="dbo",
+            name="sales_v2",
+            qualified_name="dbo.sales_v2",
+            created=_NOW,
+            modified=_NOW,
+        )
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.rename_table",
+                new=AsyncMock(return_value=renamed),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "--json",
+                    "tables",
+                    "rename",
+                    WS_GUID,
+                    WH_GUID,
+                    "dbo.sales",
+                    "--new-name",
+                    "sales_v2",
+                ],
+            )
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["name"] == "sales_v2"
+
+    def test_rename_missing_new_name_fails(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        result = runner.invoke(cli, ["tables", "rename", WS_GUID, WH_GUID, "dbo.sales"])
+        assert result.exit_code != 0
+
+    def test_rename_schema_qualified_new_name_fails(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """Service must reject schema-qualified new names."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.rename_table",
+                new=AsyncMock(side_effect=ValueError("schema-qualified")),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "tables",
+                    "rename",
+                    WS_GUID,
+                    WH_GUID,
+                    "dbo.sales",
+                    "--new-name",
+                    "other.sales_v2",
+                ],
+            )
+        assert result.exit_code != 0
+
+    def test_rename_sql_endpoint_rejected(self, runner: CliRunner, cache_env: Path) -> None:
+        """SQL Endpoint items must be rejected by the service-layer guard."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.rename_table",
+                new=AsyncMock(side_effect=ItemKindError("read-only")),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["tables", "rename", WS_GUID, SE_GUID, "dbo.sales", "--new-name", "sales_v2"],
+            )
+        assert result.exit_code != 0
+        assert "read-only" in result.output
+
+    def test_rename_permission_denied_returns_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.rename_table",
+                new=AsyncMock(side_effect=PermissionDeniedError("no permission")),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["tables", "rename", WS_GUID, WH_GUID, "dbo.sales", "--new-name", "sales_v2"],
             )
         assert result.exit_code != 0
