@@ -22,7 +22,7 @@ nav = [
     { "Shell Completion" = "completion.md" },
     { "Troubleshooting" = "troubleshooting.md" }
   ] },
-  { "About" = [
+  { "Contributing" = [
     { "Contributing" = "contributing.md" },
     { "Code of Conduct" = "code-of-conduct.md" },
     { "License" = "license.md" },
