@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 
 import click
 
@@ -16,6 +17,9 @@ from fabric_dw.cli._render import confirm, render
 from fabric_dw.cli.commands._utils import (
     _coro,
     build_http_client,
+    build_sql_target,
+    parse_iso_datetime,
+    resolve_warehouse_arg,
     resolve_workspace_arg,
     resolve_workspace_id,
 )
@@ -26,6 +30,7 @@ from fabric_dw.exceptions import (
     PermissionDeniedError,
 )
 from fabric_dw.models import SqlPool, SqlPoolClassifier
+from fabric_dw.services import query_insights as _qi_svc
 from fabric_dw.services import sql_pools as _svc
 
 _log = logging.getLogger(__name__)
@@ -389,5 +394,69 @@ async def reset_cmd(ctx: CliContext, workspace: str | None) -> None:
                 render(result.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except PermissionDeniedError as exc:
         raise _permission_hint(exc) from exc
+    except FabricError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# insights
+# ---------------------------------------------------------------------------
+
+
+def _parse_iso(value: str | None, param_name: str) -> datetime | None:
+    """Parse an optional ISO-8601 string; raise UsageError on bad input."""
+    if value is None:
+        return None
+    return parse_iso_datetime(value, param_name, assume_utc=False)
+
+
+@sql_pools_group.command("insights")
+@click.argument("workspace", required=False, default=None)
+@click.argument("warehouse", required=False, default=None)
+@click.option(
+    "--limit",
+    default=100,
+    show_default=True,
+    type=click.IntRange(1, 10_000),
+    help="Maximum number of rows to return (1-10 000).",
+)
+@click.option(
+    "--since",
+    default=None,
+    metavar="ISO8601",
+    help="Return rows with timestamp >= this value (ISO-8601).",
+)
+@click.option(
+    "--until",
+    default=None,
+    metavar="ISO8601",
+    help="Return rows with timestamp <= this value (ISO-8601).",
+)
+@click.pass_obj
+@_coro
+async def insights_cmd(
+    ctx: CliContext,
+    workspace: str | None,
+    warehouse: str | None,
+    limit: int,
+    since: str | None,
+    until: str | None,
+) -> None:
+    """List SQL pool insights from queryinsights.sql_pool_insights."""
+    ws = resolve_workspace_arg(ctx, workspace)
+    wh = resolve_warehouse_arg(ctx, warehouse)
+    since_dt = _parse_iso(since, "--since")
+    until_dt = _parse_iso(until, "--until")
+    try:
+        async with build_http_client(ctx) as http:
+            target, _ = await build_sql_target(http, ws, wh)
+            items = await _qi_svc.list_sql_pool_insights(
+                target, limit=limit, since=since_dt, until=until_dt, mode=ctx.auth
+            )
+            render(
+                [q.model_dump(by_alias=True, mode="json") for q in items],
+                json_output=ctx.json_output,
+                table_title="SQL Pool Insights",
+            )
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc

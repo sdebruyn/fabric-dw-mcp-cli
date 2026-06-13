@@ -10,8 +10,7 @@ Domains
 - :mod:`.warehouses` — warehouse CRUD, takeover, permissions
 - :mod:`.sql_endpoints` — SQL Analytics Endpoint listing, detail, refresh, permissions
 - :mod:`.audit` — SQL audit settings management
-- :mod:`.queries` — running queries, connections, kill session
-- :mod:`.query_insights` — Query Insights DMV tools
+- :mod:`.queries` — running queries, connections, kill session, query-insights DMVs
 - :mod:`.sql_exec` — generic SQL execution (execute_sql)
 - :mod:`.snapshots` — warehouse snapshot CRUD, roll timestamp
 - :mod:`.restore` — restore points CRUD, in-place restore
@@ -19,7 +18,7 @@ Domains
 - :mod:`.procedures` — stored procedure listing and CRUD
 - :mod:`.schemas` — SQL schema listing and DDL
 - :mod:`.tables` — SQL table listing, reading, DDL
-- :mod:`.sql_pools` — SQL Pools beta API
+- :mod:`.sql_pools` — SQL Pools beta API, pool insights DMV
 - :mod:`.cache` — cache management (clear_cache)
 """
 
@@ -32,7 +31,6 @@ from fabric_dw.mcp.tools import (
     cache,
     procedures,
     queries,
-    query_insights,
     restore,
     schemas,
     snapshots,
@@ -53,7 +51,6 @@ _DOMAINS = [
     sql_endpoints,
     audit,
     queries,
-    query_insights,
     sql_exec,
     snapshots,
     restore,

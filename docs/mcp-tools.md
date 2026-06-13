@@ -405,6 +405,80 @@ Terminate a session on a warehouse.
 
 ---
 
+The following four tools query the `queryinsights` schema DMVs via TDS. They share the same parameter shape — `workspace`, `warehouse`, optional `limit`, optional `since`, and optional `until`.
+
+### list_request_history
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Return completed SQL requests from `queryinsights.exec_requests_history`.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `warehouse` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
+- `limit` (`int`, default `100`) — maximum rows to return (1–10 000).
+- `since` (`str | null`, optional) — ISO-8601 lower bound on `submit_time`.
+- `until` (`str | null`, optional) — ISO-8601 upper bound on `submit_time`.
+
+**Returns:** `list[dict]` — array of request-history row objects.
+
+---
+
+### list_session_history
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Return completed sessions from `queryinsights.exec_sessions_history`.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `warehouse` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
+- `limit` (`int`, default `100`) — maximum rows to return (1–10 000).
+- `since` (`str | null`, optional) — ISO-8601 lower bound on `session_start_time`.
+- `until` (`str | null`, optional) — ISO-8601 upper bound on `session_start_time`.
+
+**Returns:** `list[dict]` — array of session-history row objects.
+
+---
+
+### list_frequent_queries
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Return frequently-run queries from `queryinsights.frequently_run_queries`.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `warehouse` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
+- `limit` (`int`, default `100`) — maximum rows to return (1–10 000).
+- `since` (`str | null`, optional) — ISO-8601 lower bound on `last_run_start_time`.
+- `until` (`str | null`, optional) — ISO-8601 upper bound on `last_run_start_time`.
+
+**Returns:** `list[dict]` — array of frequently-run query row objects.
+
+---
+
+### list_long_running_queries
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Return long-running queries from `queryinsights.long_running_queries`.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `warehouse` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
+- `limit` (`int`, default `100`) — maximum rows to return (1–10 000).
+- `since` (`str | null`, optional) — ISO-8601 lower bound on `last_run_start_time`.
+- `until` (`str | null`, optional) — ISO-8601 upper bound on `last_run_start_time`.
+
+**Returns:** `list[dict]` — array of long-running query row objects.
+
+---
+
 ## SQL
 
 ### execute_sql
@@ -860,100 +934,6 @@ Rename a SQL table via `sp_rename`. Only supported on Fabric Data Warehouses (SQ
 
 ---
 
-## Query Insights
-
-Query the `queryinsights` schema DMVs on Fabric Data Warehouses and SQL Analytics Endpoints. All five tools share the same parameter shape — `workspace`, `warehouse`, optional `limit`, optional `since`, and optional `until`.
-
-### list_request_history
-
-**Targets:** Data Warehouse · SQL Analytics Endpoint
-
-Return completed SQL requests from `queryinsights.exec_requests_history`.
-
-**Parameters:**
-
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
-- `limit` (`int`, default `100`) — maximum rows to return (1–10 000).
-- `since` (`str | null`, optional) — ISO-8601 lower bound on `submit_time`.
-- `until` (`str | null`, optional) — ISO-8601 upper bound on `submit_time`.
-
-**Returns:** `list[dict]` — array of request-history row objects.
-
----
-
-### list_session_history
-
-**Targets:** Data Warehouse · SQL Analytics Endpoint
-
-Return completed sessions from `queryinsights.exec_sessions_history`.
-
-**Parameters:**
-
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
-- `limit` (`int`, default `100`) — maximum rows to return (1–10 000).
-- `since` (`str | null`, optional) — ISO-8601 lower bound on `session_start_time`.
-- `until` (`str | null`, optional) — ISO-8601 upper bound on `session_start_time`.
-
-**Returns:** `list[dict]` — array of session-history row objects.
-
----
-
-### list_frequent_queries
-
-**Targets:** Data Warehouse · SQL Analytics Endpoint
-
-Return frequently-run queries from `queryinsights.frequently_run_queries`.
-
-**Parameters:**
-
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
-- `limit` (`int`, default `100`) — maximum rows to return (1–10 000).
-- `since` (`str | null`, optional) — ISO-8601 lower bound on `last_run_start_time`.
-- `until` (`str | null`, optional) — ISO-8601 upper bound on `last_run_start_time`.
-
-**Returns:** `list[dict]` — array of frequently-run query row objects.
-
----
-
-### list_long_running_queries
-
-**Targets:** Data Warehouse · SQL Analytics Endpoint
-
-Return long-running queries from `queryinsights.long_running_queries`.
-
-**Parameters:**
-
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
-- `limit` (`int`, default `100`) — maximum rows to return (1–10 000).
-- `since` (`str | null`, optional) — ISO-8601 lower bound on `last_run_start_time`.
-- `until` (`str | null`, optional) — ISO-8601 upper bound on `last_run_start_time`.
-
-**Returns:** `list[dict]` — array of long-running query row objects.
-
----
-
-### list_sql_pool_insights
-
-**Targets:** Data Warehouse · SQL Analytics Endpoint
-
-Return SQL pool insight events from `queryinsights.sql_pool_insights`.
-
-**Parameters:**
-
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
-- `limit` (`int`, default `100`) — maximum rows to return (1–10 000).
-- `since` (`str | null`, optional) — ISO-8601 lower bound on `timestamp`.
-- `until` (`str | null`, optional) — ISO-8601 upper bound on `timestamp`.
-
-**Returns:** `list[dict]` — array of SQL pool insight row objects.
-
----
-
 ## Procedures
 
 ### list_procedures
@@ -1242,6 +1222,24 @@ Disable custom SQL Pools for a workspace, preserving the pool configuration. Re-
 - `workspace` (`str`) — workspace name or GUID.
 
 **Returns:** `SqlPoolsConfiguration` — the updated configuration.
+
+---
+
+### list_sql_pool_insights
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Return SQL pool insight events from `queryinsights.sql_pool_insights`.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `warehouse` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
+- `limit` (`int`, default `100`) — maximum rows to return (1–10 000).
+- `since` (`str | null`, optional) — ISO-8601 lower bound on `timestamp`.
+- `until` (`str | null`, optional) — ISO-8601 upper bound on `timestamp`.
+
+**Returns:** `list[dict]` — array of SQL pool insight row objects.
 
 ---
 

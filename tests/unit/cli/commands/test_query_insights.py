@@ -1,4 +1,4 @@
-"""Tests for query-insights CLI sub-commands (TDD)."""
+"""Tests for query-insights commands now under queries / sql-pools CLI groups."""
 
 from __future__ import annotations
 
@@ -153,7 +153,7 @@ def _make_pool_insight_row() -> SqlPoolInsight:
 
 
 # ---------------------------------------------------------------------------
-# request-history
+# request-history (now under queries group)
 # ---------------------------------------------------------------------------
 
 
@@ -163,11 +163,11 @@ class TestRequestHistory:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.query_insights.build_http_client",
+                "fabric_dw.cli.commands.queries.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.query_insights.build_sql_target",
+                "fabric_dw.cli.commands.queries.build_sql_target",
                 new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
@@ -175,7 +175,7 @@ class TestRequestHistory:
                 new=AsyncMock(return_value=[_make_request_history_row()]),
             ),
         ):
-            result = runner.invoke(cli, ["query-insights", "request-history", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["queries", "request-history", WS_GUID, WH_GUID])
         assert result.exit_code == 0
 
     def test_json_output(self, runner: CliRunner, cache_env: Path) -> None:
@@ -183,11 +183,11 @@ class TestRequestHistory:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.query_insights.build_http_client",
+                "fabric_dw.cli.commands.queries.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.query_insights.build_sql_target",
+                "fabric_dw.cli.commands.queries.build_sql_target",
                 new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
@@ -197,7 +197,7 @@ class TestRequestHistory:
         ):
             result = runner.invoke(
                 cli,
-                ["--json", "query-insights", "request-history", WS_GUID, WH_GUID],
+                ["--json", "queries", "request-history", WS_GUID, WH_GUID],
             )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -208,15 +208,15 @@ class TestRequestHistory:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.query_insights.build_http_client",
+                "fabric_dw.cli.commands.queries.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.query_insights.build_sql_target",
+                "fabric_dw.cli.commands.queries.build_sql_target",
                 new=AsyncMock(side_effect=NotFoundError("not found")),
             ),
         ):
-            result = runner.invoke(cli, ["query-insights", "request-history", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["queries", "request-history", WS_GUID, WH_GUID])
         assert result.exit_code != 0
 
     def test_permission_denied_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
@@ -224,11 +224,11 @@ class TestRequestHistory:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.query_insights.build_http_client",
+                "fabric_dw.cli.commands.queries.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.query_insights.build_sql_target",
+                "fabric_dw.cli.commands.queries.build_sql_target",
                 new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
@@ -236,7 +236,7 @@ class TestRequestHistory:
                 new=AsyncMock(side_effect=PermissionDeniedError("no permission")),
             ),
         ):
-            result = runner.invoke(cli, ["query-insights", "request-history", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["queries", "request-history", WS_GUID, WH_GUID])
         assert result.exit_code != 0
 
     def test_invalid_since_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
@@ -244,7 +244,7 @@ class TestRequestHistory:
         result = runner.invoke(
             cli,
             [
-                "query-insights",
+                "queries",
                 "request-history",
                 WS_GUID,
                 WH_GUID,
@@ -259,7 +259,7 @@ class TestRequestHistory:
         result = runner.invoke(
             cli,
             [
-                "query-insights",
+                "queries",
                 "request-history",
                 WS_GUID,
                 WH_GUID,
@@ -271,7 +271,7 @@ class TestRequestHistory:
 
 
 # ---------------------------------------------------------------------------
-# session-history
+# session-history (now under queries group)
 # ---------------------------------------------------------------------------
 
 
@@ -281,11 +281,11 @@ class TestSessionHistory:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.query_insights.build_http_client",
+                "fabric_dw.cli.commands.queries.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.query_insights.build_sql_target",
+                "fabric_dw.cli.commands.queries.build_sql_target",
                 new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
@@ -293,7 +293,7 @@ class TestSessionHistory:
                 new=AsyncMock(return_value=[_make_session_history_row()]),
             ),
         ):
-            result = runner.invoke(cli, ["query-insights", "session-history", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["queries", "session-history", WS_GUID, WH_GUID])
         assert result.exit_code == 0
 
     def test_json_output(self, runner: CliRunner, cache_env: Path) -> None:
@@ -301,11 +301,11 @@ class TestSessionHistory:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.query_insights.build_http_client",
+                "fabric_dw.cli.commands.queries.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.query_insights.build_sql_target",
+                "fabric_dw.cli.commands.queries.build_sql_target",
                 new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
@@ -315,7 +315,7 @@ class TestSessionHistory:
         ):
             result = runner.invoke(
                 cli,
-                ["--json", "query-insights", "session-history", WS_GUID, WH_GUID],
+                ["--json", "queries", "session-history", WS_GUID, WH_GUID],
             )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -323,7 +323,7 @@ class TestSessionHistory:
 
 
 # ---------------------------------------------------------------------------
-# frequent
+# frequent (now under queries group)
 # ---------------------------------------------------------------------------
 
 
@@ -333,11 +333,11 @@ class TestFrequent:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.query_insights.build_http_client",
+                "fabric_dw.cli.commands.queries.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.query_insights.build_sql_target",
+                "fabric_dw.cli.commands.queries.build_sql_target",
                 new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
@@ -345,7 +345,7 @@ class TestFrequent:
                 new=AsyncMock(return_value=[_make_frequent_query_row()]),
             ),
         ):
-            result = runner.invoke(cli, ["query-insights", "frequent", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["queries", "frequent", WS_GUID, WH_GUID])
         assert result.exit_code == 0
 
     def test_json_output(self, runner: CliRunner, cache_env: Path) -> None:
@@ -353,11 +353,11 @@ class TestFrequent:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.query_insights.build_http_client",
+                "fabric_dw.cli.commands.queries.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.query_insights.build_sql_target",
+                "fabric_dw.cli.commands.queries.build_sql_target",
                 new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
@@ -367,7 +367,7 @@ class TestFrequent:
         ):
             result = runner.invoke(
                 cli,
-                ["--json", "query-insights", "frequent", WS_GUID, WH_GUID],
+                ["--json", "queries", "frequent", WS_GUID, WH_GUID],
             )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -375,7 +375,7 @@ class TestFrequent:
 
 
 # ---------------------------------------------------------------------------
-# long-running
+# long-running (now under queries group)
 # ---------------------------------------------------------------------------
 
 
@@ -385,11 +385,11 @@ class TestLongRunning:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.query_insights.build_http_client",
+                "fabric_dw.cli.commands.queries.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.query_insights.build_sql_target",
+                "fabric_dw.cli.commands.queries.build_sql_target",
                 new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
@@ -397,7 +397,7 @@ class TestLongRunning:
                 new=AsyncMock(return_value=[_make_long_running_row()]),
             ),
         ):
-            result = runner.invoke(cli, ["query-insights", "long-running", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["queries", "long-running", WS_GUID, WH_GUID])
         assert result.exit_code == 0
 
     def test_json_output(self, runner: CliRunner, cache_env: Path) -> None:
@@ -405,11 +405,11 @@ class TestLongRunning:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.query_insights.build_http_client",
+                "fabric_dw.cli.commands.queries.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.query_insights.build_sql_target",
+                "fabric_dw.cli.commands.queries.build_sql_target",
                 new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
@@ -419,7 +419,7 @@ class TestLongRunning:
         ):
             result = runner.invoke(
                 cli,
-                ["--json", "query-insights", "long-running", WS_GUID, WH_GUID],
+                ["--json", "queries", "long-running", WS_GUID, WH_GUID],
             )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -427,7 +427,7 @@ class TestLongRunning:
 
 
 # ---------------------------------------------------------------------------
-# pool-insights
+# sql-pools insights (pool-insights moved here)
 # ---------------------------------------------------------------------------
 
 
@@ -437,11 +437,11 @@ class TestPoolInsights:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.query_insights.build_http_client",
+                "fabric_dw.cli.commands.sql_pools.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.query_insights.build_sql_target",
+                "fabric_dw.cli.commands.sql_pools.build_sql_target",
                 new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
@@ -449,7 +449,7 @@ class TestPoolInsights:
                 new=AsyncMock(return_value=[_make_pool_insight_row()]),
             ),
         ):
-            result = runner.invoke(cli, ["query-insights", "pool-insights", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["sql-pools", "insights", WS_GUID, WH_GUID])
         assert result.exit_code == 0
 
     def test_json_output(self, runner: CliRunner, cache_env: Path) -> None:
@@ -457,11 +457,11 @@ class TestPoolInsights:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.query_insights.build_http_client",
+                "fabric_dw.cli.commands.sql_pools.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.query_insights.build_sql_target",
+                "fabric_dw.cli.commands.sql_pools.build_sql_target",
                 new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
@@ -471,7 +471,7 @@ class TestPoolInsights:
         ):
             result = runner.invoke(
                 cli,
-                ["--json", "query-insights", "pool-insights", WS_GUID, WH_GUID],
+                ["--json", "sql-pools", "insights", WS_GUID, WH_GUID],
             )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -496,11 +496,11 @@ class TestQueryInsightsDefaultFallback:
         mock_http = AsyncMock()
         with (
             patch(
-                "fabric_dw.cli.commands.query_insights.build_http_client",
+                "fabric_dw.cli.commands.queries.build_http_client",
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.query_insights.build_sql_target",
+                "fabric_dw.cli.commands.queries.build_sql_target",
                 new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
@@ -508,7 +508,7 @@ class TestQueryInsightsDefaultFallback:
                 new=AsyncMock(return_value=[_make_request_history_row()]),
             ),
         ):
-            result = runner.invoke(cli, ["query-insights", "request-history"])
+            result = runner.invoke(cli, ["queries", "request-history"])
         assert result.exit_code == 0
 
     def test_missing_workspace_raises_usage_error(
@@ -518,5 +518,5 @@ class TestQueryInsightsDefaultFallback:
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
         monkeypatch.delenv("FABRIC_DW_DEFAULT_WORKSPACE", raising=False)
         monkeypatch.delenv("FABRIC_DW_DEFAULT_WAREHOUSE", raising=False)
-        result = runner.invoke(cli, ["query-insights", "request-history"])
+        result = runner.invoke(cli, ["queries", "request-history"])
         assert result.exit_code != 0
