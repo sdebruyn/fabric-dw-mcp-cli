@@ -699,6 +699,23 @@ Drop a SQL view.
 
 ---
 
+### rename_view
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Rename a SQL view via `sp_rename`. Works on both Data Warehouses and SQL Analytics Endpoints. The new name must be a bare (unqualified) identifier — `sp_rename` cannot move a view across schemas.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`) — current dot-separated qualified view name, e.g. `dbo.vw_sales`.
+- `new_name` (`str`) — new bare view name (no schema prefix), e.g. `vw_revenue`.
+
+**Returns:** `View` — the updated view object (fetched after rename, includes `definition`).
+
+---
+
 ### read_view
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -808,11 +825,228 @@ Truncate a SQL table (remove all rows, preserve structure).
 
 ---
 
+### clone_table
+
+**Targets:** Data Warehouse only
+
+Create a zero-copy clone of a table using `CREATE TABLE … AS CLONE OF …`. Only supported on Fabric Data Warehouses (not SQL Analytics Endpoints).
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse name or GUID.
+- `source` (`str`) — qualified source table name, e.g. `dbo.sales`.
+- `new_table` (`str`) — qualified name for the new cloned table, e.g. `dbo.sales_clone`.
+- `at` (`str | null`, optional) — ISO-8601 UTC timestamp for a point-in-time clone (e.g. `2024-05-20T14:00:00`). Must be within the data-retention window. When omitted, the clone reflects the current state of the source table.
+
+**Returns:** `Table` — the newly-created cloned table record.
+
+---
+
+### rename_table
+
+**Targets:** Data Warehouse only
+
+Rename a SQL table via `sp_rename`. Only supported on Fabric Data Warehouses (SQL Analytics Endpoints are rejected). The new name must be a bare (unqualified) identifier — `sp_rename` cannot move a table to a different schema.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse name or GUID.
+- `qualified_name` (`str`) — current dot-separated qualified table name, e.g. `dbo.sales`.
+- `new_name` (`str`) — new bare table name (no schema prefix), e.g. `sales_v2`.
+
+**Returns:** `Table` — the updated table record.
+
+---
+
+## Query Insights
+
+Query the `queryinsights` schema DMVs on Fabric Data Warehouses and SQL Analytics Endpoints. All five tools share the same parameter shape — `workspace`, `warehouse`, optional `limit`, optional `since`, and optional `until`.
+
+### list_request_history
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Return completed SQL requests from `queryinsights.exec_requests_history`.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `warehouse` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
+- `limit` (`int`, default `100`) — maximum rows to return (1–10 000).
+- `since` (`str | null`, optional) — ISO-8601 lower bound on `submit_time`.
+- `until` (`str | null`, optional) — ISO-8601 upper bound on `submit_time`.
+
+**Returns:** `list[dict]` — array of request-history row objects.
+
+---
+
+### list_session_history
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Return completed sessions from `queryinsights.exec_sessions_history`.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `warehouse` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
+- `limit` (`int`, default `100`) — maximum rows to return (1–10 000).
+- `since` (`str | null`, optional) — ISO-8601 lower bound on `session_start_time`.
+- `until` (`str | null`, optional) — ISO-8601 upper bound on `session_start_time`.
+
+**Returns:** `list[dict]` — array of session-history row objects.
+
+---
+
+### list_frequent_queries
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Return frequently-run queries from `queryinsights.frequently_run_queries`.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `warehouse` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
+- `limit` (`int`, default `100`) — maximum rows to return (1–10 000).
+- `since` (`str | null`, optional) — ISO-8601 lower bound on `last_run_start_time`.
+- `until` (`str | null`, optional) — ISO-8601 upper bound on `last_run_start_time`.
+
+**Returns:** `list[dict]` — array of frequently-run query row objects.
+
+---
+
+### list_long_running_queries
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Return long-running queries from `queryinsights.long_running_queries`.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `warehouse` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
+- `limit` (`int`, default `100`) — maximum rows to return (1–10 000).
+- `since` (`str | null`, optional) — ISO-8601 lower bound on `last_run_start_time`.
+- `until` (`str | null`, optional) — ISO-8601 upper bound on `last_run_start_time`.
+
+**Returns:** `list[dict]` — array of long-running query row objects.
+
+---
+
+### list_sql_pool_insights
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Return SQL pool insight events from `queryinsights.sql_pool_insights`.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `warehouse` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
+- `limit` (`int`, default `100`) — maximum rows to return (1–10 000).
+- `since` (`str | null`, optional) — ISO-8601 lower bound on `timestamp`.
+- `until` (`str | null`, optional) — ISO-8601 upper bound on `timestamp`.
+
+**Returns:** `list[dict]` — array of SQL pool insight row objects.
+
+---
+
+## Procedures
+
+### list_procedures
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+List stored procedures on a warehouse or SQL Analytics Endpoint, optionally filtered to a single schema.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
+- `schema` (`str | null`, optional) — when provided, only procedures in this schema are returned.
+
+**Returns:** `list[StoredProcedure]` — array of procedure objects, each with `schema_name`, `name`, `qualified_name`, `created`, and `modified`.
+
+---
+
+### get_procedure
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Fetch the full definition of a single stored procedure.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`) — dot-separated qualified procedure name, e.g. `dbo.usp_load`.
+
+**Returns:** `StoredProcedure` — single procedure object with `definition` populated from `sys.sql_modules`.
+
+---
+
+### create_procedure
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Create a new stored procedure.
+
+> **CAUTION:** `body` is executed verbatim as DDL. Ensure the body matches the user's intent before calling this tool.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`) — dot-separated qualified procedure name, e.g. `dbo.usp_load`.
+- `body` (`str`) — the procedure body (the `AS …` section).
+
+**Returns:** `StoredProcedure` — the newly-created procedure object.
+
+---
+
+### update_procedure
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Redefine a stored procedure via `CREATE OR ALTER PROCEDURE`.
+
+> **CAUTION:** `body` is executed verbatim as DDL. Ensure the body matches the user's intent before calling this tool.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`) — dot-separated qualified procedure name, e.g. `dbo.usp_load`.
+- `body` (`str`) — the new procedure body (the `AS …` section).
+
+**Returns:** `StoredProcedure` — the updated procedure object.
+
+---
+
+### drop_procedure
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Drop a stored procedure.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`) — dot-separated qualified procedure name, e.g. `dbo.usp_load`.
+
+**Returns:** `{ "dropped": true }` — confirmation.
+
+---
+
 ## Schemas
 
 > **List-source note** — no public REST API exists for enumerating warehouse schemas. `list_schemas` uses TDS `sys.schemas`, filtering out `sys`, `INFORMATION_SCHEMA`, `guest`, and `db_*` fixed-role schemas. `dbo` is always included because it is user-writable.
 
-> **SQL Analytics Endpoints** — `list_schemas` works on both Fabric Data Warehouses and SQL Analytics Endpoints. `create_schema` and `delete_schema` are DDL operations and are rejected with a `ToolError` when the resolved item is a SQL Analytics Endpoint.
+> **SQL Analytics Endpoints** — `list_schemas`, `create_schema`, and `delete_schema` all work on both Fabric Data Warehouses and SQL Analytics Endpoints. When `delete_schema` is called with `cascade=True` on a SQL Analytics Endpoint, views, stored procedures, and functions are dropped, but tables are **not** dropped (because `DROP TABLE` is a Warehouse-only operation on Fabric). If the schema still contains tables after the cascade pass, the subsequent `DROP SCHEMA` will be rejected by the engine; remove the tables manually before deleting the schema.
 
 ### list_schemas
 
