@@ -83,7 +83,13 @@ def _cell(value: object) -> str:
 
 
 def _render_table(rows: Sequence[object], *, console: Console, title: str | None) -> None:
-    """Render a list of dicts as a Rich Table."""
+    """Render a list of dicts as a Rich Table.
+
+    Columns whose value is ``None`` in **every** row are omitted from the
+    output — they only clutter list views (e.g. ``definition`` for
+    ``procedures list``).  A column that is non-null in at least one row is
+    kept, and any null cells in that column still render as ``[dim]NULL[/dim]``.
+    """
     table = Table(title=title, show_header=True, header_style="bold")
 
     if not rows:
@@ -93,21 +99,38 @@ def _render_table(rows: Sequence[object], *, console: Console, title: str | None
     # Collect all column names in insertion order (union of all keys)
     columns: list[str] = []
     seen: set[str] = set()
+    # Normalise each row to dict[str, object] once so we can reuse below.
+    norm_rows: list[dict[str, object] | object] = []
     for row in rows:
         if isinstance(row, dict):
             row_dict: dict[str, object] = {str(k): v for k, v in row.items()}
+            norm_rows.append(row_dict)
             for key in row_dict:
                 if key not in seen:
                     columns.append(key)
                     seen.add(key)
+        else:
+            norm_rows.append(row)
 
-    for col in columns:
+    # Drop columns where every dict-row's value is None (or the key is absent).
+    # Non-dict rows (scalars) are never counted as "having" any column value, so
+    # a column is only kept if at least one dict-row provides a non-None value.
+    all_null: set[str] = {
+        col
+        for col in columns
+        if all(
+            (isinstance(r, dict) and r.get(col) is None) or not isinstance(r, dict)
+            for r in norm_rows
+        )
+    }
+    visible_columns = [col for col in columns if col not in all_null]
+
+    for col in visible_columns:
         table.add_column(col)
 
-    for row in rows:
+    for row in norm_rows:
         if isinstance(row, dict):
-            row_dict = {str(k): v for k, v in row.items()}
-            table.add_row(*[_cell(row_dict.get(col, "")) for col in columns])
+            table.add_row(*[_cell(row.get(col, "")) for col in visible_columns])
         else:
             table.add_row(_cell(row))
 
