@@ -92,12 +92,35 @@ jobs:
           from fabric_dw.auth import get_credential
           from fabric_dw.http_client import FabricHttpClient, HttpBase
 
+          async def purge_recycle_bin(http, ws):
+              for pass_num in range(1, 4):
+                  items = [i async for i in http.iter_paginated(HttpBase.FABRIC, f'/workspaces/{ws}/recoverableItems')]
+                  if not items:
+                      print(f'Recoverable pass {pass_num}: recycle bin is empty.')
+                      return
+                  print(f'Recoverable pass {pass_num}: found {len(items)} item(s) to purge.')
+                  for item in items:
+                      item_id = item.get('id', '')
+                      item_type = item.get('type', '')
+                      item_name = item.get('displayName', '')
+                      print(f'  Purging {item_type} {item_name!r} ({item_id})')
+                      try:
+                          await http.request('DELETE', HttpBase.FABRIC, f'/workspaces/{ws}/recoverableItems/{item_id}')
+                      except Exception as exc:
+                          print(f'    skip: {exc}')
+              residual = [i async for i in http.iter_paginated(HttpBase.FABRIC, f'/workspaces/{ws}/recoverableItems')]
+              if residual:
+                  for item in residual:
+                      print(f'  Residual recoverable: {item.get(\"type\")} {item.get(\"displayName\")!r} ({item.get(\"id\")})')
+              else:
+                  print('Recycle bin clean.')
+
           async def delete_all(http, ws):
               for pass_num in range(1, 4):
                   items = [i async for i in http.iter_paginated(HttpBase.FABRIC, f'/workspaces/{ws}/items')]
                   if not items:
                       print(f'Pass {pass_num}: workspace is empty.')
-                      return
+                      break
                   print(f'Pass {pass_num}: found {len(items)} item(s) to delete.')
                   for item in items:
                       item_id = item.get('id', '')
@@ -114,6 +137,7 @@ jobs:
                       print(f'  Residual (undeletable?): {item.get(\"type\")} {item.get(\"displayName\")!r} ({item.get(\"id\")})')
               else:
                   print('Workspace is clean.')
+              await purge_recycle_bin(http, ws)
 
           async def main() -> None:
               ws = os.environ['FABRIC_TEST_WORKSPACE_ID']
@@ -141,12 +165,35 @@ jobs:
           from fabric_dw.auth import get_credential
           from fabric_dw.http_client import FabricHttpClient, HttpBase
 
+          async def purge_recycle_bin(http, ws):
+              for pass_num in range(1, 4):
+                  items = [i async for i in http.iter_paginated(HttpBase.FABRIC, f'/workspaces/{ws}/recoverableItems')]
+                  if not items:
+                      print(f'Recoverable pass {pass_num}: recycle bin is empty.')
+                      return
+                  print(f'Recoverable pass {pass_num}: found {len(items)} item(s) to purge.')
+                  for item in items:
+                      item_id = item.get('id', '')
+                      item_type = item.get('type', '')
+                      item_name = item.get('displayName', '')
+                      print(f'  Purging {item_type} {item_name!r} ({item_id})')
+                      try:
+                          await http.request('DELETE', HttpBase.FABRIC, f'/workspaces/{ws}/recoverableItems/{item_id}')
+                      except Exception as exc:
+                          print(f'    skip: {exc}')
+              residual = [i async for i in http.iter_paginated(HttpBase.FABRIC, f'/workspaces/{ws}/recoverableItems')]
+              if residual:
+                  for item in residual:
+                      print(f'  Residual recoverable: {item.get(\"type\")} {item.get(\"displayName\")!r} ({item.get(\"id\")})')
+              else:
+                  print('Recycle bin clean.')
+
           async def delete_all(http, ws):
               for pass_num in range(1, 4):
                   items = [i async for i in http.iter_paginated(HttpBase.FABRIC, f'/workspaces/{ws}/items')]
                   if not items:
                       print(f'Pass {pass_num}: workspace is empty.')
-                      return
+                      break
                   print(f'Pass {pass_num}: found {len(items)} item(s) to delete.')
                   for item in items:
                       item_id = item.get('id', '')
@@ -163,6 +210,7 @@ jobs:
                       print(f'  Residual (undeletable?): {item.get(\"type\")} {item.get(\"displayName\")!r} ({item.get(\"id\")})')
               else:
                   print('Workspace is clean.')
+              await purge_recycle_bin(http, ws)
 
           async def main() -> None:
               ws = os.environ['FABRIC_TEST_WORKSPACE_ID']
