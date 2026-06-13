@@ -92,22 +92,36 @@ jobs:
           from fabric_dw.auth import get_credential
           from fabric_dw.http_client import FabricHttpClient, HttpBase
 
+          CONCURRENCY = 16
+
           async def purge_recycle_bin(http, ws):
-              for pass_num in range(1, 4):
+              limiter = anyio.CapacityLimiter(CONCURRENCY)
+              for pass_num in range(1, 51):
                   items = [i async for i in http.iter_paginated(HttpBase.FABRIC, f'/workspaces/{ws}/recoverableItems')]
                   if not items:
                       print(f'Recoverable pass {pass_num}: recycle bin is empty.')
                       return
-                  print(f'Recoverable pass {pass_num}: found {len(items)} item(s) to purge.')
-                  for item in items:
+                  print(f'Recoverable pass {pass_num}: found {len(items)} item(s), deleting with concurrency {CONCURRENCY}.')
+                  deleted = 0
+                  async def _purge_one(item):
+                      nonlocal deleted
                       item_id = item.get('id', '')
                       item_type = item.get('type', '')
                       item_name = item.get('displayName', '')
                       print(f'  Purging {item_type} {item_name!r} ({item_id})')
-                      try:
-                          await http.request('DELETE', HttpBase.FABRIC, f'/workspaces/{ws}/recoverableItems/{item_id}')
-                      except Exception as exc:
-                          print(f'    skip: {exc}')
+                      async with limiter:
+                          try:
+                              await http.request('DELETE', HttpBase.FABRIC, f'/workspaces/{ws}/recoverableItems/{item_id}')
+                              deleted += 1
+                          except Exception as exc:
+                              print(f'    skip: {exc}')
+                  async with anyio.create_task_group() as tg:
+                      for item in items:
+                          tg.start_soon(_purge_one, item)
+                  print(f'Recoverable pass {pass_num}: deleted {deleted} of {len(items)}.')
+                  if deleted == 0:
+                      print('No progress in this pass, stopping to avoid infinite loop.')
+                      break
               residual = [i async for i in http.iter_paginated(HttpBase.FABRIC, f'/workspaces/{ws}/recoverableItems')]
               if residual:
                   for item in residual:
@@ -116,21 +130,33 @@ jobs:
                   print('Recycle bin clean.')
 
           async def delete_all(http, ws):
-              for pass_num in range(1, 4):
+              limiter = anyio.CapacityLimiter(CONCURRENCY)
+              for pass_num in range(1, 51):
                   items = [i async for i in http.iter_paginated(HttpBase.FABRIC, f'/workspaces/{ws}/items')]
                   if not items:
                       print(f'Pass {pass_num}: workspace is empty.')
                       break
-                  print(f'Pass {pass_num}: found {len(items)} item(s) to delete.')
-                  for item in items:
+                  print(f'Pass {pass_num}: found {len(items)} item(s), deleting with concurrency {CONCURRENCY}.')
+                  deleted = 0
+                  async def _delete_one(item):
+                      nonlocal deleted
                       item_id = item.get('id', '')
                       item_type = item.get('type', '')
                       item_name = item.get('displayName', '')
                       print(f'  Deleting {item_type} {item_name!r} ({item_id})')
-                      try:
-                          await http.request('DELETE', HttpBase.FABRIC, f'/workspaces/{ws}/items/{item_id}')
-                      except Exception as exc:
-                          print(f'    skip: {exc}')
+                      async with limiter:
+                          try:
+                              await http.request('DELETE', HttpBase.FABRIC, f'/workspaces/{ws}/items/{item_id}')
+                              deleted += 1
+                          except Exception as exc:
+                              print(f'    skip: {exc}')
+                  async with anyio.create_task_group() as tg:
+                      for item in items:
+                          tg.start_soon(_delete_one, item)
+                  print(f'Pass {pass_num}: deleted {deleted} of {len(items)}.')
+                  if deleted == 0:
+                      print('No progress in this pass, stopping to avoid infinite loop.')
+                      break
               remaining = [i async for i in http.iter_paginated(HttpBase.FABRIC, f'/workspaces/{ws}/items')]
               if remaining:
                   for item in remaining:
@@ -165,22 +191,36 @@ jobs:
           from fabric_dw.auth import get_credential
           from fabric_dw.http_client import FabricHttpClient, HttpBase
 
+          CONCURRENCY = 16
+
           async def purge_recycle_bin(http, ws):
-              for pass_num in range(1, 4):
+              limiter = anyio.CapacityLimiter(CONCURRENCY)
+              for pass_num in range(1, 51):
                   items = [i async for i in http.iter_paginated(HttpBase.FABRIC, f'/workspaces/{ws}/recoverableItems')]
                   if not items:
                       print(f'Recoverable pass {pass_num}: recycle bin is empty.')
                       return
-                  print(f'Recoverable pass {pass_num}: found {len(items)} item(s) to purge.')
-                  for item in items:
+                  print(f'Recoverable pass {pass_num}: found {len(items)} item(s), deleting with concurrency {CONCURRENCY}.')
+                  deleted = 0
+                  async def _purge_one(item):
+                      nonlocal deleted
                       item_id = item.get('id', '')
                       item_type = item.get('type', '')
                       item_name = item.get('displayName', '')
                       print(f'  Purging {item_type} {item_name!r} ({item_id})')
-                      try:
-                          await http.request('DELETE', HttpBase.FABRIC, f'/workspaces/{ws}/recoverableItems/{item_id}')
-                      except Exception as exc:
-                          print(f'    skip: {exc}')
+                      async with limiter:
+                          try:
+                              await http.request('DELETE', HttpBase.FABRIC, f'/workspaces/{ws}/recoverableItems/{item_id}')
+                              deleted += 1
+                          except Exception as exc:
+                              print(f'    skip: {exc}')
+                  async with anyio.create_task_group() as tg:
+                      for item in items:
+                          tg.start_soon(_purge_one, item)
+                  print(f'Recoverable pass {pass_num}: deleted {deleted} of {len(items)}.')
+                  if deleted == 0:
+                      print('No progress in this pass, stopping to avoid infinite loop.')
+                      break
               residual = [i async for i in http.iter_paginated(HttpBase.FABRIC, f'/workspaces/{ws}/recoverableItems')]
               if residual:
                   for item in residual:
@@ -189,21 +229,33 @@ jobs:
                   print('Recycle bin clean.')
 
           async def delete_all(http, ws):
-              for pass_num in range(1, 4):
+              limiter = anyio.CapacityLimiter(CONCURRENCY)
+              for pass_num in range(1, 51):
                   items = [i async for i in http.iter_paginated(HttpBase.FABRIC, f'/workspaces/{ws}/items')]
                   if not items:
                       print(f'Pass {pass_num}: workspace is empty.')
                       break
-                  print(f'Pass {pass_num}: found {len(items)} item(s) to delete.')
-                  for item in items:
+                  print(f'Pass {pass_num}: found {len(items)} item(s), deleting with concurrency {CONCURRENCY}.')
+                  deleted = 0
+                  async def _delete_one(item):
+                      nonlocal deleted
                       item_id = item.get('id', '')
                       item_type = item.get('type', '')
                       item_name = item.get('displayName', '')
                       print(f'  Deleting {item_type} {item_name!r} ({item_id})')
-                      try:
-                          await http.request('DELETE', HttpBase.FABRIC, f'/workspaces/{ws}/items/{item_id}')
-                      except Exception as exc:
-                          print(f'    skip: {exc}')
+                      async with limiter:
+                          try:
+                              await http.request('DELETE', HttpBase.FABRIC, f'/workspaces/{ws}/items/{item_id}')
+                              deleted += 1
+                          except Exception as exc:
+                              print(f'    skip: {exc}')
+                  async with anyio.create_task_group() as tg:
+                      for item in items:
+                          tg.start_soon(_delete_one, item)
+                  print(f'Pass {pass_num}: deleted {deleted} of {len(items)}.')
+                  if deleted == 0:
+                      print('No progress in this pass, stopping to avoid infinite loop.')
+                      break
               remaining = [i async for i in http.iter_paginated(HttpBase.FABRIC, f'/workspaces/{ws}/items')]
               if remaining:
                   for item in remaining:
