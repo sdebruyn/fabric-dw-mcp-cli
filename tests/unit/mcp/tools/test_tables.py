@@ -1,0 +1,483 @@
+"""Unit tests for fabric_dw.mcp.tools.tables — targeting uncovered branches.
+
+Coverage targets (lines from coverage report):
+  54, 56-57  list_tables happy path and FabricError funnel
+  74-94      read_table happy path (parse name, resolve, make target, service call)
+  163        delete_table: return {"dropped": True} (happy-path success path)
+  193        clear_table: return {"truncated": True} (happy-path success path)
+  224-227    clone_table: at_dt UTC normalisation (naive timestamp → UTC)
+
+NOTE: The SQL-endpoint guard tests for create_table / delete_table / clear_table /
+clone_table / rename_table already live in tests/unit/mcp/test_server.py —
+those are NOT duplicated here.
+"""
+
+from __future__ import annotations
+
+import os
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, patch
+
+import pytest
+from mcp.server.fastmcp.exceptions import ToolError
+
+from fabric_dw.exceptions import NotFoundError
+from fabric_dw.models import Table
+from tests.unit.mcp.conftest import (
+    WH_NAME,
+    WS_ID,
+    WS_NAME,
+    make_item_entry,
+)
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_table(schema: str = "dbo", name: str = "sales") -> Table:
+    _now = datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC)
+    return Table(
+        schema_name=schema,
+        name=name,
+        qualified_name=f"{schema}.{name}",
+        created=_now,
+        modified=_now,
+    )
+
+
+# ---------------------------------------------------------------------------
+# list_tables — happy path + error funnel (lines 54, 56-57)
+# ---------------------------------------------------------------------------
+
+
+async def test_list_tables_happy_path(mock_ctx, ctx_patch) -> None:
+    """list_tables resolves workspace + item, builds sql target and returns list of dicts."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    table = _make_table()
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.tables.list_tables",
+            new=AsyncMock(return_value=[table]),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "list_tables",
+            {"workspace": WS_NAME, "item": WH_NAME},
+        )
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0]["name"] == "sales"
+    assert result[0]["schema_name"] == "dbo"
+
+
+async def test_list_tables_with_schema_filter(mock_ctx, ctx_patch) -> None:
+    """list_tables passes schema filter to the service layer."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    table = _make_table(schema="myschema", name="orders")
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+    mock_list = AsyncMock(return_value=[table])
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.tables.list_tables", new=mock_list),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "list_tables",
+            {"workspace": WS_NAME, "item": WH_NAME, "schema": "myschema"},
+        )
+
+    assert len(result) == 1
+    assert result[0]["schema_name"] == "myschema"
+    _, kwargs = mock_list.call_args
+    assert kwargs.get("schema") == "myschema"
+
+
+async def test_list_tables_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
+    """list_tables wraps FabricError into ToolError."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.tables.list_tables",
+            new=AsyncMock(side_effect=NotFoundError("warehouse not found")),
+        ),
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "list_tables",
+            {"workspace": WS_NAME, "item": WH_NAME},
+        )
+
+
+async def test_list_tables_no_connection_string_raises_tool_error(mock_ctx, ctx_patch) -> None:
+    """list_tables raises ToolError when the item has no connection string."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry(connection_string=None)
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with (
+        ctx_patch,
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "list_tables",
+            {"workspace": WS_NAME, "item": WH_NAME},
+        )
+
+
+async def test_list_tables_workspace_allowlist_blocks(ctx_patch) -> None:
+    """list_tables raises ToolError when workspace is not in FABRIC_MCP_WORKSPACES."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
+        pytest.raises(ToolError, match="allowlist"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "list_tables",
+            {"workspace": WS_NAME, "item": WH_NAME},
+        )
+
+
+# ---------------------------------------------------------------------------
+# read_table — happy path (lines 74-94)
+# ---------------------------------------------------------------------------
+
+
+async def test_read_table_happy_path(mock_ctx, ctx_patch) -> None:
+    """read_table resolves item, executes SQL query, and returns columns + rows."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.tables.read_table",
+            new=AsyncMock(return_value=(["id", "name"], [[1, "foo"], [2, "bar"]])),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "read_table",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.sales"},
+        )
+
+    assert isinstance(result, dict)
+    assert result["columns"] == ["id", "name"]
+    assert result["rows"] == [[1, "foo"], [2, "bar"]]
+
+
+async def test_read_table_with_count(mock_ctx, ctx_patch) -> None:
+    """read_table passes custom count to the service layer."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+    mock_read = AsyncMock(return_value=(["id"], [[42]]))
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.tables.read_table", new=mock_read),
+    ):
+        await mcp._tool_manager.call_tool(
+            "read_table",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.sales", "count": 100},
+        )
+
+    _, kwargs = mock_read.call_args
+    assert kwargs.get("count") == 100
+
+
+async def test_read_table_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
+    """read_table wraps FabricError into ToolError."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.tables.read_table",
+            new=AsyncMock(side_effect=NotFoundError("table not found")),
+        ),
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "read_table",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.sales"},
+        )
+
+
+async def test_read_table_bad_qualified_name_raises_tool_error(ctx_patch) -> None:
+    """read_table raises ToolError when qualified_name has no dot."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with (
+        ctx_patch,
+        pytest.raises(ToolError, match="qualified_name"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "read_table",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "nodot"},
+        )
+
+
+async def test_read_table_no_connection_string_raises_tool_error(mock_ctx, ctx_patch) -> None:
+    """read_table raises ToolError when the item has no connection string."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry(connection_string=None)
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with (
+        ctx_patch,
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "read_table",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.sales"},
+        )
+
+
+async def test_read_table_workspace_allowlist_blocks(ctx_patch) -> None:
+    """read_table raises ToolError when workspace is not in FABRIC_MCP_WORKSPACES."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
+        pytest.raises(ToolError, match="allowlist"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "read_table",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.sales"},
+        )
+
+
+# ---------------------------------------------------------------------------
+# delete_table — happy-path return path (line 163)
+# NOTE: SQL-endpoint guard tested in test_server.py — not duplicated here.
+# ---------------------------------------------------------------------------
+
+
+async def test_delete_table_happy_path(mock_ctx, ctx_patch) -> None:
+    """delete_table calls the service and returns {"dropped": True}."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
+        patch(
+            "fabric_dw.services.tables.delete_table",
+            new=AsyncMock(return_value=None),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "delete_table",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.sales"},
+        )
+
+    assert result == {"dropped": True}
+
+
+async def test_delete_table_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
+    """delete_table wraps FabricError into ToolError."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
+        patch(
+            "fabric_dw.services.tables.delete_table",
+            new=AsyncMock(side_effect=NotFoundError("table not found")),
+        ),
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "delete_table",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.sales"},
+        )
+
+
+# ---------------------------------------------------------------------------
+# clear_table — happy-path return path (line 193)
+# NOTE: SQL-endpoint guard tested in test_server.py — not duplicated here.
+# ---------------------------------------------------------------------------
+
+
+async def test_clear_table_happy_path(mock_ctx, ctx_patch) -> None:
+    """clear_table calls the service and returns {"truncated": True}."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
+        patch(
+            "fabric_dw.services.tables.clear_table",
+            new=AsyncMock(return_value=None),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "clear_table",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.sales"},
+        )
+
+    assert result == {"truncated": True}
+
+
+async def test_clear_table_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
+    """clear_table wraps FabricError into ToolError."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
+        patch(
+            "fabric_dw.services.tables.clear_table",
+            new=AsyncMock(side_effect=NotFoundError("table not found")),
+        ),
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "clear_table",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.sales"},
+        )
+
+
+# ---------------------------------------------------------------------------
+# clone_table — at UTC normalisation (lines 224-227)
+# The naive → UTC conversion branch: at_dt.replace(tzinfo=UTC) when tzinfo is None
+# NOTE: clone_table happy path and SQL-endpoint guard already in test_server.py.
+# ---------------------------------------------------------------------------
+
+
+async def test_clone_table_naive_at_timestamp_normalised_to_utc(mock_ctx, ctx_patch) -> None:
+    """clone_table converts a naive ISO-8601 timestamp to UTC before calling service."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    table = _make_table(name="sales_clone")
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+    mock_clone = AsyncMock(return_value=table)
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.tables.clone_table", new=mock_clone),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "clone_table",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "source": "dbo.sales",
+                "new_table": "dbo.sales_clone",
+                "at": "2024-05-20T14:00:00",  # naive — no tzinfo
+            },
+        )
+
+    assert isinstance(result, dict)
+    mock_clone.assert_called_once()
+    _, kwargs = mock_clone.call_args
+    at_passed = kwargs.get("at")
+    assert at_passed is not None
+    # The naive timestamp must have been assigned UTC.
+    assert at_passed.tzinfo is not None
+    assert at_passed.tzinfo == UTC
+
+
+async def test_clone_table_aware_at_timestamp_converted_to_utc(mock_ctx, ctx_patch) -> None:
+    """clone_table converts a timezone-aware ISO-8601 timestamp to UTC."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    table = _make_table(name="sales_clone")
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+    mock_clone = AsyncMock(return_value=table)
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.tables.clone_table", new=mock_clone),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "clone_table",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "source": "dbo.sales",
+                "new_table": "dbo.sales_clone",
+                "at": "2024-05-20T14:00:00+02:00",  # aware, non-UTC
+            },
+        )
+
+    assert isinstance(result, dict)
+    mock_clone.assert_called_once()
+    _, kwargs = mock_clone.call_args
+    at_passed = kwargs.get("at")
+    assert at_passed is not None
+    # Should be normalised to UTC
+    assert at_passed.tzinfo == UTC
+    # 14:00+02:00 → 12:00 UTC
+    assert at_passed.hour == 12
+
+
+async def test_clone_table_bad_at_timestamp_raises_tool_error(ctx_patch) -> None:
+    """clone_table raises ToolError when at is not a valid ISO-8601 timestamp."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with (
+        ctx_patch,
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "clone_table",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "source": "dbo.sales",
+                "new_table": "dbo.sales_clone",
+                "at": "not-a-date",
+            },
+        )
+
+    assert "ISO-8601" in str(exc_info.value)
