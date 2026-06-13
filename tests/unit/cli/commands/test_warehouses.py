@@ -15,7 +15,7 @@ from click.testing import CliRunner
 
 from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.cli._main import cli
-from fabric_dw.exceptions import NotFoundError
+from fabric_dw.exceptions import FabricError, NotFoundError
 from fabric_dw.models import WarehouseKind
 from tests.fixtures.api_payloads import (
     WAREHOUSE_CREATE_202_PAYLOAD,
@@ -395,6 +395,243 @@ class TestWarehousesDefaultFallback:
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
         monkeypatch.delenv("FABRIC_DW_DEFAULT_WORKSPACE", raising=False)
         result = runner.invoke(cli, ["warehouses", "list"])
+        assert result.exit_code != 0
+
+
+class TestWarehousesListFabricError:
+    """warehouses list — FabricError branch (line 70-71)."""
+
+    def test_list_fabric_error_exits_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.warehouses.build_http_client",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.resolver.Resolver.workspace_id",
+                new=AsyncMock(side_effect=FabricError("server error")),
+            ),
+        ):
+            result = runner.invoke(cli, ["warehouses", "list", WS_GUID])
+        assert result.exit_code != 0
+
+
+class TestWarehousesCreateError:
+    """warehouses create — FabricError branch (lines 120-121)."""
+
+    def test_create_fabric_error_exits_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.warehouses.build_http_client",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.resolver.Resolver.workspace_id",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+            patch(
+                "fabric_dw.services.warehouses.create",
+                new=AsyncMock(side_effect=FabricError("server error")),
+            ),
+        ):
+            result = runner.invoke(cli, ["warehouses", "create", WS_GUID, "NewWarehouse"])
+        assert result.exit_code != 0
+
+
+class TestWarehousesRenameError:
+    """warehouses rename — FabricError branch (lines 161-162)."""
+
+    def test_rename_fabric_error_exits_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        _cache = LookupCache(path=cache_env / "lookup.json")
+        with (
+            patch(
+                "fabric_dw.cli.commands.warehouses.build_http_client",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.warehouses._resolve_item_with_cache",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry(), _cache)),
+            ),
+            patch(
+                "fabric_dw.services.warehouses.rename",
+                new=AsyncMock(side_effect=FabricError("server error")),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["--yes", "warehouses", "rename", WS_GUID, WH_GUID, "NewName"],
+            )
+        assert result.exit_code != 0
+
+
+class TestWarehousesDeleteError:
+    """warehouses delete — FabricError branch (lines 192-193)."""
+
+    def test_delete_fabric_error_exits_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        _cache = LookupCache(path=cache_env / "lookup.json")
+        with (
+            patch(
+                "fabric_dw.cli.commands.warehouses.build_http_client",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.warehouses._resolve_item_with_cache",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry(), _cache)),
+            ),
+            patch(
+                "fabric_dw.services.warehouses.delete",
+                new=AsyncMock(side_effect=FabricError("server error")),
+            ),
+        ):
+            result = runner.invoke(cli, ["--yes", "warehouses", "delete", WS_GUID, WH_GUID])
+        assert result.exit_code != 0
+
+
+class TestWarehousesTakeoverErrors:
+    """warehouses takeover — FabricError and abort branches (lines 211-212, 220-221, 225-226)."""
+
+    def test_takeover_resolve_fabric_error_exits_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """FabricError during _resolve_item (line 211-212)."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.warehouses.build_http_client",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.warehouses._resolve_item",
+                new=AsyncMock(side_effect=FabricError("resolve error")),
+            ),
+        ):
+            result = runner.invoke(cli, ["--yes", "warehouses", "takeover", WS_GUID, WH_GUID])
+        assert result.exit_code != 0
+
+    def test_takeover_declined_prints_aborted(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """Declining confirmation prints 'Aborted.' (lines 220-221)."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.warehouses.build_http_client",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.warehouses._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry(WarehouseKind.WAREHOUSE))),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["warehouses", "takeover", WS_GUID, WH_GUID],
+                input="n\n",
+            )
+        assert result.exit_code == 0
+        assert "Aborted." in result.output
+
+    def test_takeover_fabric_error_after_confirm_exits_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """FabricError from ownership service (lines 225-226)."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.warehouses.build_http_client",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.warehouses._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry(WarehouseKind.WAREHOUSE))),
+            ),
+            patch(
+                "fabric_dw.services.ownership.takeover",
+                new=AsyncMock(side_effect=FabricError("takeover failed")),
+            ),
+        ):
+            result = runner.invoke(cli, ["--yes", "warehouses", "takeover", WS_GUID, WH_GUID])
+        assert result.exit_code != 0
+
+
+class TestWarehousesPermissions:
+    """warehouses permissions — happy path + FabricError (lines 241-251)."""
+
+    def test_permissions_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        from fabric_dw.models import ItemAccess, ItemAccessDetail, ItemAccessPrincipal  # noqa: PLC0415
+
+        principal = ItemAccessPrincipal.model_validate(
+            {
+                "id": str(WH_UUID),
+                "displayName": "Alice",
+                "type": "User",
+                "userDetails": {"userPrincipalName": "alice@example.com"},
+            }
+        )
+        detail = ItemAccessDetail.model_validate(
+            {"permissions": ["Read"], "additionalPermissions": []}
+        )
+        access = ItemAccess.model_validate(
+            {
+                "principal": principal.model_dump(by_alias=True, mode="json"),
+                "itemAccessDetails": detail.model_dump(by_alias=True, mode="json"),
+            }
+        )
+
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.warehouses.build_http_client",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.warehouses._resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.permissions.list_item_access",
+                new=AsyncMock(return_value=[access]),
+            ),
+        ):
+            result = runner.invoke(cli, ["warehouses", "permissions", WS_GUID, WH_GUID])
+        assert result.exit_code == 0
+
+    def test_permissions_fabric_error_exits_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.warehouses.build_http_client",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.warehouses._resolve_item",
+                new=AsyncMock(side_effect=FabricError("server error")),
+            ),
+        ):
+            result = runner.invoke(cli, ["warehouses", "permissions", WS_GUID, WH_GUID])
         assert result.exit_code != 0
 
 
