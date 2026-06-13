@@ -51,6 +51,10 @@ jobs:
   unit:
     name: Unit tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Required by actions/upload-code-coverage@v1 (GitHub Code Quality public preview)
+      code-quality: write
     strategy:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
@@ -72,3 +76,20 @@ jobs:
         with:
           name: coverage-${{ matrix.python-version }}
           path: coverage.xml
+      # Upload coverage to GitHub Code Quality (public preview).
+      # Only runs on Python 3.13 to avoid duplicate uploads across matrix entries.
+      # Fork-PR guard: skip on PRs from forks (they lack write permissions).
+      # continue-on-error: the feature requires the maintainer to first enable
+      # "Code Quality" in repo Settings → Code security (public preview).
+      # The step must not block CI/merges while that setting is pending.
+      - name: Upload coverage to GitHub Code Quality
+        if: >-
+          matrix.python-version == '3.13' &&
+          (github.event_name != 'pull_request' ||
+           github.event.pull_request.head.repo.full_name == github.repository)
+        uses: actions/upload-code-coverage@v1
+        continue-on-error: true
+        with:
+          file: coverage.xml
+          language: Python
+          label: code-coverage/pytest
