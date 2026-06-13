@@ -97,7 +97,7 @@ async def ephemeral_lakehouse(
     The fixture does NOT wait for the SQL endpoint to provision; use
     ``ephemeral_sql_endpoint`` if you need a ready endpoint.
     """
-    name = f"pytest-{uuid.uuid4().hex[:8]}-lh"
+    name = f"pytest_{uuid.uuid4().hex[:8]}_lh"
     body: dict[str, object] = {
         "displayName": name,
         "description": "ephemeral integration-test lakehouse",
