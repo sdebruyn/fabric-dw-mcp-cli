@@ -769,22 +769,16 @@ fabric-dw --yes queries kill MyWorkspace SalesWH 42
 
 ---
 
-## fabric-dw query-insights
-
-Inspect Query Insights DMVs on Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
-
-All sub-commands query the `queryinsights` schema DMVs via TDS and support optional time-range filtering with `--since` and `--until` (ISO-8601 strings). The `--limit` option caps the number of rows returned (default: 100, max: 10 000).
-
-### query-insights request-history
+### queries request-history
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
-List completed SQL requests from `queryinsights.exec_requests_history`.
+List completed SQL requests from `queryinsights.exec_requests_history`. Supports optional time-range filtering with `--since` and `--until` (ISO-8601 strings). The `--limit` option caps the number of rows returned (default: 100, max: 10 000).
 
 **Synopsis**
 
 ```
-fabric-dw query-insights request-history [OPTIONS] [WORKSPACE] [WAREHOUSE]
+fabric-dw queries request-history [OPTIONS] [WORKSPACE] [WAREHOUSE]
 ```
 
 | Option | Description | Default |
@@ -796,12 +790,12 @@ fabric-dw query-insights request-history [OPTIONS] [WORKSPACE] [WAREHOUSE]
 **Example**
 
 ```shell
-fabric-dw query-insights request-history MyWorkspace SalesWH --limit 50 --since 2026-06-01T00:00:00
+fabric-dw queries request-history MyWorkspace SalesWH --limit 50 --since 2026-06-01T00:00:00
 ```
 
 ---
 
-### query-insights session-history
+### queries session-history
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
@@ -810,7 +804,7 @@ List completed sessions from `queryinsights.exec_sessions_history`.
 **Synopsis**
 
 ```
-fabric-dw query-insights session-history [OPTIONS] [WORKSPACE] [WAREHOUSE]
+fabric-dw queries session-history [OPTIONS] [WORKSPACE] [WAREHOUSE]
 ```
 
 | Option | Description | Default |
@@ -822,12 +816,12 @@ fabric-dw query-insights session-history [OPTIONS] [WORKSPACE] [WAREHOUSE]
 **Example**
 
 ```shell
-fabric-dw query-insights session-history MyWorkspace SalesWH
+fabric-dw queries session-history MyWorkspace SalesWH
 ```
 
 ---
 
-### query-insights frequent
+### queries frequent
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
@@ -836,7 +830,7 @@ List frequently-run queries from `queryinsights.frequently_run_queries`.
 **Synopsis**
 
 ```
-fabric-dw query-insights frequent [OPTIONS] [WORKSPACE] [WAREHOUSE]
+fabric-dw queries frequent [OPTIONS] [WORKSPACE] [WAREHOUSE]
 ```
 
 | Option | Description | Default |
@@ -848,12 +842,12 @@ fabric-dw query-insights frequent [OPTIONS] [WORKSPACE] [WAREHOUSE]
 **Example**
 
 ```shell
-fabric-dw query-insights frequent MyWorkspace SalesWH --limit 20
+fabric-dw queries frequent MyWorkspace SalesWH --limit 20
 ```
 
 ---
 
-### query-insights long-running
+### queries long-running
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
@@ -862,7 +856,7 @@ List long-running queries from `queryinsights.long_running_queries`.
 **Synopsis**
 
 ```
-fabric-dw query-insights long-running [OPTIONS] [WORKSPACE] [WAREHOUSE]
+fabric-dw queries long-running [OPTIONS] [WORKSPACE] [WAREHOUSE]
 ```
 
 | Option | Description | Default |
@@ -874,33 +868,7 @@ fabric-dw query-insights long-running [OPTIONS] [WORKSPACE] [WAREHOUSE]
 **Example**
 
 ```shell
-fabric-dw query-insights long-running MyWorkspace SalesWH
-```
-
----
-
-### query-insights pool-insights
-
-**Targets:** Data Warehouse · SQL Analytics Endpoint
-
-List SQL pool insight events from `queryinsights.sql_pool_insights`.
-
-**Synopsis**
-
-```
-fabric-dw query-insights pool-insights [OPTIONS] [WORKSPACE] [WAREHOUSE]
-```
-
-| Option | Description | Default |
-| --- | --- | --- |
-| `--limit INTEGER` | Maximum rows to return (1–10 000). | `100` |
-| `--since ISO8601` | Return rows with timestamp >= this value. | — |
-| `--until ISO8601` | Return rows with timestamp <= this value. | — |
-
-**Example**
-
-```shell
-fabric-dw query-insights pool-insights MyWorkspace SalesWH
+fabric-dw queries long-running MyWorkspace SalesWH
 ```
 
 ---
@@ -2021,6 +1989,32 @@ fabric-dw sql-pools reset [OPTIONS] [WORKSPACE]
 
 ```shell
 fabric-dw --yes sql-pools reset MyWorkspace
+```
+
+---
+
+### sql-pools insights
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+List SQL pool insight events from `queryinsights.sql_pool_insights`. Supports optional time-range filtering with `--since` and `--until` (ISO-8601 strings). The `--limit` option caps the number of rows returned (default: 100, max: 10 000).
+
+**Synopsis**
+
+```
+fabric-dw sql-pools insights [OPTIONS] [WORKSPACE] [WAREHOUSE]
+```
+
+| Option | Description | Default |
+| --- | --- | --- |
+| `--limit INTEGER` | Maximum rows to return (1–10 000). | `100` |
+| `--since ISO8601` | Return rows with timestamp >= this value. | — |
+| `--until ISO8601` | Return rows with timestamp <= this value. | — |
+
+**Example**
+
+```shell
+fabric-dw sql-pools insights MyWorkspace SalesWH
 ```
 
 ---

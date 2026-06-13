@@ -75,14 +75,15 @@ EXPECTED_TOOL_NAMES: frozenset[str] = frozenset(
         "add_audit_group",
         "remove_audit_group",
         "set_audit_retention",
-        # Queries
+        # Queries (running + query-insights DMVs)
         "list_running_queries",
         "kill_session",
-        # Query Insights
         "list_request_history",
         "list_session_history",
         "list_frequent_queries",
         "list_long_running_queries",
+        # SQL Pools (incl. pool-insights DMV)
+        # list_sql_pool_insights is grouped with sql_pools below
         "list_sql_pool_insights",
         # Generic SQL execution
         "execute_sql",

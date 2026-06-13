@@ -55,6 +55,7 @@ during these tests.
 | `sql-pools enable` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_sql_pools.py#L28) | ✅ | ✅ |
 | `sql-pools disable` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_sql_pools.py#L28) | ✅ | ✅ |
 | `sql-pools reset` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_sql_pools.py#L112) | ✅ | ✅ |
+| `sql-pools insights` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_query_insights.py#L82) | ✅ | ✅ |
 
 [^pools-list]: `list_sql_pools` reads the same configuration response as `get_configuration`; the `test_get_configuration_returns_model` test covers that path.
 [^pools-get]: `get_sql_pool` reads a named pool from the same configuration response; covered by the same test.
@@ -148,18 +149,12 @@ during these tests.
 | `queries list` (running queries) | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_queries.py#L10) | ✅ | ✅ |
 | `queries list-connections` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_queries.py#L22) | ✅ | ✅ |
 | `queries kill` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_queries.py#L15) [^kill] | ✅ | ✅ |
+| `queries request-history` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_query_insights.py#L34) | ✅ | ✅ |
+| `queries session-history` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_query_insights.py#L46) | ✅ | ✅ |
+| `queries frequent` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_query_insights.py#L58) | ✅ | ✅ |
+| `queries long-running` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_query_insights.py#L70) | ✅ | ✅ |
 
 [^kill]: The integration test for `kill` validates input-validation errors against a live warehouse; it does not kill a running session (none exist on an ephemeral warehouse). The happy-path kill path is covered by unit tests.
-
-### Query Insights
-
-| Feature | Integration test | CLI | MCP |
-|---|---|---|---|
-| `query-insights request-history` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_query_insights.py#L34) | ✅ | ✅ |
-| `query-insights session-history` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_query_insights.py#L46) | ✅ | ✅ |
-| `query-insights frequent` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_query_insights.py#L58) | ✅ | ✅ |
-| `query-insights long-running` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_query_insights.py#L70) | ✅ | ✅ |
-| `query-insights pool-insights` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_query_insights.py#L82) | ✅ | ✅ |
 
 ### SQL Execution
 
