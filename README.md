@@ -7,6 +7,7 @@
 
 <p align="center">
   <a href="https://github.com/sdebruyn/fabric-dw-mcp-cli/actions/workflows/ci.yml"><img src="https://github.com/sdebruyn/fabric-dw-mcp-cli/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://codecov.io/gh/sdebruyn/fabric-dw-mcp-cli"><img src="https://codecov.io/gh/sdebruyn/fabric-dw-mcp-cli/graph/badge.svg" alt="codecov"></a>
   <a href="https://pypi.org/project/fabric-dw/"><img src="https://img.shields.io/pypi/v/fabric-dw" alt="PyPI version"></a>
   <a href="https://pypi.org/project/fabric-dw/"><img src="https://img.shields.io/pypi/pyversions/fabric-dw" alt="Python versions"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/sdebruyn/fabric-dw-mcp-cli" alt="License"></a>

@@ -69,13 +69,24 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: uv sync --frozen
-      - run: uv run pytest tests/unit --cov --cov-report=xml --cov-report=term
+      - run: uv run pytest tests/unit --cov --cov-branch --cov-report=xml --cov-report=term --junitxml=junit.xml -o junit_family=legacy
       - name: Enforce coverage threshold
         run: uv run coverage report --fail-under=80
       - uses: actions/upload-artifact@v7
         with:
           name: coverage-${{ matrix.python-version }}
           path: coverage.xml
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          flags: python-${{ matrix.python-version }}
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/test-results-action@v1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          flags: python-${{ matrix.python-version }}
       # Upload coverage to GitHub Code Quality (public preview).
       # Only runs on Python 3.13 to avoid duplicate uploads across matrix entries.
       # Fork-PR guard: skip on PRs from forks (they lack write permissions).
