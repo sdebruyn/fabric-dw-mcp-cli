@@ -1675,7 +1675,7 @@ async def test_rename_table_sql_endpoint_raises_tool_error(mock_ctx, ctx_patch) 
 
 
 async def test_rename_table_workspace_allowlist_blocks(mock_ctx, ctx_patch) -> None:
-    """rename_table raises ToolError when workspace is not in FABRIC_MCP_WORKSPACE_ALLOWLIST."""
+    """rename_table raises ToolError when workspace is not in FABRIC_MCP_WORKSPACES."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -1685,8 +1685,8 @@ async def test_rename_table_workspace_allowlist_blocks(mock_ctx, ctx_patch) -> N
 
     with (
         ctx_patch,
-        patch.dict(os.environ, {"FABRIC_MCP_WORKSPACE_ALLOWLIST": "other-workspace"}),
-        pytest.raises(ToolError),
+        patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
+        pytest.raises(ToolError, match="FABRIC_MCP_WORKSPACES"),
     ):
         await mcp._tool_manager.call_tool(
             "rename_table",
