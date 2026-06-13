@@ -15,7 +15,7 @@ from click.testing import CliRunner
 
 from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._main import cli
-from fabric_dw.exceptions import NotFoundError, PermissionDeniedError
+from fabric_dw.exceptions import FabricError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import RunningQuery, WarehouseKind
 from fabric_dw.sql import SqlTarget
 
@@ -248,4 +248,196 @@ class TestQueriesDefaultFallback:
         monkeypatch.delenv("FABRIC_DW_DEFAULT_WORKSPACE", raising=False)
         monkeypatch.delenv("FABRIC_DW_DEFAULT_WAREHOUSE", raising=False)
         result = runner.invoke(cli, ["queries", "list"])
+        assert result.exit_code != 0
+
+
+class TestQueriesListConnections:
+    """queries list-connections — happy path + FabricError (lines 89-101)."""
+
+    def test_list_connections_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.queries.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.queries.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.queries.list_connections",
+                new=AsyncMock(return_value=[]),
+            ),
+        ):
+            result = runner.invoke(cli, ["queries", "list-connections", WS_GUID, WH_GUID])
+        assert result.exit_code == 0
+
+    def test_list_connections_fabric_error_exits_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.queries.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.queries.build_sql_target",
+                new=AsyncMock(side_effect=FabricError("server error")),
+            ),
+        ):
+            result = runner.invoke(cli, ["queries", "list-connections", WS_GUID, WH_GUID])
+        assert result.exit_code != 0
+
+
+class TestQueriesRequestHistory:
+    """queries request-history — happy path."""
+
+    def test_request_history_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.queries.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.queries.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.query_insights.list_request_history",
+                new=AsyncMock(return_value=[]),
+            ),
+        ):
+            result = runner.invoke(cli, ["queries", "request-history", WS_GUID, WH_GUID])
+        assert result.exit_code == 0
+
+
+class TestQueriesSessionHistory:
+    """queries session-history — happy path + FabricError (lines 210-211)."""
+
+    def test_session_history_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.queries.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.queries.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.query_insights.list_session_history",
+                new=AsyncMock(return_value=[]),
+            ),
+        ):
+            result = runner.invoke(cli, ["queries", "session-history", WS_GUID, WH_GUID])
+        assert result.exit_code == 0
+
+    def test_session_history_fabric_error_exits_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.queries.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.queries.build_sql_target",
+                new=AsyncMock(side_effect=FabricError("server error")),
+            ),
+        ):
+            result = runner.invoke(cli, ["queries", "session-history", WS_GUID, WH_GUID])
+        assert result.exit_code != 0
+
+
+class TestQueriesFrequent:
+    """queries frequent — happy path + FabricError (lines 251-252)."""
+
+    def test_frequent_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.queries.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.queries.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.query_insights.list_frequent_queries",
+                new=AsyncMock(return_value=[]),
+            ),
+        ):
+            result = runner.invoke(cli, ["queries", "frequent", WS_GUID, WH_GUID])
+        assert result.exit_code == 0
+
+    def test_frequent_fabric_error_exits_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.queries.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.queries.build_sql_target",
+                new=AsyncMock(side_effect=FabricError("server error")),
+            ),
+        ):
+            result = runner.invoke(cli, ["queries", "frequent", WS_GUID, WH_GUID])
+        assert result.exit_code != 0
+
+
+class TestQueriesLongRunning:
+    """queries long-running — happy path + FabricError (lines 292-293)."""
+
+    def test_long_running_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.queries.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.queries.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.query_insights.list_long_running_queries",
+                new=AsyncMock(return_value=[]),
+            ),
+        ):
+            result = runner.invoke(cli, ["queries", "long-running", WS_GUID, WH_GUID])
+        assert result.exit_code == 0
+
+    def test_long_running_fabric_error_exits_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.queries.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.queries.build_sql_target",
+                new=AsyncMock(side_effect=FabricError("server error")),
+            ),
+        ):
+            result = runner.invoke(cli, ["queries", "long-running", WS_GUID, WH_GUID])
         assert result.exit_code != 0

@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from io import StringIO
+from uuid import UUID
 
 import pytest
 from rich.console import Console
 
-from fabric_dw.cli._render import _cell, confirm, render
+from fabric_dw.cli._render import _cell, confirm, render, render_permissions_table, render_refresh_table
+from fabric_dw.models import ItemAccess, ItemAccessDetail, ItemAccessPrincipal, TableSyncError, TableSyncStatus
 
 
 class TestRenderJson:
@@ -293,9 +296,259 @@ class TestOmitAllNullColumns:
         assert "definition" not in output
 
 
+class TestNonDictListRows:
+    """_render_table handles list rows that are not dicts (lines 113, 135)."""
+
+    def _render_to_string(self, data: object) -> str:
+        sio = StringIO()
+        console = Console(file=sio, width=200, highlight=False, no_color=True)
+        render(data, json_output=False, console=console)
+        return sio.getvalue()
+
+    def test_list_of_scalars_renders_without_error(self) -> None:
+        """A list of plain strings renders as a single-column table."""
+        output = self._render_to_string(["alpha", "beta", "gamma"])
+        assert "alpha" in output
+        assert "beta" in output
+        assert "gamma" in output
+
+    def test_list_of_ints_renders_without_error(self) -> None:
+        output = self._render_to_string([1, 2, 3])
+        assert "1" in output
+        assert "2" in output
+
+    def test_mixed_dict_and_scalar_rows_renders_without_error(self) -> None:
+        """Mixed rows: dict first (adds columns), then scalar (renders via _cell)."""
+        # Non-dict rows appended at line 113; rendered at line 135
+        output = self._render_to_string([{"name": "foo"}, "bar"])
+        assert output is not None
+
+
 class TestConfirm:
     """confirm() helper returns True when yes=True without prompting."""
 
     def test_yes_flag_skips_prompt(self) -> None:
         result = confirm("Are you sure?", yes=True)
         assert result is True
+
+
+# ---------------------------------------------------------------------------
+# Helpers for render_permissions_table / render_refresh_table tests
+# ---------------------------------------------------------------------------
+
+def _make_item_access(
+    display_name: str = "Alice",
+    upn: str = "alice@example.com",
+    principal_type: str = "User",
+    permissions: list[str] | None = None,
+    additional_permissions: list[str] | None = None,
+) -> ItemAccess:
+    principal = ItemAccessPrincipal.model_validate(
+        {
+            "id": str(UUID("12345678-1234-5678-1234-567812345678")),
+            "displayName": display_name,
+            "type": principal_type,
+            "userDetails": {"userPrincipalName": upn},
+        }
+    )
+    detail = ItemAccessDetail.model_validate(
+        {
+            "permissions": permissions or ["Read"],
+            "additionalPermissions": additional_permissions or [],
+        }
+    )
+    return ItemAccess.model_validate(
+        {
+            "principal": principal.model_dump(by_alias=True, mode="json"),
+            "itemAccessDetails": detail.model_dump(by_alias=True, mode="json"),
+        }
+    )
+
+
+def _make_table_sync_status(
+    table_name: str = "dbo.Sales",
+    status: str = "Success",
+    end_date_time: datetime | None = None,
+    error: TableSyncError | None = None,
+) -> TableSyncStatus:
+    return TableSyncStatus.model_validate(
+        {
+            "tableName": table_name,
+            "status": status,
+            "endDateTime": end_date_time.isoformat() if end_date_time else None,
+            "error": error.model_dump(by_alias=True, mode="json") if error else None,
+        }
+    )
+
+
+class TestRenderPermissionsTable:
+    """render_permissions_table renders ItemAccess records correctly."""
+
+    def _render_to_string(
+        self,
+        accesses: list[ItemAccess],
+        title: str = "Permissions",
+        json_output: bool = False,
+    ) -> str:
+        sio = StringIO()
+        console = Console(file=sio, width=200, highlight=False, no_color=True)
+        render_permissions_table(accesses, title=title, json_output=json_output, console=console)
+        return sio.getvalue()
+
+    def test_renders_display_name(self) -> None:
+        access = _make_item_access(display_name="Alice Smith")
+        output = self._render_to_string([access])
+        assert "Alice Smith" in output
+
+    def test_renders_upn(self) -> None:
+        access = _make_item_access(upn="alice@example.com")
+        output = self._render_to_string([access])
+        assert "alice@example.com" in output
+
+    def test_renders_principal_type(self) -> None:
+        access = _make_item_access(principal_type="User")
+        output = self._render_to_string([access])
+        assert "User" in output
+
+    def test_renders_permissions(self) -> None:
+        access = _make_item_access(permissions=["Read", "Write"])
+        output = self._render_to_string([access])
+        assert "Read" in output
+        assert "Write" in output
+
+    def test_renders_additional_permissions(self) -> None:
+        access = _make_item_access(additional_permissions=["Execute"])
+        output = self._render_to_string([access])
+        assert "Execute" in output
+
+    def test_renders_table_title(self) -> None:
+        access = _make_item_access()
+        output = self._render_to_string([access], title="Warehouse Permissions")
+        assert "Warehouse" in output or "Permissions" in output
+
+    def test_empty_list_renders_without_error(self) -> None:
+        output = self._render_to_string([])
+        assert output is not None
+
+    def test_json_output_emits_valid_json(self, capsys: pytest.CaptureFixture[str]) -> None:
+        access = _make_item_access(display_name="Bob", permissions=["Read"])
+        render_permissions_table([access], title="Test", json_output=True)
+        captured = capsys.readouterr()
+        parsed = json.loads(captured.out)
+        assert isinstance(parsed, list)
+        assert len(parsed) == 1
+
+    def test_service_principal_uses_aad_app_id(self) -> None:
+        """Service principal: identity column shows AAD app ID, not UPN."""
+        aad_id = "aaaabbbb-cccc-dddd-eeee-ffffffffffff"
+        principal = ItemAccessPrincipal.model_validate(
+            {
+                "id": str(UUID("12345678-1234-5678-1234-567812345678")),
+                "displayName": "MyApp",
+                "type": "ServicePrincipal",
+                "servicePrincipalDetails": {"aadAppId": aad_id},
+            }
+        )
+        detail = ItemAccessDetail.model_validate(
+            {"permissions": ["Read"], "additionalPermissions": []}
+        )
+        access = ItemAccess.model_validate(
+            {
+                "principal": principal.model_dump(by_alias=True, mode="json"),
+                "itemAccessDetails": detail.model_dump(by_alias=True, mode="json"),
+            }
+        )
+        sio = StringIO()
+        console = Console(file=sio, width=200, highlight=False, no_color=True)
+        render_permissions_table([access], title="Test", console=console)
+        output = sio.getvalue()
+        assert aad_id in output
+
+    def test_uses_default_console_when_none_given(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """When console=None, a fresh Console() is created (no crash)."""
+        access = _make_item_access()
+        # Should not raise; output goes to stdout (captured)
+        render_permissions_table([access], title="Test", console=None)
+
+
+class TestRenderRefreshTable:
+    """render_refresh_table renders TableSyncStatus records correctly."""
+
+    def _render_to_string(self, statuses: list[TableSyncStatus]) -> str:
+        sio = StringIO()
+        console = Console(file=sio, width=200, highlight=False, no_color=True)
+        render_refresh_table(statuses, console=console)
+        return sio.getvalue()
+
+    def test_renders_table_name(self) -> None:
+        s = _make_table_sync_status(table_name="dbo.Orders")
+        output = self._render_to_string([s])
+        assert "dbo.Orders" in output
+
+    def test_renders_success_status(self) -> None:
+        s = _make_table_sync_status(status="Success")
+        output = self._render_to_string([s])
+        assert "Success" in output
+
+    def test_renders_failure_status(self) -> None:
+        s = _make_table_sync_status(status="Failure")
+        output = self._render_to_string([s])
+        assert "Failure" in output
+
+    def test_renders_notrun_status(self) -> None:
+        s = _make_table_sync_status(status="NotRun")
+        output = self._render_to_string([s])
+        assert "NotRun" in output
+
+    def test_renders_unknown_status_without_style(self) -> None:
+        """An unknown status value does not raise — just renders as plain text."""
+        s = _make_table_sync_status(status="InProgress")
+        output = self._render_to_string([s])
+        assert "InProgress" in output
+
+    def test_renders_end_time(self) -> None:
+        dt = datetime(2024, 3, 15, 10, 30, 0, tzinfo=UTC)
+        s = _make_table_sync_status(end_date_time=dt)
+        output = self._render_to_string([s])
+        assert "2024" in output
+
+    def test_renders_error_code_and_message(self) -> None:
+        error = TableSyncError.model_validate(
+            {"errorCode": "ERR001", "message": "Something went wrong"}
+        )
+        s = _make_table_sync_status(status="Failure", error=error)
+        output = self._render_to_string([s])
+        assert "ERR001" in output
+        assert "Something went wrong" in output
+
+    def test_renders_error_code_only(self) -> None:
+        error = TableSyncError.model_validate({"errorCode": "ERR002", "message": None})
+        s = _make_table_sync_status(status="Failure", error=error)
+        output = self._render_to_string([s])
+        assert "ERR002" in output
+
+    def test_renders_error_message_only(self) -> None:
+        error = TableSyncError.model_validate({"errorCode": None, "message": "Something failed"})
+        s = _make_table_sync_status(status="Failure", error=error)
+        output = self._render_to_string([s])
+        assert "Something failed" in output
+
+    def test_renders_no_error(self) -> None:
+        s = _make_table_sync_status(status="Success", error=None)
+        output = self._render_to_string([s])
+        assert "Success" in output
+
+    def test_empty_list_renders_without_error(self) -> None:
+        output = self._render_to_string([])
+        assert output is not None
+
+    def test_uses_default_console_when_none_given(self) -> None:
+        """When console=None, a fresh Console() is created (no crash)."""
+        s = _make_table_sync_status()
+        # Should not raise
+        render_refresh_table([s], console=None)
+
+    def test_title_appears_in_output(self) -> None:
+        s = _make_table_sync_status()
+        output = self._render_to_string([s])
+        assert "Metadata Refresh Results" in output
