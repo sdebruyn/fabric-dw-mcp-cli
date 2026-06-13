@@ -98,10 +98,21 @@ _SP_RENAME_SQL = "EXEC sp_rename ?, ?, 'OBJECT'"
 # Helpers
 # ---------------------------------------------------------------------------
 
-_SELECT_LEAD_RE = re.compile(
-    r"^(?:\s*(?:/\*.*?\*/|--[^\n]*\n))*\s*(?:WITH|SELECT)\b",
-    re.IGNORECASE | re.DOTALL,
-)
+# Pre-compiled patterns used by _reject_non_select — each anchored at the
+# current scan position (used with re.match, not re.search).
+#
+# Block-comment pattern uses the "unrolled loop" technique to stay linear:
+#   /\*          — opening delimiter
+#   [^*]*        — any non-star characters (fast, no backtracking with *)
+#   (?:\*+[^*/][^*]*)* — one-or-more stars NOT followed by /: consume the star
+#                        run plus the next non-star character and repeat
+#   \*+/         — the closing *+/
+# This is equivalent to /\*.*?\*/ with re.DOTALL but avoids catastrophic
+# backtracking on inputs like "/*" + "*//*" * N.
+_BLOCK_COMMENT_RE = re.compile(r"/\*[^*]*(?:\*+[^*/][^*]*)*\*+/")
+_LINE_COMMENT_RE = re.compile(r"--[^\n]*")
+_WHITESPACE_RE = re.compile(r"\s+")
+_SELECT_OR_WITH_RE = re.compile(r"(?:WITH|SELECT)\b", re.IGNORECASE)
 
 
 def _reject_non_select(body: str) -> None:
@@ -115,13 +126,41 @@ def _reject_non_select(body: str) -> None:
     here — the Fabric CTAS API will reject non-SELECT bodies at the server side.
     This validator is an inexpensive first-line filter only.
 
+    Implementation note: the check is done procedurally — consuming leading
+    whitespace and comments token-by-token — rather than with a single nested
+    quantifier regex.  The old ``(?:\\s*(?:/\\*.*?\\*/|--[^\\n]*\\n))*``
+    pattern caused catastrophic (exponential) backtracking on adversarial
+    inputs such as ``"/*" + "*//*" * N`` (CodeQL py/redos, high severity).
+    Each sub-pattern used here is linear and unambiguous.
+
     Args:
         body: The raw SQL supplied as the CTAS body.
 
     Raises:
         ValueError: If the first keyword is not SELECT or WITH (CTE).
     """
-    if not _SELECT_LEAD_RE.match(body):
+    pos = 0
+    length = len(body)
+    while pos < length:
+        # Consume leading whitespace.
+        m = _WHITESPACE_RE.match(body, pos)
+        if m:
+            pos = m.end()
+            continue
+        # Consume a block comment /* ... */.
+        m = _BLOCK_COMMENT_RE.match(body, pos)
+        if m:
+            pos = m.end()
+            continue
+        # Consume a line comment -- ...\n (or -- ... at end of string).
+        m = _LINE_COMMENT_RE.match(body, pos)
+        if m:
+            pos = m.end()
+            continue
+        # Nothing consumed — we are at the first real token.
+        break
+
+    if not _SELECT_OR_WITH_RE.match(body, pos):
         msg = "CTAS body must begin with SELECT or WITH (CTE) (leading comments are allowed)"
         raise ValueError(msg)
 

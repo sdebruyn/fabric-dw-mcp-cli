@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
@@ -128,6 +129,44 @@ class TestRejectNonSelect:
 
     def test_mixed_comments_then_select(self) -> None:
         tables._reject_non_select("-- line\n/* block */ SELECT 1")
+
+    # -----------------------------------------------------------------------
+    # ReDoS regression tests (CodeQL py/redos — must complete in < 2 s)
+    # -----------------------------------------------------------------------
+
+    def test_redos_alternating_block_comment_delimiters_rejected_fast(self) -> None:
+        """Adversarial input '/*' + '*//*' * N must be REJECTED and not hang.
+
+        The previous nested-quantifier regex ``(?:\\s*(?:/\\*.*?\\*/|...))*``
+        backtracked exponentially on this pattern.  The procedural rewrite is
+        linear: after consuming the first block comment ``/* */``, the remaining
+        ``/*`` is an unclosed block comment that leaves no SELECT/WITH keyword,
+        so it is rejected immediately.
+        """
+        malicious = "/*" + "*//*" * 50_000
+        start = time.monotonic()
+        with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
+            tables._reject_non_select(malicious)
+        elapsed = time.monotonic() - start
+        assert elapsed < 2.0, f"ReDoS: took {elapsed:.3f}s (expected < 2s)"
+
+    def test_redos_many_unclosed_block_comments_rejected_fast(self) -> None:
+        """Many opening ``/*`` without closing ``*/`` must be REJECTED fast."""
+        malicious = "/* " * 50_000
+        start = time.monotonic()
+        with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
+            tables._reject_non_select(malicious)
+        elapsed = time.monotonic() - start
+        assert elapsed < 2.0, f"ReDoS: took {elapsed:.3f}s (expected < 2s)"
+
+    def test_redos_many_whitespace_and_comments_select_accepted_fast(self) -> None:
+        """Many leading whitespace + closed block comments before SELECT must PASS fast."""
+        preamble = "/* ok */ " * 5_000
+        body = preamble + "SELECT 1"
+        start = time.monotonic()
+        tables._reject_non_select(body)  # must not raise
+        elapsed = time.monotonic() - start
+        assert elapsed < 2.0, f"ReDoS: took {elapsed:.3f}s (expected < 2s)"
 
 
 # ===========================================================================
