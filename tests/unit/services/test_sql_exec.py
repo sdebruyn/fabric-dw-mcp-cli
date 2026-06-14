@@ -295,25 +295,33 @@ async def test_execute_perm_denied_driver_raises_permission_denied() -> None:
 
 
 async def test_execute_multi_statement_returns_last_result_set() -> None:
-    """When the cursor has multiple result sets, the last one is returned."""
+    """When the cursor has multiple result sets, the last one is returned.
+
+    Uses a stateful cursor where description and fetchall genuinely change as
+    nextset() advances.  This distinguishes the FIRST result set
+    (first_col / first_value) from the LAST result set (last_col / last_value).
+
+    The OLD buggy code called ``while nextset(): pass`` first and then read
+    ``cursor.description``, returning whatever the cursor exposed after being
+    advanced past all sets.  The static-description mock used previously would
+    have made that buggy path pass (description was the same before and after
+    advancing).  This stateful version fails under the old code because
+    description becomes None after nextset() exhausts the sets.
+    """
     target = _make_target()
+    cursor = _make_stateful_cursor(
+        [
+            (["first_col"], [("first_value",)]),
+            (["last_col"], [("last_value",)]),
+        ]
+    )
     conn = MagicMock()
-    cursor = MagicMock()
-    cursor.rowcount = -1
-
-    # First call to nextset() → True (advance to result set 2)
-    # Second call to nextset() → False (no more result sets)
-    cursor.nextset.side_effect = [True, False]
-
-    # After advancing, description and fetchall reflect the second result set.
-    cursor.description = [("last_col", None)]
-    cursor.fetchall.return_value = [("last_value",)]
-
     conn.cursor.return_value = cursor
 
     with patch("fabric_dw.sql.open_connection", return_value=conn):
         result = await sql_exec.execute(target, "SELECT 1; SELECT 'last_value' AS last_col")
 
+    # Must be the LAST result set, not the first.
     assert result.columns == ["last_col"]
     assert result.rows == [["last_value"]]
 

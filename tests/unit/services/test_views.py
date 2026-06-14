@@ -319,12 +319,25 @@ class TestReadView:
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await read_view(target, "dbo", "vw--injection")
 
-    async def test_raises_not_found_when_no_columns(self) -> None:
+    async def test_raises_not_found_for_missing_view(self) -> None:
+        """A missing view raises NotFoundError via SQL error 208 mapping in run_query.
+
+        Before this PR, read_view detected a missing view via ``if not cols``
+        after run_query returned empty columns.  Now, map_driver_error converts
+        SQL error 208 ("invalid object name") to NotFoundError inside run_query,
+        which re-raises it before returning.  The cursor error is the trigger.
+        """
         target = _make_target()
-        cursor = MagicMock()
-        cursor.description = None
-        cursor.fetchall.return_value = []
         conn = MagicMock()
+        cursor = MagicMock()
+
+        class _Err208Error(Exception):
+            ddbc_error = "Error: 208 Invalid object name 'dbo.vw_nonexistent'"
+
+            def __str__(self) -> str:
+                return "Invalid object name 'dbo.vw_nonexistent'"
+
+        cursor.execute.side_effect = _Err208Error()
         conn.cursor.return_value = cursor
         with (
             patch("fabric_dw.sql.open_connection", return_value=conn),

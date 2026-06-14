@@ -498,9 +498,10 @@ def map_driver_error(exc: BaseException) -> Exception | None:
         exc: The raw exception raised by the driver.
 
     Returns:
-        A :class:`~fabric_dw.exceptions.PermissionDeniedError` or
-        :class:`~fabric_dw.exceptions.AuthError` instance if the error message
-        matches a known fragment or error number, otherwise ``None``.
+        A :class:`~fabric_dw.exceptions.PermissionDeniedError`,
+        :class:`~fabric_dw.exceptions.AuthError`, or
+        :class:`~fabric_dw.exceptions.NotFoundError` instance if the error
+        message matches a known fragment or error number, otherwise ``None``.
     """
     # --- Strategy 1: native error number (primary, locale-independent) ---
     ddbc_error = getattr(exc, "ddbc_error", None)
@@ -595,6 +596,8 @@ def run_query(  # noqa: PLR0912,PLR0913
     Raises:
         PermissionDeniedError: If the driver reports a permission error.
         AuthError: If the driver reports an authentication failure.
+        NotFoundError: If the driver reports a missing-object error (SQL Server
+            error 208, invalid object name / base table or view not found).
         Exception: Any other driver error is propagated unchanged.
     """
     # Bounded transient retry: retry ONLY on connection-level TDS drops (not on
