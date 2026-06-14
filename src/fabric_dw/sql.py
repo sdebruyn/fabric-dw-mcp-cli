@@ -47,7 +47,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
 from fabric_dw.auth import CredentialMode
-from fabric_dw.exceptions import AuthError, PermissionDeniedError
+from fabric_dw.exceptions import AuthError, NotFoundError, PermissionDeniedError
 
 # ---------------------------------------------------------------------------
 # Transient-retry configuration
@@ -112,6 +112,16 @@ _PERMISSION_DENIED_ERROR_NUMBERS = frozenset({229, 230, 297})
 
 # SQL Server native error number for authentication failure (login failed).
 _AUTH_FAILED_ERROR_NUMBERS = frozenset({18456})
+
+# SQL Server native error numbers that indicate a missing object.
+# 208: Invalid object name (table/view/proc not found).
+_NOT_FOUND_ERROR_NUMBERS = frozenset({208})
+
+# Message fragments that indicate a missing database object.
+_NOT_FOUND_FRAGMENTS = (
+    "invalid object name",
+    "base table or view not found",
+)
 
 # Fragments that indicate a transient connection-level drop (TCP tear-down,
 # server-side restart, or fabric warm-up).  These are safe to retry because
@@ -488,9 +498,10 @@ def map_driver_error(exc: BaseException) -> Exception | None:
         exc: The raw exception raised by the driver.
 
     Returns:
-        A :class:`~fabric_dw.exceptions.PermissionDeniedError` or
-        :class:`~fabric_dw.exceptions.AuthError` instance if the error message
-        matches a known fragment or error number, otherwise ``None``.
+        A :class:`~fabric_dw.exceptions.PermissionDeniedError`,
+        :class:`~fabric_dw.exceptions.AuthError`, or
+        :class:`~fabric_dw.exceptions.NotFoundError` instance if the error
+        message matches a known fragment or error number, otherwise ``None``.
     """
     # --- Strategy 1: native error number (primary, locale-independent) ---
     ddbc_error = getattr(exc, "ddbc_error", None)
@@ -503,13 +514,18 @@ def map_driver_error(exc: BaseException) -> Exception | None:
                     return PermissionDeniedError(str(exc))
                 if err_num in _AUTH_FAILED_ERROR_NUMBERS:
                     return AuthError(str(exc))
+                if err_num in _NOT_FOUND_ERROR_NUMBERS:
+                    return NotFoundError(str(exc))
 
     # --- Strategy 2: message-fragment fallback (locale-dependent, documented) ---
     msg = str(exc).lower()
-    if any(fragment in msg for fragment in _PERMISSION_DENIED_FRAGMENTS):
-        return PermissionDeniedError(str(exc))
-    if any(fragment in msg for fragment in _AUTH_FAILED_FRAGMENTS):
-        return AuthError(str(exc))
+    for cls, fragments in (
+        (PermissionDeniedError, _PERMISSION_DENIED_FRAGMENTS),
+        (AuthError, _AUTH_FAILED_FRAGMENTS),
+        (NotFoundError, _NOT_FOUND_FRAGMENTS),
+    ):
+        if any(fragment in msg for fragment in fragments):
+            return cls(str(exc))
     return None
 
 
@@ -580,6 +596,8 @@ def run_query(  # noqa: PLR0912,PLR0913
     Raises:
         PermissionDeniedError: If the driver reports a permission error.
         AuthError: If the driver reports an authentication failure.
+        NotFoundError: If the driver reports a missing-object error (SQL Server
+            error 208, invalid object name / base table or view not found).
         Exception: Any other driver error is propagated unchanged.
     """
     # Bounded transient retry: retry ONLY on connection-level TDS drops (not on

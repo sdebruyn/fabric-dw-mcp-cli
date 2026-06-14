@@ -295,25 +295,33 @@ async def test_execute_perm_denied_driver_raises_permission_denied() -> None:
 
 
 async def test_execute_multi_statement_returns_last_result_set() -> None:
-    """When the cursor has multiple result sets, the last one is returned."""
+    """When the cursor has multiple result sets, the last one is returned.
+
+    Uses a stateful cursor where description and fetchall genuinely change as
+    nextset() advances.  This distinguishes the FIRST result set
+    (first_col / first_value) from the LAST result set (last_col / last_value).
+
+    The OLD buggy code called ``while nextset(): pass`` first and then read
+    ``cursor.description``, returning whatever the cursor exposed after being
+    advanced past all sets.  The static-description mock used previously would
+    have made that buggy path pass (description was the same before and after
+    advancing).  This stateful version fails under the old code because
+    description becomes None after nextset() exhausts the sets.
+    """
     target = _make_target()
+    cursor = _make_stateful_cursor(
+        [
+            (["first_col"], [("first_value",)]),
+            (["last_col"], [("last_value",)]),
+        ]
+    )
     conn = MagicMock()
-    cursor = MagicMock()
-    cursor.rowcount = -1
-
-    # First call to nextset() → True (advance to result set 2)
-    # Second call to nextset() → False (no more result sets)
-    cursor.nextset.side_effect = [True, False]
-
-    # After advancing, description and fetchall reflect the second result set.
-    cursor.description = [("last_col", None)]
-    cursor.fetchall.return_value = [("last_value",)]
-
     conn.cursor.return_value = cursor
 
     with patch("fabric_dw.sql.open_connection", return_value=conn):
         result = await sql_exec.execute(target, "SELECT 1; SELECT 'last_value' AS last_col")
 
+    # Must be the LAST result set, not the first.
     assert result.columns == ["last_col"]
     assert result.rows == [["last_value"]]
 
@@ -403,3 +411,105 @@ async def test_binary_type_code_in_description_tags_column() -> None:
         result = await sql_exec.execute(target, "SELECT data FROM t")
 
     assert result.columns == ["data__base64"]
+
+
+# ---------------------------------------------------------------------------
+# Regression: BUG 1 — single SELECT must return columns+rows (nextset fix)
+# ---------------------------------------------------------------------------
+
+
+def _make_stateful_cursor(
+    result_sets: list[tuple[list[str], list[tuple[object, ...]]]],
+) -> MagicMock:
+    """Build a mock DB-API cursor that models multi-result-set behaviour.
+
+    Each entry in *result_sets* is ``(column_names, rows)``.  After
+    ``execute()`` the cursor starts on result_set 0; ``nextset()`` advances
+    it and returns True until there are no more sets, then returns False and
+    sets ``description = None`` (mirroring real DB-API behaviour).
+    """
+    cursor = MagicMock()
+    cursor.rowcount = -1
+    state = {"index": 0}
+
+    def _update_state(idx: int) -> None:
+        if idx < len(result_sets):
+            cols, rows = result_sets[idx]
+            cursor.description = [(c, None) for c in cols] if cols else None
+            cursor.fetchall.return_value = rows
+            cursor.fetchmany.side_effect = lambda n: rows[:n]
+        else:
+            cursor.description = None
+            cursor.fetchall.return_value = []
+
+    # Position on first result set immediately after execute().
+    _update_state(0)
+
+    def _nextset() -> bool:
+        state["index"] += 1
+        idx = state["index"]
+        _update_state(idx)
+        return idx < len(result_sets)
+
+    cursor.nextset.side_effect = _nextset
+    return cursor
+
+
+async def test_single_select_returns_columns_and_rows_regression() -> None:
+    """Regression: a single-result-set SELECT must return its columns and rows.
+
+    Before the fix, nextset() was called first which advanced past the only
+    result set, leaving description=None and fetchall returning [].
+    """
+    target = _make_target()
+    cursor = _make_stateful_cursor(
+        [
+            (["hello"], [(1,)]),
+        ]
+    )
+    conn = MagicMock()
+    conn.cursor.return_value = cursor
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await sql_exec.execute(target, "SELECT 1 AS hello")
+
+    assert result.columns == ["hello"]
+    assert result.rows == [[1]]
+
+
+async def test_multi_result_set_returns_last_set_stateful() -> None:
+    """A multi-result-set batch returns only the LAST result set."""
+    target = _make_target()
+    cursor = _make_stateful_cursor(
+        [
+            (["first_col"], [("first_value",)]),
+            (["last_col"], [("last_value",)]),
+        ]
+    )
+    conn = MagicMock()
+    conn.cursor.return_value = cursor
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await sql_exec.execute(
+            target,
+            "SELECT 'first_value' AS first_col; SELECT 'last_value' AS last_col",
+        )
+
+    assert result.columns == ["last_col"]
+    assert result.rows == [["last_value"]]
+
+
+async def test_ddl_no_result_set_returns_empty_stateful() -> None:
+    """A DDL statement with no result set returns empty columns and rows."""
+    target = _make_target()
+    # No result sets at all — cursor.description is None throughout.
+    cursor = _make_stateful_cursor([])
+    cursor.rowcount = 0
+    conn = MagicMock()
+    conn.cursor.return_value = cursor
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await sql_exec.execute(target, "CREATE TABLE t (id INT)")
+
+    assert result.columns == []
+    assert result.rows == []

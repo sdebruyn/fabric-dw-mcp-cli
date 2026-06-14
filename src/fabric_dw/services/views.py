@@ -174,7 +174,8 @@ async def read_view(
 
     Raises:
         ValueError: If *schema* or *view_name* fails identifier validation.
-        NotFoundError: If the view does not exist (zero rows AND zero columns).
+        NotFoundError: If the view does not exist (SQL Server error 208 mapped
+            upstream by :func:`~fabric_dw.sql.run_query`).
         PermissionDeniedError: If the driver reports a permission error.
     """
     validate_identifier(schema)
@@ -189,10 +190,12 @@ async def read_view(
     )
 
     def _run() -> tuple[list[str], list[tuple[object, ...]]]:
+        # run_query raises NotFoundError (via map_driver_error) for SQL error 208
+        # (invalid object name) before returning, so a missing view never reaches
+        # here.  The cols guard that previously raised NotFoundError for empty
+        # columns was only reachable for the missing-view case and is therefore
+        # removed; SELECT * on an existing view always yields at least one column.
         cols, rows = run_query(target, read_sql, mode=mode)
-        if not cols:
-            msg = f"View [{schema}].[{view_name}] not found"
-            raise NotFoundError(msg)
         return cols, list(rows)
 
     return await asyncio.to_thread(_run)
