@@ -551,8 +551,9 @@ async def test_remove_action_group_timeout_raises_fabric_error() -> None:
 
     The test patches asyncio.sleep to be instant (so the loop runs at full speed)
     and makes every GET return the group still present, simulating a permanently
-    stuck backend.  After max_wait_s / poll_interval_s iterations the function
-    must raise rather than return.
+    stuck backend.  After approximately max_wait_s of accumulated sleep (roughly
+    21 iterations with variable exponential-backoff intervals) the function must
+    raise rather than return.
     """
     from unittest.mock import AsyncMock, patch  # noqa: PLC0415
 

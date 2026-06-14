@@ -345,9 +345,7 @@ async def remove_action_group(
             group disappears from the API response (see issue #205).  The
             timeout is 180 s with exponential-like backoff (2 s → 10 s cap)
             to accommodate slow propagation observed in practice for groups
-            such as ``SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP``.  When the
-            group is already absent the function returns immediately without
-            polling.
+            such as ``SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP``.
         PermissionDeniedError: If the caller lacks the required permission (HTTP 403).
         NotFoundError: If the warehouse does not exist (HTTP 404).
     """
@@ -396,7 +394,7 @@ async def remove_action_group(
         refreshed = await get_settings(http, workspace_id, warehouse_id)
     if group in refreshed.action_groups:
         msg = (
-            f"remove_action_group: group {group!r} still present after {max_wait_s:.0f} s of "
+            f"remove_action_group: group {group!r} still present after {waited:.0f} s of "
             "eventual-consistency polling; the PATCH was accepted but the change has not yet "
             "propagated.  Retry the operation or check the Fabric audit settings manually."
         )
