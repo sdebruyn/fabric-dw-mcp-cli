@@ -6,6 +6,7 @@ Public API
 - :func:`build_connection_string` — augment the raw API connection string.
 - :func:`open_connection`     — checkout a pooled (or fresh) connection; caller closes.
 - :func:`map_driver_error`    — classify a driver exception → high-level error.
+- :func:`is_transient_connection_error` — True when an exception is a retryable TDS drop.
 - :func:`run_query`           — open connection, execute, fetch, map errors.
 - :func:`run_statements`      — execute multiple DDL statements on ONE connection.
 - :func:`reset_pool`          — drain and physically close all pooled connections.
@@ -47,6 +48,18 @@ from typing import Any, Literal, Protocol
 
 from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import AuthError, PermissionDeniedError
+
+# ---------------------------------------------------------------------------
+# Transient-retry configuration
+# ---------------------------------------------------------------------------
+
+# Maximum number of retry attempts for transient TDS connection drops.
+# Set to 0 to disable retries entirely.  Unit tests can monkeypatch this.
+SQL_TRANSIENT_MAX_RETRIES: int = 3
+
+# Backoff delays (seconds) between retry attempts.  Index 0 = delay before
+# attempt 2, index 1 = delay before attempt 3, etc.  Extend if needed.
+_TRANSIENT_RETRY_DELAYS: tuple[float, ...] = (1.0, 2.0, 4.0)
 
 # ---------------------------------------------------------------------------
 # Lazy driver import — @functools.cache avoids the module-level global and the
@@ -99,6 +112,29 @@ _PERMISSION_DENIED_ERROR_NUMBERS = frozenset({229, 230, 297})
 
 # SQL Server native error number for authentication failure (login failed).
 _AUTH_FAILED_ERROR_NUMBERS = frozenset({18456})
+
+# Fragments that indicate a transient connection-level drop (TCP tear-down,
+# server-side restart, or fabric warm-up).  These are safe to retry because
+# the statement has NOT been executed on the server yet (connection failed).
+# Keep this list tight — we must NOT retry real SQL or auth-config errors.
+_TRANSIENT_FRAGMENTS = (
+    # mssql_python / ODBC Driver 18 wording:
+    "communication link failure",
+    "connection was forcibly closed",
+    "a transport-level error",
+    "tcp provider",
+    # Generic socket/timeout seen during heavy transient:
+    "connection timed out",
+    "connection reset by peer",
+    # NOTE: "database was not found" is intentionally NOT listed here.  The real
+    # Fabric TDS driver embeds native error number 18456 alongside this message, so
+    # map_driver_error() converts it to AuthError before is_transient_connection_error
+    # is consulted — making a "database was not found" entry dead code in the
+    # run_query / run_statements retry paths.  Including it would also incorrectly
+    # retry a genuine wrong-database-name error for the full backoff window.
+    # _wait_for_sql_readiness in tests/integration/conftest.py handles the warm-up
+    # case correctly by inspecting the AuthError message directly.
+)
 
 # Mapping from CredentialMode to the ActiveDirectory auth type suffix.
 _MODE_TO_AD_AUTH: dict[CredentialMode, str] = {
@@ -477,12 +513,30 @@ def map_driver_error(exc: BaseException) -> Exception | None:
     return None
 
 
+def is_transient_connection_error(exc: BaseException) -> bool:
+    """Return True when *exc* represents a retryable TDS connection-level drop.
+
+    Matches only transport / warm-up errors, NOT auth failures or SQL errors.
+    Used by :func:`run_query` and :func:`run_statements` to gate the small
+    bounded retry loop that guards against transient Fabric TDS drops.
+
+    Args:
+        exc: The raw exception raised by the driver.
+
+    Returns:
+        ``True`` when the exception message matches a known transient fragment,
+        ``False`` for all other errors (auth, permission, SQL syntax, etc.).
+    """
+    msg = str(exc).lower()
+    return any(fragment in msg for fragment in _TRANSIENT_FRAGMENTS)
+
+
 # ---------------------------------------------------------------------------
 # TDS runner helpers
 # ---------------------------------------------------------------------------
 
 
-def run_query(  # noqa: PLR0913
+def run_query(  # noqa: PLR0912,PLR0913
     target: SqlTarget,
     statement: str,
     *,
@@ -528,40 +582,75 @@ def run_query(  # noqa: PLR0913
         AuthError: If the driver reports an authentication failure.
         Exception: Any other driver error is propagated unchanged.
     """
-    conn = open_connection(target, mode=mode)
-    cursor = conn.cursor()
-    try:
-        if params:
-            cursor.execute(statement, params)
-        else:
-            cursor.execute(statement)
-        if commit:
-            conn.commit()
+    # Bounded transient retry: retry ONLY on connection-level TDS drops (not on
+    # real SQL/auth errors).  SQL_TRANSIENT_MAX_RETRIES=0 disables the loop.
+    max_attempts = 1 + max(0, SQL_TRANSIENT_MAX_RETRIES)
+    last_exc: BaseException | None = None
+    for attempt in range(max_attempts):
+        if attempt > 0:
+            # Back off before the next attempt.  _TRANSIENT_RETRY_DELAYS is
+            # indexed from 0 (= delay before attempt 2); clamp to last value.
+            delay = _TRANSIENT_RETRY_DELAYS[min(attempt - 1, len(_TRANSIENT_RETRY_DELAYS) - 1)]
+            time.sleep(delay)
 
-        if fetch == "none":
-            return [], []
+        try:
+            conn = open_connection(target, mode=mode)
+        except Exception as exc:
+            # open_connection itself may raise on connect failure (TCP timeout,
+            # TLS handshake error, etc.).  Retry on transient errors, just as
+            # run_statements does — the dead connection is never put into the
+            # pool when open_connection raises, so there is nothing to discard.
+            if is_transient_connection_error(exc) and attempt < max_attempts - 1:
+                last_exc = exc
+                continue
+            raise
 
-        cols = [c[0] for c in (cursor.description or [])]
+        try:
+            cursor = conn.cursor()
+            try:
+                if params:
+                    cursor.execute(statement, params)
+                else:
+                    cursor.execute(statement)
+                if commit:
+                    conn.commit()
 
-        if fetch == "one":
-            row = cursor.fetchone()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-            return cols, ([row] if row is not None else [])
+                if fetch == "none":
+                    return [], []
 
-        # Default: fetch all rows.
-        rows: list[tuple[Any, ...]] = cursor.fetchall()
-    except Exception as exc:
-        # Mark tainted so close() physically closes instead of pooling.
-        # setattr is safe for both _PooledConnection and mock objects.
-        if isinstance(conn, _PooledConnection):
-            conn._discard = True
-        mapped = map_driver_error(exc)
-        if mapped:
-            raise mapped from exc
-        raise
-    else:
-        return cols, rows
-    finally:
-        conn.close()
+                cols = [c[0] for c in (cursor.description or [])]
+
+                if fetch == "one":
+                    row = cursor.fetchone()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+                    return cols, ([row] if row is not None else [])
+
+                # Default: fetch all rows.
+                rows: list[tuple[Any, ...]] = cursor.fetchall()
+            except Exception as exc:
+                # Mark tainted so close() physically closes instead of pooling.
+                # setattr is safe for both _PooledConnection and mock objects.
+                if isinstance(conn, _PooledConnection):
+                    conn._discard = True
+                mapped = map_driver_error(exc)
+                if mapped:
+                    # Auth/permission errors are never transient — raise immediately.
+                    raise mapped from exc
+                # Retry only on recognised transient connection drops; re-raise
+                # everything else (SQL syntax, deadlocks, programming errors …).
+                if is_transient_connection_error(exc) and attempt < max_attempts - 1:
+                    last_exc = exc
+                    continue
+                raise
+            else:
+                return cols, rows
+        finally:
+            conn.close()
+
+    # Unreachable in normal flow but satisfies the type-checker and raises the
+    # last transient error if somehow the loop exits without returning.
+    if last_exc is not None:
+        raise last_exc  # pragma: no cover
+    return [], []  # pragma: no cover
 
 
 def run_statements(
@@ -587,19 +676,43 @@ def run_statements(
         AuthError: If the driver reports an authentication failure.
         Exception: Any other driver error is propagated unchanged.
     """
-    conn = open_connection(target, mode=mode)
-    cursor = conn.cursor()
-    try:
-        for stmt in statements:
-            try:
-                cursor.execute(stmt)
-                conn.commit()
-            except Exception as exc:
-                if isinstance(conn, _PooledConnection):
-                    conn._discard = True
-                mapped = map_driver_error(exc)
-                if mapped:
-                    raise mapped from exc
-                raise
-    finally:
-        conn.close()
+    # Bounded transient retry: retry ONLY on connection-level TDS drops that
+    # occur during the *connect* phase (before any statement executes).
+    # Per-statement errors after a successful connect are NOT retried here
+    # because the connection state is unknown once a statement has started.
+    max_attempts = 1 + max(0, SQL_TRANSIENT_MAX_RETRIES)
+    last_exc: BaseException | None = None
+    for attempt in range(max_attempts):
+        if attempt > 0:
+            delay = _TRANSIENT_RETRY_DELAYS[min(attempt - 1, len(_TRANSIENT_RETRY_DELAYS) - 1)]
+            time.sleep(delay)
+
+        try:
+            conn = open_connection(target, mode=mode)
+        except Exception as exc:
+            # open_connection itself may raise on connect failure.
+            if is_transient_connection_error(exc) and attempt < max_attempts - 1:
+                last_exc = exc
+                continue
+            raise
+
+        cursor = conn.cursor()
+        try:
+            for stmt in statements:
+                try:
+                    cursor.execute(stmt)
+                    conn.commit()
+                except Exception as exc:
+                    if isinstance(conn, _PooledConnection):
+                        conn._discard = True
+                    mapped = map_driver_error(exc)
+                    if mapped:
+                        raise mapped from exc
+                    raise
+            # All statements succeeded — return (outer loop exits naturally).
+            return
+        finally:
+            conn.close()
+
+    if last_exc is not None:
+        raise last_exc  # pragma: no cover

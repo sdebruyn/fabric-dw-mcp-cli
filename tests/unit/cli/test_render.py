@@ -402,6 +402,7 @@ class TestRenderPermissionsTable:
         accesses: list[ItemAccess],
         *,
         title: str = "Permissions",
+        *,
         json_output: bool = False,
     ) -> str:
         sio = StringIO()
