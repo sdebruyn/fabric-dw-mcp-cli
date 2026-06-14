@@ -123,6 +123,17 @@ _NOT_FOUND_FRAGMENTS = (
     "base table or view not found",
 )
 
+# Fragments that indicate a freshly-created snapshot database has not yet
+# finished provisioning at the SQL layer ("eventual consistency" lag).  The
+# full error from the Fabric TDS endpoint reads:
+#   "User does not have permission to alter database '<name>', the database
+#    does not exist, or the database is not in a state that allows access checks."
+# All three clauses are surfaced as a single PermissionDeniedError (the driver
+# maps them via the permission-denied fragment path), so we detect them by
+# matching the unique sub-phrase that distinguishes provisioning lag from a real
+# permission denial.
+_SNAPSHOT_NOT_READY_FRAGMENTS = ("not in a state that allows access checks",)
+
 # Fragments that indicate a transient connection-level drop (TCP tear-down,
 # server-side restart, or fabric warm-up).  These are safe to retry because
 # the statement has NOT been executed on the server yet (connection failed).
@@ -603,6 +614,34 @@ def is_transient_connection_error(exc: BaseException) -> bool:
     """
     msg = str(exc).lower()
     return any(fragment in msg for fragment in _TRANSIENT_FRAGMENTS)
+
+
+def is_snapshot_not_ready_error(exc: BaseException) -> bool:
+    """Return True when *exc* indicates a snapshot DB is still provisioning.
+
+    A freshly-created Fabric warehouse snapshot database is not immediately
+    accessible at the SQL layer.  During the provisioning window the TDS
+    endpoint returns a message of the form:
+
+        "User does not have permission to alter database '<name>', the database
+         does not exist, or the database is not in a state that allows access
+         checks."
+
+    This is surfaced as a :class:`~fabric_dw.exceptions.PermissionDeniedError`
+    by :func:`map_driver_error` because the message contains the
+    "permission was denied" / "permission" fragment.  However, retrying is
+    safe here — the statement was rejected *before* it could execute, and once
+    provisioning finishes the same ``ALTER DATABASE`` will succeed.
+
+    Args:
+        exc: The exception raised by the driver or by :func:`map_driver_error`.
+
+    Returns:
+        ``True`` when the message matches a known snapshot-not-ready fragment,
+        ``False`` for all other errors.
+    """
+    msg = str(exc).lower()
+    return any(fragment in msg for fragment in _SNAPSHOT_NOT_READY_FRAGMENTS)
 
 
 # ---------------------------------------------------------------------------

@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import time as _time
 from datetime import UTC, datetime
 from uuid import UUID
 
 from fabric_dw.auth import CredentialMode
 from fabric_dw.cache import ItemEntry, LookupCache
+from fabric_dw.exceptions import FabricError
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import WarehouseKind, WarehouseSnapshot, WarehouseSnapshotApiPayload, as_props
 from fabric_dw.services._helpers import compact
 from fabric_dw.services._lro import LRO_DETAIL_WAIT_S, LRO_MAX_DETAIL_RETRIES, resolve_lro_item_id
-from fabric_dw.sql import SqlTarget, run_statements
+from fabric_dw.sql import SqlTarget, is_snapshot_not_ready_error, run_statements
 
 __all__ = [
     "create",
@@ -21,6 +23,16 @@ __all__ = [
     "rename",
     "roll_timestamp",
 ]
+
+# ---------------------------------------------------------------------------
+# Readiness-retry configuration for roll_timestamp
+# ---------------------------------------------------------------------------
+
+# How long to wait between ALTER retries while the snapshot DB is provisioning.
+_SNAP_READY_POLL_INTERVAL_S: float = 4.0
+# Total time (seconds) to wait for the snapshot DB to become ready before
+# giving up and raising FabricError.
+_SNAP_READY_TIMEOUT_S: float = 90.0
 
 # Characters / sequences that could enable SQL injection in a bracket-quoted name.
 # This is a strict blocklist: snapshot names are NOT passed through
@@ -349,6 +361,17 @@ async def roll_timestamp(
     # Correct fix: open the connection with ODBC-level ``autocommit=True`` so
     # the driver never wraps any statement in an explicit transaction, then run
     # the ALTER as the sole statement on that connection.
+    #
+    # Additionally, a freshly-created snapshot database is subject to an
+    # eventual-consistency / provisioning lag at the SQL layer.  During this
+    # window the TDS endpoint rejects the ALTER with a message of the form:
+    #   "User does not have permission to alter database '<name>', the database
+    #    does not exist, or the database is not in a state that allows access
+    #    checks."
+    # This is NOT a real permission failure — it is a transient provisioning
+    # state.  We detect it via :func:`~fabric_dw.sql.is_snapshot_not_ready_error`
+    # and retry with a bounded back-off (``_SNAP_READY_POLL_INTERVAL_S`` sleep,
+    # ``_SNAP_READY_TIMEOUT_S`` total wall-clock budget).
     def _run() -> None:
         run_statements(
             parent_target,
@@ -357,4 +380,23 @@ async def roll_timestamp(
             autocommit=True,
         )
 
-    await asyncio.to_thread(_run)
+    deadline = _time.monotonic() + _SNAP_READY_TIMEOUT_S
+    while True:
+        try:
+            await asyncio.to_thread(_run)
+        except Exception as exc:
+            if not is_snapshot_not_ready_error(exc):
+                # Real error (permission denied, auth failure, SQL syntax …) — propagate.
+                raise
+            if _time.monotonic() >= deadline:
+                msg = (
+                    f"roll_timestamp: snapshot database {snapshot_name!r} did not become "
+                    f"ready within {_SNAP_READY_TIMEOUT_S:.0f}s.  The snapshot may still "
+                    "be provisioning at the SQL layer.  Retry the operation after a short "
+                    "wait or check the snapshot status in the Fabric portal."
+                )
+                raise FabricError(msg) from exc
+            # Provisioning lag — wait and retry.
+            await asyncio.sleep(_SNAP_READY_POLL_INTERVAL_S)
+        else:
+            return  # ALTER succeeded — we're done
