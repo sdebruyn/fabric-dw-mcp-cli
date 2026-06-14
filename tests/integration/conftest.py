@@ -169,6 +169,7 @@ async def _wait_for_snapshot_sql_readiness(
         attempt += 1
         try:
             row_found, ts_non_null, raw_ts = await asyncio.to_thread(_probe)
+            # row_found is diagnostic-only (logged below); readiness is driven by ts_non_null.
         except Exception as exc:
             # Swallow transient connection errors during the wait — the parent
             # warehouse itself may be briefly unreachable.
