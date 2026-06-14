@@ -234,6 +234,7 @@ async def test_list_running_unrelated_error_propagates() -> None:
 
 
 async def test_kill_issues_kill_statement() -> None:
+    """KILL statement embeds the session_id as a bare integer literal."""
     target = _make_target()
     conn = MagicMock()
     cursor = MagicMock()

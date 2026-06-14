@@ -323,6 +323,9 @@ async def test_list_session_history_since_adds_where() -> None:
     cursor = conn.cursor.return_value
     call_sql: str = cursor.execute.call_args[0][0]
     assert "session_start_time" in call_sql
+    # datetime must be bound as a param, never interpolated into the SQL string
+    assert since.isoformat() not in call_sql
+    assert since in cursor.execute.call_args[0][1]
 
 
 # ---------------------------------------------------------------------------
@@ -417,6 +420,9 @@ async def test_list_frequent_queries_since_adds_where() -> None:
     cursor = conn.cursor.return_value
     call_sql: str = cursor.execute.call_args[0][0]
     assert "last_run_start_time" in call_sql
+    # datetime must be bound as a param, never interpolated into the SQL string
+    assert since.isoformat() not in call_sql
+    assert since in cursor.execute.call_args[0][1]
 
 
 # ---------------------------------------------------------------------------
@@ -505,6 +511,9 @@ async def test_list_long_running_since_adds_where() -> None:
     cursor = conn.cursor.return_value
     call_sql: str = cursor.execute.call_args[0][0]
     assert "last_run_start_time" in call_sql
+    # datetime must be bound as a param, never interpolated into the SQL string
+    assert since.isoformat() not in call_sql
+    assert since in cursor.execute.call_args[0][1]
 
 
 # ---------------------------------------------------------------------------
@@ -593,6 +602,9 @@ async def test_list_sql_pool_insights_since_adds_where() -> None:
     cursor = conn.cursor.return_value
     call_sql: str = cursor.execute.call_args[0][0]
     assert "timestamp" in call_sql
+    # datetime must be bound as a param, never interpolated into the SQL string
+    assert since.isoformat() not in call_sql
+    assert since in cursor.execute.call_args[0][1]
 
 
 async def test_list_sql_pool_insights_closes_connection() -> None:

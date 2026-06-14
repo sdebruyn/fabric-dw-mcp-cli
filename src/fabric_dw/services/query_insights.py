@@ -227,7 +227,7 @@ def _execute_sql(
             Query Insights permissions page.
     """
     try:
-        cols, rows = run_query(target, sql_text, params=params or None, mode=mode)
+        cols, rows = run_query(target, sql_text, params=params, mode=mode)
     except PermissionDeniedError as exc:
         raise PermissionDeniedError(str(exc), hint=_PERMISSION_DENIED_DOCS) from exc
     return [dict(zip(cols, r, strict=True)) for r in rows]
