@@ -4,6 +4,7 @@ Provides:
 - Global rate-limiting via aiolimiter (default 2 RPS).
 - 429 Retry-After handling with a monotonic deadline (``_pause_until``).
 - 5xx retry with tenacity exponential back-off (max 3 attempts).
+- Timeout retry for idempotent methods (GET/HEAD/OPTIONS) only (max 3 attempts).
 - Standard error mapping (401 -> AuthError, 403 -> PermissionDeniedError, 404 -> NotFoundError).
 - continuationUri pagination.
 - LRO (202 + Location) polling with jitter.
@@ -16,11 +17,20 @@ Tenacity wraps ``_request_with_retry`` and retries on ``FabricServerError``
 Worst-case total attempts = 3 tenacity attempts x 5 429-retries = 15 sends.
 In practice the 429-loop resets its counter on any non-429 response, so the
 two mechanisms are largely independent.
+
+Timeout retry safety
+~~~~~~~~~~~~~~~~~~~~
+``httpx.TimeoutException`` (including ``ReadTimeout``, ``ConnectTimeout``, etc.)
+is retried ONLY for idempotent HTTP methods (GET, HEAD, OPTIONS).  POST, PATCH,
+and DELETE are NOT retried on timeout because the server may have received and
+committed the request — re-sending a POST would duplicate the resource or cause
+a 409 Conflict.  LRO status polling (GET) is covered by the safe retry path.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import datetime
 import http
 import logging
@@ -35,7 +45,7 @@ import httpx
 from aiolimiter import AsyncLimiter
 from azure.core.credentials import AccessToken
 from azure.core.credentials_async import AsyncTokenCredential
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from fabric_dw import auth
 from fabric_dw.exceptions import (
@@ -59,10 +69,20 @@ __all__ = [
 
 # Module-level defaults (used as constructor defaults)
 _DEFAULT_RPS: int = 2
-_DEFAULT_TIMEOUT: float = 30.0
+_DEFAULT_TIMEOUT: float = 60.0  # bumped from 30.0 to reduce spurious timeouts on slow responses
 _MAX_429_RETRIES: int = 5
 _DEFAULT_POLL_INTERVAL: float = 2.0
 _TOKEN_REFRESH_BUFFER: float = 300.0  # seconds before expiry to refresh
+
+# HTTP methods that are safe to retry on timeout: repeating them cannot duplicate
+# server-side state.  POST/PATCH/DELETE are excluded — a timed-out POST may have
+# committed server-side; re-sending it would create a duplicate resource or 409.
+_IDEMPOTENT_METHODS: frozenset[str] = frozenset({"GET", "HEAD", "OPTIONS"})
+
+# ContextVar that _request_with_retry sets before each call so the tenacity
+# retry predicate can inspect the HTTP method without changing the function
+# signature (tenacity only passes the exception to retry predicates).
+_current_method: contextvars.ContextVar[str] = contextvars.ContextVar("_current_method", default="")
 
 # Status code → exception class mapping (4xx errors only; 5xx handled separately)
 _STATUS_TO_EXC: dict[int, type[FabricError]] = {
@@ -102,6 +122,23 @@ def _parse_retry_after(value: str) -> float:
     now = datetime.datetime.now(tz=datetime.UTC)
     delta = (retry_dt - now).total_seconds()
     return max(0.0, delta)
+
+
+def _should_retry(exc: BaseException) -> bool:
+    """Tenacity retry predicate: retry on 5xx *or* timeouts for idempotent methods.
+
+    Returns ``True`` when tenacity should attempt another send:
+    - Always retry :class:`~fabric_dw.exceptions.FabricServerError` (5xx responses).
+    - Retry :class:`httpx.TimeoutException` ONLY when the current request method
+      is in :data:`_IDEMPOTENT_METHODS` (GET, HEAD, OPTIONS).  Non-idempotent
+      methods (POST, PATCH, DELETE) are NOT retried because the server may have
+      already committed the request.
+    """
+    if isinstance(exc, FabricServerError):
+        return True
+    if isinstance(exc, httpx.TimeoutException):
+        return _current_method.get("") in _IDEMPOTENT_METHODS
+    return False
 
 
 class FabricHttpClient:
@@ -218,7 +255,7 @@ class FabricHttpClient:
         return await self._request_with_retry(method, url, json=json, params=params)
 
     @retry(
-        retry=retry_if_exception_type(FabricServerError),
+        retry=retry_if_exception(_should_retry),
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=0.1, min=0.1, max=2),
         reraise=True,
@@ -231,7 +268,13 @@ class FabricHttpClient:
         json: object = None,
         params: Mapping[str, Any] | None = None,
     ) -> httpx.Response:
-        """Inner request method wrapped with tenacity 5xx retry."""
+        """Inner request method wrapped with tenacity 5xx and idempotent-timeout retry.
+
+        Sets :data:`_current_method` so that :func:`_should_retry` can inspect the
+        HTTP method when deciding whether a :class:`httpx.TimeoutException` is safe
+        to retry.
+        """
+        _current_method.set(method.upper())
         return await self._do_request(method, url, json=json, params=params)
 
     async def _do_request(

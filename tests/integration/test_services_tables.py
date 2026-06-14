@@ -9,6 +9,7 @@ cleaned up in the roundtrip test itself.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from datetime import UTC, datetime
 
@@ -17,7 +18,7 @@ import pytest
 from fabric_dw.exceptions import FabricError, NotFoundError
 from fabric_dw.models import Table
 from fabric_dw.services import tables
-from fabric_dw.sql import SqlTarget
+from fabric_dw.sql import SqlTarget, run_query
 
 pytestmark = pytest.mark.integration
 
@@ -118,17 +119,17 @@ async def test_clone_table_creates_identical_rows(ephemeral_sql_target: SqlTarge
 async def test_clone_table_at_point_in_time(ephemeral_sql_target: SqlTarget) -> None:
     """clone_table with AT timestamp clones the table at the specified point in time.
 
-    The AT timestamp must be strictly in the past relative to the clone
-    transaction.  Capturing ``now`` *after* creation is unsafe because server
-    clock skew means the timestamp may equal or slightly exceed the current
-    server transaction time, causing the engine to reject it.
+    The AT timestamp must be >= the object creation time and <= the clone
+    transaction time.  We capture the timestamp via ``SELECT SYSUTCDATETIME()``
+    executed against the same server AFTER the table is created.  This
+    eliminates client/server clock skew (the server timestamp is always >= the
+    DDL commit on the same server) and ensures the AT is in the past relative to
+    the subsequent clone transaction.
 
-    Instead we capture a timestamp *before* table creation so the timestamp is
-    safely older than both the DDL commit and the clone transaction.  If the
-    engine rejects the timestamp because the table has no committed history
-    older than the AT point (some engines require at least one committed version
-    *before* the AT time), the test is skipped with a clear reason rather than
-    failing.
+    If the engine rejects the timestamp because the table has no committed
+    history at the requested point (e.g. some engines require a version to
+    have been committed *before* the AT time), the test is skipped rather than
+    failed, as this is an expected engine limitation for freshly-created tables.
     """
     schema = "dbo"
     source_name = "pytest_clone_at_source"
@@ -136,13 +137,26 @@ async def test_clone_table_at_point_in_time(ephemeral_sql_target: SqlTarget) -> 
     select_body = "SELECT 42 AS value"
 
     try:
-        # Capture the AT timestamp BEFORE creating the table so it is safely
-        # in the past relative to both the DDL commit and the clone transaction.
-        # Using ``now`` after creation risks a "timestamp is after the current
-        # transaction" error due to client/server clock skew.
-        at_dt = datetime.now(tz=UTC)
-
+        # Create the source table first so the server-side timestamp is taken
+        # AFTER the DDL commit — guaranteeing AT >= object creation time.
         await tables.create_table(ephemeral_sql_target, schema, source_name, select_body)
+
+        # Capture a server-side timestamp via SYSUTCDATETIME() executed on the
+        # same Fabric warehouse.  This is always >= the DDL commit time (same
+        # server clock) and will be < the upcoming clone transaction time.
+        # Using a client-side timestamp risks client/server clock skew (~60ms)
+        # where the client clock trails the server, making the AT appear to be
+        # *before* the object was created from the server's perspective.
+        def _get_server_ts() -> datetime:
+            _, rows = run_query(ephemeral_sql_target, "SELECT SYSUTCDATETIME() AS ts")
+            raw = rows[0][0]
+            # mssql_python returns datetime objects; ensure timezone-aware UTC.
+            if isinstance(raw, datetime):
+                return raw.replace(tzinfo=UTC) if raw.tzinfo is None else raw.astimezone(UTC)
+            # Fallback: parse ISO string if the driver returns a string.
+            return datetime.fromisoformat(str(raw)).replace(tzinfo=UTC)
+
+        at_dt: datetime = await asyncio.to_thread(_get_server_ts)
 
         try:
             cloned = await tables.clone_table(
