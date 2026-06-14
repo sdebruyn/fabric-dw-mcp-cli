@@ -396,7 +396,17 @@ async def clone_table(
         ddl = f"{ddl} AT '{at_literal}'"
 
     def _run_ddl() -> None:
-        run_query(target, ddl, mode=mode, commit=True, fetch="none")
+        # Clone DDL runs on an autocommit connection so the implicit transaction
+        # starts exactly at statement-execute time — after the captured AT
+        # timestamp.  With autocommit=False the ODBC driver issues BEGIN
+        # TRANSACTION before the first statement; a pooled connection can have
+        # its transaction start time predate the requested AT point, causing
+        # "TIMESTAMP is after the current transaction started" on Fabric.
+        # Autocommit connections bypass the pool (always opened fresh) and
+        # eliminate the implicit transaction, matching the pattern used for
+        # ALTER DATABASE snapshot DDL.  Both the AT and non-AT paths share
+        # this single code path for consistency.
+        run_query(target, ddl, mode=mode, autocommit=True, fetch="none")
 
     await asyncio.to_thread(_run_ddl)
     return await _fetch_table(target, new_schema, new_name, mode=mode)

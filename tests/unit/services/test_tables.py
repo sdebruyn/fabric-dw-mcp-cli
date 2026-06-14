@@ -708,56 +708,66 @@ class TestCloneTable:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
         fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
-        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+        mock_oc = patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn])
+        with mock_oc as mock_open:
             await tables.clone_table(target, "dbo.source_tbl", "dbo.sales")
         cursor = ddl_conn.cursor.return_value
         call_sql: str = cursor.execute.call_args[0][0].upper()
         assert "CREATE TABLE" in call_sql
         assert "CLONE OF" in call_sql
+        assert mock_open.call_args_list[0].kwargs.get("autocommit") is True
 
     async def test_bracket_quotes_all_identifiers(self) -> None:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
         fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
-        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+        mock_oc = patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn])
+        with mock_oc as mock_open:
             await tables.clone_table(target, "dbo.source_tbl", "dbo.sales")
         cursor = ddl_conn.cursor.return_value
         call_sql: str = cursor.execute.call_args[0][0]
         assert "[dbo].[sales]" in call_sql
         assert "[dbo].[source_tbl]" in call_sql
+        assert mock_open.call_args_list[0].kwargs.get("autocommit") is True
 
     async def test_cross_schema_clone_quotes_correctly(self) -> None:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
         fetch_row: tuple[object, ...] = ("staging", "copy_tbl", _NOW, _NOW)
         fetch_conn = _make_conn([fetch_row], _LIST_COLS)
-        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+        mock_oc = patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn])
+        with mock_oc as mock_open:
             await tables.clone_table(target, "dbo.source_tbl", "staging.copy_tbl")
         cursor = ddl_conn.cursor.return_value
         call_sql: str = cursor.execute.call_args[0][0]
         assert "[staging].[copy_tbl]" in call_sql
         assert "[dbo].[source_tbl]" in call_sql
+        assert mock_open.call_args_list[0].kwargs.get("autocommit") is True
 
     async def test_no_at_clause_without_timestamp(self) -> None:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
         fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
-        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+        mock_oc = patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn])
+        with mock_oc as mock_open:
             await tables.clone_table(target, "dbo.source_tbl", "dbo.sales")
         cursor = ddl_conn.cursor.return_value
         call_sql: str = cursor.execute.call_args[0][0].upper()
         assert " AT " not in call_sql
+        assert mock_open.call_args_list[0].kwargs.get("autocommit") is True
 
     async def test_at_clause_appended_when_provided(self) -> None:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
         fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
         at_dt = datetime(2024, 5, 20, 14, 0, 0, tzinfo=UTC)
-        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+        mock_oc = patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn])
+        with mock_oc as mock_open:
             await tables.clone_table(target, "dbo.source_tbl", "dbo.sales", at=at_dt)
         cursor = ddl_conn.cursor.return_value
         call_sql: str = cursor.execute.call_args[0][0]
         assert "AT '2024-05-20T14:00:00.000'" in call_sql
+        assert mock_open.call_args_list[0].kwargs.get("autocommit") is True
 
     async def test_at_clause_formats_milliseconds(self) -> None:
         target = _make_target()
@@ -765,27 +775,60 @@ class TestCloneTable:
         fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
         # 123456 microseconds → 123 milliseconds in the literal
         at_dt = datetime(2024, 5, 20, 14, 0, 0, 123456, tzinfo=UTC)
-        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+        mock_oc = patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn])
+        with mock_oc as mock_open:
             await tables.clone_table(target, "dbo.source_tbl", "dbo.sales", at=at_dt)
         cursor = ddl_conn.cursor.return_value
         call_sql: str = cursor.execute.call_args[0][0]
         assert "AT '2024-05-20T14:00:00.123'" in call_sql
+        assert mock_open.call_args_list[0].kwargs.get("autocommit") is True
 
     async def test_returns_table_object(self) -> None:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
         fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
-        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+        mock_oc = patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn])
+        with mock_oc as mock_open:
             result = await tables.clone_table(target, "dbo.source_tbl", "dbo.sales")
         assert isinstance(result, Table)
+        assert mock_open.call_args_list[0].kwargs.get("autocommit") is True
 
-    async def test_commits_after_execute(self) -> None:
+    async def test_uses_autocommit_not_commit_without_at(self) -> None:
+        """Clone DDL must use autocommit=True (no implicit transaction) — non-AT path."""
         target = _make_target()
-        ddl_conn = _make_conn_for_ddl()
-        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
-        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+        # First call: DDL (returns empty); second call: _fetch_table (returns row).
+        fetch_return = (_LIST_COLS, [_TABLE_ROW_1])
+        with patch(
+            "fabric_dw.services.tables.run_query",
+            side_effect=[([], []), fetch_return],
+        ) as mock_run_query:
             await tables.clone_table(target, "dbo.source_tbl", "dbo.sales")
-        ddl_conn.commit.assert_called_once()
+        # The FIRST call is the DDL; it must use autocommit=True, not commit=True.
+        ddl_call = mock_run_query.call_args_list[0]
+        assert ddl_call.kwargs.get("autocommit") is True, (
+            "clone DDL must pass autocommit=True to run_query"
+        )
+        assert not ddl_call.kwargs.get("commit"), (
+            "clone DDL must not pass commit=True (autocommit handles it)"
+        )
+
+    async def test_uses_autocommit_not_commit_with_at(self) -> None:
+        """Clone DDL must use autocommit=True (no implicit transaction) — AT path."""
+        target = _make_target()
+        at_dt = datetime(2024, 5, 20, 14, 0, 0, tzinfo=UTC)
+        fetch_return = (_LIST_COLS, [_TABLE_ROW_1])
+        with patch(
+            "fabric_dw.services.tables.run_query",
+            side_effect=[([], []), fetch_return],
+        ) as mock_run_query:
+            await tables.clone_table(target, "dbo.source_tbl", "dbo.sales", at=at_dt)
+        ddl_call = mock_run_query.call_args_list[0]
+        assert ddl_call.kwargs.get("autocommit") is True, (
+            "clone DDL with AT must pass autocommit=True to run_query"
+        )
+        assert not ddl_call.kwargs.get("commit"), (
+            "clone DDL with AT must not pass commit=True (autocommit handles it)"
+        )
 
     async def test_rejects_sql_endpoint(self) -> None:
         target = _make_target()
