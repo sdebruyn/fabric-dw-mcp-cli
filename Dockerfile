@@ -17,10 +17,14 @@ ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_FABRIC_DW=${VERSION}
 
 COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY src/ src/
-RUN uv build --wheel
+# Build the wheel, then install all runtime deps from the frozen lock into a venv.
+# uv sync --frozen reads uv.lock and installs exactly the locked versions (no fresh resolution).
+RUN uv build --wheel && \
+    uv sync --frozen --no-dev --no-install-project && \
+    uv pip install --no-deps dist/*.whl
 
-# Runtime stage stays minimal — slim Python, pip-install the wheel
-FROM python:${PYTHON_VERSION}-slim AS runtime
+# Runtime stage — copy the pre-built venv from the build stage (all deps already pinned by lock)
+FROM ghcr.io/astral-sh/uv:python${PYTHON_VERSION}-trixie-slim AS runtime
 
 ARG VERSION
 # OCI image labels
@@ -31,13 +35,19 @@ LABEL org.opencontainers.image.title="fabric-dw" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.licenses="MIT"
 
-# Install system dependencies using BuildKit cache mount for faster rebuilds
+# Install system dependencies using BuildKit cache mount for faster rebuilds.
+# ca-certificates: required for TLS connections to Fabric REST APIs and Azure AD.
+# mssql-python (the SQL driver) bundles its own native driver (no separate ODBC
+# manager needed), so no unixodbc/libodbc system packages are required on top of
+# the glibc/OpenSSL already present in the Debian trixie-slim base image.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends ca-certificates
 
-COPY --from=build /app/dist/*.whl /tmp/
-RUN pip install --no-cache-dir /tmp/*.whl && rm /tmp/*.whl
+# Copy the virtualenv (with all locked deps + the wheel) from the build stage.
+# No pip/uv resolution happens here — all versions are already pinned by uv.lock.
+COPY --from=build /app/.venv /app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
 
 ENV FABRIC_AUTH=default PYTHONUNBUFFERED=1
 

@@ -25,10 +25,9 @@ See [Authentication](authentication.md) for the full credential chain, all suppo
 
 ```bash
 pip install fabric-dw
+# or run without installing:
+uvx fabric-dw --help
 ```
-
-!!! note
-    The package is not yet published to PyPI. Installation instructions will be updated on the first release. In the meantime, you can install directly from the repository source.
 
 ## Verify
 

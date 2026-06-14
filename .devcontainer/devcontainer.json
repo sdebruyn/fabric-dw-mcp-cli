@@ -12,7 +12,6 @@
       "extensions": [
         "charliermarsh.ruff",
         "ms-python.python",
-        "ms-python.mypy-type-checker",
         "tamasfe.even-better-toml",
         "GitHub.copilot",
         "GitHub.copilot-chat"
