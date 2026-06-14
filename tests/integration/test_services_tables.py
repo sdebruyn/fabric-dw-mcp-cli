@@ -118,11 +118,17 @@ async def test_clone_table_creates_identical_rows(ephemeral_sql_target: SqlTarge
 async def test_clone_table_at_point_in_time(ephemeral_sql_target: SqlTarget) -> None:
     """clone_table with AT timestamp clones the table at the specified point in time.
 
-    A fresh table will have existed for only a few seconds, so the AT timestamp
-    is captured immediately after creation and used for the clone.  If the
-    engine rejects the timestamp because the table has no history at that
-    instant (some engines require at least one committed version *before* the
-    AT time), the test is skipped with a clear reason rather than failing.
+    The AT timestamp must be strictly in the past relative to the clone
+    transaction.  Capturing ``now`` *after* creation is unsafe because server
+    clock skew means the timestamp may equal or slightly exceed the current
+    server transaction time, causing the engine to reject it.
+
+    Instead we capture a timestamp *before* table creation so the timestamp is
+    safely older than both the DDL commit and the clone transaction.  If the
+    engine rejects the timestamp because the table has no committed history
+    older than the AT point (some engines require at least one committed version
+    *before* the AT time), the test is skipped with a clear reason rather than
+    failing.
     """
     schema = "dbo"
     source_name = "pytest_clone_at_source"
@@ -130,10 +136,13 @@ async def test_clone_table_at_point_in_time(ephemeral_sql_target: SqlTarget) -> 
     select_body = "SELECT 42 AS value"
 
     try:
-        await tables.create_table(ephemeral_sql_target, schema, source_name, select_body)
-
-        # Capture a timestamp a moment after creation.
+        # Capture the AT timestamp BEFORE creating the table so it is safely
+        # in the past relative to both the DDL commit and the clone transaction.
+        # Using ``now`` after creation risks a "timestamp is after the current
+        # transaction" error due to client/server clock skew.
         at_dt = datetime.now(tz=UTC)
+
+        await tables.create_table(ephemeral_sql_target, schema, source_name, select_body)
 
         try:
             cloned = await tables.clone_table(

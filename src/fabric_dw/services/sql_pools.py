@@ -380,23 +380,27 @@ async def reset_pools(
     http: FabricHttpClient,
     workspace_id: UUID,
 ) -> SqlPoolsConfiguration | None:
-    """Clear all custom pools for a workspace, preserving the enabled flag.
+    """Disable and clear all custom pools for a workspace.
 
-    Fetches the current configuration, replaces ``customSQLPools`` with an
-    empty list, and PATCHes.  ``customSQLPoolsEnabled`` is left unchanged.
+    The Fabric beta API rejects a PATCH with ``customSQLPools: []`` (minimum
+    array-item count is 1), so it is impossible to zero the pool list in a
+    single PATCH while keeping ``customSQLPoolsEnabled=True``.  ``reset_pools``
+    therefore **disables** the SQL pools configuration via :func:`disable`,
+    which sets ``customSQLPoolsEnabled=False`` while preserving (but deactivating)
+    the existing pool definitions.  This is the closest achievable "reset to
+    clean state" operation the API permits without deleting pools one by one.
 
-    If the workspace has never been provisioned (GET returns 404), the endpoint
-    is already in the desired empty state.  ``None`` is returned to indicate
-    that no configuration exists rather than fabricating a sentinel value.
+    If the workspace has never been provisioned (GET returns 404), ``None`` is
+    returned to indicate that no configuration exists.
 
     Args:
         http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
         workspace_id: The Fabric workspace UUID.
 
     Returns:
-        The updated :class:`~fabric_dw.models.SqlPoolsConfiguration`, or
-        ``None`` if the workspace has no SQL pools configuration (never
-        provisioned — GET returned 404).
+        The updated :class:`~fabric_dw.models.SqlPoolsConfiguration` with
+        ``customSQLPoolsEnabled=False``, or ``None`` if the workspace has no
+        SQL pools configuration (never provisioned — GET returned 404).
 
     Raises:
         PermissionDeniedError: If the caller does not have the workspace admin role.
@@ -405,10 +409,9 @@ async def reset_pools(
         current = await get_configuration(http, workspace_id)
     except NotFoundError:
         return None
-    new_config = SqlPoolsConfiguration.model_validate(
-        {
-            "customSQLPoolsEnabled": current.custom_sql_pools_enabled,
-            "customSQLPools": [],
-        }
-    )
-    return await update_configuration(http, workspace_id, new_config)
+
+    if not current.custom_sql_pools_enabled:
+        # Already disabled — nothing to do.
+        return current
+
+    return await disable(http, workspace_id)

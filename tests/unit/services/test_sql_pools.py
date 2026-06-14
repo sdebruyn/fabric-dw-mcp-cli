@@ -721,42 +721,60 @@ async def test_delete_pool_raises_not_found_for_missing_name() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_reset_pools_patches_empty_list_preserving_enabled_flag() -> None:
-    """reset_pools should PATCH with empty customSQLPools and preserve enabled state."""
+async def test_reset_pools_disables_when_enabled() -> None:
+    """reset_pools disables custom SQL pools when the workspace is currently enabled.
+
+    The Fabric beta API rejects PATCH payloads with an empty ``customSQLPools``
+    array (minimum item count is 1).  ``reset_pools`` therefore calls
+    ``disable()`` which sets ``customSQLPoolsEnabled=False`` while keeping pool
+    definitions intact.  This deactivates all pools without hitting the
+    empty-array API constraint.
+
+    Call sequence:
+      1. reset_pools → get_configuration (GET #1: enabled)
+      2. reset_pools calls disable() → disable() calls get_configuration (GET #2: enabled again)
+      3. disable() sends PATCH
+      4. disable() calls update_configuration → get_configuration (GET #3: disabled)
+    """
     with respx.mock:
         respx.get(_CONFIG_URL).mock(
             side_effect=[
+                # GET #1: reset_pools pre-check (enabled, pools present)
                 httpx.Response(200, json=POOLS_ENABLED_PAYLOAD),
-                httpx.Response(200, json=POOLS_EMPTY_PAYLOAD),
-            ]
-        )
-        patch_route = respx.patch(_CONFIG_URL).mock(return_value=httpx.Response(200))
-        client = await _make_client()
-        async with client:
-            await sql_pools.reset_pools(client, _WS_ID)
-
-    sent_body = json.loads(patch_route.calls[0].request.content)
-    assert sent_body["customSQLPools"] == []
-    assert sent_body["customSQLPoolsEnabled"] is True
-
-
-async def test_reset_pools_preserves_disabled_state() -> None:
-    """reset_pools keeps customSQLPoolsEnabled=false when the workspace is disabled."""
-    with respx.mock:
-        respx.get(_CONFIG_URL).mock(
-            side_effect=[
+                # GET #2: disable() pre-check (still enabled — triggers the PATCH)
+                httpx.Response(200, json=POOLS_ENABLED_PAYLOAD),
+                # GET #3: re-fetch inside update_configuration after disable PATCH
                 httpx.Response(200, json=POOLS_DISABLED_PAYLOAD),
-                httpx.Response(200, json=POOLS_EMPTY_PAYLOAD),
             ]
         )
         patch_route = respx.patch(_CONFIG_URL).mock(return_value=httpx.Response(200))
         client = await _make_client()
         async with client:
-            await sql_pools.reset_pools(client, _WS_ID)
+            result = await sql_pools.reset_pools(client, _WS_ID)
 
+    assert patch_route.called
     sent_body = json.loads(patch_route.calls[0].request.content)
-    assert sent_body["customSQLPools"] == []
+    # The PATCH sent by disable() keeps the pool list intact but sets enabled=False.
     assert sent_body["customSQLPoolsEnabled"] is False
+    assert result is not None
+    assert result.custom_sql_pools_enabled is False
+
+
+async def test_reset_pools_is_no_op_when_already_disabled() -> None:
+    """reset_pools returns immediately when the workspace is already disabled."""
+    with respx.mock:
+        get_route = respx.get(_CONFIG_URL).mock(
+            return_value=httpx.Response(200, json=POOLS_DISABLED_PAYLOAD)
+        )
+        patch_route = respx.patch(_CONFIG_URL).mock(return_value=httpx.Response(200))
+        client = await _make_client()
+        async with client:
+            result = await sql_pools.reset_pools(client, _WS_ID)
+
+    assert get_route.call_count == 1
+    assert not patch_route.called
+    assert result is not None
+    assert result.custom_sql_pools_enabled is False
 
 
 async def test_reset_pools_404_returns_none_without_patch() -> None:

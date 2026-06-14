@@ -12,6 +12,7 @@ Wraps the warehouse-scoped ``/settings/sqlAudit`` endpoint:
 
 from __future__ import annotations
 
+import asyncio
 import re
 from uuid import UUID
 
@@ -131,9 +132,10 @@ async def set_retention(
 ) -> AuditSettings:
     """Update the audit log retention period without changing the audit state.
 
-    Sends the PATCH directly and lets the server reject invalid states (e.g.
-    setting retention while audit is disabled).  If the API returns an error,
-    it is propagated to the caller as-is — no pre-flight GET is performed.
+    Performs a pre-flight GET to verify that auditing is currently enabled.
+    Setting retention while audit is disabled is not meaningful — the Fabric
+    service accepts the PATCH silently but the setting has no effect.  Raising
+    ``ValueError`` eagerly gives callers a clear signal to enable auditing first.
 
     The Fabric REST API does not document an upper bound for ``retentionDays``.
     Only the lower bound (>= 1) is enforced here; the API will reject any value
@@ -150,10 +152,17 @@ async def set_retention(
 
     Raises:
         ValueError: If *days* is less than 1.
+        ValueError: If auditing is currently disabled (``state == "Disabled"``).
+            Enable auditing first with :func:`enable`.
         PermissionDeniedError: If the caller lacks the required permission (HTTP 403).
     """
     if days < 1:
         msg = f"days must be >= 1; got {days}"
+        raise ValueError(msg)
+
+    current = await get_settings(http, workspace_id, warehouse_id)
+    if current.state == "Disabled":
+        msg = "audit is disabled; enable first before setting retention"
         raise ValueError(msg)
 
     path = _audit_path(workspace_id, warehouse_id)
@@ -358,5 +367,16 @@ async def remove_action_group(
         path,
         json={"auditActionsAndGroups": new_groups},
     )
-    # PATCH returns empty/partial body on this endpoint; re-fetch required.
-    return await get_settings(http, workspace_id, warehouse_id)
+    # The ``/settings/sqlAudit`` PATCH endpoint has eventual consistency: a
+    # GET immediately after PATCH may still return the old action-group list.
+    # Poll until the removed group is absent from the response (up to 30 s).
+    # This mirrors the pattern used by the sql_pools service (see issue #205).
+    poll_interval_s = 2.0
+    max_wait_s = 30.0
+    waited = 0.0
+    refreshed = await get_settings(http, workspace_id, warehouse_id)
+    while group in refreshed.action_groups and waited < max_wait_s:
+        await asyncio.sleep(poll_interval_s)
+        waited += poll_interval_s
+        refreshed = await get_settings(http, workspace_id, warehouse_id)
+    return refreshed
