@@ -478,6 +478,70 @@ async def test_remove_action_group_403_raises_permission_denied() -> None:
                 await audit.remove_action_group(client, _WS_ID, _WH_ID, "BATCH_COMPLETED_GROUP")
 
 
+async def test_remove_action_group_already_absent_no_sleep() -> None:
+    """remove_action_group must return immediately (no sleep) when the group is already absent.
+
+    Verifies the idempotent fast-path: if the initial GET shows the group is not
+    present, the function must return without issuing a PATCH or any polling sleep.
+    """
+    from unittest.mock import AsyncMock, patch  # noqa: PLC0415
+
+    absent_group = "FAILED_DATABASE_AUTHENTICATION_GROUP"
+    existing = AUDIT_SETTINGS_PAYLOAD.copy()  # does NOT contain FAILED_DATABASE_...
+
+    with respx.mock:
+        get_route = respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=existing))
+        patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        sleep_mock = AsyncMock()
+        client = await _make_client()
+        async with client:
+            with patch("fabric_dw.services.audit.asyncio.sleep", new=sleep_mock):
+                result = await audit.remove_action_group(client, _WS_ID, _WH_ID, absent_group)
+
+    assert get_route.call_count == 1  # exactly one GET — the pre-flight read
+    assert not patch_route.called  # no PATCH — nothing to remove
+    sleep_mock.assert_not_called()  # no polling sleep at all
+    assert isinstance(result, AuditSettings)
+    assert absent_group not in result.action_groups
+
+
+async def test_remove_action_group_polls_until_gone() -> None:
+    """remove_action_group must poll GET until the group is absent after a PATCH.
+
+    Simulates a backend that initially returns the group still present (stale
+    cache), then reflects the removal on the third GET.  Patching asyncio.sleep
+    keeps the test fast while verifying the backoff loop behaviour.
+    """
+    from unittest.mock import AsyncMock, patch  # noqa: PLC0415
+
+    group = "SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP"
+    existing = AUDIT_SETTINGS_PAYLOAD.copy()  # group present
+    still_stale = AUDIT_SETTINGS_PAYLOAD.copy()  # group still present (stale)
+    removed = AUDIT_SETTINGS_PAYLOAD.copy()
+    removed["auditActionsAndGroups"] = ["BATCH_COMPLETED_GROUP"]  # group gone
+
+    with respx.mock:
+        get_route = respx.get(_AUDIT_URL).mock(
+            side_effect=[
+                httpx.Response(200, json=existing),  # initial GET — group present
+                httpx.Response(200, json=still_stale),  # first poll — still stale
+                httpx.Response(200, json=removed),  # second poll — gone
+            ]
+        )
+        patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        sleep_mock = AsyncMock()
+        client = await _make_client()
+        async with client:
+            with patch("fabric_dw.services.audit.asyncio.sleep", new=sleep_mock):
+                result = await audit.remove_action_group(client, _WS_ID, _WH_ID, group)
+
+    assert patch_route.call_count == 1  # exactly one PATCH
+    assert get_route.call_count == 3  # initial + 2 poll GETs
+    assert sleep_mock.call_count == 1  # slept once between poll GETs
+    assert isinstance(result, AuditSettings)
+    assert group not in result.action_groups
+
+
 async def test_remove_action_group_timeout_raises_fabric_error() -> None:
     """remove_action_group raises FabricError when the group is still present after polling.
 
@@ -487,8 +551,9 @@ async def test_remove_action_group_timeout_raises_fabric_error() -> None:
 
     The test patches asyncio.sleep to be instant (so the loop runs at full speed)
     and makes every GET return the group still present, simulating a permanently
-    stuck backend.  After max_wait_s / poll_interval_s iterations the function
-    must raise rather than return.
+    stuck backend.  After approximately max_wait_s of accumulated sleep (roughly
+    21 iterations with variable exponential-backoff intervals) the function must
+    raise rather than return.
     """
     from unittest.mock import AsyncMock, patch  # noqa: PLC0415
 
