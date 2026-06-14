@@ -861,13 +861,18 @@ class TestIsTransientConnectionError:
         exc = Exception("TCP Provider: Error code 0x68")
         assert is_transient_connection_error(exc) is True
 
-    def test_database_was_not_found_is_transient(self) -> None:
+    def test_database_was_not_found_is_not_transient(self) -> None:
+        # "database was not found" was removed from _TRANSIENT_FRAGMENTS because
+        # the real Fabric driver wraps it with native error 18456, so
+        # map_driver_error() converts it to AuthError before the transient
+        # classifier is ever consulted.  A bare message-only exception (no
+        # ddbc_error) is therefore also NOT classified as transient.
         exc = Exception(
             "Login failed for user '<token-identified principal>'. Reason: "
             "Authentication was successful, but the database was not found "
             "or you have insufficient permissions to connect to it"
         )
-        assert is_transient_connection_error(exc) is True
+        assert is_transient_connection_error(exc) is False
 
     def test_auth_error_is_not_transient(self) -> None:
         exc = Exception("Authentication failed for user ''")
@@ -1012,3 +1017,55 @@ class TestTransientRetry:
         run_statements(_make_target(), ["SELECT 1"])
 
         assert mock_mssql.connect.call_count == 2
+
+    def test_run_query_retries_transient_connect_failure(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """run_query retries when open_connection itself raises a transient error."""
+        mock_mssql, good_conn, good_cursor = _make_mock_mssql()
+        good_cursor.description = [("n",)]
+        good_cursor.fetchall.return_value = [(1,)]
+
+        # First connect call raises a transient error; second succeeds.
+        mock_mssql.connect.side_effect = [
+            Exception("TCP Provider: connection failed"),
+            good_conn,
+        ]
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        _cols, rows = run_query(_make_target(), "SELECT 1")
+
+        assert mock_mssql.connect.call_count == 2
+        assert rows == [(1,)]
+
+    def test_run_query_does_not_retry_wrong_database_name(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A "database was not found" error with error 18456 maps to AuthError and is NOT retried.
+
+        map_driver_error converts 18456 to AuthError before is_transient_connection_error
+        is consulted, so the error surfaces immediately instead of being retried.
+        """
+        mock_mssql, _, mock_cursor = _make_mock_mssql()
+
+        # Simulate the Fabric TDS driver: message contains "database was not found"
+        # AND ddbc_error embeds native error 18456.  Must be a real exception
+        # subclass so that mock can raise it.
+        class _FakeDriverError(Exception):
+            ddbc_error: str = "[SQL Server]Login failed. Error: 18456"
+
+            def __str__(self) -> str:
+                return (
+                    "Login failed for user '<token-identified principal>'. "
+                    "Reason: Authentication was successful, but the database was not found "
+                    "or you have insufficient permissions to connect to it"
+                )
+
+        mock_cursor.execute.side_effect = _FakeDriverError()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with pytest.raises(AuthError):
+            run_query(_make_target(), "SELECT 1")
+
+        # Must NOT retry — only one connect attempt.
+        assert mock_mssql.connect.call_count == 1

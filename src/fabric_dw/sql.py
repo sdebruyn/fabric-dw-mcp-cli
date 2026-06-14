@@ -123,13 +123,17 @@ _TRANSIENT_FRAGMENTS = (
     "connection was forcibly closed",
     "a transport-level error",
     "tcp provider",
-    # Fabric warm-up: database not yet visible to TDS layer.  Distinct from a
-    # real "login failed" (18456) auth error because the db simply hasn't
-    # provisioned yet; we retry rather than surface an AuthError.
-    "database was not found",
     # Generic socket/timeout seen during heavy transient:
     "connection timed out",
     "connection reset by peer",
+    # NOTE: "database was not found" is intentionally NOT listed here.  The real
+    # Fabric TDS driver embeds native error number 18456 alongside this message, so
+    # map_driver_error() converts it to AuthError before is_transient_connection_error
+    # is consulted — making a "database was not found" entry dead code in the
+    # run_query / run_statements retry paths.  Including it would also incorrectly
+    # retry a genuine wrong-database-name error for the full backoff window.
+    # _wait_for_sql_readiness in tests/integration/conftest.py handles the warm-up
+    # case correctly by inspecting the AuthError message directly.
 )
 
 # Mapping from CredentialMode to the ActiveDirectory auth type suffix.
@@ -589,44 +593,56 @@ def run_query(  # noqa: PLR0912,PLR0913
             delay = _TRANSIENT_RETRY_DELAYS[min(attempt - 1, len(_TRANSIENT_RETRY_DELAYS) - 1)]
             time.sleep(delay)
 
-        conn = open_connection(target, mode=mode)
-        cursor = conn.cursor()
         try:
-            if params:
-                cursor.execute(statement, params)
-            else:
-                cursor.execute(statement)
-            if commit:
-                conn.commit()
-
-            if fetch == "none":
-                return [], []
-
-            cols = [c[0] for c in (cursor.description or [])]
-
-            if fetch == "one":
-                row = cursor.fetchone()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-                return cols, ([row] if row is not None else [])
-
-            # Default: fetch all rows.
-            rows: list[tuple[Any, ...]] = cursor.fetchall()
+            conn = open_connection(target, mode=mode)
         except Exception as exc:
-            # Mark tainted so close() physically closes instead of pooling.
-            # setattr is safe for both _PooledConnection and mock objects.
-            if isinstance(conn, _PooledConnection):
-                conn._discard = True
-            mapped = map_driver_error(exc)
-            if mapped:
-                # Auth/permission errors are never transient — raise immediately.
-                raise mapped from exc
-            # Retry only on recognised transient connection drops; re-raise
-            # everything else (SQL syntax, deadlocks, programming errors …).
+            # open_connection itself may raise on connect failure (TCP timeout,
+            # TLS handshake error, etc.).  Retry on transient errors, just as
+            # run_statements does — the dead connection is never put into the
+            # pool when open_connection raises, so there is nothing to discard.
             if is_transient_connection_error(exc) and attempt < max_attempts - 1:
                 last_exc = exc
                 continue
             raise
-        else:
-            return cols, rows
+
+        try:
+            cursor = conn.cursor()
+            try:
+                if params:
+                    cursor.execute(statement, params)
+                else:
+                    cursor.execute(statement)
+                if commit:
+                    conn.commit()
+
+                if fetch == "none":
+                    return [], []
+
+                cols = [c[0] for c in (cursor.description or [])]
+
+                if fetch == "one":
+                    row = cursor.fetchone()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+                    return cols, ([row] if row is not None else [])
+
+                # Default: fetch all rows.
+                rows: list[tuple[Any, ...]] = cursor.fetchall()
+            except Exception as exc:
+                # Mark tainted so close() physically closes instead of pooling.
+                # setattr is safe for both _PooledConnection and mock objects.
+                if isinstance(conn, _PooledConnection):
+                    conn._discard = True
+                mapped = map_driver_error(exc)
+                if mapped:
+                    # Auth/permission errors are never transient — raise immediately.
+                    raise mapped from exc
+                # Retry only on recognised transient connection drops; re-raise
+                # everything else (SQL syntax, deadlocks, programming errors …).
+                if is_transient_connection_error(exc) and attempt < max_attempts - 1:
+                    last_exc = exc
+                    continue
+                raise
+            else:
+                return cols, rows
         finally:
             conn.close()
 

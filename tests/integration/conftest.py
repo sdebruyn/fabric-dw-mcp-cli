@@ -73,9 +73,13 @@ async def _wait_for_sql_readiness(
         except Exception as exc:
             msg_lower = str(exc).lower()
             # Swallow transient connection drops AND the Fabric warm-up
-            # "login failed / database was not found" flavour.  The latter is
-            # a transient provisioning state, not a real auth error.
-            is_warmup = "login failed" in msg_lower or "database was not found" in msg_lower
+            # "database was not found" flavour (AuthError from map_driver_error).
+            # We do NOT swallow all "login failed" messages — that is too broad
+            # and would hide genuine permanent auth misconfiguration (wrong tenant,
+            # expired service principal, etc.) for the full 240 s timeout.
+            # "database was not found" uniquely identifies the provisioning-transient
+            # variant of login-failed (error 18456), so it is the right signal here.
+            is_warmup = "database was not found" in msg_lower
             if not (is_transient_connection_error(exc) or is_warmup):
                 # Unexpected error — surface it immediately.
                 raise
