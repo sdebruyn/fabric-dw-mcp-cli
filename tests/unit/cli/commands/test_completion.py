@@ -45,9 +45,7 @@ class TestCompletionInstallPrintOnly:
 class TestCompletionInstallAppendShells:
     """completion install for append-mode shells (bash, zsh)."""
 
-    def test_bash_install_appends_to_rc(
-        self, runner: CliRunner, tmp_path: Path
-    ) -> None:
+    def test_bash_install_appends_to_rc(self, runner: CliRunner, tmp_path: Path) -> None:
         """Installing bash completion writes to ~/.bashrc."""
         rc_file = tmp_path / ".bashrc"
         rc_file.write_text("# existing rc\n")
@@ -68,9 +66,7 @@ class TestCompletionInstallAppendShells:
         content = rc_file.read_text()
         assert mock_script.strip() in content
 
-    def test_zsh_install_appends_to_zshrc(
-        self, runner: CliRunner, tmp_path: Path
-    ) -> None:
+    def test_zsh_install_appends_to_zshrc(self, runner: CliRunner, tmp_path: Path) -> None:
         """Installing zsh completion writes to ~/.zshrc."""
         rc_file = tmp_path / ".zshrc"
         rc_file.write_text("# existing rc\n")
@@ -114,9 +110,7 @@ class TestCompletionInstallAppendShells:
 class TestCompletionInstallWriteShell:
     """completion install for write-mode shells (fish)."""
 
-    def test_fish_install_writes_file(
-        self, runner: CliRunner, tmp_path: Path
-    ) -> None:
+    def test_fish_install_writes_file(self, runner: CliRunner, tmp_path: Path) -> None:
         """Fish completions are written to ~/.config/fish/completions/fabric-dw.fish."""
         mock_script = "# fish completion\ncomplete -c fabric-dw\n"
 
@@ -134,9 +128,7 @@ class TestCompletionInstallWriteShell:
         assert expected_path.exists()
         assert expected_path.read_text() == mock_script
 
-    def test_fish_install_creates_parent_dirs(
-        self, runner: CliRunner, tmp_path: Path
-    ) -> None:
+    def test_fish_install_creates_parent_dirs(self, runner: CliRunner, tmp_path: Path) -> None:
         """Parent directories for fish completion file are created if absent."""
         mock_script = "# fish\n"
 

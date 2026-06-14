@@ -382,9 +382,7 @@ class TestQueriesFrequent:
             result = runner.invoke(cli, ["queries", "frequent", WS_GUID, WH_GUID])
         assert result.exit_code == 0
 
-    def test_frequent_fabric_error_exits_nonzero(
-        self, runner: CliRunner, cache_env: Path
-    ) -> None:
+    def test_frequent_fabric_error_exits_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
         with (

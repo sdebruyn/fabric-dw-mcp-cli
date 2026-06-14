@@ -10,8 +10,20 @@ from uuid import UUID
 import pytest
 from rich.console import Console
 
-from fabric_dw.cli._render import _cell, confirm, render, render_permissions_table, render_refresh_table
-from fabric_dw.models import ItemAccess, ItemAccessDetail, ItemAccessPrincipal, TableSyncError, TableSyncStatus
+from fabric_dw.cli._render import (
+    _cell,
+    confirm,
+    render,
+    render_permissions_table,
+    render_refresh_table,
+)
+from fabric_dw.models import (
+    ItemAccess,
+    ItemAccessDetail,
+    ItemAccessPrincipal,
+    TableSyncError,
+    TableSyncStatus,
+)
 
 
 class TestRenderJson:
@@ -336,6 +348,7 @@ class TestConfirm:
 # Helpers for render_permissions_table / render_refresh_table tests
 # ---------------------------------------------------------------------------
 
+
 def _make_item_access(
     display_name: str = "Alice",
     upn: str = "alice@example.com",
@@ -388,6 +401,7 @@ class TestRenderPermissionsTable:
         self,
         accesses: list[ItemAccess],
         title: str = "Permissions",
+        *,
         json_output: bool = False,
     ) -> str:
         sio = StringIO()
@@ -464,7 +478,7 @@ class TestRenderPermissionsTable:
         output = sio.getvalue()
         assert aad_id in output
 
-    def test_uses_default_console_when_none_given(self, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_uses_default_console_when_none_given(self) -> None:
         """When console=None, a fresh Console() is created (no crash)."""
         access = _make_item_access()
         # Should not raise; output goes to stdout (captured)
