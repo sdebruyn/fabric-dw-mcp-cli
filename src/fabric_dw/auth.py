@@ -1,6 +1,7 @@
 """Azure credential chain with persistent token cache."""
 
 import asyncio
+import logging
 import os
 import struct
 import threading
@@ -31,10 +32,43 @@ SQL_SCOPE = "https://database.windows.net/.default"
 
 #: Shared multi-tenant Entra app for the interactive browser sign-in path.
 #: Users on any tenant can sign in without registering their own app.
-#: Override with the ``FABRIC_INTERACTIVE_CLIENT_ID`` environment variable.
+#: **Security note**: this is a shared public app registration — all users of
+#: this tool share the same client-id, so consent, conditional-access policies,
+#: and audit logs cannot be scoped per organisation.  To use your own Entra app
+#: registration (recommended for production), set the
+#: ``FABRIC_INTERACTIVE_CLIENT_ID`` environment variable to your app's client-id.
 DEFAULT_INTERACTIVE_CLIENT_ID = "f666e5ee-2149-4c6a-87eb-13c9e1fdc70d"
 
-_CACHE_OPTIONS = TokenCachePersistenceOptions(name="fabric-dw", allow_unencrypted_storage=True)
+_logger = logging.getLogger(__name__)
+
+
+def _build_cache_options() -> TokenCachePersistenceOptions:
+    """Return :class:`TokenCachePersistenceOptions` with a safe default.
+
+    By default the token cache requires OS-level encryption (e.g. the system
+    keyring on Linux, Keychain on macOS, DPAPI on Windows).  When encryption is
+    unavailable *and* ``FABRIC_ALLOW_UNENCRYPTED_TOKEN_CACHE=1`` is explicitly
+    set, the cache falls back to plaintext on-disk storage and logs a prominent
+    warning so that the operator is aware of the security trade-off.
+
+    If the env var is absent or falsy the option is left at its safe default
+    (``allow_unencrypted_storage=False``), which means azure-identity will
+    raise at runtime when encryption is unavailable rather than silently
+    persisting tokens in cleartext.
+    """
+    allow_unencrypted = os.environ.get("FABRIC_ALLOW_UNENCRYPTED_TOKEN_CACHE", "").strip() == "1"
+    if allow_unencrypted:
+        _logger.warning(
+            "FABRIC_ALLOW_UNENCRYPTED_TOKEN_CACHE=1 is set: the token cache will "
+            "persist refresh/access tokens to disk WITHOUT encryption.  "
+            "Anyone with read access to the cache file can steal your tokens.  "
+            "Unset this variable or ensure the OS keyring is available to use "
+            "encrypted storage."
+        )
+    return TokenCachePersistenceOptions(
+        name="fabric-dw", allow_unencrypted_storage=allow_unencrypted
+    )
+
 
 _GITHUB_OIDC_AUDIENCE = "api://AzureADTokenExchange"
 _GITHUB_OIDC_TIMEOUT = 10  # seconds
@@ -94,7 +128,7 @@ class SyncCredentialAdapter:
         claims: str | None = None,
         tenant_id: str | None = None,
         enable_cae: bool = False,
-        **kwargs: object,  # noqa: ARG002 — required by AsyncTokenCredential protocol
+        **kwargs: object,
     ) -> AccessToken:
         return await asyncio.to_thread(
             self._inner.get_token,
@@ -102,6 +136,7 @@ class SyncCredentialAdapter:
             claims=claims,
             tenant_id=tenant_id,
             enable_cae=enable_cae,
+            **kwargs,
         )
 
     async def close(self) -> None:
@@ -200,7 +235,20 @@ def _fetch_github_oidc_jwt() -> str:
     except httpx.RequestError as exc:
         raise ConfigError(f"Failed to reach GitHub OIDC token endpoint: {exc}.") from exc
 
-    return str(response.json()["value"])
+    try:
+        body = response.json()
+        value = body["value"]
+    except (ValueError, KeyError) as exc:
+        raise ConfigError(
+            f"GitHub OIDC token endpoint returned an unexpected response body "
+            f"(expected JSON with a 'value' string): {exc}"
+        ) from exc
+    if not isinstance(value, str):
+        raise ConfigError(
+            f"GitHub OIDC token endpoint returned a non-string 'value' field "
+            f"(got {type(value).__name__!r}); expected a JWT string."
+        )
+    return value
 
 
 def _build_sync_oidc_credential() -> SyncClientAssertionCredential:
@@ -316,7 +364,7 @@ def _make_default_credential() -> AsyncTokenCredential:
 
     interactive_kwargs = _resolve_interactive_kwargs()
     dac_kwargs: dict[str, object] = {
-        "cache_persistence_options": _CACHE_OPTIONS,
+        "cache_persistence_options": _build_cache_options(),
         "exclude_interactive_browser_credential": False,
         "interactive_browser_client_id": interactive_kwargs["client_id"],
     }
@@ -350,7 +398,7 @@ def _make_interactive_credential() -> AsyncTokenCredential:
     # azure-identity; wrap in an adapter that offloads to a worker thread.
     return SyncCredentialAdapter(
         InteractiveBrowserCredential(
-            cache_persistence_options=_CACHE_OPTIONS,
+            cache_persistence_options=_build_cache_options(),
             **_resolve_interactive_kwargs(),
         )
     )

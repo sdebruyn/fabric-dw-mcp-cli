@@ -217,7 +217,7 @@ class TestConfigError:
     def test_missing_env_vars_single(self) -> None:
         err = ConfigError.missing_env_vars(["FABRIC_CLIENT_SECRET"])
         assert "FABRIC_CLIENT_SECRET" in str(err)
-        assert isinstance(err, FabricError)
+        assert isinstance(err, Exception)
 
     def test_missing_env_vars_multiple(self) -> None:
         names = ["FABRIC_TENANT_ID", "FABRIC_CLIENT_ID", "FABRIC_CLIENT_SECRET"]
@@ -233,17 +233,28 @@ class TestConfigError:
     def test_unknown_credential_mode(self) -> None:
         err = ConfigError.unknown_credential_mode("bogus-mode")
         assert "bogus-mode" in str(err)
-        assert isinstance(err, FabricError)
+        assert isinstance(err, Exception)
 
     def test_unknown_credential_mode_repr(self) -> None:
         """The mode should appear in repr form (quotes) in the message."""
         err = ConfigError.unknown_credential_mode("weird")
         assert "'weird'" in str(err) or "weird" in str(err)
 
-    def test_config_error_is_fabric_error(self) -> None:
-        err = ConfigError("cfg problem")
-        assert isinstance(err, FabricError)
+    def test_config_error_is_not_fabric_error(self) -> None:
+        """ConfigError must NOT be a subtype of FabricError (C22).
 
-    def test_config_error_accepts_kwargs(self) -> None:
-        err = ConfigError("cfg problem", status=None, hint="Check env vars.")
-        assert err.hint == "Check env vars."
+        A local config error has no HTTP context; mixing it with FabricError
+        causes broad ``except FabricError`` handlers to silently swallow
+        configuration problems.
+        """
+        err = ConfigError("cfg problem")
+        assert isinstance(err, Exception)
+        assert not isinstance(err, FabricError)
+
+    def test_config_error_is_exception(self) -> None:
+        err = ConfigError("cfg problem")
+        assert isinstance(err, Exception)
+
+    def test_config_error_message_preserved(self) -> None:
+        err = ConfigError("cfg problem")
+        assert "cfg problem" in str(err)

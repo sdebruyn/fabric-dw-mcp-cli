@@ -65,8 +65,17 @@ class AlreadyExistsError(FabricError):
     """Raised when a resource with the given name already exists."""
 
 
-class ConfigError(FabricError):
-    """Raised when required configuration is missing or invalid."""
+class ConfigError(Exception):
+    """Raised when required configuration is missing or invalid.
+
+    This is a local configuration error (missing env vars, unrecognised
+    credential mode) and is intentionally *not* a subtype of
+    :class:`FabricError`.  ``FabricError`` carries HTTP context
+    (status, request_id, body) that has no meaning for a missing env var.
+    Keeping the hierarchies separate ensures that broad
+    ``except FabricError`` handlers in HTTP/API call sites do **not**
+    silently swallow configuration problems.
+    """
 
     @classmethod
     def missing_env_vars(cls, names: list[str]) -> "ConfigError":
