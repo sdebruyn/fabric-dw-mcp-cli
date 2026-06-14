@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 from uuid import UUID
 
-from fabric_dw.exceptions import NotFoundError, PermissionDeniedError
+from fabric_dw.exceptions import FabricServerError, NotFoundError, PermissionDeniedError
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import TableSyncStatus, Warehouse, WarehouseKind
 from fabric_dw.services._concurrency import bounded_gather
@@ -14,8 +15,13 @@ from fabric_dw.services.workspaces import list_all as _list_all_workspaces
 
 _log = logging.getLogger("fabric_dw.sql_endpoints")
 
+# Bounded polling for eventual-consistency fields (e.g. connection_string).
+_CONN_STRING_POLL_INTERVAL: float = 5.0
+_CONN_STRING_POLL_TIMEOUT: float = 120.0
+
 __all__ = [
     "get_endpoint",
+    "get_endpoint_connection_string",
     "list_all_workspaces",
     "list_endpoints",
     "refresh_metadata",
@@ -112,6 +118,60 @@ async def get_endpoint(http: FabricHttpClient, workspace_id: UUID, endpoint_id: 
     return Warehouse.from_api(resp.json(), kind=WarehouseKind.SQL_ENDPOINT)
 
 
+async def get_endpoint_connection_string(
+    http: FabricHttpClient,
+    workspace_id: UUID,
+    endpoint_id: UUID,
+    *,
+    poll_interval: float = _CONN_STRING_POLL_INTERVAL,
+    timeout: float = _CONN_STRING_POLL_TIMEOUT,
+) -> str:
+    """Return the connection string for a SQL analytics endpoint, polling until non-empty.
+
+    SQL analytics endpoints are provisioned with eventual consistency: the
+    ``connectionString`` field may be empty or absent immediately after
+    the endpoint is created.  This function polls
+    ``GET /workspaces/{ws}/sqlEndpoints/{id}`` until the connection string
+    is non-empty, up to *timeout* seconds.
+
+    Args:
+        http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
+        workspace_id: The UUID of the workspace containing the endpoint.
+        endpoint_id: The UUID of the SQL analytics endpoint.
+        poll_interval: Seconds between polls (default 5.0).
+        timeout: Maximum wall-clock seconds to wait (default 120.0).
+
+    Returns:
+        The non-empty connection string.
+
+    Raises:
+        FabricServerError: If the connection string remains empty after *timeout* seconds.
+        NotFoundError: If the endpoint does not exist (404).
+    """
+    import time as _time  # noqa: PLC0415 — local import avoids module-level shadowing
+
+    deadline = _time.monotonic() + timeout
+    while True:
+        ep = await get_endpoint(http, workspace_id, endpoint_id)
+        if ep.connection_string:
+            return ep.connection_string
+
+        remaining = deadline - _time.monotonic()
+        if remaining <= 0:
+            raise FabricServerError(
+                f"connection_string for SQL endpoint {endpoint_id} "
+                f"remained empty after {timeout:.0f}s"
+            )
+
+        wait = min(poll_interval, remaining)
+        _log.debug(
+            "connection_string not yet populated for endpoint %s; retrying in %.1fs",
+            endpoint_id,
+            wait,
+        )
+        await asyncio.sleep(wait)
+
+
 async def refresh_metadata(
     http: FabricHttpClient,
     workspace_id: UUID,
@@ -122,9 +182,17 @@ async def refresh_metadata(
     """Trigger a metadata refresh for a SQL analytics endpoint.
 
     Issues ``POST /workspaces/{ws}/sqlEndpoints/{id}/refreshMetadata`` with
-    an optional ``recreateTables`` body flag.  The API returns a 202 with a
-    ``Location`` header pointing at a long-running operation (LRO).  The
-    function polls the LRO to completion and parses the per-table results.
+    an optional ``recreateTables`` body flag.
+
+    The API supports two completion modes:
+
+    * **Synchronous** (200/204, no ``Location`` or ``Operation-Location``
+      response header): the per-table results are read directly from the
+      response body.
+    * **Asynchronous** (202 + ``Location`` / ``Operation-Location`` header):
+      the function polls the LRO to completion via
+      :meth:`~fabric_dw.http_client.FabricHttpClient.poll_operation` and then
+      parses the per-table results from the operation result.
 
     Args:
         http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
@@ -139,7 +207,8 @@ async def refresh_metadata(
         table, describing the outcome of the refresh.
 
     Raises:
-        FabricServerError: If the LRO fails or times out.
+        FabricServerError: If the async LRO fails or times out (async path
+            only).
         NotFoundError: If the endpoint does not exist (404).
     """
     json_body: dict[str, Any] | None = {"recreateTables": True} if recreate_tables else None
@@ -150,8 +219,23 @@ async def refresh_metadata(
         f"/workspaces/{workspace_id}/sqlEndpoints/{endpoint_id}/refreshMetadata",
         json=json_body,
     )
-    location: str = resp.headers["Location"]
-    lro_body = await http.poll_operation(location)
-    raw_value: Any = lro_body.get("value", []) if isinstance(lro_body, dict) else []
+
+    # The API may complete synchronously (200/204 with results inline) or
+    # asynchronously (202 + Location / Operation-Location header).  Try the
+    # async path first; fall back to treating the response body as the result.
+    location: str | None = resp.headers.get("Location") or resp.headers.get("Operation-Location")
+
+    if location:
+        lro_body = await http.poll_operation(location)
+        raw_value: Any = lro_body.get("value", []) if isinstance(lro_body, dict) else []
+    else:
+        # Synchronous completion: parse the table sync statuses from the body directly.
+        _log.debug(
+            "refresh_metadata for endpoint %s completed synchronously (no LRO header)",
+            endpoint_id,
+        )
+        body: Any = resp.json() if resp.content else {}
+        raw_value = body.get("value", []) if isinstance(body, dict) else []
+
     raw_items: list[Any] = raw_value if isinstance(raw_value, list) else []
     return [TableSyncStatus.model_validate(item) for item in raw_items]

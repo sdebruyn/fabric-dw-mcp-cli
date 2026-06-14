@@ -481,3 +481,184 @@ async def test_list_all_workspaces_endpoints_skips_not_found(
     assert ids == {_EP_A, _EP_C}
     assert any(f"WS-{_EP_WS_B}" in r.message for r in caplog.records)
     assert any("skipped 1 of 3" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# refresh_metadata — synchronous (no LRO header) path
+# ---------------------------------------------------------------------------
+
+
+async def test_refresh_metadata_sync_no_location_header_returns_statuses() -> None:
+    """refresh_metadata with no Location/Operation-Location header must parse body inline.
+
+    This covers the synchronous completion path: the API responds with 200 and
+    table sync results directly in the body, no LRO header present.
+    Should NOT raise KeyError.
+    """
+    from fabric_dw.services.sql_endpoints import refresh_metadata  # noqa: PLC0415
+
+    with respx.mock:
+        respx.post(_REFRESH_URL).mock(
+            return_value=httpx.Response(
+                200,
+                json={"value": _REFRESH_TABLE_RESULTS},
+                # Deliberately no Location or Operation-Location header
+            )
+        )
+
+        client = await _make_client()
+        async with client:
+            result = await refresh_metadata(client, _WORKSPACE_ID, _ENDPOINT_ID)
+
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert all(isinstance(s, TableSyncStatus) for s in result)
+    assert result[0].table_name == "Table1"
+    assert result[0].status == "Success"
+    assert result[1].table_name == "Table2"
+    assert result[1].status == "Failure"
+
+
+async def test_refresh_metadata_sync_empty_body_returns_empty_list() -> None:
+    """refresh_metadata with 204 (no content) and no LRO header must return empty list."""
+    from fabric_dw.services.sql_endpoints import refresh_metadata  # noqa: PLC0415
+
+    with respx.mock:
+        respx.post(_REFRESH_URL).mock(return_value=httpx.Response(204, content=b""))
+
+        client = await _make_client()
+        async with client:
+            result = await refresh_metadata(client, _WORKSPACE_ID, _ENDPOINT_ID)
+
+    assert result == []
+
+
+async def test_refresh_metadata_operation_location_header_still_works() -> None:
+    """refresh_metadata must also poll when the header is Operation-Location (not Location)."""
+    from fabric_dw.services.sql_endpoints import refresh_metadata  # noqa: PLC0415
+
+    with respx.mock:
+        respx.post(_REFRESH_URL).mock(
+            return_value=httpx.Response(
+                202,
+                json={},
+                headers={"Operation-Location": _OPERATION_URL},
+            )
+        )
+        respx.get(_OPERATION_URL).mock(
+            return_value=httpx.Response(200, json=_REFRESH_LRO_SUCCEEDED)
+        )
+
+        client = await _make_client()
+        async with client:
+            result = await refresh_metadata(client, _WORKSPACE_ID, _ENDPOINT_ID)
+
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert result[0].table_name == "Table1"
+
+
+# ---------------------------------------------------------------------------
+# get_endpoint_connection_string — polling behaviour
+# ---------------------------------------------------------------------------
+
+_ENDPOINT_GET_EMPTY_CONN_STRING: dict[str, Any] = {
+    "id": str(_ENDPOINT_ID),
+    "displayName": "SalesLakehouse",
+    "description": "SQL endpoint for sales lakehouse",
+    "type": "SQLEndpoint",
+    "workspaceId": str(_WORKSPACE_ID),
+    "properties": {
+        "sqlEndpointProperties": {
+            "connectionString": "",
+            "id": "f6a7b8c9-d0e1-2345-f012-34567890abcd",
+            "provisioningStatus": "Success",
+        }
+    },
+}
+
+
+async def test_get_endpoint_connection_string_polls_until_populated() -> None:
+    """get_endpoint_connection_string must poll until connection_string is non-empty."""
+    from fabric_dw.services.sql_endpoints import get_endpoint_connection_string  # noqa: PLC0415
+
+    call_count = 0
+
+    def side_effect(_request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count < 3:
+            # First two calls return empty connection_string
+            return httpx.Response(200, json=_ENDPOINT_GET_EMPTY_CONN_STRING)
+        # Third call returns populated connection_string
+        return httpx.Response(200, json=_ENDPOINT_GET_PAYLOAD)
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(_ENDPOINT_URL).mock(side_effect=side_effect)
+
+        client = await _make_client()
+        async with client:
+            with patch(
+                "fabric_dw.services.sql_endpoints.asyncio.sleep",
+                new=AsyncMock(),
+            ) as mock_sleep:
+                result = await get_endpoint_connection_string(
+                    client,
+                    _WORKSPACE_ID,
+                    _ENDPOINT_ID,
+                    poll_interval=5.0,
+                    timeout=120.0,
+                )
+
+    assert result == "lakehouse-sql-ep.datawarehouse.fabric.microsoft.com"
+    assert call_count == 3
+    # sleep must have been called between polls (twice: after call 1 and call 2)
+    assert mock_sleep.call_count == 2
+
+
+async def test_get_endpoint_connection_string_immediate_return_no_sleep() -> None:
+    """get_endpoint_connection_string must return immediately when already populated."""
+    from fabric_dw.services.sql_endpoints import get_endpoint_connection_string  # noqa: PLC0415
+
+    with respx.mock:
+        respx.get(_ENDPOINT_URL).mock(return_value=httpx.Response(200, json=_ENDPOINT_GET_PAYLOAD))
+
+        client = await _make_client()
+        async with client:
+            with patch(
+                "fabric_dw.services.sql_endpoints.asyncio.sleep",
+                new=AsyncMock(),
+            ) as mock_sleep:
+                result = await get_endpoint_connection_string(
+                    client,
+                    _WORKSPACE_ID,
+                    _ENDPOINT_ID,
+                )
+
+    assert result == "lakehouse-sql-ep.datawarehouse.fabric.microsoft.com"
+    mock_sleep.assert_not_called()
+
+
+async def test_get_endpoint_connection_string_timeout_raises_fabric_server_error() -> None:
+    """get_endpoint_connection_string must raise FabricServerError after timeout.
+
+    Passes timeout=0.0 so the deadline is already expired after the first GET
+    that returns an empty connection_string — no need to mock time.
+    """
+    from fabric_dw.services.sql_endpoints import get_endpoint_connection_string  # noqa: PLC0415
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(_ENDPOINT_URL).mock(
+            return_value=httpx.Response(200, json=_ENDPOINT_GET_EMPTY_CONN_STRING)
+        )
+
+        client = await _make_client()
+        async with client:
+            with pytest.raises(FabricServerError, match="connection_string"):
+                await get_endpoint_connection_string(
+                    client,
+                    _WORKSPACE_ID,
+                    _ENDPOINT_ID,
+                    poll_interval=0.0,
+                    timeout=0.0,
+                )
