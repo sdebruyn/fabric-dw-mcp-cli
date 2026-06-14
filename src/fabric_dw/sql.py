@@ -197,6 +197,12 @@ _MODE_TO_AD_AUTH: dict[CredentialMode, str] = {
 #   - "[SQL Server] ... (229)" where the parenthesised number is anchored to an
 #     explicit SQL-Server/Msg/Error context word so that incidental numbers in
 #     unrelated text (port numbers, byte counts, row counts) are not matched.
+#
+# Note: the second alternative deliberately reuses the word "Error" (distinct
+# from "Error:" with the colon+space in alt-1) to match patterns like
+# "Error (229)".  Since re.finditer processes left-to-right and the code
+# returns on the first recognised number, first-match-wins is intentional —
+# there is no ambiguity between the two alternatives in practice.
 _NATIVE_ERROR_RE = re.compile(
     r"\b(?:Error:\s*|error\s+)(\d+)\b"
     r"|(?:SQL\s+Server|Msg|Error)\b[^(]*\((\d+)\)",
@@ -445,6 +451,9 @@ class _PooledConnection:
         # Set to True after an exception during execute so that the connection
         # is NOT returned to the pool (unknown transaction state).
         self._discard: bool = False
+        # Guard against double-close (e.g. explicit close in retry path + outer
+        # finally).  Once True, subsequent close() calls are no-ops.
+        self._closed: bool = False
 
     # ------------------------------------------------------------------ #
     # Forward _Connection protocol methods to the underlying object.      #
@@ -472,9 +481,16 @@ class _PooledConnection:
     def close(self) -> None:
         """Return to pool or physically close, depending on state and config.
 
+        Idempotent: a second call is a no-op.  This prevents the underlying TDS
+        socket from receiving ``close()`` twice when the execute-retry path
+        calls ``conn.close()`` explicitly and the outer ``finally`` also closes.
+
         Before returning to the pool, any open implicit transaction is rolled
         back so the next caller starts with a clean transaction state.
         """
+        if self._closed:
+            return
+        self._closed = True
         if self._discard or not _pool_enabled():
             self._underlying.close()
         else:
@@ -813,6 +829,11 @@ def run_query(  # noqa: PLR0913
     the change — retrying non-idempotent statements could cause duplicate rows
     or double-DDL errors.
 
+    The execute-phase retry fires **at most once**: one extra connect + execute
+    attempt, regardless of ``SQL_TRANSIENT_MAX_RETRIES``.  If that second
+    attempt also fails, the error is propagated immediately — there is no
+    execute-phase retry loop.
+
     Args:
         target: The :class:`SqlTarget` identifying the warehouse.
         statement: The SQL statement to execute.
@@ -895,9 +916,8 @@ def run_query(  # noqa: PLR0913
                 and attempt < max_attempts - 1
             ):
                 # Retry: close the tainted connection and open a fresh one.
-                # The outer finally will attempt to close it again, but since
-                # mark_discard() was called, the underlying is already closed —
-                # the mssql_python driver is tolerant of multiple .close() calls.
+                # The outer finally also calls conn.close(); _PooledConnection.close()
+                # is idempotent (_closed guard) so the second call is a no-op.
                 conn.close()
                 conn2, _a, _m, _ = _with_connect_retry(target, mode, autocommit)
                 try:

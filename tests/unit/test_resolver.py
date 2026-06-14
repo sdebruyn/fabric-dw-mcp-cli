@@ -813,3 +813,32 @@ def test_item_type_info_namedtuple_fields() -> None:
 
     snap = _ITEM_TYPE_INFO["WarehouseSnapshot"]
     assert snap.endpoint is None  # no type-specific endpoint
+
+
+# ---------------------------------------------------------------------------
+# D22 -- reject invalid item_type with a clear FabricError
+# ---------------------------------------------------------------------------
+
+
+class TestD22InvalidItemType:
+    """D22: resolver.item() must raise FabricError immediately for unknown item_type."""
+
+    @pytest.mark.asyncio
+    async def test_invalid_item_type_raises_fabric_error_name_path(self, tmp_path: Path) -> None:
+        """Passing an unknown item_type by name must raise FabricError before any API call."""
+        from fabric_dw.cache import LookupCache  # noqa: PLC0415
+        from fabric_dw.exceptions import FabricError  # noqa: PLC0415
+
+        cache = LookupCache(path=tmp_path / "lookup.json")
+        # Use a minimal mock for the HTTP client -- it must NOT be called.
+        mock_http = MagicMock()
+        mock_http.iter_paginated = AsyncMock()
+        resolver = Resolver(http=mock_http, cache=cache)
+
+        ws_guid = "00000000-0000-0000-0000-000000000001"
+
+        with pytest.raises(FabricError, match="Unknown item_type"):
+            await resolver.item(ws_guid, "MyWarehouse", item_type="NotARealType")
+
+        # The HTTP layer must NOT have been called -- error raised before pagination.
+        mock_http.iter_paginated.assert_not_called()
