@@ -401,9 +401,7 @@ class TestWarehousesDefaultFallback:
 class TestWarehousesListFabricError:
     """warehouses list — FabricError branch (line 70-71)."""
 
-    def test_list_fabric_error_exits_nonzero(
-        self, runner: CliRunner, cache_env: Path
-    ) -> None:
+    def test_list_fabric_error_exits_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
         with (
@@ -423,9 +421,7 @@ class TestWarehousesListFabricError:
 class TestWarehousesCreateError:
     """warehouses create — FabricError branch (lines 120-121)."""
 
-    def test_create_fabric_error_exits_nonzero(
-        self, runner: CliRunner, cache_env: Path
-    ) -> None:
+    def test_create_fabric_error_exits_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
         with (
@@ -449,9 +445,7 @@ class TestWarehousesCreateError:
 class TestWarehousesRenameError:
     """warehouses rename — FabricError branch (lines 161-162)."""
 
-    def test_rename_fabric_error_exits_nonzero(
-        self, runner: CliRunner, cache_env: Path
-    ) -> None:
+    def test_rename_fabric_error_exits_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
         _cache = LookupCache(path=cache_env / "lookup.json")
@@ -479,9 +473,7 @@ class TestWarehousesRenameError:
 class TestWarehousesDeleteError:
     """warehouses delete — FabricError branch (lines 192-193)."""
 
-    def test_delete_fabric_error_exits_nonzero(
-        self, runner: CliRunner, cache_env: Path
-    ) -> None:
+    def test_delete_fabric_error_exits_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
         _cache = LookupCache(path=cache_env / "lookup.json")
@@ -525,9 +517,7 @@ class TestWarehousesTakeoverErrors:
             result = runner.invoke(cli, ["--yes", "warehouses", "takeover", WS_GUID, WH_GUID])
         assert result.exit_code != 0
 
-    def test_takeover_declined_prints_aborted(
-        self, runner: CliRunner, cache_env: Path
-    ) -> None:
+    def test_takeover_declined_prints_aborted(self, runner: CliRunner, cache_env: Path) -> None:
         """Declining confirmation prints 'Aborted.' (lines 220-221)."""
         _ = cache_env
         mock_http = AsyncMock()
@@ -578,7 +568,11 @@ class TestWarehousesPermissions:
 
     def test_permissions_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
-        from fabric_dw.models import ItemAccess, ItemAccessDetail, ItemAccessPrincipal  # noqa: PLC0415
+        from fabric_dw.models import (  # noqa: PLC0415
+            ItemAccess,
+            ItemAccessDetail,
+            ItemAccessPrincipal,
+        )
 
         principal = ItemAccessPrincipal.model_validate(
             {

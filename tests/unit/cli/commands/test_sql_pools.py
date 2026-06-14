@@ -13,7 +13,12 @@ import pytest
 from click.testing import CliRunner
 
 from fabric_dw.cli._main import cli
-from fabric_dw.exceptions import AlreadyExistsError, FabricError, NotFoundError, PermissionDeniedError
+from fabric_dw.exceptions import (
+    AlreadyExistsError,
+    FabricError,
+    NotFoundError,
+    PermissionDeniedError,
+)
 from fabric_dw.models import SqlPool, SqlPoolsConfiguration
 from fabric_dw.sql import SqlTarget
 
@@ -855,9 +860,7 @@ class TestSqlPoolsShowErrors:
 class TestSqlPoolsCreateErrors:
     """create_cmd — ValueError, PermissionDeniedError, FabricError branches (204-209)."""
 
-    def test_create_permission_denied_shows_hint(
-        self, runner: CliRunner, cache_env: Path
-    ) -> None:
+    def test_create_permission_denied_shows_hint(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         with (
             patch(
@@ -879,9 +882,7 @@ class TestSqlPoolsCreateErrors:
         assert result.exit_code != 0
         assert "admin" in result.output.lower()
 
-    def test_create_fabric_error_exits_nonzero(
-        self, runner: CliRunner, cache_env: Path
-    ) -> None:
+    def test_create_fabric_error_exits_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         with (
             patch(
@@ -902,9 +903,7 @@ class TestSqlPoolsCreateErrors:
             )
         assert result.exit_code != 0
 
-    def test_create_value_error_exits_nonzero(
-        self, runner: CliRunner, cache_env: Path
-    ) -> None:
+    def test_create_value_error_exits_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         """ValueError from service surfaces as ClickException (line 205)."""
         _ = cache_env
         with (
@@ -931,9 +930,7 @@ class TestSqlPoolsCreateErrors:
 class TestSqlPoolsUpdateErrors:
     """update_cmd — ValueError, PermissionDeniedError, FabricError branches (285-290)."""
 
-    def test_update_permission_denied_shows_hint(
-        self, runner: CliRunner, cache_env: Path
-    ) -> None:
+    def test_update_permission_denied_shows_hint(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         with (
             patch(
@@ -956,9 +953,7 @@ class TestSqlPoolsUpdateErrors:
         assert result.exit_code != 0
         assert "admin" in result.output.lower()
 
-    def test_update_fabric_error_exits_nonzero(
-        self, runner: CliRunner, cache_env: Path
-    ) -> None:
+    def test_update_fabric_error_exits_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         with (
             patch(
@@ -980,9 +975,7 @@ class TestSqlPoolsUpdateErrors:
             )
         assert result.exit_code != 0
 
-    def test_update_value_error_exits_nonzero(
-        self, runner: CliRunner, cache_env: Path
-    ) -> None:
+    def test_update_value_error_exits_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         """ValueError from service surfaces as ClickException (line 286)."""
         _ = cache_env
         with (
@@ -1034,9 +1027,7 @@ class TestSqlPoolsDeleteAbort:
                 new=AsyncMock(side_effect=FabricError("server error")),
             ),
         ):
-            result = runner.invoke(
-                cli, ["-y", "sql-pools", "delete", WS_GUID, "--name", "Default"]
-            )
+            result = runner.invoke(cli, ["-y", "sql-pools", "delete", WS_GUID, "--name", "Default"])
         assert result.exit_code != 0
 
 

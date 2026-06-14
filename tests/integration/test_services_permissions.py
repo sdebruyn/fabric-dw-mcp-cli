@@ -2,10 +2,13 @@
 
 These tests require:
 - FABRIC_TEST_WORKSPACE_ID set to a workspace the caller can see.
-- The caller must be a Fabric Administrator to call the admin endpoint.
+- For admin-API tests: the caller must hold the **tenant-level Fabric Administrator**
+  role (``Tenant.Read.All`` scope, granted via the Microsoft Fabric admin portal).
+  This is distinct from being a Workspace Admin or Contributor — a workspace-level
+  "Admin" role member cannot call the ``/v1/admin/...`` endpoints.
 
-Tests that require admin access are marked with ``skip_if_not_admin``
-and are gated behind the ``integration`` pytest mark.
+Tests that require tenant-level Fabric Administrator access are marked with
+``skip_if_not_tenant_admin`` and are gated behind the ``integration`` pytest mark.
 """
 
 from __future__ import annotations
@@ -26,12 +29,18 @@ pytestmark = pytest.mark.integration
 # Fixtures / helpers
 # ---------------------------------------------------------------------------
 
-#: Set to True when the test environment is known to have Fabric Admin access.
-_IS_ADMIN = os.environ.get("FABRIC_TEST_IS_ADMIN", "").lower() in {"1", "true", "yes"}
+#: Set to True when the test environment is known to have tenant-level Fabric
+#: Administrator access. NOTE: this is NOT the same as being a Workspace Admin or
+#: Contributor — it requires the tenant-level "Fabric Administrator" role in the
+#: Microsoft Fabric admin portal, which grants the Tenant.Read.All scope needed
+#: by the /v1/admin/... endpoints.
+_IS_TENANT_ADMIN = os.environ.get("FABRIC_TEST_IS_TENANT_ADMIN", "").lower() in {"1", "true", "yes"}
 
-skip_if_not_admin = pytest.mark.skipif(
-    not _IS_ADMIN,
-    reason="FABRIC_TEST_IS_ADMIN not set; skipping admin-only test",
+# Marker for tests that require the tenant-level Fabric Administrator role.
+# A workspace-level "Admin" role is NOT sufficient for these admin-API tests.
+skip_if_not_tenant_admin = pytest.mark.skipif(
+    not _IS_TENANT_ADMIN,
+    reason="FABRIC_TEST_IS_TENANT_ADMIN not set; skipping tenant-Fabric-Administrator-only test",
 )
 
 
@@ -40,7 +49,7 @@ skip_if_not_admin = pytest.mark.skipif(
 # ---------------------------------------------------------------------------
 
 
-@skip_if_not_admin
+@skip_if_not_tenant_admin
 async def test_list_item_access_returns_list(
     http: FabricHttpClient,
     workspace_id: UUID,
@@ -53,7 +62,7 @@ async def test_list_item_access_returns_list(
     assert all(isinstance(item, ItemAccess) for item in result)
 
 
-@skip_if_not_admin
+@skip_if_not_tenant_admin
 async def test_list_item_access_principals_have_required_fields(
     http: FabricHttpClient,
     workspace_id: UUID,
@@ -76,16 +85,16 @@ async def test_list_item_access_non_admin_raises_permission_denied(
 
     This test is expected to run even without admin access; it just verifies
     the error is surfaced correctly.  If the caller IS an admin (either because
-    FABRIC_TEST_IS_ADMIN is set, or because the call unexpectedly succeeds) the
+    FABRIC_TEST_IS_TENANT_ADMIN is set, or because the call unexpectedly succeeds) the
     test is skipped so it does not accidentally pass for the wrong reason.
 
-    Explicit skip: FABRIC_TEST_IS_ADMIN=1/true/yes is set in the environment.
+    Explicit skip: FABRIC_TEST_IS_TENANT_ADMIN=1/true/yes is set in the environment.
     Implicit skip: The API call succeeds — the CI principal has admin rights
-    even though FABRIC_TEST_IS_ADMIN was not declared.  Both cases are safe
+    even though FABRIC_TEST_IS_TENANT_ADMIN was not declared.  Both cases are safe
     to skip; neither is a test failure.
     """
-    if _IS_ADMIN:
-        pytest.skip("caller has admin access; cannot test non-admin path")
+    if _IS_TENANT_ADMIN:
+        pytest.skip("caller has tenant Fabric Administrator access; cannot test non-admin path")
 
     try:
         await permissions.list_item_access(http, workspace_id, ephemeral_warehouse.id)
@@ -95,9 +104,10 @@ async def test_list_item_access_non_admin_raises_permission_denied(
         # here we only confirm the correct exception type is raised.
         return
     # If we reach here, the call succeeded — the principal has admin rights but
-    # FABRIC_TEST_IS_ADMIN was not set.  Skip rather than fail so the suite
+    # FABRIC_TEST_IS_TENANT_ADMIN was not set.  Skip rather than fail so the suite
     # does not report a false negative.
     pytest.skip(
-        "list_item_access succeeded unexpectedly — CI principal appears to have Fabric "
-        "Administrator rights. Set FABRIC_TEST_IS_ADMIN=1 to gate admin-only tests correctly."
+        "list_item_access succeeded unexpectedly — CI principal appears to have "
+        "tenant-level Fabric Administrator rights. "
+        "Set FABRIC_TEST_IS_TENANT_ADMIN=1 to gate admin-only tests correctly."
     )
