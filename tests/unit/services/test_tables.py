@@ -779,13 +779,42 @@ class TestCloneTable:
             result = await tables.clone_table(target, "dbo.source_tbl", "dbo.sales")
         assert isinstance(result, Table)
 
-    async def test_commits_after_execute(self) -> None:
+    async def test_uses_autocommit_not_commit_without_at(self) -> None:
+        """Clone DDL must use autocommit=True (no implicit transaction) — non-AT path."""
         target = _make_target()
-        ddl_conn = _make_conn_for_ddl()
-        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
-        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+        # First call: DDL (returns empty); second call: _fetch_table (returns row).
+        fetch_return = (_LIST_COLS, [_TABLE_ROW_1])
+        with patch(
+            "fabric_dw.services.tables.run_query",
+            side_effect=[([], []), fetch_return],
+        ) as mock_run_query:
             await tables.clone_table(target, "dbo.source_tbl", "dbo.sales")
-        ddl_conn.commit.assert_called_once()
+        # The FIRST call is the DDL; it must use autocommit=True, not commit=True.
+        ddl_call = mock_run_query.call_args_list[0]
+        assert ddl_call.kwargs.get("autocommit") is True, (
+            "clone DDL must pass autocommit=True to run_query"
+        )
+        assert not ddl_call.kwargs.get("commit"), (
+            "clone DDL must not pass commit=True (autocommit handles it)"
+        )
+
+    async def test_uses_autocommit_not_commit_with_at(self) -> None:
+        """Clone DDL must use autocommit=True (no implicit transaction) — AT path."""
+        target = _make_target()
+        at_dt = datetime(2024, 5, 20, 14, 0, 0, tzinfo=UTC)
+        fetch_return = (_LIST_COLS, [_TABLE_ROW_1])
+        with patch(
+            "fabric_dw.services.tables.run_query",
+            side_effect=[([], []), fetch_return],
+        ) as mock_run_query:
+            await tables.clone_table(target, "dbo.source_tbl", "dbo.sales", at=at_dt)
+        ddl_call = mock_run_query.call_args_list[0]
+        assert ddl_call.kwargs.get("autocommit") is True, (
+            "clone DDL with AT must pass autocommit=True to run_query"
+        )
+        assert not ddl_call.kwargs.get("commit"), (
+            "clone DDL with AT must not pass commit=True (autocommit handles it)"
+        )
 
     async def test_rejects_sql_endpoint(self) -> None:
         target = _make_target()
