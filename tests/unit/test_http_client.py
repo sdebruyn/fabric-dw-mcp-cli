@@ -75,6 +75,7 @@ class _FakeClock:
         return self
 
     def __exit__(self, *_exc: object) -> None:
+        # Stop in reverse start order (LIFO) so nested patchers unwind correctly.
         self._p_sleep.stop()
         self._p_monotonic.stop()
 
@@ -815,8 +816,11 @@ async def test_429_deadline_aggregated_for_concurrent_requests() -> None:
                 )
 
     assert all(r.status_code == 200 for r in results)
-    # The aggregated deadline must have produced at least one sleep >= 1.0 s.
-    assert len(clock.sleeps) >= 1, f"Expected >=1 deadline sleep; got {clock.sleeps}"
+    # Both gather coroutines must have respected the shared deadline:
+    # one sleep per coroutine, each >= 1.0 s (the Retry-After value).
+    assert len(clock.sleeps) >= 2, (
+        f"Expected >=2 deadline sleeps (one per coroutine); got {clock.sleeps}"
+    )
     assert max(clock.sleeps) >= 1.0, (
         f"Largest sleep {max(clock.sleeps):.3f}s < 1.0 — Retry-After not honoured"
     )
