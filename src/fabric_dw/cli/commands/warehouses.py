@@ -7,12 +7,13 @@ import logging
 import click
 
 from fabric_dw.cli._context import CliContext
-from fabric_dw.cli._render import confirm, render, render_permissions_table
+from fabric_dw.cli._render import render, render_permissions_table
 from fabric_dw.cli.commands._utils import (
     _coro,
     _resolve_item,
     _resolve_item_with_cache,
     build_http_client,
+    confirm_destructive,
     make_resolver,
     resolve_warehouse_arg,
     resolve_workspace_arg,
@@ -52,22 +53,26 @@ async def list_cmd(ctx: CliContext, workspace: str | None, all_workspaces: bool)
     Pass -A / --all-workspaces to scan every visible workspace instead.
     WORKSPACE and --all-workspaces are mutually exclusive; exactly one is required.
     """
-    validate_workspace_or_all_workspaces(workspace, all_workspaces)
+    # Resolve the workspace default before the XOR validation so that a
+    # configured default-workspace (env / config file) is honoured when no
+    # positional arg is passed but --all-workspaces is also absent.
+    resolved_workspace = None if all_workspaces else resolve_workspace_arg(ctx, workspace)
+    validate_workspace_or_all_workspaces(resolved_workspace, all_workspaces)
     try:
         async with build_http_client(ctx) as http:
             if all_workspaces:
                 items = await _warehouses_svc.list_all_workspaces(http)
             else:
-                ws = resolve_workspace_arg(ctx, workspace)
+                assert resolved_workspace is not None  # noqa: S101 - validated above
                 resolver, _ = make_resolver(http)
-                ws_id = await resolver.workspace_id(ws)
+                ws_id = await resolver.workspace_id(resolved_workspace)
                 items = await _warehouses_svc.list_warehouses(http, ws_id)
             render(
                 [w.model_dump(by_alias=True, mode="json") for w in items],
                 json_output=ctx.json_output,
                 table_title="Warehouses",
             )
-    except FabricError as exc:
+    except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
 
@@ -85,7 +90,7 @@ async def get_cmd(ctx: CliContext, workspace: str | None, warehouse: str | None)
             ws_id, entry = await _resolve_item(http, ws, wh)
             obj = await _warehouses_svc.get_warehouse(http, ws_id, entry.id)
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
-    except FabricError as exc:
+    except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
 
@@ -141,11 +146,10 @@ async def rename_cmd(
     try:
         async with build_http_client(ctx) as http:
             ws_id, entry, cache = await _resolve_item_with_cache(http, ws, wh)
-            confirmed = confirm(
+            if not confirm_destructive(
                 f"Rename warehouse {entry.display_name!r} ({entry.id}) to {new_name!r}?",
                 yes=ctx.yes,
-            )
-            if not confirmed:
+            ):
                 click.echo("Aborted.")
                 return
             obj = await _warehouses_svc.rename(
@@ -174,11 +178,10 @@ async def delete_cmd(ctx: CliContext, workspace: str | None, warehouse: str | No
     try:
         async with build_http_client(ctx) as http:
             ws_id, entry, cache = await _resolve_item_with_cache(http, ws, wh)
-            confirmed = confirm(
+            if not confirm_destructive(
                 f"Delete warehouse {entry.display_name!r} ({entry.id})?",
                 yes=ctx.yes,
-            )
-            if not confirmed:
+            ):
                 click.echo("Aborted.")
                 return
             await _warehouses_svc.delete(
@@ -188,8 +191,14 @@ async def delete_cmd(ctx: CliContext, workspace: str | None, warehouse: str | No
                 cache=cache,
                 name=entry.display_name or None,
             )
-            click.echo(f"Warehouse {entry.display_name!r} ({entry.id}) deleted.")
-    except FabricError as exc:
+            if ctx.json_output:
+                render(
+                    {"status": "deleted", "name": entry.display_name, "id": str(entry.id)},
+                    json_output=True,
+                )
+            else:
+                click.echo(f"Warehouse {entry.display_name!r} ({entry.id}) deleted.")
+    except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
 
@@ -208,21 +217,20 @@ async def takeover_cmd(ctx: CliContext, workspace: str | None, warehouse: str | 
     try:
         async with build_http_client(ctx) as http:
             ws_id, entry = await _resolve_item(http, ws, wh)
-    except FabricError as exc:
+    except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
     if entry.kind == WarehouseKind.SQL_ENDPOINT:
         raise click.UsageError("takeover is not supported for SQL Analytics Endpoints")
-    confirmed = confirm(
+    if not confirm_destructive(
         f"Take over warehouse {entry.display_name!r} ({entry.id})?",
         yes=ctx.yes,
-    )
-    if not confirmed:
+    ):
         click.echo("Aborted.")
         return
     try:
         async with build_http_client(ctx) as http:
             await _ownership_svc.takeover(http, ws_id, entry.id)
-    except FabricError as exc:
+    except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(f"Ownership of warehouse {entry.display_name!r} ({entry.id}) taken.")
 
@@ -247,5 +255,5 @@ async def permissions_cmd(ctx: CliContext, workspace: str | None, warehouse: str
             render_permissions_table(
                 items, title="Warehouse Permissions", json_output=ctx.json_output
             )
-    except FabricError as exc:
+    except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc

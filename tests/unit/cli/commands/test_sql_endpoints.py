@@ -188,6 +188,31 @@ class TestEndpointsListAllWorkspaces:
             result = runner.invoke(cli, ["sql-endpoints", "list", WS_GUID, "-A"])
         assert result.exit_code != 0
 
+    def test_list_uses_config_default_workspace(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """sql-endpoints list honours the configured default-workspace (L17 regression guard)."""
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.delenv("FABRIC_DW_DEFAULT_WORKSPACE", raising=False)
+        setup = runner.invoke(cli, ["config", "set", "workspace", WS_GUID])
+        assert setup.exit_code == 0
+        mock_http = AsyncMock()
+        mock_http.iter_paginated = MagicMock(return_value=_async_iter([]))
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_endpoints.build_http_client",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.resolver.Resolver.workspace_id",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+        ):
+            # No WORKSPACE argument — must fall back to config default.
+            result = runner.invoke(cli, ["sql-endpoints", "list"])
+        assert result.exit_code == 0
+
 
 class TestEndpointsGet:
     """endpoints get — happy path and 404."""

@@ -7,10 +7,11 @@ import logging
 import click
 
 from fabric_dw.cli._context import CliContext
-from fabric_dw.cli._render import confirm, render
+from fabric_dw.cli._render import render
 from fabric_dw.cli.commands._utils import (
     _coro,
     build_http_client,
+    confirm_destructive,
     resolve_workspace_arg,
     resolve_workspace_id,
 )
@@ -74,17 +75,18 @@ async def set_collation_cmd(ctx: CliContext, workspace: str | None, collation: s
             ws_id = await resolve_workspace_id(http, ws)
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc
-    confirmed = confirm(
+    if not confirm_destructive(
         f"Set collation to {collation!r} for workspace {ws_id}?",
         yes=ctx.yes,
-    )
-    if not confirmed:
-        raise click.Abort()
+    ):
+        click.echo("Aborted.")
+        return
     try:
         async with build_http_client(ctx) as http:
             await _workspaces_svc.set_collation(http, ws_id, collation)
-    except ValueError as exc:
+    except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
-    except FabricError as exc:
-        raise click.ClickException(str(exc)) from exc
-    click.echo(f"Collation set to {collation!r}.")
+    if ctx.json_output:
+        render({"status": "set", "collation": collation}, json_output=True)
+    else:
+        click.echo(f"Collation set to {collation!r}.")

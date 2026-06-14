@@ -268,6 +268,49 @@ class TestTablesRead:
         assert result.exit_code == 0
         assert out_file.exists()
 
+    def test_read_explicit_format_beats_json_flag(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        """--format csv must win over --json (L13 precedence regression guard)."""
+        _ = cache_env
+        out_file = tmp_path / "out.csv"
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.read_table",
+                new=AsyncMock(return_value=(["id"], [(1,)])),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "--json",
+                    "tables",
+                    "read",
+                    WS_GUID,
+                    WH_GUID,
+                    "dbo.sales",
+                    "--format",
+                    "csv",
+                    "--output",
+                    str(out_file),
+                ],
+            )
+        assert result.exit_code == 0
+        assert out_file.exists()
+        # Verify the file is actually CSV (not JSON) — the --format flag won.
+        content = out_file.read_text()
+        assert "id" in content  # CSV header
+        assert not content.strip().startswith("[")  # not JSON array
+
     def test_read_bad_qualified_name_exits_nonzero(
         self, runner: CliRunner, cache_env: Path
     ) -> None:

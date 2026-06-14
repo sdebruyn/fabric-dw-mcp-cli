@@ -7,10 +7,11 @@ import logging
 import click
 
 from fabric_dw.cli._context import CliContext
-from fabric_dw.cli._render import confirm, render
+from fabric_dw.cli._render import render
 from fabric_dw.cli.commands._utils import (
     _coro,
     build_http_client,
+    confirm_destructive,
     resolve_item,
     resolve_warehouse_arg,
     resolve_workspace_arg,
@@ -45,7 +46,7 @@ async def list_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> 
                 json_output=ctx.json_output,
                 table_title="Restore Points",
             )
-    except FabricError as exc:
+    except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
 
@@ -70,7 +71,7 @@ async def get_cmd(
             wh_id = entry.id
             rp = await _restore_svc.get_point(http, ws_id, wh_id, restore_point_id)
             render(rp.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
-    except FabricError as exc:
+    except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
 
@@ -99,7 +100,7 @@ async def create_cmd(
                 http, ws_id, wh_id, name=name, description=description
             )
             render(rp.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
-    except FabricError as exc:
+    except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
 
@@ -163,16 +164,19 @@ async def delete_cmd(
         async with build_http_client(ctx) as http:
             ws_id, entry = await resolve_item(http, ws, wh)
             wh_id = entry.id
-            confirmed = confirm(
-                f"Delete restore point {restore_point_id!r} on warehouse in {ws!r}?",
+            if not confirm_destructive(
+                f"Delete restore point {restore_point_id!r} on warehouse"
+                f" {entry.display_name!r} ({entry.id})?",
                 yes=ctx.yes,
-            )
-            if not confirmed:
+            ):
                 click.echo("Aborted.")
                 return
             await _restore_svc.delete_point(http, ws_id, wh_id, restore_point_id)
-            click.echo(f"Restore point {restore_point_id!r} deleted.")
-    except FabricError as exc:
+            if ctx.json_output:
+                render({"status": "deleted", "id": restore_point_id}, json_output=True)
+            else:
+                click.echo(f"Restore point {restore_point_id!r} deleted.")
+    except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
 
@@ -221,5 +225,5 @@ async def restore_cmd(
                     return
             await _restore_svc.restore_in_place(http, ws_id, wh_id, restore_point_id)
             click.echo(f"Warehouse restored to restore point {restore_point_id!r} successfully.")
-    except FabricError as exc:
+    except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc

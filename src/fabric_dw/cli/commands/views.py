@@ -13,6 +13,7 @@ from fabric_dw.cli.commands._utils import (
     _coro,
     build_http_client,
     build_sql_target,
+    confirm_destructive,
     load_select_body,
     parse_qualified_name,
     resolve_warehouse_arg,
@@ -86,8 +87,14 @@ async def read_cmd(
     schema, view_name = parse_qualified_name(qualified_name, kind="view")
     output_path = Path(output) if output else None
 
-    if fmt in (OutputFormat.CSV, OutputFormat.PARQUET) and output_path is None:
-        raise click.UsageError(f"--output PATH is required for {fmt!r} format.")
+    # --format takes precedence when explicitly supplied (i.e. differs from the default
+    # JSON value); if --format is omitted (or is the default "json"), the global --json
+    # flag selects JSON output.  This means --json --format csv produces CSV.
+    _json_fallback = OutputFormat.JSON.value if ctx.json_output else fmt
+    effective_fmt = fmt if fmt != OutputFormat.JSON else _json_fallback
+
+    if effective_fmt in (OutputFormat.CSV, OutputFormat.PARQUET) and output_path is None:
+        raise click.UsageError(f"--output PATH is required for {effective_fmt!r} format.")
     try:
         async with build_http_client(ctx) as http:
             target, _entry = await build_sql_target(http, ws, wh)
@@ -95,7 +102,7 @@ async def read_cmd(
                 target, schema, view_name, count=count, mode=ctx.auth
             )
             arrow_table = columns_rows_to_arrow(columns, rows)
-            write_arrow(arrow_table, fmt, output_path)
+            write_arrow(arrow_table, effective_fmt, output_path)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -211,15 +218,17 @@ async def drop_cmd(
     try:
         async with build_http_client(ctx) as http:
             target, entry = await build_sql_target(http, ws, wh)
-            confirmed = confirm(
+            if not confirm_destructive(
                 f"Drop view [{schema}].[{view_name}] from {entry.display_name!r} ({entry.id})?",
                 yes=ctx.yes,
-            )
-            if not confirmed:
+            ):
                 click.echo("Aborted.")
                 return
             await _views_svc.drop_view(target, schema, view_name, mode=ctx.auth)
-            click.echo(f"View [{schema}].[{view_name}] dropped.")
+            if ctx.json_output:
+                render({"status": "dropped", "name": f"[{schema}].[{view_name}]"}, json_output=True)
+            else:
+                click.echo(f"View [{schema}].[{view_name}] dropped.")
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 

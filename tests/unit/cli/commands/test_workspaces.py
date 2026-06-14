@@ -227,7 +227,8 @@ class TestWorkspacesSetCollation:
             )
         assert result.exit_code != 0
 
-    def test_set_collation_declined_aborts(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_set_collation_declined_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        """Declining set-collation is a clean no-op (exit 0) — decline != error (L01)."""
         _ = cache_env
         mock_http = AsyncMock()
         with patch(
@@ -244,7 +245,9 @@ class TestWorkspacesSetCollation:
                 ],
                 input="n\n",
             )
-        assert result.exit_code != 0
+        # User declined — this is a graceful no-op, not an error (exit 0).
+        assert result.exit_code == 0
+        assert "Aborted." in result.output
 
 
 # ---------------------------------------------------------------------------
