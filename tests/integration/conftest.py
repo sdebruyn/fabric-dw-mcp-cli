@@ -305,6 +305,29 @@ async def ephemeral_sql_endpoint(
                     f"SQL endpoint provisioned but id is not a valid UUID "
                     f"for lakehouse {lh_id}: {ep_id_raw!r}"
                 )
+
+            # Even after provisioningStatus=Success, the connectionString on the
+            # SQL endpoint resource itself can be empty due to eventual consistency.
+            # Poll GET /sqlEndpoints/{id} until connection_string is non-empty so
+            # that tests fetching the endpoint directly get a populated value.
+            from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
+                get_endpoint_connection_string,
+            )
+
+            try:
+                ep_conn = await get_endpoint_connection_string(
+                    http,
+                    workspace_id,
+                    ep_uuid,
+                    poll_interval=_SQL_ENDPOINT_POLL_INTERVAL_S,
+                    timeout=max(1.0, deadline - time.monotonic()),
+                )
+            except Exception as exc:
+                pytest.skip(
+                    f"SQL endpoint {ep_uuid} connection_string did not populate "
+                    f"within timeout: {exc}"
+                )
+
             wh = Warehouse.model_validate(
                 {
                     "id": str(ep_uuid),
