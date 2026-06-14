@@ -172,14 +172,17 @@ async def test_disable_403_raises_permission_denied() -> None:
 
 
 async def test_set_action_groups_patches_with_enabled_state_and_groups() -> None:
-    """set_action_groups should PATCH with state=Enabled + auditActionsAndGroups, then GET."""
+    """set_action_groups should GET current state, PATCH with state=Enabled + auditActionsAndGroups,
+    then return authoritative constructed state (no re-GET after PATCH).
+    """
     groups = ["BATCH_COMPLETED_GROUP", "FAILED_DATABASE_AUTHENTICATION_GROUP"]
-    updated = AUDIT_SETTINGS_PAYLOAD.copy()
-    updated["auditActionsAndGroups"] = groups
+    current_payload = AUDIT_SETTINGS_PAYLOAD.copy()
 
     with respx.mock:
+        get_route = respx.get(_AUDIT_URL).mock(
+            return_value=httpx.Response(200, json=current_payload)
+        )
         patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
-        get_route = respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=updated))
         client = await _make_client()
         async with client:
             result = await audit.set_action_groups(client, _WS_ID, _WH_ID, groups)
@@ -188,7 +191,8 @@ async def test_set_action_groups_patches_with_enabled_state_and_groups() -> None
     sent_body = json.loads(patch_route.calls[0].request.content)
     assert sent_body == {"state": "Enabled", "auditActionsAndGroups": groups}
 
-    assert get_route.called
+    # Exactly one GET (pre-flight) — no re-GET after PATCH.
+    assert get_route.call_count == 1
     assert isinstance(result, AuditSettings)
     assert result.action_groups == groups
 
@@ -196,15 +200,15 @@ async def test_set_action_groups_patches_with_enabled_state_and_groups() -> None
 async def test_set_action_groups_empty_list_is_valid() -> None:
     """set_action_groups with an empty list should be accepted (clears all groups)."""
     with respx.mock:
+        # Pre-flight GET to obtain current settings, then PATCH; no re-GET.
+        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=AUDIT_SETTINGS_PAYLOAD))
         respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
-        respx.get(_AUDIT_URL).mock(
-            return_value=httpx.Response(200, json=AUDIT_SETTINGS_DISABLED_PAYLOAD)
-        )
         client = await _make_client()
         async with client:
             result = await audit.set_action_groups(client, _WS_ID, _WH_ID, [])
 
     assert isinstance(result, AuditSettings)
+    assert result.action_groups == []
 
 
 @pytest.mark.parametrize(
@@ -226,8 +230,14 @@ async def test_set_action_groups_invalid_name_raises_value_error(bad_group: str)
 
 
 async def test_set_action_groups_403_raises_permission_denied() -> None:
-    """set_action_groups should propagate PermissionDeniedError on 403 from PATCH."""
+    """set_action_groups should propagate PermissionDeniedError on 403 from PATCH.
+
+    set_action_groups performs a pre-flight GET (which succeeds here) before
+    sending the PATCH that returns 403.
+    """
     with respx.mock:
+        # Pre-flight GET succeeds; PATCH returns 403.
+        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=AUDIT_SETTINGS_PAYLOAD))
         respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(403, json={"error": "forbidden"}))
         client = await _make_client()
         async with client:
@@ -240,14 +250,18 @@ async def test_set_action_groups_works_on_fresh_warehouse() -> None:
 
     Regression: the previous implementation used POST which returned EntityNotFound (404)
     on fresh warehouses.  PATCH with state=Enabled is idempotent and always works.
+
+    Now performs a pre-flight GET (which may return empty/default settings on a fresh
+    warehouse) and returns authoritative constructed state — no re-GET after PATCH.
     """
     groups = ["BATCH_COMPLETED_GROUP"]
-    updated = AUDIT_SETTINGS_PAYLOAD.copy()
-    updated["auditActionsAndGroups"] = groups
+    current_payload = AUDIT_SETTINGS_PAYLOAD.copy()
 
     with respx.mock:
+        get_route = respx.get(_AUDIT_URL).mock(
+            return_value=httpx.Response(200, json=current_payload)
+        )
         patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
-        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=updated))
         client = await _make_client()
         async with client:
             result = await audit.set_action_groups(client, _WS_ID, _WH_ID, groups)
@@ -256,19 +270,25 @@ async def test_set_action_groups_works_on_fresh_warehouse() -> None:
     sent_body = json.loads(patch_route.calls[0].request.content)
     assert sent_body["state"] == "Enabled"
     assert sent_body["auditActionsAndGroups"] == groups
+    # Exactly one GET (pre-flight) — no re-GET after PATCH.
+    assert get_route.call_count == 1
     assert isinstance(result, AuditSettings)
     assert result.action_groups == groups
 
 
 async def test_set_action_groups_ensure_enabled_false_omits_state() -> None:
-    """set_action_groups with ensure_enabled=False should NOT include state=Enabled in the PATCH."""
+    """set_action_groups with ensure_enabled=False should NOT include state=Enabled in the PATCH.
+
+    The returned state reflects the current state (from the pre-flight GET), not Enabled.
+    """
     groups = ["BATCH_COMPLETED_GROUP"]
-    updated = AUDIT_SETTINGS_PAYLOAD.copy()
-    updated["auditActionsAndGroups"] = groups
+    current_payload = AUDIT_SETTINGS_PAYLOAD.copy()  # state == "Enabled"
 
     with respx.mock:
+        get_route = respx.get(_AUDIT_URL).mock(
+            return_value=httpx.Response(200, json=current_payload)
+        )
         patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
-        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=updated))
         client = await _make_client()
         async with client:
             result = await audit.set_action_groups(
@@ -279,17 +299,22 @@ async def test_set_action_groups_ensure_enabled_false_omits_state() -> None:
     sent_body = json.loads(patch_route.calls[0].request.content)
     assert "state" not in sent_body
     assert sent_body["auditActionsAndGroups"] == groups
+    # Exactly one GET (pre-flight) — no re-GET after PATCH.
+    assert get_route.call_count == 1
     assert isinstance(result, AuditSettings)
+    assert result.action_groups == groups
+    # With ensure_enabled=False the returned state mirrors the pre-PATCH current state.
+    assert result.state == "Enabled"
 
 
 async def test_set_action_groups_ensure_enabled_true_default_includes_state() -> None:
     """set_action_groups default (ensure_enabled=True) includes state=Enabled in the PATCH."""
     groups = ["BATCH_COMPLETED_GROUP"]
-    updated = AUDIT_SETTINGS_PAYLOAD.copy()
+    current_payload = AUDIT_SETTINGS_PAYLOAD.copy()
 
     with respx.mock:
+        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=current_payload))
         patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
-        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=updated))
         client = await _make_client()
         async with client:
             await audit.set_action_groups(client, _WS_ID, _WH_ID, groups)
@@ -304,7 +329,9 @@ async def test_set_action_groups_ensure_enabled_true_default_includes_state() ->
 
 
 async def test_add_action_group_adds_missing_group() -> None:
-    """add_action_group should GET current groups, append the new one, then PATCH."""
+    """add_action_group should GET current groups, append the new one, PATCH, then return
+    authoritative constructed state (no re-GET after PATCH).
+    """
     new_group = "FAILED_DATABASE_AUTHENTICATION_GROUP"
     existing = AUDIT_SETTINGS_PAYLOAD.copy()  # has BATCH_COMPLETED_GROUP + SUCCESSFUL_...
     expected_groups = [
@@ -312,22 +339,18 @@ async def test_add_action_group_adds_missing_group() -> None:
         "SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP",
         new_group,
     ]
-    updated = AUDIT_SETTINGS_PAYLOAD.copy()
-    updated["auditActionsAndGroups"] = expected_groups
 
     with respx.mock:
         get_route = respx.get(_AUDIT_URL).mock(
-            side_effect=[
-                httpx.Response(200, json=existing),  # first GET — read current state
-                httpx.Response(200, json=updated),  # second GET — after PATCH
-            ]
+            return_value=httpx.Response(200, json=existing),  # one GET — read current state
         )
         patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
         client = await _make_client()
         async with client:
             result = await audit.add_action_group(client, _WS_ID, _WH_ID, new_group)
 
-    assert get_route.call_count == 2
+    # Exactly one GET (pre-flight) — no re-GET after PATCH.
+    assert get_route.call_count == 1
     assert patch_route.called
     sent_body = json.loads(patch_route.calls[0].request.content)
     assert sent_body["auditActionsAndGroups"] == expected_groups
