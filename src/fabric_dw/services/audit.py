@@ -343,9 +343,11 @@ async def remove_action_group(
             Enable auditing first with :func:`enable`.
         FabricError: If eventual-consistency polling times out before the removed
             group disappears from the API response (see issue #205).  The
-            timeout is 90 s to accommodate slow propagation observed in
-            practice for groups such as
-            ``SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP``.
+            timeout is 180 s with exponential-like backoff (2 s → 10 s cap)
+            to accommodate slow propagation observed in practice for groups
+            such as ``SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP``.  When the
+            group is already absent the function returns immediately without
+            polling.
         PermissionDeniedError: If the caller lacks the required permission (HTTP 403).
         NotFoundError: If the warehouse does not exist (HTTP 404).
     """
@@ -363,6 +365,7 @@ async def remove_action_group(
         raise ValueError(msg)
 
     if group not in current.action_groups:
+        # Group already absent — idempotent success, no PATCH or polling needed.
         return current
 
     new_groups = [g for g in current.action_groups if g != group]
@@ -375,17 +378,21 @@ async def remove_action_group(
     )
     # The ``/settings/sqlAudit`` PATCH endpoint has eventual consistency: a
     # GET immediately after PATCH may still return the old action-group list.
-    # Poll until the removed group is absent from the response (up to 90 s),
+    # Poll until the removed group is absent from the response (up to 180 s),
     # then raise FabricError so callers are never silently handed stale data.
-    # 90 s (was 30 s) — observed propagation delays for groups such as
-    # SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP can exceed 30 s in practice.
+    # 180 s (was 90 s) — observed propagation delays for groups such as
+    # SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP can exceed 90 s in practice
+    # when the Fabric backend is under load.  Exponential-like backoff is used
+    # to reduce the number of GET calls during slow-propagation windows.
     poll_interval_s = 2.0
-    max_wait_s = 90.0
+    max_poll_interval_s = 10.0
+    max_wait_s = 180.0
     waited = 0.0
     refreshed = await get_settings(http, workspace_id, warehouse_id)
     while group in refreshed.action_groups and waited < max_wait_s:
         await asyncio.sleep(poll_interval_s)
         waited += poll_interval_s
+        poll_interval_s = min(poll_interval_s * 1.5, max_poll_interval_s)
         refreshed = await get_settings(http, workspace_id, warehouse_id)
     if group in refreshed.action_groups:
         msg = (
