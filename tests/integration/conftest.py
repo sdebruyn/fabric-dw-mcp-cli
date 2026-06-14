@@ -32,7 +32,7 @@ _SQL_READINESS_BACKOFF_MAX_S = 5.0
 # Maximum time (seconds) to wait for a freshly-created snapshot to appear in
 # sys.databases on the parent warehouse's SQL connection and report a non-null
 # TIMESTAMP property (i.e. be ready for ALTER DATABASE … SET TIMESTAMP = …).
-_SNAP_SQL_READINESS_TIMEOUT_S = 300
+_SNAP_SQL_READINESS_TIMEOUT_S = 300.0
 # Polling interval (seconds) between snapshot readiness probes.
 _SNAP_SQL_READINESS_POLL_S = 5.0
 
@@ -137,14 +137,14 @@ async def _wait_for_snapshot_sql_readiness(
         "SELECT DATABASEPROPERTYEX(v.name, 'TIMESTAMP') AS snapshot_ts "
         "FROM sys.databases AS v "
         "INNER JOIN sys.databases AS s ON v.source_database_id = s.database_id "
-        "WHERE v.name = ?;"
+        "WHERE v.name = ? AND s.database_id = DB_ID(?);"
     )
 
     def _probe() -> bool:
         _cols, rows = run_query(
             parent_target,
             readiness_sql,
-            params=(snapshot_name,),
+            params=(snapshot_name, parent_target.database),
             fetch="all",
         )
         if not rows:
