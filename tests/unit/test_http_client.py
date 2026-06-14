@@ -16,6 +16,7 @@ from azure.core.credentials import AccessToken
 from azure.core.credentials_async import AsyncTokenCredential
 from freezegun import freeze_time
 
+from fabric_dw.auth import FABRIC_SCOPE, SQL_SCOPE
 from fabric_dw.exceptions import (
     AuthError,
     BadRequestError,
@@ -1356,3 +1357,148 @@ async def test_post_5xx_is_retried() -> None:
                 await client.request("POST", HttpBase.FABRIC, "/items", json={"x": 1})
 
     assert call_count == 3, f"POST 5xx must be retried 3 times (tenacity budget); got {call_count}"
+
+
+# ---------------------------------------------------------------------------
+# C04: poll_operation malformed Retry-After must not crash
+# ---------------------------------------------------------------------------
+
+
+async def test_poll_operation_malformed_retry_after_uses_fallback() -> None:
+    """poll_operation must survive a malformed Retry-After header (C04).
+
+    A garbage value must not propagate as an exception — _parse_retry_after
+    always returns a float (0.0 on failure), and poll_operation falls back to
+    poll_interval when it gets 0.0 from a non-null header.
+    """
+    poll_count = 0
+    sleep_durations: list[float] = []
+    original_sleep = asyncio.sleep
+
+    async def mock_sleep(seconds: float) -> None:
+        sleep_durations.append(seconds)
+        await original_sleep(0)
+
+    def side_effect(_request: httpx.Request) -> httpx.Response:
+        nonlocal poll_count
+        poll_count += 1
+        if poll_count == 1:
+            return httpx.Response(
+                202,
+                headers={"Retry-After": "not-a-date-or-number"},
+                json={"status": "Running"},
+            )
+        return httpx.Response(200, json={"status": "Succeeded"})
+
+    with respx.mock:
+        respx.get("https://api.fabric.microsoft.com/v1/operations/op-c04").mock(
+            side_effect=side_effect
+        )
+
+        client = FabricHttpClient(credential=_make_credential(), rps=10, poll_interval=0.5)
+        async with client:
+            with unittest.mock.patch("asyncio.sleep", side_effect=mock_sleep):
+                result = await client.poll_operation(
+                    "https://api.fabric.microsoft.com/v1/operations/op-c04"
+                )
+
+    assert result["status"] == "Succeeded"
+    # Must have slept once (falling back to poll_interval on malformed header)
+    assert len(sleep_durations) >= 1, f"Expected at least 1 sleep; got {sleep_durations}"
+    # The sleep duration should be around poll_interval (0.5 s), not 0.
+    assert all(d > 0 for d in sleep_durations), (
+        f"All sleeps must be positive (fallback to poll_interval); got {sleep_durations}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# C06: per-scope token cache
+# ---------------------------------------------------------------------------
+
+
+async def test_get_token_caches_per_scope() -> None:
+    """_get_token must maintain separate cache entries per scope (C06).
+
+    Fetching a token for FABRIC_SCOPE and then for SQL_SCOPE must produce
+    two separate get_token calls (one per scope), not reuse the FABRIC_SCOPE
+    token for the SQL request.
+    """
+    scopes_requested: list[str] = []
+
+    async def tracking_get_token(scope: str, *_: object, **__: object) -> AccessToken:
+        scopes_requested.append(scope)
+        return AccessToken(token=f"token-for-{scope}", expires_on=int(time.time()) + 3600)
+
+    cred = MagicMock(spec=AsyncTokenCredential)
+    cred.get_token = AsyncMock(side_effect=tracking_get_token)
+
+    client = FabricHttpClient(credential=cred, rps=10)
+    async with client:
+        tok_fabric = await client._get_token(FABRIC_SCOPE)  # type: ignore[attr-defined]
+        tok_sql = await client._get_token(SQL_SCOPE)  # type: ignore[attr-defined]
+        # Second call for each scope should be from cache (token not expired)
+        tok_fabric2 = await client._get_token(FABRIC_SCOPE)  # type: ignore[attr-defined]
+
+    assert tok_fabric == f"token-for-{FABRIC_SCOPE}"
+    assert tok_sql == f"token-for-{SQL_SCOPE}"
+    # Cache hit: third call must NOT trigger another credential fetch
+    assert tok_fabric2 == tok_fabric
+    assert scopes_requested.count(FABRIC_SCOPE) == 1, (
+        f"Expected 1 fetch for FABRIC_SCOPE; got {scopes_requested.count(FABRIC_SCOPE)}"
+    )
+    assert scopes_requested.count(SQL_SCOPE) == 1, (
+        f"Expected 1 fetch for SQL_SCOPE; got {scopes_requested.count(SQL_SCOPE)}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# C16: iter_paginated non-dict page body is handled gracefully
+# ---------------------------------------------------------------------------
+
+
+async def test_iter_paginated_non_dict_page_does_not_crash() -> None:
+    """iter_paginated must not crash when a page body is not a dict (C16).
+
+    A list or null JSON body should produce zero items and stop pagination
+    cleanly, not crash with AttributeError on .get().
+    """
+    with respx.mock:
+        respx.get("https://api.fabric.microsoft.com/v1/items").mock(
+            return_value=httpx.Response(200, json=[{"id": "x"}, {"id": "y"}])
+        )
+
+        client = await _get_client()
+        async with client:
+            items = [item async for item in client.iter_paginated(HttpBase.FABRIC, "/items")]
+
+    # Non-dict body → no items yielded, no exception raised
+    assert items == [], f"Expected empty list for non-dict page; got {items}"
+
+
+# ---------------------------------------------------------------------------
+# C27: combined retry deadline bounds overall wait
+# ---------------------------------------------------------------------------
+
+
+async def test_combined_deadline_aborts_429_loop() -> None:
+    """A combined_deadline_s that has already elapsed must abort the 429-loop (C27).
+
+    Sets combined_deadline_s=0 so the deadline is immediately in the past.
+    The first iteration of _do_request must detect this and raise RateLimitedError
+    rather than entering the 429 retry loop at all.
+    """
+    with respx.mock:
+        # The route is registered but should never be hit because the deadline
+        # is already past before any request is made.
+        respx.get("https://api.fabric.microsoft.com/v1/items").mock(
+            return_value=httpx.Response(200, json={})
+        )
+
+        client = FabricHttpClient(
+            credential=_make_credential(),
+            rps=10,
+            combined_deadline_s=0,  # deadline already expired
+        )
+        async with client:
+            with pytest.raises(RateLimitedError, match="deadline"):
+                await client.request("GET", HttpBase.FABRIC, "/items")
