@@ -29,6 +29,13 @@ _SQL_READINESS_BACKOFF_INITIAL_S = 2.0
 # Maximum backoff delay cap (seconds).
 _SQL_READINESS_BACKOFF_MAX_S = 5.0
 
+# Maximum time (seconds) to wait for a freshly-created snapshot to appear in
+# sys.databases on the parent warehouse's SQL connection and report a non-null
+# TIMESTAMP property (i.e. be ready for ALTER DATABASE … SET TIMESTAMP = …).
+_SNAP_SQL_READINESS_TIMEOUT_S = 300.0
+# Polling interval (seconds) between snapshot readiness probes.
+_SNAP_SQL_READINESS_POLL_S = 5.0
+
 
 async def _wait_for_sql_readiness(
     target: SqlTarget,
@@ -98,6 +105,78 @@ async def _wait_for_sql_readiness(
         delay = min(delay * 1.5, _SQL_READINESS_BACKOFF_MAX_S)
 
 
+async def _wait_for_snapshot_sql_readiness(
+    parent_target: SqlTarget,
+    snapshot_name: str,
+    *,
+    timeout_s: float = _SNAP_SQL_READINESS_TIMEOUT_S,
+) -> None:
+    """Poll the parent warehouse until *snapshot_name* appears in sys.databases and is ready.
+
+    A freshly-created warehouse snapshot takes additional time to provision at the SQL
+    layer after the REST LRO has completed.  During this window, ``ALTER DATABASE … SET
+    TIMESTAMP`` fails with a not-ready error.  This function waits until the snapshot's
+    TIMESTAMP property is non-null in ``sys.databases`` — the authoritative SQL-layer
+    signal that the snapshot is ready — before yielding control back to the fixture.
+
+    The query runs against the PARENT warehouse connection (per Microsoft docs, a
+    warehouse's snapshots are visible via ``sys.databases`` on the parent).
+
+    Args:
+        parent_target: The :class:`~fabric_dw.sql.SqlTarget` for the parent warehouse.
+        snapshot_name: The display name of the snapshot to wait for.
+        timeout_s: Total seconds to wait before giving up.
+
+    Raises:
+        TimeoutError: When the snapshot is still not SQL-ready after *timeout_s*.
+    """
+    # The sys.databases query looks for the snapshot by name and returns a
+    # non-null TIMESTAMP when the snapshot is accessible.  A NULL result (or no
+    # row) means the snapshot is still provisioning.
+    readiness_sql = (
+        "SELECT DATABASEPROPERTYEX(v.name, 'TIMESTAMP') AS snapshot_ts "
+        "FROM sys.databases AS v "
+        "INNER JOIN sys.databases AS s ON v.source_database_id = s.database_id "
+        "WHERE v.name = ? AND s.database_id = DB_ID(?);"
+    )
+
+    def _probe() -> bool:
+        _cols, rows = run_query(
+            parent_target,
+            readiness_sql,
+            params=(snapshot_name, parent_target.database),
+            fetch="all",
+        )
+        if not rows:
+            return False
+        snapshot_ts = rows[0][0]
+        return snapshot_ts is not None
+
+    deadline = time.monotonic() + timeout_s
+    while True:
+        try:
+            ready = await asyncio.to_thread(_probe)
+        except Exception as exc:
+            # Swallow transient connection errors during the wait — the parent
+            # warehouse itself may be briefly unreachable.
+            if not is_transient_connection_error(exc):
+                raise
+            ready = False
+
+        if ready:
+            return
+
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                f"Snapshot {snapshot_name!r} on parent {parent_target.database!r} "
+                f"(workspace {parent_target.workspace_id}) did not become SQL-ready "
+                f"within {timeout_s:.0f}s. "
+                "The snapshot database may still be provisioning at the SQL layer."
+            )
+
+        await asyncio.sleep(_SNAP_SQL_READINESS_POLL_S)
+
+
 @pytest_asyncio.fixture
 async def workspace_id() -> UUID:
     raw = os.environ.get("FABRIC_TEST_WORKSPACE_ID")
@@ -150,6 +229,23 @@ async def ephemeral_snapshot(
     name = f"pytest-{uuid.uuid4().hex[:8]}-snap"
     snap = await snapshots.create(http, workspace_id, ephemeral_warehouse.id, name)
     try:
+        # Wait for the snapshot to become SQL-ready on the parent warehouse
+        # connection before yielding.  The REST LRO completing (above) only means
+        # the Fabric control-plane has created the snapshot resource; the SQL layer
+        # needs additional time to provision the snapshot database.  Without this
+        # wait, roll_timestamp fails with the snapshot-not-ready error for the
+        # full retry window, causing test_roll_timestamp_updates_snapshot to time
+        # out.  The authoritative readiness signal is a non-null TIMESTAMP property
+        # in sys.databases on the parent warehouse connection.
+        assert ephemeral_warehouse.connection_string, (
+            f"Parent warehouse {ephemeral_warehouse.id} has no connection_string"
+        )
+        parent_target = SqlTarget(
+            workspace_id=str(workspace_id),
+            database=ephemeral_warehouse.name,
+            connection_string=ephemeral_warehouse.connection_string,
+        )
+        await _wait_for_snapshot_sql_readiness(parent_target, snap.name)
         yield snap
     finally:
         await snapshots.delete(http, workspace_id, snap.id)

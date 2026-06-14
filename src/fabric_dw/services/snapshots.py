@@ -32,7 +32,7 @@ __all__ = [
 _SNAP_READY_POLL_INTERVAL_S: float = 4.0
 # Total time (seconds) to wait for the snapshot DB to become ready before
 # giving up and raising FabricError.
-_SNAP_READY_TIMEOUT_S: float = 240.0
+_SNAP_READY_TIMEOUT_S: float = 300.0
 
 # Characters / sequences that could enable SQL injection in a bracket-quoted name.
 # This is a strict blocklist: snapshot names are NOT passed through
