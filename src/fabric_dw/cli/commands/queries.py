@@ -8,11 +8,12 @@ from datetime import datetime
 import click
 
 from fabric_dw.cli._context import CliContext
-from fabric_dw.cli._render import confirm, render
+from fabric_dw.cli._render import render
 from fabric_dw.cli.commands._utils import (
     _coro,
     build_http_client,
     build_sql_target,
+    confirm_destructive,
     parse_iso_datetime,
     resolve_warehouse_arg,
     resolve_workspace_arg,
@@ -75,7 +76,7 @@ async def list_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> 
                 json_output=ctx.json_output,
                 table_title="Running Queries",
             )
-    except FabricError as exc:
+    except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
 
@@ -97,7 +98,7 @@ async def list_connections_cmd(ctx: CliContext, workspace: str | None, item: str
                 json_output=ctx.json_output,
                 table_title="SQL Connections",
             )
-    except FabricError as exc:
+    except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
 
@@ -116,15 +117,17 @@ async def kill_cmd(
     try:
         async with build_http_client(ctx) as http:
             target, entry = await build_sql_target(http, ws, wh)
-            confirmed = confirm(
+            if not confirm_destructive(
                 f"Kill session {session_id} on {entry.display_name!r} ({entry.id})?",
                 yes=ctx.yes,
-            )
-            if not confirmed:
+            ):
                 click.echo("Aborted.")
                 return
             await _queries_svc.kill(target, session_id, mode=ctx.auth)
-            click.echo(f"Session {session_id} killed.")
+            if ctx.json_output:
+                render({"status": "killed", "session_id": session_id}, json_output=True)
+            else:
+                click.echo(f"Session {session_id} killed.")
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -166,7 +169,7 @@ async def request_history_cmd(
                 json_output=ctx.json_output,
                 table_title="Request History",
             )
-    except FabricError as exc:
+    except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
 
@@ -207,7 +210,7 @@ async def session_history_cmd(
                 json_output=ctx.json_output,
                 table_title="Session History",
             )
-    except FabricError as exc:
+    except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
 
@@ -248,7 +251,7 @@ async def frequent_cmd(
                 json_output=ctx.json_output,
                 table_title="Frequently Run Queries",
             )
-    except FabricError as exc:
+    except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
 
@@ -289,5 +292,5 @@ async def long_running_cmd(
                 json_output=ctx.json_output,
                 table_title="Long Running Queries",
             )
-    except FabricError as exc:
+    except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc

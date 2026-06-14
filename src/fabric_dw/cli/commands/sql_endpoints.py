@@ -47,15 +47,19 @@ async def list_cmd(ctx: CliContext, workspace: str | None, all_workspaces: bool)
     Pass -A / --all-workspaces to scan every visible workspace instead.
     WORKSPACE and --all-workspaces are mutually exclusive; exactly one is required.
     """
-    validate_workspace_or_all_workspaces(workspace, all_workspaces)
+    # Resolve the workspace default before the XOR validation so that a
+    # configured default-workspace (env / config file) is honoured when no
+    # positional arg is passed but --all-workspaces is also absent.
+    resolved_workspace = None if all_workspaces else resolve_workspace_arg(ctx, workspace)
+    validate_workspace_or_all_workspaces(resolved_workspace, all_workspaces)
     try:
         async with build_http_client(ctx) as http:
             if all_workspaces:
                 items = await _sql_endpoints_svc.list_all_workspaces(http)
             else:
+                assert resolved_workspace is not None  # noqa: S101 - validated above
                 resolver, _ = make_resolver(http)
-                assert workspace is not None  # noqa: S101 - guarded above
-                ws_id = await resolver.workspace_id(workspace)
+                ws_id = await resolver.workspace_id(resolved_workspace)
                 items = await _sql_endpoints_svc.list_endpoints(http, ws_id)
             render(
                 [ep.model_dump(by_alias=True, mode="json") for ep in items],

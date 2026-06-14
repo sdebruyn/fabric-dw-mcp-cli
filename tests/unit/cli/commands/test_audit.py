@@ -192,11 +192,12 @@ class TestAuditEnable:
     def test_enable_retention_days_zero_is_rejected(
         self, runner: CliRunner, cache_env: Path
     ) -> None:
-        """--retention-days 0 must be rejected with a usage error (use --unlimited instead)."""
+        """--retention-days 0 must be rejected with a usage error (click.IntRange >= 1)."""
         _ = cache_env
         result = runner.invoke(cli, ["audit", "enable", WS_GUID, WH_GUID, "--retention-days", "0"])
         assert result.exit_code != 0
-        assert "--unlimited" in result.output
+        # click.IntRange validation message; the hint to use --unlimited is in the --help text.
+        assert "x>=1" in result.output or ">=1" in result.output or "range" in result.output
 
     def test_enable_retention_days_negative_is_rejected(
         self, runner: CliRunner, cache_env: Path
@@ -311,6 +312,20 @@ class TestAuditSetRetention:
             result = runner.invoke(
                 cli, ["audit", "set-retention", WS_GUID, WH_GUID, "--days", "9999"]
             )
+        assert result.exit_code != 0
+
+    def test_set_retention_zero_is_rejected(self, runner: CliRunner, cache_env: Path) -> None:
+        """--days 0 must be rejected client-side (L24: >= 1 validation)."""
+        _ = cache_env
+        result = runner.invoke(cli, ["audit", "set-retention", WS_GUID, WH_GUID, "--days", "0"])
+        assert result.exit_code != 0
+        # click.IntRange validation message should appear.
+        assert "range" in result.output
+
+    def test_set_retention_negative_is_rejected(self, runner: CliRunner, cache_env: Path) -> None:
+        """--days -1 must be rejected client-side (L24: >= 1 validation)."""
+        _ = cache_env
+        result = runner.invoke(cli, ["audit", "set-retention", WS_GUID, WH_GUID, "--days", "-1"])
         assert result.exit_code != 0
 
     def test_set_retention_no_precheck_sends_patch_directly(

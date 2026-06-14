@@ -49,7 +49,7 @@ async def list_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> 
                 json_output=ctx.json_output,
                 table_title="Snapshots",
             )
-    except FabricError as exc:
+    except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
 
@@ -151,8 +151,14 @@ async def delete_cmd(ctx: CliContext, workspace: str, snapshot: str) -> None:
                 cache=cache,
                 name=entry.display_name or None,
             )
-            click.echo(f"Snapshot {entry.display_name!r} ({entry.id}) deleted.")
-    except FabricError as exc:
+            if ctx.json_output:
+                render(
+                    {"status": "deleted", "name": entry.display_name, "id": str(entry.id)},
+                    json_output=True,
+                )
+            else:
+                click.echo(f"Snapshot {entry.display_name!r} ({entry.id}) deleted.")
+    except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
 
@@ -197,6 +203,9 @@ async def roll_cmd(
                 click.echo("Aborted.")
                 return
             await _snapshots_svc.roll_timestamp(target, snapshot_name, parsed_dt, mode=ctx.auth)
-            click.echo(f"Snapshot {snapshot_name!r} rolled.")
+            if ctx.json_output:
+                render({"status": "rolled", "name": snapshot_name}, json_output=True)
+            else:
+                click.echo(f"Snapshot {snapshot_name!r} rolled.")
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc

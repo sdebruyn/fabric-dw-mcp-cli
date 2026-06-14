@@ -40,7 +40,7 @@ async def get_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> N
             ws_id, entry = await _resolve_item(http, ws, wh)
             obj = await _audit_svc.get_settings(http, ws_id, entry.id)
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
-    except FabricError as exc:
+    except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
 
@@ -51,7 +51,7 @@ async def get_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> N
     "--retention-days",
     "retention_days",
     default=None,
-    type=int,
+    type=click.IntRange(min=1),
     help="Audit log retention in days (>= 1). Mutually exclusive with --unlimited.",
 )
 @click.option(
@@ -77,12 +77,16 @@ async def enable_cmd(
     """
     if retention_days is not None and unlimited:
         raise click.UsageError("--retention-days and --unlimited are mutually exclusive.")
-    if retention_days is not None and retention_days < 1:
-        raise click.UsageError("--retention-days must be >= 1; use --unlimited for no limit.")
     # Map to service value: 0 means unlimited.
-    effective_days: int = 0
-    if retention_days is not None:
+    # Explicit branch for each case to make the intent clear.
+    effective_days: int
+    if unlimited:
+        effective_days = 0
+    elif retention_days is not None:
         effective_days = retention_days
+    else:
+        # No flag supplied — default to unlimited retention.
+        effective_days = 0
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, item)
     try:
@@ -115,7 +119,7 @@ async def disable_cmd(ctx: CliContext, workspace: str | None, item: str | None) 
                 return
             obj = await _audit_svc.disable(http, ws_id, entry.id)
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
-    except FabricError as exc:
+    except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
 
@@ -125,7 +129,7 @@ async def disable_cmd(ctx: CliContext, workspace: str | None, item: str | None) 
 @click.option(
     "--days",
     required=True,
-    type=int,
+    type=click.IntRange(min=1),
     help="Retention period in days (>= 1). Does not change the audit enabled/disabled state.",
 )
 @click.pass_obj

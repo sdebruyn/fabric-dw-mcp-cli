@@ -117,6 +117,9 @@ async def delete_cmd(
             await _schemas_svc.delete_schema(
                 target, name, cascade=cascade, kind=entry.kind, mode=ctx.auth
             )
-            click.echo(f"Schema [{name}] dropped.")
+            if ctx.json_output:
+                render({"status": "dropped", "name": f"[{name}]"}, json_output=True)
+            else:
+                click.echo(f"Schema [{name}] dropped.")
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc

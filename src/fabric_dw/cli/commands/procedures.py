@@ -12,6 +12,7 @@ from fabric_dw.cli.commands._utils import (
     _coro,
     build_http_client,
     build_sql_target,
+    confirm_destructive,
     load_select_body,
     parse_qualified_name,
     resolve_warehouse_arg,
@@ -172,15 +173,17 @@ async def drop_cmd(
     try:
         async with build_http_client(ctx) as http:
             target, entry = await build_sql_target(http, ws, wh)
-            confirmed = confirm(
+            if not confirm_destructive(
                 f"Drop procedure [{schema}].[{proc_name}] from"
                 f" {entry.display_name!r} ({entry.id})?",
                 yes=ctx.yes,
-            )
-            if not confirmed:
+            ):
                 click.echo("Aborted.")
                 return
             await _procs_svc.drop_procedure(target, schema, proc_name, mode=ctx.auth)
-            click.echo(f"Procedure [{schema}].[{proc_name}] dropped.")
+            if ctx.json_output:
+                render({"status": "dropped", "name": f"[{schema}].[{proc_name}]"}, json_output=True)
+            else:
+                click.echo(f"Procedure [{schema}].[{proc_name}] dropped.")
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
