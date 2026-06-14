@@ -76,9 +76,9 @@ class Warehouse(_FabricBase):
 
         kind_val = d.get("kind")
         conn_string: Any = None
-        if kind_val in {WarehouseKind.WAREHOUSE, WarehouseKind.WAREHOUSE.value}:
+        if kind_val == WarehouseKind.WAREHOUSE:
             conn_string = props_dict.get("connectionString")
-        elif kind_val in {WarehouseKind.SQL_ENDPOINT, WarehouseKind.SQL_ENDPOINT.value}:
+        elif kind_val == WarehouseKind.SQL_ENDPOINT:
             sql_ep = props_dict.get("sqlEndpointProperties")
             sql_ep_dict: dict[str, Any] = sql_ep if isinstance(sql_ep, dict) else {}
             conn_string = sql_ep_dict.get("connectionString")
