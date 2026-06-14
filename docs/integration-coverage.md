@@ -40,7 +40,7 @@ during these tests.
 | `sql-endpoints refresh` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_sql_endpoints.py#L131) | ✅ | ✅ |
 | `sql-endpoints permissions` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_permissions.py#L70) [^endpoint-permissions] | ✅ | ✅ |
 
-[^endpoint-permissions]: `sql-endpoints permissions` delegates to `permissions.list_item_access`, which is item-type-agnostic. The integration test at line 70 exercises the non-admin error path against a live warehouse item (the same code path the endpoint follows); the admin happy-path (lines 44 and 57) is conditionally skipped unless `FABRIC_TEST_IS_ADMIN=1` is set.
+[^endpoint-permissions]: `sql-endpoints permissions` delegates to `permissions.list_item_access`, which is item-type-agnostic. The integration test at line 70 exercises the non-admin error path against a live warehouse item (the same code path the endpoint follows); the admin happy-path (lines 44 and 57) is conditionally skipped unless `FABRIC_TEST_IS_TENANT_ADMIN=1` is set. Note: `FABRIC_TEST_IS_TENANT_ADMIN` gates the **tenant-level Fabric Administrator** role (distinct from workspace-level Admin/Contributor membership), which is required to call the `/v1/admin/...` endpoints.
 
 ### SQL Pools
 
@@ -54,7 +54,6 @@ during these tests.
 | `sql-pools delete` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_sql_pools.py#L59) | ✅ | ✅ |
 | `sql-pools enable` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_sql_pools.py#L28) | ✅ | ✅ |
 | `sql-pools disable` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_sql_pools.py#L28) | ✅ | ✅ |
-| `sql-pools reset` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_sql_pools.py#L112) | ✅ | ✅ |
 | `sql-pools insights` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_query_insights.py#L82) | ✅ | ✅ |
 
 [^pools-list]: `list_sql_pools` reads the same configuration response as `get_configuration`; the `test_get_configuration_returns_model` test covers that path.

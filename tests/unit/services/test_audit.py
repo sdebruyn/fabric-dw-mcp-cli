@@ -10,7 +10,7 @@ import httpx
 import pytest
 import respx
 
-from fabric_dw.exceptions import PermissionDeniedError
+from fabric_dw.exceptions import FabricError, PermissionDeniedError
 from fabric_dw.models import AuditSettings
 from fabric_dw.services import audit
 from tests.unit.services._helpers import _make_client
@@ -478,19 +478,58 @@ async def test_remove_action_group_403_raises_permission_denied() -> None:
                 await audit.remove_action_group(client, _WS_ID, _WH_ID, "BATCH_COMPLETED_GROUP")
 
 
+async def test_remove_action_group_timeout_raises_fabric_error() -> None:
+    """remove_action_group raises FabricError when the group is still present after polling.
+
+    If eventual consistency never resolves within max_wait_s, the function must
+    raise FabricError rather than silently returning stale data that still contains
+    the group the caller just asked to remove.
+
+    The test patches asyncio.sleep to be instant (so the loop runs at full speed)
+    and makes every GET return the group still present, simulating a permanently
+    stuck backend.  After max_wait_s / poll_interval_s iterations the function
+    must raise rather than return.
+    """
+    from unittest.mock import AsyncMock, patch  # noqa: PLC0415
+
+    group = "BATCH_COMPLETED_GROUP"
+    existing = AUDIT_SETTINGS_PAYLOAD.copy()  # group is present in every GET
+
+    with respx.mock:
+        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=existing))
+        respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        client = await _make_client()
+        async with client:
+            with (
+                patch("fabric_dw.services.audit.asyncio.sleep", new=AsyncMock()),
+                pytest.raises(FabricError, match="still present"),
+            ):
+                await audit.remove_action_group(client, _WS_ID, _WH_ID, group)
+
+
 # ---------------------------------------------------------------------------
 # set_retention
 # ---------------------------------------------------------------------------
 
 
 async def test_set_retention_patches_with_retention_days_only() -> None:
-    """set_retention should PATCH with only retentionDays (no state), then GET and return fresh."""
+    """set_retention should PATCH with only retentionDays (no state), then GET and return fresh.
+
+    set_retention performs a pre-flight GET to verify audit is enabled, then
+    sends a PATCH with only ``retentionDays``, then GETs fresh state.
+    """
+    enabled = AUDIT_SETTINGS_PAYLOAD.copy()
     updated = AUDIT_SETTINGS_PAYLOAD.copy()
     updated["retentionDays"] = 90
 
     with respx.mock:
         patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
-        get_route = respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=updated))
+        get_route = respx.get(_AUDIT_URL).mock(
+            side_effect=[
+                httpx.Response(200, json=enabled),  # pre-flight GET (audit is enabled)
+                httpx.Response(200, json=updated),  # re-fetch after PATCH
+            ]
+        )
         client = await _make_client()
         async with client:
             result = await audit.set_retention(client, _WS_ID, _WH_ID, days=90)
@@ -500,7 +539,7 @@ async def test_set_retention_patches_with_retention_days_only() -> None:
     assert sent_body == {"retentionDays": 90}
     assert "state" not in sent_body
 
-    assert get_route.called
+    assert get_route.call_count == 2
     assert isinstance(result, AuditSettings)
     assert result.retention_days == 90
 
@@ -519,13 +558,20 @@ async def test_set_retention_boundary_values_are_accepted(days: int) -> None:
     """set_retention should accept boundary values: 1 (minimum) and 3650 (large plausible value).
 
     The API does not document an upper bound, so any value >= 1 is valid client-side.
+    set_retention performs a pre-flight GET (audit enabled) before the PATCH.
     """
+    enabled = AUDIT_SETTINGS_PAYLOAD.copy()  # state == "Enabled"
     updated = AUDIT_SETTINGS_PAYLOAD.copy()
     updated["retentionDays"] = days
 
     with respx.mock:
         respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
-        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=updated))
+        respx.get(_AUDIT_URL).mock(
+            side_effect=[
+                httpx.Response(200, json=enabled),  # pre-flight GET
+                httpx.Response(200, json=updated),  # re-fetch after PATCH
+            ]
+        )
         client = await _make_client()
         async with client:
             result = await audit.set_retention(client, _WS_ID, _WH_ID, days=days)
@@ -533,31 +579,36 @@ async def test_set_retention_boundary_values_are_accepted(days: int) -> None:
     assert result.retention_days == days
 
 
-async def test_set_retention_disabled_audit_sends_patch_to_server() -> None:
-    """set_retention no longer pre-checks audit state; it sends PATCH and lets the server decide.
+async def test_set_retention_disabled_audit_raises_value_error() -> None:
+    """set_retention raises ValueError when audit is disabled (pre-flight GET check).
 
-    The old pre-flight GET was racy (another caller could disable audit between the
-    GET and the PATCH).  The new behaviour sends the PATCH directly and lets the
-    server reject invalid states.
+    Setting retention while auditing is disabled is meaningless — the Fabric
+    service accepts the PATCH silently but the setting has no observable effect.
+    A pre-flight GET is performed and ``ValueError`` is raised eagerly so callers
+    get a clear signal to enable auditing first.
     """
-    updated = AUDIT_SETTINGS_PAYLOAD.copy()
-    updated["retentionDays"] = 30
-
     with respx.mock:
+        get_route = respx.get(_AUDIT_URL).mock(
+            return_value=httpx.Response(200, json=AUDIT_SETTINGS_DISABLED_PAYLOAD)
+        )
         patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
-        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=updated))
         client = await _make_client()
         async with client:
-            result = await audit.set_retention(client, _WS_ID, _WH_ID, days=30)
+            with pytest.raises(ValueError, match="disabled"):
+                await audit.set_retention(client, _WS_ID, _WH_ID, days=30)
 
-    assert patch_route.called
-    assert isinstance(result, AuditSettings)
+    assert get_route.call_count == 1
+    assert not patch_route.called
 
 
 async def test_set_retention_403_raises_permission_denied() -> None:
-    """set_retention should propagate PermissionDeniedError on 403 from PATCH."""
+    """set_retention should propagate PermissionDeniedError on 403 from PATCH.
+
+    set_retention performs a pre-flight GET (which succeeds here — audit is
+    enabled) before sending the PATCH that returns 403.
+    """
     with respx.mock:
-        # GET succeeds (audit enabled), PATCH returns 403
+        # pre-flight GET succeeds (audit enabled), PATCH returns 403
         respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=AUDIT_SETTINGS_PAYLOAD))
         respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(403, json={"error": "forbidden"}))
         client = await _make_client()

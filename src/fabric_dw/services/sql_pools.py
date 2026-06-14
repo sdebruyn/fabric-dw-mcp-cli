@@ -35,7 +35,6 @@ __all__ = [
     "disable",
     "enable",
     "get_configuration",
-    "reset_pools",
     "update_configuration",
     "update_pool",
 ]
@@ -371,44 +370,6 @@ async def delete_pool(
         {
             "customSQLPoolsEnabled": current.custom_sql_pools_enabled,
             "customSQLPools": [p.model_dump(by_alias=True, mode="json") for p in new_pools],
-        }
-    )
-    return await update_configuration(http, workspace_id, new_config)
-
-
-async def reset_pools(
-    http: FabricHttpClient,
-    workspace_id: UUID,
-) -> SqlPoolsConfiguration | None:
-    """Clear all custom pools for a workspace, preserving the enabled flag.
-
-    Fetches the current configuration, replaces ``customSQLPools`` with an
-    empty list, and PATCHes.  ``customSQLPoolsEnabled`` is left unchanged.
-
-    If the workspace has never been provisioned (GET returns 404), the endpoint
-    is already in the desired empty state.  ``None`` is returned to indicate
-    that no configuration exists rather than fabricating a sentinel value.
-
-    Args:
-        http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
-        workspace_id: The Fabric workspace UUID.
-
-    Returns:
-        The updated :class:`~fabric_dw.models.SqlPoolsConfiguration`, or
-        ``None`` if the workspace has no SQL pools configuration (never
-        provisioned — GET returned 404).
-
-    Raises:
-        PermissionDeniedError: If the caller does not have the workspace admin role.
-    """
-    try:
-        current = await get_configuration(http, workspace_id)
-    except NotFoundError:
-        return None
-    new_config = SqlPoolsConfiguration.model_validate(
-        {
-            "customSQLPoolsEnabled": current.custom_sql_pools_enabled,
-            "customSQLPools": [],
         }
     )
     return await update_configuration(http, workspace_id, new_config)

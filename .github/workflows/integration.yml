@@ -178,6 +178,7 @@ jobs:
         env:
           FABRIC_TEST_WORKSPACE_ID: ${{ secrets.FABRIC_TEST_WORKSPACE_ID }}
           FABRIC_AUTH: default
+          FABRIC_TEST_IS_TENANT_ADMIN: "true"
         run: uv run pytest tests/integration -m integration -v
 
       - name: Post-test full workspace wipe

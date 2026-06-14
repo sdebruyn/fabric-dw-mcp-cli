@@ -510,16 +510,19 @@ class TestAuditRemoveGroup:
 
     def test_remove_group_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
-        mock_http = AsyncMock()
-        mock_http.request = AsyncMock(return_value=_make_response(200, AUDIT_SETTINGS_PAYLOAD))
+        settings = AuditSettings.model_validate(json.loads(AUDIT_SETTINGS_PAYLOAD))
         with (
             patch(
                 "fabric_dw.cli.commands.audit.build_http_client",
-                new=_make_cm(mock_http, None),
+                new=_make_cm(AsyncMock(), None),
             ),
             patch(
                 "fabric_dw.cli.commands.audit._resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.cli.commands.audit._audit_svc.remove_action_group",
+                new=AsyncMock(return_value=settings),
             ),
         ):
             result = runner.invoke(
@@ -536,16 +539,19 @@ class TestAuditRemoveGroup:
 
     def test_remove_group_json_output(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
-        mock_http = AsyncMock()
-        mock_http.request = AsyncMock(return_value=_make_response(200, AUDIT_SETTINGS_PAYLOAD))
+        settings = AuditSettings.model_validate(json.loads(AUDIT_SETTINGS_PAYLOAD))
         with (
             patch(
                 "fabric_dw.cli.commands.audit.build_http_client",
-                new=_make_cm(mock_http, None),
+                new=_make_cm(AsyncMock(), None),
             ),
             patch(
                 "fabric_dw.cli.commands.audit._resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.cli.commands.audit._audit_svc.remove_action_group",
+                new=AsyncMock(return_value=settings),
             ),
         ):
             result = runner.invoke(

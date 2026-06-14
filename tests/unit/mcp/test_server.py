@@ -138,7 +138,6 @@ EXPECTED_TOOL_NAMES: frozenset[str] = frozenset(
         "create_sql_pool",
         "update_sql_pool",
         "delete_sql_pool",
-        "reset_sql_pools",
         "enable_sql_pools",
         "disable_sql_pools",
         # Connections

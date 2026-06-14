@@ -231,29 +231,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             raise fabric_err(exc) from exc
         return {"deleted": True, "pool_name": pool_name}
 
-    @mcp.tool(name="reset_sql_pools")
-    async def reset_sql_pools(workspace: str) -> dict[str, Any]:
-        """Clear all SQL pools for a workspace, preserving the enabled/disabled state.
-
-        Requires workspace admin role.  This tool targets a **beta / preview** API.
-
-        CAUTION: this permanently removes ALL pool definitions in the workspace. The
-        configuration's enabled-state is preserved, but every pool is wiped. Use only
-        when the user explicitly requests a reset.
-        """
-        assert_writes_allowed("reset_sql_pools")
-        assert_destructive_allowed()
-        assert_workspace_allowed(workspace)
-        ctx = get_context()
-        try:
-            ws_id = await ctx.resolver.workspace_id(workspace)
-            assert_workspace_allowed(workspace, str(ws_id))
-            _log.debug("reset_sql_pools ws=%s", ws_id)
-            result = await sql_pools_svc.reset_pools(ctx.http, ws_id)
-        except FabricError as exc:
-            raise fabric_err(exc) from exc
-        return result.model_dump(by_alias=True, mode="json")  # ty: ignore[unresolved-attribute]
-
     @mcp.tool(name="enable_sql_pools")
     async def enable_sql_pools(workspace: str) -> dict[str, Any]:
         """Enable custom SQL Pools for a workspace without modifying pool definitions.

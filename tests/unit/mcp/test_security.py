@@ -633,23 +633,6 @@ async def test_delete_snapshot_blocked_without_destructive_flag() -> None:
         )
 
 
-async def test_reset_sql_pools_blocked_without_destructive_flag() -> None:
-    """reset_sql_pools raises ToolError when FABRIC_MCP_ALLOW_DESTRUCTIVE is not set."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
-
-    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
-
-    env_copy = {k: v for k, v in os.environ.items() if k != "FABRIC_MCP_ALLOW_DESTRUCTIVE"}
-    with (
-        patch.dict(os.environ, env_copy, clear=True),
-        pytest.raises(ToolError, match="FABRIC_MCP_ALLOW_DESTRUCTIVE"),
-    ):
-        await mcp._tool_manager.call_tool(
-            "reset_sql_pools",
-            {"workspace": _WS_NAME},
-        )
-
-
 # ---------------------------------------------------------------------------
 # 8. Workspace allowlist gate via server tool invocation
 # ---------------------------------------------------------------------------

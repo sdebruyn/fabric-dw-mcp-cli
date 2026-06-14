@@ -370,35 +370,6 @@ async def disable_cmd(ctx: CliContext, workspace: str | None) -> None:
 
 
 # ---------------------------------------------------------------------------
-# reset
-# ---------------------------------------------------------------------------
-
-
-@sql_pools_group.command("reset")
-@click.argument("workspace", required=False, default=None)
-@click.pass_obj
-@_coro
-async def reset_cmd(ctx: CliContext, workspace: str | None) -> None:
-    """Clear all SQL pools for WORKSPACE (preserves enabled/disabled state)."""
-    ws = resolve_workspace_arg(ctx, workspace)
-    if not confirm("Clear all SQL pools?", yes=ctx.yes):
-        click.echo("Aborted.")
-        return
-    try:
-        async with build_http_client(ctx) as http:
-            ws_id = await resolve_workspace_id(http, ws)
-            result = await _svc.reset_pools(http, ws_id)
-            if result is None:
-                click.echo("Workspace has no SQL pools configuration (never provisioned).")
-            else:
-                render(result.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
-    except PermissionDeniedError as exc:
-        raise _permission_hint(exc) from exc
-    except FabricError as exc:
-        raise click.ClickException(str(exc)) from exc
-
-
-# ---------------------------------------------------------------------------
 # insights
 # ---------------------------------------------------------------------------
 

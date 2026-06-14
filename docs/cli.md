@@ -1969,30 +1969,6 @@ fabric-dw sql-pools disable MyWorkspace
 
 ---
 
-### sql-pools reset
-
-**Targets:** Workspace (not item-specific)
-
-Clear all SQL pools for a workspace. The enabled/disabled state is preserved. You will be asked to confirm unless `--yes` is passed.
-
-**Synopsis**
-
-```
-fabric-dw sql-pools reset [OPTIONS] [WORKSPACE]
-```
-
-| Option | Description |
-| --- | --- |
-| `--yes` | Skip confirmation prompt. |
-
-**Example**
-
-```shell
-fabric-dw --yes sql-pools reset MyWorkspace
-```
-
----
-
 ### sql-pools insights
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint

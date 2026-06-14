@@ -717,69 +717,6 @@ async def test_delete_pool_raises_not_found_for_missing_name() -> None:
 
 
 # ---------------------------------------------------------------------------
-# reset_pools
-# ---------------------------------------------------------------------------
-
-
-async def test_reset_pools_patches_empty_list_preserving_enabled_flag() -> None:
-    """reset_pools should PATCH with empty customSQLPools and preserve enabled state."""
-    with respx.mock:
-        respx.get(_CONFIG_URL).mock(
-            side_effect=[
-                httpx.Response(200, json=POOLS_ENABLED_PAYLOAD),
-                httpx.Response(200, json=POOLS_EMPTY_PAYLOAD),
-            ]
-        )
-        patch_route = respx.patch(_CONFIG_URL).mock(return_value=httpx.Response(200))
-        client = await _make_client()
-        async with client:
-            await sql_pools.reset_pools(client, _WS_ID)
-
-    sent_body = json.loads(patch_route.calls[0].request.content)
-    assert sent_body["customSQLPools"] == []
-    assert sent_body["customSQLPoolsEnabled"] is True
-
-
-async def test_reset_pools_preserves_disabled_state() -> None:
-    """reset_pools keeps customSQLPoolsEnabled=false when the workspace is disabled."""
-    with respx.mock:
-        respx.get(_CONFIG_URL).mock(
-            side_effect=[
-                httpx.Response(200, json=POOLS_DISABLED_PAYLOAD),
-                httpx.Response(200, json=POOLS_EMPTY_PAYLOAD),
-            ]
-        )
-        patch_route = respx.patch(_CONFIG_URL).mock(return_value=httpx.Response(200))
-        client = await _make_client()
-        async with client:
-            await sql_pools.reset_pools(client, _WS_ID)
-
-    sent_body = json.loads(patch_route.calls[0].request.content)
-    assert sent_body["customSQLPools"] == []
-    assert sent_body["customSQLPoolsEnabled"] is False
-
-
-async def test_reset_pools_404_returns_none_without_patch() -> None:
-    """reset_pools returns None when the workspace has no SQL pools config (never provisioned).
-
-    The old code returned a fake sentinel SqlPoolsConfiguration.  The new behaviour
-    returns None so callers can distinguish "truly empty" from "never provisioned".
-    """
-    with respx.mock:
-        get_route = respx.get(_CONFIG_URL).mock(
-            return_value=httpx.Response(404, json={"error": "not found"})
-        )
-        patch_route = respx.patch(_CONFIG_URL).mock(return_value=httpx.Response(200))
-        client = await _make_client()
-        async with client:
-            result = await sql_pools.reset_pools(client, _WS_ID)
-
-    assert get_route.call_count == 1
-    assert not patch_route.called
-    assert result is None
-
-
-# ---------------------------------------------------------------------------
 # update_pool — classifier partial validation
 # ---------------------------------------------------------------------------
 

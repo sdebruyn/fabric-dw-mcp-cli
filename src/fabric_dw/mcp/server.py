@@ -38,7 +38,7 @@ Security environment variables
     Set to ``1``, ``true``, or ``yes`` to enable permanently-destructive
     tools (delete_warehouse, delete_snapshot, delete_restore_point,
     restore_warehouse_in_place, delete_schema, delete_table, clear_table,
-    delete_sql_pool, reset_sql_pools).  Defaults to **disabled**.
+    delete_sql_pool).  Defaults to **disabled**.
 
 ``FABRIC_MCP_WORKSPACES``
     Comma-separated workspace names or GUIDs the server may touch.
