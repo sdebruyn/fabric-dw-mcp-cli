@@ -334,17 +334,27 @@ async def roll_timestamp(
         formatted = new_dt.strftime("%Y-%m-%dT%H:%M:%S.00")
         alter_sql = f"ALTER DATABASE [{snapshot_name}] SET TIMESTAMP = '{formatted}';"
 
-    # ``ALTER DATABASE … SET TIMESTAMP`` is rejected inside any transaction
-    # (SQL Server error 226: "ALTER DATABASE statement not allowed within
-    # multi-statement transaction").  We run it as a standalone statement via
-    # ``run_statements`` which opens a fresh connection and commits after each
-    # statement — but we first disable implicit transactions on the session so
-    # the ODBC driver does not silently wrap the ALTER in a transaction scope.
+    # ``ALTER DATABASE … SET TIMESTAMP`` is rejected inside any explicit
+    # transaction (SQL Server error 226: "ALTER DATABASE statement not allowed
+    # within multi-statement transaction").
+    #
+    # ``mssql_python.connect()`` defaults to ``autocommit=False``, which causes
+    # the ODBC driver to send a ``BEGIN TRANSACTION`` to SQL Server before every
+    # ``cursor.execute()`` call at the TDS/ODBC layer — independently of any
+    # T-SQL ``SET IMPLICIT_TRANSACTIONS`` session option.  Even prefixing with
+    # ``SET IMPLICIT_TRANSACTIONS OFF`` in a prior statement does not help,
+    # because the ODBC driver opens a *new* explicit transaction for each
+    # subsequent ``cursor.execute()`` call.
+    #
+    # Correct fix: open the connection with ODBC-level ``autocommit=True`` so
+    # the driver never wraps any statement in an explicit transaction, then run
+    # the ALTER as the sole statement on that connection.
     def _run() -> None:
         run_statements(
             parent_target,
-            ["SET IMPLICIT_TRANSACTIONS OFF;", alter_sql],
+            [alter_sql],
             mode=mode,
+            autocommit=True,
         )
 
     await asyncio.to_thread(_run)

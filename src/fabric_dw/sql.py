@@ -443,6 +443,7 @@ def open_connection(
     target: SqlTarget,
     *,
     mode: CredentialMode = CredentialMode.DEFAULT,
+    autocommit: bool = False,
 ) -> _Connection:
     """Return a connection to the target warehouse, reusing a pooled one when available.
 
@@ -455,17 +456,40 @@ def open_connection(
     When pooling is disabled (``FABRIC_SQL_POOL=0``) every call opens a fresh
     physical connection and ``.close()`` physically closes it.
 
+    When ``autocommit=True``, the ODBC driver does **not** wrap each statement
+    in an explicit ``BEGIN TRANSACTION`` / ``COMMIT`` pair.  This is required
+    for DDL statements that SQL Server disallows inside a transaction (e.g.
+    ``ALTER DATABASE``).  Autocommit connections are **never** pooled — they
+    are always opened fresh and physically closed on ``.close()``.
+
     This function is intentionally synchronous.  Callers that need to keep the
     event loop free should wrap the entire sync block in ``asyncio.to_thread``.
 
     Args:
         target: The :class:`SqlTarget` identifying the warehouse.
         mode: The credential mode for Entra authentication.
+        autocommit: When ``True``, open the connection with ODBC-level
+            autocommit enabled.  Defaults to ``False``.  Autocommit connections
+            bypass the pool entirely.
 
     Returns:
         A :class:`_PooledConnection` wrapping a DB-API 2.0 connection from
         the ``mssql_python`` driver.
     """
+    cs = build_connection_string(target, mode=mode)
+
+    # Autocommit connections bypass the pool entirely to avoid cross-contaminating
+    # a pooled autocommit=False connection with autocommit=True semantics or vice
+    # versa.  They are always opened fresh and physically closed after use.
+    if autocommit:
+        raw_conn: Any = _get_mssql().connect(cs, autocommit=True)
+        # Wrap in _PooledConnection with a sentinel key; _discard=True ensures
+        # .close() physically closes the connection rather than pooling it.
+        key = _make_pool_key(target, mode)
+        wrapped = _PooledConnection(raw_conn, key)
+        wrapped._discard = True
+        return wrapped
+
     key = _make_pool_key(target, mode)
 
     if _pool_enabled():
@@ -473,8 +497,7 @@ def open_connection(
         if cached is not None:
             return _PooledConnection(cached, key)
 
-    cs = build_connection_string(target, mode=mode)
-    raw_conn: Any = _get_mssql().connect(cs)
+    raw_conn = _get_mssql().connect(cs)
     return _PooledConnection(raw_conn, key)
 
 
@@ -560,6 +583,7 @@ def run_query(  # noqa: PLR0912,PLR0913
     mode: CredentialMode = CredentialMode.DEFAULT,
     commit: bool = False,
     fetch: Literal["all", "none", "one"] = "all",
+    autocommit: bool = False,
 ) -> tuple[list[str], list[tuple[Any, ...]]]:
     """Open a connection, execute *statement*, fetch rows, close, and map errors.
 
@@ -581,6 +605,7 @@ def run_query(  # noqa: PLR0912,PLR0913
             - they cannot be bound as parameters.
         mode: The credential mode for Entra authentication.
         commit: When ``True``, call ``conn.commit()`` after execute (for DDL/DML).
+            Ignored when ``autocommit=True`` (the driver commits automatically).
         fetch: One of:
             - ``"all"`` (default) - call ``fetchall()`` and return
               ``(columns, rows)``; columns are derived from ``cursor.description``.
@@ -588,6 +613,11 @@ def run_query(  # noqa: PLR0912,PLR0913
               future point-lookup helpers); returns ``(columns, [row])`` or
               ``([], [])`` when no row.
             - ``"none"`` - do not fetch; returns ``([], [])``.
+
+        autocommit: When ``True``, open the connection with ODBC-level autocommit
+            so the driver does not wrap the statement in an explicit transaction.
+            Use this for DDL that SQL Server disallows inside transactions
+            (e.g. ``ALTER DATABASE``).  When ``True``, ``commit`` is ignored.
 
     Returns:
         A ``(columns, rows)`` tuple where *columns* is a list of column-name
@@ -612,7 +642,7 @@ def run_query(  # noqa: PLR0912,PLR0913
             time.sleep(delay)
 
         try:
-            conn = open_connection(target, mode=mode)
+            conn = open_connection(target, mode=mode, autocommit=autocommit)
         except Exception as exc:
             # open_connection itself may raise on connect failure (TCP timeout,
             # TLS handshake error, etc.).  Retry on transient errors, just as
@@ -630,7 +660,7 @@ def run_query(  # noqa: PLR0912,PLR0913
                     cursor.execute(statement, params)
                 else:
                     cursor.execute(statement)
-                if commit:
+                if commit and not autocommit:
                     conn.commit()
 
                 if fetch == "none":
@@ -676,6 +706,7 @@ def run_statements(
     statements: Sequence[str],
     *,
     mode: CredentialMode = CredentialMode.DEFAULT,
+    autocommit: bool = False,
 ) -> None:
     """Execute multiple DDL/DML *statements* on a **single** connection.
 
@@ -688,6 +719,11 @@ def run_statements(
         target: The :class:`SqlTarget` identifying the warehouse.
         statements: Sequence of SQL strings to execute in order.
         mode: The credential mode for Entra authentication.
+        autocommit: When ``True``, open the connection with ODBC-level autocommit
+            so the driver does not wrap statements in explicit transactions.
+            Use this for DDL that SQL Server disallows inside transactions
+            (e.g. ``ALTER DATABASE``).  When ``True``, ``conn.commit()`` is
+            not called (the driver commits each statement automatically).
 
     Raises:
         PermissionDeniedError: If the driver reports a permission error on any statement.
@@ -706,7 +742,7 @@ def run_statements(
             time.sleep(delay)
 
         try:
-            conn = open_connection(target, mode=mode)
+            conn = open_connection(target, mode=mode, autocommit=autocommit)
         except Exception as exc:
             # open_connection itself may raise on connect failure.
             if is_transient_connection_error(exc) and attempt < max_attempts - 1:
@@ -719,7 +755,8 @@ def run_statements(
             for stmt in statements:
                 try:
                     cursor.execute(stmt)
-                    conn.commit()
+                    if not autocommit:
+                        conn.commit()
                 except Exception as exc:
                     if isinstance(conn, _PooledConnection):
                         conn._discard = True
