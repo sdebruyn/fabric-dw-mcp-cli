@@ -549,7 +549,12 @@ async def test_delete_404_raises_not_found() -> None:
 
 
 async def test_roll_timestamp_without_new_dt_uses_current_timestamp() -> None:
-    """roll_timestamp with new_dt=None should use CURRENT_TIMESTAMP."""
+    """roll_timestamp with new_dt=None should use CURRENT_TIMESTAMP.
+
+    run_statements executes two statements on the same connection:
+    1. SET IMPLICIT_TRANSACTIONS OFF (ensures ALTER DATABASE is not wrapped in a transaction)
+    2. ALTER DATABASE … SET TIMESTAMP = CURRENT_TIMESTAMP
+    """
     target = _make_sql_target()
     conn = _make_mock_conn()
 
@@ -557,13 +562,18 @@ async def test_roll_timestamp_without_new_dt_uses_current_timestamp() -> None:
         await snapshots.roll_timestamp(target, "MySnapshot")
 
     cursor = conn.cursor.return_value
-    cursor.execute.assert_called_once()
-    sql_str: str = cursor.execute.call_args[0][0]
-    assert "ALTER DATABASE [MySnapshot] SET TIMESTAMP = CURRENT_TIMESTAMP;" in sql_str
+    # Two execute calls: SET IMPLICIT_TRANSACTIONS OFF + ALTER DATABASE
+    assert cursor.execute.call_count == 2
+    all_sql = " ".join(call[0][0] for call in cursor.execute.call_args_list)
+    assert "SET IMPLICIT_TRANSACTIONS OFF" in all_sql
+    assert "ALTER DATABASE [MySnapshot] SET TIMESTAMP = CURRENT_TIMESTAMP;" in all_sql
 
 
 async def test_roll_timestamp_with_new_dt_formats_correctly() -> None:
-    """roll_timestamp with a datetime should format as YYYY-MM-DDTHH:MM:SS.SS."""
+    """roll_timestamp with a datetime should format as YYYY-MM-DDTHH:MM:SS.SS.
+
+    run_statements executes two statements: SET IMPLICIT_TRANSACTIONS OFF then ALTER DATABASE.
+    """
     target = _make_sql_target()
     conn = _make_mock_conn()
     new_dt = datetime(2024, 3, 15, 8, 30, 45, tzinfo=UTC)
@@ -572,8 +582,9 @@ async def test_roll_timestamp_with_new_dt_formats_correctly() -> None:
         await snapshots.roll_timestamp(target, "MySnapshot", new_dt=new_dt)
 
     cursor = conn.cursor.return_value
-    sql_str: str = cursor.execute.call_args[0][0]
-    assert "ALTER DATABASE [MySnapshot] SET TIMESTAMP = '2024-03-15T08:30:45.00';" in sql_str
+    assert cursor.execute.call_count == 2
+    all_sql = " ".join(call[0][0] for call in cursor.execute.call_args_list)
+    assert "ALTER DATABASE [MySnapshot] SET TIMESTAMP = '2024-03-15T08:30:45.00';" in all_sql
 
 
 async def test_roll_timestamp_name_injection_bracket() -> None:

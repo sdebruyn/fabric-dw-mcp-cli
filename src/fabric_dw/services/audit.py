@@ -342,7 +342,10 @@ async def remove_action_group(
         ValueError: If auditing is currently disabled (``state == "Disabled"``).
             Enable auditing first with :func:`enable`.
         FabricError: If eventual-consistency polling times out before the removed
-            group disappears from the API response (see issue #205).
+            group disappears from the API response (see issue #205).  The
+            timeout is 90 s to accommodate slow propagation observed in
+            practice for groups such as
+            ``SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP``.
         PermissionDeniedError: If the caller lacks the required permission (HTTP 403).
         NotFoundError: If the warehouse does not exist (HTTP 404).
     """
@@ -372,10 +375,12 @@ async def remove_action_group(
     )
     # The ``/settings/sqlAudit`` PATCH endpoint has eventual consistency: a
     # GET immediately after PATCH may still return the old action-group list.
-    # Poll until the removed group is absent from the response (up to 30 s),
+    # Poll until the removed group is absent from the response (up to 90 s),
     # then raise FabricError so callers are never silently handed stale data.
+    # 90 s (was 30 s) — observed propagation delays for groups such as
+    # SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP can exceed 30 s in practice.
     poll_interval_s = 2.0
-    max_wait_s = 30.0
+    max_wait_s = 90.0
     waited = 0.0
     refreshed = await get_settings(http, workspace_id, warehouse_id)
     while group in refreshed.action_groups and waited < max_wait_s:

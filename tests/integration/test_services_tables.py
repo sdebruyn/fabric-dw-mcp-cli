@@ -162,6 +162,14 @@ async def test_clone_table_at_point_in_time(ephemeral_sql_target: SqlTarget) -> 
 
         at_dt: datetime = await asyncio.to_thread(_get_server_ts)
 
+        # Sleep so the upcoming clone transaction starts well after `at_dt`.
+        # Without this buffer, Fabric's distributed compute can assign a
+        # transaction start-time that is within milliseconds of `at_dt`,
+        # making the AT appear to be *after* the transaction began (skew
+        # between the timestamp-capture connection and the clone connection).
+        # 5 s is comfortably larger than any observed inter-node clock skew.
+        await asyncio.sleep(5)
+
         try:
             cloned = await tables.clone_table(
                 ephemeral_sql_target,
