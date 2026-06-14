@@ -3,6 +3,7 @@
 import asyncio
 import os
 import struct
+import threading
 from collections.abc import Callable
 from enum import StrEnum
 from types import TracebackType
@@ -202,6 +203,29 @@ def _fetch_github_oidc_jwt() -> str:
     return str(response.json()["value"])
 
 
+def _build_sync_oidc_credential() -> SyncClientAssertionCredential:
+    """Validate env-vars and construct a :class:`SyncClientAssertionCredential`.
+
+    Shared by :func:`_make_github_oidc_credential` (async wrapper path) and
+    :func:`_get_sql_oidc_credential` (sync SQL-injection path) to avoid duplicating
+    the env-var check and constructor call.
+
+    Raises:
+        ConfigError: If AZURE_TENANT_ID or AZURE_CLIENT_ID are missing.
+    """
+    missing = [name for name in ("AZURE_TENANT_ID", "AZURE_CLIENT_ID") if not os.environ.get(name)]
+    if missing:
+        raise ConfigError(
+            f"GitHub Actions OIDC credential requires {', '.join(missing)} "
+            f"to be set in the environment."
+        )
+    return SyncClientAssertionCredential(
+        tenant_id=os.environ["AZURE_TENANT_ID"],
+        client_id=os.environ["AZURE_CLIENT_ID"],
+        func=_fetch_github_oidc_jwt,
+    )
+
+
 def _make_github_oidc_credential() -> AsyncTokenCredential:
     """Build a self-refreshing ClientAssertionCredential backed by GitHub OIDC.
 
@@ -220,45 +244,27 @@ def _make_github_oidc_credential() -> AsyncTokenCredential:
     Raises:
         ConfigError: If AZURE_TENANT_ID or AZURE_CLIENT_ID are missing.
     """
-    missing = [name for name in ("AZURE_TENANT_ID", "AZURE_CLIENT_ID") if not os.environ.get(name)]
-    if missing:
-        raise ConfigError(
-            f"GitHub Actions OIDC credential requires {', '.join(missing)} "
-            f"to be set in the environment."
-        )
-
-    return SyncCredentialAdapter(
-        SyncClientAssertionCredential(
-            tenant_id=os.environ["AZURE_TENANT_ID"],
-            client_id=os.environ["AZURE_CLIENT_ID"],
-            func=_fetch_github_oidc_jwt,
-        )
-    )
+    return SyncCredentialAdapter(_build_sync_oidc_credential())
 
 
 # Module-level cached sync credential for SQL token injection under GitHub OIDC.
 # Caching allows azure-identity's in-memory token cache to work across connects,
 # so tokens are only re-acquired when they genuinely expire — NOT on every connect.
 _sql_oidc_credential: SyncClientAssertionCredential | None = None
+_sql_oidc_credential_lock = threading.Lock()
 
 
 def _get_sql_oidc_credential() -> SyncClientAssertionCredential:
-    """Return (creating once) the sync OIDC credential used for SQL token injection."""
+    """Return (creating once) the sync OIDC credential used for SQL token injection.
+
+    Uses double-checked locking so concurrent callers never race to initialise
+    the module-level singleton — mirroring the ``_pool_lock`` pattern in sql.py.
+    """
     global _sql_oidc_credential  # noqa: PLW0603
     if _sql_oidc_credential is None:
-        missing = [
-            name for name in ("AZURE_TENANT_ID", "AZURE_CLIENT_ID") if not os.environ.get(name)
-        ]
-        if missing:
-            raise ConfigError(
-                f"GitHub Actions OIDC credential requires {', '.join(missing)} "
-                f"to be set in the environment."
-            )
-        _sql_oidc_credential = SyncClientAssertionCredential(
-            tenant_id=os.environ["AZURE_TENANT_ID"],
-            client_id=os.environ["AZURE_CLIENT_ID"],
-            func=_fetch_github_oidc_jwt,
-        )
+        with _sql_oidc_credential_lock:
+            if _sql_oidc_credential is None:
+                _sql_oidc_credential = _build_sync_oidc_credential()
     return _sql_oidc_credential
 
 

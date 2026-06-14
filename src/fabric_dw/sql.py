@@ -491,21 +491,21 @@ def open_connection(
         A :class:`_PooledConnection` wrapping a DB-API 2.0 connection from
         the ``mssql_python`` driver.
     """
-    # Acquire a token struct when running under GitHub OIDC.  This bypasses the
-    # mssql-python driver's own DefaultAzureCredential chain (which uses AzureCliCredential
-    # whose GitHub OIDC assertion expires after ~5 min) in favour of our self-refreshing
-    # credential whose _fetch_github_oidc_jwt always obtains a fresh assertion.
-    # Token acquisition happens here — only for NEW physical connections — not on
-    # pool checkout (checked-out connections are already authenticated).
-    token_struct = get_sql_token_struct(mode)
-    use_token = token_struct is not None
-    cs = build_connection_string(target, mode=mode, use_access_token=use_token)
-    attrs: dict[int, bytes] | None = {SQL_COPT_SS_ACCESS_TOKEN: token_struct} if use_token else None
-
     # Autocommit connections bypass the pool entirely to avoid cross-contaminating
     # a pooled autocommit=False connection with autocommit=True semantics or vice
     # versa.  They are always opened fresh and physically closed after use.
     if autocommit:
+        # Acquire a token struct when running under GitHub OIDC.  This bypasses the
+        # mssql-python driver's own DefaultAzureCredential chain (which uses
+        # AzureCliCredential whose GitHub OIDC assertion expires after ~5 min) in
+        # favour of our self-refreshing credential whose _fetch_github_oidc_jwt
+        # always obtains a fresh assertion.
+        token_struct = get_sql_token_struct(mode)
+        use_token = token_struct is not None
+        cs = build_connection_string(target, mode=mode, use_access_token=use_token)
+        attrs: dict[int, bytes] | None = (
+            {SQL_COPT_SS_ACCESS_TOKEN: token_struct} if use_token else None
+        )
         raw_conn: Any = _get_mssql().connect(cs, autocommit=True, attrs_before=attrs)
         # Wrap in _PooledConnection with a sentinel key; _discard=True ensures
         # .close() physically closes the connection rather than pooling it.
@@ -519,8 +519,19 @@ def open_connection(
     if _pool_enabled():
         cached = _pool_checkout(key)
         if cached is not None:
+            # Pool HIT — return the cached connection without acquiring a token.
+            # Checked-out connections are already authenticated; acquiring a token
+            # here would invoke credential.get_token() (holding azure-identity's
+            # token-cache lock) and then discard the result — pure waste.
             return _PooledConnection(cached, key)
 
+    # Pool MISS (or pooling disabled) — open a new physical connection.
+    # Only now do we acquire the OIDC token struct, so the credential is never
+    # consulted on pool-hit paths.
+    token_struct = get_sql_token_struct(mode)
+    use_token = token_struct is not None
+    cs = build_connection_string(target, mode=mode, use_access_token=use_token)
+    attrs = {SQL_COPT_SS_ACCESS_TOKEN: token_struct} if use_token else None
     raw_conn = _get_mssql().connect(cs, attrs_before=attrs)
     return _PooledConnection(raw_conn, key)
 

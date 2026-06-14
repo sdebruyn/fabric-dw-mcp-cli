@@ -1179,8 +1179,9 @@ class TestOpenConnectionOidcTokenInjection:
         open_connection(_make_target())
 
         call_kwargs = mock_mssql.connect.call_args.kwargs
-        # attrs_before must be None (falsy) — no token injected.
-        assert not call_kwargs.get("attrs_before")
+        # attrs_before must be explicitly None — not merely absent (falsy).
+        # The implementation always passes attrs_before=None on the non-OIDC path.
+        assert call_kwargs.get("attrs_before") is None
         # Connection string must contain Authentication=.
         called_cs: str = mock_mssql.connect.call_args.args[0]
         assert "Authentication=" in called_cs
@@ -1258,3 +1259,51 @@ class TestOpenConnectionOidcTokenInjection:
         from fabric_dw.sql import SQL_COPT_SS_ACCESS_TOKEN  # noqa: PLC0415
 
         assert SQL_COPT_SS_ACCESS_TOKEN == 1256
+
+    def test_oidc_pool_hit_does_not_call_connect(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Pool HIT under OIDC must NOT call connect and must NOT invoke get_sql_token_struct.
+
+        On the first call a new physical connection is opened (pool miss).
+        After .close() returns the connection to the pool, the second call must
+        return the cached connection without acquiring a token — verifying that
+        the token acquisition is gated behind the pool-miss path.
+        """
+        import struct  # noqa: PLC0415
+
+        mock_mssql, mock_conn, _ = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        # Enable the pool for this test.
+        monkeypatch.setenv("FABRIC_SQL_POOL", "1")
+        reset_pool()
+
+        # Track how many times the token stub is invoked.
+        token_call_count = 0
+
+        token_bytes = b"fake-oidc-token"
+        fake_struct = struct.pack(f"<I{len(token_bytes)}s", len(token_bytes), token_bytes)
+
+        def _counting_token_stub(*_a: object, **_kw: object) -> bytes:
+            nonlocal token_call_count
+            token_call_count += 1
+            return fake_struct
+
+        monkeypatch.setattr(_sql_module, "get_sql_token_struct", _counting_token_stub)
+
+        from fabric_dw.sql import open_connection  # noqa: PLC0415
+
+        target = _make_target()
+
+        # First call: pool miss → opens a new physical connection, acquires token.
+        conn1 = open_connection(target)
+        assert mock_mssql.connect.call_count == 1
+        assert token_call_count == 1
+        conn1.close()  # return to pool
+
+        # Second call: pool HIT → must reuse cached connection, not call connect,
+        # and must NOT invoke get_sql_token_struct at all.
+        conn2 = open_connection(target)
+        assert mock_mssql.connect.call_count == 1, "connect must NOT be called on pool hit"
+        assert token_call_count == 1, "get_sql_token_struct must NOT be called on pool hit"
+        assert conn2._raw is mock_conn  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        conn2.close()
