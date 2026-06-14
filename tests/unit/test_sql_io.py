@@ -6,6 +6,7 @@ import base64
 import io
 import json
 import logging
+import math
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import StrEnum
@@ -86,6 +87,25 @@ class TestColumnsRowsToArrow:
     def test_returns_arrow_table_type(self) -> None:
         result = columns_rows_to_arrow(["x"], [(1,)])
         assert isinstance(result, pa.Table)
+
+    # D14 — duplicate column names must be preserved positionally
+    def test_duplicate_column_names_all_columns_present(self) -> None:
+        """columns=['id','id'] must produce 2 columns, not 1."""
+        result = columns_rows_to_arrow(["id", "id"], [(1, 2), (3, 4)])
+        assert result.num_columns == 2
+        assert result.num_rows == 2
+
+    def test_duplicate_column_names_values_not_merged(self) -> None:
+        """Values from the two 'id' columns must remain in separate columns."""
+        result = columns_rows_to_arrow(["id", "id"], [(1, 2), (3, 4)])
+        # column(0) == first 'id'; column(1) == second 'id'
+        assert result.column(0).to_pylist() == [1, 3]
+        assert result.column(1).to_pylist() == [2, 4]
+
+    def test_duplicate_column_names_schema_names(self) -> None:
+        """Schema field names must mirror the input column list."""
+        result = columns_rows_to_arrow(["x", "x", "y"], [(1, 2, 3)])
+        assert result.schema.names == ["x", "x", "y"]
 
 
 # ===========================================================================
@@ -259,6 +279,28 @@ class TestJsonSafe:
 
     def test_other_type_stringified(self) -> None:
         assert json_safe(Decimal("3.14")) == "3.14"
+
+    # D15 — nan/inf must become None (not leaked as non-JSON NaN/Infinity)
+    def test_nan_becomes_none(self) -> None:
+        assert json_safe(math.nan) is None
+
+    def test_inf_becomes_none(self) -> None:
+        assert json_safe(math.inf) is None
+
+    def test_neg_inf_becomes_none(self) -> None:
+        assert json_safe(-math.inf) is None
+
+    def test_finite_float_unchanged(self) -> None:
+        assert json_safe(1.5) == pytest.approx(1.5)
+
+    def test_nan_produces_valid_json(self) -> None:
+        """End-to-end: a table with NaN values must round-trip through json.loads."""
+        table = columns_rows_to_arrow(["v"], [(math.nan,), (1.0,)])
+        buf = io.StringIO()
+        write_arrow(table, OutputFormat.JSON, out=buf)
+        parsed = json.loads(buf.getvalue())
+        assert parsed[0]["v"] is None
+        assert parsed[1]["v"] == pytest.approx(1.0)
 
 
 # ===========================================================================

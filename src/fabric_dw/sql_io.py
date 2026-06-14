@@ -12,6 +12,7 @@ import base64
 import io
 import json
 import logging
+import math
 from enum import StrEnum
 from pathlib import Path
 from typing import IO, Any
@@ -60,14 +61,17 @@ def columns_rows_to_arrow(
     if not columns:
         return pa.table({})
 
-    col_arrays: dict[str, list[Any]] = {c: [] for c in columns}
+    # Build per-column value lists positionally so duplicate column names are
+    # preserved (T-SQL allows e.g. ``SELECT a.id, b.id`` which yields two
+    # columns both named "id").
+    col_arrays_by_idx: list[list[Any]] = [[] for _ in columns]
     for row in rows:
-        for col, val in zip(columns, row, strict=True):
-            col_arrays[col].append(val)
+        for idx, val in enumerate(row):
+            col_arrays_by_idx[idx].append(val)
 
     arrays: list[pa.Array] = []
-    for col in columns:
-        values = col_arrays[col]
+    for idx, col in enumerate(columns):
+        values = col_arrays_by_idx[idx]
         try:
             arrays.append(pa.array(values))
         except (pa.ArrowInvalid, pa.ArrowTypeError, TypeError):
@@ -78,13 +82,22 @@ def columns_rows_to_arrow(
             )
             arrays.append(pa.array([str(v) if v is not None else None for v in values]))
 
-    return pa.table(dict(zip(columns, arrays, strict=True)))
+    schema = pa.schema([pa.field(col, arr.type) for col, arr in zip(columns, arrays, strict=True)])
+    return pa.Table.from_arrays(arrays, schema=schema)
 
 
 def _arrow_to_json_records(table: pa.Table) -> list[dict[str, Any]]:
-    """Serialise *table* to a list of JSON-safe dicts."""
+    """Serialise *table* to a list of JSON-safe dicts.
+
+    Columns are accessed by positional index (not by name) so that tables with
+    duplicate column names — legal in T-SQL — are serialised correctly.  When
+    duplicates exist the resulting dict keys will collide; the last column with
+    a given name wins, which matches the natural expectation for a row dict.
+    """
+    col_names = table.schema.names
+    col_data = [table.column(i).to_pylist() for i in range(table.num_columns)]
     return [
-        {col: json_safe(table.column(col)[i].as_py()) for col in table.column_names}
+        {col_names[j]: json_safe(col_data[j][i]) for j in range(table.num_columns)}
         for i in range(table.num_rows)
     ]
 
@@ -105,9 +118,13 @@ def json_safe(value: Any) -> Any:  # noqa: ANN401
         A JSON-serialisable scalar (``None``, ``bool``, ``int``, ``float``,
         ``str``).
     """
-    if value is None:
-        return None
-    if isinstance(value, (bool, int, float, str)):
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, float):
+        # nan/inf are not valid JSON (RFC 8259 §6); map to null so downstream
+        # parsers (JS JSON.parse, jq, …) can consume the output.
+        return None if not math.isfinite(value) else value
+    if isinstance(value, (int, str)):
         return value
     if isinstance(value, (bytes, bytearray, memoryview)):
         return base64.b64encode(value).decode("ascii")
@@ -148,22 +165,21 @@ def write_arrow(
         msg = f"--output PATH is required for {fmt!r} format"
         raise ValueError(msg)
 
-    if fmt == OutputFormat.JSON:
-        records = _arrow_to_json_records(table)
-        payload = json.dumps(records, default=str, ensure_ascii=False, indent=2)
-        if output is not None:
-            output.write_text(payload, encoding="utf-8")
-        else:
-            stream = out if out is not None else click.get_text_stream("stdout")
-            stream.write(payload)
-            stream.write("\n")
-
-    elif fmt == OutputFormat.CSV:
-        assert output is not None  # noqa: S101 — guarded above
-        buf = io.BytesIO()
-        pa_csv.write_csv(table, buf)
-        output.write_bytes(buf.getvalue())
-
-    elif fmt == OutputFormat.PARQUET:
-        assert output is not None  # noqa: S101 — guarded above
-        pq.write_table(table, str(output))
+    match OutputFormat(fmt):
+        case OutputFormat.JSON:
+            records = _arrow_to_json_records(table)
+            payload = json.dumps(records, default=str, ensure_ascii=False, indent=2)
+            if output is not None:
+                output.write_text(payload, encoding="utf-8")
+            else:
+                stream = out if out is not None else click.get_text_stream("stdout")
+                stream.write(payload)
+                stream.write("\n")
+        case OutputFormat.CSV:
+            if output is not None:  # guarded above — always true here
+                buf = io.BytesIO()
+                pa_csv.write_csv(table, buf)
+                output.write_bytes(buf.getvalue())
+        case OutputFormat.PARQUET:
+            if output is not None:  # guarded above — always true here
+                pq.write_table(table, str(output))
