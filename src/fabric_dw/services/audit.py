@@ -12,11 +12,9 @@ Wraps the warehouse-scoped ``/settings/sqlAudit`` endpoint:
 
 from __future__ import annotations
 
-import asyncio
 import re
 from uuid import UUID
 
-from fabric_dw.exceptions import FabricError
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import AuditSettings
 
@@ -327,6 +325,13 @@ async def remove_action_group(
         ETags or ``If-Match`` on the ``/settings/sqlAudit`` endpoint.  Under
         concurrent modification the last writer wins silently.
 
+    The authoritative post-PATCH state is returned immediately after the PATCH
+    succeeds, constructed locally from the pre-PATCH settings and the computed
+    new group list.  The ``GET /settings/sqlAudit`` endpoint is eventually
+    consistent with multi-minute lag; polling it after PATCH to confirm removal
+    is self-defeating and causes spurious timeouts.  A failed PATCH still
+    raises via :meth:`~fabric_dw.http_client.FabricHttpClient.request`.
+
     Args:
         http: Authenticated Fabric HTTP client.
         workspace_id: GUID of the Fabric workspace.
@@ -334,18 +339,13 @@ async def remove_action_group(
         group: Name of the action group to remove.
 
     Returns:
-        The fresh :class:`~fabric_dw.models.AuditSettings` after the update
-        (or the current settings when the group was not present).
+        The authoritative :class:`~fabric_dw.models.AuditSettings` after the
+        PATCH (or the current settings when the group was not present).
 
     Raises:
         ValueError: If *group* does not match ``^[A-Z0-9_]+$``.
         ValueError: If auditing is currently disabled (``state == "Disabled"``).
             Enable auditing first with :func:`enable`.
-        FabricError: If eventual-consistency polling times out before the removed
-            group disappears from the API response (see issue #205).  The
-            timeout is 180 s with exponential-like backoff (2 s → 10 s cap)
-            to accommodate slow propagation observed in practice for groups
-            such as ``SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP``.
         PermissionDeniedError: If the caller lacks the required permission (HTTP 403).
         NotFoundError: If the warehouse does not exist (HTTP 404).
     """
@@ -363,7 +363,7 @@ async def remove_action_group(
         raise ValueError(msg)
 
     if group not in current.action_groups:
-        # Group already absent — idempotent success, no PATCH or polling needed.
+        # Group already absent — idempotent success, no PATCH needed.
         return current
 
     new_groups = [g for g in current.action_groups if g != group]
@@ -374,29 +374,7 @@ async def remove_action_group(
         path,
         json={"auditActionsAndGroups": new_groups},
     )
-    # The ``/settings/sqlAudit`` PATCH endpoint has eventual consistency: a
-    # GET immediately after PATCH may still return the old action-group list.
-    # Poll until the removed group is absent from the response (up to 180 s),
-    # then raise FabricError so callers are never silently handed stale data.
-    # 180 s (was 90 s) — observed propagation delays for groups such as
-    # SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP can exceed 90 s in practice
-    # when the Fabric backend is under load.  Exponential-like backoff is used
-    # to reduce the number of GET calls during slow-propagation windows.
-    poll_interval_s = 2.0
-    max_poll_interval_s = 10.0
-    max_wait_s = 180.0
-    waited = 0.0
-    refreshed = await get_settings(http, workspace_id, warehouse_id)
-    while group in refreshed.action_groups and waited < max_wait_s:
-        await asyncio.sleep(poll_interval_s)
-        waited += poll_interval_s
-        poll_interval_s = min(poll_interval_s * 1.5, max_poll_interval_s)
-        refreshed = await get_settings(http, workspace_id, warehouse_id)
-    if group in refreshed.action_groups:
-        msg = (
-            f"remove_action_group: group {group!r} still present after {waited:.0f} s of "
-            "eventual-consistency polling; the PATCH was accepted but the change has not yet "
-            "propagated.  Retry the operation or check the Fabric audit settings manually."
-        )
-        raise FabricError(msg)
-    return refreshed
+    # Return the authoritative post-PATCH state constructed locally.
+    # Do NOT poll GET: the GET endpoint lags the PATCH by minutes; the PATCH
+    # itself is the authoritative source of truth.
+    return current.model_copy(update={"action_groups": new_groups})

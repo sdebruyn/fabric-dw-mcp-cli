@@ -10,7 +10,7 @@ import httpx
 import pytest
 import respx
 
-from fabric_dw.exceptions import FabricError, PermissionDeniedError
+from fabric_dw.exceptions import PermissionDeniedError
 from fabric_dw.models import AuditSettings
 from fabric_dw.services import audit
 from tests.unit.services._helpers import _make_client
@@ -397,34 +397,41 @@ async def test_add_action_group_403_raises_permission_denied() -> None:
 
 
 async def test_remove_action_group_removes_present_group() -> None:
-    """remove_action_group should GET current groups, remove the target, then PATCH."""
+    """remove_action_group sends the correct PATCH body with the target group removed.
+
+    Verifies the PATCH request body: ``auditActionsAndGroups`` must contain exactly
+    the groups that were present minus the removed one.  The call pattern (1 GET +
+    1 PATCH) is a secondary assertion confirming no polling loop is triggered.
+    """
     group_to_remove = "SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP"
     existing = AUDIT_SETTINGS_PAYLOAD.copy()  # has both groups
     expected_groups = ["BATCH_COMPLETED_GROUP"]
-    updated = AUDIT_SETTINGS_PAYLOAD.copy()
-    updated["auditActionsAndGroups"] = expected_groups
 
     with respx.mock:
         get_route = respx.get(_AUDIT_URL).mock(
-            side_effect=[
-                httpx.Response(200, json=existing),  # first GET — read current state
-                httpx.Response(200, json=updated),  # second GET — after PATCH
-            ]
+            return_value=httpx.Response(200, json=existing),  # one GET — read current state
         )
         patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
         client = await _make_client()
         async with client:
-            result = await audit.remove_action_group(client, _WS_ID, _WH_ID, group_to_remove)
+            await audit.remove_action_group(client, _WS_ID, _WH_ID, group_to_remove)
 
-    assert get_route.call_count == 2
-    assert patch_route.called
+    assert get_route.call_count == 1  # exactly one GET — no polling
+    assert patch_route.call_count == 1  # exactly one PATCH
+    # Primary assertion: the PATCH body must contain the correct group list.
     sent_body = json.loads(patch_route.calls[0].request.content)
+    assert sent_body["auditActionsAndGroups"] == expected_groups
     assert group_to_remove not in sent_body["auditActionsAndGroups"]
-    assert isinstance(result, AuditSettings)
 
 
 async def test_remove_action_group_idempotent_when_not_present() -> None:
-    """remove_action_group should not PATCH if the group is not present."""
+    """remove_action_group fast-path: no PATCH is issued when the group is already absent.
+
+    Primary assertion: the PATCH route must not be called at all.  This test focuses
+    on the *call pattern* of the fast-path; see
+    ``test_remove_action_group_already_absent_returns_current_no_patch`` for the
+    corresponding return-value assertion.
+    """
     absent_group = "FAILED_DATABASE_AUTHENTICATION_GROUP"
     existing = AUDIT_SETTINGS_PAYLOAD.copy()  # does NOT have FAILED_DATABASE_AUTHENTICATION_GROUP
 
@@ -433,11 +440,11 @@ async def test_remove_action_group_idempotent_when_not_present() -> None:
         patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
         client = await _make_client()
         async with client:
-            result = await audit.remove_action_group(client, _WS_ID, _WH_ID, absent_group)
+            await audit.remove_action_group(client, _WS_ID, _WH_ID, absent_group)
 
-    assert get_route.call_count == 1  # only one GET — no PATCH needed
+    # Primary: no PATCH must be sent when the group is absent.
     assert not patch_route.called
-    assert isinstance(result, AuditSettings)
+    assert get_route.call_count == 1  # only the pre-flight GET
 
 
 async def test_remove_action_group_disabled_raises_value_error() -> None:
@@ -478,98 +485,56 @@ async def test_remove_action_group_403_raises_permission_denied() -> None:
                 await audit.remove_action_group(client, _WS_ID, _WH_ID, "BATCH_COMPLETED_GROUP")
 
 
-async def test_remove_action_group_already_absent_no_sleep() -> None:
-    """remove_action_group must return immediately (no sleep) when the group is already absent.
+async def test_remove_action_group_already_absent_returns_current_no_patch() -> None:
+    """remove_action_group fast-path: if the group is not present, return current with no PATCH.
 
-    Verifies the idempotent fast-path: if the initial GET shows the group is not
-    present, the function must return without issuing a PATCH or any polling sleep.
+    Exactly one GET (the pre-flight read) should be issued; no PATCH is needed.
     """
-    from unittest.mock import AsyncMock, patch  # noqa: PLC0415
-
     absent_group = "FAILED_DATABASE_AUTHENTICATION_GROUP"
     existing = AUDIT_SETTINGS_PAYLOAD.copy()  # does NOT contain FAILED_DATABASE_...
 
     with respx.mock:
         get_route = respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=existing))
         patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
-        sleep_mock = AsyncMock()
         client = await _make_client()
         async with client:
-            with patch("fabric_dw.services.audit.asyncio.sleep", new=sleep_mock):
-                result = await audit.remove_action_group(client, _WS_ID, _WH_ID, absent_group)
+            result = await audit.remove_action_group(client, _WS_ID, _WH_ID, absent_group)
 
     assert get_route.call_count == 1  # exactly one GET — the pre-flight read
     assert not patch_route.called  # no PATCH — nothing to remove
-    sleep_mock.assert_not_called()  # no polling sleep at all
     assert isinstance(result, AuditSettings)
     assert absent_group not in result.action_groups
 
 
-async def test_remove_action_group_polls_until_gone() -> None:
-    """remove_action_group must poll GET until the group is absent after a PATCH.
+async def test_remove_action_group_returns_authoritative_state_no_reget() -> None:
+    """remove_action_group returns a locally-constructed AuditSettings without a re-GET.
 
-    Simulates a backend that initially returns the group still present (stale
-    cache), then reflects the removal on the third GET.  Patching asyncio.sleep
-    keeps the test fast while verifying the backoff loop behaviour.
+    Primary assertion: the returned object reflects the post-PATCH membership
+    (removed group absent, remaining groups preserved) even though the GET endpoint
+    is eventually-consistent and is not polled after the PATCH.
+
+    The call-pattern assertion (1 GET + 1 PATCH, no re-GET) is what distinguishes
+    this test from ``test_remove_action_group_removes_present_group``, which focuses
+    on the PATCH *body*; this test focuses on the *return value* and the absence of
+    any subsequent GET call.
     """
-    from unittest.mock import AsyncMock, patch  # noqa: PLC0415
-
-    group = "SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP"
-    existing = AUDIT_SETTINGS_PAYLOAD.copy()  # group present
-    still_stale = AUDIT_SETTINGS_PAYLOAD.copy()  # group still present (stale)
-    removed = AUDIT_SETTINGS_PAYLOAD.copy()
-    removed["auditActionsAndGroups"] = ["BATCH_COMPLETED_GROUP"]  # group gone
+    group_to_remove = "SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP"
+    existing = AUDIT_SETTINGS_PAYLOAD.copy()  # has both groups
 
     with respx.mock:
-        get_route = respx.get(_AUDIT_URL).mock(
-            side_effect=[
-                httpx.Response(200, json=existing),  # initial GET — group present
-                httpx.Response(200, json=still_stale),  # first poll — still stale
-                httpx.Response(200, json=removed),  # second poll — gone
-            ]
-        )
+        get_route = respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=existing))
         patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
-        sleep_mock = AsyncMock()
         client = await _make_client()
         async with client:
-            with patch("fabric_dw.services.audit.asyncio.sleep", new=sleep_mock):
-                result = await audit.remove_action_group(client, _WS_ID, _WH_ID, group)
+            result = await audit.remove_action_group(client, _WS_ID, _WH_ID, group_to_remove)
 
-    assert patch_route.call_count == 1  # exactly one PATCH
-    assert get_route.call_count == 3  # initial + 2 poll GETs
-    assert sleep_mock.call_count == 1  # slept once between poll GETs
+    # Call pattern: exactly 1 GET (pre-flight) + 1 PATCH; no subsequent re-GET.
+    assert get_route.call_count == 1
+    assert patch_route.call_count == 1
+    # Primary: return value reflects locally-constructed post-PATCH state.
     assert isinstance(result, AuditSettings)
-    assert group not in result.action_groups
-
-
-async def test_remove_action_group_timeout_raises_fabric_error() -> None:
-    """remove_action_group raises FabricError when the group is still present after polling.
-
-    If eventual consistency never resolves within max_wait_s, the function must
-    raise FabricError rather than silently returning stale data that still contains
-    the group the caller just asked to remove.
-
-    The test patches asyncio.sleep to be instant (so the loop runs at full speed)
-    and makes every GET return the group still present, simulating a permanently
-    stuck backend.  After approximately max_wait_s of accumulated sleep (roughly
-    21 iterations with variable exponential-backoff intervals) the function must
-    raise rather than return.
-    """
-    from unittest.mock import AsyncMock, patch  # noqa: PLC0415
-
-    group = "BATCH_COMPLETED_GROUP"
-    existing = AUDIT_SETTINGS_PAYLOAD.copy()  # group is present in every GET
-
-    with respx.mock:
-        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=existing))
-        respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
-        client = await _make_client()
-        async with client:
-            with (
-                patch("fabric_dw.services.audit.asyncio.sleep", new=AsyncMock()),
-                pytest.raises(FabricError, match="still present"),
-            ):
-                await audit.remove_action_group(client, _WS_ID, _WH_ID, group)
+    assert group_to_remove not in result.action_groups  # removed group is gone
+    assert "BATCH_COMPLETED_GROUP" in result.action_groups  # remaining groups preserved
 
 
 # ---------------------------------------------------------------------------
