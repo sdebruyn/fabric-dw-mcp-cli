@@ -397,8 +397,12 @@ async def test_add_action_group_403_raises_permission_denied() -> None:
 
 
 async def test_remove_action_group_removes_present_group() -> None:
-    """remove_action_group should GET current groups, remove the target, PATCH, and return
-    the authoritative post-PATCH state immediately — no re-GET / no polling."""
+    """remove_action_group sends the correct PATCH body with the target group removed.
+
+    Verifies the PATCH request body: ``auditActionsAndGroups`` must contain exactly
+    the groups that were present minus the removed one.  The call pattern (1 GET +
+    1 PATCH) is a secondary assertion confirming no polling loop is triggered.
+    """
     group_to_remove = "SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP"
     existing = AUDIT_SETTINGS_PAYLOAD.copy()  # has both groups
     expected_groups = ["BATCH_COMPLETED_GROUP"]
@@ -410,20 +414,24 @@ async def test_remove_action_group_removes_present_group() -> None:
         patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
         client = await _make_client()
         async with client:
-            result = await audit.remove_action_group(client, _WS_ID, _WH_ID, group_to_remove)
+            await audit.remove_action_group(client, _WS_ID, _WH_ID, group_to_remove)
 
     assert get_route.call_count == 1  # exactly one GET — no polling
     assert patch_route.call_count == 1  # exactly one PATCH
+    # Primary assertion: the PATCH body must contain the correct group list.
     sent_body = json.loads(patch_route.calls[0].request.content)
     assert sent_body["auditActionsAndGroups"] == expected_groups
     assert group_to_remove not in sent_body["auditActionsAndGroups"]
-    assert isinstance(result, AuditSettings)
-    assert group_to_remove not in result.action_groups
-    assert "BATCH_COMPLETED_GROUP" in result.action_groups
 
 
 async def test_remove_action_group_idempotent_when_not_present() -> None:
-    """remove_action_group should not PATCH if the group is not present."""
+    """remove_action_group fast-path: no PATCH is issued when the group is already absent.
+
+    Primary assertion: the PATCH route must not be called at all.  This test focuses
+    on the *call pattern* of the fast-path; see
+    ``test_remove_action_group_already_absent_returns_current_no_patch`` for the
+    corresponding return-value assertion.
+    """
     absent_group = "FAILED_DATABASE_AUTHENTICATION_GROUP"
     existing = AUDIT_SETTINGS_PAYLOAD.copy()  # does NOT have FAILED_DATABASE_AUTHENTICATION_GROUP
 
@@ -432,11 +440,11 @@ async def test_remove_action_group_idempotent_when_not_present() -> None:
         patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
         client = await _make_client()
         async with client:
-            result = await audit.remove_action_group(client, _WS_ID, _WH_ID, absent_group)
+            await audit.remove_action_group(client, _WS_ID, _WH_ID, absent_group)
 
-    assert get_route.call_count == 1  # only one GET — no PATCH needed
+    # Primary: no PATCH must be sent when the group is absent.
     assert not patch_route.called
-    assert isinstance(result, AuditSettings)
+    assert get_route.call_count == 1  # only the pre-flight GET
 
 
 async def test_remove_action_group_disabled_raises_value_error() -> None:
@@ -499,12 +507,16 @@ async def test_remove_action_group_already_absent_returns_current_no_patch() -> 
 
 
 async def test_remove_action_group_returns_authoritative_state_no_reget() -> None:
-    """remove_action_group returns the post-PATCH state immediately without a re-GET.
+    """remove_action_group returns a locally-constructed AuditSettings without a re-GET.
 
-    The function must issue exactly one GET (to read current state) and one PATCH.
-    It must NOT issue any subsequent GET calls — the authoritative state is
-    constructed locally from the pre-PATCH settings and the new group list,
-    bypassing the eventually-consistent GET endpoint.
+    Primary assertion: the returned object reflects the post-PATCH membership
+    (removed group absent, remaining groups preserved) even though the GET endpoint
+    is eventually-consistent and is not polled after the PATCH.
+
+    The call-pattern assertion (1 GET + 1 PATCH, no re-GET) is what distinguishes
+    this test from ``test_remove_action_group_removes_present_group``, which focuses
+    on the PATCH *body*; this test focuses on the *return value* and the absence of
+    any subsequent GET call.
     """
     group_to_remove = "SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP"
     existing = AUDIT_SETTINGS_PAYLOAD.copy()  # has both groups
@@ -516,13 +528,13 @@ async def test_remove_action_group_returns_authoritative_state_no_reget() -> Non
         async with client:
             result = await audit.remove_action_group(client, _WS_ID, _WH_ID, group_to_remove)
 
-    # Exactly one GET and one PATCH — no polling re-GETs.
+    # Call pattern: exactly 1 GET (pre-flight) + 1 PATCH; no subsequent re-GET.
     assert get_route.call_count == 1
     assert patch_route.call_count == 1
+    # Primary: return value reflects locally-constructed post-PATCH state.
     assert isinstance(result, AuditSettings)
-    # The removed group must be absent; the others must be preserved.
-    assert group_to_remove not in result.action_groups
-    assert "BATCH_COMPLETED_GROUP" in result.action_groups
+    assert group_to_remove not in result.action_groups  # removed group is gone
+    assert "BATCH_COMPLETED_GROUP" in result.action_groups  # remaining groups preserved
 
 
 # ---------------------------------------------------------------------------
