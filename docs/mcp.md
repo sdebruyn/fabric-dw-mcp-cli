@@ -309,6 +309,27 @@ env_vars = ["FABRIC_AUTH", "AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_S
 
 Codex picks up config changes on the next invocation; no explicit reload is needed.
 
+## Security environment variables
+
+The MCP server reads the following environment variables to restrict what it may do. Pass them via your client's `env` block or your shell environment:
+
+| Variable | Default | Description |
+|---|---|---|
+| `FABRIC_MCP_READONLY` | unset | Set to `1` to restrict `execute_sql` to SELECT/WITH and block all mutating tools. |
+| `FABRIC_MCP_ALLOW_DESTRUCTIVE` | unset | Set to `1` to enable permanently-destructive tools (`delete_*`, `clear_table`, `restore_warehouse_in_place`). Disabled by default. |
+| `FABRIC_MCP_WORKSPACES` | unset | Comma-separated workspace names or GUIDs the server may touch. Unset = all workspaces allowed. |
+| `FABRIC_MCP_ALLOW_REMOTE` | unset | Set to `1` to allow the HTTP transport (`--transport http`) to bind on a non-loopback address. Always front with an authenticating reverse proxy that handles TLS. |
+
+### HTTP transport
+
+The MCP server can be started in HTTP mode for remote clients:
+
+```bash
+fabric-dw-mcp --transport http [--host 127.0.0.1] [--port 8000]
+```
+
+Binding to non-loopback addresses requires `FABRIC_MCP_ALLOW_REMOTE=1`. The HTTP transport has **no built-in authentication or TLS** — always front it with an authenticating reverse proxy.
+
 ## Verifying
 
 After configuring your client, restart it and ask the assistant to list its available tools. You should see entries like `list_workspaces`, `get_warehouse`, `kill_session`, `clear_cache`, and 23 others (27 tools total).

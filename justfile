@@ -19,9 +19,11 @@ test:
 
 cov:
     uv run pytest tests/unit --cov --cov-report=term
+    uv run coverage report --fail-under=80
 
 cov-html:
     uv run pytest tests/unit --cov --cov-report=html
+    uv run coverage report --fail-under=80
 
 integration:
     uv run pytest tests/integration -q -m integration
@@ -30,7 +32,7 @@ build:
     uv build
 
 audit:
-    uvx 'bandit[sarif]' -r src/ -ll
-    uvx pip-audit --strict
+    uvx 'bandit[sarif]==1.9.4' -r src/ -ll
+    uvx 'pip-audit==2.10.1' --strict
 
 check: lint type test
