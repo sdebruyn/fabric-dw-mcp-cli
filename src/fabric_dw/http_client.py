@@ -160,7 +160,7 @@ class FabricHttpClient:
     Args:
         credential:          Azure credential used to fetch bearer tokens.
         rps:                 Maximum requests per second (default 2).
-        timeout:             HTTP request timeout in seconds (default 30.0).
+        timeout:             HTTP request timeout in seconds (default 60.0).
         max_429_retries:     Maximum consecutive 429 responses before raising
                              ``RateLimitedError`` (default 5).
         poll_interval:       Default LRO polling interval in seconds (default 2.0).

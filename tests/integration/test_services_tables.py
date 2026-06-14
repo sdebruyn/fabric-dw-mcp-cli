@@ -154,7 +154,11 @@ async def test_clone_table_at_point_in_time(ephemeral_sql_target: SqlTarget) -> 
             if isinstance(raw, datetime):
                 return raw.replace(tzinfo=UTC) if raw.tzinfo is None else raw.astimezone(UTC)
             # Fallback: parse ISO string if the driver returns a string.
-            return datetime.fromisoformat(str(raw)).replace(tzinfo=UTC)
+            # Then attach UTC only if the parsed datetime is
+            # naive; if it already carries an offset, convert instead so the offset
+            # is not silently discarded.
+            parsed = datetime.fromisoformat(str(raw))
+            return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
 
         at_dt: datetime = await asyncio.to_thread(_get_server_ts)
 

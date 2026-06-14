@@ -1239,3 +1239,29 @@ def test_default_timeout_is_60_seconds() -> None:
     timeouts entirely.
     """
     assert _DEFAULT_TIMEOUT == 60.0, f"Expected _DEFAULT_TIMEOUT == 60.0; got {_DEFAULT_TIMEOUT}"
+
+
+async def test_post_5xx_is_retried() -> None:
+    """POST on 5xx must still be retried (FabricServerError path in _should_retry).
+
+    The switch from retry_if_exception_type(FabricServerError) to
+    retry_if_exception(_should_retry) keeps 5xx retry regardless of HTTP method.
+    This test guards against accidentally removing the isinstance(exc,
+    FabricServerError) branch from _should_retry.
+    """
+    call_count = 0
+
+    def side_effect(_request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(500, json={"error": "server error"})
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.post("https://api.fabric.microsoft.com/v1/items").mock(side_effect=side_effect)
+
+        client = await _get_client(rps=10)
+        async with client:
+            with pytest.raises(FabricServerError):
+                await client.request("POST", HttpBase.FABRIC, "/items", json={"x": 1})
+
+    assert call_count == 3, f"POST 5xx must be retried 3 times (tenacity budget); got {call_count}"
