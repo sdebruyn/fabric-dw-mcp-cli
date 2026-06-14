@@ -7,7 +7,7 @@ import logging
 import time
 import unittest.mock
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -32,6 +32,51 @@ from fabric_dw.http_client import _DEFAULT_TIMEOUT, FabricHttpClient, HttpBase, 
 # ---------------------------------------------------------------------------
 
 _FAKE_TOKEN = AccessToken(token="fake-token", expires_on=int(time.time()) + 3600)  # noqa: S106
+
+
+class _FakeClock:
+    """A controllable monotonic clock and asyncio.sleep replacement.
+
+    Use as a context manager to patch ``fabric_dw.http_client._time.monotonic``
+    and ``asyncio.sleep`` for the duration of the ``with`` block::
+
+        clock = _FakeClock()
+        with clock:
+            client._pause_until = clock.now + 1.0
+            await client.request(...)
+        assert clock.sleeps == [1.0]
+
+    Attributes:
+        now: The current fake monotonic time (float).
+        sleeps: Durations passed to ``asyncio.sleep`` (positive values only).
+    """
+
+    def __init__(self, now: float = 1_000.0) -> None:
+        # Start well above zero so that ``_pause_until - now`` arithmetic is clean.
+        self.now: float = now
+        self.sleeps: list[float] = []
+
+    def monotonic(self) -> float:
+        return self.now
+
+    async def sleep(self, seconds: float) -> None:
+        """Record the requested duration and advance the fake clock; no real wait."""
+        if seconds > 0:
+            self.sleeps.append(seconds)
+            self.now += seconds
+
+    def __enter__(self) -> _FakeClock:
+        self._p_monotonic = patch(
+            "fabric_dw.http_client._time.monotonic", side_effect=self.monotonic
+        )
+        self._p_sleep = patch("asyncio.sleep", side_effect=self.sleep)
+        self._p_monotonic.start()
+        self._p_sleep.start()
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self._p_sleep.stop()
+        self._p_monotonic.stop()
 
 
 def _make_credential(token: AccessToken = _FAKE_TOKEN) -> AsyncTokenCredential:
@@ -69,14 +114,17 @@ def test_parse_retry_after_http_date() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 async def test_rps_limiter_timing() -> None:
-    """6 requests at 2 RPS complete in ~2.0s.
+    """6 requests at 2 RPS complete in ~2.0s (wall-clock test; marked slow).
 
     AsyncLimiter(2, 1) drains at 2 tokens/s: first 2 fire immediately,
     then 1 more every 0.5 s, so the 6th fires at ~2.0 s.
-    """
-    elapsed: float = 0.0
 
+    This test measures real elapsed time to verify the AsyncLimiter is wired up
+    correctly.  It is excluded from the default ``just check`` run via
+    ``@pytest.mark.slow``; run it explicitly with ``-m slow`` when needed.
+    """
     with respx.mock:
         route = respx.get("https://api.fabric.microsoft.com/v1/items").mock(
             return_value=httpx.Response(200, json={"value": []})
@@ -101,7 +149,12 @@ async def test_rps_limiter_timing() -> None:
 
 
 async def test_429_retry_after_honored() -> None:
-    """A 429 with Retry-After: 1 should retry once and succeed; elapsed >= ~0.9 s."""
+    """A 429 with Retry-After: 1 should retry once and succeed.
+
+    Uses a fake clock so the test is instantaneous: asserts that asyncio.sleep
+    was called with a duration >= 1.0 s (the Retry-After value), proving the
+    pause deadline is honoured without real wall-clock waiting.
+    """
     call_count = 0
 
     def side_effect(_request: httpx.Request) -> httpx.Response:
@@ -111,18 +164,22 @@ async def test_429_retry_after_honored() -> None:
             return httpx.Response(429, headers={"Retry-After": "1"}, json={})
         return httpx.Response(200, json={"value": []})
 
+    clock = _FakeClock()
     with respx.mock:
         respx.get("https://api.fabric.microsoft.com/v1/items").mock(side_effect=side_effect)
 
         client = await _get_client(rps=10)
         async with client:
-            start = time.monotonic()
-            resp = await client.request("GET", HttpBase.FABRIC, "/items")
-            elapsed = time.monotonic() - start
+            with clock:
+                resp = await client.request("GET", HttpBase.FABRIC, "/items")
 
-        assert resp.status_code == 200
-        assert call_count == 2
-    assert elapsed >= 0.9, f"Retry-After not honored: {elapsed:.2f}s"
+    assert resp.status_code == 200
+    assert call_count == 2
+    # The client must have slept for at least the Retry-After duration (1 s).
+    assert len(clock.sleeps) >= 1, f"Expected >=1 deadline sleep; got {clock.sleeps}"
+    assert sum(clock.sleeps) >= 1.0, (
+        f"Total sleep {sum(clock.sleeps):.3f}s < 1.0 — Retry-After not honoured"
+    )
 
 
 async def test_429_raises_after_five_in_a_row() -> None:
@@ -729,8 +786,11 @@ def test_fabric_error_str_with_hint_and_request_id() -> None:
 async def test_429_deadline_aggregated_for_concurrent_requests() -> None:
     """Two concurrent 429s with Retry-After values aggregate to the MAX deadline.
 
-    Both requests see a 429 first. After sleeping the maximum Retry-After,
-    both succeed. The total elapsed time must be >= the longer Retry-After.
+    Both requests see a 429 first. After the deadline expires, both succeed.
+
+    Uses a fake clock so the test is instantaneous: asserts that asyncio.sleep
+    was called at least once with a duration >= 1.0 s (the Retry-After value),
+    proving the aggregated pause deadline is honoured without real waiting.
     """
     call_count = 0
 
@@ -742,21 +802,24 @@ async def test_429_deadline_aggregated_for_concurrent_requests() -> None:
             return httpx.Response(429, headers={"Retry-After": "1"}, json={})
         return httpx.Response(200, json={"value": []})
 
+    clock = _FakeClock()
     with respx.mock:
         respx.get("https://api.fabric.microsoft.com/v1/items").mock(side_effect=side_effect)
 
         client = FabricHttpClient(credential=_make_credential(), rps=10)
         async with client:
-            start = time.monotonic()
-            results = await asyncio.gather(
-                client.request("GET", HttpBase.FABRIC, "/items"),
-                client.request("GET", HttpBase.FABRIC, "/items"),
-            )
-            elapsed = time.monotonic() - start
+            with clock:
+                results = await asyncio.gather(
+                    client.request("GET", HttpBase.FABRIC, "/items"),
+                    client.request("GET", HttpBase.FABRIC, "/items"),
+                )
 
     assert all(r.status_code == 200 for r in results)
-    # Must have waited at least 1 second for the Retry-After
-    assert elapsed >= 0.9, f"Retry-After not honored: {elapsed:.2f}s"
+    # The aggregated deadline must have produced at least one sleep >= 1.0 s.
+    assert len(clock.sleeps) >= 1, f"Expected >=1 deadline sleep; got {clock.sleeps}"
+    assert max(clock.sleeps) >= 1.0, (
+        f"Largest sleep {max(clock.sleeps):.3f}s < 1.0 — Retry-After not honoured"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -765,7 +828,12 @@ async def test_429_deadline_aggregated_for_concurrent_requests() -> None:
 
 
 async def test_429_deadline_single_request_honors_retry_after() -> None:
-    """429 with Retry-After: 1 sets _pause_until and waits before retry."""
+    """429 with Retry-After: 1 sets _pause_until and waits before retry.
+
+    Uses a fake clock so the test is instantaneous: asserts that asyncio.sleep
+    was called with a duration >= 1.0 s, proving the pause deadline from the
+    Retry-After header is honoured deterministically.
+    """
     call_count = 0
 
     def side_effect(_request: httpx.Request) -> httpx.Response:
@@ -775,18 +843,22 @@ async def test_429_deadline_single_request_honors_retry_after() -> None:
             return httpx.Response(429, headers={"Retry-After": "1"}, json={})
         return httpx.Response(200, json={"ok": True})
 
+    clock = _FakeClock()
     with respx.mock:
         respx.get("https://api.fabric.microsoft.com/v1/items").mock(side_effect=side_effect)
 
         client = FabricHttpClient(credential=_make_credential(), rps=10)
         async with client:
-            start = time.monotonic()
-            resp = await client.request("GET", HttpBase.FABRIC, "/items")
-            elapsed = time.monotonic() - start
+            with clock:
+                resp = await client.request("GET", HttpBase.FABRIC, "/items")
 
     assert resp.status_code == 200
     assert call_count == 2
-    assert elapsed >= 0.9, f"Pause deadline not honored: {elapsed:.2f}s"
+    # Must have slept for at least the Retry-After duration (1 s).
+    assert len(clock.sleeps) >= 1, f"Expected >=1 deadline sleep; got {clock.sleeps}"
+    assert sum(clock.sleeps) >= 1.0, (
+        f"Total sleep {sum(clock.sleeps):.3f}s < 1.0 — pause deadline not honoured"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1047,20 +1119,30 @@ async def test_send_once_re_sleeps_when_pause_until_extended_mid_sleep() -> None
     Regression for the original single-if implementation: if a concurrent coroutine
     extends _pause_until while this coroutine is sleeping, the while loop must
     detect the remaining time and sleep again rather than proceeding immediately.
+
+    The original test was FLAKY because it used ``time.monotonic() + 0.05`` to set
+    the deadline, so a slow scheduler could let real time advance past the deadline
+    before _send_once checked it, recording zero sleeps.
+
+    Fix: use ``_FakeClock`` to control the monotonic clock.  The fake clock starts
+    at ``now=1000.0``; we set ``_pause_until = 1001.0`` (1 s in the fake future).
+    The fake sleep advances the clock, so after the first sleep the clock is at
+    1001.0 + extension.  The while loop detects the extension and sleeps again.
+    No real time passes; the test is deterministic.
     """
-    sleep_durations: list[float] = []
-    original_sleep = asyncio.sleep
+    clock = _FakeClock(now=1_000.0)
+    # We need a custom sleep that extends _pause_until on the first call,
+    # simulating a concurrent coroutine updating the shared deadline.
+    # We wrap clock.sleep to inject the side-effect on the first call.
+    first_sleep_done = False
 
-    call_count = 0
-
-    async def mock_sleep(seconds: float) -> None:
-        nonlocal call_count
-        sleep_durations.append(seconds)
-        # On the first deadline sleep, extend _pause_until by an extra 0.1s
-        # to simulate a concurrent coroutine updating the shared deadline.
-        if len(sleep_durations) == 1 and seconds > 0:
-            client._pause_until = client._pause_until + 0.1
-        await original_sleep(0)  # Don't actually wait in tests
+    async def extending_sleep(seconds: float) -> None:
+        nonlocal first_sleep_done
+        if not first_sleep_done and seconds > 0:
+            # Simulate a concurrent coroutine extending the deadline mid-sleep.
+            client._pause_until += 0.5
+            first_sleep_done = True
+        await clock.sleep(seconds)
 
     with respx.mock:
         respx.get("https://api.fabric.microsoft.com/v1/items").mock(
@@ -1069,16 +1151,21 @@ async def test_send_once_re_sleeps_when_pause_until_extended_mid_sleep() -> None
 
         client = FabricHttpClient(credential=_make_credential(), rps=10)
         async with client:
-            # Pre-set a deadline in the future so _send_once will enter the while loop
-            client._pause_until = time.monotonic() + 0.05
-            with unittest.mock.patch("asyncio.sleep", side_effect=mock_sleep):
+            # Set deadline 1 s into the fake future (clock.now = 1000, deadline = 1001).
+            # This is guaranteed to be in the future because the fake clock is frozen
+            # until fake sleep is called — no real-time race condition.
+            client._pause_until = clock.now + 1.0
+            with (
+                patch("fabric_dw.http_client._time.monotonic", side_effect=clock.monotonic),
+                patch("asyncio.sleep", side_effect=extending_sleep),
+            ):
                 resp = await client.request("GET", HttpBase.FABRIC, "/items")
 
     assert resp.status_code == 200
     # The while loop must have produced at least 2 deadline sleeps:
-    # once for the original deadline, once after _pause_until was extended.
-    assert len(sleep_durations) >= 2, (
-        f"Expected >=2 sleeps (original + extended deadline); got {sleep_durations}"
+    # once for the original deadline (1 s), once after _pause_until was extended (0.5 s).
+    assert len(clock.sleeps) >= 2, (
+        f"Expected >=2 sleeps (original + extended deadline); got {clock.sleeps}"
     )
 
 
