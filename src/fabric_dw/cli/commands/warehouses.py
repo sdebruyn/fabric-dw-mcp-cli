@@ -7,7 +7,7 @@ import logging
 import click
 
 from fabric_dw.cli._context import CliContext
-from fabric_dw.cli._render import confirm, render, render_permissions_table
+from fabric_dw.cli._render import render, render_permissions_table
 from fabric_dw.cli.commands._utils import (
     _coro,
     _resolve_item,
@@ -72,7 +72,7 @@ async def list_cmd(ctx: CliContext, workspace: str | None, all_workspaces: bool)
                 json_output=ctx.json_output,
                 table_title="Warehouses",
             )
-    except FabricError as exc:
+    except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
 
@@ -90,7 +90,7 @@ async def get_cmd(ctx: CliContext, workspace: str | None, warehouse: str | None)
             ws_id, entry = await _resolve_item(http, ws, wh)
             obj = await _warehouses_svc.get_warehouse(http, ws_id, entry.id)
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
-    except FabricError as exc:
+    except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
 
@@ -146,11 +146,10 @@ async def rename_cmd(
     try:
         async with build_http_client(ctx) as http:
             ws_id, entry, cache = await _resolve_item_with_cache(http, ws, wh)
-            confirmed = confirm(
+            if not confirm_destructive(
                 f"Rename warehouse {entry.display_name!r} ({entry.id}) to {new_name!r}?",
                 yes=ctx.yes,
-            )
-            if not confirmed:
+            ):
                 click.echo("Aborted.")
                 return
             obj = await _warehouses_svc.rename(
@@ -199,7 +198,7 @@ async def delete_cmd(ctx: CliContext, workspace: str | None, warehouse: str | No
                 )
             else:
                 click.echo(f"Warehouse {entry.display_name!r} ({entry.id}) deleted.")
-    except FabricError as exc:
+    except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
 
@@ -218,21 +217,20 @@ async def takeover_cmd(ctx: CliContext, workspace: str | None, warehouse: str | 
     try:
         async with build_http_client(ctx) as http:
             ws_id, entry = await _resolve_item(http, ws, wh)
-    except FabricError as exc:
+    except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
     if entry.kind == WarehouseKind.SQL_ENDPOINT:
         raise click.UsageError("takeover is not supported for SQL Analytics Endpoints")
-    confirmed = confirm(
+    if not confirm_destructive(
         f"Take over warehouse {entry.display_name!r} ({entry.id})?",
         yes=ctx.yes,
-    )
-    if not confirmed:
+    ):
         click.echo("Aborted.")
         return
     try:
         async with build_http_client(ctx) as http:
             await _ownership_svc.takeover(http, ws_id, entry.id)
-    except FabricError as exc:
+    except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(f"Ownership of warehouse {entry.display_name!r} ({entry.id}) taken.")
 
@@ -257,5 +255,5 @@ async def permissions_cmd(ctx: CliContext, workspace: str | None, warehouse: str
             render_permissions_table(
                 items, title="Warehouse Permissions", json_output=ctx.json_output
             )
-    except FabricError as exc:
+    except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc

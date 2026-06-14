@@ -206,6 +206,7 @@ class TestAuditEnable:
         _ = cache_env
         result = runner.invoke(cli, ["audit", "enable", WS_GUID, WH_GUID, "--retention-days", "-1"])
         assert result.exit_code != 0
+        assert "range" in result.output
 
 
 class TestAuditDisable:
@@ -327,6 +328,7 @@ class TestAuditSetRetention:
         _ = cache_env
         result = runner.invoke(cli, ["audit", "set-retention", WS_GUID, WH_GUID, "--days", "-1"])
         assert result.exit_code != 0
+        assert "range" in result.output
 
     def test_set_retention_no_precheck_sends_patch_directly(
         self, runner: CliRunner, cache_env: Path

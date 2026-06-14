@@ -87,9 +87,11 @@ async def read_cmd(
     schema, view_name = parse_qualified_name(qualified_name, kind="view")
     output_path = Path(output) if output else None
 
-    # --json (global flag) implies JSON format for row data; --format takes precedence
-    # when explicitly supplied, but if only --json is set we force json output.
-    effective_fmt = OutputFormat.JSON.value if ctx.json_output else fmt
+    # --format takes precedence when explicitly supplied (i.e. differs from the default
+    # JSON value); if --format is omitted (or is the default "json"), the global --json
+    # flag selects JSON output.  This means --json --format csv produces CSV.
+    _json_fallback = OutputFormat.JSON.value if ctx.json_output else fmt
+    effective_fmt = fmt if fmt != OutputFormat.JSON else _json_fallback
 
     if effective_fmt in (OutputFormat.CSV, OutputFormat.PARQUET) and output_path is None:
         raise click.UsageError(f"--output PATH is required for {effective_fmt!r} format.")

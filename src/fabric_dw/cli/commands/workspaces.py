@@ -84,8 +84,9 @@ async def set_collation_cmd(ctx: CliContext, workspace: str | None, collation: s
     try:
         async with build_http_client(ctx) as http:
             await _workspaces_svc.set_collation(http, ws_id, collation)
-    except ValueError as exc:
+    except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
-    except FabricError as exc:
-        raise click.ClickException(str(exc)) from exc
-    click.echo(f"Collation set to {collation!r}.")
+    if ctx.json_output:
+        render({"status": "set", "collation": collation}, json_output=True)
+    else:
+        click.echo(f"Collation set to {collation!r}.")

@@ -418,7 +418,8 @@ class TestWarehousesDefaultFallback:
         monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
         monkeypatch.delenv("FABRIC_DW_DEFAULT_WORKSPACE", raising=False)
-        runner.invoke(cli, ["config", "set", "workspace", WS_GUID])
+        setup = runner.invoke(cli, ["config", "set", "workspace", WS_GUID])
+        assert setup.exit_code == 0
         mock_http = AsyncMock()
         mock_http.iter_paginated = MagicMock(return_value=_async_iter([]))
         with (
