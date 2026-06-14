@@ -26,7 +26,7 @@ jobs:
         # bandit exits non-zero on findings >= -ll, which blocks the PR.
         run: uvx --quiet 'bandit[sarif]==1.9.4' -r src/ -ll -f sarif -o bandit.sarif
       - name: Upload SARIF to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@411bbbe57033eedfc1a82d68c01345aa96c737d7 # v4
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4
         if: always()
         with:
           sarif_file: bandit.sarif
