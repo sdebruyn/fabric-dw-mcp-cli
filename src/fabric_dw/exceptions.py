@@ -1,5 +1,15 @@
-class FabricError(Exception):
-    """Base error for all fabric-dw errors.
+class FabricCliError(Exception):
+    """Common base for all fabric-dw exceptions raised to the CLI / MCP boundary.
+
+    Both :class:`FabricError` (HTTP/API errors) and :class:`ConfigError` (local
+    configuration errors) inherit from this class so that a single broad catch at
+    the CLI or MCP boundary can present both cleanly without collapsing the two
+    distinct semantic hierarchies.
+    """
+
+
+class FabricError(FabricCliError):
+    """Base error for all fabric-dw HTTP/API errors.
 
     Attributes:
         status:     HTTP status code that triggered this error, or None.
@@ -65,7 +75,7 @@ class AlreadyExistsError(FabricError):
     """Raised when a resource with the given name already exists."""
 
 
-class ConfigError(Exception):
+class ConfigError(FabricCliError):
     """Raised when required configuration is missing or invalid.
 
     This is a local configuration error (missing env vars, unrecognised
@@ -75,6 +85,11 @@ class ConfigError(Exception):
     Keeping the hierarchies separate ensures that broad
     ``except FabricError`` handlers in HTTP/API call sites do **not**
     silently swallow configuration problems.
+
+    Both :class:`ConfigError` and :class:`FabricError` share the common base
+    :class:`FabricCliError`, so the CLI and MCP boundaries can catch
+    ``FabricCliError`` to present *both* kinds of error cleanly without
+    collapsing the two distinct semantics.
     """
 
     @classmethod

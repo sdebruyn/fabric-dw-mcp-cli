@@ -147,7 +147,12 @@ async def fabric_lifespan(app: FastMCP) -> AsyncIterator[None]:  # noqa: ARG001
        there is no standalone ``aclose()`` call), then clears the sentinel.
     """
     global _SERVER_CTX  # noqa: PLW0603
-    ctx = build_context()
+    try:
+        ctx = build_context()
+    except ConfigError as exc:
+        raise RuntimeError(
+            f"fabric-dw MCP server failed to start due to a configuration error: {exc}"
+        ) from exc
     async with ctx.http:
         _SERVER_CTX = ctx
         try:

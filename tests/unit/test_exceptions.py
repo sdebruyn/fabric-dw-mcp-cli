@@ -15,6 +15,7 @@ from fabric_dw.exceptions import (
     AlreadyExistsError,
     AuthError,
     ConfigError,
+    FabricCliError,
     FabricError,
     FabricServerError,
     ItemKindError,
@@ -26,6 +27,32 @@ from fabric_dw.exceptions import (
 # ---------------------------------------------------------------------------
 # FabricError — base class
 # ---------------------------------------------------------------------------
+
+
+class TestFabricCliError:
+    """FabricCliError common base is shared by FabricError and ConfigError."""
+
+    def test_fabric_error_is_fabric_cli_error(self) -> None:
+        err = FabricError("msg")
+        assert isinstance(err, FabricCliError)
+
+    def test_config_error_is_fabric_cli_error(self) -> None:
+        err = ConfigError("cfg problem")
+        assert isinstance(err, FabricCliError)
+
+    def test_config_error_is_not_fabric_error(self) -> None:
+        err = ConfigError("cfg problem")
+        assert not isinstance(err, FabricError)
+
+    def test_catching_common_base_catches_both(self) -> None:
+        """A single except FabricCliError block must catch both subtypes."""
+        caught: list[FabricCliError] = []
+        for exc in (FabricError("http err"), ConfigError("cfg err")):
+            try:
+                raise exc
+            except FabricCliError as e:
+                caught.append(e)
+        assert len(caught) == 2
 
 
 class TestFabricErrorBasic:
@@ -250,6 +277,11 @@ class TestConfigError:
         err = ConfigError("cfg problem")
         assert isinstance(err, Exception)
         assert not isinstance(err, FabricError)
+
+    def test_config_error_is_fabric_cli_error(self) -> None:
+        """ConfigError must be a FabricCliError so CLI/MCP boundaries can catch it."""
+        err = ConfigError("cfg problem")
+        assert isinstance(err, FabricCliError)
 
     def test_config_error_is_exception(self) -> None:
         err = ConfigError("cfg problem")

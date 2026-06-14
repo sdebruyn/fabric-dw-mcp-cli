@@ -778,7 +778,13 @@ async def test_sync_adapter_get_token_forwards_extra_kwargs() -> None:
 
 
 async def test_sync_adapter_get_token_dispatches_extra_kwargs_via_to_thread() -> None:
-    """asyncio.to_thread must receive the forwarded extra kwargs (C23)."""
+    """asyncio.to_thread must receive the forwarded extra kwargs (C23).
+
+    We verify that the extra kwarg is forwarded without hardcoding the full set
+    of default keyword values (which would make the test brittle to signature
+    changes).  The positional args (callable and scope) are pinned; the keyword
+    presence of ``future_param`` is asserted via ``call_args``.
+    """
     inner = MagicMock()
     inner.get_token.return_value = AccessToken("tok", 9999999999)
     adapter = SyncCredentialAdapter(inner)
@@ -786,14 +792,13 @@ async def test_sync_adapter_get_token_dispatches_extra_kwargs_via_to_thread() ->
     with patch("fabric_dw.auth.asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
         mock_to_thread.return_value = AccessToken("tok", 9999999999)
         await adapter.get_token(FABRIC_SCOPE, future_param="x")
-        mock_to_thread.assert_called_once_with(
-            inner.get_token,
-            FABRIC_SCOPE,
-            claims=None,
-            tenant_id=None,
-            enable_cae=False,
-            future_param="x",
-        )
+        mock_to_thread.assert_called_once()
+        args, kwargs = mock_to_thread.call_args
+        # First two positional args: the callable and the scope.
+        assert args[0] is inner.get_token
+        assert args[1] == FABRIC_SCOPE
+        # The extra kwarg must be forwarded unchanged.
+        assert kwargs.get("future_param") == "x"
 
 
 # ---------------------------------------------------------------------------
@@ -921,6 +926,9 @@ def test_config_error_is_not_caught_by_fabric_error_handler() -> None:
     Broad except-FabricError blocks in MCP tool / CLI call sites must not
     silently absorb local configuration problems.
     """
-    from fabric_dw.exceptions import ConfigError, FabricError  # noqa: PLC0415
+    from fabric_dw.exceptions import ConfigError, FabricCliError, FabricError  # noqa: PLC0415
 
     assert not issubclass(ConfigError, FabricError)
+    # Both share a common base so CLI/MCP boundaries can catch either.
+    assert issubclass(ConfigError, FabricCliError)
+    assert issubclass(FabricError, FabricCliError)
