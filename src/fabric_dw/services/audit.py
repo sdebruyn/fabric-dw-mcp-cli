@@ -196,10 +196,17 @@ async def set_action_groups(
             list is changed and the current audit state is left untouched.
 
     Returns:
-        The fresh :class:`~fabric_dw.models.AuditSettings` after the update.
+        The authoritative :class:`~fabric_dw.models.AuditSettings` after the
+        PATCH, constructed locally from the pre-PATCH settings and the supplied
+        action-group list.  The ``GET /settings/sqlAudit`` endpoint is
+        eventually consistent with multi-minute lag; polling it after PATCH is
+        self-defeating.  A failed PATCH still raises via
+        :meth:`~fabric_dw.http_client.FabricHttpClient.request`.
 
     Raises:
         ValueError: If any name in *action_groups* does not match ``^[A-Z0-9_]+$``.
+        ValueError: If *ensure_enabled* is ``False`` and auditing is currently disabled
+            (``state == "Disabled"``).  Enable auditing first with :func:`enable`.
         PermissionDeniedError: If the caller lacks the required permission (HTTP 403).
     """
     for name in action_groups:
@@ -209,6 +216,14 @@ async def set_action_groups(
                 "names must match ^[A-Z0-9_]+$ (upper-case letters, digits, and underscores only)"
             )
             raise ValueError(msg)
+
+    # Pre-flight GET to obtain current settings so we can construct the
+    # authoritative post-PATCH state without a stale re-fetch.
+    current = await get_settings(http, workspace_id, warehouse_id)
+
+    if not ensure_enabled and current.state == "Disabled":
+        msg = "audit is disabled; enable first"
+        raise ValueError(msg)
 
     path = _audit_path(workspace_id, warehouse_id)
 
@@ -226,8 +241,11 @@ async def set_action_groups(
         path,
         json=patch_body,
     )
-    # PATCH returns empty/partial body on this endpoint; re-fetch required.
-    return await get_settings(http, workspace_id, warehouse_id)
+    # Return the authoritative post-PATCH state constructed locally.
+    # Do NOT poll GET: the GET endpoint lags the PATCH by minutes; the PATCH
+    # itself is the authoritative source of truth.
+    new_state = "Enabled" if ensure_enabled else current.state
+    return current.model_copy(update={"action_groups": list(action_groups), "state": new_state})
 
 
 async def add_action_group(
@@ -262,8 +280,13 @@ async def add_action_group(
         group: Name of the action group to add.
 
     Returns:
-        The fresh :class:`~fabric_dw.models.AuditSettings` after the update
-        (or the current settings when the group was already present).
+        The authoritative :class:`~fabric_dw.models.AuditSettings` after the
+        PATCH (or the current settings when the group was already present),
+        constructed locally from the pre-PATCH settings and the computed new
+        group list.  The ``GET /settings/sqlAudit`` endpoint is eventually
+        consistent with multi-minute lag; polling it after PATCH is
+        self-defeating.  A failed PATCH still raises via
+        :meth:`~fabric_dw.http_client.FabricHttpClient.request`.
 
     Raises:
         ValueError: If *group* does not match ``^[A-Z0-9_]+$``.
@@ -296,8 +319,10 @@ async def add_action_group(
         path,
         json={"auditActionsAndGroups": new_groups},
     )
-    # PATCH returns empty/partial body on this endpoint; re-fetch required.
-    return await get_settings(http, workspace_id, warehouse_id)
+    # Return the authoritative post-PATCH state constructed locally.
+    # Do NOT poll GET: the GET endpoint lags the PATCH by minutes; the PATCH
+    # itself is the authoritative source of truth.
+    return current.model_copy(update={"action_groups": new_groups})
 
 
 async def remove_action_group(
