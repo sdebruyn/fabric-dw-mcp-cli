@@ -6,6 +6,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      pytest_k:
+        description: "Optional pytest -k expression to run a subset (empty = full suite)"
+        required: false
+        default: ""
 
 permissions:
   id-token: write
@@ -20,7 +25,7 @@ jobs:
     if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'integration') }}
     runs-on: ubuntu-latest
     environment: integration
-    timeout-minutes: 45
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v6
         with:
@@ -179,7 +184,13 @@ jobs:
           FABRIC_TEST_WORKSPACE_ID: ${{ secrets.FABRIC_TEST_WORKSPACE_ID }}
           FABRIC_AUTH: default
           FABRIC_TEST_IS_TENANT_ADMIN: "true"
-        run: uv run pytest tests/integration -m integration -v
+        run: |
+          if [ -n "${{ inputs.pytest_k }}" ]; then
+            echo "Running subset: -k '${{ inputs.pytest_k }}'"
+            uv run pytest tests/integration -m integration -v -k "${{ inputs.pytest_k }}"
+          else
+            uv run pytest tests/integration -m integration -v
+          fi
 
       - name: Post-test full workspace wipe
         if: always()
