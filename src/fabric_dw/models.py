@@ -329,7 +329,7 @@ class FrequentlyRunQuery(_FabricBase):
     max_run_total_elapsed_time_ms: int
     number_of_successful_runs: int
     number_of_failed_runs: int
-    number_of_cancelled_runs: int
+    number_of_canceled_runs: int
     query_hash: str | None = None
 
 
