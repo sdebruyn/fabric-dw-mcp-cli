@@ -4,6 +4,22 @@ Converts raw ``(columns, rows)`` pairs (as returned by DBAPI cursors) into a
 :class:`pyarrow.Table` and then writes them to JSON, CSV, or Parquet.
 
 Designed to be reusable across ``tables read`` and ``views read`` (issue #211).
+
+Duplicate column names
+----------------------
+T-SQL permits queries such as ``SELECT a.id, b.id`` that yield two columns
+with the same name.  This module normalises duplicates at the earliest point —
+:func:`_disambiguate_columns` — and propagates the unique names through every
+output layer (Arrow schema, JSON keys, CSV headers, Parquet field names).
+
+The disambiguation scheme is:
+
+* The **first** occurrence keeps its original name unchanged.
+* Each **subsequent** occurrence is suffixed with ``_2``, ``_3``, …
+* If the suffixed name would itself collide with another column (original or
+  already-suffixed), the counter is incremented until a free name is found.
+
+Example: ``['id', 'id', 'id']`` → ``['id', 'id_2', 'id_3']``.
 """
 
 from __future__ import annotations
@@ -40,6 +56,36 @@ class OutputFormat(StrEnum):
     PARQUET = "parquet"
 
 
+def _disambiguate_columns(columns: list[str]) -> list[str]:
+    """Return a copy of *columns* with duplicate names made unique.
+
+    The first occurrence of each name is kept as-is.  Later occurrences are
+    suffixed ``_2``, ``_3``, … (incrementing until the candidate name is not
+    already present in the output list).
+
+    Args:
+        columns: Original column name list, possibly containing duplicates.
+
+    Returns:
+        A new list of the same length as *columns* with all names unique.
+    """
+    seen: set[str] = set()
+    result: list[str] = []
+    for name in columns:
+        if name not in seen:
+            seen.add(name)
+            result.append(name)
+        else:
+            counter = 2
+            candidate = f"{name}_{counter}"
+            while candidate in seen:
+                counter += 1
+                candidate = f"{name}_{counter}"
+            seen.add(candidate)
+            result.append(candidate)
+    return result
+
+
 def columns_rows_to_arrow(
     columns: list[str],
     rows: list[tuple[object, ...]],
@@ -50,27 +96,47 @@ def columns_rows_to_arrow(
     type; this ensures the function never raises for exotic MSSQL types such as
     ``uniqueidentifier``, ``datetimeoffset``, or ``varbinary``.
 
+    Duplicate column names (e.g. from ``SELECT a.id, b.id``) are
+    **disambiguated** before the Arrow schema is constructed: later occurrences
+    receive ``_2``, ``_3``, … suffixes (see :func:`_disambiguate_columns`).
+    The same unique names are used consistently across all output formats so
+    that every column's data is preserved in JSON, CSV, and Parquet output.
+
     Args:
-        columns: Ordered list of column name strings.
+        columns: Ordered list of column name strings.  May contain duplicates.
         rows: List of row tuples; each tuple must have the same length as
-            *columns*.
+            *columns*.  A :class:`ValueError` is raised if any row's length
+            does not match ``len(columns)``.
 
     Returns:
-        A :class:`pyarrow.Table` with one column per name in *columns*.
+        A :class:`pyarrow.Table` with one column per name in *columns*,
+        using disambiguated names when duplicates were present.
+
+    Raises:
+        ValueError: If any row in *rows* has a different length than *columns*.
     """
     if not columns:
         return pa.table({})
 
+    unique_columns = _disambiguate_columns(columns)
+    n_cols = len(columns)
+
     # Build per-column value lists positionally so duplicate column names are
     # preserved (T-SQL allows e.g. ``SELECT a.id, b.id`` which yields two
-    # columns both named "id").
+    # columns both named "id"). Enforce row-length contract explicitly so the
+    # caller receives a descriptive ValueError rather than an IndexError or a
+    # cryptic ArrowInvalid later.
     col_arrays_by_idx: list[list[Any]] = [[] for _ in columns]
-    for row in rows:
+    for row_idx, row in enumerate(rows):
+        row_len = len(row)
+        if row_len != n_cols:
+            msg = f"Row {row_idx} has {row_len} value(s) but {n_cols} column(s) were declared"
+            raise ValueError(msg)
         for idx, val in enumerate(row):
             col_arrays_by_idx[idx].append(val)
 
     arrays: list[pa.Array] = []
-    for idx, col in enumerate(columns):
+    for idx, col in enumerate(unique_columns):
         values = col_arrays_by_idx[idx]
         try:
             arrays.append(pa.array(values))
@@ -82,17 +148,21 @@ def columns_rows_to_arrow(
             )
             arrays.append(pa.array([str(v) if v is not None else None for v in values]))
 
-    schema = pa.schema([pa.field(col, arr.type) for col, arr in zip(columns, arrays, strict=True)])
+    fields = [pa.field(col, arr.type) for col, arr in zip(unique_columns, arrays, strict=True)]
+    schema = pa.schema(fields)
     return pa.Table.from_arrays(arrays, schema=schema)
 
 
 def _arrow_to_json_records(table: pa.Table) -> list[dict[str, Any]]:
     """Serialise *table* to a list of JSON-safe dicts.
 
-    Columns are accessed by positional index (not by name) so that tables with
-    duplicate column names — legal in T-SQL — are serialised correctly.  When
-    duplicates exist the resulting dict keys will collide; the last column with
-    a given name wins, which matches the natural expectation for a row dict.
+    Column names are taken from ``table.schema.names``, which are guaranteed to
+    be unique because :func:`columns_rows_to_arrow` disambiguates duplicates
+    before building the schema.  Each column is accessed by positional index so
+    the implementation is correct even if an external caller somehow passes a
+    table with duplicate field names (the last such column would overwrite
+    earlier ones in that case, but callers should use
+    :func:`columns_rows_to_arrow` to avoid that).
     """
     col_names = table.schema.names
     col_data = [table.column(i).to_pylist() for i in range(table.num_columns)]
@@ -144,6 +214,10 @@ def write_arrow(
     - ``csv``: writes CSV to *output* (required).
     - ``parquet``: writes Parquet to *output* (required).
 
+    Duplicate column names are disambiguated by :func:`columns_rows_to_arrow`
+    before the table reaches this function, so all output formats receive
+    unique column names and every column's data is preserved.
+
     Args:
         table: The Arrow table to write.
         fmt: One of ``"json"``, ``"csv"``, ``"parquet"``.
@@ -156,6 +230,8 @@ def write_arrow(
     Raises:
         ValueError: If *fmt* is not a known format, or if *output* is ``None``
             for a format that requires a file path.
+        AssertionError: If an unhandled :class:`OutputFormat` member is
+            encountered (indicates a programmer error, not a user error).
     """
     if fmt not in OutputFormat:
         msg = f"Unknown output format {fmt!r}; expected one of {[f.value for f in OutputFormat]}"
@@ -176,10 +252,13 @@ def write_arrow(
                 stream.write(payload)
                 stream.write("\n")
         case OutputFormat.CSV:
-            if output is not None:  # guarded above — always true here
-                buf = io.BytesIO()
-                pa_csv.write_csv(table, buf)
-                output.write_bytes(buf.getvalue())
+            assert output is not None  # noqa: S101  # guarded by ValueError above
+            buf = io.BytesIO()
+            pa_csv.write_csv(table, buf)
+            output.write_bytes(buf.getvalue())
         case OutputFormat.PARQUET:
-            if output is not None:  # guarded above — always true here
-                pq.write_table(table, str(output))
+            assert output is not None  # noqa: S101  # guarded by ValueError above
+            pq.write_table(table, str(output))
+        case _:  # pragma: no cover
+            msg = f"Unhandled OutputFormat member {fmt!r}; update write_arrow to handle it"
+            raise AssertionError(msg)
