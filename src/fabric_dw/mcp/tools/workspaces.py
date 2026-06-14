@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -12,6 +13,7 @@ from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
 from fabric_dw.mcp._guards import assert_workspace_allowed, assert_writes_allowed
 from fabric_dw.mcp._helpers import fabric_err
+from fabric_dw.models import Workspace
 from fabric_dw.services import workspaces
 
 __all__ = ["register"]
@@ -19,18 +21,34 @@ __all__ = ["register"]
 _log = logging.getLogger(__name__)
 
 
+def _workspace_in_allowlist(ws: Workspace, allowed: frozenset[str]) -> bool:
+    """Return True when *ws* matches any entry in *allowed* (name or GUID)."""
+    return ws.name.strip().lower() in allowed or str(ws.id).strip().lower() in allowed
+
+
 def register(mcp: FastMCP) -> None:
     """Register workspace tools against *mcp*."""
 
     @mcp.tool(name="list_workspaces")
     async def list_workspaces() -> list[dict[str, Any]]:
-        """List all Fabric workspaces the caller has access to."""
+        """List all Fabric workspaces the caller has access to.
+
+        When ``FABRIC_MCP_WORKSPACES`` is configured only the workspaces that
+        match the allowlist (by name or GUID) are returned.
+        """
         _log.debug("list_workspaces called")
         ctx = get_context()
         try:
             result = await workspaces.list_all(ctx.http)
         except FabricError as exc:
             raise fabric_err(exc) from exc
+        raw_allowlist = os.environ.get("FABRIC_MCP_WORKSPACES", "").strip()
+        if raw_allowlist:
+            allowed: frozenset[str] = frozenset(
+                entry.strip().lower() for entry in raw_allowlist.split(",") if entry.strip()
+            )
+            if allowed:
+                result = [ws for ws in result if _workspace_in_allowlist(ws, allowed)]
         return [ws.model_dump(by_alias=True, mode="json") for ws in result]
 
     @mcp.tool(name="get_workspace")

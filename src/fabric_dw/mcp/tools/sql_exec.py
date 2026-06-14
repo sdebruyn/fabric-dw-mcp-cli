@@ -85,9 +85,12 @@ def register(mcp: FastMCP) -> None:
             raise fabric_err(exc) from exc
         # The service fetches max_rows+1 rows so we can detect truncation without
         # pulling the entire result set over the wire.  Slice back to max_rows here.
+        truncated = len(result.rows) > max_rows
         sliced_rows = result.rows[:max_rows]
-        out = result.model_dump(mode="json")
-        out["rows"] = sliced_rows
-        out["row_count_returned"] = len(sliced_rows)
-        out["truncated"] = len(result.rows) > max_rows
-        return out
+        return {
+            "columns": result.columns,
+            "rows": sliced_rows,
+            "rowcount": result.rowcount,
+            "row_count_returned": len(sliced_rows),
+            "truncated": truncated,
+        }

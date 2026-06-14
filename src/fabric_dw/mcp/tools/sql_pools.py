@@ -8,7 +8,7 @@ from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
-from pydantic import Field
+from pydantic import Field, ValidationError
 
 from fabric_dw.exceptions import AlreadyExistsError, FabricError, NotFoundError
 from fabric_dw.mcp._context import get_context
@@ -132,7 +132,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                     ),
                 }
             )
-        except Exception as exc:
+        except ValidationError as exc:
             raise ToolError(f"Invalid pool: {exc}") from exc
 
         ctx = get_context()

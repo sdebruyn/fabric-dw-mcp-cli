@@ -723,7 +723,10 @@ async def test_refresh_sql_endpoint_metadata_happy_path(mock_ctx, ctx_patch) -> 
 
 
 async def test_refresh_sql_endpoint_metadata_recreate_tables(mock_ctx, ctx_patch) -> None:
-    """refresh_sql_endpoint_metadata passes recreate_tables=True to the service."""
+    """refresh_sql_endpoint_metadata passes recreate_tables=True to the service.
+
+    Requires FABRIC_MCP_ALLOW_DESTRUCTIVE=1 because recreate_tables=True is destructive.
+    """
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     ep_id = UUID("e5f6a7b8-c9d0-1234-ef01-234567890abc")
@@ -734,6 +737,7 @@ async def test_refresh_sql_endpoint_metadata_recreate_tables(mock_ctx, ctx_patch
 
     with (
         ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
         patch(
             "fabric_dw.services.sql_endpoints.refresh_metadata",
             new=mock_refresh,

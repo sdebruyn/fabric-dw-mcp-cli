@@ -10,7 +10,11 @@ from pydantic import Field
 
 from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
-from fabric_dw.mcp._guards import assert_workspace_allowed, assert_writes_allowed
+from fabric_dw.mcp._guards import (
+    assert_destructive_allowed,
+    assert_workspace_allowed,
+    assert_writes_allowed,
+)
 from fabric_dw.mcp._helpers import (
     make_sql_target,
     parse_qualified_name,
@@ -187,6 +191,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         """
         schema, view_name = parse_qualified_name(qualified_name, kind="view")
         assert_writes_allowed("drop_view")
+        assert_destructive_allowed()
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:

@@ -6,7 +6,6 @@ import logging
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
@@ -125,10 +124,8 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 name=name,
                 description=description,
             )
-        except ValueError as exc:
-            raise ToolError(str(exc)) from exc
-        except FabricError as exc:
-            raise fabric_err(exc) from exc
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
         return result.model_dump(by_alias=True, mode="json")
 
     @mcp.tool(name="delete_restore_point")

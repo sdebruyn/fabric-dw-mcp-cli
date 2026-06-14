@@ -6,13 +6,12 @@ import logging
 from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
 from pydantic import Field
 
 from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
 from fabric_dw.mcp._guards import assert_workspace_allowed, assert_writes_allowed
-from fabric_dw.mcp._helpers import fabric_err, resolve_item
+from fabric_dw.mcp._helpers import resolve_item, tool_err
 from fabric_dw.services import audit
 
 __all__ = ["register"]
@@ -33,8 +32,8 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             assert_workspace_allowed(workspace, str(ws_id))
             _log.debug("get_audit_settings ws=%s item=%s", ws_id, item.id)
             result = await audit.get_settings(ctx.http, ws_id, item.id)
-        except FabricError as exc:
-            raise fabric_err(exc) from exc
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
         return result.model_dump(by_alias=True, mode="json")
 
     @mcp.tool(name="enable_audit")
@@ -58,8 +57,8 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             assert_workspace_allowed(workspace, str(ws_id))
             _log.debug("enable_audit ws=%s item=%s retention=%d", ws_id, item.id, retention_days)
             result = await audit.enable(ctx.http, ws_id, item.id, retention_days=retention_days)
-        except FabricError as exc:
-            raise fabric_err(exc) from exc
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
         return result.model_dump(by_alias=True, mode="json")
 
     @mcp.tool(name="disable_audit")
@@ -73,8 +72,8 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             assert_workspace_allowed(workspace, str(ws_id))
             _log.debug("disable_audit ws=%s item=%s", ws_id, item.id)
             result = await audit.disable(ctx.http, ws_id, item.id)
-        except FabricError as exc:
-            raise fabric_err(exc) from exc
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
         return result.model_dump(by_alias=True, mode="json")
 
     @mcp.tool(name="set_audit_action_groups")
@@ -92,8 +91,8 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 "set_audit_action_groups ws=%s item=%s groups=%s", ws_id, item.id, action_groups
             )
             result = await audit.set_action_groups(ctx.http, ws_id, item.id, action_groups)
-        except FabricError as exc:
-            raise fabric_err(exc) from exc
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
         return result.model_dump(by_alias=True, mode="json")
 
     @mcp.tool(name="add_audit_group")
@@ -118,10 +117,8 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             assert_workspace_allowed(workspace, str(ws_id))
             _log.debug("add_audit_group ws=%s item=%s group=%r", ws_id, item.id, group)
             result = await audit.add_action_group(ctx.http, ws_id, item.id, group)
-        except ValueError as exc:
-            raise ToolError(str(exc)) from exc
-        except FabricError as exc:
-            raise fabric_err(exc) from exc
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
         return result.model_dump(by_alias=True, mode="json")
 
     @mcp.tool(name="remove_audit_group")
@@ -146,10 +143,8 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             assert_workspace_allowed(workspace, str(ws_id))
             _log.debug("remove_audit_group ws=%s item=%s group=%r", ws_id, item.id, group)
             result = await audit.remove_action_group(ctx.http, ws_id, item.id, group)
-        except ValueError as exc:
-            raise ToolError(str(exc)) from exc
-        except FabricError as exc:
-            raise fabric_err(exc) from exc
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
         return result.model_dump(by_alias=True, mode="json")
 
     @mcp.tool(name="set_audit_retention")
@@ -175,8 +170,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             assert_workspace_allowed(workspace, str(ws_id))
             _log.debug("set_audit_retention ws=%s item=%s days=%d", ws_id, item.id, days)
             result = await audit.set_retention(ctx.http, ws_id, item.id, days=days)
-        except ValueError as exc:
-            raise ToolError(str(exc)) from exc
-        except FabricError as exc:
-            raise fabric_err(exc) from exc
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
         return result.model_dump(by_alias=True, mode="json")

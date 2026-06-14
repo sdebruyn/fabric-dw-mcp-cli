@@ -718,7 +718,10 @@ async def test_update_view_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) 
 
 
 async def test_drop_view_happy_path(mock_ctx, ctx_patch) -> None:
-    """drop_view resolves workspace + item, calls service, returns dropped dict."""
+    """drop_view resolves workspace + item, calls service, returns dropped dict.
+
+    Requires FABRIC_MCP_ALLOW_DESTRUCTIVE=1 because drop_view is a destructive operation.
+    """
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
@@ -726,6 +729,7 @@ async def test_drop_view_happy_path(mock_ctx, ctx_patch) -> None:
 
     with (
         ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
         patch("fabric_dw.services.views.drop_view", new=AsyncMock(return_value=None)),
     ):
         result = await mcp._tool_manager.call_tool(
@@ -784,7 +788,10 @@ async def test_drop_view_workspace_not_in_allowlist(ctx_patch) -> None:
 
     with (
         ctx_patch,
-        patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-ws"}),
+        patch.dict(
+            os.environ,
+            {"FABRIC_MCP_WORKSPACES": "other-ws", "FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"},
+        ),
         pytest.raises(ToolError),
     ):
         await mcp._tool_manager.call_tool(
@@ -804,6 +811,7 @@ async def test_drop_view_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) ->
 
     with (
         ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
         patch(
             "fabric_dw.services.views.drop_view",
             new=AsyncMock(side_effect=FabricError("SQL error")),

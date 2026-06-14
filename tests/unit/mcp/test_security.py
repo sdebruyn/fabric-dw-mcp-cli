@@ -738,3 +738,304 @@ def test_run_http_loopback_host_does_not_require_flag() -> None:
     ):
         run(["--transport", "http", "--host", "127.0.0.1"])
         # Must not raise SystemExit
+
+
+# ---------------------------------------------------------------------------
+# M03 — drop_view must require FABRIC_MCP_ALLOW_DESTRUCTIVE
+# ---------------------------------------------------------------------------
+
+
+async def test_drop_view_blocked_without_destructive_flag() -> None:
+    """M03: drop_view raises ToolError when FABRIC_MCP_ALLOW_DESTRUCTIVE is not set."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    env_copy = {k: v for k, v in os.environ.items() if k != "FABRIC_MCP_ALLOW_DESTRUCTIVE"}
+    with (
+        patch.dict(os.environ, env_copy, clear=True),
+        pytest.raises(ToolError, match="FABRIC_MCP_ALLOW_DESTRUCTIVE"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "drop_view",
+            {"workspace": _WS_NAME, "item": _WH_NAME, "qualified_name": "dbo.vw_sales"},
+        )
+
+
+async def test_drop_view_allowed_with_destructive_flag() -> None:
+    """M03: drop_view succeeds when FABRIC_MCP_ALLOW_DESTRUCTIVE=1 is set."""
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    from fabric_dw import auth as _auth  # noqa: PLC0415
+    from fabric_dw.cache import ItemEntry  # noqa: PLC0415
+    from fabric_dw.mcp._context import ServerContext  # noqa: PLC0415
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+    from fabric_dw.models import WarehouseKind  # noqa: PLC0415
+
+    entry = ItemEntry(
+        id=_WH_ID,
+        kind=WarehouseKind.WAREHOUSE,
+        connection_string=_CONN_STRING,
+        fetched_at=datetime.now(tz=UTC),
+        display_name=_WH_NAME,
+    )
+    mock_resolver = AsyncMock()
+    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_resolver.item = AsyncMock(return_value=entry)
+    mock_resolver.clear_negative_cache = MagicMock()
+
+    ctx = ServerContext(
+        http=AsyncMock(),
+        cache=MagicMock(),
+        resolver=mock_resolver,
+        auth_mode=_auth.CredentialMode.DEFAULT,
+    )
+
+    with (
+        patch("fabric_dw.mcp._context._SERVER_CTX", ctx),
+        patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
+        patch("fabric_dw.services.views.drop_view", new=AsyncMock(return_value=None)),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "drop_view",
+            {"workspace": _WS_NAME, "item": _WH_NAME, "qualified_name": "dbo.vw_sales"},
+        )
+
+    assert result == {"dropped": True}
+
+
+# ---------------------------------------------------------------------------
+# M04 — refresh_sql_endpoint_metadata(recreate_tables=True) requires FABRIC_MCP_ALLOW_DESTRUCTIVE
+# ---------------------------------------------------------------------------
+
+
+async def test_refresh_sql_endpoint_metadata_recreate_blocked_without_destructive_flag() -> None:
+    """M04: recreate_tables=True raises ToolError without FABRIC_MCP_ALLOW_DESTRUCTIVE."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    env_copy = {k: v for k, v in os.environ.items() if k != "FABRIC_MCP_ALLOW_DESTRUCTIVE"}
+    with (
+        patch.dict(os.environ, env_copy, clear=True),
+        pytest.raises(ToolError, match="FABRIC_MCP_ALLOW_DESTRUCTIVE"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "refresh_sql_endpoint_metadata",
+            {"workspace": _WS_NAME, "endpoint": _WH_NAME, "recreate_tables": True},
+        )
+
+
+async def test_refresh_sql_endpoint_metadata_no_recreate_allowed_without_destructive_flag() -> None:
+    """M04: recreate_tables=False (default) does NOT require FABRIC_MCP_ALLOW_DESTRUCTIVE."""
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    from fabric_dw import auth as _auth  # noqa: PLC0415
+    from fabric_dw.cache import ItemEntry  # noqa: PLC0415
+    from fabric_dw.mcp._context import ServerContext  # noqa: PLC0415
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+    from fabric_dw.models import WarehouseKind  # noqa: PLC0415
+
+    entry = ItemEntry(
+        id=_WH_ID,
+        kind=WarehouseKind.SQL_ENDPOINT,
+        connection_string=_CONN_STRING,
+        fetched_at=datetime.now(tz=UTC),
+        display_name=_WH_NAME,
+    )
+    mock_resolver = AsyncMock()
+    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_resolver.item = AsyncMock(return_value=entry)
+
+    ctx = ServerContext(
+        http=AsyncMock(),
+        cache=MagicMock(),
+        resolver=mock_resolver,
+        auth_mode=_auth.CredentialMode.DEFAULT,
+    )
+
+    env_copy = {k: v for k, v in os.environ.items() if k != "FABRIC_MCP_ALLOW_DESTRUCTIVE"}
+    with (
+        patch("fabric_dw.mcp._context._SERVER_CTX", ctx),
+        patch.dict(os.environ, env_copy, clear=True),
+        patch(
+            "fabric_dw.services.sql_endpoints.refresh_metadata",
+            new=AsyncMock(return_value=[]),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "refresh_sql_endpoint_metadata",
+            {"workspace": _WS_NAME, "endpoint": _WH_NAME, "recreate_tables": False},
+        )
+
+    assert isinstance(result, list)
+
+
+# ---------------------------------------------------------------------------
+# M06 — list_workspaces must filter by FABRIC_MCP_WORKSPACES allowlist
+# ---------------------------------------------------------------------------
+
+
+async def test_list_workspaces_filtered_by_allowlist() -> None:
+    """M06: list_workspaces returns only workspaces matching FABRIC_MCP_WORKSPACES."""
+    from uuid import UUID  # noqa: PLC0415
+
+    from fabric_dw import auth as _auth  # noqa: PLC0415
+    from fabric_dw.mcp._context import ServerContext  # noqa: PLC0415
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+    from fabric_dw.models import Workspace  # noqa: PLC0415
+
+    allowed_ws = Workspace.model_validate(
+        {"id": str(UUID("aaaaaaaa-0000-0000-0000-000000000001")), "displayName": "prod"}
+    )
+    forbidden_ws = Workspace.model_validate(
+        {"id": str(UUID("bbbbbbbb-0000-0000-0000-000000000002")), "displayName": "dev"}
+    )
+
+    ctx = ServerContext(
+        http=AsyncMock(),
+        cache=MagicMock(),
+        resolver=AsyncMock(),
+        auth_mode=_auth.CredentialMode.DEFAULT,
+    )
+
+    with (
+        patch("fabric_dw.mcp._context._SERVER_CTX", ctx),
+        patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "prod"}),
+        patch(
+            "fabric_dw.services.workspaces.list_all",
+            new=AsyncMock(return_value=[allowed_ws, forbidden_ws]),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool("list_workspaces", {})
+
+    assert len(result) == 1
+    assert result[0]["displayName"] == "prod"
+
+
+async def test_list_workspaces_filtered_by_guid_allowlist() -> None:
+    """M06: list_workspaces filters by GUID when allowlist contains GUIDs."""
+    from fabric_dw import auth as _auth  # noqa: PLC0415
+    from fabric_dw.mcp._context import ServerContext  # noqa: PLC0415
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+    from fabric_dw.models import Workspace  # noqa: PLC0415
+
+    allowed_id = "aaaaaaaa-0000-0000-0000-000000000001"
+    allowed_ws = Workspace.model_validate({"id": allowed_id, "displayName": "prod"})
+    forbidden_ws = Workspace.model_validate(
+        {"id": "bbbbbbbb-0000-0000-0000-000000000002", "displayName": "dev"}
+    )
+
+    ctx = ServerContext(
+        http=AsyncMock(),
+        cache=MagicMock(),
+        resolver=AsyncMock(),
+        auth_mode=_auth.CredentialMode.DEFAULT,
+    )
+
+    with (
+        patch("fabric_dw.mcp._context._SERVER_CTX", ctx),
+        patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": allowed_id}),
+        patch(
+            "fabric_dw.services.workspaces.list_all",
+            new=AsyncMock(return_value=[allowed_ws, forbidden_ws]),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool("list_workspaces", {})
+
+    assert len(result) == 1
+    assert result[0]["displayName"] == "prod"
+
+
+async def test_list_workspaces_no_filter_when_allowlist_unset() -> None:
+    """M06: list_workspaces returns all workspaces when FABRIC_MCP_WORKSPACES is not set."""
+    from fabric_dw import auth as _auth  # noqa: PLC0415
+    from fabric_dw.mcp._context import ServerContext  # noqa: PLC0415
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+    from fabric_dw.models import Workspace  # noqa: PLC0415
+
+    ws1 = Workspace.model_validate(
+        {"id": "aaaaaaaa-0000-0000-0000-000000000001", "displayName": "ws1"}
+    )
+    ws2 = Workspace.model_validate(
+        {"id": "bbbbbbbb-0000-0000-0000-000000000002", "displayName": "ws2"}
+    )
+
+    ctx = ServerContext(
+        http=AsyncMock(),
+        cache=MagicMock(),
+        resolver=AsyncMock(),
+        auth_mode=_auth.CredentialMode.DEFAULT,
+    )
+
+    env_copy = {k: v for k, v in os.environ.items() if k != "FABRIC_MCP_WORKSPACES"}
+    with (
+        patch("fabric_dw.mcp._context._SERVER_CTX", ctx),
+        patch.dict(os.environ, env_copy, clear=True),
+        patch(
+            "fabric_dw.services.workspaces.list_all",
+            new=AsyncMock(return_value=[ws1, ws2]),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool("list_workspaces", {})
+
+    assert len(result) == 2
+
+
+# ---------------------------------------------------------------------------
+# M13 — pre-resolve allowlist check must not block name when allowlist has only GUIDs
+# ---------------------------------------------------------------------------
+
+
+def test_assert_workspace_allowed_name_passes_pre_resolve_when_allowlist_guid_only() -> None:
+    """M13: pre-resolve call with a name does not block when allowlist contains only GUIDs.
+
+    A workspace name cannot match a GUID-only allowlist pre-resolve.  The guard
+    must defer to the post-resolve call (which has the GUID) rather than falsely
+    rejecting.
+    """
+    from fabric_dw.mcp._guards import assert_workspace_allowed  # noqa: PLC0415
+
+    guid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    with patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": guid}):
+        # Pre-resolve call with a name — must NOT raise even though name != GUID
+        assert_workspace_allowed("my-workspace")  # no resolved_id
+
+
+def test_assert_workspace_allowed_name_blocked_post_resolve_when_allowlist_guid_only() -> None:
+    """M13: post-resolve call blocks when the resolved GUID is not in the allowlist."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp._guards import assert_workspace_allowed  # noqa: PLC0415
+
+    allowed_guid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    other_guid = "00000000-0000-0000-0000-000000000001"
+    with (
+        patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": allowed_guid}),
+        pytest.raises(ToolError, match="allowlist"),
+    ):
+        # Post-resolve with a different GUID — must raise
+        assert_workspace_allowed("my-workspace", resolved_id=other_guid)
+
+
+def test_assert_workspace_allowed_name_passes_post_resolve_when_guid_matches() -> None:
+    """M13: post-resolve call permits when the resolved GUID matches the GUID-only allowlist."""
+    from fabric_dw.mcp._guards import assert_workspace_allowed  # noqa: PLC0415
+
+    allowed_guid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    with patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": allowed_guid}):
+        # Post-resolve with the matching GUID — must NOT raise
+        assert_workspace_allowed("my-workspace", resolved_id=allowed_guid)
+
+
+def test_assert_workspace_allowed_still_blocks_name_when_allowlist_has_names() -> None:
+    """M13: pre-resolve call blocks when allowlist has name-shaped entries that don't match."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp._guards import assert_workspace_allowed  # noqa: PLC0415
+
+    with (
+        patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "allowed-workspace"}),
+        pytest.raises(ToolError, match="allowlist"),
+    ):
+        assert_workspace_allowed("forbidden-workspace")  # pre-resolve, name-only allowlist
