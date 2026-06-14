@@ -205,6 +205,8 @@ async def set_action_groups(
 
     Raises:
         ValueError: If any name in *action_groups* does not match ``^[A-Z0-9_]+$``.
+        ValueError: If *ensure_enabled* is ``False`` and auditing is currently disabled
+            (``state == "Disabled"``).  Enable auditing first with :func:`enable`.
         PermissionDeniedError: If the caller lacks the required permission (HTTP 403).
     """
     for name in action_groups:
@@ -218,6 +220,10 @@ async def set_action_groups(
     # Pre-flight GET to obtain current settings so we can construct the
     # authoritative post-PATCH state without a stale re-fetch.
     current = await get_settings(http, workspace_id, warehouse_id)
+
+    if not ensure_enabled and current.state == "Disabled":
+        msg = "audit is disabled; enable first"
+        raise ValueError(msg)
 
     path = _audit_path(workspace_id, warehouse_id)
 

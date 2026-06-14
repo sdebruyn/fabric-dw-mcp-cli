@@ -209,6 +209,8 @@ async def test_set_action_groups_empty_list_is_valid() -> None:
 
     assert isinstance(result, AuditSettings)
     assert result.action_groups == []
+    # ensure_enabled=True (default) + AUDIT_SETTINGS_PAYLOAD (state="Enabled") → state="Enabled"
+    assert result.state == "Enabled"
 
 
 @pytest.mark.parametrize(
@@ -243,6 +245,44 @@ async def test_set_action_groups_403_raises_permission_denied() -> None:
         async with client:
             with pytest.raises(PermissionDeniedError):
                 await audit.set_action_groups(client, _WS_ID, _WH_ID, ["BATCH_COMPLETED_GROUP"])
+
+
+async def test_set_action_groups_get_403_raises_permission_denied() -> None:
+    """set_action_groups should propagate PermissionDeniedError on 403 from the pre-flight GET.
+
+    The pre-flight GET added by this PR is a second 403 surface; this test covers it.
+    """
+    with respx.mock:
+        # Pre-flight GET returns 403; PATCH is never reached.
+        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(403, json={"error": "forbidden"}))
+        client = await _make_client()
+        async with client:
+            with pytest.raises(PermissionDeniedError):
+                await audit.set_action_groups(client, _WS_ID, _WH_ID, ["BATCH_COMPLETED_GROUP"])
+
+
+async def test_set_action_groups_disabled_audit_raises_when_ensure_enabled_false() -> None:
+    """set_action_groups with ensure_enabled=False should raise ValueError when audit is Disabled.
+
+    Consistent with add_action_group and remove_action_group which also raise
+    ValueError("audit is disabled; enable first") when the current state is Disabled.
+    When ensure_enabled=True (default) the function enables auditing, so the guard
+    only applies to the ensure_enabled=False path.
+    """
+    with respx.mock:
+        # Pre-flight GET returns disabled state; PATCH should never be reached.
+        respx.get(_AUDIT_URL).mock(
+            return_value=httpx.Response(200, json=AUDIT_SETTINGS_DISABLED_PAYLOAD)
+        )
+        patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        client = await _make_client()
+        async with client:
+            with pytest.raises(ValueError, match="audit is disabled; enable first"):
+                await audit.set_action_groups(
+                    client, _WS_ID, _WH_ID, ["BATCH_COMPLETED_GROUP"], ensure_enabled=False
+                )
+
+    assert not patch_route.called
 
 
 async def test_set_action_groups_works_on_fresh_warehouse() -> None:
