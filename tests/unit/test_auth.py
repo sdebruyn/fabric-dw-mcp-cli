@@ -3,8 +3,11 @@
 import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
+import respx
 from azure.core.credentials import AccessToken
+from azure.identity import ClientAssertionCredential as SyncClientAssertionCredential
 from azure.identity.aio import ClientSecretCredential as AsyncClientSecretCredential
 from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
 
@@ -29,18 +32,30 @@ def test_sql_scope_constant() -> None:
     assert SQL_SCOPE == "https://database.windows.net/.default"
 
 
-def test_get_credential_default_returns_default_azure_credential() -> None:
+def test_get_credential_default_returns_default_azure_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_URL", raising=False)
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", raising=False)
     credential = get_credential(CredentialMode.DEFAULT)
     assert isinstance(credential, AsyncDefaultAzureCredential)
 
 
-def test_get_credential_default_is_default_argument() -> None:
+def test_get_credential_default_is_default_argument(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_URL", raising=False)
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", raising=False)
     credential = get_credential()
     assert isinstance(credential, AsyncDefaultAzureCredential)
 
 
-def test_get_credential_default_includes_interactive_browser() -> None:
+def test_get_credential_default_includes_interactive_browser(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """DefaultAzureCredential must NOT exclude the interactive browser credential."""
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_URL", raising=False)
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", raising=False)
     with patch("fabric_dw.auth.DefaultAzureCredential") as mock_dac:
         get_credential(CredentialMode.DEFAULT)
         _, kwargs = mock_dac.call_args
@@ -234,6 +249,8 @@ def test_interactive_mode_no_tenant_id_when_not_set(monkeypatch: pytest.MonkeyPa
 
 def test_default_mode_passes_interactive_browser_client_id(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("FABRIC_INTERACTIVE_CLIENT_ID", raising=False)
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_URL", raising=False)
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", raising=False)
     with patch("fabric_dw.auth.DefaultAzureCredential") as mock_dac:
         get_credential(CredentialMode.DEFAULT)
         _, kwargs = mock_dac.call_args
@@ -245,6 +262,8 @@ def test_default_mode_respects_env_override_for_interactive(
 ) -> None:
     custom_id = "deadbeef-0000-0000-0000-000000000002"
     monkeypatch.setenv("FABRIC_INTERACTIVE_CLIENT_ID", custom_id)
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_URL", raising=False)
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", raising=False)
     with patch("fabric_dw.auth.DefaultAzureCredential") as mock_dac:
         get_credential(CredentialMode.DEFAULT)
         _, kwargs = mock_dac.call_args
@@ -254,6 +273,8 @@ def test_default_mode_respects_env_override_for_interactive(
 def test_default_mode_passes_interactive_browser_tenant_id(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("FABRIC_INTERACTIVE_CLIENT_ID", raising=False)
     monkeypatch.setenv("FABRIC_INTERACTIVE_TENANT_ID", "my-tenant-id")
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_URL", raising=False)
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", raising=False)
     with patch("fabric_dw.auth.DefaultAzureCredential") as mock_dac:
         get_credential(CredentialMode.DEFAULT)
         _, kwargs = mock_dac.call_args
@@ -265,6 +286,8 @@ def test_default_mode_no_interactive_browser_tenant_id_when_not_set(
 ) -> None:
     monkeypatch.delenv("FABRIC_INTERACTIVE_CLIENT_ID", raising=False)
     monkeypatch.delenv("FABRIC_INTERACTIVE_TENANT_ID", raising=False)
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_URL", raising=False)
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", raising=False)
     with patch("fabric_dw.auth.DefaultAzureCredential") as mock_dac:
         get_credential(CredentialMode.DEFAULT)
         _, kwargs = mock_dac.call_args
@@ -293,8 +316,10 @@ def test_sp_mode_does_not_use_interactive_client_id(monkeypatch: pytest.MonkeyPa
 # ---------------------------------------------------------------------------
 
 
-def test_registry_dispatches_default_mode() -> None:
+def test_registry_dispatches_default_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     """Registry must dispatch to the default factory for CredentialMode.DEFAULT."""
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_URL", raising=False)
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", raising=False)
     mock_factory = MagicMock(return_value=MagicMock())
     original = auth_module._CREDENTIAL_REGISTRY[CredentialMode.DEFAULT]
     try:
@@ -356,3 +381,204 @@ def test_get_credential_unknown_mode_raises_config_error() -> None:
     """get_credential must raise ConfigError for a mode not in the registry."""
     with pytest.raises(ConfigError, match="Unknown credential mode"):
         get_credential("not-a-real-mode")  # ty: ignore[invalid-argument-type]
+
+
+# ---------------------------------------------------------------------------
+# GitHub Actions OIDC credential — _is_github_actions_oidc
+# ---------------------------------------------------------------------------
+
+
+def test_is_github_actions_oidc_true_when_both_vars_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://token.example.com/")
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "secret-runner-token")
+    assert auth_module._is_github_actions_oidc() is True
+
+
+def test_is_github_actions_oidc_false_when_url_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_URL", raising=False)
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "secret-runner-token")
+    assert auth_module._is_github_actions_oidc() is False
+
+
+def test_is_github_actions_oidc_false_when_token_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://token.example.com/")
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", raising=False)
+    assert auth_module._is_github_actions_oidc() is False
+
+
+def test_is_github_actions_oidc_false_when_both_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_URL", raising=False)
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", raising=False)
+    assert auth_module._is_github_actions_oidc() is False
+
+
+# ---------------------------------------------------------------------------
+# GitHub Actions OIDC credential — _fetch_github_oidc_jwt
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_github_oidc_jwt_returns_value_from_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_fetch_github_oidc_jwt must GET the OIDC endpoint and return the JWT.
+
+    Uses a realistic GitHub Actions URL that already contains a query string
+    (api-version=2.0) to verify robust URL parameter handling.
+    """
+    # Real GitHub Actions URLs always include ?api-version=2.0
+    request_url = "https://pipelines.actions.githubusercontent.com/serviceHosts/abc/_apis/distributedtask/hubs/Gates/plans/def/jobs/ghi/idtoken?api-version=2.0"
+    runner_token = "gha-runner-token-abc"  # noqa: S105
+    expected_jwt = "eyJhbGciOiJSUzI1NiJ9.fake.jwt"
+
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_URL", request_url)
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", runner_token)
+
+    with respx.mock:
+        # The audience param must be appended alongside the existing api-version param
+        route = respx.get(
+            "https://pipelines.actions.githubusercontent.com/serviceHosts/abc/_apis/distributedtask/hubs/Gates/plans/def/jobs/ghi/idtoken",
+            params={"api-version": "2.0", "audience": "api://AzureADTokenExchange"},
+        ).mock(return_value=httpx.Response(200, json={"value": expected_jwt}))
+        result = auth_module._fetch_github_oidc_jwt()
+
+    assert result == expected_jwt
+    assert route.called
+    sent_request = route.calls.last.request
+    assert sent_request.headers["authorization"] == f"Bearer {runner_token}"
+    # Confirm both query params are present in the final URL
+    sent_url = str(sent_request.url)
+    assert "api-version=2.0" in sent_url
+    assert (
+        "audience=api%3A%2F%2FAzureADTokenExchange" in sent_url
+        or "audience=api://AzureADTokenExchange" in sent_url
+    )
+
+
+def test_fetch_github_oidc_jwt_sends_correct_audience(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_fetch_github_oidc_jwt must append audience=api://AzureADTokenExchange."""
+    request_url = "https://pipelines.actions.githubusercontent.com/oidc/token?api-version=2.0"
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_URL", request_url)
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "tok")
+
+    with respx.mock:
+        route = respx.get(
+            "https://pipelines.actions.githubusercontent.com/oidc/token",
+            params={"api-version": "2.0", "audience": "api://AzureADTokenExchange"},
+        ).mock(return_value=httpx.Response(200, json={"value": "jwt-token"}))
+        auth_module._fetch_github_oidc_jwt()
+
+    # Confirm both params are present — audience added via copy_add_param preserving api-version
+    sent_url = str(route.calls.last.request.url)
+    assert "audience=api%3A%2F%2FAzureADTokenExchange" in sent_url
+    assert "api-version=2.0" in sent_url
+
+
+def test_fetch_github_oidc_jwt_raises_config_error_on_http_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_fetch_github_oidc_jwt must raise ConfigError when the endpoint returns non-2xx."""
+    request_url = "https://pipelines.actions.githubusercontent.com/oidc/token?api-version=2.0"
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_URL", request_url)
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "tok")
+
+    with respx.mock:
+        respx.get(
+            "https://pipelines.actions.githubusercontent.com/oidc/token",
+            params={"api-version": "2.0", "audience": "api://AzureADTokenExchange"},
+        ).mock(return_value=httpx.Response(403, text="Forbidden"))
+        with pytest.raises(ConfigError, match="403"):
+            auth_module._fetch_github_oidc_jwt()
+
+
+def test_fetch_github_oidc_jwt_raises_config_error_when_env_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_fetch_github_oidc_jwt must raise ConfigError when env vars are absent."""
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_URL", raising=False)
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", raising=False)
+
+    with pytest.raises(ConfigError, match="ACTIONS_ID_TOKEN_REQUEST_URL"):
+        auth_module._fetch_github_oidc_jwt()
+
+
+# ---------------------------------------------------------------------------
+# GitHub Actions OIDC credential — get_credential DEFAULT mode routing
+# ---------------------------------------------------------------------------
+
+
+def test_get_credential_default_returns_sync_adapter_wrapping_client_assertion_in_github_actions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DEFAULT mode returns SyncCredentialAdapter(SyncClientAssertionCredential) in GHA.
+
+    The sync credential is used (not the aio variant) so the blocking _fetch_github_oidc_jwt
+    runs in a worker thread via SyncCredentialAdapter, keeping the event loop free.
+    """
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://token.example.com/")
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "runner-token")
+    monkeypatch.setenv("AZURE_TENANT_ID", "my-tenant-id")
+    monkeypatch.setenv("AZURE_CLIENT_ID", "my-client-id")
+
+    with patch("fabric_dw.auth.SyncClientAssertionCredential") as mock_cac:
+        mock_cac.return_value = MagicMock(spec=SyncClientAssertionCredential)
+        credential = get_credential(CredentialMode.DEFAULT)
+        mock_cac.assert_called_once()
+        _, kwargs = mock_cac.call_args
+        assert kwargs["tenant_id"] == "my-tenant-id"
+        assert kwargs["client_id"] == "my-client-id"
+        assert kwargs["func"] is auth_module._fetch_github_oidc_jwt
+        # The result must be a SyncCredentialAdapter wrapping the sync credential
+        assert isinstance(credential, SyncCredentialAdapter)
+
+
+def test_get_credential_default_returns_default_azure_credential_outside_github_actions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DEFAULT mode must fall back to DefaultAzureCredential when OIDC env vars are absent."""
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_URL", raising=False)
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", raising=False)
+
+    with patch("fabric_dw.auth.DefaultAzureCredential") as mock_dac:
+        get_credential(CredentialMode.DEFAULT)
+        mock_dac.assert_called_once()
+
+
+def test_get_credential_default_raises_config_error_missing_tenant_id_in_github_actions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DEFAULT mode must raise ConfigError if AZURE_TENANT_ID is missing in GitHub Actions."""
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://token.example.com/")
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "runner-token")
+    monkeypatch.setenv("AZURE_CLIENT_ID", "my-client-id")
+    monkeypatch.delenv("AZURE_TENANT_ID", raising=False)
+
+    with pytest.raises(ConfigError, match="AZURE_TENANT_ID"):
+        get_credential(CredentialMode.DEFAULT)
+
+
+def test_get_credential_default_raises_config_error_missing_client_id_in_github_actions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DEFAULT mode must raise ConfigError if AZURE_CLIENT_ID is missing in GitHub Actions."""
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://token.example.com/")
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "runner-token")
+    monkeypatch.setenv("AZURE_TENANT_ID", "my-tenant-id")
+    monkeypatch.delenv("AZURE_CLIENT_ID", raising=False)
+
+    with pytest.raises(ConfigError, match="AZURE_CLIENT_ID"):
+        get_credential(CredentialMode.DEFAULT)
+
+
+def test_get_credential_default_raises_config_error_missing_both_in_github_actions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DEFAULT mode must raise ConfigError if AZURE_TENANT_ID and AZURE_CLIENT_ID are missing."""
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://token.example.com/")
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "runner-token")
+    monkeypatch.delenv("AZURE_TENANT_ID", raising=False)
+    monkeypatch.delenv("AZURE_CLIENT_ID", raising=False)
+
+    with pytest.raises(ConfigError):
+        get_credential(CredentialMode.DEFAULT)

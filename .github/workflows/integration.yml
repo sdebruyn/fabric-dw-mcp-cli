@@ -91,6 +91,8 @@ jobs:
         env:
           FABRIC_TEST_WORKSPACE_ID: ${{ secrets.FABRIC_TEST_WORKSPACE_ID }}
           FABRIC_AUTH: default
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
         run: |
           uv run python -c "
           import anyio, os
@@ -184,6 +186,8 @@ jobs:
           FABRIC_TEST_WORKSPACE_ID: ${{ secrets.FABRIC_TEST_WORKSPACE_ID }}
           FABRIC_AUTH: default
           FABRIC_TEST_IS_TENANT_ADMIN: "true"
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
         run: |
           if [ -n "${{ inputs.pytest_k }}" ]; then
             echo "Running subset: -k '${{ inputs.pytest_k }}'"
@@ -197,6 +201,8 @@ jobs:
         env:
           FABRIC_TEST_WORKSPACE_ID: ${{ secrets.FABRIC_TEST_WORKSPACE_ID }}
           FABRIC_AUTH: default
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
         run: |
           uv run python -c "
           import anyio, os
