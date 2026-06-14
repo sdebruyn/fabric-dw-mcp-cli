@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from fabric_dw.exceptions import AuthError, PermissionDeniedError
+from fabric_dw.exceptions import AuthError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import Connection, RunningQuery
 from fabric_dw.services import queries
 
@@ -248,6 +248,7 @@ async def test_kill_issues_kill_statement() -> None:
 
 
 async def test_kill_commits_after_execute() -> None:
+    """run_query with commit=True issues commit via the shared execution path."""
     target = _make_target()
     conn = MagicMock()
     cursor = MagicMock()
@@ -260,6 +261,7 @@ async def test_kill_commits_after_execute() -> None:
 
 
 async def test_kill_closes_connection_after_success() -> None:
+    """run_query always closes the connection in its finally block."""
     target = _make_target()
     conn = MagicMock()
     cursor = MagicMock()
@@ -344,8 +346,8 @@ async def test_kill_maps_permission_denied_from_cursor() -> None:
         await queries.kill(target, 42)
 
 
-async def test_kill_maps_auth_error_to_permission_denied() -> None:
-    """kill should map AuthError → PermissionDeniedError."""
+async def test_kill_maps_auth_error_faithfully() -> None:
+    """kill should surface AuthError as AuthError, not as PermissionDeniedError."""
     target = _make_target()
     conn = MagicMock()
     cursor = MagicMock()
@@ -354,23 +356,43 @@ async def test_kill_maps_auth_error_to_permission_denied() -> None:
 
     with (
         patch("fabric_dw.sql.open_connection", return_value=conn),
-        pytest.raises(PermissionDeniedError),
+        pytest.raises(AuthError),
     ):
         await queries.kill(target, 42)
 
 
-async def test_kill_permission_denied_message_contains_session_id() -> None:
+async def test_kill_maps_not_found_faithfully() -> None:
+    """kill surfaces NotFoundError (e.g. session already gone) as NotFoundError."""
     target = _make_target()
     conn = MagicMock()
     cursor = MagicMock()
-    cursor.execute.side_effect = Exception("Authentication failed for user ''")
+    cursor.execute.side_effect = Exception("Invalid object name 'session'")
     conn.cursor.return_value = cursor
 
     with (
         patch("fabric_dw.sql.open_connection", return_value=conn),
-        pytest.raises(PermissionDeniedError, match="42"),
+        pytest.raises(NotFoundError),
     ):
         await queries.kill(target, 42)
+
+
+async def test_kill_uses_run_query_not_direct_connection() -> None:
+    """kill must go through run_query (shared path), not open_connection directly."""
+    target = _make_target()
+
+    with patch("fabric_dw.services.queries.run_query") as mock_run_query:
+        mock_run_query.return_value = ([], [])
+        await queries.kill(target, 99)
+
+    mock_run_query.assert_called_once()
+    call_kwargs = mock_run_query.call_args
+    # Verify the SQL contains KILL and the session id
+    sql_arg: str = call_kwargs.args[1]
+    assert "KILL" in sql_arg
+    assert "99" in sql_arg
+    # Verify commit=True and fetch="none" are set
+    assert call_kwargs.kwargs.get("commit") is True
+    assert call_kwargs.kwargs.get("fetch") == "none"
 
 
 # ---------------------------------------------------------------------------
@@ -663,3 +685,18 @@ async def test_kill_sql_session_id_is_integer_not_string() -> None:
     assert "'7'" not in call_sql
     assert '"7"' not in call_sql
     assert "7" in call_sql
+
+
+async def test_kill_sql_no_params_bound() -> None:
+    """KILL embeds the session id as a literal integer — no ? placeholders, no params."""
+    target = _make_target()
+    conn = MagicMock()
+    cursor = MagicMock()
+    conn.cursor.return_value = cursor
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await queries.kill(target, 55)
+
+    # cursor.execute must be called with exactly one positional arg (the SQL),
+    # not with a second params argument, because KILL does not support binding.
+    assert cursor.execute.call_args.args == ("KILL 55",)

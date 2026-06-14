@@ -10,11 +10,8 @@ Public API
 from __future__ import annotations
 
 import asyncio
-from contextlib import closing
 
-from fabric_dw import sql
 from fabric_dw.auth import CredentialMode
-from fabric_dw.exceptions import AuthError, PermissionDeniedError
 from fabric_dw.models import Connection, RunningQuery
 from fabric_dw.sql import SqlTarget, run_query
 
@@ -138,35 +135,23 @@ async def kill(
 
     Raises:
         ValueError: If *session_id* is not a positive integer (i.e. <= 0).
-        PermissionDeniedError: If the driver raises a permission or auth error
+        PermissionDeniedError: If the driver reports a permission error
             (KILL requires Monitor or Admin permission on Fabric DW).
+        AuthError: If the driver reports an authentication failure.
+        NotFoundError: If the driver reports a missing object (e.g. the
+            session no longer exists when the KILL is issued).
     """
     if session_id <= 0:
         msg = f"session_id must be a positive integer; got {session_id}"
         raise ValueError(msg)
 
-    # KILL requires a bare integer (no quotes, no parameter binding).
-    # We validate and cast to int to prevent injection before embedding.
+    # KILL requires a bare integer literal — the SQL syntax does not accept
+    # a parameter placeholder here.  We cast to int explicitly to prevent any
+    # accidental injection before embedding in the statement.
     safe_id = int(session_id)
     kill_sql = f"KILL {safe_id}"
 
     def _run() -> None:
-        with closing(sql.open_connection(target, mode=mode)) as conn:
-            cursor = conn.cursor()
-            try:
-                cursor.execute(kill_sql)
-                conn.commit()
-            except Exception as exc:
-                mapped = sql.map_driver_error(exc)
-                if mapped:
-                    msg = f"Permission denied when trying to KILL session {session_id}: {mapped}"
-                    raise PermissionDeniedError(
-                        msg,
-                        hint="KILL requires Monitor or Admin permission on Fabric DW.",
-                    ) from exc
-                if isinstance(exc, (PermissionDeniedError, AuthError)):
-                    msg = f"Permission denied when trying to KILL session {session_id}: {exc}"
-                    raise PermissionDeniedError(msg) from exc
-                raise
+        run_query(target, kill_sql, mode=mode, commit=True, fetch="none")
 
     await asyncio.to_thread(_run)

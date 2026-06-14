@@ -696,3 +696,109 @@ def test_long_running_queries_sql_excludes_last_run_session_id() -> None:
     """last_run_session_id must NOT appear — it crashes on live Fabric (#195)."""
     sql = query_insights._LONG_RUNNING_SQL_TEMPLATE.format(limit=100, where="")
     assert "last_run_session_id" not in sql
+
+
+# ---------------------------------------------------------------------------
+# V01: _build_where datetime binding — unit tests for the helper directly
+# ---------------------------------------------------------------------------
+
+
+def test_build_where_no_bounds_returns_empty_clause_and_no_params() -> None:
+    """No since/until → empty string and empty params."""
+    clause, params = query_insights._build_where(since=None, until=None, column="col")
+    assert clause == ""
+    assert params == []
+
+
+def test_build_where_since_only_returns_clause_and_one_param() -> None:
+    """since-only → WHERE clause with one ? placeholder and the datetime as param."""
+    since = datetime(2024, 1, 1, tzinfo=UTC)
+    clause, params = query_insights._build_where(since=since, until=None, column="ts")
+    assert "WHERE" in clause
+    assert "ts >= ?" in clause
+    assert params == [since]
+    # The datetime must NOT be interpolated as a string literal.
+    assert since.isoformat() not in clause
+
+
+def test_build_where_until_only_returns_clause_and_one_param() -> None:
+    """until-only → WHERE clause with one ? placeholder and the datetime as param."""
+    until = datetime(2024, 12, 31, tzinfo=UTC)
+    clause, params = query_insights._build_where(since=None, until=until, column="ts")
+    assert "WHERE" in clause
+    assert "ts <= ?" in clause
+    assert params == [until]
+    assert until.isoformat() not in clause
+
+
+def test_build_where_since_and_until_returns_two_params_in_order() -> None:
+    """since+until → WHERE with two ? placeholders; params in since, until order."""
+    since = datetime(2024, 1, 1, tzinfo=UTC)
+    until = datetime(2024, 12, 31, tzinfo=UTC)
+    clause, params = query_insights._build_where(since=since, until=until, column="ts")
+    assert "WHERE" in clause
+    assert "AND" in clause
+    assert params == [since, until]
+    assert since.isoformat() not in clause
+    assert until.isoformat() not in clause
+
+
+def test_build_where_clause_prefixed_with_newline_where() -> None:
+    """Non-empty clause starts with \\nWHERE so it splices cleanly into SQL."""
+    since = datetime(2024, 6, 1, tzinfo=UTC)
+    clause, _ = query_insights._build_where(since=since, until=None, column="ts")
+    assert clause.startswith("\nWHERE ")
+
+
+# ---------------------------------------------------------------------------
+# V01: end-to-end binding — datetime params passed to run_query, not in SQL
+# ---------------------------------------------------------------------------
+
+
+async def test_list_request_history_since_passed_as_param_not_interpolated() -> None:
+    """since datetime must be in the params tuple, never in the SQL string."""
+    target = _make_target()
+    conn = _make_conn([], _REQ_HIST_COLS)
+    since = datetime(2024, 3, 15, 9, 30, tzinfo=UTC)
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await query_insights.list_request_history(target, since=since)
+    cursor = conn.cursor.return_value
+    # SQL string must not contain the ISO-formatted datetime value
+    call_sql: str = cursor.execute.call_args[0][0]
+    assert since.isoformat() not in call_sql
+    # The datetime must appear as a bound parameter (second positional arg to execute)
+    call_params = cursor.execute.call_args[0][1]
+    assert since in call_params
+
+
+async def test_list_request_history_until_passed_as_param_not_interpolated() -> None:
+    """until datetime must be in the params tuple, never in the SQL string."""
+    target = _make_target()
+    conn = _make_conn([], _REQ_HIST_COLS)
+    until = datetime(2024, 9, 30, 23, 59, tzinfo=UTC)
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await query_insights.list_request_history(target, until=until)
+    cursor = conn.cursor.return_value
+    call_sql: str = cursor.execute.call_args[0][0]
+    assert until.isoformat() not in call_sql
+    call_params = cursor.execute.call_args[0][1]
+    assert until in call_params
+
+
+async def test_list_request_history_both_bounds_passed_as_params() -> None:
+    """Both since and until must be bound as params (two ? placeholders in SQL)."""
+    target = _make_target()
+    conn = _make_conn([], _REQ_HIST_COLS)
+    since = datetime(2024, 1, 1, tzinfo=UTC)
+    until = datetime(2024, 12, 31, tzinfo=UTC)
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await query_insights.list_request_history(target, since=since, until=until)
+    cursor = conn.cursor.return_value
+    call_sql: str = cursor.execute.call_args[0][0]
+    # Neither value interpolated
+    assert since.isoformat() not in call_sql
+    assert until.isoformat() not in call_sql
+    # Both present as params
+    call_params = cursor.execute.call_args[0][1]
+    assert since in call_params
+    assert until in call_params

@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from typing import Any
 
 from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import PermissionDeniedError
@@ -175,24 +174,60 @@ def _build_where(
     since: datetime | None,
     until: datetime | None,
     column: str,
-) -> str:
-    """Return a WHERE clause fragment (without the WHERE keyword) or empty string."""
-    parts: list[str] = []
+) -> tuple[str, list[object]]:
+    """Return a ``(where_clause, params)`` pair for the given time window.
+
+    The ``where_clause`` is either an empty string (no filter) or a
+    ``\\nWHERE <fragment>`` string ready to splice into the SQL template.
+    The datetime values are returned as *params* for ``?``-style driver
+    binding — they are **never** interpolated into the SQL text.
+
+    Args:
+        since: Optional inclusive lower bound (``column >= ?``).
+        until: Optional inclusive upper bound (``column <= ?``).
+        column: The pre-validated column name to filter on.  Must be a
+            trusted constant — it is interpolated directly into the SQL
+            fragment (identifier, not a value).
+
+    Returns:
+        A ``(where_clause, params)`` tuple where ``params`` holds the
+        datetime values to be passed via ``run_query(params=...)``.
+    """
+    fragments: list[str] = []
+    params: list[object] = []
     if since is not None:
-        parts.append(f"{column} >= '{since.isoformat()}'")
+        fragments.append(f"{column} >= ?")
+        params.append(since)
     if until is not None:
-        parts.append(f"{column} <= '{until.isoformat()}'")
-    return " AND ".join(parts)
+        fragments.append(f"{column} <= ?")
+        params.append(until)
+    if not fragments:
+        return "", []
+    return "\nWHERE " + " AND ".join(fragments), params
 
 
 def _execute_sql(
     target: SqlTarget,
     sql_text: str,
     mode: CredentialMode,
-) -> list[dict[str, Any]]:
-    """Execute *sql_text* synchronously and return rows as list of dicts."""
+    params: list[object] | None = None,
+) -> list[dict[str, object]]:
+    """Execute *sql_text* synchronously and return rows as list of dicts.
+
+    Args:
+        target: The warehouse or SQL analytics endpoint to query.
+        sql_text: The SQL statement to execute.  Use ``?`` placeholders for
+            any values; pass the corresponding values via *params*.
+        mode: The credential mode for Entra authentication.
+        params: Optional bound parameters for ``?`` placeholders.
+
+    Raises:
+        PermissionDeniedError: If the driver reports a 403 / permission error.
+            Re-raised with a documentation hint pointing to the Fabric
+            Query Insights permissions page.
+    """
     try:
-        cols, rows = run_query(target, sql_text, mode=mode)
+        cols, rows = run_query(target, sql_text, params=params or None, mode=mode)
     except PermissionDeniedError as exc:
         raise PermissionDeniedError(str(exc), hint=_PERMISSION_DENIED_DOCS) from exc
     return [dict(zip(cols, r, strict=True)) for r in rows]
@@ -260,10 +295,9 @@ async def list_request_history(
         PermissionDeniedError: If the caller lacks Contributor or above permission.
     """
     clamped = _clamp_limit(limit)
-    where_fragment = _build_where(since=since, until=until, column="submit_time")
-    where_clause = f"\nWHERE {where_fragment}" if where_fragment else ""
+    where_clause, where_params = _build_where(since=since, until=until, column="submit_time")
     sql_text = _REQUEST_HISTORY_SQL_TEMPLATE.format(limit=clamped, where=where_clause)
-    rows = await asyncio.to_thread(_execute_sql, target, sql_text, mode)
+    rows = await asyncio.to_thread(_execute_sql, target, sql_text, mode, where_params)
     return [ExecRequestHistory.model_validate(r) for r in rows]
 
 
@@ -337,10 +371,9 @@ async def list_session_history(
         PermissionDeniedError: If the caller lacks Contributor or above permission.
     """
     clamped = _clamp_limit(limit)
-    where_fragment = _build_where(since=since, until=until, column="session_start_time")
-    where_clause = f"\nWHERE {where_fragment}" if where_fragment else ""
+    where_clause, where_params = _build_where(since=since, until=until, column="session_start_time")
     sql_text = _SESSION_HISTORY_SQL_TEMPLATE.format(limit=clamped, where=where_clause)
-    rows = await asyncio.to_thread(_execute_sql, target, sql_text, mode)
+    rows = await asyncio.to_thread(_execute_sql, target, sql_text, mode, where_params)
     return [ExecSessionHistory.model_validate(r) for r in rows]
 
 
@@ -392,10 +425,11 @@ async def list_frequent_queries(
         PermissionDeniedError: If the caller lacks Contributor or above permission.
     """
     clamped = _clamp_limit(limit)
-    where_fragment = _build_where(since=since, until=until, column="last_run_start_time")
-    where_clause = f"\nWHERE {where_fragment}" if where_fragment else ""
+    where_clause, where_params = _build_where(
+        since=since, until=until, column="last_run_start_time"
+    )
     sql_text = _FREQUENT_QUERIES_SQL_TEMPLATE.format(limit=clamped, where=where_clause)
-    rows = await asyncio.to_thread(_execute_sql, target, sql_text, mode)
+    rows = await asyncio.to_thread(_execute_sql, target, sql_text, mode, where_params)
     return [FrequentlyRunQuery.model_validate(r) for r in rows]
 
 
@@ -442,10 +476,11 @@ async def list_long_running_queries(
         PermissionDeniedError: If the caller lacks Contributor or above permission.
     """
     clamped = _clamp_limit(limit)
-    where_fragment = _build_where(since=since, until=until, column="last_run_start_time")
-    where_clause = f"\nWHERE {where_fragment}" if where_fragment else ""
+    where_clause, where_params = _build_where(
+        since=since, until=until, column="last_run_start_time"
+    )
     sql_text = _LONG_RUNNING_SQL_TEMPLATE.format(limit=clamped, where=where_clause)
-    rows = await asyncio.to_thread(_execute_sql, target, sql_text, mode)
+    rows = await asyncio.to_thread(_execute_sql, target, sql_text, mode, where_params)
     return [LongRunningQuery.model_validate(r) for r in rows]
 
 
@@ -491,8 +526,7 @@ async def list_sql_pool_insights(
         PermissionDeniedError: If the caller lacks Contributor or above permission.
     """
     clamped = _clamp_limit(limit)
-    where_fragment = _build_where(since=since, until=until, column="timestamp")
-    where_clause = f"\nWHERE {where_fragment}" if where_fragment else ""
+    where_clause, where_params = _build_where(since=since, until=until, column="timestamp")
     sql_text = _SQL_POOL_INSIGHTS_SQL_TEMPLATE.format(limit=clamped, where=where_clause)
-    rows = await asyncio.to_thread(_execute_sql, target, sql_text, mode)
+    rows = await asyncio.to_thread(_execute_sql, target, sql_text, mode, where_params)
     return [SqlPoolInsight.model_validate(r) for r in rows]
