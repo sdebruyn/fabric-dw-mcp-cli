@@ -340,13 +340,12 @@ async def ephemeral_sql_endpoint(
             # Even after the Fabric API reports provisioningStatus=Success, the
             # SQL analytics endpoint may not yet accept TDS connections (the DB
             # engine needs an additional warm-up window).  Poll until reachable.
-            if ep_conn:
-                sql_target = SqlTarget(
-                    workspace_id=str(workspace_id),
-                    database=wh.name,
-                    connection_string=ep_conn,
-                )
-                await _wait_for_sql_readiness(sql_target)
+            sql_target = SqlTarget(
+                workspace_id=str(workspace_id),
+                database=wh.name,
+                connection_string=ep_conn,
+            )
+            await _wait_for_sql_readiness(sql_target)
             yield wh
             return
 

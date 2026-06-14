@@ -182,9 +182,17 @@ async def refresh_metadata(
     """Trigger a metadata refresh for a SQL analytics endpoint.
 
     Issues ``POST /workspaces/{ws}/sqlEndpoints/{id}/refreshMetadata`` with
-    an optional ``recreateTables`` body flag.  The API returns a 202 with a
-    ``Location`` header pointing at a long-running operation (LRO).  The
-    function polls the LRO to completion and parses the per-table results.
+    an optional ``recreateTables`` body flag.
+
+    The API supports two completion modes:
+
+    * **Synchronous** (200/204, no ``Location`` or ``Operation-Location``
+      response header): the per-table results are read directly from the
+      response body.
+    * **Asynchronous** (202 + ``Location`` / ``Operation-Location`` header):
+      the function polls the LRO to completion via
+      :meth:`~fabric_dw.http_client.FabricHttpClient.poll_operation` and then
+      parses the per-table results from the operation result.
 
     Args:
         http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
@@ -199,7 +207,8 @@ async def refresh_metadata(
         table, describing the outcome of the refresh.
 
     Raises:
-        FabricServerError: If the LRO fails or times out.
+        FabricServerError: If the async LRO fails or times out (async path
+            only).
         NotFoundError: If the endpoint does not exist (404).
     """
     json_body: dict[str, Any] | None = {"recreateTables": True} if recreate_tables else None
