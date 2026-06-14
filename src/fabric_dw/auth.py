@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import struct
 from collections.abc import Callable
 from enum import StrEnum
 from types import TracebackType
@@ -44,6 +45,7 @@ __all__ = [
     "CredentialMode",
     "SyncCredentialAdapter",
     "get_credential",
+    "get_sql_token_struct",
 ]
 
 
@@ -232,6 +234,74 @@ def _make_github_oidc_credential() -> AsyncTokenCredential:
             func=_fetch_github_oidc_jwt,
         )
     )
+
+
+# Module-level cached sync credential for SQL token injection under GitHub OIDC.
+# Caching allows azure-identity's in-memory token cache to work across connects,
+# so tokens are only re-acquired when they genuinely expire — NOT on every connect.
+_sql_oidc_credential: SyncClientAssertionCredential | None = None
+
+
+def _get_sql_oidc_credential() -> SyncClientAssertionCredential:
+    """Return (creating once) the sync OIDC credential used for SQL token injection."""
+    global _sql_oidc_credential  # noqa: PLW0603
+    if _sql_oidc_credential is None:
+        missing = [
+            name for name in ("AZURE_TENANT_ID", "AZURE_CLIENT_ID") if not os.environ.get(name)
+        ]
+        if missing:
+            raise ConfigError(
+                f"GitHub Actions OIDC credential requires {', '.join(missing)} "
+                f"to be set in the environment."
+            )
+        _sql_oidc_credential = SyncClientAssertionCredential(
+            tenant_id=os.environ["AZURE_TENANT_ID"],
+            client_id=os.environ["AZURE_CLIENT_ID"],
+            func=_fetch_github_oidc_jwt,
+        )
+    return _sql_oidc_credential
+
+
+def get_sql_token_struct(mode: CredentialMode = CredentialMode.DEFAULT) -> bytes | None:
+    """Return a packed ODBC SQL access-token struct for injection under GitHub OIDC.
+
+    When running under GitHub Actions OIDC (both ``ACTIONS_ID_TOKEN_REQUEST_URL``
+    and ``ACTIONS_ID_TOKEN_REQUEST_TOKEN`` are set), acquires a fresh SQL access
+    token from a module-level cached :class:`~azure.identity.ClientAssertionCredential`
+    backed by :func:`_fetch_github_oidc_jwt` and packs it in the format required
+    by the ``SQL_COPT_SS_ACCESS_TOKEN`` ODBC connection attribute (attribute 1256):
+    a 4-byte little-endian length prefix followed by the token encoded as UTF-16-LE.
+
+    When NOT under OIDC (local dev / interactive), returns ``None`` so the caller
+    falls back to the ``Authentication=`` connection-string key.
+
+    The ``mode`` parameter is accepted for API symmetry but is ignored on the OIDC
+    path — the CI service-principal identity is fixed by the GitHub Actions environment.
+
+    Args:
+        mode: Ignored on the OIDC path; kept for symmetry with other auth helpers.
+
+    Returns:
+        Packed token bytes when running under GitHub Actions OIDC, otherwise ``None``.
+
+    Raises:
+        ConfigError: If OIDC is detected but AZURE_TENANT_ID or AZURE_CLIENT_ID
+            are missing from the environment.
+    """
+    # Suppress unused-arg warning: mode is intentionally ignored on OIDC path.
+    _ = mode
+
+    if not _is_github_actions_oidc():
+        return None
+
+    credential = _get_sql_oidc_credential()
+    # Call get_token on every connect — the credential's own in-memory cache returns
+    # a cached access token when it is still valid; _fetch_github_oidc_jwt is only
+    # invoked when the assertion itself needs refreshing (every ~5 min in CI).
+    # We must NOT cache the resulting struct here — let the credential decide expiry.
+    token = credential.get_token(SQL_SCOPE).token
+    token_bytes = token.encode("UTF-16-LE")
+    return struct.pack(f"<I{len(token_bytes)}s", len(token_bytes), token_bytes)
 
 
 def _make_default_credential() -> AsyncTokenCredential:

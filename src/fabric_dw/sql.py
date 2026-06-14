@@ -46,7 +46,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
-from fabric_dw.auth import CredentialMode
+from fabric_dw.auth import CredentialMode, get_sql_token_struct
 from fabric_dw.exceptions import AuthError, NotFoundError, PermissionDeniedError
 
 # ---------------------------------------------------------------------------
@@ -145,6 +145,12 @@ _TRANSIENT_FRAGMENTS = (
     # _wait_for_sql_readiness in tests/integration/conftest.py handles the warm-up
     # case correctly by inspecting the AuthError message directly.
 )
+
+# ODBC connection attribute number for injecting a pre-acquired SQL access token.
+# When set in attrs_before, the driver uses this token instead of its own
+# DefaultAzureCredential chain — critical for long-running CI jobs where the
+# mssql-python driver's own AzureCliCredential assertion expires after ~5 min.
+SQL_COPT_SS_ACCESS_TOKEN: int = 1256
 
 # Mapping from CredentialMode to the ActiveDirectory auth type suffix.
 _MODE_TO_AD_AUTH: dict[CredentialMode, str] = {
@@ -413,6 +419,7 @@ def build_connection_string(
     target: SqlTarget,
     *,
     mode: CredentialMode = CredentialMode.DEFAULT,
+    use_access_token: bool = False,
 ) -> str:
     """Augment the API-provided connection string with auth, encryption and database settings.
 
@@ -423,6 +430,10 @@ def build_connection_string(
         target: The :class:`SqlTarget` whose ``connection_string`` and ``database``
             are used as inputs.
         mode: The credential mode, used to select the ActiveDirectory auth variant.
+            Ignored when ``use_access_token`` is ``True``.
+        use_access_token: When ``True``, omit the ``Authentication=`` key from the
+            connection string.  The caller is responsible for injecting a pre-acquired
+            token via ``attrs_before={SQL_COPT_SS_ACCESS_TOKEN: token_struct}``.
 
     Returns:
         The augmented ODBC connection string, ready to pass to the driver.
@@ -433,8 +444,12 @@ def build_connection_string(
     raw = target.connection_string
     if not _has_key(raw, "Server"):
         raw = f"Server={raw}"
-    cs = _set_key(raw, "Authentication", _MODE_TO_AD_AUTH[mode])
-    cs = _set_key(cs, "Encrypt", "yes")
+    # Only set the Authentication key when we are NOT injecting a pre-acquired token.
+    # With a token in attrs_before, the Authentication key must be absent — the driver
+    # uses whichever identity source is provided first and having both causes conflicts.
+    if not use_access_token:
+        raw = _set_key(raw, "Authentication", _MODE_TO_AD_AUTH[mode])
+    cs = _set_key(raw, "Encrypt", "yes")
     cs = _set_key(cs, "TrustServerCertificate", "no")
     return _set_key(cs, "Database", target.database)
 
@@ -476,13 +491,22 @@ def open_connection(
         A :class:`_PooledConnection` wrapping a DB-API 2.0 connection from
         the ``mssql_python`` driver.
     """
-    cs = build_connection_string(target, mode=mode)
+    # Acquire a token struct when running under GitHub OIDC.  This bypasses the
+    # mssql-python driver's own DefaultAzureCredential chain (which uses AzureCliCredential
+    # whose GitHub OIDC assertion expires after ~5 min) in favour of our self-refreshing
+    # credential whose _fetch_github_oidc_jwt always obtains a fresh assertion.
+    # Token acquisition happens here — only for NEW physical connections — not on
+    # pool checkout (checked-out connections are already authenticated).
+    token_struct = get_sql_token_struct(mode)
+    use_token = token_struct is not None
+    cs = build_connection_string(target, mode=mode, use_access_token=use_token)
+    attrs: dict[int, bytes] | None = {SQL_COPT_SS_ACCESS_TOKEN: token_struct} if use_token else None
 
     # Autocommit connections bypass the pool entirely to avoid cross-contaminating
     # a pooled autocommit=False connection with autocommit=True semantics or vice
     # versa.  They are always opened fresh and physically closed after use.
     if autocommit:
-        raw_conn: Any = _get_mssql().connect(cs, autocommit=True)
+        raw_conn: Any = _get_mssql().connect(cs, autocommit=True, attrs_before=attrs)
         # Wrap in _PooledConnection with a sentinel key; _discard=True ensures
         # .close() physically closes the connection rather than pooling it.
         key = _make_pool_key(target, mode)
@@ -497,7 +521,7 @@ def open_connection(
         if cached is not None:
             return _PooledConnection(cached, key)
 
-    raw_conn = _get_mssql().connect(cs)
+    raw_conn = _get_mssql().connect(cs, attrs_before=attrs)
     return _PooledConnection(raw_conn, key)
 
 
