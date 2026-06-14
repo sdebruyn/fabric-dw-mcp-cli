@@ -277,7 +277,7 @@ class TestOpenConnection:
 
         thread_ids: list[int] = []
 
-        def _capture_connect(_cs: str) -> MagicMock:
+        def _capture_connect(_cs: str, **_kwargs: object) -> MagicMock:
             thread_ids.append(threading.get_ident())
             return MagicMock()
 
@@ -1113,3 +1113,197 @@ class TestTransientRetry:
 
         # Must NOT retry — only one connect attempt.
         assert mock_mssql.connect.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# GitHub OIDC SQL token injection — build_connection_string + open_connection
+# ---------------------------------------------------------------------------
+
+
+class TestBuildConnectionStringAccessToken:
+    """Tests for build_connection_string(use_access_token=True)."""
+
+    def test_use_access_token_omits_authentication_key(self) -> None:
+        """When use_access_token=True, Authentication= must NOT appear in the cs."""
+        result = build_connection_string(_make_target(), use_access_token=True)
+        assert "Authentication=" not in result
+
+    def test_use_access_token_still_adds_encrypt_and_tls_keys(self) -> None:
+        """Encryption settings must be present even when injecting a token."""
+        result = build_connection_string(_make_target(), use_access_token=True)
+        assert "Encrypt=yes" in result
+        assert "TrustServerCertificate=no" in result
+
+    def test_use_access_token_still_adds_database(self) -> None:
+        """Database= must be present even when injecting a token."""
+        target = _make_target(database="mydb")
+        result = build_connection_string(target, use_access_token=True)
+        assert "Database=mydb" in result
+
+    def test_default_use_access_token_false_keeps_authentication(self) -> None:
+        """Default (use_access_token=False) must keep Authentication=."""
+        result = build_connection_string(_make_target())
+        assert "Authentication=ActiveDirectoryDefault" in result
+
+    def test_use_access_token_false_explicitly_keeps_authentication(self) -> None:
+        """Explicit use_access_token=False must keep Authentication=."""
+        result = build_connection_string(_make_target(), use_access_token=False)
+        assert "Authentication=ActiveDirectoryDefault" in result
+
+    def test_use_access_token_no_double_semicolons(self) -> None:
+        """Token-injection path must not produce double semicolons."""
+        result = build_connection_string(_make_target(), use_access_token=True)
+        assert ";;" not in result
+
+
+class TestOpenConnectionOidcTokenInjection:
+    """Tests for OIDC token injection in open_connection.
+
+    The mssql_python driver is never imported: _mssql is monkeypatched with a
+    MagicMock.  get_sql_token_struct is patched at the fabric_dw.sql module level
+    so that the mock controls the OIDC environment independently of env-vars.
+    """
+
+    def test_non_oidc_connect_called_without_attrs_before(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Outside OIDC, connect must be called WITHOUT attrs_before (or attrs_before=None)
+        and the connection string must contain Authentication=."""
+        mock_mssql, _, _ = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+        # Simulate non-OIDC: get_sql_token_struct returns None.
+        monkeypatch.setattr(_sql_module, "get_sql_token_struct", lambda *_a, **_kw: None)
+
+        from fabric_dw.sql import open_connection  # noqa: PLC0415
+
+        open_connection(_make_target())
+
+        call_kwargs = mock_mssql.connect.call_args.kwargs
+        # attrs_before must be explicitly None — not merely absent (falsy).
+        # The implementation always passes attrs_before=None on the non-OIDC path.
+        assert call_kwargs.get("attrs_before") is None
+        # Connection string must contain Authentication=.
+        called_cs: str = mock_mssql.connect.call_args.args[0]
+        assert "Authentication=" in called_cs
+
+    def test_oidc_connect_called_with_attrs_before_containing_key_1256(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Under OIDC, connect must receive attrs_before={1256: <bytes>}."""
+        import struct  # noqa: PLC0415
+
+        mock_mssql, _, _ = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        # Build a known token struct the same way the real code does.
+        known_token = "eyJhbGciOiJSUzI1NiJ9.mock-sql-token"  # noqa: S105
+        token_bytes = known_token.encode("UTF-16-LE")
+        fake_struct = struct.pack(f"<I{len(token_bytes)}s", len(token_bytes), token_bytes)
+
+        monkeypatch.setattr(_sql_module, "get_sql_token_struct", lambda *_a, **_kw: fake_struct)
+
+        from fabric_dw.sql import SQL_COPT_SS_ACCESS_TOKEN, open_connection  # noqa: PLC0415
+
+        open_connection(_make_target())
+
+        call_kwargs = mock_mssql.connect.call_args.kwargs
+        attrs = call_kwargs.get("attrs_before")
+        assert attrs is not None
+        assert SQL_COPT_SS_ACCESS_TOKEN in attrs
+        assert attrs[SQL_COPT_SS_ACCESS_TOKEN] == fake_struct
+
+    def test_oidc_connect_called_without_authentication_in_cs(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Under OIDC, the connection string must NOT contain Authentication=."""
+        import struct  # noqa: PLC0415
+
+        mock_mssql, _, _ = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        token_bytes = b"fake"
+        fake_struct = struct.pack(f"<I{len(token_bytes)}s", len(token_bytes), token_bytes)
+        monkeypatch.setattr(_sql_module, "get_sql_token_struct", lambda *_a, **_kw: fake_struct)
+
+        from fabric_dw.sql import open_connection  # noqa: PLC0415
+
+        open_connection(_make_target())
+
+        called_cs: str = mock_mssql.connect.call_args.args[0]
+        assert "Authentication=" not in called_cs
+
+    def test_oidc_autocommit_connect_called_with_attrs_before(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Under OIDC, autocommit=True connections must also receive attrs_before."""
+        import struct  # noqa: PLC0415
+
+        mock_mssql, _, _ = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        token_bytes = b"tok"
+        fake_struct = struct.pack(f"<I{len(token_bytes)}s", len(token_bytes), token_bytes)
+        monkeypatch.setattr(_sql_module, "get_sql_token_struct", lambda *_a, **_kw: fake_struct)
+
+        from fabric_dw.sql import SQL_COPT_SS_ACCESS_TOKEN, open_connection  # noqa: PLC0415
+
+        open_connection(_make_target(), autocommit=True)
+
+        call_kwargs = mock_mssql.connect.call_args.kwargs
+        attrs = call_kwargs.get("attrs_before")
+        assert attrs is not None
+        assert SQL_COPT_SS_ACCESS_TOKEN in attrs
+
+    def test_sql_copt_ss_access_token_constant_is_1256(self) -> None:
+        """SQL_COPT_SS_ACCESS_TOKEN must equal 1256 (the ODBC attribute number)."""
+        from fabric_dw.sql import SQL_COPT_SS_ACCESS_TOKEN  # noqa: PLC0415
+
+        assert SQL_COPT_SS_ACCESS_TOKEN == 1256
+
+    def test_oidc_pool_hit_does_not_call_connect(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Pool HIT under OIDC must NOT call connect and must NOT invoke get_sql_token_struct.
+
+        On the first call a new physical connection is opened (pool miss).
+        After .close() returns the connection to the pool, the second call must
+        return the cached connection without acquiring a token — verifying that
+        the token acquisition is gated behind the pool-miss path.
+        """
+        import struct  # noqa: PLC0415
+
+        mock_mssql, mock_conn, _ = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        # Enable the pool for this test.
+        monkeypatch.setenv("FABRIC_SQL_POOL", "1")
+        reset_pool()
+
+        # Track how many times the token stub is invoked.
+        token_call_count = 0
+
+        token_bytes = b"fake-oidc-token"
+        fake_struct = struct.pack(f"<I{len(token_bytes)}s", len(token_bytes), token_bytes)
+
+        def _counting_token_stub(*_a: object, **_kw: object) -> bytes:
+            nonlocal token_call_count
+            token_call_count += 1
+            return fake_struct
+
+        monkeypatch.setattr(_sql_module, "get_sql_token_struct", _counting_token_stub)
+
+        from fabric_dw.sql import open_connection  # noqa: PLC0415
+
+        target = _make_target()
+
+        # First call: pool miss → opens a new physical connection, acquires token.
+        conn1 = open_connection(target)
+        assert mock_mssql.connect.call_count == 1
+        assert token_call_count == 1
+        conn1.close()  # return to pool
+
+        # Second call: pool HIT → must reuse cached connection, not call connect,
+        # and must NOT invoke get_sql_token_struct at all.
+        conn2 = open_connection(target)
+        assert mock_mssql.connect.call_count == 1, "connect must NOT be called on pool hit"
+        assert token_call_count == 1, "get_sql_token_struct must NOT be called on pool hit"
+        assert conn2._raw is mock_conn  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        conn2.close()

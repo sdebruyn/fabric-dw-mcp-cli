@@ -582,3 +582,168 @@ def test_get_credential_default_raises_config_error_missing_both_in_github_actio
 
     with pytest.raises(ConfigError):
         get_credential(CredentialMode.DEFAULT)
+
+
+# ---------------------------------------------------------------------------
+# get_sql_token_struct — SQL access-token injection for GitHub OIDC
+# ---------------------------------------------------------------------------
+
+
+def test_get_sql_token_struct_exported_in_all() -> None:
+    assert "get_sql_token_struct" in auth_module.__all__
+
+
+def test_get_sql_token_struct_returns_none_outside_github_actions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When not under OIDC, get_sql_token_struct must return None."""
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_URL", raising=False)
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", raising=False)
+    from fabric_dw.auth import get_sql_token_struct  # noqa: PLC0415
+
+    result = get_sql_token_struct()
+    assert result is None
+
+
+def test_get_sql_token_struct_mode_param_ignored_outside_oidc(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The mode parameter must not affect the None return outside OIDC."""
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_URL", raising=False)
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", raising=False)
+    from fabric_dw.auth import get_sql_token_struct  # noqa: PLC0415
+
+    result = get_sql_token_struct(CredentialMode.SERVICE_PRINCIPAL)
+    assert result is None
+
+
+def test_get_sql_token_struct_packs_token_correctly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """get_sql_token_struct must pack the token as 4-byte LE length + UTF-16-LE bytes."""
+    import struct  # noqa: PLC0415
+
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://token.example.com/")
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "runner-token")
+    monkeypatch.setenv("AZURE_TENANT_ID", "my-tenant-id")
+    monkeypatch.setenv("AZURE_CLIENT_ID", "my-client-id")
+
+    # Reset cached credential so monkeypatched env vars take effect.
+    import fabric_dw.auth as _auth_module  # noqa: PLC0415
+
+    _auth_module._sql_oidc_credential = None
+
+    known_token = "eyJhbGciOiJSUzI1NiJ9.test-token"  # noqa: S105
+    mock_access_token = AccessToken(known_token, 9999999999)
+
+    with patch("fabric_dw.auth.SyncClientAssertionCredential") as mock_cred_class:
+        mock_cred_instance = MagicMock()
+        mock_cred_instance.get_token.return_value = mock_access_token
+        mock_cred_class.return_value = mock_cred_instance
+
+        result = _auth_module.get_sql_token_struct()
+
+    assert result is not None
+    token_bytes = known_token.encode("UTF-16-LE")
+    expected = struct.pack(f"<I{len(token_bytes)}s", len(token_bytes), token_bytes)
+    assert result == expected
+    # Verify correct scope was requested.
+    mock_cred_instance.get_token.assert_called_once_with(SQL_SCOPE)
+
+
+def test_get_sql_token_struct_struct_format_4_byte_le_length(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The packed struct must start with a 4-byte little-endian token length."""
+    import struct  # noqa: PLC0415
+
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://token.example.com/")
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "runner-token")
+    monkeypatch.setenv("AZURE_TENANT_ID", "my-tenant-id")
+    monkeypatch.setenv("AZURE_CLIENT_ID", "my-client-id")
+
+    import fabric_dw.auth as _auth_module  # noqa: PLC0415
+
+    _auth_module._sql_oidc_credential = None
+
+    known_token = "test"  # noqa: S105
+    mock_access_token = AccessToken(known_token, 9999999999)
+
+    with patch("fabric_dw.auth.SyncClientAssertionCredential") as mock_cred_class:
+        mock_cred_instance = MagicMock()
+        mock_cred_instance.get_token.return_value = mock_access_token
+        mock_cred_class.return_value = mock_cred_instance
+
+        result = _auth_module.get_sql_token_struct()
+
+    assert result is not None
+    length_field = struct.unpack_from("<I", result, 0)[0]
+    token_bytes = known_token.encode("UTF-16-LE")
+    assert length_field == len(token_bytes)
+    assert result[4:] == token_bytes
+
+
+def test_get_sql_token_struct_raises_config_error_missing_tenant_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """get_sql_token_struct must raise ConfigError if AZURE_TENANT_ID is missing."""
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://token.example.com/")
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "runner-token")
+    monkeypatch.setenv("AZURE_CLIENT_ID", "my-client-id")
+    monkeypatch.delenv("AZURE_TENANT_ID", raising=False)
+
+    import fabric_dw.auth as _auth_module  # noqa: PLC0415
+
+    _auth_module._sql_oidc_credential = None
+    from fabric_dw.auth import get_sql_token_struct  # noqa: PLC0415
+
+    with pytest.raises(ConfigError, match="AZURE_TENANT_ID"):
+        get_sql_token_struct()
+
+
+def test_get_sql_token_struct_raises_config_error_missing_client_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """get_sql_token_struct must raise ConfigError if AZURE_CLIENT_ID is missing."""
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://token.example.com/")
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "runner-token")
+    monkeypatch.setenv("AZURE_TENANT_ID", "my-tenant-id")
+    monkeypatch.delenv("AZURE_CLIENT_ID", raising=False)
+
+    import fabric_dw.auth as _auth_module  # noqa: PLC0415
+    from fabric_dw.auth import get_sql_token_struct  # noqa: PLC0415
+
+    _auth_module._sql_oidc_credential = None
+
+    with pytest.raises(ConfigError, match="AZURE_CLIENT_ID"):
+        get_sql_token_struct()
+
+
+def test_get_sql_token_struct_caches_credential_across_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The sync credential must be created once and reused across multiple calls."""
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://token.example.com/")
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "runner-token")
+    monkeypatch.setenv("AZURE_TENANT_ID", "my-tenant-id")
+    monkeypatch.setenv("AZURE_CLIENT_ID", "my-client-id")
+
+    import fabric_dw.auth as _auth_module  # noqa: PLC0415
+
+    _auth_module._sql_oidc_credential = None
+
+    known_token = "my-sql-token"  # noqa: S105
+    mock_access_token = AccessToken(known_token, 9999999999)
+
+    with patch("fabric_dw.auth.SyncClientAssertionCredential") as mock_cred_class:
+        mock_cred_instance = MagicMock()
+        mock_cred_instance.get_token.return_value = mock_access_token
+        mock_cred_class.return_value = mock_cred_instance
+
+        _auth_module.get_sql_token_struct()
+        _auth_module.get_sql_token_struct()
+
+    # Credential class must be instantiated only once across multiple calls.
+    mock_cred_class.assert_called_once()
+    # get_token must be called each time (fresh struct per call).
+    assert mock_cred_instance.get_token.call_count == 2
