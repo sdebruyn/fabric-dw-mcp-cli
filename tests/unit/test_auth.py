@@ -7,7 +7,7 @@ import httpx
 import pytest
 import respx
 from azure.core.credentials import AccessToken
-from azure.identity.aio import ClientAssertionCredential
+from azure.identity import ClientAssertionCredential as SyncClientAssertionCredential
 from azure.identity.aio import ClientSecretCredential as AsyncClientSecretCredential
 from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
 
@@ -420,8 +420,13 @@ def test_is_github_actions_oidc_false_when_both_missing(monkeypatch: pytest.Monk
 def test_fetch_github_oidc_jwt_returns_value_from_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """_fetch_github_oidc_jwt must GET the OIDC endpoint and return the JWT."""
-    request_url = "https://pipelines.actions.githubusercontent.com/oidc/token"
+    """_fetch_github_oidc_jwt must GET the OIDC endpoint and return the JWT.
+
+    Uses a realistic GitHub Actions URL that already contains a query string
+    (api-version=2.0) to verify robust URL parameter handling.
+    """
+    # Real GitHub Actions URLs always include ?api-version=2.0
+    request_url = "https://pipelines.actions.githubusercontent.com/serviceHosts/abc/_apis/distributedtask/hubs/Gates/plans/def/jobs/ghi/idtoken?api-version=2.0"
     runner_token = "gha-runner-token-abc"  # noqa: S105
     expected_jwt = "eyJhbGciOiJSUzI1NiJ9.fake.jwt"
 
@@ -429,51 +434,60 @@ def test_fetch_github_oidc_jwt_returns_value_from_response(
     monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", runner_token)
 
     with respx.mock:
-        route = respx.get(f"{request_url}&audience=api://AzureADTokenExchange").mock(
-            return_value=httpx.Response(200, json={"value": expected_jwt})
-        )
+        # The audience param must be appended alongside the existing api-version param
+        route = respx.get(
+            "https://pipelines.actions.githubusercontent.com/serviceHosts/abc/_apis/distributedtask/hubs/Gates/plans/def/jobs/ghi/idtoken",
+            params={"api-version": "2.0", "audience": "api://AzureADTokenExchange"},
+        ).mock(return_value=httpx.Response(200, json={"value": expected_jwt}))
         result = auth_module._fetch_github_oidc_jwt()
 
     assert result == expected_jwt
     assert route.called
     sent_request = route.calls.last.request
     assert sent_request.headers["authorization"] == f"Bearer {runner_token}"
-
-
-def test_fetch_github_oidc_jwt_sends_correct_audience(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """_fetch_github_oidc_jwt must append audience=api://AzureADTokenExchange."""
-    request_url = "https://pipelines.actions.githubusercontent.com/oidc/token?base=1"
-    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_URL", request_url)
-    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "tok")
-
-    with respx.mock:
-        route = respx.get(f"{request_url}&audience=api://AzureADTokenExchange").mock(
-            return_value=httpx.Response(200, json={"value": "jwt-token"})
-        )
-        auth_module._fetch_github_oidc_jwt()
-
-    # Confirm the audience param was appended (URL-encoded or raw both acceptable)
-    sent_url = str(route.calls.last.request.url)
+    # Confirm both query params are present in the final URL
+    sent_url = str(sent_request.url)
+    assert "api-version=2.0" in sent_url
     assert (
         "audience=api%3A%2F%2FAzureADTokenExchange" in sent_url
         or "audience=api://AzureADTokenExchange" in sent_url
     )
 
 
-def test_fetch_github_oidc_jwt_raises_config_error_on_http_error(
+def test_fetch_github_oidc_jwt_sends_correct_audience(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """_fetch_github_oidc_jwt must raise ConfigError when the endpoint returns non-2xx."""
-    request_url = "https://pipelines.actions.githubusercontent.com/oidc/token"
+    """_fetch_github_oidc_jwt must append audience=api://AzureADTokenExchange."""
+    request_url = "https://pipelines.actions.githubusercontent.com/oidc/token?api-version=2.0"
     monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_URL", request_url)
     monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "tok")
 
     with respx.mock:
-        respx.get(f"{request_url}&audience=api://AzureADTokenExchange").mock(
-            return_value=httpx.Response(403, text="Forbidden")
-        )
+        route = respx.get(
+            "https://pipelines.actions.githubusercontent.com/oidc/token",
+            params={"api-version": "2.0", "audience": "api://AzureADTokenExchange"},
+        ).mock(return_value=httpx.Response(200, json={"value": "jwt-token"}))
+        auth_module._fetch_github_oidc_jwt()
+
+    # Confirm both params are present — audience added via copy_add_param preserving api-version
+    sent_url = str(route.calls.last.request.url)
+    assert "audience=api%3A%2F%2FAzureADTokenExchange" in sent_url
+    assert "api-version=2.0" in sent_url
+
+
+def test_fetch_github_oidc_jwt_raises_config_error_on_http_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_fetch_github_oidc_jwt must raise ConfigError when the endpoint returns non-2xx."""
+    request_url = "https://pipelines.actions.githubusercontent.com/oidc/token?api-version=2.0"
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_URL", request_url)
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "tok")
+
+    with respx.mock:
+        respx.get(
+            "https://pipelines.actions.githubusercontent.com/oidc/token",
+            params={"api-version": "2.0", "audience": "api://AzureADTokenExchange"},
+        ).mock(return_value=httpx.Response(403, text="Forbidden"))
         with pytest.raises(ConfigError, match="403"):
             auth_module._fetch_github_oidc_jwt()
 
@@ -494,23 +508,29 @@ def test_fetch_github_oidc_jwt_raises_config_error_when_env_missing(
 # ---------------------------------------------------------------------------
 
 
-def test_get_credential_default_returns_client_assertion_in_github_actions(
+def test_get_credential_default_returns_sync_adapter_wrapping_client_assertion_in_github_actions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """DEFAULT mode must return ClientAssertionCredential when OIDC env vars are present."""
+    """DEFAULT mode returns SyncCredentialAdapter(SyncClientAssertionCredential) in GHA.
+
+    The sync credential is used (not the aio variant) so the blocking _fetch_github_oidc_jwt
+    runs in a worker thread via SyncCredentialAdapter, keeping the event loop free.
+    """
     monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://token.example.com/")
     monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "runner-token")
     monkeypatch.setenv("AZURE_TENANT_ID", "my-tenant-id")
     monkeypatch.setenv("AZURE_CLIENT_ID", "my-client-id")
 
-    with patch("fabric_dw.auth.ClientAssertionCredential") as mock_cac:
-        mock_cac.return_value = MagicMock(spec=ClientAssertionCredential)
-        get_credential(CredentialMode.DEFAULT)
+    with patch("fabric_dw.auth.SyncClientAssertionCredential") as mock_cac:
+        mock_cac.return_value = MagicMock(spec=SyncClientAssertionCredential)
+        credential = get_credential(CredentialMode.DEFAULT)
         mock_cac.assert_called_once()
         _, kwargs = mock_cac.call_args
         assert kwargs["tenant_id"] == "my-tenant-id"
         assert kwargs["client_id"] == "my-client-id"
         assert kwargs["func"] is auth_module._fetch_github_oidc_jwt
+        # The result must be a SyncCredentialAdapter wrapping the sync credential
+        assert isinstance(credential, SyncCredentialAdapter)
 
 
 def test_get_credential_default_returns_default_azure_credential_outside_github_actions(

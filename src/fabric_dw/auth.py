@@ -5,16 +5,19 @@ import os
 from collections.abc import Callable
 from enum import StrEnum
 from types import TracebackType
+from typing import Protocol
 
 import httpx
 from azure.core.credentials import AccessToken
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.identity import (
+    ClientAssertionCredential as SyncClientAssertionCredential,
+)
+from azure.identity import (
     InteractiveBrowserCredential,
     TokenCachePersistenceOptions,
 )
 from azure.identity.aio import (
-    ClientAssertionCredential,
     ClientSecretCredential,
     DefaultAzureCredential,
 )
@@ -50,19 +53,36 @@ class CredentialMode(StrEnum):
     INTERACTIVE = "interactive"
 
 
+class _CloseableTokenCredential(Protocol):
+    """A synchronous token credential that also supports close()."""
+
+    def get_token(
+        self,
+        *scopes: str,
+        claims: str | None = None,
+        tenant_id: str | None = None,
+        enable_cae: bool = False,
+        **kwargs: object,
+    ) -> AccessToken: ...
+
+    def close(self) -> None: ...
+
+
 class SyncCredentialAdapter:
     """Adapts a synchronous TokenCredential to the AsyncTokenCredential protocol.
 
     Used because ``azure.identity.aio.InteractiveBrowserCredential`` does not
-    exist in azure-identity 1.25.x.  Both ``get_token`` and ``close`` are
-    offloaded to a worker thread via :func:`asyncio.to_thread` so the event
-    loop is never blocked.
+    exist in azure-identity 1.25.x, and because ``azure.identity.aio.ClientAssertionCredential``
+    invokes its ``func`` callback bare on the event loop (no ``asyncio.to_thread`` wrapping)
+    in azure-identity 1.25.x.  Wrapping a synchronous credential here ensures that both
+    ``get_token`` and ``close`` are offloaded to a worker thread via
+    :func:`asyncio.to_thread` so the event loop is never blocked.
 
-    Remove this adapter and switch to ``azure.identity.aio.InteractiveBrowserCredential``
-    once that ships in a stable release.
+    Remove the ``InteractiveBrowserCredential`` usage of this adapter and switch to
+    ``azure.identity.aio.InteractiveBrowserCredential`` once that ships in a stable release.
     """
 
-    def __init__(self, inner: InteractiveBrowserCredential) -> None:
+    def __init__(self, inner: _CloseableTokenCredential) -> None:
         self._inner = inner
 
     async def get_token(
@@ -134,10 +154,13 @@ def _is_github_actions_oidc() -> bool:
 def _fetch_github_oidc_jwt() -> str:
     """Fetch a fresh GitHub Actions OIDC JWT.
 
-    This is a *synchronous* callable because ``azure.identity.aio.ClientAssertionCredential``
-    expects ``func: Callable[[], str]`` (sync) in azure-identity 1.25.x.  It is
-    invoked by azure-identity on every token acquisition (not on every HTTP
-    request), so the blocking GET is acceptable.
+    This is a *synchronous* callable because ``azure.identity.ClientAssertionCredential``
+    (sync variant) expects ``func: Callable[[], str]``.  The whole credential is wrapped
+    in :class:`SyncCredentialAdapter`, which offloads ``get_token`` (and therefore this
+    function) to a worker thread via :func:`asyncio.to_thread`, keeping the event loop free.
+
+    It is invoked by azure-identity on every token acquisition (not on every HTTP
+    request), so the blocking GET runs safely off the event loop.
 
     Returns:
         The OIDC JWT string from the GitHub token endpoint.
@@ -155,7 +178,11 @@ def _fetch_github_oidc_jwt() -> str:
             "ACTIONS_ID_TOKEN_REQUEST_URL and ACTIONS_ID_TOKEN_REQUEST_TOKEN are available."
         )
 
-    url = f"{request_url}&audience={_GITHUB_OIDC_AUDIENCE}"
+    # Build the final URL by appending audience= to any existing query params.
+    # Using httpx.URL.copy_add_param preserves params already in the URL
+    # (e.g. api-version=2.0 that GitHub always includes), whereas passing
+    # params= to httpx.get() would replace the entire query string.
+    url = httpx.URL(request_url).copy_add_param("audience", _GITHUB_OIDC_AUDIENCE)
     try:
         response = httpx.get(
             url,
@@ -165,10 +192,10 @@ def _fetch_github_oidc_jwt() -> str:
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
         raise ConfigError(
-            f"GitHub OIDC token endpoint returned HTTP {exc.response.status_code}. URL: {url}"
+            f"GitHub OIDC token endpoint returned HTTP {exc.response.status_code}."
         ) from exc
     except httpx.RequestError as exc:
-        raise ConfigError(f"Failed to reach GitHub OIDC token endpoint: {exc}. URL: {url}") from exc
+        raise ConfigError(f"Failed to reach GitHub OIDC token endpoint: {exc}.") from exc
 
     return str(response.json()["value"])
 
@@ -176,11 +203,17 @@ def _fetch_github_oidc_jwt() -> str:
 def _make_github_oidc_credential() -> AsyncTokenCredential:
     """Build a self-refreshing ClientAssertionCredential backed by GitHub OIDC.
 
-    Each time azure-identity needs to acquire or refresh an access token it
-    calls *func* to obtain a fresh client assertion.  Because a GitHub OIDC
-    JWT is only valid for ~5 minutes, fetching a new one on every call prevents
-    ``AADSTS700024: Client assertion is not within its valid time range`` errors
-    that would otherwise terminate long-running CI jobs.
+    Uses the *synchronous* ``azure.identity.ClientAssertionCredential`` wrapped in
+    :class:`SyncCredentialAdapter`.  This ensures that the blocking ``_fetch_github_oidc_jwt``
+    HTTP call runs in a worker thread (via :func:`asyncio.to_thread`) rather than on the
+    event loop — the aio variant calls its ``func`` bare on the event loop in azure-identity
+    1.25.x.
+
+    Each time azure-identity needs to acquire or refresh an access token it calls *func*
+    to obtain a fresh client assertion.  Because a GitHub OIDC JWT is only valid for ~5
+    minutes, fetching a new one on every call prevents
+    ``AADSTS700024: Client assertion is not within its valid time range`` errors that
+    would otherwise terminate long-running CI jobs.
 
     Raises:
         ConfigError: If AZURE_TENANT_ID or AZURE_CLIENT_ID are missing.
@@ -192,10 +225,12 @@ def _make_github_oidc_credential() -> AsyncTokenCredential:
             f"to be set in the environment."
         )
 
-    return ClientAssertionCredential(
-        tenant_id=os.environ["AZURE_TENANT_ID"],
-        client_id=os.environ["AZURE_CLIENT_ID"],
-        func=_fetch_github_oidc_jwt,
+    return SyncCredentialAdapter(
+        SyncClientAssertionCredential(
+            tenant_id=os.environ["AZURE_TENANT_ID"],
+            client_id=os.environ["AZURE_CLIENT_ID"],
+            func=_fetch_github_oidc_jwt,
+        )
     )
 
 
