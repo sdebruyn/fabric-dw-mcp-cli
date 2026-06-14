@@ -12,7 +12,7 @@ from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import WarehouseKind, WarehouseSnapshot, WarehouseSnapshotApiPayload, as_props
 from fabric_dw.services._helpers import compact
 from fabric_dw.services._lro import LRO_DETAIL_WAIT_S, LRO_MAX_DETAIL_RETRIES, resolve_lro_item_id
-from fabric_dw.sql import SqlTarget, run_query
+from fabric_dw.sql import SqlTarget, run_statements
 
 __all__ = [
     "create",
@@ -329,12 +329,32 @@ async def roll_timestamp(
     _validate_snapshot_name(snapshot_name, param="snapshot_name")
 
     if new_dt is None:
-        sql_str = f"ALTER DATABASE [{snapshot_name}] SET TIMESTAMP = CURRENT_TIMESTAMP;"
+        alter_sql = f"ALTER DATABASE [{snapshot_name}] SET TIMESTAMP = CURRENT_TIMESTAMP;"
     else:
         formatted = new_dt.strftime("%Y-%m-%dT%H:%M:%S.00")
-        sql_str = f"ALTER DATABASE [{snapshot_name}] SET TIMESTAMP = '{formatted}';"
+        alter_sql = f"ALTER DATABASE [{snapshot_name}] SET TIMESTAMP = '{formatted}';"
 
+    # ``ALTER DATABASE … SET TIMESTAMP`` is rejected inside any explicit
+    # transaction (SQL Server error 226: "ALTER DATABASE statement not allowed
+    # within multi-statement transaction").
+    #
+    # ``mssql_python.connect()`` defaults to ``autocommit=False``, which causes
+    # the ODBC driver to send a ``BEGIN TRANSACTION`` to SQL Server before every
+    # ``cursor.execute()`` call at the TDS/ODBC layer — independently of any
+    # T-SQL ``SET IMPLICIT_TRANSACTIONS`` session option.  Even prefixing with
+    # ``SET IMPLICIT_TRANSACTIONS OFF`` in a prior statement does not help,
+    # because the ODBC driver opens a *new* explicit transaction for each
+    # subsequent ``cursor.execute()`` call.
+    #
+    # Correct fix: open the connection with ODBC-level ``autocommit=True`` so
+    # the driver never wraps any statement in an explicit transaction, then run
+    # the ALTER as the sole statement on that connection.
     def _run() -> None:
-        run_query(parent_target, sql_str, mode=mode, commit=True, fetch="none")
+        run_statements(
+            parent_target,
+            [alter_sql],
+            mode=mode,
+            autocommit=True,
+        )
 
     await asyncio.to_thread(_run)

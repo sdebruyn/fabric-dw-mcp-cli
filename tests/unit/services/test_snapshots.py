@@ -549,31 +549,61 @@ async def test_delete_404_raises_not_found() -> None:
 
 
 async def test_roll_timestamp_without_new_dt_uses_current_timestamp() -> None:
-    """roll_timestamp with new_dt=None should use CURRENT_TIMESTAMP."""
+    """roll_timestamp with new_dt=None should use CURRENT_TIMESTAMP on an autocommit connection.
+
+    The ODBC driver wraps every cursor.execute() in an explicit BEGIN/COMMIT
+    transaction when autocommit=False (the default).  SQL Server error 226 fires
+    on ALTER DATABASE inside any explicit transaction.  The fix is to open the
+    connection with autocommit=True at the ODBC layer, which bypasses all
+    transaction wrapping.
+
+    This test pins that open_connection is called with autocommit=True and that
+    exactly ONE SQL statement is executed (the ALTER DATABASE — no preceding
+    SET IMPLICIT_TRANSACTIONS OFF is needed or present).
+    """
     target = _make_sql_target()
     conn = _make_mock_conn()
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
+    with patch("fabric_dw.sql.open_connection", return_value=conn) as mock_open:
         await snapshots.roll_timestamp(target, "MySnapshot")
 
+    # Verify ODBC-level autocommit was requested — this is the critical assertion.
+    mock_open.assert_called_once_with(
+        target, mode=snapshots.CredentialMode.DEFAULT, autocommit=True
+    )
+
     cursor = conn.cursor.return_value
-    cursor.execute.assert_called_once()
-    sql_str: str = cursor.execute.call_args[0][0]
-    assert "ALTER DATABASE [MySnapshot] SET TIMESTAMP = CURRENT_TIMESTAMP;" in sql_str
+    # Only ONE statement: the ALTER DATABASE itself (no SET IMPLICIT_TRANSACTIONS OFF).
+    assert cursor.execute.call_count == 1
+    executed_sql = cursor.execute.call_args_list[0][0][0]
+    assert "ALTER DATABASE [MySnapshot] SET TIMESTAMP = CURRENT_TIMESTAMP;" in executed_sql
+    assert "SET IMPLICIT_TRANSACTIONS" not in executed_sql
 
 
 async def test_roll_timestamp_with_new_dt_formats_correctly() -> None:
-    """roll_timestamp with a datetime should format as YYYY-MM-DDTHH:MM:SS.SS."""
+    """roll_timestamp with a datetime should format as YYYY-MM-DDTHH:MM:SS.SS.
+
+    Verifies the connection is opened with autocommit=True and the ALTER DATABASE
+    is the sole executed statement (no SET IMPLICIT_TRANSACTIONS OFF preamble).
+    """
     target = _make_sql_target()
     conn = _make_mock_conn()
     new_dt = datetime(2024, 3, 15, 8, 30, 45, tzinfo=UTC)
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
+    with patch("fabric_dw.sql.open_connection", return_value=conn) as mock_open:
         await snapshots.roll_timestamp(target, "MySnapshot", new_dt=new_dt)
 
+    # Autocommit must be True — the ODBC driver must not wrap ALTER DATABASE
+    # in an explicit transaction (that would trigger SQL Server error 226).
+    mock_open.assert_called_once_with(
+        target, mode=snapshots.CredentialMode.DEFAULT, autocommit=True
+    )
+
     cursor = conn.cursor.return_value
-    sql_str: str = cursor.execute.call_args[0][0]
-    assert "ALTER DATABASE [MySnapshot] SET TIMESTAMP = '2024-03-15T08:30:45.00';" in sql_str
+    assert cursor.execute.call_count == 1
+    executed_sql = cursor.execute.call_args_list[0][0][0]
+    assert "ALTER DATABASE [MySnapshot] SET TIMESTAMP = '2024-03-15T08:30:45.00';" in executed_sql
+    assert "SET IMPLICIT_TRANSACTIONS" not in executed_sql
 
 
 async def test_roll_timestamp_name_injection_bracket() -> None:
