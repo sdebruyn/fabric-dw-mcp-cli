@@ -14,7 +14,7 @@ Environment variables
     Set to ``1``, ``true``, or ``yes`` to enable the permanently-destructive
     tools: ``delete_warehouse``, ``delete_snapshot``, ``delete_restore_point``,
     ``restore_warehouse_in_place``, ``delete_schema``, ``delete_table``,
-    ``clear_table``, ``delete_sql_pool``, ``reset_sql_pools``.
+    ``clear_table``, ``delete_sql_pool``.
     Defaults to **disabled** (secure-by-default).
 
 ``FABRIC_MCP_WORKSPACES``

@@ -10,7 +10,7 @@ import httpx
 import pytest
 import respx
 
-from fabric_dw.exceptions import PermissionDeniedError
+from fabric_dw.exceptions import FabricError, PermissionDeniedError
 from fabric_dw.models import AuditSettings
 from fabric_dw.services import audit
 from tests.unit.services._helpers import _make_client
@@ -476,6 +476,35 @@ async def test_remove_action_group_403_raises_permission_denied() -> None:
         async with client:
             with pytest.raises(PermissionDeniedError):
                 await audit.remove_action_group(client, _WS_ID, _WH_ID, "BATCH_COMPLETED_GROUP")
+
+
+async def test_remove_action_group_timeout_raises_fabric_error() -> None:
+    """remove_action_group raises FabricError when the group is still present after polling.
+
+    If eventual consistency never resolves within max_wait_s, the function must
+    raise FabricError rather than silently returning stale data that still contains
+    the group the caller just asked to remove.
+
+    The test patches asyncio.sleep to be instant (so the loop runs at full speed)
+    and makes every GET return the group still present, simulating a permanently
+    stuck backend.  After max_wait_s / poll_interval_s iterations the function
+    must raise rather than return.
+    """
+    from unittest.mock import AsyncMock, patch  # noqa: PLC0415
+
+    group = "BATCH_COMPLETED_GROUP"
+    existing = AUDIT_SETTINGS_PAYLOAD.copy()  # group is present in every GET
+
+    with respx.mock:
+        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=existing))
+        respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        client = await _make_client()
+        async with client:
+            with (
+                patch("fabric_dw.services.audit.asyncio.sleep", new=AsyncMock()),
+                pytest.raises(FabricError, match="still present"),
+            ):
+                await audit.remove_action_group(client, _WS_ID, _WH_ID, group)
 
 
 # ---------------------------------------------------------------------------

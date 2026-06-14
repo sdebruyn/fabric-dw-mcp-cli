@@ -54,7 +54,6 @@ during these tests.
 | `sql-pools delete` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_sql_pools.py#L59) | ✅ | ✅ |
 | `sql-pools enable` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_sql_pools.py#L28) | ✅ | ✅ |
 | `sql-pools disable` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_sql_pools.py#L28) | ✅ | ✅ |
-| `sql-pools reset` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_sql_pools.py#L112) | ✅ | ✅ |
 | `sql-pools insights` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_query_insights.py#L82) | ✅ | ✅ |
 
 [^pools-list]: `list_sql_pools` reads the same configuration response as `get_configuration`; the `test_get_configuration_returns_model` test covers that path.

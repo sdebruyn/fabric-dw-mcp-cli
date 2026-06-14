@@ -8,11 +8,10 @@ Coverage targets
 - create_sql_pool              (lines 92-155)
 - update_sql_pool              (lines 157-207)
 - delete_sql_pool              (lines 209-232)
-- reset_sql_pools              (lines 234-255)
-- enable_sql_pools             (lines 257-273)
-- disable_sql_pools            (lines 275-293)
-- _parse_dt helper             (lines 295-302)
-- list_sql_pool_insights       (lines 304-335)
+- enable_sql_pools             (lines 234-250)
+- disable_sql_pools            (lines 252-270)
+- _parse_dt helper             (lines 272-279)
+- list_sql_pool_insights       (lines 281-312)
 
 Each tool is covered for:
   1. Happy path (service returns expected data -> correct dict/list shape)
@@ -751,96 +750,6 @@ async def test_delete_sql_pool_readonly_blocked(ctx_patch) -> None:
         await mcp._tool_manager.call_tool(
             "delete_sql_pool",
             {"workspace": _WS_NAME, "pool_name": "p"},
-        )
-
-
-# ---------------------------------------------------------------------------
-# reset_sql_pools
-# ---------------------------------------------------------------------------
-
-
-async def test_reset_sql_pools_happy_path(mock_ctx, ctx_patch) -> None:
-    """reset_sql_pools returns serialised config dict with empty pools list."""
-    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
-
-    config = _make_config(pools=[])
-    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-
-    with (
-        ctx_patch,
-        patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
-        patch(
-            "fabric_dw.services.sql_pools.reset_pools",
-            new=AsyncMock(return_value=config),
-        ),
-    ):
-        result = await mcp._tool_manager.call_tool(
-            "reset_sql_pools",
-            {"workspace": _WS_NAME},
-        )
-
-    assert isinstance(result, dict)
-    assert result["customSQLPools"] == []
-
-
-async def test_reset_sql_pools_fabric_error(mock_ctx, ctx_patch) -> None:
-    """reset_sql_pools wraps FabricError as ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
-
-    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
-
-    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-
-    with (
-        ctx_patch,
-        patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
-        patch(
-            "fabric_dw.services.sql_pools.reset_pools",
-            new=AsyncMock(side_effect=FabricError("server error")),
-        ),
-        pytest.raises(ToolError),
-    ):
-        await mcp._tool_manager.call_tool(
-            "reset_sql_pools",
-            {"workspace": _WS_NAME},
-        )
-
-
-async def test_reset_sql_pools_destructive_disabled(ctx_patch) -> None:
-    """reset_sql_pools raises ToolError when FABRIC_MCP_ALLOW_DESTRUCTIVE is not set."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
-
-    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
-
-    env = {k: v for k, v in os.environ.items() if k != "FABRIC_MCP_ALLOW_DESTRUCTIVE"}
-
-    with (
-        ctx_patch,
-        patch.dict(os.environ, env, clear=True),
-        pytest.raises(ToolError) as exc_info,
-    ):
-        await mcp._tool_manager.call_tool(
-            "reset_sql_pools",
-            {"workspace": _WS_NAME},
-        )
-
-    assert "destructive" in str(exc_info.value).lower()
-
-
-async def test_reset_sql_pools_readonly_blocked(ctx_patch) -> None:
-    """reset_sql_pools raises ToolError in read-only mode."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
-
-    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
-
-    with (
-        ctx_patch,
-        patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1", "FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
-        pytest.raises(ToolError),
-    ):
-        await mcp._tool_manager.call_tool(
-            "reset_sql_pools",
-            {"workspace": _WS_NAME},
         )
 
 

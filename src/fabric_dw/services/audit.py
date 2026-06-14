@@ -16,6 +16,7 @@ import asyncio
 import re
 from uuid import UUID
 
+from fabric_dw.exceptions import FabricError
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import AuditSettings
 
@@ -340,6 +341,8 @@ async def remove_action_group(
         ValueError: If *group* does not match ``^[A-Z0-9_]+$``.
         ValueError: If auditing is currently disabled (``state == "Disabled"``).
             Enable auditing first with :func:`enable`.
+        FabricError: If eventual-consistency polling times out before the removed
+            group disappears from the API response (see issue #205).
         PermissionDeniedError: If the caller lacks the required permission (HTTP 403).
         NotFoundError: If the warehouse does not exist (HTTP 404).
     """
@@ -369,8 +372,8 @@ async def remove_action_group(
     )
     # The ``/settings/sqlAudit`` PATCH endpoint has eventual consistency: a
     # GET immediately after PATCH may still return the old action-group list.
-    # Poll until the removed group is absent from the response (up to 30 s).
-    # This mirrors the pattern used by the sql_pools service (see issue #205).
+    # Poll until the removed group is absent from the response (up to 30 s),
+    # then raise FabricError so callers are never silently handed stale data.
     poll_interval_s = 2.0
     max_wait_s = 30.0
     waited = 0.0
@@ -379,4 +382,11 @@ async def remove_action_group(
         await asyncio.sleep(poll_interval_s)
         waited += poll_interval_s
         refreshed = await get_settings(http, workspace_id, warehouse_id)
+    if group in refreshed.action_groups:
+        msg = (
+            f"remove_action_group: group {group!r} still present after {max_wait_s:.0f} s of "
+            "eventual-consistency polling; the PATCH was accepted but the change has not yet "
+            "propagated.  Retry the operation or check the Fabric audit settings manually."
+        )
+        raise FabricError(msg)
     return refreshed

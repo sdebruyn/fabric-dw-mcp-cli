@@ -1183,20 +1183,6 @@ Delete an SQL pool from a workspace.
 
 ---
 
-### reset_sql_pools
-
-**Targets:** Workspace (not item-specific)
-
-Clear all SQL pools for a workspace.  The `customSQLPoolsEnabled` flag is preserved.
-
-**Parameters:**
-
-- `workspace` (`str`) — workspace name or GUID.
-
-**Returns:** `SqlPoolsConfiguration` — the updated configuration (with an empty pool list).
-
----
-
 ### enable_sql_pools
 
 **Targets:** Workspace (not item-specific)

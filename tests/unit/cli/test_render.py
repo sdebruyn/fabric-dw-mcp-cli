@@ -400,7 +400,6 @@ class TestRenderPermissionsTable:
     def _render_to_string(
         self,
         accesses: list[ItemAccess],
-        *,
         title: str = "Permissions",
         *,
         json_output: bool = False,
