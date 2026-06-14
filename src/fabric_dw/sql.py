@@ -132,10 +132,7 @@ _NOT_FOUND_FRAGMENTS = (
 # maps them via the permission-denied fragment path), so we detect them by
 # matching the unique sub-phrase that distinguishes provisioning lag from a real
 # permission denial.
-_SNAPSHOT_NOT_READY_FRAGMENTS = (
-    "does not exist, or the database is not in a state that allows access checks",
-    "not in a state that allows access checks",
-)
+_SNAPSHOT_NOT_READY_FRAGMENTS = ("not in a state that allows access checks",)
 
 # Fragments that indicate a transient connection-level drop (TCP tear-down,
 # server-side restart, or fabric warm-up).  These are safe to retry because
