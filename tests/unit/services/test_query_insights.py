@@ -372,6 +372,7 @@ async def test_list_frequent_queries_parses_fields() -> None:
     row = result[0]
     assert row.number_of_runs == 42
     assert row.avg_total_elapsed_time_ms == 1500
+    assert row.number_of_canceled_runs == 1
 
 
 async def test_list_frequent_queries_sql_references_view() -> None:
