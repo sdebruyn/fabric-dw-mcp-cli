@@ -11,7 +11,11 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
-from fabric_dw.mcp._guards import assert_workspace_allowed, assert_writes_allowed
+from fabric_dw.mcp._guards import (
+    assert_destructive_allowed,
+    assert_workspace_allowed,
+    assert_writes_allowed,
+)
 from fabric_dw.mcp._helpers import fabric_err, resolve_item
 from fabric_dw.services import permissions as _permissions_svc
 from fabric_dw.services import sql_endpoints
@@ -89,6 +93,8 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 rebuild.  **Destructive** — use with caution.
         """
         assert_writes_allowed("refresh_sql_endpoint_metadata")
+        if recreate_tables:
+            assert_destructive_allowed()
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:

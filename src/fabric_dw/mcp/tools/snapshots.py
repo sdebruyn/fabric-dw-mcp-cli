@@ -123,8 +123,8 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             assert_workspace_allowed(workspace, str(ws_id))
             _log.debug("delete_snapshot ws=%s item=%s", ws_id, snap_item.id)
             await snapshots.delete(ctx.http, ws_id, snap_item.id)
-        except FabricError as exc:
-            raise fabric_err(exc) from exc
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
         return {"deleted": True, "snapshot_id": str(snap_item.id)}
 
     @mcp.tool(name="roll_snapshot_timestamp")

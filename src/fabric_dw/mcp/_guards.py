@@ -14,7 +14,8 @@ Environment variables
     Set to ``1``, ``true``, or ``yes`` to enable the permanently-destructive
     tools: ``delete_warehouse``, ``delete_snapshot``, ``delete_restore_point``,
     ``restore_warehouse_in_place``, ``delete_schema``, ``delete_table``,
-    ``clear_table``, ``delete_sql_pool``.
+    ``clear_table``, ``delete_sql_pool``, ``drop_view``, ``drop_procedure``,
+    and ``refresh_sql_endpoint_metadata`` when ``recreate_tables=True``.
     Defaults to **disabled** (secure-by-default).
 
 ``FABRIC_MCP_WORKSPACES``
@@ -34,6 +35,7 @@ from __future__ import annotations
 
 import os
 import re
+import uuid as _uuid_mod
 
 from mcp.server.fastmcp.exceptions import ToolError
 
@@ -280,12 +282,34 @@ def assert_destructive_allowed() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _looks_like_uuid(value: str) -> bool:
+    """Return True when *value* is a valid UUID string."""
+    try:
+        _uuid_mod.UUID(value)
+    except ValueError:
+        return False
+    else:
+        return True
+
+
 def assert_workspace_allowed(workspace_arg: str, resolved_id: str | None = None) -> None:
     """Raise :class:`ToolError` when *workspace_arg* is not in the allowlist.
 
     When ``FABRIC_MCP_WORKSPACES`` is unset or empty every workspace is
     allowed.  When set, the raw argument **or** the resolved GUID must match
     an entry (case-insensitive, whitespace-trimmed).
+
+    Pre-resolve vs post-resolve behaviour
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    This function is called twice per tool invocation: once before the
+    workspace GUID is resolved (``resolved_id=None``), and once after
+    (``resolved_id=<guid>``).
+
+    When called *pre-resolve* and the allowlist contains only GUID-shaped
+    entries, the raw name cannot be authoritatively matched — skipping early
+    rejection here prevents false negatives for callers who supply a workspace
+    name against a GUID-only allowlist.  The post-resolve call (with the
+    actual GUID) is then the authoritative gate.
 
     Args:
         workspace_arg: The raw workspace parameter as supplied by the caller
@@ -307,6 +331,13 @@ def assert_workspace_allowed(workspace_arg: str, resolved_id: str | None = None)
     candidates = {workspace_arg.strip().lower()}
     if resolved_id is not None:
         candidates.add(resolved_id.strip().lower())
+    else:
+        # Pre-resolve: if *all* allowlist entries are GUIDs and the raw arg is
+        # not itself a GUID, we cannot determine validity yet — defer to the
+        # post-resolve call rather than falsely rejecting a valid name.
+        all_guids = all(_looks_like_uuid(entry) for entry in allowed)
+        if all_guids and not _looks_like_uuid(workspace_arg.strip()):
+            return  # cannot decide pre-resolve; post-resolve call will gate
 
     if candidates.isdisjoint(allowed):
         raise ToolError(
