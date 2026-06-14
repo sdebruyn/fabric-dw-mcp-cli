@@ -25,6 +25,9 @@ cov-html:
     uv run pytest tests/unit --cov --cov-report=html
     uv run coverage report --fail-under=80
 
+slow:
+    uv run pytest tests/unit -m slow -v
+
 integration:
     uv run pytest tests/integration -q -m integration
 

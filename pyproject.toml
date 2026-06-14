@@ -144,8 +144,11 @@ docstring-code-format = true
 # Run with: uv run ty check src tests
 
 [tool.pytest.ini_options]
-markers = ["integration: hits real Fabric APIs"]
-addopts = "-ra --strict-markers -m 'not integration'"
+markers = [
+    "integration: hits real Fabric APIs",
+    "slow: relies on real wall-clock timing; excluded from the default unit run",
+]
+addopts = "-ra --strict-markers -m 'not integration and not slow'"
 asyncio_mode = "auto"
 filterwarnings = ["error::RuntimeWarning"]
 
