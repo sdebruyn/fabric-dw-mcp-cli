@@ -14,12 +14,88 @@ from fabric_dw.exceptions import NotFoundError
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import Warehouse, WarehouseKind, WarehouseSnapshot
 from fabric_dw.services import snapshots, warehouses
-from fabric_dw.sql import SqlTarget
+from fabric_dw.sql import SqlTarget, is_transient_connection_error, run_query
 
 # Maximum time to wait for a SQL analytics endpoint to provision on a new lakehouse.
 _SQL_ENDPOINT_PROVISION_TIMEOUT_S = 300
 # Polling interval between provisioning status checks.
 _SQL_ENDPOINT_POLL_INTERVAL_S = 5
+
+# Maximum time (seconds) to wait for a fresh warehouse/endpoint SQL database
+# to become connectable after creation.
+_SQL_READINESS_TIMEOUT_S = 240
+# Starting backoff delay (seconds) between readiness probe attempts.
+_SQL_READINESS_BACKOFF_INITIAL_S = 2.0
+# Maximum backoff delay cap (seconds).
+_SQL_READINESS_BACKOFF_MAX_S = 5.0
+
+
+async def _wait_for_sql_readiness(
+    target: SqlTarget,
+    *,
+    timeout_s: float = _SQL_READINESS_TIMEOUT_S,
+) -> None:
+    """Poll *target* with ``SELECT 1`` until the SQL engine is reachable.
+
+    A freshly created Fabric warehouse or SQL analytics endpoint requires a
+    warm-up period (database provisioning + permission propagation) before TDS
+    connections succeed.  During warm-up the driver raises ``OperationalError``
+    with messages like "Login failed … database was not found" or "communication
+    link failure".  This function retries until the query succeeds or *timeout_s*
+    is exhausted.
+
+    Only connection-level transient errors (detected by
+    :func:`~fabric_dw.sql.is_transient_connection_error`) and login-failed /
+    database-not-found errors are swallowed during the wait.  Any other error
+    (e.g. real SQL errors, unexpected exceptions) is re-raised immediately.
+
+    The underlying :func:`~fabric_dw.sql.run_query` is synchronous (TDS), so
+    each probe is offloaded to a thread via ``asyncio.to_thread``, mirroring
+    how the service layer calls it in ``sql_exec.py``.
+
+    Args:
+        target: The :class:`~fabric_dw.sql.SqlTarget` to probe.
+        timeout_s: Total seconds to wait before giving up.
+
+    Raises:
+        TimeoutError: When the SQL endpoint is still not reachable after *timeout_s*.
+        Exception: Any non-transient error raised by the driver.
+    """
+
+    def _probe() -> None:
+        run_query(target, "SELECT 1", fetch="none")
+
+    deadline = time.monotonic() + timeout_s
+    delay = _SQL_READINESS_BACKOFF_INITIAL_S
+    while True:
+        try:
+            await asyncio.to_thread(_probe)
+        except Exception as exc:
+            msg_lower = str(exc).lower()
+            # Swallow transient connection drops AND the Fabric warm-up
+            # "database was not found" flavour (AuthError from map_driver_error).
+            # We do NOT swallow all "login failed" messages — that is too broad
+            # and would hide genuine permanent auth misconfiguration (wrong tenant,
+            # expired service principal, etc.) for the full 240 s timeout.
+            # "database was not found" uniquely identifies the provisioning-transient
+            # variant of login-failed (error 18456), so it is the right signal here.
+            is_warmup = "database was not found" in msg_lower
+            if not (is_transient_connection_error(exc) or is_warmup):
+                # Unexpected error — surface it immediately.
+                raise
+        else:
+            # SUCCESS — the database is reachable.
+            return
+
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                f"SQL endpoint for {target.database!r} (workspace {target.workspace_id}) "
+                f"did not become reachable within {timeout_s:.0f}s. "
+                "The warehouse may still be provisioning."
+            )
+
+        await asyncio.sleep(delay)
+        delay = min(delay * 1.5, _SQL_READINESS_BACKOFF_MAX_S)
 
 
 @pytest_asyncio.fixture
@@ -48,6 +124,18 @@ async def ephemeral_warehouse(
     name = f"pytest-{uuid.uuid4().hex[:8]}-wh"
     wh = await warehouses.create(http, workspace_id, name)
     try:
+        # Wait for the new warehouse's SQL engine to become reachable before
+        # yielding.  Fresh Fabric warehouses need warm-up (database provisioning
+        # + owner permission propagation) before TDS connections succeed; without
+        # this poll essentially every TDS test fails with "database was not found
+        # or insufficient permissions".
+        assert wh.connection_string, f"Warehouse {wh.id} returned no connection_string"
+        sql_target = SqlTarget(
+            workspace_id=str(workspace_id),
+            database=wh.name,
+            connection_string=wh.connection_string,
+        )
+        await _wait_for_sql_readiness(sql_target)
         yield wh
     finally:
         await warehouses.delete(http, workspace_id, wh.id)
@@ -226,6 +314,16 @@ async def ephemeral_sql_endpoint(
                     "connectionString": ep_conn,
                 }
             )
+            # Even after the Fabric API reports provisioningStatus=Success, the
+            # SQL analytics endpoint may not yet accept TDS connections (the DB
+            # engine needs an additional warm-up window).  Poll until reachable.
+            if ep_conn:
+                sql_target = SqlTarget(
+                    workspace_id=str(workspace_id),
+                    database=wh.name,
+                    connection_string=ep_conn,
+                )
+                await _wait_for_sql_readiness(sql_target)
             yield wh
             return
 

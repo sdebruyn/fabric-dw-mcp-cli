@@ -14,6 +14,7 @@ from fabric_dw.exceptions import AuthError, PermissionDeniedError
 from fabric_dw.sql import (
     SqlTarget,
     build_connection_string,
+    is_transient_connection_error,
     map_driver_error,
     reset_pool,
     run_query,
@@ -832,3 +833,239 @@ class TestConnectionPool:
 
         run_query(_make_target(), "SELECT 1", fetch="none")
         assert mock_mssql.connect.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# is_transient_connection_error — error classifier
+# ---------------------------------------------------------------------------
+
+
+class TestIsTransientConnectionError:
+    """Tests for the transient-error detector used by the retry loop."""
+
+    def test_communication_link_failure_is_transient(self) -> None:
+        exc = Exception("Communication link failure")
+        assert is_transient_connection_error(exc) is True
+
+    def test_connection_forcibly_closed_is_transient(self) -> None:
+        exc = Exception("An existing connection was forcibly closed by the remote host")
+        assert is_transient_connection_error(exc) is True
+
+    def test_transport_level_error_is_transient(self) -> None:
+        exc = Exception(
+            "A transport-level error has occurred when receiving results from the server"
+        )
+        assert is_transient_connection_error(exc) is True
+
+    def test_tcp_provider_is_transient(self) -> None:
+        exc = Exception("TCP Provider: Error code 0x68")
+        assert is_transient_connection_error(exc) is True
+
+    def test_database_was_not_found_is_not_transient(self) -> None:
+        # "database was not found" was removed from _TRANSIENT_FRAGMENTS because
+        # the real Fabric driver wraps it with native error 18456, so
+        # map_driver_error() converts it to AuthError before the transient
+        # classifier is ever consulted.  A bare message-only exception (no
+        # ddbc_error) is therefore also NOT classified as transient.
+        exc = Exception(
+            "Login failed for user '<token-identified principal>'. Reason: "
+            "Authentication was successful, but the database was not found "
+            "or you have insufficient permissions to connect to it"
+        )
+        assert is_transient_connection_error(exc) is False
+
+    def test_auth_error_is_not_transient(self) -> None:
+        exc = Exception("Authentication failed for user ''")
+        assert is_transient_connection_error(exc) is False
+
+    def test_permission_denied_is_not_transient(self) -> None:
+        exc = Exception("permission was denied on object X")
+        assert is_transient_connection_error(exc) is False
+
+    def test_syntax_error_is_not_transient(self) -> None:
+        exc = Exception("Incorrect syntax near 'SELCT'")
+        assert is_transient_connection_error(exc) is False
+
+    def test_generic_boom_is_not_transient(self) -> None:
+        exc = Exception("boom")
+        assert is_transient_connection_error(exc) is False
+
+    def test_case_insensitive(self) -> None:
+        exc = Exception("COMMUNICATION LINK FAILURE")
+        assert is_transient_connection_error(exc) is True
+
+
+# ---------------------------------------------------------------------------
+# Transient retry behaviour in run_query / run_statements
+# ---------------------------------------------------------------------------
+
+
+def _make_fake_time_module() -> MagicMock:
+    """Return a fake ``time`` module whose ``sleep`` is a no-op."""
+    import time as _time  # noqa: PLC0415
+
+    fake = MagicMock()
+    fake.sleep = MagicMock()  # no-op
+    fake.monotonic = MagicMock(side_effect=_time.monotonic)
+    return fake
+
+
+class TestTransientRetry:
+    """run_query and run_statements retry on transient errors but not on real errors."""
+
+    @pytest.fixture(autouse=True)
+    def _disable_sleep(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Replace the sql module's time reference to avoid actual delays."""
+        monkeypatch.setattr(_sql_module, "time", _make_fake_time_module())
+
+    def test_run_query_retries_transient_then_succeeds(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A transient error on attempt 1 is retried; attempt 2 succeeds."""
+        mock_mssql, _, _ = _make_mock_mssql()
+
+        # First cursor/execute raises transient; second succeeds.
+        bad_cursor = MagicMock()
+        bad_cursor.execute.side_effect = Exception("communication link failure")
+        bad_conn = MagicMock()
+        bad_conn.cursor.return_value = bad_cursor
+
+        good_cursor = MagicMock()
+        good_cursor.description = [("n",)]
+        good_cursor.fetchall.return_value = [(1,)]
+        good_conn = MagicMock()
+        good_conn.cursor.return_value = good_cursor
+
+        mock_mssql.connect.side_effect = [bad_conn, good_conn]
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        _cols, rows = run_query(_make_target(), "SELECT 1")
+
+        assert mock_mssql.connect.call_count == 2
+        assert rows == [(1,)]
+
+    def test_run_query_does_not_retry_non_transient(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A non-transient error is raised immediately without retrying."""
+        mock_mssql, _, mock_cursor = _make_mock_mssql()
+        mock_cursor.execute.side_effect = Exception("Incorrect syntax near 'SELCT'")
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with pytest.raises(Exception, match="Incorrect syntax near"):
+            run_query(_make_target(), "SELCT 1")
+
+        # Only one connect attempt — no retry.
+        assert mock_mssql.connect.call_count == 1
+
+    def test_run_query_raises_after_all_retries_exhausted(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When all retry attempts hit transient errors the last error is re-raised."""
+        original_retries = _sql_module.SQL_TRANSIENT_MAX_RETRIES
+        _sql_module.SQL_TRANSIENT_MAX_RETRIES = 2
+        try:
+            mock_mssql, _, _ = _make_mock_mssql()
+            bad_cursor = MagicMock()
+            bad_cursor.execute.side_effect = Exception("communication link failure")
+            bad_conn = MagicMock()
+            bad_conn.cursor.return_value = bad_cursor
+            mock_mssql.connect.return_value = bad_conn
+            _patch_mssql(monkeypatch, mock_mssql)
+
+            with pytest.raises(Exception, match="communication link failure"):
+                run_query(_make_target(), "SELECT 1")
+
+            # 1 original + 2 retries = 3 connect calls
+            assert mock_mssql.connect.call_count == 3
+        finally:
+            _sql_module.SQL_TRANSIENT_MAX_RETRIES = original_retries
+
+    def test_run_query_does_not_retry_when_retries_disabled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """SQL_TRANSIENT_MAX_RETRIES=0 disables retry entirely."""
+        original_retries = _sql_module.SQL_TRANSIENT_MAX_RETRIES
+        _sql_module.SQL_TRANSIENT_MAX_RETRIES = 0
+        try:
+            mock_mssql, _, _ = _make_mock_mssql()
+            bad_cursor = MagicMock()
+            bad_cursor.execute.side_effect = Exception("communication link failure")
+            bad_conn = MagicMock()
+            bad_conn.cursor.return_value = bad_cursor
+            mock_mssql.connect.return_value = bad_conn
+            _patch_mssql(monkeypatch, mock_mssql)
+
+            with pytest.raises(Exception, match="communication link failure"):
+                run_query(_make_target(), "SELECT 1")
+
+            assert mock_mssql.connect.call_count == 1
+        finally:
+            _sql_module.SQL_TRANSIENT_MAX_RETRIES = original_retries
+
+    def test_run_statements_retries_transient_connect_failure(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """run_statements retries when open_connection itself raises a transient error."""
+        mock_mssql, good_conn, _ = _make_mock_mssql()
+
+        # First connect call raises a transient error; second succeeds.
+        mock_mssql.connect.side_effect = [
+            Exception("TCP Provider: connection failed"),
+            good_conn,
+        ]
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        run_statements(_make_target(), ["SELECT 1"])
+
+        assert mock_mssql.connect.call_count == 2
+
+    def test_run_query_retries_transient_connect_failure(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """run_query retries when open_connection itself raises a transient error."""
+        mock_mssql, good_conn, good_cursor = _make_mock_mssql()
+        good_cursor.description = [("n",)]
+        good_cursor.fetchall.return_value = [(1,)]
+
+        # First connect call raises a transient error; second succeeds.
+        mock_mssql.connect.side_effect = [
+            Exception("TCP Provider: connection failed"),
+            good_conn,
+        ]
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        _cols, rows = run_query(_make_target(), "SELECT 1")
+
+        assert mock_mssql.connect.call_count == 2
+        assert rows == [(1,)]
+
+    def test_run_query_does_not_retry_wrong_database_name(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A "database was not found" error with error 18456 maps to AuthError and is NOT retried.
+
+        map_driver_error converts 18456 to AuthError before is_transient_connection_error
+        is consulted, so the error surfaces immediately instead of being retried.
+        """
+        mock_mssql, _, mock_cursor = _make_mock_mssql()
+
+        # Simulate the Fabric TDS driver: message contains "database was not found"
+        # AND ddbc_error embeds native error 18456.  Must be a real exception
+        # subclass so that mock can raise it.
+        class _FakeDriverError(Exception):
+            ddbc_error: str = "[SQL Server]Login failed. Error: 18456"
+
+            def __str__(self) -> str:
+                return (
+                    "Login failed for user '<token-identified principal>'. "
+                    "Reason: Authentication was successful, but the database was not found "
+                    "or you have insufficient permissions to connect to it"
+                )
+
+        mock_cursor.execute.side_effect = _FakeDriverError()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with pytest.raises(AuthError):
+            run_query(_make_target(), "SELECT 1")
+
+        # Must NOT retry — only one connect attempt.
+        assert mock_mssql.connect.call_count == 1
