@@ -129,7 +129,7 @@ def _make_frequently_run_query() -> FrequentlyRunQuery:
             "max_run_total_elapsed_time_ms": 300,
             "number_of_successful_runs": 9,
             "number_of_failed_runs": 1,
-            "number_of_cancelled_runs": 0,
+            "number_of_canceled_runs": 0,
         }
     )
 

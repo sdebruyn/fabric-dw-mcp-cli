@@ -138,7 +138,7 @@ FREQUENTLY_RUN_QUERIES_COLUMNS: tuple[str, ...] = (
     "max_run_total_elapsed_time_ms",
     "number_of_successful_runs",
     "number_of_failed_runs",
-    "number_of_cancelled_runs",
+    "number_of_canceled_runs",
     "query_hash",
 )
 
@@ -360,7 +360,7 @@ SELECT TOP ({limit})
     max_run_total_elapsed_time_ms,
     number_of_successful_runs,
     number_of_failed_runs,
-    number_of_cancelled_runs,
+    number_of_canceled_runs,
     query_hash
 FROM queryinsights.frequently_run_queries{where}
 ORDER BY number_of_runs DESC;
