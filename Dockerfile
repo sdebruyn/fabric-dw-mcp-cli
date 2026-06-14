@@ -23,8 +23,9 @@ RUN uv build --wheel && \
     uv sync --frozen --no-dev --no-install-project && \
     uv pip install --no-deps dist/*.whl
 
-# Runtime stage — copy the pre-built venv from the build stage (all deps already pinned by lock)
-FROM ghcr.io/astral-sh/uv:python${PYTHON_VERSION}-trixie-slim AS runtime
+# Runtime stage — copy the pre-built venv from the build stage (all deps already pinned by lock).
+# Use plain python slim (no uv binary in production image) — Python path matches the build stage.
+FROM python:${PYTHON_VERSION}-slim AS runtime
 
 ARG VERSION
 # OCI image labels

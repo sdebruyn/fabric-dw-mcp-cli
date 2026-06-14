@@ -77,7 +77,7 @@ The Docker image's default `ENTRYPOINT` is the **MCP server** (`fabric-dw-mcp`).
 docker pull ghcr.io/sdebruyn/fabric-dw:latest
 
 # Run the MCP server (default entrypoint — connect via stdio from your MCP client):
-docker run --rm \
+docker run --rm -i \
   -e AZURE_CLIENT_ID=… \
   -e AZURE_TENANT_ID=… \
   -e AZURE_CLIENT_SECRET=… \
