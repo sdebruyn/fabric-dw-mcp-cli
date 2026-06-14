@@ -14,7 +14,7 @@ import pytest
 import respx
 
 from fabric_dw.cache import ItemEntry, LookupCache
-from fabric_dw.exceptions import NotFoundError, PermissionDeniedError
+from fabric_dw.exceptions import FabricError, NotFoundError, PermissionDeniedError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import WarehouseKind, WarehouseSnapshot
 from fabric_dw.services import snapshots
@@ -714,6 +714,131 @@ async def test_roll_timestamp_closes_connection() -> None:
         await snapshots.roll_timestamp(target, "MySnapshot")
 
     conn.close.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# roll_timestamp — snapshot-not-ready retry
+# ---------------------------------------------------------------------------
+
+# The transient error message the Fabric TDS endpoint emits while a freshly
+# created snapshot DB is still provisioning at the SQL layer.
+_SNAP_NOT_READY_MSG = (
+    "User does not have permission to alter database 'my-snap', "
+    "the database does not exist, or the database is not in a state "
+    "that allows access checks."
+)
+
+
+async def test_roll_timestamp_retries_once_on_snapshot_not_ready() -> None:
+    """roll_timestamp retries once when run_statements raises the not-ready error, then succeeds."""
+    target = _make_sql_target()
+    transient_exc = PermissionDeniedError(_SNAP_NOT_READY_MSG)
+
+    call_count = 0
+
+    def _run_side_effect(*_args: object, **_kwargs: object) -> None:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise transient_exc
+
+    # Freeze monotonic time so the deadline is never hit.
+    fake_now = [0.0]
+
+    def _fake_monotonic() -> float:
+        return fake_now[0]
+
+    with (
+        patch("fabric_dw.services.snapshots.run_statements", side_effect=_run_side_effect),
+        patch("time.monotonic", side_effect=_fake_monotonic),
+    ):
+        await snapshots.roll_timestamp(target, "MySnapshot")
+
+    assert call_count == 2
+
+
+async def test_roll_timestamp_retries_twice_on_snapshot_not_ready() -> None:
+    """roll_timestamp retries up to N times, succeeding on the third attempt."""
+    target = _make_sql_target()
+    transient_exc = PermissionDeniedError(_SNAP_NOT_READY_MSG)
+
+    call_count = 0
+
+    def _run_side_effect(*_args: object, **_kwargs: object) -> None:
+        nonlocal call_count
+        call_count += 1
+        if call_count < 3:
+            raise transient_exc
+
+    fake_now = [0.0]
+
+    def _fake_monotonic() -> float:
+        return fake_now[0]
+
+    with (
+        patch("fabric_dw.services.snapshots.run_statements", side_effect=_run_side_effect),
+        patch("time.monotonic", side_effect=_fake_monotonic),
+    ):
+        await snapshots.roll_timestamp(target, "MySnapshot")
+
+    assert call_count == 3
+
+
+async def test_roll_timestamp_raises_fabric_error_on_timeout() -> None:
+    """roll_timestamp raises FabricError once the timeout budget is exhausted."""
+    target = _make_sql_target()
+    transient_exc = PermissionDeniedError(_SNAP_NOT_READY_MSG)
+
+    # Always raise the transient error.
+    def _run_always_fails(*_args: object, **_kwargs: object) -> None:
+        raise transient_exc
+
+    # Simulate time advancing past the deadline on the second monotonic() call
+    # (first call sets the deadline, second call is checked inside the loop).
+    # Return a large value for any additional calls (teardown etc.).
+    timeout = snapshots._SNAP_READY_TIMEOUT_S
+    call_counter = [0]
+
+    def _fake_monotonic() -> float:
+        call_counter[0] += 1
+        if call_counter[0] == 1:
+            return 0.0  # initial deadline computation
+        return timeout + 1.0  # past deadline on every subsequent check
+
+    with (
+        patch("fabric_dw.services.snapshots.run_statements", side_effect=_run_always_fails),
+        patch("time.monotonic", side_effect=_fake_monotonic),
+        pytest.raises(FabricError, match="did not become ready"),
+    ):
+        await snapshots.roll_timestamp(target, "MySnapshot")
+
+
+async def test_roll_timestamp_does_not_retry_real_permission_error() -> None:
+    """roll_timestamp propagates real PermissionDeniedError without retrying."""
+    target = _make_sql_target()
+    real_permission_exc = PermissionDeniedError("permission was denied on ALTER DATABASE")
+
+    call_count = 0
+
+    def _run_side_effect(*_args: object, **_kwargs: object) -> None:
+        nonlocal call_count
+        call_count += 1
+        raise real_permission_exc
+
+    fake_now = [0.0]
+
+    def _fake_monotonic() -> float:
+        return fake_now[0]
+
+    with (
+        patch("fabric_dw.services.snapshots.run_statements", side_effect=_run_side_effect),
+        patch("time.monotonic", side_effect=_fake_monotonic),
+        pytest.raises(PermissionDeniedError),
+    ):
+        await snapshots.roll_timestamp(target, "MySnapshot")
+
+    # Must NOT retry a real permission error.
+    assert call_count == 1
 
 
 # ---------------------------------------------------------------------------
