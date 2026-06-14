@@ -123,7 +123,7 @@ def _parse_retry_after(value: str) -> float:
     """
     value = value.strip()
     try:
-        return float(value)
+        return max(0.0, float(value))
     except ValueError:
         pass
 
@@ -135,6 +135,34 @@ def _parse_retry_after(value: str) -> float:
         return max(0.0, delta)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _is_malformed_retry_after(value: str) -> bool:
+    """Return True when *value* is neither a valid numeric seconds string nor an HTTP date.
+
+    Used by ``_do_request`` to distinguish a legitimately-zero Retry-After (e.g.
+    ``"0.00"``, ``"0.000"``) from a completely unrecognisable value that fell
+    through ``_parse_retry_after`` as ``0.0``.
+
+    Args:
+        value: The raw Retry-After header value (not yet stripped).
+
+    Returns:
+        ``True`` only when the value cannot be parsed as a number or an HTTP date.
+    """
+    stripped = value.strip()
+    try:
+        float(stripped)
+    except ValueError:
+        pass
+    else:
+        return False  # valid number (including "0.00", "0.000", negative, etc.)
+    try:
+        parsedate_to_datetime(stripped)
+    except (TypeError, ValueError):
+        return True  # truly malformed
+    else:
+        return False  # valid HTTP date (even a past one mapping to 0.0)
 
 
 def _parse_json_body(resp: httpx.Response) -> dict[str, object] | None:
@@ -399,7 +427,13 @@ class FabricHttpClient:
 
                 retry_after_raw = resp.headers.get("Retry-After", "1")
                 wait_s = _parse_retry_after(retry_after_raw)
-                if wait_s == 0.0 and retry_after_raw.strip() not in ("0", "0.0"):
+                # Warn and override only when the header was truly unrecognizable.
+                # _parse_retry_after returns 0.0 both for a legitimate "0 seconds"
+                # value AND for a completely unparseable string.  Distinguish them
+                # by re-checking: if the raw value is a parseable number (any form
+                # of zero like "0.00") or a valid HTTP date (even a past one that
+                # maps to 0.0), treat it as intentional.  Only warn otherwise.
+                if wait_s == 0.0 and _is_malformed_retry_after(retry_after_raw):
                     _logger.warning(
                         "Malformed Retry-After header %r; falling back to 1.0s",
                         retry_after_raw,
@@ -548,10 +582,15 @@ class FabricHttpClient:
         """
         url: str | None = f"{base}{path}"
         first = True
+        # Apply the same combined wall-clock deadline used by request() so that
+        # 429 loops inside paginated fetches are time-bounded (C27).
+        combined_deadline = _time.monotonic() + self._combined_deadline_s
 
         while url is not None:
             # continuationUri is always a full URL; use _request_with_retry directly
-            resp = await self._request_with_retry("GET", url, params=params if first else None)
+            resp = await self._request_with_retry(
+                "GET", url, params=params if first else None, combined_deadline=combined_deadline
+            )
             first = False
             raw = resp.json()
             if not isinstance(raw, dict):
@@ -592,7 +631,10 @@ class FabricHttpClient:
             FabricServerError: On 5xx errors or a non-dict response body.
         """
         result_url = f"{HttpBase.FABRIC}/operations/{operation_id}/result"
-        resp = await self._request_with_retry("GET", result_url)
+        combined_deadline = _time.monotonic() + self._combined_deadline_s
+        resp = await self._request_with_retry(
+            "GET", result_url, combined_deadline=combined_deadline
+        )
         body = _parse_json_body(resp)
         if body is None:
             raise FabricServerError(
@@ -620,12 +662,27 @@ class FabricHttpClient:
                 timeout is exceeded.
         """
         deadline = _time.monotonic() + timeout_s
+        # Apply the combined wall-clock deadline so that 429 loops inside
+        # each poll request are time-bounded (C27).  For poll_operation the
+        # natural combined deadline is per-request: reset it each iteration so
+        # that a fresh ``_combined_deadline_s`` budget is granted per poll GET,
+        # while the LRO ``deadline`` bounds the overall polling duration.
+        #
+        # Note: combined_deadline is intentionally re-computed each iteration
+        # inside the loop (see below) so that each poll attempt gets its own
+        # fresh 429-retry budget rather than sharing a single budget across
+        # potentially hundreds of polls.
 
         while True:
             if _time.monotonic() >= deadline:
                 raise FabricServerError(f"LRO timed out after {timeout_s}s for {location}")
 
-            resp = await self._request_with_retry("GET", location)
+            # Fresh combined_deadline per poll GET so the 429-retry window is
+            # scoped to each individual HTTP request, not the entire LRO wait.
+            poll_combined_deadline = _time.monotonic() + self._combined_deadline_s
+            resp = await self._request_with_retry(
+                "GET", location, combined_deadline=poll_combined_deadline
+            )
             body = _parse_json_body(resp) or {}
             status = body.get("status", "")
 

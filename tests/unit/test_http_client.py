@@ -1502,3 +1502,98 @@ async def test_combined_deadline_aborts_429_loop() -> None:
         async with client:
             with pytest.raises(RateLimitedError, match="deadline"):
                 await client.request("GET", HttpBase.FABRIC, "/items")
+
+
+# ---------------------------------------------------------------------------
+# _parse_retry_after: negative value clamped to 0.0
+# ---------------------------------------------------------------------------
+
+
+def test_parse_retry_after_negative_clamped_to_zero() -> None:
+    """_parse_retry_after must clamp negative values to 0.0 (docstring guarantee).
+
+    'Retry-After: -1' is not a valid RFC 7231 value, but _parse_retry_after
+    promises always a non-negative float.  Before the fix, float('-1') = -1.0
+    was returned directly.
+    """
+    result = _parse_retry_after("-1")
+    assert result == 0.0, f"Expected 0.0 for negative Retry-After; got {result}"
+    result2 = _parse_retry_after("-100.5")
+    assert result2 == 0.0, f"Expected 0.0 for -100.5 Retry-After; got {result2}"
+
+
+# ---------------------------------------------------------------------------
+# Retry-After: 0.00 must NOT trigger spurious malformed-header warning
+# ---------------------------------------------------------------------------
+
+
+async def test_429_retry_after_zero_decimal_no_spurious_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Retry-After: 0.00 is a valid zero-second wait and must not emit a WARNING.
+
+    The old string-allowlist check ('0', '0.0') did not cover '0.00', '0.000', etc.,
+    causing a spurious 'Malformed Retry-After' warning and a 1.0s override even
+    though the server explicitly said to wait 0 seconds.
+    """
+    call_count = 0
+
+    def side_effect(_request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return httpx.Response(429, headers={"Retry-After": "0.00"}, json={})
+        return httpx.Response(200, json={"ok": True})
+
+    with respx.mock:
+        respx.get("https://api.fabric.microsoft.com/v1/items").mock(side_effect=side_effect)
+
+        client = FabricHttpClient(credential=_make_credential(), rps=10)
+        async with client:
+            with caplog.at_level(logging.WARNING, logger="fabric_dw.http"):
+                resp = await client.request("GET", HttpBase.FABRIC, "/items")
+
+    assert resp.status_code == 200
+    assert call_count == 2
+    # Must not have emitted a 'Malformed' warning for '0.00'
+    malformed_warnings = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "malformed" in r.getMessage().lower()
+    ]
+    assert malformed_warnings == [], (
+        f"Spurious malformed-header warning for Retry-After: 0.00 — got: "
+        f"{[r.getMessage() for r in malformed_warnings]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# C27: combined deadline applies to iter_paginated 429 loop
+# ---------------------------------------------------------------------------
+
+
+async def test_combined_deadline_aborts_paginated_429_loop() -> None:
+    """A combined_deadline_s=0 must abort the 429-loop inside iter_paginated (C27).
+
+    iter_paginated calls _request_with_retry directly.  Before the fix it passed
+    combined_deadline=None, making the 429 loop time-unbounded for pagination.
+    With the fix, iter_paginated sets its own combined_deadline from
+    _combined_deadline_s so the guard fires on the first iteration.
+    """
+    with respx.mock(assert_all_called=False) as mock_router:
+        # The route returns a 429 first; with combined_deadline_s=0 the deadline
+        # guard should fire before any request is made.
+        mock_router.get(url__regex=r"https://api\.fabric\.microsoft\.com/v1/items.*").mock(
+            return_value=httpx.Response(429, headers={"Retry-After": "10"}, json={})
+        )
+
+        client = FabricHttpClient(
+            credential=_make_credential(),
+            rps=10,
+            combined_deadline_s=0,  # deadline already expired
+        )
+        async with client:
+            with pytest.raises(RateLimitedError, match="deadline"):
+                # Exhaust the async generator — the first _request_with_retry call
+                # must raise RateLimitedError before returning any items.
+                _ = [item async for item in client.iter_paginated(HttpBase.FABRIC, "/items")]

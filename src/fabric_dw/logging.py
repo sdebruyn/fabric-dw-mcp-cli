@@ -103,6 +103,9 @@ _SENSITIVE_HEADERS: frozenset[str] = frozenset(
     }
 )
 
+# Headers for which the scheme word (e.g. "Bearer") is preserved in redacted output.
+_SCHEME_PRESERVING_HEADERS: frozenset[str] = frozenset({"authorization", "proxy-authorization"})
+
 
 def redact_auth_header(headers: dict[str, str]) -> dict[str, str]:
     """Return a copy of *headers* with auth-bearing values replaced by ``***``.
@@ -122,12 +125,12 @@ def redact_auth_header(headers: dict[str, str]) -> dict[str, str]:
     """
     result: dict[str, str] = {}
     for key, value in headers.items():
-        if key.lower() in _SENSITIVE_HEADERS:
+        lower_key = key.lower()
+        if lower_key in _SENSITIVE_HEADERS:
             # Preserve the scheme word (e.g. "Bearer") for token-bearing headers
             # so the token type is still visible in debug logs.
             parts = value.split(" ", 1)
-            scheme_headers = {"authorization", "proxy-authorization"}
-            if len(parts) == 2 and key.lower() in scheme_headers:  # noqa: PLR2004
+            if len(parts) == 2 and lower_key in _SCHEME_PRESERVING_HEADERS:  # noqa: PLR2004
                 result[key] = f"{parts[0]} ***"
             else:
                 result[key] = "***"
