@@ -10,7 +10,7 @@ import pytest
 
 import fabric_dw.sql as _sql_module
 from fabric_dw.auth import CredentialMode
-from fabric_dw.exceptions import AuthError, PermissionDeniedError
+from fabric_dw.exceptions import AuthError, NotFoundError, PermissionDeniedError
 from fabric_dw.sql import (
     SqlTarget,
     build_connection_string,
@@ -383,6 +383,50 @@ class TestMapDriverError:
         exc = self._make_driver_exc("permission was denied for this object", "Error: 9999 unknown")
         result = map_driver_error(exc)
         assert isinstance(result, PermissionDeniedError)
+
+    # --- NotFoundError mapping (BUG 2 regression) ---
+
+    def test_native_error_208_returns_not_found(self) -> None:
+        """Error number 208 (Invalid object name) -> NotFoundError."""
+        exc = self._make_driver_exc("some driver error", "Error: 208 Invalid object name 'dbo.x'")
+        result = map_driver_error(exc)
+        assert isinstance(result, NotFoundError)
+
+    def test_native_error_208_parenthesised_returns_not_found(self) -> None:
+        """Error number 208 in parenthesised form -> NotFoundError."""
+        exc = self._make_driver_exc("some driver error", "(208) Invalid object name")
+        result = map_driver_error(exc)
+        assert isinstance(result, NotFoundError)
+
+    def test_fragment_invalid_object_name_returns_not_found(self) -> None:
+        """Message containing 'invalid object name' -> NotFoundError."""
+        exc = Exception("Invalid object name 'dbo.missing_view'")
+        result = map_driver_error(exc)
+        assert isinstance(result, NotFoundError)
+
+    def test_fragment_base_table_or_view_not_found_returns_not_found(self) -> None:
+        """Message containing 'base table or view not found' -> NotFoundError."""
+        exc = Exception("Base table or view not found: 'dbo.missing_table'")
+        result = map_driver_error(exc)
+        assert isinstance(result, NotFoundError)
+
+    def test_permission_denied_wins_over_not_found(self) -> None:
+        """Permission-denied is checked before not-found in both strategies."""
+        exc = Exception("permission was denied on invalid object name 'x'")
+        result = map_driver_error(exc)
+        assert isinstance(result, PermissionDeniedError)
+
+    def test_auth_error_wins_over_not_found_fragment(self) -> None:
+        """Auth is checked before not-found in strategy 2."""
+        exc = Exception("authentication failed invalid object name 'x'")
+        result = map_driver_error(exc)
+        assert isinstance(result, AuthError)
+
+    def test_unrelated_error_still_returns_none(self) -> None:
+        """Unrelated errors are still None after adding NotFound checks."""
+        exc = Exception("Incorrect syntax near 'SELCT'")
+        result = map_driver_error(exc)
+        assert result is None
 
 
 # ---------------------------------------------------------------------------

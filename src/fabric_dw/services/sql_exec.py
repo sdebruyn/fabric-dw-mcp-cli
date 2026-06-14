@@ -186,36 +186,43 @@ async def execute(
                         raise mapped from exc
                     raise
 
-                # Advance to the last result set so that multi-statement batches
-                # return the result of the final statement (DB-API 2.0 cursors
-                # position on the *first* result set after execute()).
-                while cursor.nextset():
-                    pass
+                # Capture result sets in order, keeping only the last one that has
+                # a description.  DB-API 2.0 cursors position on the *first* result
+                # set after execute(); calling nextset() advances to the next one.
+                # The old pattern (advance-until-False then read description) was
+                # wrong: for a single-result-set SELECT, nextset() returns False
+                # immediately AND leaves the cursor past the only result set, so
+                # cursor.description becomes None and fetchall() returns [].
+                # The correct approach is capture-then-advance: read the current
+                # result set (if it has a description) before calling nextset().
+                last: tuple[list[str], list[list[object]], int] | None = None
+                while True:
+                    if cursor.description is not None:
+                        raw_cols = [col[0] for col in cursor.description]
+                        if row_limit is not None:
+                            raw_rows: list[tuple[object, ...]] = cursor.fetchmany(row_limit + 1)
+                        else:
+                            raw_rows = cursor.fetchall()
+                        tagged_cols, serialised_rows = _tag_binary_columns(
+                            raw_cols,
+                            raw_rows,
+                            description=list(cursor.description),
+                        )
+                        rc: int = getattr(cursor, "rowcount", -1)
+                        if rc is None or rc == -1:
+                            rc = len(serialised_rows)
+                        last = (tagged_cols, serialised_rows, rc)
+                    if not cursor.nextset():
+                        break
 
-                rowcount: int = getattr(cursor, "rowcount", -1)
-                if rowcount is None:
-                    rowcount = -1
-
-                if cursor.description is None:
-                    # DDL / DML — no result set.
+                if last is None:
+                    # DDL / DML — no result set produced a description.
+                    rowcount: int = getattr(cursor, "rowcount", -1)
+                    if rowcount is None:
+                        rowcount = -1
                     return SqlResult(columns=[], rows=[], rowcount=rowcount)
 
-                raw_cols = [col[0] for col in cursor.description]
-                # When a row_limit is provided fetch only limit+1 rows from the
-                # driver so we avoid loading the entire result set into memory.
-                # The caller can detect truncation by comparing len(rows) to the
-                # requested limit.
-                if row_limit is not None:
-                    raw_rows: list[tuple[object, ...]] = cursor.fetchmany(row_limit + 1)
-                else:
-                    raw_rows = cursor.fetchall()
-                tagged_cols, serialised_rows = _tag_binary_columns(
-                    raw_cols,
-                    raw_rows,
-                    description=list(cursor.description),
-                )
-                if rowcount == -1:
-                    rowcount = len(serialised_rows)
-                return SqlResult(columns=tagged_cols, rows=serialised_rows, rowcount=rowcount)
+                cols, rows, rowcount = last
+                return SqlResult(columns=cols, rows=rows, rowcount=rowcount)
 
     return await asyncio.to_thread(_run)
