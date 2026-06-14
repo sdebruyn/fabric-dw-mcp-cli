@@ -25,7 +25,7 @@ from fabric_dw.exceptions import (
     PermissionDeniedError,
     RateLimitedError,
 )
-from fabric_dw.http_client import FabricHttpClient, HttpBase, _parse_retry_after
+from fabric_dw.http_client import _DEFAULT_TIMEOUT, FabricHttpClient, HttpBase, _parse_retry_after
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1172,3 +1172,96 @@ async def test_401_still_raises_auth_error_not_bad_request() -> None:
         async with client:
             with pytest.raises(AuthError):
                 await client.request("GET", HttpBase.FABRIC, "/items")
+
+
+# ---------------------------------------------------------------------------
+# Timeout retry: idempotent methods retried; non-idempotent not retried
+# ---------------------------------------------------------------------------
+
+
+async def test_get_timeout_once_then_success_is_retried() -> None:
+    """A GET that times out once then succeeds must be retried (idempotent method).
+
+    The first call raises httpx.ReadTimeout; the second returns 200.
+    The client must return the successful response without propagating the timeout.
+    """
+    call_count = 0
+
+    def side_effect(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise httpx.ReadTimeout("read timeout", request=request)
+        return httpx.Response(200, json={"value": []})
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get("https://api.fabric.microsoft.com/v1/items").mock(side_effect=side_effect)
+
+        client = await _get_client(rps=10)
+        async with client:
+            resp = await client.request("GET", HttpBase.FABRIC, "/items")
+
+    assert resp.status_code == 200
+    assert call_count == 2, f"Expected 2 calls (1 timeout + 1 success); got {call_count}"
+
+
+async def test_post_timeout_is_not_retried() -> None:
+    """A POST that times out must NOT be retried (non-idempotent method).
+
+    Re-sending a timed-out POST risks duplicating server-side state or causing
+    a 409 Conflict.  The timeout must be raised immediately.
+    """
+    call_count = 0
+
+    def side_effect(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        raise httpx.ReadTimeout("read timeout", request=request)
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.post("https://api.fabric.microsoft.com/v1/items").mock(side_effect=side_effect)
+
+        client = await _get_client(rps=10)
+        async with client:
+            with pytest.raises(httpx.ReadTimeout):
+                await client.request("POST", HttpBase.FABRIC, "/items", json={"x": 1})
+
+    assert call_count == 1, (
+        f"POST timeout must not be retried; expected 1 call but got {call_count}"
+    )
+
+
+def test_default_timeout_is_60_seconds() -> None:
+    """The default request timeout must be 60.0 seconds (bumped from 30.0).
+
+    Slow Fabric responses during LRO polling or large query results were causing
+    spurious ReadTimeout errors; a 60s default reduces this without disabling
+    timeouts entirely.
+    """
+    assert _DEFAULT_TIMEOUT == 60.0, f"Expected _DEFAULT_TIMEOUT == 60.0; got {_DEFAULT_TIMEOUT}"
+
+
+async def test_post_5xx_is_retried() -> None:
+    """POST on 5xx must still be retried (FabricServerError path in _should_retry).
+
+    The switch from retry_if_exception_type(FabricServerError) to
+    retry_if_exception(_should_retry) keeps 5xx retry regardless of HTTP method.
+    This test guards against accidentally removing the isinstance(exc,
+    FabricServerError) branch from _should_retry.
+    """
+    call_count = 0
+
+    def side_effect(_request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(500, json={"error": "server error"})
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.post("https://api.fabric.microsoft.com/v1/items").mock(side_effect=side_effect)
+
+        client = await _get_client(rps=10)
+        async with client:
+            with pytest.raises(FabricServerError):
+                await client.request("POST", HttpBase.FABRIC, "/items", json={"x": 1})
+
+    assert call_count == 3, f"POST 5xx must be retried 3 times (tenacity budget); got {call_count}"
