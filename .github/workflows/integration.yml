@@ -201,10 +201,9 @@ jobs:
           # shared_warehouse fixture, named pytest-<worker>-<uid>-wh).  Fabric
           # capacity (CU) budget, the per-workspace item limit, and the HTTP 429
           # rate-limit all constrain how many parallel warehouses are safe.
-          # 4 workers is a conservative default that fits within a single F4/F8
-          # capacity unit budget and leaves headroom for ephemeral items created
-          # by snapshot/restore/lakehouse tests.  Raise to 6 if the target
-          # capacity is F16+ and the workspace item limit is not an issue.
+          # 8 workers is the default and targets F8+ capacity.  Reduce to 4 if
+          # running on F4 or hitting 429 rate-limit pressure.  Raise above 8 if
+          # the target capacity is F16+ and the workspace item limit allows it.
           # Reduce to 1 (serial) to debug flaky tests without parallelism noise.
           #
           # The xdist_workers workflow_dispatch input lets you tune this without
