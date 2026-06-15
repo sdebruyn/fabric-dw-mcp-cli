@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import yaml
+
 if TYPE_CHECKING:
     from fabric_dw.auth import CredentialMode
     from fabric_dw.models import Schema, Table
@@ -187,35 +189,40 @@ def render_profiles_yml(cfg: DbtScaffoldConfig) -> str:
     For ServicePrincipal auth, credentials are emitted as ``env_var(...)``
     placeholders — never as literal secrets.
 
+    Uses :func:`yaml.safe_dump` to serialise the document so that any
+    special characters in ``database``, ``schema``, ``target``, or
+    ``profile_name`` (colons, hashes, etc.) are automatically quoted.
+
     Args:
         cfg: The scaffold configuration.
 
     Returns:
         The ``profiles.yml`` content as a YAML string.
     """
-    auth_block = f"      authentication: {cfg.dbt_auth}\n"
-    sp_block = ""
-    if cfg.dbt_auth == DbtAuthMode.SERVICE_PRINCIPAL:
-        sp_block = (
-            "      tenant_id: \"{{ env_var('AZURE_TENANT_ID') }}\"\n"
-            "      client_id: \"{{ env_var('AZURE_CLIENT_ID') }}\"\n"
-            "      client_secret: \"{{ env_var('AZURE_CLIENT_SECRET') }}\"\n"
-        )
+    output: dict[str, object] = {
+        "type": "fabric",
+        "driver": "ODBC Driver 18 for SQL Server",
+        "host": cfg.host,
+        "database": cfg.database,
+        "schema": cfg.schema,
+        "threads": cfg.threads,
+        "authentication": cfg.dbt_auth,
+    }
 
-    return (
-        "config:\n"
-        "  partial_parse: true\n"
-        f"{cfg.profile_name}:\n"
-        f"  target: {cfg.target}\n"
-        "  outputs:\n"
-        f"    {cfg.target}:\n"
-        "      type: fabric\n"
-        "      driver: ODBC Driver 18 for SQL Server\n"
-        f"      host: {cfg.host}\n"
-        f"      database: {cfg.database}\n"
-        f"      schema: {cfg.schema}\n"
-        f"      threads: {cfg.threads}\n" + auth_block + sp_block
-    )
+    if cfg.dbt_auth == DbtAuthMode.SERVICE_PRINCIPAL:
+        output["tenant_id"] = "{{ env_var('AZURE_TENANT_ID') }}"
+        output["client_id"] = "{{ env_var('AZURE_CLIENT_ID') }}"
+        output["client_secret"] = "{{ env_var('AZURE_CLIENT_SECRET') }}"  # noqa: S105
+
+    doc: dict[str, object] = {
+        "config": {"partial_parse": True},
+        cfg.profile_name: {
+            "target": cfg.target,
+            "outputs": {cfg.target: output},
+        },
+    }
+
+    return yaml.safe_dump(doc, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
 
 def render_dbt_project_yml(cfg: DbtScaffoldConfig) -> str:
@@ -255,6 +262,10 @@ def render_sources_yml(
     generates a real source definition per schema.  Otherwise generates a minimal
     placeholder.
 
+    Uses :func:`yaml.safe_dump` to serialise the document so that any
+    special characters in schema/table names (colons, hashes, etc.) are
+    automatically quoted and cannot break the YAML structure.
+
     Args:
         cfg: The scaffold configuration (must have ``schemas`` and ``tables`` populated
             when ``with_sources`` is ``True``).
@@ -263,35 +274,41 @@ def render_sources_yml(
         The ``_sources.yml`` content as a YAML string.
     """
     if not cfg.with_sources or not cfg.schemas:
-        return (
-            "version: 2\n"
-            "\n"
-            "sources:\n"
-            "  - name: placeholder\n"
-            "    description: Replace with your source definitions.\n"
-            "    database: \"{{ env_var('DBT_DATABASE', '" + cfg.database + "') }}\"\n"
-            "    schema: dbo\n"
-            "    tables: []\n"
-        )
+        doc: dict[str, object] = {
+            "version": 2,
+            "sources": [
+                {
+                    "name": "placeholder",
+                    "description": "Replace with your source definitions.",
+                    "database": "{{ env_var('DBT_DATABASE', '" + cfg.database + "') }}",
+                    "schema": "dbo",
+                    "tables": [],
+                }
+            ],
+        }
+        return yaml.safe_dump(doc, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
     # Group tables by schema name for easier lookup.
     tables_by_schema: dict[str, list[str]] = {}
     for tbl in cfg.tables:
         tables_by_schema.setdefault(tbl.schema_name, []).append(tbl.name)
 
-    lines: list[str] = ["version: 2", "", "sources:"]
+    sources: list[dict[str, object]] = []
     for schema in cfg.schemas:
-        lines.append(f"  - name: {schema.name}")
-        lines.append(f"    database: {cfg.database}")
-        lines.append(f"    schema: {schema.name}")
-        schema_tables = tables_by_schema.get(schema.name, [])
-        if schema_tables:
-            lines.append("    tables:")
-            lines.extend(f"      - name: {tbl_name}" for tbl_name in sorted(schema_tables))
-        else:
-            lines.append("    tables: []")
+        schema_tables = sorted(tables_by_schema.get(schema.name, []))
+        source: dict[str, object] = {
+            "name": schema.name,
+            "database": cfg.database,
+            "schema": schema.name,
+            "tables": [{"name": t} for t in schema_tables],
+        }
+        sources.append(source)
 
-    return "\n".join(lines) + "\n"
+    doc = {
+        "version": 2,
+        "sources": sources,
+    }
+    return yaml.safe_dump(doc, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
 
 def _render_readme(cfg: DbtScaffoldConfig, profiles_dir: str) -> str:
@@ -461,6 +478,10 @@ def scaffold(
 def _write_home_profiles(cfg: DbtScaffoldConfig) -> list[Path]:
     """Merge the profile into ``~/.dbt/profiles.yml``, backing up any existing file.
 
+    The backup is only created when the profile is actually absent and the file
+    will be modified — re-running when the profile is already present leaves the
+    backup from the first run intact.
+
     Returns:
         A list of written paths (backup path if created, plus the profiles.yml).
     """
@@ -472,18 +493,21 @@ def _write_home_profiles(cfg: DbtScaffoldConfig) -> list[Path]:
     new_content = render_profiles_yml(cfg)
 
     if profiles_path.exists():
-        # Back up existing file before merging.
-        backup_path = profiles_path.with_suffix(".yml.bak")
-        shutil.copy2(profiles_path, backup_path)
-        written.append(backup_path)
-        # Merge: append the new profile if not already present.
         existing = profiles_path.read_text(encoding="utf-8")
-        if cfg.profile_name not in existing:
+        # Use an anchored regex so that `my_project` does not match
+        # `my_project_old:` or `my_project_backup:` as a top-level key.
+        profile_key_re = re.compile(r"^" + re.escape(cfg.profile_name) + r"\s*:", re.MULTILINE)
+        if not profile_key_re.search(existing):
+            # Profile is genuinely absent — back up before modifying.
+            backup_path = profiles_path.with_suffix(".yml.bak")
+            shutil.copy2(profiles_path, backup_path)
+            written.append(backup_path)
             # Strip the global config block (starts with "config:") from new_content
             # and append just the profile section.
             profile_section = _extract_profile_section(new_content, cfg.profile_name)
             merged = existing.rstrip("\n") + "\n\n" + profile_section + "\n"
             profiles_path.write_text(merged, encoding="utf-8")
+        # else: profile already present — leave the file untouched.
     else:
         profiles_path.write_text(new_content, encoding="utf-8")
 

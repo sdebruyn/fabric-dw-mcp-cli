@@ -170,9 +170,13 @@ class TestRenderProfilesYml:
     def test_sp_emits_env_var_placeholders(self) -> None:
         cfg = _make_cfg(dbt_auth=DbtAuthMode.SERVICE_PRINCIPAL)
         content = render_profiles_yml(cfg)
-        assert "env_var('AZURE_TENANT_ID')" in content
-        assert "env_var('AZURE_CLIENT_ID')" in content
-        assert "env_var('AZURE_CLIENT_SECRET')" in content
+        # The Jinja2 placeholders survive a YAML round-trip (safe_dump uses single-quoted
+        # scalars which double inner single-quotes; the parsed value is the original string).
+        parsed = yaml.safe_load(content)
+        dev_output = parsed[cfg.profile_name]["outputs"][cfg.target]
+        assert dev_output["tenant_id"] == "{{ env_var('AZURE_TENANT_ID') }}"
+        assert dev_output["client_id"] == "{{ env_var('AZURE_CLIENT_ID') }}"
+        assert dev_output["client_secret"] == "{{ env_var('AZURE_CLIENT_SECRET') }}"  # noqa: S105
 
     def test_sp_emits_no_literal_secrets(self) -> None:
         """SP mode must never write literal tenant_id/client_id/client_secret values."""
@@ -186,6 +190,28 @@ class TestRenderProfilesYml:
         content = render_profiles_yml(cfg)
         parsed = yaml.safe_load(content)
         assert isinstance(parsed, dict)
+
+    def test_yaml_special_chars_in_database_are_safe(self) -> None:
+        """A database name containing YAML-special characters must not produce broken YAML."""
+        cfg = _make_cfg(database="Sales: DWH #1")
+        content = render_profiles_yml(cfg)
+        parsed = yaml.safe_load(content)
+        # Round-trip: the database value is preserved exactly.
+        assert parsed[cfg.profile_name]["outputs"][cfg.target]["database"] == "Sales: DWH #1"
+
+    def test_yaml_special_chars_in_schema_are_safe(self) -> None:
+        """A schema name containing YAML-special characters must not produce broken YAML."""
+        cfg = _make_cfg(schema="raw: staging")
+        content = render_profiles_yml(cfg)
+        parsed = yaml.safe_load(content)
+        assert parsed[cfg.profile_name]["outputs"][cfg.target]["schema"] == "raw: staging"
+
+    def test_yaml_special_chars_in_target_are_safe(self) -> None:
+        """A target name containing YAML-special characters must not produce broken YAML."""
+        cfg = _make_cfg(target="dev: local")
+        content = render_profiles_yml(cfg)
+        parsed = yaml.safe_load(content)
+        assert parsed[cfg.profile_name]["target"] == "dev: local"
 
     def test_sp_valid_yaml(self) -> None:
         cfg = _make_cfg(dbt_auth=DbtAuthMode.SERVICE_PRINCIPAL)
@@ -293,6 +319,28 @@ class TestRenderSourcesYml:
         content = render_sources_yml(cfg)
         assert "placeholder" in content
 
+    def test_yaml_special_chars_in_schema_name_are_safe(self) -> None:
+        """Schema names with YAML-special characters must survive a round-trip."""
+        schemas = [_make_schema("finance: raw")]
+        tables = [_make_table("finance: raw", "sales: orders")]
+        cfg = _make_cfg(with_sources=True, schemas=schemas, tables=tables)
+        content = render_sources_yml(cfg)
+        parsed = yaml.safe_load(content)
+        assert isinstance(parsed, dict)
+        source = parsed["sources"][0]
+        assert source["name"] == "finance: raw"
+        assert source["tables"][0]["name"] == "sales: orders"
+
+    def test_yaml_special_chars_in_database_are_safe_in_sources(self) -> None:
+        """Database names with YAML-special characters must survive a round-trip."""
+        schemas = [_make_schema("dbo")]
+        tables = [_make_table("dbo", "orders")]
+        cfg = _make_cfg(database="Sales: DWH #1", with_sources=True, schemas=schemas, tables=tables)
+        content = render_sources_yml(cfg)
+        parsed = yaml.safe_load(content)
+        source = parsed["sources"][0]
+        assert source["database"] == "Sales: DWH #1"
+
 
 # ---------------------------------------------------------------------------
 # scaffold (file writing)
@@ -396,9 +444,11 @@ class TestScaffold:
         cfg = _make_cfg(dbt_auth=DbtAuthMode.SERVICE_PRINCIPAL)
         scaffold(cfg, tmp_path / "proj")
         content = (tmp_path / "proj" / "profiles.yml").read_text()
-        assert "env_var('AZURE_TENANT_ID')" in content
-        assert "env_var('AZURE_CLIENT_ID')" in content
-        assert "env_var('AZURE_CLIENT_SECRET')" in content
+        parsed = yaml.safe_load(content)
+        dev_output = parsed[cfg.profile_name]["outputs"][cfg.target]
+        assert dev_output["tenant_id"] == "{{ env_var('AZURE_TENANT_ID') }}"
+        assert dev_output["client_id"] == "{{ env_var('AZURE_CLIENT_ID') }}"
+        assert dev_output["client_secret"] == "{{ env_var('AZURE_CLIENT_SECRET') }}"  # noqa: S105
 
 
 # ---------------------------------------------------------------------------
@@ -514,6 +564,85 @@ class TestHomeProfiles:
         merged = (dbt_dir / "profiles.yml").read_text()
         assert "other_project" in merged
         assert "new_project" in merged
+
+    def test_profile_already_present_does_not_clobber_file(self, tmp_path: Path) -> None:
+        """When the profile already exists as a top-level key, the file must not be modified."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        dbt_dir = fake_home / ".dbt"
+        dbt_dir.mkdir()
+        profile_name = "my_project"
+        existing_content = (
+            f"{profile_name}:\n  target: dev\n  outputs:\n    dev:\n      type: fabric\n"
+        )
+        profiles_path = dbt_dir / "profiles.yml"
+        profiles_path.write_text(existing_content)
+
+        with patch("pathlib.Path.home", return_value=fake_home):
+            cfg = _make_cfg(profiles_dir=ProfilesDir.HOME, project_name=profile_name)
+            scaffold(cfg, tmp_path / "proj")
+
+        # File must be unchanged.
+        assert profiles_path.read_text() == existing_content
+
+    def test_substring_match_does_not_suppress_merge(self, tmp_path: Path) -> None:
+        """A longer profile key like ``my_project_old`` must not prevent merging ``my_project``."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        dbt_dir = fake_home / ".dbt"
+        dbt_dir.mkdir()
+        existing_content = (
+            "my_project_old:\n  target: dev\n  outputs:\n    dev:\n      type: fabric\n"
+        )
+        profiles_path = dbt_dir / "profiles.yml"
+        profiles_path.write_text(existing_content)
+
+        with patch("pathlib.Path.home", return_value=fake_home):
+            cfg = _make_cfg(profiles_dir=ProfilesDir.HOME, project_name="my_project")
+            scaffold(cfg, tmp_path / "proj")
+
+        merged = profiles_path.read_text()
+        # Both profiles must be present.
+        assert "my_project_old:" in merged
+        assert "my_project:" in merged
+
+    def test_backup_not_created_when_profile_already_present(self, tmp_path: Path) -> None:
+        """No backup should be created when the profile already exists (no modification)."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        dbt_dir = fake_home / ".dbt"
+        dbt_dir.mkdir()
+        profile_name = "sales_warehouse"
+        existing_content = (
+            f"{profile_name}:\n  target: dev\n  outputs:\n    dev:\n      type: fabric\n"
+        )
+        profiles_path = dbt_dir / "profiles.yml"
+        profiles_path.write_text(existing_content)
+
+        with patch("pathlib.Path.home", return_value=fake_home):
+            cfg = _make_cfg(profiles_dir=ProfilesDir.HOME, project_name=profile_name)
+            scaffold(cfg, tmp_path / "proj")
+
+        backup_path = dbt_dir / "profiles.yml.bak"
+        assert not backup_path.exists(), "Backup must not be created when no modification occurs"
+
+    def test_backup_created_only_when_profile_is_absent(self, tmp_path: Path) -> None:
+        """Backup should be created exactly once when the profile is added."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        dbt_dir = fake_home / ".dbt"
+        dbt_dir.mkdir()
+        profiles_path = dbt_dir / "profiles.yml"
+        profiles_path.write_text(_EXISTING_PROFILES_YML)
+
+        with patch("pathlib.Path.home", return_value=fake_home):
+            cfg = _make_cfg(profiles_dir=ProfilesDir.HOME, project_name="brand_new_project")
+            scaffold(cfg, tmp_path / "proj")
+
+        backup_path = dbt_dir / "profiles.yml.bak"
+        assert backup_path.exists(), "Backup must be created when the profile is added"
+        # Backup contains the original content.
+        assert backup_path.read_text() == _EXISTING_PROFILES_YML
 
 
 # ---------------------------------------------------------------------------

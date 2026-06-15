@@ -120,9 +120,14 @@ async def test_generate_dbt_profile_sp_emits_env_var_placeholders(
             },
         )
 
-    assert "env_var('AZURE_TENANT_ID')" in result["profiles_yml"]
-    assert "env_var('AZURE_CLIENT_ID')" in result["profiles_yml"]
-    assert "env_var('AZURE_CLIENT_SECRET')" in result["profiles_yml"]
+    # The Jinja2 placeholders survive a YAML round-trip; parse the YAML to verify values.
+    import yaml  # noqa: PLC0415
+
+    parsed = yaml.safe_load(result["profiles_yml"])
+    dev_output = next(iter(parsed[k] for k in parsed if k != "config"))["outputs"]["dev"]
+    assert dev_output["tenant_id"] == "{{ env_var('AZURE_TENANT_ID') }}"
+    assert dev_output["client_id"] == "{{ env_var('AZURE_CLIENT_ID') }}"
+    assert dev_output["client_secret"] == "{{ env_var('AZURE_CLIENT_SECRET') }}"  # noqa: S105
 
 
 async def test_generate_dbt_profile_requirements_contains_dbt_core(
