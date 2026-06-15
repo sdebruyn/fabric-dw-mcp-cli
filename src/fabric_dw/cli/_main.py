@@ -53,6 +53,147 @@ _CLI_SEGMENTS_KEY = _CLI_TELEMETRY_KEY + "_segments"
 # Cap of 160 prevents absurdly long lines on ultra-wide monitors.
 _HELP_MAX_WIDTH = max(80, min(shutil.get_terminal_size(fallback=(120, 24)).columns, 160))
 
+# ---------------------------------------------------------------------------
+# Global-options injection
+# ---------------------------------------------------------------------------
+# These option definitions are injected into every leaf command and sub-group
+# so that --json, -y/--yes, and -v/--verbose work regardless of whether they
+# appear before or after the subcommand on the command line.
+#
+# --auth is intentionally excluded: it is consumed in the root group callback
+# before any subcommand runs, so positional placement there is load-bearing.
+#
+# Design note — expose_value=False for all commands (groups and leaves):
+#   All injected options use expose_value=False so Click parses the option but
+#   does NOT pass it as a keyword argument to any command callback.  Instead,
+#   an option callback (see _make_meta_callback) stores the value in ctx.meta
+#   when the flag is set.  Before the command body runs, _apply_meta_global_params
+#   reads ctx.meta and OR-merges the stored flags into ctx.obj (the shared
+#   CliContext).  This uniform approach avoids having to distinguish between
+#   group callbacks and leaf-command callbacks.
+# ---------------------------------------------------------------------------
+
+_META_KEY_JSON = "fabric_dw_global_json_output"
+_META_KEY_YES = "fabric_dw_global_yes"
+_META_KEY_VERBOSE = "fabric_dw_global_verbose"
+
+
+def _make_meta_callback(meta_key: str) -> Any:  # noqa: ANN401
+    """Return an option callback that stores the flag value in ``ctx.meta``."""
+
+    def _cb(ctx: click.Context, _param: click.Parameter, value: bool) -> bool:
+        if value:
+            ctx.meta[meta_key] = True
+        return value
+
+    return _cb
+
+
+def _inject_global_options(cmd: click.Command) -> None:
+    """Add the three global options to *cmd*, skipping any that already exist.
+
+    All injected options use ``expose_value=False`` so they are never passed
+    as keyword arguments to the command's own callback (which may not declare
+    them).  Instead, an option callback stores the value in ``ctx.meta`` so
+    the ``_wrapped_invoke`` can read it and fold it into the shared
+    :class:`CliContext` before the command body runs.
+    """
+    existing_names: set[str] = set()
+    existing_dests: set[str] = set()
+    for param in cmd.params:
+        if isinstance(param, click.Option):
+            existing_names.update(param.opts)
+        if param.name is not None:
+            existing_dests.add(param.name)
+
+    # Tuples of (opts, dest, meta_key, help_text).
+    _specs: list[tuple[list[str], str, str, str]] = [
+        (
+            ["--json", "json_output"],
+            "json_output",
+            _META_KEY_JSON,
+            "Emit machine-readable JSON instead of Rich tables.",
+        ),
+        (["--yes", "-y", "yes"], "yes", _META_KEY_YES, "Skip confirmation prompts."),
+        (["--verbose", "-v", "verbose"], "verbose", _META_KEY_VERBOSE, "Enable debug logging."),
+    ]
+
+    for opts, dest, meta_key, help_text in _specs:
+        # Skip if any declared option string already exists on this command.
+        if existing_names.intersection(opts):
+            continue
+        # Skip if the destination name already exists.
+        if dest in existing_dests:
+            continue
+
+        option = click.Option(
+            opts,
+            is_flag=True,
+            default=False,
+            expose_value=False,
+            callback=_make_meta_callback(meta_key),
+            help=help_text,
+        )
+        cmd.params.append(option)
+        existing_dests.add(dest)
+        # Update existing_names with the actual flag strings (e.g. "--json", "-y")
+        # as returned by the constructed option, not the raw opts list which may
+        # include the Click destination name (e.g. "json_output").
+        existing_names.update(option.opts)
+
+
+def _apply_meta_global_params(ctx: click.Context) -> None:
+    """Apply global flags stored in ``ctx.meta`` to the shared :class:`CliContext`.
+
+    The option callbacks (set up via :func:`_inject_global_options`) store flag
+    values in ``ctx.meta`` when the flag is set.  This function merges those
+    stored values into ``ctx.obj`` (the shared :class:`CliContext`) before the
+    command body runs.
+
+    Merge semantics (OR-merge — the most-permissive position wins):
+    - ``json_output`` → ``ctx.obj.json_output = True``
+    - ``yes``         → ``ctx.obj.yes = True``
+    - ``verbose``     → re-applies ``setup_logging(DEBUG)``
+    """
+    obj: CliContext | None = ctx.obj
+    if obj is None:
+        return
+    if ctx.meta.get(_META_KEY_JSON):
+        obj.json_output = True
+    if ctx.meta.get(_META_KEY_YES):
+        obj.yes = True
+    if ctx.meta.get(_META_KEY_VERBOSE):
+        setup_logging(logging.DEBUG)
+
+
+def _patch_command_for_global_options(cmd: click.Command) -> None:
+    """Inject global options and an invoke wrapper into *cmd* in-place.
+
+    Idempotent: the ``_global_opts_patched`` sentinel prevents double-patching.
+    All injected options use ``expose_value=False`` so neither group nor leaf
+    callbacks receive unexpected keyword arguments.
+
+    Recurses into sub-groups' already-registered commands so that nested
+    command trees are fully covered when a sub-group is added to the root.
+    """
+    if getattr(cmd, "_global_opts_patched", False):
+        return
+    cmd._global_opts_patched = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    _inject_global_options(cmd)
+
+    original_invoke = cmd.invoke
+
+    def _wrapped_invoke(ctx: click.Context) -> Any:  # noqa: ANN401
+        _apply_meta_global_params(ctx)
+        return original_invoke(ctx)
+
+    cmd.invoke = _wrapped_invoke  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+
+    if isinstance(cmd, click.Group):
+        for sub in cmd.commands.values():  # type: ignore[attr-defined]
+            _patch_command_for_global_options(sub)
+
 
 class _InstrumentedGroup(click.Group):
     """A :class:`click.Group` subclass that emits one ``command_invoked``
@@ -81,9 +222,10 @@ class _InstrumentedGroup(click.Group):
     """
 
     def add_command(self, cmd: click.Command, name: str | None = None) -> None:
-        """Add *cmd* and patch its ``invoke`` to capture the command path."""
+        """Add *cmd*, patch for telemetry, and inject global options."""
         if isinstance(cmd, click.Group):
             _patch_group_for_telemetry(cmd)
+        _patch_command_for_global_options(cmd)
         super().add_command(cmd, name)
 
     def invoke(self, ctx: click.Context) -> object:
