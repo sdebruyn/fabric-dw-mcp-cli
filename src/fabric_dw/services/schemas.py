@@ -255,6 +255,13 @@ async def delete_schema(
         permanently deleted**.  This operation is irreversible.  Confirm with
         the user before calling this function with ``cascade=True``.
 
+    Atomicity
+    ~~~~~~~~~
+    When *cascade* is ``True`` all DROP statements — including the final
+    ``DROP SCHEMA`` — are executed in a **single transaction** (via
+    ``commit_per_statement=False``).  If any statement fails the entire
+    transaction is rolled back, leaving the schema intact.
+
     Args:
         target: The warehouse to connect to.
         name: The schema name.  Must pass :func:`validate_identifier`.
@@ -274,7 +281,19 @@ async def delete_schema(
     validate_identifier(name)
 
     if cascade:
-        await _drop_schema_objects(target, name, kind=kind, mode=mode)
+        # Collect all object-drop statements, then append the schema DROP.
+        # Execute the entire batch atomically (single transaction, one commit).
+        object_stmts = await _build_drop_object_statements(target, name, kind=kind, mode=mode)
+        schema_drop = f"DROP SCHEMA {quote_identifier(name)}"
+        all_stmts = [*object_stmts, schema_drop]
+        await asyncio.to_thread(
+            run_statements,
+            target,
+            all_stmts,
+            mode=mode,
+            commit_per_statement=False,
+        )
+        return
 
     ddl = f"DROP SCHEMA {quote_identifier(name)}"
 
@@ -327,36 +346,37 @@ async def _fetch_schema(
     return await asyncio.to_thread(_run)
 
 
-async def _drop_schema_objects(
+async def _build_drop_object_statements(
     target: SqlTarget,
     schema_name: str,
     *,
     kind: WarehouseKind = WarehouseKind.WAREHOUSE,
     mode: CredentialMode = CredentialMode.DEFAULT,
-) -> None:
-    """Drop droppable objects contained in *schema_name*, respecting *kind*.
+) -> list[str]:
+    """Build the list of DROP statements for droppable objects in *schema_name*.
 
     Enumerates objects via ``sys.objects`` (types ``U``, ``V``, ``P``,
-    ``FN``, ``IF``, ``TF``) joined to ``sys.schemas``, then issues the
-    appropriate ``DROP`` statement for each object on a **single** connection.
+    ``FN``, ``IF``, ``TF``) joined to ``sys.schemas``, then returns the
+    appropriate ``DROP`` statement for each object.  The caller is responsible
+    for executing the returned statements (typically alongside the final
+    ``DROP SCHEMA`` in a single atomic transaction).
 
     Target-kind filtering
     ~~~~~~~~~~~~~~~~~~~~~
     - **Warehouse** (``WarehouseKind.WAREHOUSE``): all enumerated types are
-      dropped (``DROP TABLE``, ``DROP VIEW``, ``DROP PROCEDURE``,
+      included (``DROP TABLE``, ``DROP VIEW``, ``DROP PROCEDURE``,
       ``DROP FUNCTION``).
     - **SQL Analytics Endpoint** (``WarehouseKind.SQL_ENDPOINT``): objects of
       type ``U`` (tables) are **excluded** because ``DROP TABLE`` is a
       Warehouse-only operation on Fabric.  Views, stored procedures, and
-      functions are still dropped.  If the schema still contains tables after
-      this pass, the subsequent ``DROP SCHEMA`` issued by
-      :func:`delete_schema` will be rejected by the engine with a clear error
-      about remaining objects — this is intentional and acceptable.
+      functions are still included.  If the schema still contains tables, the
+      subsequent ``DROP SCHEMA`` will be rejected by the engine with a clear
+      error about remaining objects — this is intentional and acceptable.
 
     .. note::
 
-        **Object-dependency caveat**: objects are dropped in the order
-        returned by ``sys.objects`` (by type then name), without analysing
+        **Object-dependency caveat**: objects are returned in the order
+        yielded by ``sys.objects`` (by type then name), without analysing
         inter-object dependencies.  If the schema contains views or functions
         that reference other views/functions in the same schema, the drop may
         fail with a dependency error.  In that case, re-run the operation or
@@ -368,6 +388,9 @@ async def _drop_schema_objects(
         kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
             Controls which object types are eligible for dropping.
         mode: The credential mode for Entra authentication.
+
+    Returns:
+        A (possibly empty) list of ``DROP <type> [schema].[name]`` statements.
     """
 
     def _run() -> list[tuple[str, str]]:
@@ -382,14 +405,14 @@ async def _drop_schema_objects(
     objects = await asyncio.to_thread(_run)
 
     if not objects:
-        return
+        return []
 
     # Determine which object types to exclude based on the target kind.
     excluded_types: frozenset[str] = (
         _ENDPOINT_EXCLUDED_TYPES if kind == WarehouseKind.SQL_ENDPOINT else frozenset()
     )
 
-    # Build all DROP statements then execute them on ONE connection.
+    # Build all DROP statements.
     ddl_statements: list[str] = []
     for obj_name, obj_type in objects:
         if obj_type in excluded_types:
@@ -407,7 +430,4 @@ async def _drop_schema_objects(
             f"DROP {ddl_keyword} {quote_identifier(schema_name)}.{quote_identifier(obj_name)}"
         )
 
-    if not ddl_statements:
-        return
-
-    await asyncio.to_thread(run_statements, target, ddl_statements, mode=mode)
+    return ddl_statements

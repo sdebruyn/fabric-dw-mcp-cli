@@ -13,6 +13,7 @@ import respx
 from fabric_dw.exceptions import PermissionDeniedError
 from fabric_dw.models import AuditSettings
 from fabric_dw.services import audit
+from fabric_dw.services.audit import _validate_action_group
 from tests.unit.services._helpers import _make_client
 
 # ---------------------------------------------------------------------------
@@ -39,6 +40,51 @@ AUDIT_SETTINGS_DISABLED_PAYLOAD: dict[str, Any] = {
     "retentionDays": 0,
     "auditActionsAndGroups": [],
 }
+
+
+# ---------------------------------------------------------------------------
+# _validate_action_group (shared validator — V12)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "valid_name",
+    [
+        "BATCH_COMPLETED_GROUP",
+        "SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP",
+        "A",
+        "A1_B",
+        "ABC123",
+    ],
+)
+def test_validate_action_group_accepts_valid_names(valid_name: str) -> None:
+    """_validate_action_group must NOT raise for names matching ^[A-Z0-9_]+$."""
+    # Should not raise
+    _validate_action_group(valid_name)
+
+
+@pytest.mark.parametrize(
+    "bad_name",
+    [
+        "batch_completed_group",  # lowercase letters
+        "Group Name",  # whitespace
+        "GROUP-NAME",  # hyphen
+        "MIXED_Group",  # mixed case
+        "GROUP\tNAME",  # tab
+        "",  # empty string
+    ],
+)
+def test_validate_action_group_rejects_invalid_names(bad_name: str) -> None:
+    """_validate_action_group must raise ValueError for names not matching ^[A-Z0-9_]+$."""
+    with pytest.raises(ValueError, match="action_group"):
+        _validate_action_group(bad_name)
+
+
+def test_validate_action_group_error_message_contains_name() -> None:
+    """The error message from _validate_action_group must contain the offending name."""
+    bad = "bad-name"
+    with pytest.raises(ValueError, match=bad):
+        _validate_action_group(bad)
 
 
 # ---------------------------------------------------------------------------
