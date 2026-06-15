@@ -29,6 +29,8 @@ from fabric_dw.exceptions import ConfigError
 
 FABRIC_SCOPE = "https://analysis.windows.net/powerbi/api/.default"
 SQL_SCOPE = "https://database.windows.net/.default"
+#: Scope for OneLake / Azure Data Lake Storage Gen2 DFS operations.
+STORAGE_SCOPE = "https://storage.azure.com/.default"
 
 #: Shared multi-tenant Entra app for the interactive browser sign-in path.
 #: Users on any tenant can sign in without registering their own app.
@@ -77,6 +79,7 @@ __all__ = [
     "DEFAULT_INTERACTIVE_CLIENT_ID",
     "FABRIC_SCOPE",
     "SQL_SCOPE",
+    "STORAGE_SCOPE",
     "CredentialMode",
     "SyncCredentialAdapter",
     "get_credential",

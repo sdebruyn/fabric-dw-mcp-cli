@@ -774,6 +774,21 @@ class ColumnSpec(_FabricBase):
     nullable: bool = True
 
 
+class CopyIntoResult(_FabricBase):
+    """Result of a ``COPY INTO`` load operation.
+
+    Attributes:
+        rows_loaded: Number of rows successfully loaded.
+        rows_rejected: Number of rows rejected (only populated when
+            ``REJECTED_ROW_LOCATION`` was specified).
+        target: The qualified target table name (``schema.table``).
+    """
+
+    rows_loaded: int
+    rows_rejected: int = 0
+    target: str
+
+
 class SqlResult(_FabricBase):
     """Result set returned by :func:`~fabric_dw.services.sql_exec.execute`.
 
