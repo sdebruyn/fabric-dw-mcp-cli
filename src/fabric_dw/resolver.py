@@ -137,34 +137,53 @@ class Resolver:
         self._negative: dict[tuple[str, str], float] = {}
 
     def _negative_check(self, scope: str, key: str) -> None:
-        """Raise NotFoundError immediately if *key* is in the negative cache and still fresh."""
-        ts = self._negative.get((scope, key))
+        """Raise NotFoundError immediately if *key* is in the negative cache and still fresh.
+
+        *key* is normalised to lower-case so that negative-cache lookups are
+        case-insensitive and consistent with the positive :class:`LookupCache`
+        which stores all names as lower-case.
+        """
+        normalised = key.strip().lower()
+        ts = self._negative.get((scope, normalised))
         if ts is not None:
             age = time.monotonic() - ts
             if age < _NEGATIVE_TTL:
-                raise NotFoundError(f"{scope}/{key!r} not found")
+                raise NotFoundError(f"{scope}/{normalised!r} not found")
             # Entry has expired; prune it now to keep the dict bounded.
-            del self._negative[(scope, key)]
+            del self._negative[(scope, normalised)]
 
     def _negative_record(self, scope: str, key: str) -> None:
-        """Record a not-found result in the negative cache."""
-        self._negative[(scope, key)] = time.monotonic()
+        """Record a not-found result in the negative cache.
+
+        *key* is normalised to lower-case (consistent with positive cache).
+        """
+        self._negative[(scope, key.strip().lower())] = time.monotonic()
 
     def _negative_clear(self, scope: str, key: str) -> None:
-        """Remove a negative-cache entry after a successful put."""
-        self._negative.pop((scope, key), None)
+        """Remove a negative-cache entry after a successful put.
+
+        *key* is normalised to lower-case (consistent with positive cache).
+        """
+        self._negative.pop((scope, key.strip().lower()), None)
+
+    def _negative_clear_scope(self, scope: str) -> None:
+        """Remove all negative-cache entries whose first element equals *scope*.
+
+        Used after a successful item detail fetch to ensure that newly created
+        (or just-discovered) items become immediately resolvable within the
+        ``_NEGATIVE_TTL`` window.
+        """
+        stale = [k for k in self._negative if k[0] == scope]
+        for k in stale:
+            del self._negative[k]
 
     def clear_negative_cache(self) -> None:
         """Clear the entire in-memory negative cache.
 
         Cheap O(1) operation that discards all recorded "not found" results.
-        Mutating frontends (MCP create / rename tools) should call this after
-        a successful write so that subsequent lookups for the new name succeed
-        immediately rather than waiting for _NEGATIVE_TTL seconds to elapse.
-
-        .. note::
-            Wiring this call into MCP create/rename tools is tracked as a
-            follow-up task; this method exists so the wiring is trivial.
+        Mutating frontends (MCP create / rename tools) call this after a
+        successful write so that subsequent lookups for the new name succeed
+        immediately rather than waiting for ``_NEGATIVE_TTL`` seconds to elapse.
         """
         self._negative.clear()
 
@@ -194,7 +213,7 @@ class Resolver:
             return UUID(value)
 
         # 2. Negative cache hit — avoid re-hitting the API for known-missing names
-        self._negative_check("workspace", value.lower())
+        self._negative_check("workspace", value)
 
         # 3. Cache hit
         cached = self._cache.get_workspace(value)
@@ -212,7 +231,7 @@ class Resolver:
         results: list[dict[str, Any]] = body.get("value", [])
 
         if not results:
-            self._negative_record("workspace", value.lower())
+            self._negative_record("workspace", value)
             raise NotFoundError(f"workspace {value!r} not found")
 
         if len(results) > 1:
@@ -221,7 +240,7 @@ class Resolver:
 
         ws_id = UUID(str(results[0]["id"]))
         self._cache.put_workspace(value, ws_id)
-        self._negative_clear("workspace", value.lower())
+        self._negative_clear("workspace", value)
         return ws_id
 
     # ------------------------------------------------------------------
@@ -256,17 +275,17 @@ class Resolver:
             cached_item = self._cache.get_item(ws_id, value)
             if cached_item is not None:
                 return cached_item
-            self._negative_check(ws_key, value.lower())
+            self._negative_check(ws_key, value)
             try:
                 result = await self._fetch_item_detail(ws_id, item_uuid)
             except NotFoundError:
-                self._negative_record(ws_key, value.lower())
+                self._negative_record(ws_key, value)
                 raise
-            self._negative_clear(ws_key, value.lower())
+            self._negative_clear(ws_key, value)
             return result
 
         # 2. Negative cache hit
-        self._negative_check(ws_key, value.lower())
+        self._negative_check(ws_key, value)
 
         # 3. Cache hit
         cached_item = self._cache.get_item(ws_id, value)
@@ -300,12 +319,12 @@ class Resolver:
             try:
                 result = await self._fetch_item_detail(ws_id, item_id)
             except NotFoundError:
-                self._negative_record(ws_key, value.lower())
+                self._negative_record(ws_key, value)
                 raise
-            self._negative_clear(ws_key, value.lower())
+            self._negative_clear(ws_key, value)
             return result
 
-        self._negative_record(ws_key, value.lower())
+        self._negative_record(ws_key, value)
         raise NotFoundError(f"item {value!r} not found in workspace {ws_id}")
 
     async def _fetch_item_detail(self, workspace_id: UUID, item_id: UUID) -> ItemEntry:
@@ -369,8 +388,5 @@ class Resolver:
         # Clear-on-put: drop all negative entries for this workspace scope so
         # that a freshly created item becomes immediately resolvable even within
         # the _NEGATIVE_TTL window (defence-in-depth against create→resolve race).
-        ws_key = str(workspace_id)
-        stale_neg = [k for k in self._negative if k[0] == ws_key]
-        for k in stale_neg:
-            del self._negative[k]
+        self._negative_clear_scope(str(workspace_id))
         return entry

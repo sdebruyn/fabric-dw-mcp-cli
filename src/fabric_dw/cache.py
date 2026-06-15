@@ -383,3 +383,35 @@ class LookupCache:
         with self._lock:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             self._write(self._empty())
+
+    def counts(self) -> tuple[int, int]:
+        """Return ``(workspace_count, item_workspace_bucket_count)`` from the cache file.
+
+        Reads the current on-disk state and returns the number of workspace
+        entries and the number of per-workspace item buckets.  Returns
+        ``(0, 0)`` when the file is missing, corrupt, or unreadable.
+        """
+        with self._lock:
+            data = self._read()
+        ws_count = len(data.get("workspaces", {}))
+        items_count = len(data.get("items", {}))
+        return ws_count, items_count
+
+    def clear_scope(self, scope: str) -> None:
+        """Clear only workspace or item entries from the cache file.
+
+        Args:
+            scope: ``"workspaces"`` to erase only workspace name→UUID entries;
+                ``"items"`` to erase only per-workspace item buckets.
+
+        Raises:
+            OSError: If the underlying file write fails.
+            ValueError: If *scope* is not ``"workspaces"`` or ``"items"``.
+        """
+        if scope not in ("workspaces", "items"):
+            msg = f"scope must be 'workspaces' or 'items', got {scope!r}"
+            raise ValueError(msg)
+        with self._lock:
+            data = self._read()
+            data[scope] = {}
+            self._write(data)

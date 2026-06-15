@@ -94,23 +94,24 @@ async def create_cmd(
 
 
 @snapshots_group.command("rename")
-@click.argument("workspace")
 @click.argument("snapshot")
 @click.argument("new_name")
+@click.argument("workspace", required=False, default=None)
 @click.option("--description", default=None, help="Optional new description.")
 @click.pass_obj
 @coro
 async def rename_cmd(
     ctx: CliContext,
-    workspace: str,
     snapshot: str,
     new_name: str,
+    workspace: str | None,
     description: str | None,
 ) -> None:
-    """Rename SNAPSHOT in WORKSPACE to NEW_NAME (workspace and snapshot accept name or GUID)."""
+    """Rename SNAPSHOT to NEW_NAME in WORKSPACE (workspace and snapshot accept name or GUID)."""
+    ws = resolve_workspace_arg(ctx, workspace)
     try:
         async with build_http_client(ctx) as http:
-            ws_id, entry, cache = await resolve_item_with_cache(http, workspace, snapshot)
+            ws_id, entry, cache = await resolve_item_with_cache(http, ws, snapshot)
             obj = await _snapshots_svc.rename(
                 http,
                 ws_id,
@@ -126,15 +127,16 @@ async def rename_cmd(
 
 
 @snapshots_group.command("delete")
-@click.argument("workspace")
 @click.argument("snapshot")
+@click.argument("workspace", required=False, default=None)
 @click.pass_obj
 @coro
-async def delete_cmd(ctx: CliContext, workspace: str, snapshot: str) -> None:
+async def delete_cmd(ctx: CliContext, snapshot: str, workspace: str | None) -> None:
     """Delete SNAPSHOT from WORKSPACE (both accept name or GUID)."""
+    ws = resolve_workspace_arg(ctx, workspace)
     try:
         async with build_http_client(ctx) as http:
-            ws_id, entry, cache = await resolve_item_with_cache(http, workspace, snapshot)
+            ws_id, entry, cache = await resolve_item_with_cache(http, ws, snapshot)
             if not confirm_destructive(
                 f"Delete snapshot {entry.display_name!r} ({entry.id})?",
                 yes=ctx.yes,

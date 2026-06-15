@@ -703,3 +703,68 @@ async def test_list_running_queries_raises_tool_error_on_no_connection() -> None
             "list_running_queries",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
+
+
+# ---------------------------------------------------------------------------
+# M21 — mutating_tool single-sources the tool name
+# ---------------------------------------------------------------------------
+
+
+async def test_mutating_tool_blocks_in_readonly_mode() -> None:
+    """mutating_tool must raise ToolError with the tool name when FABRIC_MCP_READONLY=1."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    ctx = _make_ctx()
+    with (
+        patch("fabric_dw.mcp._context._SERVER_CTX", ctx),
+        patch.dict("os.environ", {"FABRIC_MCP_READONLY": "1"}),
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "create_warehouse",
+            {"workspace": _WS_NAME, "name": "new-wh"},
+        )
+
+    # The error message must include the tool name (single-sourced via mutating_tool)
+    assert "create_warehouse" in str(exc_info.value)
+
+
+async def test_mutating_tool_create_view_blocked_in_readonly() -> None:
+    """create_view (using mutating_tool) must surface the correct tool name in read-only error."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    ctx = _make_ctx()
+    with (
+        patch("fabric_dw.mcp._context._SERVER_CTX", ctx),
+        patch.dict("os.environ", {"FABRIC_MCP_READONLY": "1"}),
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "create_view",
+            {
+                "workspace": _WS_NAME,
+                "item": _WH_NAME,
+                "qualified_name": "dbo.vw_x",
+                "select_body": "SELECT 1",
+            },
+        )
+
+    assert "create_view" in str(exc_info.value)
+
+
+async def test_mutating_tool_create_sql_pool_blocked_in_readonly() -> None:
+    """create_sql_pool (mutating_tool) must surface the correct tool name in read-only mode."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    ctx = _make_ctx()
+    with (
+        patch("fabric_dw.mcp._context._SERVER_CTX", ctx),
+        patch.dict("os.environ", {"FABRIC_MCP_READONLY": "1"}),
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "create_sql_pool",
+            {"workspace": _WS_NAME, "name": "pool1", "max_percent": 10},
+        )
+
+    assert "create_sql_pool" in str(exc_info.value)

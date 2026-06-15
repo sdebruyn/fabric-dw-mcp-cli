@@ -767,3 +767,73 @@ def test_put_item_and_put_items_produce_identical_schema(tmp_path: Path) -> None
     data_b = json.loads(path_b.read_text())
     ws_key = str(WS_ID)
     assert data_a["items"][ws_key]["wh"].keys() == data_b["items"][ws_key]["wh"].keys()
+
+
+# ---------------------------------------------------------------------------
+# LookupCache.counts — M01 public API
+# ---------------------------------------------------------------------------
+
+
+def test_counts_empty_cache(tmp_path: Path) -> None:
+    """counts() must return (0, 0) when the cache file is empty."""
+    cache = _make_cache(tmp_path)
+    assert cache.counts() == (0, 0)
+
+
+def test_counts_reflects_stored_entries(tmp_path: Path) -> None:
+    """counts() must return the number of workspace names and item workspace buckets."""
+    cache = _make_cache(tmp_path)
+    ws_id_a = UUID("aaaaaaaa-0000-0000-0000-000000000000")
+    ws_id_b = UUID("bbbbbbbb-0000-0000-0000-000000000000")
+    cache.put_workspace("alpha", ws_id_a)
+    cache.put_workspace("beta", ws_id_b)
+    entry = _make_item_entry()
+    cache.put_item(ws_id_a, "wh1", entry)
+    cache.put_item(ws_id_b, "wh2", entry)
+    ws_count, items_count = cache.counts()
+    assert ws_count == 2
+    assert items_count == 2
+
+
+def test_counts_returns_zero_on_missing_file(tmp_path: Path) -> None:
+    """counts() must return (0, 0) when the cache file does not exist."""
+    cache = LookupCache(path=tmp_path / "nonexistent.json")
+    assert cache.counts() == (0, 0)
+
+
+# ---------------------------------------------------------------------------
+# LookupCache.clear_scope — M01 public API
+# ---------------------------------------------------------------------------
+
+
+def test_clear_scope_workspaces_only(tmp_path: Path) -> None:
+    """clear_scope('workspaces') must erase only workspace entries, leaving items intact."""
+    cache = _make_cache(tmp_path)
+    ws_id = UUID("cccccccc-0000-0000-0000-000000000000")
+    cache.put_workspace("myws", ws_id)
+    cache.put_item(ws_id, "mywh", _make_item_entry())
+
+    cache.clear_scope("workspaces")
+
+    assert cache.get_workspace("myws") is None
+    assert cache.get_item(ws_id, "mywh") is not None
+
+
+def test_clear_scope_items_only(tmp_path: Path) -> None:
+    """clear_scope('items') must erase only item entries, leaving workspaces intact."""
+    cache = _make_cache(tmp_path)
+    ws_id = UUID("dddddddd-0000-0000-0000-000000000000")
+    cache.put_workspace("myws", ws_id)
+    cache.put_item(ws_id, "mywh", _make_item_entry())
+
+    cache.clear_scope("items")
+
+    assert cache.get_workspace("myws") is not None
+    assert cache.get_item(ws_id, "mywh") is None
+
+
+def test_clear_scope_invalid_raises_value_error(tmp_path: Path) -> None:
+    """clear_scope must raise ValueError for an unrecognised scope."""
+    cache = _make_cache(tmp_path)
+    with pytest.raises(ValueError, match="scope must be"):
+        cache.clear_scope("all")

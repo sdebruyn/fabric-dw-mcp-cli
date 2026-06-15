@@ -17,6 +17,7 @@ from fabric_dw.mcp._guards import (
 )
 from fabric_dw.mcp._helpers import (
     make_sql_target,
+    mutating_tool,
     parse_qualified_name,
     resolve_item,
     safe_rows,
@@ -117,7 +118,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             raise tool_err(exc) from exc
         return result.model_dump(mode="json")
 
-    @mcp.tool(name="create_view")
+    @mutating_tool(mcp, "create_view")
     async def create_view(
         workspace: str, item: str, qualified_name: str, select_body: str
     ) -> dict[str, Any]:
@@ -133,7 +134,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             select_body: The SELECT statement that forms the view body.
         """
         schema, view_name = parse_qualified_name(qualified_name, kind="view")
-        assert_writes_allowed("create_view")
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
@@ -178,6 +178,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
+        ctx.resolver.clear_negative_cache()
         return result.model_dump(mode="json")
 
     @mcp.tool(name="drop_view")
@@ -202,6 +203,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             await views_svc.drop_view(target, schema, view_name, mode=ctx.auth_mode)
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
+        ctx.resolver.clear_negative_cache()
         return {"dropped": True}
 
     @mcp.tool(name="rename_view")
@@ -243,4 +245,5 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
+        ctx.resolver.clear_negative_cache()
         return result.model_dump(mode="json")

@@ -842,3 +842,81 @@ class TestD22InvalidItemType:
 
         # The HTTP layer must NOT have been called -- error raised before pagination.
         mock_http.iter_paginated.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# D13 — negative cache casing consistency
+# ---------------------------------------------------------------------------
+
+
+def test_negative_cache_normalises_keys_to_lowercase(tmp_path: Path) -> None:
+    """Negative-cache helpers must normalise keys to lower-case (D13).
+
+    _negative_record, _negative_check, and _negative_clear must all use the
+    same lower-cased key so that lookups are case-insensitive and consistent
+    with the positive LookupCache (which also stores names lower-cased).
+    """
+    from fabric_dw.cache import LookupCache  # noqa: PLC0415
+
+    cache = LookupCache(path=tmp_path / "dummy.json")
+    mock_http = MagicMock()
+    resolver = Resolver(http=mock_http, cache=cache)
+
+    # Record under mixed case
+    resolver._negative_record("workspace", "MyWorkspace")
+    # The internal key must be lower-cased regardless of input casing
+    assert ("workspace", "myworkspace") in resolver._negative
+
+    # Check must recognise it under different casing
+    with pytest.raises(NotFoundError):
+        resolver._negative_check("workspace", "MYWORKSPACE")
+
+    # Clear must also normalise
+    resolver._negative_clear("workspace", "MYWORKSPACE")
+    assert ("workspace", "myworkspace") not in resolver._negative
+
+
+def test_negative_cache_strips_whitespace(tmp_path: Path) -> None:
+    """Negative-cache helpers must strip leading/trailing whitespace from keys."""
+    from fabric_dw.cache import LookupCache  # noqa: PLC0415
+
+    cache = LookupCache(path=tmp_path / "dummy.json")
+    mock_http = MagicMock()
+    resolver = Resolver(http=mock_http, cache=cache)
+
+    resolver._negative_record("workspace", "  My WS  ")
+    assert ("workspace", "my ws") in resolver._negative
+
+    with pytest.raises(NotFoundError):
+        resolver._negative_check("workspace", "  My WS  ")
+
+    resolver._negative_clear("workspace", "  My WS  ")
+    assert ("workspace", "my ws") not in resolver._negative
+
+
+# ---------------------------------------------------------------------------
+# D12 — _negative_clear_scope
+# ---------------------------------------------------------------------------
+
+
+def test_negative_clear_scope_removes_matching_scope_only(tmp_path: Path) -> None:
+    """_negative_clear_scope must remove all entries for the given scope and leave others."""
+    from fabric_dw.cache import LookupCache  # noqa: PLC0415
+
+    cache = LookupCache(path=tmp_path / "dummy.json")
+    mock_http = MagicMock()
+    resolver = Resolver(http=mock_http, cache=cache)
+
+    ws_key = "ws-uuid-1234"
+    other_key = "ws-other-5678"
+
+    resolver._negative[(ws_key, "item_a")] = time.monotonic()
+    resolver._negative[(ws_key, "item_b")] = time.monotonic()
+    resolver._negative[(other_key, "item_c")] = time.monotonic()
+
+    resolver._negative_clear_scope(ws_key)
+
+    assert (ws_key, "item_a") not in resolver._negative
+    assert (ws_key, "item_b") not in resolver._negative
+    # Entries from a different scope must be preserved
+    assert (other_key, "item_c") in resolver._negative

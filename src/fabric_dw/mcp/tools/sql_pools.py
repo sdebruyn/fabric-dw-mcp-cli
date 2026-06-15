@@ -16,7 +16,13 @@ from fabric_dw.mcp._guards import (
     assert_workspace_allowed,
     assert_writes_allowed,
 )
-from fabric_dw.mcp._helpers import fabric_err, make_sql_target, parse_iso8601, resolve_item
+from fabric_dw.mcp._helpers import (
+    fabric_err,
+    make_sql_target,
+    mutating_tool,
+    parse_iso8601,
+    resolve_item,
+)
 from fabric_dw.models import SqlPool, SqlPoolClassifier
 from fabric_dw.services import query_insights as _qi_svc
 from fabric_dw.services import sql_pools as sql_pools_svc
@@ -88,7 +94,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             raise ToolError(f"pool {pool_name!r} not found")
         return pool.model_dump(by_alias=True, mode="json")
 
-    @mcp.tool(name="create_sql_pool")
+    @mutating_tool(mcp, "create_sql_pool")
     async def create_sql_pool(  # noqa: PLR0913
         workspace: str,
         name: str,
@@ -111,7 +117,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
 
         Requires workspace admin role.  This tool targets a **beta / preview** API.
         """
-        assert_writes_allowed("create_sql_pool")
         assert_workspace_allowed(workspace)
         classifier: SqlPoolClassifier | None = None
         if classifier_type is not None:

@@ -16,7 +16,7 @@ from fabric_dw.mcp._guards import (
     assert_writes_allowed,
     workspace_allowlist_active,
 )
-from fabric_dw.mcp._helpers import fabric_err, resolve_item, tool_err
+from fabric_dw.mcp._helpers import fabric_err, mutating_tool, resolve_item, tool_err
 from fabric_dw.services import ownership as ownership_svc
 from fabric_dw.services import permissions as _permissions_svc
 from fabric_dw.services import warehouses
@@ -74,7 +74,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             raise fabric_err(exc) from exc
         return result.model_dump(by_alias=True, mode="json")
 
-    @mcp.tool(name="create_warehouse")
+    @mutating_tool(mcp, "create_warehouse")
     async def create_warehouse(
         workspace: str,
         name: str,
@@ -101,7 +101,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 list of supported collations.
             description: Optional description for the new warehouse.
         """
-        assert_writes_allowed("create_warehouse")
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:

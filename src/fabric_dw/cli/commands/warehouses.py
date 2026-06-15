@@ -215,18 +215,14 @@ async def takeover_cmd(ctx: CliContext, workspace: str | None, warehouse: str | 
     try:
         async with build_http_client(ctx) as http:
             ws_id, entry = await resolve_item(http, ws, wh)
-    except (ValueError, FabricError) as exc:
-        raise click.ClickException(str(exc)) from exc
-    if entry.kind == WarehouseKind.SQL_ENDPOINT:
-        raise click.UsageError("takeover is not supported for SQL Analytics Endpoints")
-    if not confirm_destructive(
-        f"Take over warehouse {entry.display_name!r} ({entry.id})?",
-        yes=ctx.yes,
-    ):
-        click.echo("Aborted.")
-        return
-    try:
-        async with build_http_client(ctx) as http:
+            if entry.kind == WarehouseKind.SQL_ENDPOINT:
+                raise click.UsageError("takeover is not supported for SQL Analytics Endpoints")
+            if not confirm_destructive(
+                f"Take over warehouse {entry.display_name!r} ({entry.id})?",
+                yes=ctx.yes,
+            ):
+                click.echo("Aborted.")
+                return
             await _ownership_svc.takeover(http, ws_id, entry.id)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc

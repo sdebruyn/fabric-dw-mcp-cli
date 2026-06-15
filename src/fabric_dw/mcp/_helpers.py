@@ -6,6 +6,9 @@ This module provides utilities imported by every domain tool module:
   to a :class:`~mcp.server.fastmcp.exceptions.ToolError` with structured data.
 - :func:`tool_err` — uniform error funnel mapping FabricError / ValueError /
   Exception to ToolError without inline ternaries.
+- :func:`mutating_tool` — decorator factory that registers a tool with FastMCP
+  **and** injects :func:`~fabric_dw.mcp._guards.assert_writes_allowed` using
+  the same name string, eliminating the duplication flagged by M21.
 - :func:`parse_iso8601` — parse an ISO-8601 string to :class:`~datetime.datetime`,
   raising :class:`~mcp.server.fastmcp.exceptions.ToolError` on bad input.
 - :func:`parse_qualified_name` — split ``"schema.object"`` strings, raising
@@ -21,14 +24,18 @@ This module provides utilities imported by every domain tool module:
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Coroutine
 from datetime import datetime
-from typing import Any
+from functools import wraps
+from typing import Any, ParamSpec, TypeVar
 from uuid import UUID
 
+from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw.cache import ItemEntry as _ItemEntry
 from fabric_dw.exceptions import FabricError
+from fabric_dw.mcp._guards import assert_writes_allowed as _assert_writes_allowed
 from fabric_dw.resolver import Resolver
 from fabric_dw.sql import SqlTarget
 from fabric_dw.sql_io import json_safe as _json_safe
@@ -36,6 +43,7 @@ from fabric_dw.sql_io import json_safe as _json_safe
 __all__ = [
     "fabric_err",
     "make_sql_target",
+    "mutating_tool",
     "parse_iso8601",
     "parse_qualified_name",
     "resolve_item",
@@ -43,11 +51,58 @@ __all__ = [
     "tool_err",
 ]
 
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
 _log = logging.getLogger(__name__)
 
 # Note: CREATE/DROP SCHEMA, views, procedures, and functions are all supported
 # on SQL Analytics Endpoints — see T-SQL Applies-to reference for Fabric.
 # No DDL guard is needed for these operations; only table DML/DDL is blocked.
+
+
+def mutating_tool(
+    mcp: FastMCP,
+    name: str,
+) -> Callable[
+    [Callable[_P, Coroutine[None, None, _R]]],
+    Callable[_P, Coroutine[None, None, _R]],
+]:
+    """Decorator factory that registers a mutating MCP tool using a single name.
+
+    Combines ``@mcp.tool(name=name)`` with an injected
+    :func:`~fabric_dw.mcp._guards.assert_writes_allowed` call so that the tool
+    name is written exactly once.  Without this helper the name was duplicated
+    in the decorator and in the ``assert_writes_allowed("…")`` call (M21).
+
+    Usage::
+
+        @mutating_tool(mcp, "create_view")
+        async def create_view(workspace: str, ...) -> dict[str, Any]:
+            # assert_writes_allowed is called automatically with "create_view"
+            ...
+
+    Args:
+        mcp: The :class:`~mcp.server.fastmcp.FastMCP` server instance.
+        name: The tool name string, used for both registration and the write guard.
+
+    Returns:
+        A decorator that wraps the tool function and registers it with *mcp*.
+    """
+
+    def decorator(
+        fn: Callable[_P, Coroutine[None, None, _R]],
+    ) -> Callable[_P, Coroutine[None, None, _R]]:
+        @wraps(fn)
+        async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+            _assert_writes_allowed(name)
+            return await fn(*args, **kwargs)
+
+        # Register the wrapper (which includes the guard) under the given name.
+        registered: Callable[_P, Coroutine[None, None, _R]] = mcp.tool(name=name)(wrapper)
+        return registered
+
+    return decorator
 
 
 def fabric_err(exc: Exception) -> ToolError:
