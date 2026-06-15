@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import warnings
 
+from azure.core.exceptions import ClientAuthenticationError
+
 
 class FabricCliError(Exception):
     """Common base for all fabric-dw exceptions raised to the CLI / MCP boundary.
@@ -49,6 +51,34 @@ class FabricError(FabricCliError):
 
 class AuthError(FabricError):
     """Raised on HTTP 401 - authentication token missing or invalid."""
+
+
+def auth_error_from_credential_exc(exc: ClientAuthenticationError) -> AuthError:
+    """Map a :class:`~azure.core.exceptions.ClientAuthenticationError` to :class:`AuthError`.
+
+    Extracts the first line of the Azure error message (which is often multi-line
+    and verbose) and wraps it in a user-friendly :class:`AuthError` with an
+    actionable hint.  The original exception is set as ``__cause__`` so that
+    verbose / debug modes can still surface the full Azure traceback.
+
+    Both :class:`~azure.identity.CredentialUnavailableError` (no credential
+    configured) and the base :class:`~azure.core.exceptions.ClientAuthenticationError`
+    (bad credentials) are covered because the former is a subclass of the latter.
+
+    Args:
+        exc: The Azure credential exception to convert.
+
+    Returns:
+        An :class:`AuthError` with an actionable message.
+    """
+    short = str(exc).splitlines()[0]
+    err = AuthError(
+        "Azure authentication failed. "
+        "Run 'az login' (or set AZURE_CLIENT_ID / AZURE_CLIENT_SECRET / "
+        f"AZURE_TENANT_ID). Details: {short}"
+    )
+    err.__cause__ = exc
+    return err
 
 
 class PermissionDeniedError(FabricError):
