@@ -81,6 +81,23 @@ _UPLOAD_CHUNK_SIZE: int = 4 * 1024 * 1024
 #: Maximum local file size before staging upload is rejected (2 GiB).
 _MAX_STAGING_FILE_BYTES: int = 2 * 1024 * 1024 * 1024
 
+#: ADLS Gen2 / OneLake DFS API version sent on every request.
+#:
+#: The OneLake documentation (https://learn.microsoft.com/fabric/onelake/onelake-access-api)
+#: shows ``x-ms-version: 2021-06-08`` in the sample response, which is the earliest version
+#: confirmed to work with OneLake.  Sending a version header makes the server's behaviour
+#: deterministic and avoids the ``UnsupportedRestVersion`` 400 that can occur when the
+#: service falls back to a very old default.
+_DFS_API_VERSION = "2021-06-08"
+
+#: Maximum number of retries for the DFS create-file PUT on transient 400 / 503 responses.
+#: A newly-provisioned Lakehouse may briefly return 400 before its OneLake storage backend
+#: is fully ready, even after the Fabric LRO has completed.
+_DFS_CREATE_MAX_RETRIES: int = 3
+
+#: Base delay (seconds) between DFS create-file retries.
+_DFS_CREATE_RETRY_DELAY: float = 2.0
+
 # SQL Endpoint rejection message.
 _SQL_ENDPOINT_READONLY_MSG = "SQL Endpoints are read-only; COPY INTO not supported"
 
@@ -388,6 +405,35 @@ def infer_file_format(path: Path) -> FileFormat:
 # ---------------------------------------------------------------------------
 
 
+def _log_dfs_error(resp: httpx.Response, context: str) -> None:
+    """Log the DFS error code and body from a non-2xx response.
+
+    Extracts the ``x-ms-error-code`` response header and the JSON error body
+    (which contains the ADLS Gen2 error code and message) and logs them at
+    ERROR level.  The Authorization token is never read or logged — only the
+    response data is used.
+
+    Args:
+        resp: The non-2xx :class:`httpx.Response`.
+        context: A short label for the log message (e.g. ``"DFS create"``).
+    """
+    error_code = resp.headers.get("x-ms-error-code", "<none>")
+    request_id = resp.headers.get("x-ms-request-id", "<none>")
+    try:
+        body_text = resp.text
+    except Exception:
+        body_text = "<unreadable>"
+
+    _logger.error(
+        "%s failed: HTTP %s  x-ms-error-code=%s  x-ms-request-id=%s  body=%s",
+        context,
+        resp.status_code,
+        error_code,
+        request_id,
+        body_text,
+    )
+
+
 async def create_staging_lakehouse(
     http: FabricHttpClient,
     workspace_id: uuid.UUID,
@@ -489,9 +535,16 @@ async def onelake_upload_file(
     """Upload a local file to the OneLake DFS API using chunked create/append/flush.
 
     Uses the ADLS Gen2 DFS protocol:
-    - PUT ``?resource=file``      — creates the file (0 bytes).
-    - PATCH ``?action=append``    — appends data chunks.
-    - PATCH ``?action=flush``     — commits the file at final position.
+    - PUT  ``?resource=file``              — creates the file (0 bytes).
+    - PATCH ``?action=append&position=N`` — appends data chunks.
+    - PATCH ``?action=flush&position=N``  — commits the file at the final offset.
+
+    All requests include ``x-ms-version: 2021-06-08`` (the earliest version
+    confirmed to work with OneLake DFS) and ``Content-Length`` as required by
+    the ADLS Gen2 Path API.  Non-2xx responses log the ``x-ms-error-code``
+    header and the JSON error body *before* raising, so the next integration
+    run will surface the exact server-side error code without exposing auth
+    tokens.
 
     Args:
         credential: An async Azure credential for the storage scope.
@@ -503,38 +556,70 @@ async def onelake_upload_file(
         chunk_size: Bytes per append chunk (default 4 MiB).
 
     Raises:
-        httpx.HTTPStatusError: On non-2xx DFS responses.
+        httpx.HTTPStatusError: On non-2xx DFS responses (after logging the
+            error code and body).
     """
     # Fetch a storage-scoped token.
     token_obj = await credential.get_token(STORAGE_SCOPE)
     token = token_obj.token
-    headers = {"Authorization": f"Bearer {token}"}
 
-    dfs_base = f"{_ONELAKE_DFS_BASE}/{workspace_id}/{lakehouse_id}.Lakehouse/Files/{dest_path}"
+    # Base headers sent with every DFS request.
+    # x-ms-version: the ADLS Gen2 / OneLake DFS API version.  The OneLake
+    # documentation shows 2021-06-08 in response headers as the minimum
+    # supported version; omitting it can cause the service to fall back to an
+    # unexpectedly old default that may reject the request.
+    base_headers: dict[str, str] = {
+        "Authorization": f"Bearer {token}",
+        "x-ms-version": _DFS_API_VERSION,
+    }
+
+    dfs_url = f"{_ONELAKE_DFS_BASE}/{workspace_id}/{lakehouse_id}.Lakehouse/Files/{dest_path}"
 
     file_size = local_path.stat().st_size
     _logger.debug(
         "onelake_upload_file: %s -> %s (size=%d bytes, chunk=%d)",
         local_path,
-        dfs_base,
+        dfs_url,
         file_size,
         chunk_size,
     )
 
     async with httpx.AsyncClient(timeout=300.0) as client:
+        # ------------------------------------------------------------------
         # Step 1: create an empty file.
-        # The ADLS Gen2 DFS API requires Content-Length: 0 on the PUT create
-        # call — omitting it or sending a non-zero value results in a 400
-        # ContentLengthMustBeZero error from OneLake.
-        create_resp = await client.put(
-            dfs_base,
-            params={"resource": "file"},
-            headers={**headers, "Content-Length": "0"},
-            content=b"",
-        )
+        #
+        # The ADLS Gen2 DFS Path - Create API requires Content-Length: 0 on
+        # the PUT ?resource=file call.  Omitting it or sending a non-zero
+        # value results in a 400 ContentLengthMustBeZero error.
+        #
+        # A freshly provisioned Lakehouse can briefly return 400 before its
+        # OneLake storage backend is fully ready even though the Fabric LRO
+        # has already signalled completion.  We retry with a short backoff to
+        # tolerate this transient provisioning delay.
+        # ------------------------------------------------------------------
+        create_headers = {**base_headers, "Content-Length": "0"}
+        create_resp: httpx.Response | None = None
+        for attempt in range(_DFS_CREATE_MAX_RETRIES):
+            create_resp = await client.put(
+                dfs_url,
+                params={"resource": "file"},
+                headers=create_headers,
+                content=b"",
+            )
+            if create_resp.is_success:
+                break
+            attempt_label = f"attempt {attempt + 1}/{_DFS_CREATE_MAX_RETRIES}"
+            _log_dfs_error(create_resp, f"DFS create ({attempt_label})")
+            if attempt < _DFS_CREATE_MAX_RETRIES - 1:
+                await asyncio.sleep(_DFS_CREATE_RETRY_DELAY * (attempt + 1))
+        if create_resp is None:  # pragma: no cover — loop always sets this
+            msg = "DFS create: no response received"
+            raise RuntimeError(msg)
         create_resp.raise_for_status()
 
+        # ------------------------------------------------------------------
         # Step 2: append chunks.
+        # ------------------------------------------------------------------
         offset = 0
         with local_path.open("rb") as fh:
             while True:
@@ -542,26 +627,32 @@ async def onelake_upload_file(
                 if not chunk:
                     break
                 append_resp = await client.patch(
-                    dfs_base,
+                    dfs_url,
                     params={"action": "append", "position": offset},
                     content=chunk,
                     headers={
-                        **headers,
+                        **base_headers,
                         "Content-Type": "application/octet-stream",
                         "Content-Length": str(len(chunk)),
                     },
                 )
+                if not append_resp.is_success:
+                    _log_dfs_error(append_resp, f"DFS append (offset={offset})")
                 append_resp.raise_for_status()
                 offset += len(chunk)
 
+        # ------------------------------------------------------------------
         # Step 3: flush (commit).
-        # Content-Length must be 0 for the flush call (no request body).
+        # Content-Length must be 0 for flush (no request body).
+        # ------------------------------------------------------------------
         flush_resp = await client.patch(
-            dfs_base,
+            dfs_url,
             params={"action": "flush", "position": offset},
-            headers={**headers, "Content-Length": "0"},
+            headers={**base_headers, "Content-Length": "0"},
             content=b"",
         )
+        if not flush_resp.is_success:
+            _log_dfs_error(flush_resp, f"DFS flush (position={offset})")
         flush_resp.raise_for_status()
 
     _logger.debug("onelake_upload_file: upload complete, %d bytes written", offset)
