@@ -84,17 +84,29 @@ def load_config(path: Path | None = None) -> UserConfig:
         return UserConfig(defaults=Defaults())
 
     lock = filelock.FileLock(str(resolved) + ".lock", timeout=_LOCK_TIMEOUT)
+    # C18: separate read errors (lock timeout, permission denied) from parse
+    # errors (corrupt TOML) so each is handled with the right semantics.
     try:
         with lock:
             raw = resolved.read_text(encoding="utf-8")
-    except Exception:
-        _log.warning("Could not read config file %s; using empty defaults", resolved)
+    except filelock.Timeout:
+        _log.warning(
+            "Could not acquire lock for config file %s (timeout); using empty defaults",
+            resolved,
+        )
+        return UserConfig(defaults=Defaults())
+    except OSError:
+        _log.warning(
+            "Could not read config file %s; using empty defaults",
+            resolved,
+            exc_info=True,
+        )
         return UserConfig(defaults=Defaults())
 
     try:
         data = tomllib.loads(raw)
-    except Exception:
-        _log.warning("Config file %s is corrupt; using empty defaults", resolved)
+    except tomllib.TOMLDecodeError:
+        _log.warning("Config file %s is corrupt (invalid TOML); using empty defaults", resolved)
         return UserConfig(defaults=Defaults())
 
     defaults_raw = data.get("defaults", {})
@@ -149,6 +161,10 @@ def save_config(config: UserConfig, path: Path | None = None) -> None:
 def set_default(key: str, value: str | None, path: Path | None = None) -> None:
     """Atomically update a single key under ``[defaults]`` without touching other keys.
 
+    The read-modify-write is performed under a single :class:`filelock.FileLock`
+    held for the full duration, preventing lost-update races between concurrent
+    CLI invocations (C20).
+
     Args:
         key: One of ``"workspace"`` or ``"warehouse"``.
         value: The new value, or *None* to clear (unset) the key.
@@ -160,13 +176,58 @@ def set_default(key: str, value: str | None, path: Path | None = None) -> None:
     allowed = {"workspace", "warehouse"}
     if key not in allowed:
         raise ValueError(f"Unknown config key {key!r}; must be one of {sorted(allowed)}")
-    cfg = load_config(path)
-    current = cfg.defaults
-    new_defaults = Defaults(
-        workspace=value if key == "workspace" else current.workspace,
-        warehouse=value if key == "warehouse" else current.warehouse,
-    )
-    save_config(UserConfig(defaults=new_defaults), path)
+
+    resolved = path if path is not None else default_path()
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    lock = filelock.FileLock(str(resolved) + ".lock", timeout=_LOCK_TIMEOUT)
+
+    with lock:
+        # Read inside the lock so the full read-modify-write is atomic.
+        if not resolved.exists():
+            current = Defaults()
+        else:
+            try:
+                raw = resolved.read_text(encoding="utf-8")
+                data = tomllib.loads(raw)
+                defaults_raw = data.get("defaults", {})
+                if isinstance(defaults_raw, dict):
+                    ws = defaults_raw.get("workspace")
+                    wh = defaults_raw.get("warehouse")
+                    current = Defaults(
+                        workspace=ws if isinstance(ws, str) else None,
+                        warehouse=wh if isinstance(wh, str) else None,
+                    )
+                else:
+                    current = Defaults()
+            except (OSError, tomllib.TOMLDecodeError):
+                current = Defaults()
+
+        new_defaults = Defaults(
+            workspace=value if key == "workspace" else current.workspace,
+            warehouse=value if key == "warehouse" else current.warehouse,
+        )
+        # save_config acquires its own lock internally, so call the internal
+        # write logic directly to stay within our single lock cycle.
+        defaults_dict: dict[str, str] = {}
+        if new_defaults.workspace is not None:
+            defaults_dict["workspace"] = new_defaults.workspace
+        if new_defaults.warehouse is not None:
+            defaults_dict["warehouse"] = new_defaults.warehouse
+        toml_data: dict[str, object] = {"defaults": defaults_dict}
+
+        fd, tmp_name = tempfile.mkstemp(
+            dir=resolved.parent,
+            prefix=".config_tmp_",
+            suffix=".toml",
+        )
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                tomli_w.dump(toml_data, fh)
+            os.replace(tmp_name, resolved)
+        except Exception:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_name)
+            raise
 
 
 def clear_config(path: Path | None = None) -> None:

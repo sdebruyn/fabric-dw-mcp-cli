@@ -38,7 +38,7 @@ _FAKE_TOKEN = AccessToken(token="fake-token", expires_on=int(time.time()) + 3600
 class _FakeClock:
     """A controllable monotonic clock and asyncio.sleep replacement.
 
-    Use as a context manager to patch ``fabric_dw.http_client._time.monotonic``
+    Use as a context manager to patch ``fabric_dw.http_client.time.monotonic``
     and ``asyncio.sleep`` for the duration of the ``with`` block::
 
         clock = _FakeClock()
@@ -68,7 +68,7 @@ class _FakeClock:
 
     def __enter__(self) -> _FakeClock:
         self._p_monotonic = patch(
-            "fabric_dw.http_client._time.monotonic", side_effect=self.monotonic
+            "fabric_dw.http_client.time.monotonic", side_effect=self.monotonic
         )
         self._p_sleep = patch("asyncio.sleep", side_effect=self.sleep)
         self._p_monotonic.start()
@@ -1161,7 +1161,7 @@ async def test_send_once_re_sleeps_when_pause_until_extended_mid_sleep() -> None
             # until fake sleep is called — no real-time race condition.
             client._pause_until = clock.now + 1.0
             with (
-                patch("fabric_dw.http_client._time.monotonic", side_effect=clock.monotonic),
+                patch("fabric_dw.http_client.time.monotonic", side_effect=clock.monotonic),
                 patch("asyncio.sleep", side_effect=extending_sleep),
             ):
                 resp = await client.request("GET", HttpBase.FABRIC, "/items")

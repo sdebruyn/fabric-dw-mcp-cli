@@ -630,3 +630,110 @@ def test_put_items_case_insensitive_keys(tmp_path: Path) -> None:
     entry = _make_item_entry()
     cache.put_items(WS_ID, [("SalesWarehouse", entry)])
     assert cache.get_item(WS_ID, "saleswarehouse") is not None
+
+
+# ---------------------------------------------------------------------------
+# C24: _validate checks per-workspace item buckets (inner entries)
+# ---------------------------------------------------------------------------
+
+
+def test_corrupt_inner_item_bucket_treated_as_empty(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """If a per-workspace bucket inside 'items' is not a dict, _read returns empty (C24).
+
+    Previously _validate only checked the top-level 'items' dict; a corrupt
+    bucket (e.g. a list) would reach get_item and raise AttributeError.  Now
+    the whole file is treated as empty and a warning is emitted.
+    """
+    cache_file = tmp_path / "lookup.json"
+    cache_file.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "workspaces": {},
+                "items": {str(WS_ID): ["not", "a", "dict"]},
+            }
+        )
+    )
+    cache = LookupCache(path=cache_file)
+    with caplog.at_level(logging.WARNING, logger="fabric_dw.cache"):
+        result = cache.get_item(WS_ID, "anything")
+    assert result is None
+    assert any("non-dict per-workspace bucket" in r.message for r in caplog.records), (
+        f"expected warning about non-dict bucket, got: {[r.message for r in caplog.records]}"
+    )
+
+
+def test_corrupt_inner_bucket_string_treated_as_empty(tmp_path: Path) -> None:
+    """A string per-workspace bucket must be treated as empty (not raise AttributeError)."""
+    cache_file = tmp_path / "lookup.json"
+    cache_file.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "workspaces": {},
+                "items": {str(WS_ID): "oops-a-string"},
+            }
+        )
+    )
+    cache = LookupCache(path=cache_file)
+    # Must not raise AttributeError; must degrade gracefully.
+    assert cache.get_item(WS_ID, "anything") is None
+
+
+def test_valid_file_with_proper_buckets_not_affected(tmp_path: Path) -> None:
+    """A valid file with well-formed per-workspace dicts is still returned correctly."""
+    cache = _make_cache(tmp_path)
+    entry = _make_item_entry()
+    cache.put_item(WS_ID, "wh", entry)
+    # Re-open (to force a read from disk) and check the entry is still present.
+    cache2 = LookupCache(path=tmp_path / "lookup.json")
+    result = cache2.get_item(WS_ID, "wh")
+    assert result is not None
+    assert result.id == ITEM_ID
+
+
+# ---------------------------------------------------------------------------
+# C08/C09: _entry_to_dict / _get_record helpers
+# ---------------------------------------------------------------------------
+
+
+def test_entry_to_dict_round_trips_via_put_get(tmp_path: Path) -> None:
+    """Serialization via _entry_to_dict must survive the full put→get cycle."""
+    cache = _make_cache(tmp_path)
+    entry = ItemEntry(
+        id=ITEM_ID,
+        kind=WarehouseKind.WAREHOUSE,
+        connection_string="srv.fabric.microsoft.com",
+        fetched_at=datetime.now(tz=UTC),
+        display_name="Sales Warehouse",
+    )
+    cache.put_item(WS_ID, "sales", entry)
+    result = cache.get_item(WS_ID, "sales")
+    assert result is not None
+    assert result.id == ITEM_ID
+    assert result.display_name == "Sales Warehouse"
+    assert result.connection_string == "srv.fabric.microsoft.com"
+
+
+def test_put_item_and_put_items_produce_identical_schema(tmp_path: Path) -> None:
+    """put_item and put_items must write identical dict structures (C08).
+
+    Both rely on _entry_to_dict so schema drift between the two paths is
+    impossible.  Verify by checking the raw JSON on disk.
+    """
+    path_a = tmp_path / "a.json"
+    path_b = tmp_path / "b.json"
+    entry = _make_item_entry()
+
+    cache_a = LookupCache(path=path_a)
+    cache_a.put_item(WS_ID, "wh", entry)
+
+    cache_b = LookupCache(path=path_b)
+    cache_b.put_items(WS_ID, [("wh", entry)])
+
+    data_a = json.loads(path_a.read_text())
+    data_b = json.loads(path_b.read_text())
+    ws_key = str(WS_ID)
+    assert data_a["items"][ws_key]["wh"].keys() == data_b["items"][ws_key]["wh"].keys()

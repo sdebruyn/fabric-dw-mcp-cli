@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
+from unittest.mock import patch
 
+import filelock
 import pytest
 
 from fabric_dw.config import (
@@ -13,6 +16,7 @@ from fabric_dw.config import (
     default_path,
     load_config,
     save_config,
+    set_default,
 )
 
 # ---------------------------------------------------------------------------
@@ -188,3 +192,112 @@ def test_round_trip_both_hostile(tmp_path: Path) -> None:
     loaded = load_config(path)
     assert loaded.defaults.workspace == ws
     assert loaded.defaults.warehouse == wh
+
+
+# ---------------------------------------------------------------------------
+# C18: load_config — narrowed exception handling
+# ---------------------------------------------------------------------------
+
+
+def test_load_config_oserror_returns_empty(tmp_path: Path) -> None:
+    """An OSError during file read must return empty defaults, not raise (C18)."""
+    path = tmp_path / "config.toml"
+    save_config(UserConfig(defaults=Defaults(workspace="WS")), path)
+    # Simulate an OSError during read_text (unreadable file)
+    with patch.object(Path, "read_text", side_effect=OSError("permission denied")):
+        cfg = load_config(path)
+    assert cfg == UserConfig(defaults=Defaults())
+
+
+def test_load_config_lock_timeout_returns_empty(tmp_path: Path) -> None:
+    """A filelock.Timeout during lock acquisition must return empty defaults (C18)."""
+    path = tmp_path / "config.toml"
+    save_config(UserConfig(defaults=Defaults(workspace="WS")), path)
+    with patch("filelock.FileLock.acquire", side_effect=filelock.Timeout(str(path) + ".lock")):
+        cfg = load_config(path)
+    assert cfg == UserConfig(defaults=Defaults())
+
+
+def test_load_config_corrupt_toml_returns_empty(tmp_path: Path) -> None:
+    """A TOMLDecodeError must return empty defaults without raising (C18)."""
+    path = tmp_path / "config.toml"
+    path.write_text("[[[[this is not valid toml", encoding="utf-8")
+    cfg = load_config(path)
+    assert cfg == UserConfig(defaults=Defaults())
+
+
+# ---------------------------------------------------------------------------
+# C20: set_default — atomic read-modify-write under one lock
+# ---------------------------------------------------------------------------
+
+
+def test_set_default_workspace_persists(tmp_path: Path) -> None:
+    """set_default must persist the given workspace."""
+    path = tmp_path / "config.toml"
+    set_default("workspace", "SalesWS", path)
+    loaded = load_config(path)
+    assert loaded.defaults.workspace == "SalesWS"
+
+
+def test_set_default_preserves_unrelated_key(tmp_path: Path) -> None:
+    """set_default must not clear other keys when only one is updated (C20)."""
+    path = tmp_path / "config.toml"
+    save_config(UserConfig(defaults=Defaults(workspace="WS", warehouse="WH")), path)
+    set_default("workspace", "NewWS", path)
+    loaded = load_config(path)
+    assert loaded.defaults.workspace == "NewWS"
+    assert loaded.defaults.warehouse == "WH"
+
+
+def test_set_default_none_clears_key(tmp_path: Path) -> None:
+    """set_default(key, None) must clear the key."""
+    path = tmp_path / "config.toml"
+    save_config(UserConfig(defaults=Defaults(workspace="WS", warehouse="WH")), path)
+    set_default("workspace", None, path)
+    loaded = load_config(path)
+    assert loaded.defaults.workspace is None
+    assert loaded.defaults.warehouse == "WH"
+
+
+def test_set_default_invalid_key_raises(tmp_path: Path) -> None:
+    """set_default with an unrecognised key must raise ValueError."""
+    path = tmp_path / "config.toml"
+    with pytest.raises(ValueError, match="Unknown config key"):
+        set_default("nonexistent_key", "value", path)
+
+
+def test_set_default_concurrent_no_lost_update(tmp_path: Path) -> None:
+    """Concurrent set_default calls must not produce a lost update (C20).
+
+    Two threads each set a different key; both values must appear in the file
+    after both threads complete.
+    """
+    path = tmp_path / "config.toml"
+    errors: list[Exception] = []
+
+    def set_workspace() -> None:
+        try:
+            for _ in range(5):
+                set_default("workspace", "ConcurrentWS", path)
+        except Exception as exc:
+            errors.append(exc)
+
+    def set_warehouse() -> None:
+        try:
+            for _ in range(5):
+                set_default("warehouse", "ConcurrentWH", path)
+        except Exception as exc:
+            errors.append(exc)
+
+    t1 = threading.Thread(target=set_workspace)
+    t2 = threading.Thread(target=set_warehouse)
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    assert not errors, f"Thread errors: {errors}"
+    loaded = load_config(path)
+    # After both threads converge, both keys must be set (no lost update).
+    assert loaded.defaults.workspace == "ConcurrentWS"
+    assert loaded.defaults.warehouse == "ConcurrentWH"

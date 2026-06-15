@@ -9,17 +9,31 @@ from fabric_dw.logging import _JsonFormatter, redact_auth_header, setup_logging
 
 
 class TestSetupLogging:
-    def test_debug_level_sets_root_logger_to_debug(self) -> None:
+    def test_debug_level_sets_fabric_dw_logger_to_debug(self) -> None:
         setup_logging(logging.DEBUG)
-        assert logging.getLogger().level == logging.DEBUG
+        assert logging.getLogger("fabric_dw").level == logging.DEBUG
 
-    def test_info_level_sets_root_logger_to_info(self) -> None:
+    def test_info_level_sets_fabric_dw_logger_to_info(self) -> None:
         setup_logging(logging.INFO)
-        assert logging.getLogger().level == logging.INFO
+        assert logging.getLogger("fabric_dw").level == logging.INFO
 
     def test_default_level_is_info(self) -> None:
         setup_logging()
-        assert logging.getLogger().level == logging.INFO
+        assert logging.getLogger("fabric_dw").level == logging.INFO
+
+    def test_does_not_mutate_root_logger(self) -> None:
+        """setup_logging must scope to fabric_dw, not the root logger (C11)."""
+        root = logging.getLogger()
+        original_handlers = list(root.handlers)
+        original_level = root.level
+        setup_logging(logging.DEBUG)
+        assert root.level == original_level
+        assert root.handlers == original_handlers
+
+    def test_fabric_dw_logger_does_not_propagate(self) -> None:
+        """fabric_dw logger must not propagate to root to avoid third-party handler leaks."""
+        setup_logging()
+        assert logging.getLogger("fabric_dw").propagate is False
 
     def test_output_is_valid_json(self) -> None:
         """The JSON formatter must produce parseable JSON with required keys."""
@@ -130,23 +144,38 @@ class TestJsonFormatterExtraFields:
         parsed = json.loads(formatter.format(record))
         assert parsed.get("count") == 42
 
-    def test_extra_non_standard_field_named_level_does_not_overwrite_core_key(self) -> None:
-        """An extra field named 'level' must not overwrite the core 'level' payload key.
+    def test_extra_colliding_core_key_preserved_with_prefix(self) -> None:
+        """An extra field named 'level' must not overwrite the core key but must not be lost.
 
-        'level' is NOT in _STANDARD_LOGRECORD_ATTRS (only 'levelname' is), so it
-        reaches the extras merge loop.  The guard ``if key not in payload`` must
-        prevent it from clobbering the real level value derived from levelname.
+        C12: instead of silently dropping the colliding extra, the formatter
+        must store it under the prefix ``extra_<name>`` so both the core value
+        and the extra value are visible in the structured log output.
         """
         formatter = _JsonFormatter()
-        # Inject a colliding 'level' key via extra — this is NOT a standard LogRecord
-        # attribute, so the extras loop will encounter it.  The guard must block it.
         record = self._make_record(msg="real message", extra={"level": "EVIL"})
         parsed = json.loads(formatter.format(record))
-        # Core key must retain the real level, not "EVIL"
-        assert parsed["level"] == "DEBUG", (
-            f"Guard failed: level was overwritten to {parsed['level']!r}"
-        )
+        # Core key retains the real log level.
+        assert parsed["level"] == "DEBUG", f"Core level was overwritten to {parsed['level']!r}"
         assert parsed["msg"] == "real message"
+        # The colliding extra must survive under the prefixed key — not be lost.
+        assert parsed.get("extra_level") == "EVIL", (
+            f"Colliding extra was not preserved under 'extra_level'; got {parsed!r}"
+        )
+
+    def test_extra_colliding_time_key_preserved_with_prefix(self) -> None:
+        """An extra field named 'time' must be stored as 'extra_time' (not lost).
+
+        'time' is a core payload key added by _JsonFormatter itself (not by
+        logging internals), so it is NOT a standard LogRecord attr and CAN be
+        injected via ``extra=``.
+        """
+        formatter = _JsonFormatter()
+        record = self._make_record(extra={"time": "2099-01-01T00:00:00Z"})
+        parsed = json.loads(formatter.format(record))
+        # Core 'time' key (from formatTime) must be present and is a real timestamp.
+        assert "time" in parsed
+        # The injected 'time' extra must survive under the prefixed key.
+        assert parsed.get("extra_time") == "2099-01-01T00:00:00Z"
 
     def test_non_serialisable_extra_coerced_to_str(self) -> None:
         """Non-JSON-serialisable extra values must be coerced to str, not raise."""

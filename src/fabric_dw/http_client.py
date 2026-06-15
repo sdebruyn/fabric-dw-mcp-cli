@@ -42,7 +42,7 @@ import http
 import json
 import logging
 import random
-import time as _time
+import time
 from collections.abc import AsyncIterator, Callable, Mapping
 from email.utils import parsedate_to_datetime
 from enum import StrEnum
@@ -305,7 +305,7 @@ class FabricHttpClient:
         """
         async with self._token_lock:
             token = self._tokens.get(scope)
-            if token is None or token.expires_on - _time.time() < self._token_refresh_buffer:
+            if token is None or token.expires_on - time.time() < self._token_refresh_buffer:
                 token = await self._credential.get_token(scope)
                 self._tokens[scope] = token
         return token.token
@@ -344,7 +344,7 @@ class FabricHttpClient:
             FabricServerError: On persistent 5xx errors.
         """
         url = f"{base}{path}"
-        combined_deadline = _time.monotonic() + self._combined_deadline_s
+        combined_deadline = time.monotonic() + self._combined_deadline_s
         return await self._request_with_retry(
             method, url, json=json, params=params, combined_deadline=combined_deadline
         )
@@ -408,7 +408,7 @@ class FabricHttpClient:
 
         while True:
             # Shared deadline check: abort if the combined retry budget is spent.
-            if combined_deadline is not None and _time.monotonic() >= combined_deadline:
+            if combined_deadline is not None and time.monotonic() >= combined_deadline:
                 raise RateLimitedError(
                     f"Combined retry deadline exceeded for {url}",
                     status=429,
@@ -444,7 +444,7 @@ class FabricHttpClient:
                 # This read-modify-write is safe on the single-threaded asyncio
                 # event loop because there is no ``await`` between the read and
                 # the write — the assignment is effectively atomic.
-                deadline = _time.monotonic() + wait_s
+                deadline = time.monotonic() + wait_s
                 self._pause_until = max(self._pause_until, deadline)
                 continue
 
@@ -475,7 +475,7 @@ class FabricHttpClient:
         # Use a while loop so that if another coroutine extends _pause_until while we
         # are sleeping, we re-check and sleep again rather than waking up early.
         while True:
-            now = _time.monotonic()
+            now = time.monotonic()
             remaining = self._pause_until - now
             if remaining <= 0:
                 break
@@ -487,7 +487,7 @@ class FabricHttpClient:
         headers = {"Authorization": f"Bearer {token}"}
 
         async with self._limiter:
-            t0 = _time.monotonic()
+            t0 = time.monotonic()
             resp = await self._http.request(
                 method,
                 url,
@@ -495,7 +495,7 @@ class FabricHttpClient:
                 json=json,
                 params=params,
             )
-            elapsed_ms = (_time.monotonic() - t0) * 1000
+            elapsed_ms = (time.monotonic() - t0) * 1000
 
         if _logger.isEnabledFor(logging.DEBUG):
             safe_headers = redact_auth_header(dict(headers))
@@ -584,7 +584,7 @@ class FabricHttpClient:
         first = True
         # Apply the same combined wall-clock deadline used by request() so that
         # 429 loops inside paginated fetches are time-bounded (C27).
-        combined_deadline = _time.monotonic() + self._combined_deadline_s
+        combined_deadline = time.monotonic() + self._combined_deadline_s
 
         while url is not None:
             # continuationUri is always a full URL; use _request_with_retry directly
@@ -631,7 +631,7 @@ class FabricHttpClient:
             FabricServerError: On 5xx errors or a non-dict response body.
         """
         result_url = f"{HttpBase.FABRIC}/operations/{operation_id}/result"
-        combined_deadline = _time.monotonic() + self._combined_deadline_s
+        combined_deadline = time.monotonic() + self._combined_deadline_s
         resp = await self._request_with_retry(
             "GET", result_url, combined_deadline=combined_deadline
         )
@@ -661,7 +661,7 @@ class FabricHttpClient:
             FabricServerError: If the operation status is ``"Failed"`` or the
                 timeout is exceeded.
         """
-        deadline = _time.monotonic() + timeout_s
+        deadline = time.monotonic() + timeout_s
         # Apply the combined wall-clock deadline so that 429 loops inside
         # each poll request are time-bounded (C27).  For poll_operation the
         # natural combined deadline is per-request: reset it each iteration so
@@ -674,12 +674,12 @@ class FabricHttpClient:
         # potentially hundreds of polls.
 
         while True:
-            if _time.monotonic() >= deadline:
+            if time.monotonic() >= deadline:
                 raise FabricServerError(f"LRO timed out after {timeout_s}s for {location}")
 
             # Fresh combined_deadline per poll GET so the 429-retry window is
             # scoped to each individual HTTP request, not the entire LRO wait.
-            poll_combined_deadline = _time.monotonic() + self._combined_deadline_s
+            poll_combined_deadline = time.monotonic() + self._combined_deadline_s
             resp = await self._request_with_retry(
                 "GET", location, combined_deadline=poll_combined_deadline
             )
