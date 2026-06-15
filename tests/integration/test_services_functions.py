@@ -288,6 +288,35 @@ async def test_create_function_full_roundtrip(
             await functions.drop_function(sql_target, schema, renamed)
 
 
+async def test_create_inline_tvf_and_list_by_kind(
+    warehouse_schema: tuple[SqlTarget, str],
+) -> None:
+    """create_function with an inline TVF body must return kind=inline_tvf
+    and list_functions with kind='inline_tvf' must include it."""
+    sql_target, schema = warehouse_schema
+    fn_name = "pytest_fns_inline_tvf"
+
+    try:
+        created = await functions.create_function(sql_target, schema, fn_name, _INLINE_TVF_BODY)
+        assert isinstance(created, FunctionDetails)
+        assert created.schema_name == schema
+        assert created.name == fn_name
+        assert created.kind == FunctionKind.INLINE_TVF
+
+        # Kind filter must include the TVF
+        tvf_fns = await functions.list_functions(sql_target, schema=schema, kind="inline-tvf")
+        assert any(f.name == fn_name for f in tvf_fns)
+        for f in tvf_fns:
+            assert f.kind == FunctionKind.INLINE_TVF
+
+        # Scalar filter must exclude it
+        scalar_fns = await functions.list_functions(sql_target, schema=schema, kind="scalar")
+        assert not any(f.name == fn_name for f in scalar_fns)
+    finally:
+        with contextlib.suppress(Exception):
+            await functions.drop_function(sql_target, schema, fn_name)
+
+
 # ---------------------------------------------------------------------------
 # SQL Analytics Endpoint — list is allowed (no endpoint guard on functions)
 # ---------------------------------------------------------------------------

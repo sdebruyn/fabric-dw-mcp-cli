@@ -72,7 +72,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 target,
                 schema=schema,
                 kind=validate_kind(kind),
-                mode=ctx.auth_mode,  # type: ignore[arg-type]
+                mode=ctx.auth_mode,
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc

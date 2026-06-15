@@ -254,8 +254,6 @@ async def list_functions(
     """
     if schema is not None:
         validate_identifier(schema)
-
-    if schema is not None:
         schema_filter = "s.name = ?"
         schema_params: list[object] = [schema]
     else:

@@ -64,7 +64,7 @@ async def list_cmd(
                 target,
                 schema=schema,
                 kind=validate_kind(kind),
-                mode=ctx.auth,  # type: ignore[arg-type]
+                mode=ctx.auth,
             )
             render(
                 [f.model_dump(by_alias=True, mode="json") for f in items],
