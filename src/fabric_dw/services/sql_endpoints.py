@@ -85,7 +85,7 @@ async def list_all_workspaces(http: FabricHttpClient) -> list[Warehouse]:
     async def _get_capacity_states_safe() -> dict[str, str] | None:
         try:
             return await get_capacity_states(http)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             _logger.debug(
                 "GET /v1/capacities failed (%s) — proactive capacity filtering unavailable; "
                 "falling back to defensive per-workspace error handling",
