@@ -276,8 +276,13 @@ class Resolver:
         # 4. Page through /v1/workspaces/{ws}/items, filter by kind + name.
         # Pass ``type`` parameter when a single item type is known so the
         # server returns fewer items (Fabric items API supports this filter).
+        # Reject unknown item_type values immediately (D22) rather than
+        # silently ignoring them, which would broaden the search scope.
+        if item_type and item_type not in _ITEM_TYPES:
+            msg = f"Unknown item_type {item_type!r}. Supported types: {sorted(_ITEM_TYPES)}"
+            raise FabricError(msg)
         list_params: dict[str, str] | None = None
-        if item_type and item_type in _ITEM_TYPES:
+        if item_type:
             list_params = {"type": item_type}
 
         async for raw_item in self._http.iter_paginated(

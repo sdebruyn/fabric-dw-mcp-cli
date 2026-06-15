@@ -11,6 +11,11 @@ Public API
 - :func:`run_statements`      — execute multiple DDL statements on ONE connection.
 - :func:`reset_pool`          — drain and physically close all pooled connections.
 
+__all__
+-------
+Only the public names listed below are part of the stable API.  Internal
+helpers (``_pool``, ``_driver``, ``_PooledConnection``, ...) are not exported.
+
 Connection Pool
 ---------------
 ``open_connection`` returns a thin wrapper whose ``.close()`` method returns
@@ -48,6 +53,22 @@ from typing import Any, Literal, Protocol
 
 from fabric_dw.auth import CredentialMode, get_sql_token_struct
 from fabric_dw.exceptions import AuthError, NotFoundError, PermissionDeniedError
+
+__all__ = [
+    "POOL_MAX_IDLE",
+    "POOL_MAX_IDLE_SECS",
+    "SQL_COPT_SS_ACCESS_TOKEN",
+    "SQL_TRANSIENT_MAX_RETRIES",
+    "SqlTarget",
+    "build_connection_string",
+    "is_snapshot_not_ready_error",
+    "is_transient_connection_error",
+    "map_driver_error",
+    "open_connection",
+    "reset_pool",
+    "run_query",
+    "run_statements",
+]
 
 # ---------------------------------------------------------------------------
 # Transient-retry configuration
@@ -171,9 +192,22 @@ _MODE_TO_AD_AUTH: dict[CredentialMode, str] = {
 }
 
 # Regex to extract the native SQL Server error number from a DDBC error string.
-# The ODBC driver embeds it as e.g. "[SQL Server]Login failed ... Error: 18456"
-# or "[SQL Server] ... (229)".
-_NATIVE_ERROR_RE = re.compile(r"\b(?:Error:\s*|error\s+)(\d+)\b|\((\d+)\)", re.IGNORECASE)
+# The ODBC driver embeds it in two forms:
+#   - "Error: 18456" or "error 229"   → captured by the first alternative.
+#   - "[SQL Server] ... (229)" where the parenthesised number is anchored to an
+#     explicit SQL-Server/Msg/Error context word so that incidental numbers in
+#     unrelated text (port numbers, byte counts, row counts) are not matched.
+#
+# Note: the second alternative deliberately reuses the word "Error" (distinct
+# from "Error:" with the colon+space in alt-1) to match patterns like
+# "Error (229)".  Since re.finditer processes left-to-right and the code
+# returns on the first recognised number, first-match-wins is intentional —
+# there is no ambiguity between the two alternatives in practice.
+_NATIVE_ERROR_RE = re.compile(
+    r"\b(?:Error:\s*|error\s+)(\d+)\b"
+    r"|(?:SQL\s+Server|Msg|Error)\b[^(]*\((\d+)\)",
+    re.IGNORECASE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +220,8 @@ class _Cursor(Protocol):
     rowcount: int
 
     def execute(self, sql: str, params: Sequence[object] | None = None) -> None: ...
+
+    def fetchone(self) -> tuple[Any, ...] | None: ...
 
     def fetchall(self) -> list[tuple[Any, ...]]: ...
 
@@ -200,6 +236,8 @@ class _Connection(Protocol):
     def cursor(self) -> _Cursor: ...
 
     def commit(self) -> None: ...
+
+    def rollback(self) -> None: ...
 
     def close(self) -> None: ...
 
@@ -355,17 +393,37 @@ def _pool_checkout(key: _PoolKey) -> Any | None:  # noqa: ANN401
 
 
 def _pool_checkin(key: _PoolKey, conn: Any) -> None:  # noqa: ANN401
-    """Return *conn* to the pool if there is room, else physically close it."""
-    do_close = False
+    """Return *conn* to the pool if there is room, else physically close it.
+
+    Also evicts expired or dead connections from the entire slot list on
+    every checkin (D06 fix) so stale bottom-layer connections do not linger
+    indefinitely even when only the top of the LIFO stack is ever reused.
+    """
+    now = _pool_time()
+    deadline = POOL_MAX_IDLE_SECS
+    to_close: list[Any] = []
+
     with _pool_lock:
         slots = _pool.setdefault(key, [])
+        # Sweep the whole list for expired / dead entries before deciding
+        # whether to add the incoming connection.  Iterate in reverse to
+        # pop-in-place safely; build a new list to avoid O(n²) pops.
+        live: list[_PoolSlot] = []
+        for slot_conn, last_used in slots:
+            if now - last_used > deadline or not _is_alive(slot_conn):
+                to_close.append(slot_conn)
+            else:
+                live.append((slot_conn, last_used))
+        slots[:] = live
+
         if len(slots) >= POOL_MAX_IDLE:
-            do_close = True
+            to_close.append(conn)
         else:
-            slots.append((conn, _pool_time()))
-    if do_close:
+            slots.append((conn, now))
+
+    for dead in to_close:
         with contextlib.suppress(Exception):
-            conn.close()
+            dead.close()
 
 
 # ---------------------------------------------------------------------------
@@ -393,6 +451,9 @@ class _PooledConnection:
         # Set to True after an exception during execute so that the connection
         # is NOT returned to the pool (unknown transaction state).
         self._discard: bool = False
+        # Guard against double-close (e.g. explicit close in retry path + outer
+        # finally).  Once True, subsequent close() calls are no-ops.
+        self._closed: bool = False
 
     # ------------------------------------------------------------------ #
     # Forward _Connection protocol methods to the underlying object.      #
@@ -404,11 +465,39 @@ class _PooledConnection:
     def commit(self) -> None:
         self._underlying.commit()
 
+    def rollback(self) -> None:
+        self._underlying.rollback()
+
+    def mark_discard(self) -> None:
+        """Mark this connection for physical close instead of pool return.
+
+        Call after any error that leaves the connection in an unknown state
+        (e.g. mid-execute failure, open transaction with unknown content).
+        Once marked, ``.close()`` physically closes the underlying socket and
+        does NOT return it to the pool.
+        """
+        self._discard = True
+
     def close(self) -> None:
-        """Return to pool or physically close, depending on state and config."""
+        """Return to pool or physically close, depending on state and config.
+
+        Idempotent: a second call is a no-op.  This prevents the underlying TDS
+        socket from receiving ``close()`` twice when the execute-retry path
+        calls ``conn.close()`` explicitly and the outer ``finally`` also closes.
+
+        Before returning to the pool, any open implicit transaction is rolled
+        back so the next caller starts with a clean transaction state.
+        """
+        if self._closed:
+            return
+        self._closed = True
         if self._discard or not _pool_enabled():
             self._underlying.close()
         else:
+            # Roll back any open implicit transaction before pool return so
+            # the next lender starts with a clean state (D23).
+            with contextlib.suppress(Exception):
+                self._underlying.rollback()
             _pool_checkin(self._key, self._underlying)
 
     # Convenience accessor used by pool-specific tests.
@@ -518,11 +607,11 @@ def open_connection(
             {SQL_COPT_SS_ACCESS_TOKEN: token_struct} if use_token else None
         )
         raw_conn: Any = _get_mssql().connect(cs, autocommit=True, attrs_before=attrs)
-        # Wrap in _PooledConnection with a sentinel key; _discard=True ensures
+        # Wrap in _PooledConnection with a sentinel key; mark_discard() ensures
         # .close() physically closes the connection rather than pooling it.
         key = _make_pool_key(target, mode)
         wrapped = _PooledConnection(raw_conn, key)
-        wrapped._discard = True
+        wrapped.mark_discard()
         return wrapped
 
     key = _make_pool_key(target, mode)
@@ -649,7 +738,67 @@ def is_snapshot_not_ready_error(exc: BaseException) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def run_query(  # noqa: PLR0912,PLR0913
+def _with_connect_retry(
+    target: SqlTarget,
+    mode: CredentialMode,
+    autocommit: bool,  # noqa: FBT001
+) -> tuple[_Connection, int, int, BaseException | None]:
+    """Attempt to open a connection, retrying on transient connect failures.
+
+    This is a shared helper for :func:`run_query` and :func:`run_statements`
+    (D08 - DRY extraction).  It encapsulates the bounded transient-retry loop
+    for the **connect phase only** — the execute phase is NOT covered here.
+
+    Retry boundary (D10)
+    --------------------
+    Transient errors raised by ``open_connection`` are always safe to retry
+    because no statement has been sent to the server yet.  Transient errors
+    raised *after* ``cursor.execute`` has been called may indicate that the
+    server already received and applied the statement — retrying such errors
+    for non-idempotent DML would risk duplicate execution.
+
+    Args:
+        target: The :class:`SqlTarget` to connect to.
+        mode: The credential mode for Entra authentication.
+        autocommit: Whether to open with ODBC-level autocommit.
+
+    Returns:
+        A tuple ``(conn, attempt, max_attempts, last_exc)`` where:
+        - ``conn`` is the open connection (ready to use).
+        - ``attempt`` is the zero-based attempt index that succeeded.
+        - ``max_attempts`` is the total allowed attempts.
+        - ``last_exc`` is the last transient exception seen before success
+          (``None`` on first-attempt success).
+
+    Raises:
+        Any non-transient exception from ``open_connection`` immediately.
+        The last transient exception if all attempts are exhausted.
+    """
+    max_attempts = 1 + max(0, SQL_TRANSIENT_MAX_RETRIES)
+    last_exc: BaseException | None = None
+    for attempt in range(max_attempts):
+        if attempt > 0:
+            # Back off before the next attempt.  _TRANSIENT_RETRY_DELAYS is
+            # indexed from 0 (= delay before attempt 2); clamp to last value.
+            delay = _TRANSIENT_RETRY_DELAYS[min(attempt - 1, len(_TRANSIENT_RETRY_DELAYS) - 1)]
+            time.sleep(delay)
+
+        try:
+            conn = open_connection(target, mode=mode, autocommit=autocommit)
+        except Exception as exc:
+            if is_transient_connection_error(exc) and attempt < max_attempts - 1:
+                last_exc = exc
+                continue
+            raise
+        else:
+            return conn, attempt, max_attempts, last_exc
+
+    # Exhausted all attempts — re-raise the last transient error.
+    assert last_exc is not None  # noqa: S101  # guaranteed: loop ran ≥1 time
+    raise last_exc  # pragma: no cover
+
+
+def run_query(  # noqa: PLR0913
     target: SqlTarget,
     statement: str,
     *,
@@ -664,10 +813,26 @@ def run_query(  # noqa: PLR0912,PLR0913
     This is the single TDS execute-and-fetch helper that replaces ~20 copies of
     the open-connection / cursor / execute / map-error pattern across services.
 
-    The ``mssql_python`` driver uses ``pyformat`` paramstyle (``%(name)s``) but
-    also accepts qmark (``?``) style.  *params* is unpacked as variadic positional
-    arguments because the driver's ``execute`` signature is
-    ``execute(sql, *parameters)``.
+    The ``mssql_python`` driver accepts a sequence of parameter values via
+    ``execute(sql, params)`` where *params* is a ``Sequence`` (list or tuple).
+    Use ``?`` placeholders in *statement*.
+
+    Retry boundary (D10)
+    --------------------
+    Transient errors during the **connect** phase (``open_connection``) are
+    always safe to retry — no statement has reached the server yet.
+
+    Transient errors during the **execute** phase are only retried when
+    ``fetch != "none"`` (i.e. the statement is a read-only SELECT or similar).
+    DML / DDL statements (``fetch="none"``) are **never** retried after
+    ``cursor.execute`` has begun, because the server may have already applied
+    the change — retrying non-idempotent statements could cause duplicate rows
+    or double-DDL errors.
+
+    The execute-phase retry fires **at most once**: one extra connect + execute
+    attempt, regardless of ``SQL_TRANSIENT_MAX_RETRIES``.  If that second
+    attempt also fails, the error is propagated immediately — there is no
+    execute-phase retry loop.
 
     Args:
         target: The :class:`SqlTarget` identifying the warehouse.
@@ -676,17 +841,16 @@ def run_query(  # noqa: PLR0912,PLR0913
             placeholders in *statement*.  Identifiers (schema/table names) MUST
             be bracket-quoted via :func:`~fabric_dw.identifiers.quote_identifier`
             and validated via :func:`~fabric_dw.identifiers.validate_identifier`
-            - they cannot be bound as parameters.
+            — they cannot be bound as parameters.
         mode: The credential mode for Entra authentication.
         commit: When ``True``, call ``conn.commit()`` after execute (for DDL/DML).
             Ignored when ``autocommit=True`` (the driver commits automatically).
         fetch: One of:
-            - ``"all"`` (default) - call ``fetchall()`` and return
+            - ``"all"`` (default) — call ``fetchall()`` and return
               ``(columns, rows)``; columns are derived from ``cursor.description``.
-            - ``"one"`` - call ``fetchone()`` (not yet used but available for
-              future point-lookup helpers); returns ``(columns, [row])`` or
-              ``([], [])`` when no row.
-            - ``"none"`` - do not fetch; returns ``([], [])``.
+            - ``"one"`` — call ``fetchone()``; returns ``(columns, [row])``
+              or ``(columns, [])`` when no row is found.
+            - ``"none"`` — do not fetch; returns ``([], [])``.
 
         autocommit: When ``True``, open the connection with ODBC-level autocommit
             so the driver does not wrap the statement in an explicit transaction.
@@ -704,75 +868,65 @@ def run_query(  # noqa: PLR0912,PLR0913
             error 208, invalid object name / base table or view not found).
         Exception: Any other driver error is propagated unchanged.
     """
-    # Bounded transient retry: retry ONLY on connection-level TDS drops (not on
-    # real SQL/auth errors).  SQL_TRANSIENT_MAX_RETRIES=0 disables the loop.
-    max_attempts = 1 + max(0, SQL_TRANSIENT_MAX_RETRIES)
-    last_exc: BaseException | None = None
-    for attempt in range(max_attempts):
-        if attempt > 0:
-            # Back off before the next attempt.  _TRANSIENT_RETRY_DELAYS is
-            # indexed from 0 (= delay before attempt 2); clamp to last value.
-            delay = _TRANSIENT_RETRY_DELAYS[min(attempt - 1, len(_TRANSIENT_RETRY_DELAYS) - 1)]
-            time.sleep(delay)
+    # Whether execute-phase transient errors are safe to retry.
+    # Only read-only fetches (fetch != "none") can safely be retried after
+    # execute has started — DML could have already been applied server-side.
+    execute_retry_allowed = fetch != "none"
 
+    def _execute_once(c: _Connection) -> tuple[list[str], list[tuple[Any, ...]]]:
+        """Run the statement on *c* and return (cols, rows)."""
+        cur = c.cursor()
+        if params:
+            cur.execute(statement, params)
+        else:
+            cur.execute(statement)
+        if commit and not autocommit:
+            c.commit()
+
+        if fetch == "none":
+            return [], []
+
+        cols = [col[0] for col in (cur.description or [])]
+
+        if fetch == "one":
+            row = cur.fetchone()
+            return cols, ([row] if row is not None else [])
+
+        rows: list[tuple[Any, ...]] = cur.fetchall()
+        return cols, rows
+
+    conn, attempt, max_attempts, _ = _with_connect_retry(target, mode, autocommit)
+    try:
         try:
-            conn = open_connection(target, mode=mode, autocommit=autocommit)
+            return _execute_once(conn)
         except Exception as exc:
-            # open_connection itself may raise on connect failure (TCP timeout,
-            # TLS handshake error, etc.).  Retry on transient errors, just as
-            # run_statements does — the dead connection is never put into the
-            # pool when open_connection raises, so there is nothing to discard.
-            if is_transient_connection_error(exc) and attempt < max_attempts - 1:
-                last_exc = exc
-                continue
+            # Mark tainted so close() physically closes instead of pooling.
+            if isinstance(conn, _PooledConnection):
+                conn.mark_discard()
+            mapped = map_driver_error(exc)
+            if mapped:
+                # Auth/permission errors are never transient — raise immediately.
+                raise mapped from exc
+            # Only retry execute-phase transient errors when the statement is
+            # read-only (fetch != "none").  Non-idempotent DML must not be
+            # re-executed (D10 retry boundary).
+            if (
+                execute_retry_allowed
+                and is_transient_connection_error(exc)
+                and attempt < max_attempts - 1
+            ):
+                # Retry: close the tainted connection and open a fresh one.
+                # The outer finally also calls conn.close(); _PooledConnection.close()
+                # is idempotent (_closed guard) so the second call is a no-op.
+                conn.close()
+                conn2, _a, _m, _ = _with_connect_retry(target, mode, autocommit)
+                try:
+                    return _execute_once(conn2)
+                finally:
+                    conn2.close()
             raise
-
-        try:
-            cursor = conn.cursor()
-            try:
-                if params:
-                    cursor.execute(statement, params)
-                else:
-                    cursor.execute(statement)
-                if commit and not autocommit:
-                    conn.commit()
-
-                if fetch == "none":
-                    return [], []
-
-                cols = [c[0] for c in (cursor.description or [])]
-
-                if fetch == "one":
-                    row = cursor.fetchone()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-                    return cols, ([row] if row is not None else [])
-
-                # Default: fetch all rows.
-                rows: list[tuple[Any, ...]] = cursor.fetchall()
-            except Exception as exc:
-                # Mark tainted so close() physically closes instead of pooling.
-                # setattr is safe for both _PooledConnection and mock objects.
-                if isinstance(conn, _PooledConnection):
-                    conn._discard = True
-                mapped = map_driver_error(exc)
-                if mapped:
-                    # Auth/permission errors are never transient — raise immediately.
-                    raise mapped from exc
-                # Retry only on recognised transient connection drops; re-raise
-                # everything else (SQL syntax, deadlocks, programming errors …).
-                if is_transient_connection_error(exc) and attempt < max_attempts - 1:
-                    last_exc = exc
-                    continue
-                raise
-            else:
-                return cols, rows
-        finally:
-            conn.close()
-
-    # Unreachable in normal flow but satisfies the type-checker and raises the
-    # last transient error if somehow the loop exits without returning.
-    if last_exc is not None:
-        raise last_exc  # pragma: no cover
-    return [], []  # pragma: no cover
+    finally:
+        conn.close()
 
 
 def run_statements(
@@ -789,6 +943,14 @@ def run_statements(
     overhead that arises when opening a new connection per statement (relevant
     for ``_drop_schema_objects`` with many tables/views).
 
+    Retry boundary
+    --------------
+    Transient errors during the **connect** phase (``open_connection``) are
+    retried automatically (up to ``SQL_TRANSIENT_MAX_RETRIES`` times).
+    Transient errors that occur *after* a statement has begun executing are
+    **not** retried — the connection state is unknown and re-executing DDL/DML
+    could cause duplicates or inconsistency.
+
     Args:
         target: The :class:`SqlTarget` identifying the warehouse.
         statements: Sequence of SQL strings to execute in order.
@@ -804,44 +966,23 @@ def run_statements(
         AuthError: If the driver reports an authentication failure.
         Exception: Any other driver error is propagated unchanged.
     """
-    # Bounded transient retry: retry ONLY on connection-level TDS drops that
-    # occur during the *connect* phase (before any statement executes).
-    # Per-statement errors after a successful connect are NOT retried here
-    # because the connection state is unknown once a statement has started.
-    max_attempts = 1 + max(0, SQL_TRANSIENT_MAX_RETRIES)
-    last_exc: BaseException | None = None
-    for attempt in range(max_attempts):
-        if attempt > 0:
-            delay = _TRANSIENT_RETRY_DELAYS[min(attempt - 1, len(_TRANSIENT_RETRY_DELAYS) - 1)]
-            time.sleep(delay)
+    conn, _attempt, _max, _ = _with_connect_retry(target, mode, autocommit)
 
-        try:
-            conn = open_connection(target, mode=mode, autocommit=autocommit)
-        except Exception as exc:
-            # open_connection itself may raise on connect failure.
-            if is_transient_connection_error(exc) and attempt < max_attempts - 1:
-                last_exc = exc
-                continue
-            raise
-
-        cursor = conn.cursor()
-        try:
-            for stmt in statements:
-                try:
-                    cursor.execute(stmt)
-                    if not autocommit:
-                        conn.commit()
-                except Exception as exc:
-                    if isinstance(conn, _PooledConnection):
-                        conn._discard = True
-                    mapped = map_driver_error(exc)
-                    if mapped:
-                        raise mapped from exc
-                    raise
-            # All statements succeeded — return (outer loop exits naturally).
-            return
-        finally:
-            conn.close()
-
-    if last_exc is not None:
-        raise last_exc  # pragma: no cover
+    cursor = conn.cursor()
+    try:
+        for stmt in statements:
+            try:
+                cursor.execute(stmt)
+                if not autocommit:
+                    conn.commit()
+            except Exception as exc:
+                if isinstance(conn, _PooledConnection):
+                    conn.mark_discard()
+                mapped = map_driver_error(exc)
+                if mapped:
+                    raise mapped from exc
+                raise
+        # All statements succeeded — return (outer try/finally closes conn).
+        return
+    finally:
+        conn.close()

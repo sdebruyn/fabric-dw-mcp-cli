@@ -68,13 +68,18 @@ def quote_identifier(name: str) -> str:
     """Return *name* bracket-quoted for use in a SQL statement.
 
     Escapes any ``]`` in *name* as ``]]`` (the standard SQL Server bracket-quote
-    escape) before wrapping in ``[…]``.  The caller is responsible for ensuring
-    *name* was validated first via :func:`validate_identifier` — since
-    :func:`validate_identifier` already rejects ``]``, the escaping step is a
-    belt-and-suspenders guard that allows this function to be used independently.
+    escape) before wrapping in ``[…]``.
+
+    .. warning::
+        Always call :func:`validate_identifier` **before** calling this
+        function.  Quoting alone does not prevent injection via newlines, NUL
+        bytes, or names longer than 128 characters — all of which
+        :func:`validate_identifier` rejects.  The ``]``-escaping here is a
+        defence-in-depth measure, not a substitute for validation.
 
     Args:
-        name: The raw identifier to quote.
+        name: The raw identifier to quote.  Should have already been validated
+            via :func:`validate_identifier`.
 
     Returns:
         The bracket-quoted identifier string, e.g. ``"[my_table]"``.
@@ -84,18 +89,26 @@ def quote_identifier(name: str) -> str:
 
 
 def parse_qualified_name(qualified: str) -> tuple[str, str]:
-    """Split *qualified* into ``(schema, object_name)`` on the first dot.
+    """Split *qualified* into ``(schema, object_name)`` on the **first** dot.
 
     Only unquoted ``schema.object`` notation is supported.  Bracket-quoted
     names containing a literal dot (e.g. ``[a.b].[c]``) are **not** parsed
     correctly by this function — callers that need to handle such names must
     pre-split them before calling this helper.
 
+    Multi-dot inputs (e.g. ``"a.b.c"``) split on the *first* dot, so the
+    returned object part may itself contain a dot (``"b.c"`` in the example).
+    Callers should validate each returned part via :func:`validate_identifier`
+    before using it in a SQL statement.
+
     Args:
-        qualified: A qualified name of the form ``schema.object``.
+        qualified: A qualified name of the form ``schema.object``.  The caller
+            is responsible for validating each part via
+            :func:`validate_identifier` before embedding it in SQL.
 
     Returns:
-        A ``(schema, object_name)`` tuple.
+        A ``(schema, object_name)`` tuple.  **Neither part is validated** —
+        call :func:`validate_identifier` on each before SQL use.
 
     Raises:
         ValueError: If *qualified* does not contain a dot (clear message is

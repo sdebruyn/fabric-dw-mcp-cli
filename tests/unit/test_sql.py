@@ -355,8 +355,16 @@ class TestMapDriverError:
         assert isinstance(result, PermissionDeniedError)
 
     def test_native_error_230_returns_permission_denied(self) -> None:
-        """Error number 230 (INSERT permission denied) -> PermissionDeniedError."""
-        exc = self._make_driver_exc("some driver error", "(230) INSERT permission denied")
+        """Error number 230 (INSERT permission denied) -> PermissionDeniedError.
+
+        D03: parenthesised form requires an anchor word (SQL Server/Msg/Error)
+        before the parenthesised number so that incidental numbers in port or
+        byte-count text are not mis-matched.
+        """
+        exc = self._make_driver_exc(
+            "some driver error",
+            "[SQL Server]INSERT permission denied. Error (230)",
+        )
         result = map_driver_error(exc)
         assert isinstance(result, PermissionDeniedError)
 
@@ -393,8 +401,15 @@ class TestMapDriverError:
         assert isinstance(result, NotFoundError)
 
     def test_native_error_208_parenthesised_returns_not_found(self) -> None:
-        """Error number 208 in parenthesised form -> NotFoundError."""
-        exc = self._make_driver_exc("some driver error", "(208) Invalid object name")
+        """Error number 208 in parenthesised form -> NotFoundError.
+
+        D03: parenthesised form requires a SQL Server/Msg/Error anchor word
+        to avoid matching incidental numbers (port numbers, row counts, etc.).
+        """
+        exc = self._make_driver_exc(
+            "some driver error",
+            "[SQL Server] Error (208) Invalid object name",
+        )
         result = map_driver_error(exc)
         assert isinstance(result, NotFoundError)
 
@@ -1003,7 +1018,19 @@ class TestTransientRetry:
     def test_run_query_raises_after_all_retries_exhausted(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """When all retry attempts hit transient errors the last error is re-raised."""
+        """When transient execute errors persist the last error is re-raised.
+
+        D10 boundary: execute-phase transient errors for read-only fetches get
+        exactly ONE extra connect+execute attempt (not a full retry loop).
+        With SQL_TRANSIENT_MAX_RETRIES=2 and both connects succeeding, the
+        sequence is:
+          1. _with_connect_retry -> conn (connect call 1)
+          2. _execute_once(conn) raises transient
+          3. execute_retry_allowed=True, attempt=0 < max_attempts-1=2 -> retry
+          4. _with_connect_retry -> conn2 (connect call 2)
+          5. _execute_once(conn2) raises transient -> re-raise (no third attempt)
+        Total connect calls: 2.
+        """
         original_retries = _sql_module.SQL_TRANSIENT_MAX_RETRIES
         _sql_module.SQL_TRANSIENT_MAX_RETRIES = 2
         try:
@@ -1018,8 +1045,8 @@ class TestTransientRetry:
             with pytest.raises(Exception, match="communication link failure"):
                 run_query(_make_target(), "SELECT 1")
 
-            # 1 original + 2 retries = 3 connect calls
-            assert mock_mssql.connect.call_count == 3
+            # 1 initial + 1 execute-phase retry = 2 connect calls (D10 boundary)
+            assert mock_mssql.connect.call_count == 2
         finally:
             _sql_module.SQL_TRANSIENT_MAX_RETRIES = original_retries
 
@@ -1307,3 +1334,308 @@ class TestOpenConnectionOidcTokenInjection:
         assert token_call_count == 1, "get_sql_token_struct must NOT be called on pool hit"
         assert conn2._raw is mock_conn  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         conn2.close()
+
+
+# ---------------------------------------------------------------------------
+# D01 — params contract: sequence passed as second positional arg, not unpacked
+# ---------------------------------------------------------------------------
+
+
+class TestParamsContract:
+    """D01: run_query must pass params as a sequence (not *params) to execute()."""
+
+    def test_empty_params_sequence_is_ignored(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """An empty sequence is treated the same as None -- execute called with SQL only."""
+        mock_mssql, _, mock_cursor = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        run_query(_make_target(), "SELECT 1", params=[])
+
+        # Empty sequence is falsy -- execute must be called WITHOUT params.
+        mock_cursor.execute.assert_called_once_with("SELECT 1")
+
+    def test_tuple_params_passed_as_sequence(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Tuple params are accepted and forwarded verbatim (not unpacked)."""
+        mock_mssql, _, mock_cursor = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        run_query(_make_target(), "SELECT * FROM t WHERE id = ?", params=("abc",))
+
+        # The tuple must arrive as the second argument, not as *args.
+        mock_cursor.execute.assert_called_once_with("SELECT * FROM t WHERE id = ?", ("abc",))
+
+    def test_list_params_passed_as_sequence(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """List params are accepted and forwarded verbatim."""
+        mock_mssql, _, mock_cursor = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        run_query(_make_target(), "SELECT * FROM t WHERE a=? AND b=?", params=[1, 2])
+
+        mock_cursor.execute.assert_called_once_with("SELECT * FROM t WHERE a=? AND b=?", [1, 2])
+
+
+# ---------------------------------------------------------------------------
+# D03 -- _NATIVE_ERROR_RE: incidental numbers must not be matched
+# ---------------------------------------------------------------------------
+
+
+class TestNativeErrorRegex:
+    """D03: the tightened regex must not match incidental numbers in error messages."""
+
+    @staticmethod
+    def _make_driver_exc(msg: str, ddbc_error: str) -> BaseException:
+        exc = MagicMock(spec=Exception)
+        exc.__str__ = MagicMock(return_value=msg)
+        exc.ddbc_error = ddbc_error
+        return exc  # type: ignore[return-value]
+
+    def test_port_number_in_ddbc_not_matched(self) -> None:
+        """A bare port number like '(1433)' must NOT trigger error-number matching."""
+        exc = self._make_driver_exc(
+            "connection failed",
+            "TCP Provider: Error code 0x68 (port 1433)",
+        )
+        # 1433 is not in any error-number set; result should be None (no false match).
+        # But even if 1433 were in a set, we test the regex doesn't match it here
+        # because '(port 1433)' contains text inside the parens.
+        result = map_driver_error(exc)
+        assert result is None
+
+    def test_row_count_in_parentheses_not_matched(self) -> None:
+        """A row count like '(100 rows affected)' must not match."""
+        exc = self._make_driver_exc(
+            "query completed",
+            "(100 rows affected)",
+        )
+        result = map_driver_error(exc)
+        assert result is None
+
+    def test_anchored_sql_server_parens_form_matches(self) -> None:
+        """The tightened regex still matches '[SQL Server] ... Error (229)'."""
+        exc = self._make_driver_exc(
+            "permission error",
+            "[SQL Server] SELECT permission denied. Error (229)",
+        )
+        result = map_driver_error(exc)
+        assert isinstance(result, PermissionDeniedError)
+
+    def test_bare_error_colon_form_matches(self) -> None:
+        """'Error: 229' first-alternative form still matches."""
+        exc = self._make_driver_exc("some error", "Error: 229 SELECT permission denied")
+        result = map_driver_error(exc)
+        assert isinstance(result, PermissionDeniedError)
+
+    def test_bare_parenthesised_number_not_matched(self) -> None:
+        """'(230) text' with no anchor word must NOT match the tightened regex."""
+        exc = self._make_driver_exc("some driver error", "(230) INSERT permission denied")
+        # D03: bare (N) without SQL Server/Msg/Error anchor is rejected.
+        # However the string fallback is NOT invoked here because ddbc_error is set.
+        # The native-number strategy finds no match; fragment strategy uses str(exc)
+        # which says "some driver error" -- no permission fragment -- so result is None.
+        result = map_driver_error(exc)
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# D06 -- pool checkin evicts stale entries from the full slot list
+# ---------------------------------------------------------------------------
+
+
+class TestPoolCheckinEvictsStale:
+    """D06: _pool_checkin must sweep and evict expired connections from the entire slot list."""
+
+    @pytest.fixture(autouse=True)
+    def _enable_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("FABRIC_SQL_POOL", "1")
+        reset_pool()
+
+    def test_stale_bottom_layer_evicted_on_checkin(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A connection buried below the top of the LIFO stack is evicted on next checkin.
+
+        Scenario:
+        1. Open conn_a and conn_b (both from the same key).
+        2. Close conn_a (checkin at t=0) -> slot list = [(conn_a, 0)].
+        3. Close conn_b (checkin at t=expired+5) -> sweep evicts conn_a;
+           adds conn_b -> slot list = [(conn_b, expired+5)].
+        """
+        import fabric_dw.sql as sql_mod  # noqa: PLC0415
+        from fabric_dw.sql import _pool, _pool_lock, open_connection  # noqa: PLC0415
+
+        mock_mssql, _, _ = _make_mock_mssql()
+        conn_a = MagicMock()
+        conn_b = MagicMock()
+        mock_mssql.connect.side_effect = [conn_a, conn_b]
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        idle_limit = sql_mod.POOL_MAX_IDLE_SECS
+        # _pool_time is called for:
+        #   checkout 1 (pool empty): t=1.0 (irrelevant -- no stored timestamp)
+        #   checkout 2 (pool empty): t=2.0 (irrelevant)
+        #   checkin conn_a:          t=0.0  <- stored as last_used
+        #   checkin conn_b (now):    t=idle_limit+5.0
+        #     -> age of conn_a = idle_limit+5.0 > idle_limit => evict
+        fake_times = iter([1.0, 2.0, 0.0, idle_limit + 5.0])
+        monkeypatch.setattr(sql_mod, "_pool_time", lambda: next(fake_times))
+
+        target = _make_target()
+        wrap_a = open_connection(target)
+        wrap_b = open_connection(target)
+
+        wrap_a.close()  # checkin at t=0.0
+        wrap_b.close()  # checkin at t=idle_limit+5 -> sweeps and evicts conn_a
+
+        with _pool_lock:
+            key = ("ws-1", "db-1", "default")
+            slots = _pool.get(key, [])
+            pool_conns = [s[0] for s in slots]
+
+        assert conn_a not in pool_conns, "stale conn_a should have been evicted on checkin"
+        assert conn_b in pool_conns, "fresh conn_b should remain in pool"
+        conn_a.close.assert_called_once()  # physically closed
+
+
+# ---------------------------------------------------------------------------
+# D10 -- retry boundary: DML (fetch="none") must NOT be retried on execute error
+# ---------------------------------------------------------------------------
+
+
+class TestD10RetryBoundary:
+    """D10: execute-phase transient errors for DML must not trigger a retry."""
+
+    @pytest.fixture(autouse=True)
+    def _disable_sleep(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(_sql_module, "time", _make_fake_time_module())
+
+    def test_dml_not_retried_on_transient_execute_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """fetch='none' (DML/DDL) must NOT be retried after cursor.execute raises transient.
+
+        If the server received the INSERT before the connection dropped, retrying
+        would cause a duplicate row.  The error must be re-raised immediately.
+        """
+        mock_mssql, _, _ = _make_mock_mssql()
+        bad_cursor = MagicMock()
+        bad_cursor.execute.side_effect = Exception("communication link failure")
+        bad_conn = MagicMock()
+        bad_conn.cursor.return_value = bad_cursor
+        mock_mssql.connect.return_value = bad_conn
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with pytest.raises(Exception, match="communication link failure"):
+            run_query(_make_target(), "INSERT INTO t VALUES (1)", fetch="none")
+
+        # Must NOT retry -- exactly 1 connect attempt.
+        assert mock_mssql.connect.call_count == 1, (
+            "DML (fetch='none') must not retry on execute-phase transient errors"
+        )
+
+    def test_select_retried_once_on_transient_execute_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """fetch='all' (SELECT) IS allowed a single execute-phase retry."""
+        mock_mssql, _, _ = _make_mock_mssql()
+
+        bad_cursor = MagicMock()
+        bad_cursor.execute.side_effect = Exception("communication link failure")
+        bad_conn = MagicMock()
+        bad_conn.cursor.return_value = bad_cursor
+
+        good_cursor = MagicMock()
+        good_cursor.description = [("n",)]
+        good_cursor.fetchall.return_value = [(42,)]
+        good_conn = MagicMock()
+        good_conn.cursor.return_value = good_cursor
+
+        mock_mssql.connect.side_effect = [bad_conn, good_conn]
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        _cols, rows = run_query(_make_target(), "SELECT 1")
+
+        assert rows == [(42,)]
+        assert mock_mssql.connect.call_count == 2
+        # _PooledConnection.close() is idempotent; despite being called once
+        # explicitly (retry path) and once in the outer finally, the underlying
+        # bad_conn must receive close() exactly once.
+        bad_conn.close.assert_called_once()
+
+    def test_fetch_one_retried_once_on_transient_execute_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """fetch='one' is also a read-only path and gets the single execute-phase retry."""
+        mock_mssql, _, _ = _make_mock_mssql()
+
+        bad_cursor = MagicMock()
+        bad_cursor.execute.side_effect = Exception("communication link failure")
+        bad_conn = MagicMock()
+        bad_conn.cursor.return_value = bad_cursor
+
+        good_cursor = MagicMock()
+        good_cursor.description = [("n",)]
+        good_cursor.fetchone.return_value = (99,)
+        good_conn = MagicMock()
+        good_conn.cursor.return_value = good_cursor
+
+        mock_mssql.connect.side_effect = [bad_conn, good_conn]
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        _cols, rows = run_query(_make_target(), "SELECT TOP 1 n FROM t", fetch="one")
+
+        assert rows == [(99,)]
+        assert mock_mssql.connect.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# D23 -- pool reset: rollback called before checkin so next caller starts clean
+# ---------------------------------------------------------------------------
+
+
+class TestD23PoolRollbackOnReturn:
+    """D23: _PooledConnection.close() must call rollback() before returning to pool."""
+
+    @pytest.fixture(autouse=True)
+    def _enable_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("FABRIC_SQL_POOL", "1")
+        reset_pool()
+
+    def test_rollback_called_before_checkin(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Closing a healthy pooled connection must call rollback() on the underlying conn."""
+        mock_mssql, mock_conn, _ = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        from fabric_dw.sql import open_connection  # noqa: PLC0415
+
+        conn = open_connection(_make_target())
+        conn.close()
+
+        mock_conn.rollback.assert_called_once()
+        # The underlying must NOT have been physically closed (it went to pool).
+        mock_conn.close.assert_not_called()
+
+    def test_rollback_not_called_when_discarded(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """mark_discard() must skip rollback and physically close instead."""
+        mock_mssql, mock_conn, mock_cursor = _make_mock_mssql()
+        mock_cursor.execute.side_effect = Exception("network error")
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with pytest.raises(Exception, match="network error"):
+            run_query(_make_target(), "SELECT 1")
+
+        # Tainted connection must be physically closed, not rolled back then pooled.
+        mock_conn.close.assert_called_once()
+        mock_conn.rollback.assert_not_called()
+
+    def test_successful_run_query_rolls_back_before_pool(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A successful SELECT must roll back before returning connection to pool."""
+        mock_mssql, mock_conn, mock_cursor = _make_mock_mssql()
+        mock_cursor.description = [("n",)]
+        mock_cursor.fetchall.return_value = [(1,)]
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        run_query(_make_target(), "SELECT 1")
+
+        # rollback called on pool return; underlying NOT physically closed.
+        mock_conn.rollback.assert_called_once()
+        mock_conn.close.assert_not_called()
