@@ -428,6 +428,15 @@ def _get_tracer() -> object | None:
         # A2/A3: silence Azure SDK logger trees before any network attempt (#411).
         _harden_azure_sdk_logging()
 
+        # A4: disable statsbeat (Azure Monitor internal telemetry-about-telemetry).
+        # Statsbeat probes the Azure IMDS endpoint (169.254.169.254:80) to detect
+        # whether the process runs on an Azure VM.  The probe socket is left unclosed;
+        # at interpreter shutdown the GC emits a ResourceWarning as
+        # "Exception ignored in: <socket ...>" (#418).  Use setdefault so an explicit
+        # operator override (e.g. APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL=false) is
+        # still respected.
+        os.environ.setdefault("APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL", "true")
+
         configure_azure_monitor(
             connection_string=_get_connection_string(),
             logger_name="fabric_dw.telemetry",
