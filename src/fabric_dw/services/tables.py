@@ -32,10 +32,6 @@ from fabric_dw.models import Table, WarehouseKind
 from fabric_dw.services._helpers import reject_non_select
 from fabric_dw.sql import SqlTarget, run_query
 
-# Re-exported as a private alias so that existing tests referencing
-# ``tables._reject_non_select`` continue to work.
-_reject_non_select = reject_non_select
-
 __all__ = [
     "clear_table",
     "clone_table",
@@ -253,7 +249,7 @@ async def create_table(
     _assert_not_sql_endpoint(kind)
     validate_identifier(schema)
     validate_identifier(table_name)
-    _reject_non_select(select_body)
+    reject_non_select(select_body)
 
     ddl = f"CREATE TABLE {quote_identifier(schema)}.{quote_identifier(table_name)} AS {select_body}"
 
@@ -296,6 +292,8 @@ async def clone_table(
             Both parts must pass :func:`validate_identifier`.
         at: Optional point-in-time (UTC) for a historical clone.
             When provided, the ``AT '<literal>'`` clause is appended.
+            Sub-millisecond precision is rounded to the nearest millisecond
+            (ties to even, i.e. Python banker's rounding via :func:`round`).
         kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
             SQL Endpoint items are rejected with :class:`~fabric_dw.exceptions.ItemKindError`.
         mode: The credential mode for Entra authentication.

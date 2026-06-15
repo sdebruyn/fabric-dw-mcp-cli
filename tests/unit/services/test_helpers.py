@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fabric_dw.services._helpers import compact
+import pytest
+
+from fabric_dw.services._helpers import compact, reject_non_select
 
 # ---------------------------------------------------------------------------
 # compact
@@ -48,3 +50,48 @@ def test_compact_does_not_mutate_input() -> None:
     original_copy = dict(original)
     compact(original)
     assert original == original_copy
+
+
+# ---------------------------------------------------------------------------
+# reject_non_select (canonical location in _helpers)
+# ---------------------------------------------------------------------------
+
+
+def test_reject_non_select_plain_select_passes() -> None:
+    """SELECT … body passes without raising."""
+    reject_non_select("SELECT id FROM dbo.foo")
+
+
+def test_reject_non_select_with_cte_passes() -> None:
+    """WITH … SELECT body passes without raising."""
+    reject_non_select("WITH cte AS (SELECT 1 AS x) SELECT * FROM cte")
+
+
+def test_reject_non_select_case_insensitive() -> None:
+    """Keyword check is case-insensitive."""
+    reject_non_select("select 1")
+    reject_non_select("with cte as (select 1) select * from cte")
+
+
+def test_reject_non_select_leading_comment_then_select_passes() -> None:
+    """Block and line comments before SELECT are allowed."""
+    reject_non_select("/* comment */ SELECT 1")
+    reject_non_select("-- line comment\nSELECT 1")
+
+
+def test_reject_non_select_insert_raises() -> None:
+    """INSERT body raises ValueError."""
+    with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
+        reject_non_select("INSERT INTO dbo.t SELECT 1")
+
+
+def test_reject_non_select_drop_raises() -> None:
+    """DROP body raises ValueError."""
+    with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
+        reject_non_select("DROP TABLE dbo.t")
+
+
+def test_reject_non_select_empty_raises() -> None:
+    """Empty string raises ValueError."""
+    with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
+        reject_non_select("")

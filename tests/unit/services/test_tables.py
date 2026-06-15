@@ -73,62 +73,62 @@ class TestValidateIdentifierReexport:
 
 class TestRejectNonSelect:
     def test_plain_select_passes(self) -> None:
-        tables._reject_non_select("SELECT id FROM dbo.foo")
+        tables.reject_non_select("SELECT id FROM dbo.foo")
 
     def test_select_with_leading_whitespace(self) -> None:
-        tables._reject_non_select("   SELECT id FROM dbo.foo")
+        tables.reject_non_select("   SELECT id FROM dbo.foo")
 
     def test_select_with_leading_block_comment(self) -> None:
-        tables._reject_non_select("/* comment */ SELECT id FROM dbo.foo")
+        tables.reject_non_select("/* comment */ SELECT id FROM dbo.foo")
 
     def test_select_with_leading_line_comment(self) -> None:
-        tables._reject_non_select("-- comment\nSELECT id FROM dbo.foo")
+        tables.reject_non_select("-- comment\nSELECT id FROM dbo.foo")
 
     def test_select_case_insensitive(self) -> None:
-        tables._reject_non_select("select id from dbo.foo")
+        tables.reject_non_select("select id from dbo.foo")
 
     def test_with_cte_select_passes(self) -> None:
-        tables._reject_non_select("WITH cte AS (SELECT 1 AS x) SELECT * FROM cte")
+        tables.reject_non_select("WITH cte AS (SELECT 1 AS x) SELECT * FROM cte")
 
     def test_with_cte_multiline_passes(self) -> None:
-        tables._reject_non_select(
+        tables.reject_non_select(
             "WITH cte AS (\n    SELECT id, name FROM dbo.source\n)\nSELECT * FROM cte"
         )
 
     def test_with_case_insensitive(self) -> None:
-        tables._reject_non_select("with cte as (select 1) select * from cte")
+        tables.reject_non_select("with cte as (select 1) select * from cte")
 
     def test_with_leading_whitespace_passes(self) -> None:
-        tables._reject_non_select("   WITH cte AS (SELECT 1) SELECT * FROM cte")
+        tables.reject_non_select("   WITH cte AS (SELECT 1) SELECT * FROM cte")
 
     def test_with_leading_comment_passes(self) -> None:
-        tables._reject_non_select("-- build cte\nWITH cte AS (SELECT 1) SELECT * FROM cte")
+        tables.reject_non_select("-- build cte\nWITH cte AS (SELECT 1) SELECT * FROM cte")
 
     def test_insert_rejected(self) -> None:
         with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
-            tables._reject_non_select("INSERT INTO dbo.bar SELECT 1")
+            tables.reject_non_select("INSERT INTO dbo.bar SELECT 1")
 
     def test_drop_rejected(self) -> None:
         with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
-            tables._reject_non_select("DROP TABLE dbo.bar")
+            tables.reject_non_select("DROP TABLE dbo.bar")
 
     def test_create_rejected(self) -> None:
         with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
-            tables._reject_non_select("CREATE TABLE dbo.t AS SELECT 1")
+            tables.reject_non_select("CREATE TABLE dbo.t AS SELECT 1")
 
     def test_empty_body_rejected(self) -> None:
         with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
-            tables._reject_non_select("")
+            tables.reject_non_select("")
 
     def test_comment_only_rejected(self) -> None:
         with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
-            tables._reject_non_select("/* only a comment */")
+            tables.reject_non_select("/* only a comment */")
 
     def test_multiple_block_comments_then_select(self) -> None:
-        tables._reject_non_select("/* a */ /* b */ SELECT 1")
+        tables.reject_non_select("/* a */ /* b */ SELECT 1")
 
     def test_mixed_comments_then_select(self) -> None:
-        tables._reject_non_select("-- line\n/* block */ SELECT 1")
+        tables.reject_non_select("-- line\n/* block */ SELECT 1")
 
     # -----------------------------------------------------------------------
     # ReDoS regression tests (CodeQL py/redos — must complete in < 2 s)
@@ -146,7 +146,7 @@ class TestRejectNonSelect:
         malicious = "/*" + "*//*" * 50_000
         start = time.monotonic()
         with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
-            tables._reject_non_select(malicious)
+            tables.reject_non_select(malicious)
         elapsed = time.monotonic() - start
         assert elapsed < 2.0, f"ReDoS: took {elapsed:.3f}s (expected < 2s)"
 
@@ -155,7 +155,7 @@ class TestRejectNonSelect:
         malicious = "/* " * 50_000
         start = time.monotonic()
         with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
-            tables._reject_non_select(malicious)
+            tables.reject_non_select(malicious)
         elapsed = time.monotonic() - start
         assert elapsed < 2.0, f"ReDoS: took {elapsed:.3f}s (expected < 2s)"
 
@@ -164,7 +164,7 @@ class TestRejectNonSelect:
         preamble = "/* ok */ " * 5_000
         body = preamble + "SELECT 1"
         start = time.monotonic()
-        tables._reject_non_select(body)  # must not raise
+        tables.reject_non_select(body)  # must not raise
         elapsed = time.monotonic() - start
         assert elapsed < 2.0, f"ReDoS: took {elapsed:.3f}s (expected < 2s)"
 

@@ -315,53 +315,6 @@ async def _list_insights(
 
 
 # ---------------------------------------------------------------------------
-# SQL template constants — kept for backward-compat with existing tests that
-# inspect the module-level _*_SQL_TEMPLATE names.  Each is generated from the
-# canonical *_COLUMNS tuple so column lists have a single source of truth.
-# ---------------------------------------------------------------------------
-
-_REQUEST_HISTORY_SQL_TEMPLATE: str = _build_sql(
-    "exec_requests_history",
-    EXEC_REQUESTS_HISTORY_COLUMNS,
-    "submit_time",
-    100,
-    "{where}",
-).replace("TOP (100)", "TOP ({limit})")
-
-_SESSION_HISTORY_SQL_TEMPLATE: str = _build_sql(
-    "exec_sessions_history",
-    EXEC_SESSIONS_HISTORY_COLUMNS,
-    "session_start_time",
-    100,
-    "{where}",
-).replace("TOP (100)", "TOP ({limit})")
-
-_FREQUENT_QUERIES_SQL_TEMPLATE: str = _build_sql(
-    "frequently_run_queries",
-    FREQUENTLY_RUN_QUERIES_COLUMNS,
-    "number_of_runs",
-    100,
-    "{where}",
-).replace("TOP (100)", "TOP ({limit})")
-
-_LONG_RUNNING_SQL_TEMPLATE: str = _build_sql(
-    "long_running_queries",
-    LONG_RUNNING_QUERIES_COLUMNS,
-    "median_total_elapsed_time_ms",
-    100,
-    "{where}",
-).replace("TOP (100)", "TOP ({limit})")
-
-_SQL_POOL_INSIGHTS_SQL_TEMPLATE: str = _build_sql(
-    "sql_pool_insights",
-    SQL_POOL_INSIGHTS_COLUMNS,
-    "timestamp",
-    100,
-    "{where}",
-).replace("TOP (100)", "TOP ({limit})")
-
-
-# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
