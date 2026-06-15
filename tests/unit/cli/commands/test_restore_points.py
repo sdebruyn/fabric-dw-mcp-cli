@@ -76,17 +76,6 @@ def _make_restore_point(
     )
 
 
-@pytest.fixture
-def runner() -> CliRunner:
-    return CliRunner()
-
-
-@pytest.fixture
-def cache_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
-    return tmp_path
-
-
 # ---------------------------------------------------------------------------
 # list
 # ---------------------------------------------------------------------------

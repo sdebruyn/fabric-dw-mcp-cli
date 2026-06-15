@@ -34,17 +34,6 @@ WH_UUID = UUID(WH_GUID)
 _NOW = datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC)
 
 
-@pytest.fixture
-def runner() -> CliRunner:
-    return CliRunner()
-
-
-@pytest.fixture
-def cache_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
-    return tmp_path
-
-
 def _make_sql_target() -> SqlTarget:
     return SqlTarget(
         workspace_id=WS_GUID,

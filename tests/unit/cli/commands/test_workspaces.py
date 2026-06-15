@@ -21,11 +21,6 @@ WS_UUID = UUID(WS_GUID)
 
 
 @pytest.fixture
-def runner() -> CliRunner:
-    return CliRunner()
-
-
-@pytest.fixture
 def cache_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Redirect XDG_CACHE_HOME to a temp dir so cache files are isolated."""
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))

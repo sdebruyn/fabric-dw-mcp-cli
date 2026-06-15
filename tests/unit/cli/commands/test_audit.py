@@ -25,17 +25,6 @@ WS_UUID = UUID(WS_GUID)
 WH_UUID = UUID(WH_GUID)
 
 
-@pytest.fixture
-def runner() -> CliRunner:
-    return CliRunner()
-
-
-@pytest.fixture
-def cache_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
-    return tmp_path
-
-
 def _make_cm(http: object, _sql: object = None) -> object:
     @asynccontextmanager
     async def _cm(_ctx: object) -> AsyncIterator[object]:

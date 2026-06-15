@@ -13,11 +13,6 @@ from fabric_dw.config import Defaults, UserConfig, default_path, load_config
 
 
 @pytest.fixture
-def runner() -> CliRunner:
-    return CliRunner()
-
-
-@pytest.fixture
 def config_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point XDG_CONFIG_HOME to a temp dir so tests are isolated."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
