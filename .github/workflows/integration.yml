@@ -12,9 +12,9 @@ on:
         required: false
         default: ""
       xdist_workers:
-        description: "Number of parallel pytest-xdist workers (1 = serial, default 4)"
+        description: "Number of parallel pytest-xdist workers (1 = serial, default 8)"
         required: false
-        default: "4"
+        default: "8"
 
 permissions:
   id-token: write
@@ -208,8 +208,8 @@ jobs:
           # Reduce to 1 (serial) to debug flaky tests without parallelism noise.
           #
           # The xdist_workers workflow_dispatch input lets you tune this without
-          # code changes.  For push events (no input), WORKERS defaults to 4.
-          WORKERS="${XDIST_WORKERS_INPUT:-4}"
+          # code changes.  For push events (no input), WORKERS defaults to 8.
+          WORKERS="${XDIST_WORKERS_INPUT:-8}"
 
           # Validate that WORKERS is a positive integer; reject 0, negatives, and
           # non-numeric values before they reach pytest (which aborts with a
