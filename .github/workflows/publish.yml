@@ -1,7 +1,13 @@
 name: Publish
 
+# Publish triggers:
+#   - push to main  → publishes a .devN pre-release to PyPI (continuous dev build;
+#                     no GitHub Release is created)
+#   - v* tag push   → publishes the clean release to PyPI AND creates a GitHub Release
+#   - workflow_dispatch (tag input) → same as tag push (manual release)
 on:
   push:
+    branches: [main]
     tags: ["v[0-9]*"]
   workflow_dispatch:
     inputs:
@@ -14,6 +20,11 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
+  # contents: write is required by softprops/action-gh-release (the "Create GitHub Release"
+  # step).  GitHub Actions does not support per-step permission overrides, so the only clean
+  # way to scope this down would be to split the job.  The release step is already guarded by
+  # `if: github.ref_type == 'tag' || ...`, so on main-branch pushes the write access is
+  # unused but unavoidable without a job split that would add complexity for minimal gain.
   contents: write
   id-token: write
   attestations: write
@@ -23,6 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: pypi
     steps:
+      # inputs.tag is only set for workflow_dispatch; on branch/tag pushes github.ref is used.
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
@@ -60,7 +72,28 @@ jobs:
             dist/*.tar.gz
 
       - name: Publish to PyPI (OIDC)
-        run: uv publish --trusted-publishing always
+        # hatch-vcs derives a unique .devN version per commit (distance since last v* tag),
+        # so a re-run would try to upload an already-existing version.  PyPI returns HTTP 400
+        # with "File already exists" in that case.  We treat that specific error as success
+        # (idempotent re-run) while still propagating any other failure.
+        #
+        # GHA runs every `run:` block as `bash --noprofile --norc -eo pipefail {0}`, so `-e`
+        # is already active.  We must disable it around the pipeline so that a non-zero exit
+        # from `uv publish` does not abort the shell before we can inspect the output.
+        run: |
+          set +e
+          uv publish --trusted-publishing always 2>&1 | tee /tmp/uv_publish_output.txt
+          exit_code=${PIPESTATUS[0]}
+          set -eo pipefail
+          if [ "$exit_code" -ne 0 ]; then
+            if grep -qiE 'already been registered|file[^ ]* already exist' /tmp/uv_publish_output.txt; then
+              echo "Version already on PyPI — treating as success (idempotent re-run)."
+            else
+              echo "Publish failed for an unexpected reason:" >&2
+              cat /tmp/uv_publish_output.txt >&2
+              exit "$exit_code"
+            fi
+          fi
 
       - name: Create GitHub Release (tag only)
         if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
