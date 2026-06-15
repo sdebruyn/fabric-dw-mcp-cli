@@ -23,9 +23,27 @@ from fabric_dw.mcp._helpers import (
     safe_rows,
     tool_err,
 )
+from fabric_dw.models import ColumnSpec
 from fabric_dw.services import tables as tables_svc
 
 __all__ = ["register"]
+
+
+def _parse_column_dict(i: int, col: object) -> ColumnSpec:
+    """Convert a raw dict from MCP input into a :class:`ColumnSpec`.
+
+    Raises :class:`TypeError` when *col* is not a ``dict``, and
+    :class:`ValueError` when required keys are missing.
+    """
+    if not isinstance(col, dict):
+        raise TypeError(f"columns[{i}] must be an object, got {type(col).__name__}")
+    name = col.get("name")
+    sql_type = col.get("sql_type")
+    if not name or not sql_type:
+        raise ValueError(f"columns[{i}] must have 'name' and 'sql_type' keys")
+    nullable = bool(col.get("nullable", True))
+    return ColumnSpec(name=str(name), sql_type=str(sql_type), nullable=nullable)
+
 
 _log = logging.getLogger(__name__)
 
@@ -186,6 +204,58 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
         return {"truncated": True}
+
+    @mutating_tool(mcp, "create_empty_table")
+    async def create_empty_table_tool(
+        workspace: str,
+        item: str,
+        qualified_name: str,
+        columns: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Create an empty table from an explicit column spec (DDL only, no data).
+
+        Builds ``CREATE TABLE [schema].[table] (col TYPE [NULL|NOT NULL], …)`` from
+        the supplied column definitions.  No data is read or inserted; this is a
+        pure DDL operation.
+
+        Server-side file access is unreliable in MCP deployments, so CSV/Parquet
+        inference is not available via this tool — use the ``fabric-dw tables create
+        --from-parquet`` or ``--from-csv`` CLI commands instead.
+
+        Only supported on Fabric Data Warehouses (not SQL Analytics Endpoints).
+
+        Args:
+            workspace: Workspace name or GUID.
+            item: Warehouse name or GUID.
+            qualified_name: Dot-separated qualified table name, e.g. ``dbo.sales``.
+            columns: List of column definitions, each a dict with:
+                ``name`` (str) — column identifier;
+                ``sql_type`` (str) — Fabric-DW T-SQL type, e.g. ``"INT"``, ``"VARCHAR(255)"``;
+                ``nullable`` (bool, optional, default true) — whether the column allows NULL.
+        """
+        schema, table_name = parse_qualified_name(qualified_name, kind="table")
+        assert_workspace_allowed(workspace)
+        ctx = get_context()
+        try:
+            col_specs = [_parse_column_dict(i, col) for i, col in enumerate(columns)]
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
+            assert_workspace_allowed(workspace, str(ws_id))
+            _log.debug(
+                "create_empty_table ws=%s item=%s table=%s.%s cols=%d",
+                ws_id,
+                entry.id,
+                schema,
+                table_name,
+                len(col_specs),
+            )
+            target = make_sql_target(ws_id, entry, item)
+            result = await tables_svc.create_empty_table(
+                target, schema, table_name, col_specs, kind=entry.kind, mode=ctx.auth_mode
+            )
+        except (TypeError, ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        ctx.resolver.clear_negative_cache()
+        return result.model_dump(mode="json")
 
     @mutating_tool(mcp, "clone_table")
     async def clone_table(

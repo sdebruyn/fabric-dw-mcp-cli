@@ -2,14 +2,17 @@
 
 Public API
 ----------
-- :func:`validate_identifier` — re-exported from :mod:`fabric_dw.identifiers`.
-- :func:`list_tables`          — list all tables via TDS ``sys.tables JOIN sys.schemas``.
-- :func:`read_table`           — ``SELECT TOP (N) * FROM [schema].[table]``.
-- :func:`create_table`         — ``CREATE TABLE … AS <select_body>`` (CTAS).
-- :func:`clone_table`          — ``CREATE TABLE … AS CLONE OF …`` (zero-copy clone).
-- :func:`delete_table`         — ``DROP TABLE [schema].[table]``.
-- :func:`clear_table`          — ``TRUNCATE TABLE [schema].[table]``.
-- :func:`rename_table`         — ``EXEC sp_rename`` (Data-Warehouse-only).
+- :func:`validate_identifier`     — re-exported from :mod:`fabric_dw.identifiers`.
+- :func:`list_tables`             — list all tables via TDS ``sys.tables JOIN sys.schemas``.
+- :func:`read_table`              — ``SELECT TOP (N) * FROM [schema].[table]``.
+- :func:`create_table`            — ``CREATE TABLE … AS <select_body>`` (CTAS).
+- :func:`create_empty_table`      — ``CREATE TABLE … (col TYPE [NULL|NOT NULL], …)`` (DDL only).
+- :func:`create_table_from_parquet` — infer schema from Parquet file → :func:`create_empty_table`.
+- :func:`create_table_from_csv`   — infer schema from CSV file → :func:`create_empty_table`.
+- :func:`clone_table`             — ``CREATE TABLE … AS CLONE OF …`` (zero-copy clone).
+- :func:`delete_table`            — ``DROP TABLE [schema].[table]``.
+- :func:`clear_table`             — ``TRUNCATE TABLE [schema].[table]``.
+- :func:`rename_table`            — ``EXEC sp_rename`` (Data-Warehouse-only).
 
 List-source note
 ----------------
@@ -22,26 +25,34 @@ falls back to TDS via ``sys.tables JOIN sys.schemas``, mirroring the
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import cast
 
 from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import ItemKindError, NotFoundError
 from fabric_dw.identifiers import parse_qualified_name, quote_identifier, validate_identifier
-from fabric_dw.models import Table, WarehouseKind
+from fabric_dw.models import ColumnSpec, Table, WarehouseKind
 from fabric_dw.services._helpers import reject_non_select
 from fabric_dw.sql import SqlTarget, run_query
+from fabric_dw.types import arrow_type_to_tsql, validate_tsql_type
 
 __all__ = [
     "clear_table",
     "clone_table",
+    "create_empty_table",
     "create_table",
+    "create_table_from_csv",
+    "create_table_from_parquet",
     "delete_table",
     "list_tables",
     "read_table",
     "rename_table",
     "validate_identifier",
 ]
+
+_log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Guard
@@ -258,6 +269,279 @@ async def create_table(
 
     await asyncio.to_thread(_run_ddl)
     return await _fetch_table(target, schema, table_name, mode=mode)
+
+
+async def create_empty_table(
+    target: SqlTarget,
+    schema: str,
+    table_name: str,
+    columns: list[ColumnSpec],
+    *,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
+    mode: CredentialMode = CredentialMode.DEFAULT,
+) -> Table:
+    """Create an empty table from an explicit column spec (DDL only, no data).
+
+    Builds ``CREATE TABLE [schema].[table] (col TYPE [NULL|NOT NULL], …)`` from
+    the validated :class:`~fabric_dw.models.ColumnSpec` list.  No data is ever
+    read or inserted; this is a pure DDL operation.
+
+    Args:
+        target: The warehouse to connect to.
+        schema: The schema name.  Must pass :func:`validate_identifier`.
+        table_name: The table name.  Must pass :func:`validate_identifier`.
+        columns: Non-empty list of :class:`~fabric_dw.models.ColumnSpec` instances
+            describing each column.
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
+            SQL Endpoint items are rejected with :class:`~fabric_dw.exceptions.ItemKindError`.
+        mode: The credential mode for Entra authentication.
+
+    Returns:
+        A :class:`~fabric_dw.models.Table` reflecting the newly-created table
+        (fetched via ``sys.tables`` after DDL).
+
+    Raises:
+        ItemKindError: If *kind* is :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
+        ValueError: If *schema* or *table_name* fails identifier validation,
+            if *columns* is empty, if any column name fails identifier validation,
+            or if any column ``sql_type`` is not on the Fabric DW type allowlist.
+        PermissionDeniedError: If the driver reports a CREATE TABLE permission error.
+    """
+    _assert_not_sql_endpoint(kind)
+    validate_identifier(schema)
+    validate_identifier(table_name)
+
+    if not columns:
+        msg = "columns must not be empty; provide at least one ColumnSpec"
+        raise ValueError(msg)
+
+    col_defs: list[str] = []
+    for col in columns:
+        validate_identifier(col.name)
+        validated_type = validate_tsql_type(col.sql_type)
+        null_clause = "NULL" if col.nullable else "NOT NULL"
+        col_defs.append(f"    {quote_identifier(col.name)} {validated_type} {null_clause}")
+
+    col_block = ",\n".join(col_defs)
+    ddl = (
+        f"CREATE TABLE {quote_identifier(schema)}.{quote_identifier(table_name)} (\n{col_block}\n)"
+    )
+
+    def _run_ddl() -> None:
+        run_query(target, ddl, mode=mode, commit=True, fetch="none")
+
+    await asyncio.to_thread(_run_ddl)
+    return await _fetch_table(target, schema, table_name, mode=mode)
+
+
+async def create_table_from_parquet(
+    target: SqlTarget,
+    schema: str,
+    table_name: str,
+    parquet_path: Path,
+    *,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
+    mode: CredentialMode = CredentialMode.DEFAULT,
+    varchar_length: int = 8000,
+) -> Table:
+    """Create an empty table whose schema is derived from a Parquet file.
+
+    Reads **only the Parquet footer** (schema metadata) — no data rows are ever
+    read or inserted.  Arrow types are mapped to Fabric-DW-supported T-SQL types
+    via :func:`~fabric_dw.types.arrow_type_to_tsql`.  Nullability is taken from
+    the Arrow schema field.
+
+    Args:
+        target: The warehouse to connect to.
+        schema: The schema name.  Must pass :func:`validate_identifier`.
+        table_name: The table name.  Must pass :func:`validate_identifier`.
+        parquet_path: Path to the Parquet file.  Only the file footer (schema)
+            is accessed — no data rows are read.
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
+            SQL Endpoint items are rejected with :class:`~fabric_dw.exceptions.ItemKindError`.
+        mode: The credential mode for Entra authentication.
+        varchar_length: Default VARCHAR/VARBINARY length for string and binary
+            columns.  Defaults to 8000 (Fabric DW non-MAX maximum).
+
+    Returns:
+        A :class:`~fabric_dw.models.Table` reflecting the newly-created table.
+
+    Raises:
+        ItemKindError: If *kind* is :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
+        ValueError: If any Parquet field maps to an unsupported T-SQL type,
+            or if any derived identifier fails validation.
+        FileNotFoundError: If *parquet_path* does not exist.
+    """
+    import pyarrow.parquet as pq  # noqa: PLC0415
+
+    _assert_not_sql_endpoint(kind)
+    if not parquet_path.exists():
+        msg = f"Parquet file not found: {parquet_path}"
+        raise FileNotFoundError(msg)
+
+    # Read schema only — pq.read_schema reads the footer without loading any row groups.
+    # Wrapped in asyncio.to_thread for consistency with other blocking I/O in this module.
+    arrow_schema = await asyncio.to_thread(pq.read_schema, str(parquet_path))
+
+    columns: list[ColumnSpec] = []
+    for field in arrow_schema:
+        sql_type = arrow_type_to_tsql(field.type, field.name, varchar_length=varchar_length)
+        nullable = field.nullable
+        columns.append(ColumnSpec(name=field.name, sql_type=sql_type, nullable=nullable))
+
+    _log.debug("create_table_from_parquet: %d columns from %s", len(columns), parquet_path.name)
+    return await create_empty_table(target, schema, table_name, columns, kind=kind, mode=mode)
+
+
+async def create_table_from_csv(
+    target: SqlTarget,
+    schema: str,
+    table_name: str,
+    csv_path: Path,
+    *,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
+    mode: CredentialMode = CredentialMode.DEFAULT,
+    infer_types: bool = True,
+    all_varchar: bool = False,
+    varchar_length: int = 8000,
+    sample_rows: int = 1000,
+    delimiter: str = ",",
+    encoding: str = "utf-8-sig",
+) -> Table:
+    """Create an empty table whose schema is derived from a CSV file header.
+
+    Reads the CSV **header row + a bounded sample** of rows for type inference.
+    No data is inserted into the warehouse.
+
+    When *all_varchar* is ``True``, every column becomes ``VARCHAR(*varchar_length*)``
+    regardless of observed values — useful as an escape hatch when inference
+    produces unexpected types.
+
+    When *infer_types* is ``True`` (the default), :mod:`pyarrow.csv` is used to
+    read up to *sample_rows* rows and infer types; the mapping to T-SQL types
+    follows :func:`~fabric_dw.types.arrow_type_to_tsql`.
+
+    Args:
+        target: The warehouse to connect to.
+        schema: The schema name.  Must pass :func:`validate_identifier`.
+        table_name: The table name.  Must pass :func:`validate_identifier`.
+        csv_path: Path to the CSV file.  Only the header + a bounded sample of
+            rows are read — this is schema inference, not data loading.
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
+            SQL Endpoint items are rejected with :class:`~fabric_dw.exceptions.ItemKindError`.
+        mode: The credential mode for Entra authentication.
+        infer_types: When ``True`` (default), types are inferred from sampled rows.
+            When ``False``, every column becomes ``VARCHAR(*varchar_length*)``.
+        all_varchar: Force all columns to ``VARCHAR(*varchar_length*)``, overriding
+            inference.  Useful when inference produces unexpected results.
+        varchar_length: Length for VARCHAR columns (default 8000).
+        sample_rows: Maximum number of rows to read for type inference (default 1000).
+        delimiter: CSV field delimiter (default ``,``).
+        encoding: File encoding (default ``utf-8-sig`` to strip BOM if present).
+
+    Returns:
+        A :class:`~fabric_dw.models.Table` reflecting the newly-created table.
+
+    Raises:
+        ItemKindError: If *kind* is :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
+        ValueError: If any inferred type maps to an unsupported T-SQL type,
+            or if any column name fails identifier validation.
+        FileNotFoundError: If *csv_path* does not exist.
+    """
+    import pyarrow.csv as pa_csv  # noqa: PLC0415
+
+    _assert_not_sql_endpoint(kind)
+    if not csv_path.exists():
+        msg = f"CSV file not found: {csv_path}"
+        raise FileNotFoundError(msg)
+
+    use_varchar = all_varchar or not infer_types
+
+    if use_varchar:
+        # Read just the header row to get column names.
+        import csv  # noqa: PLC0415
+
+        with csv_path.open(encoding=encoding, newline="") as fh:
+            reader = csv.reader(fh, delimiter=delimiter)
+            try:
+                header = next(reader)
+            except StopIteration:
+                msg = f"CSV file is empty: {csv_path}"
+                raise ValueError(msg) from None
+
+        columns = [
+            ColumnSpec(name=col_name, sql_type=f"VARCHAR({varchar_length})", nullable=True)
+            for col_name in header
+        ]
+    else:
+        # Read header + a bounded sample for type inference via pyarrow.csv.
+        # Use open_csv() (streaming batches) so that only a prefix of the file
+        # is ever loaded into memory — read_csv() would buffer the entire file
+        # before slice() could discard excess rows.
+        import pyarrow as pa  # noqa: PLC0415
+
+        read_opts = pa_csv.ReadOptions(encoding=encoding)
+        parse_opts = pa_csv.ParseOptions(delimiter=delimiter)
+        # ConvertOptions: auto-convert types, treat empty fields as null
+        convert_opts = pa_csv.ConvertOptions(null_values=["", "NULL", "null", "NA", "N/A"])
+
+        def _read_csv_sample() -> pa.Table:
+            """Read at most *sample_rows* rows via the streaming CSV reader.
+
+            Uses :func:`pyarrow.csv.open_csv` (batch streaming) so that the
+            file is read lazily and iteration stops as soon as *sample_rows*
+            rows have been accumulated.  Only the prefix of the file is ever
+            loaded into memory, regardless of total file size.
+            """
+            reader = pa_csv.open_csv(
+                str(csv_path),
+                read_options=read_opts,
+                parse_options=parse_opts,
+                convert_options=convert_opts,
+            )
+            # reader.schema is available before iteration and reflects inferred types.
+            inferred_schema = reader.schema
+            batches: list[pa.RecordBatch] = []
+            rows_seen = 0
+            for batch in reader:
+                remaining = sample_rows - rows_seen
+                chunk = batch.slice(0, remaining) if batch.num_rows > remaining else batch
+                batches.append(chunk)
+                rows_seen += chunk.num_rows
+                if rows_seen >= sample_rows:
+                    break
+            if not batches:
+                # Header-only CSV — return a zero-row table so schema is preserved.
+                return inferred_schema.empty_table()
+            return pa.Table.from_batches(batches)
+
+        arrow_table = await asyncio.to_thread(_read_csv_sample)
+        _log.debug(
+            "create_table_from_csv: read %d sample rows from %s for type inference",
+            arrow_table.num_rows,
+            csv_path.name,
+        )
+
+        columns = []
+        for i, name in enumerate(arrow_table.schema.names):
+            field = arrow_table.schema.field(i)
+            try:
+                sql_type = arrow_type_to_tsql(field.type, name, varchar_length=varchar_length)
+            except ValueError:
+                # Fall back to VARCHAR for non-mappable inferred types.
+                _log.warning(
+                    "Column %r: inferred Arrow type %r has no T-SQL equivalent; "
+                    "falling back to VARCHAR(%d)",
+                    name,
+                    field.type,
+                    varchar_length,
+                )
+                sql_type = f"VARCHAR({varchar_length})"
+            # CSV columns are always nullable (empty cells).
+            columns.append(ColumnSpec(name=name, sql_type=sql_type, nullable=True))
+
+    _log.debug("create_table_from_csv: %d columns from %s", len(columns), csv_path.name)
+    return await create_empty_table(target, schema, table_name, columns, kind=kind, mode=mode)
 
 
 async def clone_table(
