@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 import time
+from typing import Any
 
 import click
 
@@ -36,9 +37,132 @@ from fabric_dw.telemetry import (
     record_app_exited,
     record_app_started,
 )
+from fabric_dw.telemetry_commands import (
+    emit_command_invoked,
+    map_status,
+    now_ms,
+)
+
+_CLI_TELEMETRY_KEY = "fabric_dw_telemetry_command_name"
+_CLI_SEGMENTS_KEY = _CLI_TELEMETRY_KEY + "_segments"
 
 
-@click.group(invoke_without_command=False)
+class _InstrumentedGroup(click.Group):
+    """A :class:`click.Group` subclass that emits one ``command_invoked``
+    telemetry event per leaf command invocation.
+
+    The event is fired *after* the subcommand (or the nested group + leaf)
+    finishes so that the ``status`` and ``duration_ms`` are accurate.
+    The fully-qualified ``name`` attribute uses the format
+    ``<group>.<subcommand>`` (e.g. ``warehouses.list``).
+
+    All child groups added via :meth:`add_command` are transparently patched
+    to record ``<group>.<leaf>`` in the root context's :attr:`click.Context.meta`
+    dict.  The root group (``parent is None``) emits the ``command_invoked``
+    event once the full call stack has unwound.
+    """
+
+    def add_command(self, cmd: click.Command, name: str | None = None) -> None:
+        """Add *cmd* and patch its ``invoke`` to capture the command path."""
+        if isinstance(cmd, click.Group):
+            _patch_group_for_telemetry(cmd)
+        super().add_command(cmd, name)
+
+    def invoke(self, ctx: click.Context) -> object:
+        """Invoke the root group and emit ``command_invoked`` when done."""
+        start = now_ms()
+        exc_seen: BaseException | None = None
+        try:
+            return super().invoke(ctx)
+        except BaseException as exc:
+            exc_seen = exc
+            raise
+        finally:
+            command_name = _build_command_name(ctx)
+            if command_name:
+                duration = now_ms() - start
+                status = map_status(exc_seen)
+                emit_command_invoked(
+                    name=command_name,
+                    surface="cli",
+                    status=status,
+                    duration_ms=duration,
+                )
+
+
+def _build_command_name(root_ctx: click.Context) -> str | None:
+    """Build the fully-qualified command name from accumulated path segments.
+
+    Reads the ``_segments`` list written by patched sub-group invoke wrappers,
+    sorts segments by nesting depth (shallowest first), and joins them to form
+    a path like ``warehouses.list`` or ``config.set.workspace``.
+
+    Returns ``None`` when no segments were accumulated (e.g. root ``--help``).
+    """
+    segments: list[tuple[int, str, str]] = root_ctx.meta.get(_CLI_SEGMENTS_KEY, [])
+    if not segments:
+        return None
+
+    # Sort by depth (ascending) to get outermost → innermost order.
+    segments_sorted = sorted(segments, key=lambda t: t[0])
+
+    # Build path: take the group name from each segment, then append the
+    # subcommand name from the deepest segment.
+    parts: list[str] = []
+    for _depth, group_name, _sub in segments_sorted:
+        parts.append(group_name)
+    # Append the leaf subcommand name from the deepest segment.
+    if segments_sorted:
+        parts.append(segments_sorted[-1][2])
+
+    return ".".join(parts)
+
+
+def _patch_group_for_telemetry(group: click.Group) -> None:
+    """Monkey-patch *group*.invoke to record its portion of the command path.
+
+    The strategy is simple and correct for arbitrarily nested groups:
+
+    - Each patched group's ``finally`` block records its own name in the root
+      context's ``meta`` as a **list of (depth, name) segments**.
+    - After all groups have written their segments, the root
+      :class:`_InstrumentedGroup` reads the segments, sorts by depth, and
+      joins them to build the full path (e.g. ``config.set.workspace``).
+
+    Recursive patching ensures that sub-groups added before this function
+    is called (e.g. ``config.set``) are also patched.
+    """
+    # Recursively patch any sub-groups already registered.
+    for sub_cmd in group.commands.values():  # type: ignore[attr-defined]
+        if isinstance(sub_cmd, click.Group):
+            _patch_group_for_telemetry(sub_cmd)
+
+    original_invoke = group.invoke
+
+    def _patched_invoke(ctx: click.Context) -> Any:  # noqa: ANN401
+        try:
+            return original_invoke(ctx)
+        finally:
+            group_name = ctx.info_name or ""
+            sub_name = ctx.invoked_subcommand or ""
+            if group_name and sub_name:
+                # Calculate nesting depth: count ancestors up to (not including) root.
+                depth = 0
+                node = ctx
+                while node.parent is not None:
+                    depth += 1
+                    node = node.parent
+                root_ctx = node  # node is now the root context
+
+                # Accumulate segments: list of (depth, group_name, sub_name).
+                segs: list[tuple[int, str, str]] = root_ctx.meta.get(_CLI_SEGMENTS_KEY, [])
+                segs.append((depth, group_name, sub_name))
+                root_ctx.meta[_CLI_SEGMENTS_KEY] = segs
+
+    group.invoke = _patched_invoke  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+
+
+@click.group(invoke_without_command=False, cls=_InstrumentedGroup)
 @click.option(
     "--json",
     "json_output",
