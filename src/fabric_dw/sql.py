@@ -92,14 +92,15 @@ _TRANSIENT_RETRY_DELAYS: tuple[float, ...] = (10.0, 10.0)
 # Timeout configuration
 # ---------------------------------------------------------------------------
 
-# Login / connection timeout (seconds) injected into the ODBC connection
-# string via "Connection Timeout=<value>".  The driver default is ~15s which
-# is too short for a freshly-warming Fabric warehouse.
+# Login / connection timeout (seconds) passed as the ``timeout`` keyword
+# argument to ``mssql_python.connect()``.  The driver default is 0 (no
+# timeout), which is too permissive for a freshly-warming Fabric warehouse.
 SQL_LOGIN_TIMEOUT_S: int = 60
 
-# Query / command timeout (seconds) injected into the ODBC connection string
-# via "Command Timeout=<value>".  A generous value prevents long-running
-# administrative queries from being cancelled prematurely.
+# Query / command timeout (seconds) applied to every cursor via the
+# ``Connection.timeout`` property setter after a fresh connection is opened.
+# A generous value prevents long-running administrative queries from being
+# cancelled prematurely.
 SQL_QUERY_TIMEOUT_S: int = 300
 
 # ---------------------------------------------------------------------------
@@ -573,10 +574,6 @@ def build_connection_string(
         raw = _set_key(raw, "Authentication", _MODE_TO_AD_AUTH[mode])
     cs = _set_key(raw, "Encrypt", "yes")
     cs = _set_key(cs, "TrustServerCertificate", "no")
-    # Set an explicit login timeout (generous, to cover warehouse warm-up) and a
-    # command/query timeout so long-running admin queries are not cut off early.
-    cs = _set_key(cs, "Connection Timeout", str(SQL_LOGIN_TIMEOUT_S))
-    cs = _set_key(cs, "Command Timeout", str(SQL_QUERY_TIMEOUT_S))
     return _set_key(cs, "Database", target.database)
 
 
@@ -632,7 +629,14 @@ def open_connection(
         attrs: dict[int, bytes] | None = (
             {SQL_COPT_SS_ACCESS_TOKEN: token_struct} if use_token else None
         )
-        raw_conn: Any = _get_mssql().connect(cs, autocommit=True, attrs_before=attrs)
+        raw_conn: Any = _get_mssql().connect(
+            cs, autocommit=True, attrs_before=attrs, timeout=SQL_LOGIN_TIMEOUT_S
+        )
+        # Sets query timeout on all *future* cursors (Connection.timeout.setter stores
+        # the value; each cursor.__init__ reads it via _set_timeout()).  Safe here
+        # because every cursor in this codebase is acquired after open_connection()
+        # returns — no caller holds a cursor across connection open.
+        raw_conn.timeout = SQL_QUERY_TIMEOUT_S
         # Wrap in _PooledConnection with a sentinel key; mark_discard() ensures
         # .close() physically closes the connection rather than pooling it.
         key = _make_pool_key(target, mode)
@@ -658,7 +662,12 @@ def open_connection(
     use_token = token_struct is not None
     cs = build_connection_string(target, mode=mode, use_access_token=use_token)
     attrs = {SQL_COPT_SS_ACCESS_TOKEN: token_struct} if use_token else None
-    raw_conn = _get_mssql().connect(cs, attrs_before=attrs)
+    raw_conn = _get_mssql().connect(cs, attrs_before=attrs, timeout=SQL_LOGIN_TIMEOUT_S)
+    # Sets query timeout on all *future* cursors (Connection.timeout.setter stores
+    # the value; each cursor.__init__ reads it via _set_timeout()).  Safe here
+    # because every cursor in this codebase is acquired after open_connection()
+    # returns — no caller holds a cursor across connection open.
+    raw_conn.timeout = SQL_QUERY_TIMEOUT_S
     return _PooledConnection(raw_conn, key)
 
 
