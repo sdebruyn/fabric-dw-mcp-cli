@@ -1823,6 +1823,22 @@ class TestAuthFailedConnectRetry:
         assert rows == [(1,)]
         assert mock_mssql.connect.call_count == 2
 
+    def test_could_not_login_fragment_also_retried(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """'could not login' fragment (without ddbc_error) is retried via _AUTH_FAILED_FRAGMENTS."""
+        mock_mssql, good_conn, good_cursor = _make_mock_mssql()
+        good_cursor.description = [("n",)]
+        good_cursor.fetchall.return_value = [(1,)]
+
+        # Some Fabric TDS error paths surface "could not login" without a native error number.
+        frag_exc = Exception("could not login because the authentication failed")
+        mock_mssql.connect.side_effect = [frag_exc, good_conn]
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        _cols, rows = run_query(_make_target(), "SELECT 1")
+
+        assert rows == [(1,)]
+        assert mock_mssql.connect.call_count == 2
+
     def test_transient_connect_still_retried_with_10s_delay(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1891,3 +1907,27 @@ class TestAuthFailedConnectRetry:
 
         # Only the initial connect attempt — no execute-phase retry for DML.
         assert mock_mssql.connect.call_count == 1
+
+    def test_run_statements_retries_auth_failed_connect(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """run_statements retries 18456 / auth-failed on the connect phase.
+
+        Mirrors the run_query case: a warming-up Fabric warehouse may reject the
+        login with error 18456 until provisioning completes.  _with_connect_retry
+        is shared by both run_query and run_statements, so both must retry.
+        """
+        mock_mssql, good_conn, _ = _make_mock_mssql()
+
+        auth_exc = self._make_auth_exc()
+        # First connect raises 18456; second succeeds.
+        mock_mssql.connect.side_effect = [auth_exc, good_conn]
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        run_statements(_make_target(), ["SELECT 1"])
+
+        assert mock_mssql.connect.call_count == 2
+        fake_time = _sql_module.time  # type: ignore[attr-defined]
+        # Exactly one sleep before the retry.
+        assert fake_time.sleep.call_count == 1  # ty: ignore[unresolved-attribute]
+        assert fake_time.sleep.call_args.args[0] == 10.0  # ty: ignore[unresolved-attribute]
