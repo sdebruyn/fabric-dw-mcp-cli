@@ -112,7 +112,7 @@ async def test_load_local_csv(
     await asyncio.to_thread(
         run_query,
         sql_target,
-        f"CREATE TABLE [{schema}].[{table_name}] (id INT, name NVARCHAR(100))",
+        f"CREATE TABLE [{schema}].[{table_name}] (id INT, name VARCHAR(100))",
         commit=True,
         fetch="none",
     )
@@ -222,7 +222,7 @@ async def test_load_local_json(
     await asyncio.to_thread(
         run_query,
         sql_target,
-        f"CREATE TABLE [{schema}].[{table_name}] (id INT, name NVARCHAR(100))",
+        f"CREATE TABLE [{schema}].[{table_name}] (id INT, name VARCHAR(100))",
         commit=True,
         fetch="none",
     )

@@ -36,7 +36,7 @@ _TSQL_ALLOWLIST_RE = re.compile(
         | BIT
         | DECIMAL | NUMERIC
         | DATE | DATETIME2 | TIME | DATETIMEOFFSET
-        | VARCHAR | NVARCHAR | CHAR | NCHAR
+        | VARCHAR | CHAR
         | VARBINARY
         | UNIQUEIDENTIFIER
     )
@@ -70,8 +70,9 @@ def validate_tsql_type(sql_type: str) -> str:
     if not _TSQL_ALLOWLIST_RE.match(cleaned):
         msg = (
             f"Unsupported or unsafe T-SQL type {sql_type!r}. "
-            "Must be a Fabric-DW-supported type such as INT, VARCHAR(n), DECIMAL(p,s), "
-            "DATETIME2, DATE, BIT, BIGINT, REAL, FLOAT, VARBINARY(n)."
+            "Must be a Fabric-DW-supported type such as INT, VARCHAR(n) "
+            "(use VARCHAR instead of NVARCHAR/NCHAR — Fabric DW uses UTF-8 VARCHAR exclusively), "
+            "DECIMAL(p,s), DATETIME2, DATE, BIT, BIGINT, REAL, FLOAT, VARBINARY(n)."
         )
         raise ValueError(msg)
     return cleaned
@@ -166,7 +167,7 @@ def arrow_type_to_tsql(
         arrow_type: The Arrow data type from a Parquet field or CSV-inferred schema.
         field_name: The column name — used only in error messages so the caller
             can identify which column triggered the error.
-        varchar_length: Default length for ``VARCHAR``/``NVARCHAR`` / ``VARBINARY``
+        varchar_length: Default length for ``VARCHAR`` / ``VARBINARY``
             columns when the type carries no length information.  Defaults to 8000
             (Fabric DW maximum for non-MAX varchar).
 

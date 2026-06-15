@@ -7,11 +7,15 @@ import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
+import respx
+from azure.core.credentials_async import AsyncTokenCredential
 
 from fabric_dw.exceptions import FabricError, ItemKindError
 from fabric_dw.models import CopyIntoResult, WarehouseKind
 from fabric_dw.services.load import (
+    _ONELAKE_DFS_BASE,
     CopyIntoCsvOptions,
     _build_copy_into_sql,
     _json_to_parquet,
@@ -22,6 +26,7 @@ from fabric_dw.services.load import (
     copy_into_from_url,
     infer_file_format,
     load_local_file,
+    onelake_upload_file,
 )
 
 # ---------------------------------------------------------------------------
@@ -885,3 +890,292 @@ class TestUrlSchemeValidation:
                 file_format="csv",
                 rejected_row_location="http://example.com/rejected/",
             )
+
+
+# ---------------------------------------------------------------------------
+# OneLake DFS upload: create → append → flush sequence
+# ---------------------------------------------------------------------------
+
+
+class TestOneLakeUploadFile:
+    """Verify the ADLS Gen2 DFS create/append/flush request sequence.
+
+    The OneLake DFS API requires:
+    - PUT  ?resource=file          Content-Length: 0  (create empty file)
+    - PATCH ?action=append&position=N  Content-Length: <chunk size>  (upload data)
+    - PATCH ?action=flush&position=N   Content-Length: 0  (commit)
+
+    Missing or incorrect Content-Length on the PUT or flush PATCH results in a
+    400 ContentLengthMustBeZero / MissingRequiredHeader from OneLake.
+    """
+
+    _WS_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+    _LH_ID = "ffffffff-0000-1111-2222-333333333333"
+    _DFS_BASE = f"{_ONELAKE_DFS_BASE}/{_WS_ID}/{_LH_ID}.Lakehouse/Files/data.parquet"
+
+    def _make_credential(self) -> AsyncTokenCredential:
+        """Return a minimal async credential stub that returns a fake token."""
+        from unittest.mock import AsyncMock, MagicMock  # noqa: PLC0415
+
+        token = MagicMock()
+        token.token = "fake-bearer-token"  # noqa: S105
+        cred = AsyncMock(spec=AsyncTokenCredential)
+        cred.get_token.return_value = token
+        return cred  # type: ignore[return-value]
+
+    @respx.mock
+    async def test_create_has_content_length_zero(self, tmp_path: Path) -> None:
+        """PUT ?resource=file must include Content-Length: 0."""
+        data_file = tmp_path / "data.parquet"
+        data_file.write_bytes(b"PARQUETDATA")
+
+        captured_create: list[httpx.Request] = []
+
+        def _on_create(request: httpx.Request) -> httpx.Response:
+            captured_create.append(request)
+            return httpx.Response(201)
+
+        respx.put(self._DFS_BASE).mock(side_effect=_on_create)
+        respx.patch(self._DFS_BASE).mock(return_value=httpx.Response(202))
+
+        await onelake_upload_file(
+            self._make_credential(),
+            self._WS_ID,
+            self._LH_ID,
+            "data.parquet",
+            data_file,
+        )
+
+        assert len(captured_create) == 1, "Expected exactly one PUT (create) call"
+        create_req = captured_create[0]
+        assert create_req.method == "PUT"
+        assert create_req.url.params.get("resource") == "file"
+        assert create_req.headers.get("content-length") == "0", (
+            "Content-Length must be '0' on the PUT create call; "
+            f"got: {create_req.headers.get('content-length')!r}"
+        )
+
+    @respx.mock
+    async def test_append_has_correct_content_length(self, tmp_path: Path) -> None:
+        """PATCH ?action=append must carry Content-Length equal to the chunk size."""
+        payload = b"HELLO WORLD"
+        data_file = tmp_path / "data.parquet"
+        data_file.write_bytes(payload)
+
+        captured_appends: list[httpx.Request] = []
+
+        def _on_patch(request: httpx.Request) -> httpx.Response:
+            if request.url.params.get("action") == "append":
+                captured_appends.append(request)
+                return httpx.Response(202)
+            # flush
+            return httpx.Response(200)
+
+        respx.put(self._DFS_BASE).mock(return_value=httpx.Response(201))
+        respx.patch(self._DFS_BASE).mock(side_effect=_on_patch)
+
+        await onelake_upload_file(
+            self._make_credential(),
+            self._WS_ID,
+            self._LH_ID,
+            "data.parquet",
+            data_file,
+        )
+
+        assert len(captured_appends) >= 1, "Expected at least one append PATCH call"
+        for req in captured_appends:
+            cl = req.headers.get("content-length")
+            assert cl is not None, f"Append PATCH must include Content-Length header; got {cl!r}"
+            body_bytes = req.read()
+            assert cl == str(len(body_bytes)), (
+                f"Append PATCH Content-Length {cl!r} must equal actual body size {len(body_bytes)}"
+            )
+
+    @respx.mock
+    async def test_flush_has_content_length_zero(self, tmp_path: Path) -> None:
+        """PATCH ?action=flush must include Content-Length: 0 (no body)."""
+        data_file = tmp_path / "data.parquet"
+        data_file.write_bytes(b"PAYLOAD")
+
+        captured_flush: list[httpx.Request] = []
+
+        def _on_patch(request: httpx.Request) -> httpx.Response:
+            if request.url.params.get("action") == "flush":
+                captured_flush.append(request)
+                return httpx.Response(200)
+            return httpx.Response(202)
+
+        respx.put(self._DFS_BASE).mock(return_value=httpx.Response(201))
+        respx.patch(self._DFS_BASE).mock(side_effect=_on_patch)
+
+        await onelake_upload_file(
+            self._make_credential(),
+            self._WS_ID,
+            self._LH_ID,
+            "data.parquet",
+            data_file,
+        )
+
+        assert len(captured_flush) == 1, "Expected exactly one flush PATCH call"
+        flush_req = captured_flush[0]
+        assert flush_req.url.params.get("action") == "flush"
+        assert flush_req.headers.get("content-length") == "0", (
+            "Content-Length must be '0' on the flush PATCH call; "
+            f"got: {flush_req.headers.get('content-length')!r}"
+        )
+
+    @respx.mock
+    async def test_flush_position_equals_total_bytes(self, tmp_path: Path) -> None:
+        """The flush ?position= must equal the total number of bytes uploaded."""
+        payload = b"ABCDEFGHIJ"
+        data_file = tmp_path / "data.parquet"
+        data_file.write_bytes(payload)
+
+        flush_positions: list[int] = []
+
+        def _on_patch(request: httpx.Request) -> httpx.Response:
+            if request.url.params.get("action") == "flush":
+                flush_positions.append(int(request.url.params["position"]))
+                return httpx.Response(200)
+            return httpx.Response(202)
+
+        respx.put(self._DFS_BASE).mock(return_value=httpx.Response(201))
+        respx.patch(self._DFS_BASE).mock(side_effect=_on_patch)
+
+        await onelake_upload_file(
+            self._make_credential(),
+            self._WS_ID,
+            self._LH_ID,
+            "data.parquet",
+            data_file,
+        )
+
+        assert flush_positions == [len(payload)], (
+            f"flush position must equal total file size {len(payload)}; got {flush_positions}"
+        )
+
+    @respx.mock
+    async def test_full_create_append_flush_order(self, tmp_path: Path) -> None:
+        """Requests must arrive in order: PUT create, PATCH append(s), PATCH flush."""
+        data_file = tmp_path / "data.parquet"
+        data_file.write_bytes(b"X" * 10)
+
+        call_order: list[str] = []
+
+        def _on_put(_request: httpx.Request) -> httpx.Response:
+            call_order.append("create")
+            return httpx.Response(201)
+
+        def _on_patch(request: httpx.Request) -> httpx.Response:
+            action = request.url.params.get("action", "")
+            call_order.append(action)
+            return httpx.Response(202 if action == "append" else 200)
+
+        respx.put(self._DFS_BASE).mock(side_effect=_on_put)
+        respx.patch(self._DFS_BASE).mock(side_effect=_on_patch)
+
+        await onelake_upload_file(
+            self._make_credential(),
+            self._WS_ID,
+            self._LH_ID,
+            "data.parquet",
+            data_file,
+        )
+
+        assert call_order[0] == "create", f"First call must be create; got {call_order}"
+        assert call_order[-1] == "flush", f"Last call must be flush; got {call_order}"
+        assert all(a == "append" for a in call_order[1:-1]), (
+            f"Middle calls must all be append; got {call_order}"
+        )
+
+    @respx.mock
+    async def test_create_non_2xx_raises(self, tmp_path: Path) -> None:
+        """A non-2xx response on the create PUT must raise HTTPStatusError."""
+        data_file = tmp_path / "data.parquet"
+        data_file.write_bytes(b"DATA")
+
+        respx.put(self._DFS_BASE).mock(return_value=httpx.Response(400))
+
+        with pytest.raises(httpx.HTTPStatusError):
+            await onelake_upload_file(
+                self._make_credential(),
+                self._WS_ID,
+                self._LH_ID,
+                "data.parquet",
+                data_file,
+            )
+
+    @respx.mock
+    async def test_append_non_2xx_raises(self, tmp_path: Path) -> None:
+        """A non-2xx response on any append PATCH must raise HTTPStatusError."""
+        data_file = tmp_path / "data.parquet"
+        data_file.write_bytes(b"DATA")
+
+        respx.put(self._DFS_BASE).mock(return_value=httpx.Response(201))
+        respx.patch(self._DFS_BASE).mock(return_value=httpx.Response(500))
+
+        with pytest.raises(httpx.HTTPStatusError):
+            await onelake_upload_file(
+                self._make_credential(),
+                self._WS_ID,
+                self._LH_ID,
+                "data.parquet",
+                data_file,
+            )
+
+    @respx.mock
+    async def test_flush_non_2xx_raises(self, tmp_path: Path) -> None:
+        """A non-2xx response on the flush PATCH must raise HTTPStatusError."""
+        data_file = tmp_path / "data.parquet"
+        data_file.write_bytes(b"DATA")
+
+        def _on_patch(request: httpx.Request) -> httpx.Response:
+            if request.url.params.get("action") == "append":
+                return httpx.Response(202)
+            # flush → server error
+            return httpx.Response(500)
+
+        respx.put(self._DFS_BASE).mock(return_value=httpx.Response(201))
+        respx.patch(self._DFS_BASE).mock(side_effect=_on_patch)
+
+        with pytest.raises(httpx.HTTPStatusError):
+            await onelake_upload_file(
+                self._make_credential(),
+                self._WS_ID,
+                self._LH_ID,
+                "data.parquet",
+                data_file,
+            )
+
+    @respx.mock
+    async def test_multi_chunk_append_positions(self, tmp_path: Path) -> None:
+        """With chunk_size=4, a 10-byte file must produce three appends at positions 0, 4, 8."""
+        payload = b"X" * 10
+        data_file = tmp_path / "data.parquet"
+        data_file.write_bytes(payload)
+
+        append_positions: list[int] = []
+
+        def _on_patch(request: httpx.Request) -> httpx.Response:
+            if request.url.params.get("action") == "append":
+                append_positions.append(int(request.url.params["position"]))
+                return httpx.Response(202)
+            # flush
+            return httpx.Response(200)
+
+        respx.put(self._DFS_BASE).mock(return_value=httpx.Response(201))
+        respx.patch(self._DFS_BASE).mock(side_effect=_on_patch)
+
+        await onelake_upload_file(
+            self._make_credential(),
+            self._WS_ID,
+            self._LH_ID,
+            "data.parquet",
+            data_file,
+            chunk_size=4,
+        )
+
+        # 10 bytes / 4-byte chunks → chunks of sizes 4, 4, 2 → positions 0, 4, 8
+        assert append_positions == [0, 4, 8], (
+            f"Expected append positions [0, 4, 8] for 3-chunk upload; got {append_positions}"
+        )
