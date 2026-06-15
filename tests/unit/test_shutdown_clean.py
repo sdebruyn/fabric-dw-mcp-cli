@@ -64,6 +64,10 @@ _FORBIDDEN_STDERR_SUBSTRINGS = [
     "Error getting processor time",
     "_get_processor_time",
     "_performance_counters",
+    # #411: Azure Monitor exporter / azure-core retry-policy noise when the
+    # endpoint is unreachable (offline / firewalled users).
+    "Retrying due to server request error",
+    "missing a valid region",
 ]
 
 # Invoke fabric-dw via ``python -c "from fabric_dw.cli import main; main()"``
