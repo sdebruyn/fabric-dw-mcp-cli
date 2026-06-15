@@ -23,6 +23,7 @@ appear in catalog listings on migrated warehouses.
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import datetime
 from typing import Literal, cast
 
@@ -185,18 +186,21 @@ def _extract_function_body(schema: str, name: str, definition: str) -> str:
     Handles both bracket-quoted (``[schema].[name]``) and unquoted
     (``schema.name``) forms, as well as single-part names without a schema.
 
+    Uses ``re.search`` for ``CREATE FUNCTION`` to skip any leading comment
+    blocks that contain the word ``FUNCTION`` before the actual DDL keyword.
+
     Raises:
-        NotFoundError: If the ``FUNCTION`` keyword cannot be located in the
-            definition string (indicates a corrupted or unexpected definition).
+        NotFoundError: If the ``CREATE FUNCTION`` keyword pair cannot be located
+            in the definition string (indicates a corrupted or unexpected
+            definition).
     """
-    upper_def = definition.upper()
-    fn_kw_pos = upper_def.find("FUNCTION")
-    if fn_kw_pos == -1:
-        msg = f"Cannot parse definition for [{schema}].[{name}]: 'FUNCTION' keyword not found"
+    m = re.search(r"\bCREATE\s+FUNCTION\b", definition, re.IGNORECASE)
+    if m is None:
+        msg = f"Cannot parse definition for [{schema}].[{name}]: 'CREATE FUNCTION' not found"
         raise NotFoundError(msg)
 
     # Advance past "FUNCTION" and trailing whitespace.
-    pos = fn_kw_pos + len("FUNCTION")
+    pos = m.end()
     while pos < len(definition) and definition[pos] in (" ", "\t", "\n", "\r"):
         pos += 1
 
@@ -235,9 +239,9 @@ def _skip_name_token(definition: str, pos: int) -> int:
             end += 1
         return end
 
-    # Unquoted token — stop at whitespace, '(', or '.'.
+    # Unquoted token — stop at whitespace (including \r for CRLF), '(', or '.'.
     end = pos
-    while end < len(definition) and definition[end] not in (" ", "\t", "\n", "(", "."):
+    while end < len(definition) and definition[end] not in (" ", "\t", "\n", "\r", "(", "."):
         end += 1
     return end
 
@@ -553,8 +557,16 @@ async def rename_function(
     2. Create a new function with the same schema, body, and the new name.
     3. Drop the old function.
 
-    If step 2 or 3 fails the old function is still intact and the error propagates
-    to the caller — there is no silent partial state.
+    Partial-state behaviour:
+
+    - If step 2 fails (e.g. the new name already exists), the old function is
+      untouched and the error propagates cleanly — no state change occurs.
+    - If step 3 fails after step 2 has succeeded, **both** the old and the new
+      function exist simultaneously and an exception is raised.  The caller must
+      clean up the duplicate by manually dropping the old name.
+
+    The ordering (create-before-drop) is intentional: a failure must never
+    silently destroy the user's function.
 
     The new name must be unqualified (no dot) because the function stays in the
     same schema.
@@ -602,14 +614,11 @@ async def rename_function(
     # it under the new name.
     body = _extract_function_body(schema, old_name, existing.definition)
 
-    # Step 2: create under the new name.
-    await create_function(target, schema, new_name, body, mode=mode)
+    # Step 2: create under the new name.  create_function() already calls
+    # get_function() internally and returns the FunctionDetails — reuse it.
+    new_details = await create_function(target, schema, new_name, body, mode=mode)
 
     # Step 3: drop the old name.
     await drop_function(target, schema, old_name, mode=mode)
 
-    try:
-        return await get_function(target, schema, new_name, mode=mode)
-    except NotFoundError:
-        msg = f"Function [{schema}].[{new_name}] not found after rename"
-        raise NotFoundError(msg) from None
+    return new_details
