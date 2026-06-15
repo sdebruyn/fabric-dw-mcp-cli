@@ -1679,3 +1679,255 @@ class TestD23PoolRollbackOnReturn:
         # rollback called on pool return; underlying NOT physically closed.
         mock_conn.rollback.assert_called_once()
         mock_conn.close.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Issue #405 — longer timeouts + auth-failed retry on connect path
+# ---------------------------------------------------------------------------
+
+
+class TestConnectionStringTimeouts:
+    """build_connection_string must embed explicit login and command timeouts."""
+
+    def test_login_timeout_in_connection_string(self) -> None:
+        """Connection string must contain Connection Timeout=<SQL_LOGIN_TIMEOUT_S>."""
+        import fabric_dw.sql as sql_mod  # noqa: PLC0415
+
+        result = build_connection_string(_make_target())
+        assert f"Connection Timeout={sql_mod.SQL_LOGIN_TIMEOUT_S}" in result
+
+    def test_query_timeout_in_connection_string(self) -> None:
+        """Connection string must contain Command Timeout=<SQL_QUERY_TIMEOUT_S>."""
+        import fabric_dw.sql as sql_mod  # noqa: PLC0415
+
+        result = build_connection_string(_make_target())
+        assert f"Command Timeout={sql_mod.SQL_QUERY_TIMEOUT_S}" in result
+
+    def test_login_timeout_constant_value(self) -> None:
+        """SQL_LOGIN_TIMEOUT_S must be 60 (generous vs ~15s driver default)."""
+        import fabric_dw.sql as sql_mod  # noqa: PLC0415
+
+        assert sql_mod.SQL_LOGIN_TIMEOUT_S == 60
+
+    def test_query_timeout_constant_value(self) -> None:
+        """SQL_QUERY_TIMEOUT_S must be 300 (generous for long-running admin queries)."""
+        import fabric_dw.sql as sql_mod  # noqa: PLC0415
+
+        assert sql_mod.SQL_QUERY_TIMEOUT_S == 300
+
+    def test_timeout_keys_not_duplicated_on_idempotent_call(self) -> None:
+        """Calling build_connection_string twice on the same augmented string must not
+        duplicate the timeout keys."""
+        target = _make_target()
+        first = build_connection_string(target)
+        target2 = SqlTarget(
+            workspace_id=target.workspace_id,
+            database=target.database,
+            connection_string=first,
+        )
+        second = build_connection_string(target2)
+        assert first == second
+        assert second.count("Connection Timeout=") == 1
+        assert second.count("Command Timeout=") == 1
+
+    def test_no_double_semicolons_with_timeouts(self) -> None:
+        """Adding timeouts must not introduce double semicolons."""
+        result = build_connection_string(_make_target())
+        assert ";;" not in result
+
+
+class TestAuthFailedConnectRetry:
+    """_with_connect_retry must retry auth-failed / 18456 errors on the connect path."""
+
+    @pytest.fixture(autouse=True)
+    def _disable_sleep(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Patch time.sleep to a no-op and capture calls."""
+        monkeypatch.setattr(_sql_module, "time", _make_fake_time_module())
+
+    # ------------------------------------------------------------------ #
+    # Helper: fake driver exception with ddbc_error containing 18456      #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _make_auth_exc() -> Exception:
+        """Return a simulated 18456 auth exception with a ``ddbc_error`` attribute."""
+
+        class _AuthDriverError(Exception):
+            ddbc_error: str = "[SQL Server]Login failed. Error: 18456"
+
+            def __str__(self) -> str:
+                return (
+                    "Login failed for user '<token-identified principal>'. "
+                    "Could not login because the authentication failed."
+                )
+
+        return _AuthDriverError()
+
+    def test_auth_failed_connect_retried_twice_then_succeeds(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An 18456 error on attempts 1 and 2 is retried; attempt 3 succeeds.
+
+        time.sleep must be called twice (once before each retry) with the
+        configured 10s delay.
+        """
+        mock_mssql, good_conn, good_cursor = _make_mock_mssql()
+        good_cursor.description = [("n",)]
+        good_cursor.fetchall.return_value = [(1,)]
+
+        auth_exc = self._make_auth_exc()
+        # Fail twice, succeed on the third attempt.
+        mock_mssql.connect.side_effect = [auth_exc, auth_exc, good_conn]
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        _cols, rows = run_query(_make_target(), "SELECT 1")
+
+        assert rows == [(1,)]
+        assert mock_mssql.connect.call_count == 3
+
+        # time.sleep must have been called twice (before attempt 2 and 3).
+        fake_time = _sql_module.time  # type: ignore[attr-defined]
+        assert fake_time.sleep.call_count == 2  # ty: ignore[unresolved-attribute]
+        # Each delay must be 10s (the fixed retry interval).
+        for call in fake_time.sleep.call_args_list:  # ty: ignore[unresolved-attribute]
+            assert call.args[0] == 10.0
+
+    def test_auth_failed_connect_persistent_raises_after_retries(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When all 3 attempts raise 18456 the exception is propagated after 2 retries."""
+        mock_mssql, _, _ = _make_mock_mssql()
+        auth_exc = self._make_auth_exc()
+        mock_mssql.connect.side_effect = auth_exc
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with pytest.raises(Exception, match="authentication failed"):
+            run_query(_make_target(), "SELECT 1")
+
+        # 3 total attempts (1 initial + 2 retries).
+        assert mock_mssql.connect.call_count == 3
+
+    def test_auth_failed_fragment_only_also_retried(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Auth-failed detected via message fragment only (no ddbc_error) is also retried."""
+        mock_mssql, good_conn, good_cursor = _make_mock_mssql()
+        good_cursor.description = [("n",)]
+        good_cursor.fetchall.return_value = [(1,)]
+
+        # Plain Exception has no ddbc_error; detection falls through to fragment path.
+        frag_exc = Exception("authentication failed for user ''")
+        mock_mssql.connect.side_effect = [frag_exc, good_conn]
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        _cols, rows = run_query(_make_target(), "SELECT 1")
+
+        assert rows == [(1,)]
+        assert mock_mssql.connect.call_count == 2
+
+    def test_could_not_login_fragment_also_retried(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """'could not login' fragment (without ddbc_error) is retried via _AUTH_FAILED_FRAGMENTS."""
+        mock_mssql, good_conn, good_cursor = _make_mock_mssql()
+        good_cursor.description = [("n",)]
+        good_cursor.fetchall.return_value = [(1,)]
+
+        # Some Fabric TDS error paths surface "could not login" without a native error number.
+        frag_exc = Exception("could not login because the authentication failed")
+        mock_mssql.connect.side_effect = [frag_exc, good_conn]
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        _cols, rows = run_query(_make_target(), "SELECT 1")
+
+        assert rows == [(1,)]
+        assert mock_mssql.connect.call_count == 2
+
+    def test_transient_connect_still_retried_with_10s_delay(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Standard transient connect errors still use the 10s delay after the policy change."""
+        mock_mssql, good_conn, good_cursor = _make_mock_mssql()
+        good_cursor.description = [("n",)]
+        good_cursor.fetchall.return_value = [(1,)]
+
+        transient_exc = Exception("TCP Provider: connection failed")
+        mock_mssql.connect.side_effect = [transient_exc, good_conn]
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        _cols, rows = run_query(_make_target(), "SELECT 1")
+
+        assert rows == [(1,)]
+        fake_time = _sql_module.time  # type: ignore[attr-defined]
+        assert fake_time.sleep.call_count == 1  # ty: ignore[unresolved-attribute]
+        assert fake_time.sleep.call_args.args[0] == 10.0  # ty: ignore[unresolved-attribute]
+
+    def test_auth_failed_on_execute_phase_not_retried(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Auth-failed raised during EXECUTE (not connect) must NOT be retried.
+
+        The execute-phase retry only covers transient transport errors for
+        read-only queries; mapped AuthError is raised immediately.
+        """
+        mock_mssql, _, mock_cursor = _make_mock_mssql()
+
+        class _AuthDriverError(Exception):
+            ddbc_error: str = "[SQL Server]Login failed. Error: 18456"
+
+            def __str__(self) -> str:
+                return "Login failed: authentication failed"
+
+        mock_cursor.execute.side_effect = _AuthDriverError()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with pytest.raises(AuthError):
+            run_query(_make_target(), "SELECT 1")
+
+        # map_driver_error converts the 18456 to AuthError and raises immediately.
+        assert mock_mssql.connect.call_count == 1
+
+    def test_retry_policy_constants(self) -> None:
+        """SQL_TRANSIENT_MAX_RETRIES=2 and delays are both 10s (flat, not exponential)."""
+        assert _sql_module.SQL_TRANSIENT_MAX_RETRIES == 2
+        assert _sql_module._TRANSIENT_RETRY_DELAYS == (10.0, 10.0)
+
+    def test_dml_not_retried_execute_phase_unchanged(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """fetch='none' DML must still NOT be retried after execute raises transient (D10).
+
+        This test re-validates the idempotency boundary is unaffected by the
+        auth-failed-on-connect change.
+        """
+        mock_mssql, _, _ = _make_mock_mssql()
+        bad_cursor = MagicMock()
+        bad_cursor.execute.side_effect = Exception("communication link failure")
+        bad_conn = MagicMock()
+        bad_conn.cursor.return_value = bad_cursor
+        mock_mssql.connect.return_value = bad_conn
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with pytest.raises(Exception, match="communication link failure"):
+            run_query(_make_target(), "INSERT INTO t VALUES (1)", fetch="none")
+
+        # Only the initial connect attempt — no execute-phase retry for DML.
+        assert mock_mssql.connect.call_count == 1
+
+    def test_run_statements_retries_auth_failed_connect(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """run_statements retries 18456 / auth-failed on the connect phase.
+
+        Mirrors the run_query case: a warming-up Fabric warehouse may reject the
+        login with error 18456 until provisioning completes.  _with_connect_retry
+        is shared by both run_query and run_statements, so both must retry.
+        """
+        mock_mssql, good_conn, _ = _make_mock_mssql()
+
+        auth_exc = self._make_auth_exc()
+        # First connect raises 18456; second succeeds.
+        mock_mssql.connect.side_effect = [auth_exc, good_conn]
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        run_statements(_make_target(), ["SELECT 1"])
+
+        assert mock_mssql.connect.call_count == 2
+        fake_time = _sql_module.time  # type: ignore[attr-defined]
+        # Exactly one sleep before the retry.
+        assert fake_time.sleep.call_count == 1  # ty: ignore[unresolved-attribute]
+        assert fake_time.sleep.call_args.args[0] == 10.0  # ty: ignore[unresolved-attribute]
