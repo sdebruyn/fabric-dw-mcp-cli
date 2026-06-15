@@ -21,12 +21,14 @@ this charset and therefore always rejected).
 ``]`` as ``]]`` for defence-in-depth) before embedding them in SQL.
 
 **DBCC SHOW_STATISTICS** is different: Fabric DW does not accept bracket-quoted
-identifiers in the first (table) argument position — doing so causes
-``Incorrect syntax near '.'``.  The table argument is therefore embedded as a
-**single-quoted string literal** of the form ``'schema.table'``.  Because
-``validate_identifier`` has already accepted both parts, neither can contain a
-single-quote, so no ``'``→``''`` escaping is needed.  The stat-name (second
-argument) is still bracket-quoted in the normal way.
+identifiers in either argument position.  The official Fabric DW documentation
+examples use single-quoted string literals for both arguments:
+``DBCC SHOW_STATISTICS ('schema.table', 'stat_name')``.  Using bracket-quoted
+identifiers for the table argument causes ``Incorrect syntax near '.'``; using
+them for the stat-name argument causes ``Could not locate statistics``.
+Both arguments are therefore embedded as **single-quoted string literals**.
+Because ``validate_identifier`` has already accepted all name parts, none can
+contain a single-quote, so no ``'``→``''`` escaping is needed.
 
 The ``sample_percent`` argument is a numeric value; it is range-validated as an
 :class:`int` (1-100) and embedded as a literal integer — never an arbitrary
@@ -117,15 +119,25 @@ WHERE ({schema_filter})
 ORDER BY s.name, t.name, st.name;
 """
 
-# DBCC SHOW_STATISTICS on Fabric DW requires the table as a string literal
-# ('schema.table') — NOT as bracket-quoted identifier tokens ([schema].[table]).
-# Passing bracket-quoted identifiers causes "Incorrect syntax near '.'" because
-# the parser does not accept a two-part identifier in that argument position.
-# The stat name (second argument) is still bracket-quoted as an identifier token.
-# Both parts are validated via validate_identifier before embedding.
-_DBCC_STAT_HEADER_SQL = "DBCC SHOW_STATISTICS ('{table_s}', {stat_q}) WITH STAT_HEADER;"
-_DBCC_DENSITY_SQL = "DBCC SHOW_STATISTICS ('{table_s}', {stat_q}) WITH DENSITY_VECTOR;"
-_DBCC_HISTOGRAM_SQL = "DBCC SHOW_STATISTICS ('{table_s}', {stat_q}) WITH HISTOGRAM;"
+# DBCC SHOW_STATISTICS on Fabric DW requires BOTH arguments as string literals.
+# The official Fabric DW docs show: DBCC SHOW_STATISTICS ('schema.table', 'stat_name')
+#
+# First argument — table: bracket-quoted [schema].[table] causes
+# "Incorrect syntax near '.'" (fixed in #371).
+#
+# Second argument — stat name: bracket-quoted [stat_name] causes
+# "Could not locate statistics '<stat_name>'" because Fabric DW does not
+# resolve bracket-quoted tokens as statistics names in this position (fixed
+# in #403).
+#
+# Both schema, table, and stat_name are validated via validate_identifier
+# (allowlist [A-Za-z_][A-Za-z0-9_]*) before embedding, so none can contain
+# a single-quote — no escaping is required.
+# The format key {stat_literal} is intentionally named to signal that the
+# stat name is embedded as a string literal (not a bracket-quoted identifier).
+_DBCC_STAT_HEADER_SQL = "DBCC SHOW_STATISTICS ('{table_s}', '{stat_literal}') WITH STAT_HEADER;"
+_DBCC_DENSITY_SQL = "DBCC SHOW_STATISTICS ('{table_s}', '{stat_literal}') WITH DENSITY_VECTOR;"
+_DBCC_HISTOGRAM_SQL = "DBCC SHOW_STATISTICS ('{table_s}', '{stat_literal}') WITH HISTOGRAM;"
 
 # CREATE STATISTICS: identifiers are bracket-quoted; FULLSCAN/SAMPLE are keywords.
 _CREATE_STAT_FULLSCAN_SQL = "CREATE STATISTICS {stat_q} ON {table_q} ({col_q}) WITH FULLSCAN;"
@@ -399,20 +411,25 @@ async def show_statistics(
     validate_identifier(table)
     validate_identifier(stat_name)
 
-    # DBCC SHOW_STATISTICS on Fabric DW requires the table as a string literal
-    # ('schema.table'), NOT as bracket-quoted identifier tokens ([schema].[table]).
-    # Using bracket-quoted identifiers in the first DBCC argument causes
-    # "Incorrect syntax near '.'" on real Fabric (the parser does not accept a
-    # two-part identifier in that position).  The stat name (second arg) is still
-    # bracket-quoted as a regular identifier token.
-    # Both schema and table have already been validated via validate_identifier
-    # (allowlist [A-Za-z_][A-Za-z0-9_]*), so they cannot contain single-quotes.
+    # DBCC SHOW_STATISTICS on Fabric DW requires BOTH arguments as string literals.
+    # The Fabric DW documentation examples use single-quoted string literals for
+    # both the table and the stat name:
+    #   DBCC SHOW_STATISTICS ('schema.table', 'stat_name')
+    #
+    # Using bracket-quoted identifiers for the table causes "Incorrect syntax
+    # near '.'" (fixed in #371).  Using bracket-quoted identifiers for the stat
+    # name causes "Could not locate statistics '<name>'" because Fabric DW does
+    # not resolve bracket tokens as statistics names in that position (#403).
+    #
+    # All parts have already been validated via validate_identifier (allowlist
+    # [A-Za-z_][A-Za-z0-9_]*), so none can contain single-quotes — no escaping
+    # is required.
     table_s = f"{schema}.{table}"
-    stat_q = quote_identifier(stat_name)
+    stat_literal = stat_name  # already validated; embedded as a single-quoted string literal
 
-    header_sql = _DBCC_STAT_HEADER_SQL.format(table_s=table_s, stat_q=stat_q)
-    density_sql = _DBCC_DENSITY_SQL.format(table_s=table_s, stat_q=stat_q)
-    histogram_sql = _DBCC_HISTOGRAM_SQL.format(table_s=table_s, stat_q=stat_q)
+    header_sql = _DBCC_STAT_HEADER_SQL.format(table_s=table_s, stat_literal=stat_literal)
+    density_sql = _DBCC_DENSITY_SQL.format(table_s=table_s, stat_literal=stat_literal)
+    histogram_sql = _DBCC_HISTOGRAM_SQL.format(table_s=table_s, stat_literal=stat_literal)
 
     def _run() -> StatisticDetails:
         if histogram_only:
