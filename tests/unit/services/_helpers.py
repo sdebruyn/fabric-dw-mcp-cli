@@ -58,17 +58,40 @@ def _make_target() -> MagicMock:
     return MagicMock()
 
 
-def _make_conn(rows: list[tuple[object, ...]], columns: list[str]) -> MagicMock:
+def _make_conn(
+    rows: list[tuple[object, ...]],
+    columns: list[str],
+    *,
+    rowcount: int = -1,
+) -> MagicMock:
     """Return a mock DB-API connection whose cursor returns *rows* / *columns*.
 
     The cursor's ``nextset()`` returns ``False`` by default (single result set).
-    The ``rowcount`` is ``-1`` (driver does not know the row count) so that
-    tests which check rowcount fall back to ``len(rows)``.
+    *rowcount* defaults to ``-1`` (driver does not know the row count) so that
+    tests which check rowcount fall back to ``len(rows)``.  Pass a positive
+    value when testing DML/driver-reported row counts.
     """
     cursor = MagicMock()
     cursor.description = [(c, None) for c in columns] if columns else None
     cursor.fetchall.return_value = rows
-    cursor.rowcount = -1
+    cursor.rowcount = rowcount
+    cursor.nextset.return_value = False
+    conn = MagicMock()
+    conn.cursor.return_value = cursor
+    return conn
+
+
+def _make_no_result_conn(*, rowcount: int = 1) -> MagicMock:
+    """Return a mock DB-API connection for DML/DDL statements with no result set.
+
+    ``cursor.description`` is ``None`` and ``fetchall`` returns ``[]``.
+    *rowcount* defaults to ``1`` (typical for a single-row DML); pass ``0``
+    for DDL or multi-row variants as needed.
+    """
+    cursor = MagicMock()
+    cursor.description = None
+    cursor.fetchall.return_value = []
+    cursor.rowcount = rowcount
     cursor.nextset.return_value = False
     conn = MagicMock()
     conn.cursor.return_value = cursor
@@ -79,12 +102,7 @@ def _make_conn_for_ddl() -> MagicMock:
     """Return a mock DB-API connection for DDL statements (no result set).
 
     ``cursor.description`` is ``None`` and ``fetchall`` returns ``[]``.
+    Alias for ``_make_no_result_conn(rowcount=0)`` retained for backward
+    compatibility with the modules that already import it by name.
     """
-    cursor = MagicMock()
-    cursor.description = None
-    cursor.fetchall.return_value = []
-    cursor.rowcount = 0
-    cursor.nextset.return_value = False
-    conn = MagicMock()
-    conn.cursor.return_value = cursor
-    return conn
+    return _make_no_result_conn(rowcount=0)

@@ -12,43 +12,7 @@ import pytest
 from fabric_dw.exceptions import AuthError, PermissionDeniedError
 from fabric_dw.models import SqlResult
 from fabric_dw.services import sql_exec
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_target() -> MagicMock:
-    return MagicMock()
-
-
-def _make_conn(
-    rows: list[tuple[object, ...]],
-    columns: list[str],
-    *,
-    rowcount: int = -1,
-) -> MagicMock:
-    cursor = MagicMock()
-    cursor.description = [(c, None) for c in columns] if columns else None
-    cursor.fetchall.return_value = rows
-    cursor.rowcount = rowcount
-    # nextset() returns False by default — single result set
-    cursor.nextset.return_value = False
-    conn = MagicMock()
-    conn.cursor.return_value = cursor
-    return conn
-
-
-def _make_no_result_conn(*, rowcount: int = 1) -> MagicMock:
-    """Connection whose cursor has no description (DDL/DML)."""
-    cursor = MagicMock()
-    cursor.description = None
-    cursor.rowcount = rowcount
-    cursor.nextset.return_value = False
-    conn = MagicMock()
-    conn.cursor.return_value = cursor
-    return conn
-
+from tests.unit.services._helpers import _make_conn, _make_no_result_conn, _make_target
 
 # ---------------------------------------------------------------------------
 # SELECT — basic result set
@@ -629,4 +593,9 @@ async def test_execute_does_not_mark_discard_on_error() -> None:
     # This means if pool is enabled the connection would be returned to the pool.
     # Document: _discard must remain False (current behaviour).
     assert pooled._closed is True  # closing() did call close()
+    # TODO: remove/invert this assertion once sql_exec.execute() is fixed to call
+    #       mark_discard() on error (same pattern as run_query).  This assertion
+    #       intentionally documents the *gap*, not the desired invariant — a future
+    #       fix that adds mark_discard() will break this line, which is the signal
+    #       that the gap has been closed and this test should be updated.
     assert pooled._discard is False  # execute does NOT mark tainted (known gap)
