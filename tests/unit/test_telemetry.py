@@ -7,9 +7,11 @@ no real network calls (every Azure Monitor SDK interaction is mocked).
 from __future__ import annotations
 
 import importlib
+import logging
 import sys
 import types
 import uuid
+from collections.abc import Generator
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -1654,3 +1656,101 @@ def test_shutdown_telemetry_never_raises_on_provider_exception(
 
     # Must not raise
     mod.shutdown_telemetry()  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# _harden_azure_sdk_logging — logging hardening for #411
+# ---------------------------------------------------------------------------
+
+# Logger names that must be silenced by _harden_azure_sdk_logging.
+_HARDENED_LOGGER_NAMES = [
+    # Azure Monitor exporter tree: covers statsbeat "missing a valid region",
+    # export/_base.py "Retrying due to server request error", and quickpulse
+    # _ping tracebacks (#411).
+    "azure.monitor.opentelemetry.exporter",
+    # azure-core pipeline — belt-and-suspenders (#411).
+    "azure.core.pipeline.policies",
+]
+
+
+@pytest.fixture
+def restore_hardened_loggers() -> Generator[None, None, None]:
+    """Save and restore the global logging state for the loggers targeted by
+    _harden_azure_sdk_logging.
+
+    Note: _reload_telemetry() evicts the telemetry module from sys.modules but
+    does NOT reset the Python logging registry — Logger objects are singletons
+    keyed by name.  Without this fixture, the four _harden tests would leave
+    those loggers permanently at CRITICAL/propagate=False for the rest of the
+    test process.  Any future test that needs to observe log output from these
+    namespaces (e.g. a caplog test checking behaviour when hardening is NOT
+    applied) would silently pass even when it should fail.
+    """
+    saved: dict[str, tuple[int, bool, list[logging.Handler]]] = {}
+    for name in _HARDENED_LOGGER_NAMES:
+        lgr = logging.getLogger(name)
+        saved[name] = (lgr.level, lgr.propagate, list(lgr.handlers))
+    yield
+    for name, (level, propagate, handlers) in saved.items():
+        lgr = logging.getLogger(name)
+        lgr.setLevel(level)
+        lgr.propagate = propagate
+        lgr.handlers = list(handlers)
+
+
+def test_harden_azure_sdk_logging_sets_level_to_critical(
+    restore_hardened_loggers: None,  # noqa: ARG001
+) -> None:
+    """_harden_azure_sdk_logging must raise each targeted logger to CRITICAL."""
+    mod = _reload_telemetry()
+    mod._harden_azure_sdk_logging()  # type: ignore[attr-defined]
+
+    for name in _HARDENED_LOGGER_NAMES:
+        lgr = logging.getLogger(name)
+        assert lgr.level >= logging.CRITICAL, (
+            f"Logger {name!r} level {lgr.level} is below CRITICAL ({logging.CRITICAL})"
+        )
+
+
+def test_harden_azure_sdk_logging_sets_propagate_false(
+    restore_hardened_loggers: None,  # noqa: ARG001
+) -> None:
+    """_harden_azure_sdk_logging must set propagate=False on each targeted logger."""
+    mod = _reload_telemetry()
+    mod._harden_azure_sdk_logging()  # type: ignore[attr-defined]
+
+    for name in _HARDENED_LOGGER_NAMES:
+        lgr = logging.getLogger(name)
+        assert lgr.propagate is False, (
+            f"Logger {name!r} propagate is not False — records can still reach root handler"
+        )
+
+
+def test_harden_azure_sdk_logging_attaches_null_handler(
+    restore_hardened_loggers: None,  # noqa: ARG001
+) -> None:
+    """_harden_azure_sdk_logging must attach a NullHandler to each targeted logger."""
+    mod = _reload_telemetry()
+    mod._harden_azure_sdk_logging()  # type: ignore[attr-defined]
+
+    for name in _HARDENED_LOGGER_NAMES:
+        lgr = logging.getLogger(name)
+        assert any(isinstance(h, logging.NullHandler) for h in lgr.handlers), (
+            f"Logger {name!r} has no NullHandler — last-resort stderr message possible"
+        )
+
+
+def test_harden_azure_sdk_logging_is_idempotent(
+    restore_hardened_loggers: None,  # noqa: ARG001
+) -> None:
+    """Calling _harden_azure_sdk_logging multiple times must not add duplicate handlers."""
+    mod = _reload_telemetry()
+    mod._harden_azure_sdk_logging()  # type: ignore[attr-defined]
+    mod._harden_azure_sdk_logging()  # type: ignore[attr-defined]
+
+    for name in _HARDENED_LOGGER_NAMES:
+        lgr = logging.getLogger(name)
+        null_count = sum(1 for h in lgr.handlers if isinstance(h, logging.NullHandler))
+        assert null_count == 1, (
+            f"Logger {name!r} has {null_count} NullHandlers after two calls — expected exactly 1"
+        )

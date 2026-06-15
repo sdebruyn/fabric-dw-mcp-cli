@@ -338,6 +338,57 @@ def _get_connection_string() -> str:
     return os.environ.get("FABRIC_TELEMETRY_CONNECTION_STRING", _DEFAULT_CONNECTION_STRING)
 
 
+def _harden_azure_sdk_logging() -> None:
+    """Raise the level of noisy Azure SDK loggers to CRITICAL and detach them from root.
+
+    When the App Insights / Live Metrics endpoint is unreachable (offline user,
+    firewall, or CI with a bogus endpoint) the Azure SDK writes full Python
+    tracebacks and retry warnings to stderr via its own loggers.  This is
+    independent of ``disable_logging=True`` passed to configure_azure_monitor,
+    which only controls the OTel log exporter — not the SDK's own logger tree.
+
+    The two noise sources suppressed here (#411):
+
+    1. ``azure.monitor.opentelemetry.exporter``
+       Covers ``export/_base.py`` ("Retrying due to server request error") and
+       ``_quickpulse/_exporter.py`` (full traceback from ``_ping`` / ``is_subscribed``
+       when the LiveEndpoint is unreachable, even with ``enable_live_metrics=False``
+       as belt-and-suspenders). Also covers ``statsbeat/_manager.py``
+       ("Exporter is missing a valid region.").
+
+    2. ``azure.core.pipeline.policies``
+       Belt-and-suspenders suppression.  At the pinned versions (azure-monitor-opentelemetry
+       1.8.8 / exporter 1.0.0b53) ``azure.core.pipeline.policies._retry`` defines ``_LOGGER``
+       but has **zero call sites** — the "Retrying due to server request error" message is
+       actually emitted by ``azure.monitor.opentelemetry.exporter.export._base`` (already
+       covered by entry 1).  This entry guards against future SDK versions adding log calls
+       to the azure-core pipeline tree.
+
+    We set CRITICAL (instead of logging.NOTSET) and propagate=False so that no
+    record at WARNING/ERROR/EXCEPTION from these trees ever reaches the root
+    handler (typically StreamHandler → stderr).  A NullHandler is attached so
+    that the "No handlers could be found" last-resort message is also suppressed.
+
+    This function is idempotent: calling it multiple times is safe.
+    """
+    for name in (
+        # A2: Azure Monitor exporter — covers retry warnings, statsbeat "missing a
+        # valid region", and quickpulse _ping tracebacks via a single parent logger.
+        "azure.monitor.opentelemetry.exporter",
+        # A3: azure-core pipeline — belt-and-suspenders only at pinned versions
+        # (azure.core.pipeline.policies._retry defines _LOGGER but has zero call sites;
+        # the "Retrying due to server request error" message comes from
+        # azure.monitor.opentelemetry.exporter.export._base, already covered above).
+        # Kept here to guard against future SDK versions emitting from this tree.
+        "azure.core.pipeline.policies",
+    ):
+        lgr = logging.getLogger(name)
+        lgr.setLevel(logging.CRITICAL)
+        lgr.propagate = False
+        if not any(isinstance(h, logging.NullHandler) for h in lgr.handlers):
+            lgr.addHandler(logging.NullHandler())
+
+
 def _get_tracer() -> object | None:
     """Lazily initialise the Azure Monitor OpenTelemetry tracer.
 
@@ -358,6 +409,10 @@ def _get_tracer() -> object | None:
     - ``shutdown_on_exit=False`` prevents the default 30-second atexit flush that
       can hang the CLI process (B2).  A bounded ``provider.shutdown()`` is
       performed by ``shutdown_telemetry()`` instead.
+    - ``enable_live_metrics=False`` is set explicitly so QuickPulse never pings
+      the LiveEndpoint, belt-and-suspenders against a future default change (A2).
+    - ``_harden_azure_sdk_logging()`` is called before ``configure_azure_monitor``
+      so the SDK's own logger tree is silenced before any network attempt (#411).
     """
     global _tracer, _sdk_initialised  # noqa: PLW0603
 
@@ -370,6 +425,9 @@ def _get_tracer() -> object | None:
         from azure.monitor.opentelemetry import configure_azure_monitor  # noqa: PLC0415
         from opentelemetry import trace  # noqa: PLC0415
 
+        # A2/A3: silence Azure SDK logger trees before any network attempt (#411).
+        _harden_azure_sdk_logging()
+
         configure_azure_monitor(
             connection_string=_get_connection_string(),
             logger_name="fabric_dw.telemetry",
@@ -379,6 +437,10 @@ def _get_tracer() -> object | None:
             # azure-monitor-opentelemetry 1.8+; its _get_processor_time callback
             # divides by zero on short-lived processes and logs a traceback (#399).
             enable_performance_counters=False,
+            # A2: belt-and-suspenders — QuickPulse must never ping the LiveEndpoint.
+            # Suppresses _quickpulse/_exporter.py::_ping tracebacks on connection
+            # refused even if the default changes in a future SDK version (#411).
+            enable_live_metrics=False,
             # B2: disable unbounded (30 s) atexit flush — we do our own bounded flush.
             shutdown_on_exit=False,
             # B1: disable all auto-HTTP / Azure SDK instrumentors (privacy).
