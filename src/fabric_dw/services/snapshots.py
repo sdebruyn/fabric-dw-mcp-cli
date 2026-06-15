@@ -14,7 +14,7 @@ from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import WarehouseKind, WarehouseSnapshot, WarehouseSnapshotApiPayload, as_props
 from fabric_dw.services._helpers import compact
 from fabric_dw.services._lro import LRO_DETAIL_WAIT_S, LRO_MAX_DETAIL_RETRIES, resolve_lro_item_id
-from fabric_dw.sql import SqlTarget, is_snapshot_not_ready_error, run_statements
+from fabric_dw.sql import SqlTarget, is_snapshot_not_ready_error, run_query, run_statements
 
 __all__ = [
     "create",
@@ -318,11 +318,11 @@ async def roll_timestamp(
     new_dt: datetime | None = None,
     *,
     mode: CredentialMode = CredentialMode.DEFAULT,
-) -> None:
+) -> datetime:
     """Advance or reset the timestamp of a warehouse snapshot via T-SQL.
 
     Executes ``ALTER DATABASE [{snapshot_name}] SET TIMESTAMP = …`` against
-    *parent_target*.
+    *parent_target* and returns the timestamp that was actually applied.
 
     Args:
         parent_target: The :class:`~fabric_dw.sql.SqlTarget` for the parent
@@ -333,6 +333,12 @@ async def roll_timestamp(
             formatted as ``YYYY-MM-DDTHH:MM:SS.SS``. If ``None``, the
             snapshot rolls forward to ``CURRENT_TIMESTAMP``.
         mode: The credential mode for Entra authentication.
+
+    Returns:
+        The datetime that was actually applied to the snapshot.  When
+        *new_dt* is supplied this equals the normalised *new_dt*; when
+        *new_dt* is ``None`` (reset to ``CURRENT_TIMESTAMP``) this is the
+        server-side timestamp queried back immediately after the ALTER.
 
     Raises:
         ValueError: If *snapshot_name* contains any forbidden character.
@@ -399,4 +405,27 @@ async def roll_timestamp(
             # Provisioning lag — wait and retry.
             await asyncio.sleep(_SNAP_READY_POLL_INTERVAL_S)
         else:
-            return  # ALTER succeeded — we're done
+            break  # ALTER succeeded — proceed to fetch the applied timestamp.
+
+    # When new_dt was supplied the applied timestamp equals new_dt (the ALTER
+    # SET a deterministic value).  When new_dt is None the server applied
+    # CURRENT_TIMESTAMP, which is only knowable by querying it back.
+    if new_dt is not None:
+        return new_dt
+
+    def _fetch_ts() -> datetime:
+        _, rows = run_query(
+            parent_target,
+            "SELECT CURRENT_TIMESTAMP;",
+            mode=mode,
+            fetch="one",
+        )
+        if rows:
+            raw = rows[0][0]
+            if isinstance(raw, datetime):
+                return raw
+            # Some driver versions return a string — parse it.
+            return datetime.fromisoformat(str(raw))
+        return datetime.now(tz=UTC)
+
+    return await asyncio.to_thread(_fetch_ts)

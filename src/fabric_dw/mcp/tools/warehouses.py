@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -15,6 +14,7 @@ from fabric_dw.mcp._guards import (
     assert_destructive_allowed,
     assert_workspace_allowed,
     assert_writes_allowed,
+    workspace_allowlist_active,
 )
 from fabric_dw.mcp._helpers import fabric_err, resolve_item, tool_err
 from fabric_dw.services import ownership as ownership_svc
@@ -39,8 +39,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         When *all_workspaces* is ``True``, ignore *workspace* and aggregate results
         across every workspace the caller can see.
         """
-        _workspaces_allowlist = os.environ.get("FABRIC_MCP_WORKSPACES", "").strip()
-        if all_workspaces and _workspaces_allowlist:
+        if all_workspaces and workspace_allowlist_active():
             raise ToolError(
                 "all_workspaces=True is not permitted when FABRIC_MCP_WORKSPACES is configured; "
                 "specify an individual workspace instead"
@@ -82,7 +81,26 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         collation: str | None = None,
         description: str | None = None,
     ) -> dict[str, Any]:
-        """Create a new Warehouse in a workspace."""
+        """Create a new Warehouse in a workspace.
+
+        Args:
+            workspace: Workspace name or GUID.
+            name: Display name for the new warehouse.
+            collation: Optional default collation for the new warehouse.
+                Fabric Data Warehouse supports a fixed set of collations.
+                Supported values include:
+
+                - ``Latin1_General_100_BIN2_UTF8`` (recommended default)
+                - ``Latin1_General_100_CI_AS_KS_WS_SC_UTF8``
+                - ``Latin1_General_CI_AS``
+                - ``SQL_Latin1_General_CP1_CI_AS``
+
+                When omitted, the workspace default collation is used.
+                Supplying an unsupported value will cause the Fabric API to
+                return an error.  See the Fabric documentation for the full
+                list of supported collations.
+            description: Optional description for the new warehouse.
+        """
         assert_writes_allowed("create_warehouse")
         assert_workspace_allowed(workspace)
         ctx = get_context()

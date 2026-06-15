@@ -67,7 +67,22 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(name="set_workspace_collation")
     async def set_workspace_collation(workspace: str, collation: str) -> dict[str, Any]:
-        """Set the default Data Warehouse collation for a workspace."""
+        """Set the default Data Warehouse collation for a workspace.
+
+        Args:
+            workspace: Workspace name or GUID.
+            collation: Collation to apply.  Fabric Data Warehouse supports a
+                fixed set of collations.  Supported values include:
+
+                - ``Latin1_General_100_BIN2_UTF8`` (recommended default)
+                - ``Latin1_General_100_CI_AS_KS_WS_SC_UTF8``
+                - ``Latin1_General_CI_AS``
+                - ``SQL_Latin1_General_CP1_CI_AS``
+
+                Supplying an unsupported value will cause the Fabric API to
+                return an error.  See the Fabric documentation for the full
+                list of supported collations.
+        """
         assert_writes_allowed("set_workspace_collation")
         assert_workspace_allowed(workspace)
         ctx = get_context()

@@ -560,12 +560,22 @@ async def test_roll_timestamp_without_new_dt_uses_current_timestamp() -> None:
     This test pins that open_connection is called with autocommit=True and that
     exactly ONE SQL statement is executed (the ALTER DATABASE — no preceding
     SET IMPLICIT_TRANSACTIONS OFF is needed or present).
+
+    After the ALTER, roll_timestamp queries ``SELECT CURRENT_TIMESTAMP`` to
+    obtain the applied timestamp; we mock run_query to return a concrete datetime.
     """
     target = _make_sql_target()
     conn = _make_mock_conn()
+    _applied = datetime(2026, 6, 15, 12, 0, 0, tzinfo=UTC)
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn) as mock_open:
-        await snapshots.roll_timestamp(target, "MySnapshot")
+    with (
+        patch("fabric_dw.sql.open_connection", return_value=conn) as mock_open,
+        patch(
+            "fabric_dw.services.snapshots.run_query",
+            return_value=(["CURRENT_TIMESTAMP"], [(_applied,)]),
+        ),
+    ):
+        result = await snapshots.roll_timestamp(target, "MySnapshot")
 
     # Verify ODBC-level autocommit was requested — this is the critical assertion.
     mock_open.assert_called_once_with(
@@ -578,6 +588,9 @@ async def test_roll_timestamp_without_new_dt_uses_current_timestamp() -> None:
     executed_sql = cursor.execute.call_args_list[0][0][0]
     assert "ALTER DATABASE [MySnapshot] SET TIMESTAMP = CURRENT_TIMESTAMP;" in executed_sql
     assert "SET IMPLICIT_TRANSACTIONS" not in executed_sql
+
+    # The returned datetime must equal the server-queried CURRENT_TIMESTAMP.
+    assert result == _applied
 
 
 async def test_roll_timestamp_with_new_dt_formats_correctly() -> None:
@@ -709,8 +722,15 @@ async def test_roll_timestamp_closes_connection() -> None:
     """roll_timestamp should close the connection after use."""
     target = _make_sql_target()
     conn = _make_mock_conn()
+    _applied = datetime(2026, 6, 15, 12, 0, 0, tzinfo=UTC)
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
+    with (
+        patch("fabric_dw.sql.open_connection", return_value=conn),
+        patch(
+            "fabric_dw.services.snapshots.run_query",
+            return_value=(["CURRENT_TIMESTAMP"], [(_applied,)]),
+        ),
+    ):
         await snapshots.roll_timestamp(target, "MySnapshot")
 
     conn.close.assert_called_once()
@@ -748,9 +768,15 @@ async def test_roll_timestamp_retries_once_on_snapshot_not_ready() -> None:
     def _fake_monotonic() -> float:
         return fake_now[0]
 
+    _applied = datetime(2026, 6, 15, 12, 0, 0, tzinfo=UTC)
+
     with (
         patch("fabric_dw.services.snapshots.run_statements", side_effect=_run_side_effect),
         patch("time.monotonic", side_effect=_fake_monotonic),
+        patch(
+            "fabric_dw.services.snapshots.run_query",
+            return_value=(["CURRENT_TIMESTAMP"], [(_applied,)]),
+        ),
     ):
         await snapshots.roll_timestamp(target, "MySnapshot")
 
@@ -775,9 +801,15 @@ async def test_roll_timestamp_retries_twice_on_snapshot_not_ready() -> None:
     def _fake_monotonic() -> float:
         return fake_now[0]
 
+    _applied = datetime(2026, 6, 15, 12, 0, 0, tzinfo=UTC)
+
     with (
         patch("fabric_dw.services.snapshots.run_statements", side_effect=_run_side_effect),
         patch("time.monotonic", side_effect=_fake_monotonic),
+        patch(
+            "fabric_dw.services.snapshots.run_query",
+            return_value=(["CURRENT_TIMESTAMP"], [(_applied,)]),
+        ),
     ):
         await snapshots.roll_timestamp(target, "MySnapshot")
 

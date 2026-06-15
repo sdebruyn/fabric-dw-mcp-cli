@@ -9,9 +9,9 @@ Design note
 -----------
 FastMCP's lifespan mechanism stores the yielded object inside the low-level
 request context (``request_context.lifespan_context``), but retrieving it
-requires injecting a ``Context`` parameter into every one of 65 tool
-functions.  Instead, we store the single ``ServerContext`` instance in a
-module-level sentinel (``_SERVER_CTX``) that is set during the
+requires injecting a ``Context`` parameter into every tool function.  Instead,
+we store the single ``ServerContext`` instance in a module-level sentinel
+(``_SERVER_CTX``) that is set during the
 ``asynccontextmanager`` lifespan and cleared on teardown.  A
 :func:`get_context` accessor raises ``RuntimeError`` when called outside the
 lifespan (i.e. before startup or after shutdown), making mis-use visible.

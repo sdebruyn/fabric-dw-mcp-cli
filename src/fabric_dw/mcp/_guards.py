@@ -44,6 +44,8 @@ __all__ = [
     "assert_readonly_sql",
     "assert_workspace_allowed",
     "assert_writes_allowed",
+    "env_flag",
+    "workspace_allowlist_active",
 ]
 
 # ---------------------------------------------------------------------------
@@ -53,9 +55,29 @@ __all__ = [
 _TRUTHY = frozenset({"1", "true", "yes"})
 
 
-def _env_flag(name: str) -> bool:
+def env_flag(name: str) -> bool:
     """Return True when *name* is set to a truthy value (case-insensitive)."""
     return os.environ.get(name, "").strip().lower() in _TRUTHY
+
+
+# Keep the private alias for backward compatibility during the transition period.
+_env_flag = env_flag
+
+
+def workspace_allowlist_active() -> bool:
+    """Return True when ``FABRIC_MCP_WORKSPACES`` is set to a non-empty, non-whitespace value.
+
+    The check mirrors the parsing in :func:`assert_workspace_allowed`: a value
+    that consists solely of commas and/or whitespace is treated as unset (no
+    allowlist in effect).  This is the single source of truth for
+    "is the allowlist active?" used by tools that need to guard
+    ``all_workspaces=True`` requests.
+    """
+    raw = os.environ.get("FABRIC_MCP_WORKSPACES", "").strip()
+    if not raw:
+        return False
+    entries = {entry.strip() for entry in raw.split(",") if entry.strip()}
+    return bool(entries)
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +274,7 @@ def assert_writes_allowed(tool_name: str) -> None:
     Raises:
         ToolError: When ``FABRIC_MCP_READONLY`` is set to a truthy value.
     """
-    if _env_flag("FABRIC_MCP_READONLY"):
+    if env_flag("FABRIC_MCP_READONLY"):
         raise ToolError(_READONLY_MSG.format(tool_name=tool_name))
 
 
@@ -273,7 +295,7 @@ def assert_destructive_allowed() -> None:
         ToolError: When ``FABRIC_MCP_ALLOW_DESTRUCTIVE`` is not set to a
             truthy value.
     """
-    if not _env_flag("FABRIC_MCP_ALLOW_DESTRUCTIVE"):
+    if not env_flag("FABRIC_MCP_ALLOW_DESTRUCTIVE"):
         raise ToolError(_DESTRUCTIVE_MSG)
 
 

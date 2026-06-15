@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
@@ -16,7 +14,13 @@ from fabric_dw.mcp._guards import (
     assert_workspace_allowed,
     assert_writes_allowed,
 )
-from fabric_dw.mcp._helpers import fabric_err, make_sql_target, resolve_item, tool_err
+from fabric_dw.mcp._helpers import (
+    fabric_err,
+    make_sql_target,
+    parse_iso8601,
+    resolve_item,
+    tool_err,
+)
 from fabric_dw.services import snapshots
 
 __all__ = ["register"]
@@ -60,12 +64,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         """
         assert_writes_allowed("create_snapshot")
         assert_workspace_allowed(workspace)
-        parsed_dt: datetime | None = None
-        if snapshot_dt is not None:
-            try:
-                parsed_dt = datetime.fromisoformat(snapshot_dt)
-            except ValueError as exc:
-                raise ToolError(f"invalid snapshot_dt {snapshot_dt!r}: expected ISO-8601") from exc
+        parsed_dt = parse_iso8601(snapshot_dt, "snapshot_dt")
         ctx = get_context()
         try:
             ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
@@ -144,12 +143,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         """
         assert_writes_allowed("roll_snapshot_timestamp")
         assert_workspace_allowed(workspace)
-        parsed_dt: datetime | None = None
-        if new_dt is not None:
-            try:
-                parsed_dt = datetime.fromisoformat(new_dt)
-            except ValueError as exc:
-                raise ToolError(f"invalid new_dt {new_dt!r}: expected ISO-8601") from exc
+        parsed_dt = parse_iso8601(new_dt, "new_dt")
         ctx = get_context()
         try:
             ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
@@ -158,7 +152,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 "roll_snapshot_timestamp ws=%s item=%s snap=%r", ws_id, item.id, snapshot_name
             )
             target = make_sql_target(ws_id, item, warehouse)
-            await snapshots.roll_timestamp(target, snapshot_name, parsed_dt, mode=ctx.auth_mode)
+            applied_dt = await snapshots.roll_timestamp(
+                target, snapshot_name, parsed_dt, mode=ctx.auth_mode
+            )
         except FabricError as exc:
             raise fabric_err(exc) from exc
-        return {"rolled": True, "snapshot_name": snapshot_name, "new_dt": new_dt}
+        return {
+            "rolled": True,
+            "snapshot_name": snapshot_name,
+            "applied_dt": applied_dt.isoformat(),
+        }

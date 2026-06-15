@@ -17,7 +17,7 @@ Tool list
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
@@ -585,9 +585,14 @@ async def test_delete_snapshot_workspace_guard(ctx_patch) -> None:
 
 
 async def test_roll_snapshot_timestamp_happy_path(mock_ctx, ctx_patch) -> None:
-    """roll_snapshot_timestamp returns a roll-confirmed dict."""
+    """roll_snapshot_timestamp returns a roll-confirmed dict with applied_dt.
+
+    When new_dt is omitted the service queries CURRENT_TIMESTAMP and returns
+    the actual applied datetime.  The tool must surface that as applied_dt.
+    """
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
+    _applied = datetime(2026, 6, 15, 12, 0, 0, tzinfo=UTC)
     item = make_item_entry()
     mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
     mock_ctx.resolver.item = AsyncMock(return_value=item)
@@ -596,7 +601,7 @@ async def test_roll_snapshot_timestamp_happy_path(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch(
             "fabric_dw.services.snapshots.roll_timestamp",
-            new=AsyncMock(return_value=None),
+            new=AsyncMock(return_value=_applied),
         ),
     ):
         result = await mcp._tool_manager.call_tool(
@@ -606,17 +611,24 @@ async def test_roll_snapshot_timestamp_happy_path(mock_ctx, ctx_patch) -> None:
 
     assert result["rolled"] is True
     assert result["snapshot_name"] == _SNAP_NAME
-    assert result["new_dt"] is None
+    # applied_dt must be the ISO-8601 string of the server-side timestamp.
+    assert result["applied_dt"] == _applied.isoformat()
+    assert "new_dt" not in result
 
 
 async def test_roll_snapshot_timestamp_with_datetime(mock_ctx, ctx_patch) -> None:
-    """roll_snapshot_timestamp passes a parsed datetime to the service when new_dt is supplied."""
+    """roll_snapshot_timestamp passes a parsed datetime to the service when new_dt is supplied.
+
+    The service returns the applied datetime (equal to the supplied new_dt in
+    this case); the tool must return it as applied_dt.
+    """
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
+    _supplied_dt = datetime(2026, 6, 1, 9, 0, 0, tzinfo=UTC)
     item = make_item_entry()
     mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
     mock_ctx.resolver.item = AsyncMock(return_value=item)
-    mock_roll = AsyncMock(return_value=None)
+    mock_roll = AsyncMock(return_value=_supplied_dt)
 
     with (
         ctx_patch,
@@ -637,7 +649,9 @@ async def test_roll_snapshot_timestamp_with_datetime(mock_ctx, ctx_patch) -> Non
     # second positional arg is snapshot_name, third is new_dt
     assert args[1] == _SNAP_NAME
     assert isinstance(args[2], datetime)
-    assert result["new_dt"] == "2026-06-01T09:00:00"
+    # applied_dt reflects the service's returned datetime, not the raw input string.
+    assert result["applied_dt"] == _supplied_dt.isoformat()
+    assert "new_dt" not in result
 
 
 async def test_roll_snapshot_timestamp_bad_datetime_becomes_tool_error(ctx_patch) -> None:

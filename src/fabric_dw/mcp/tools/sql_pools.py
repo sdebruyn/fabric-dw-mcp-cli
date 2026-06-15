@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
@@ -17,7 +16,7 @@ from fabric_dw.mcp._guards import (
     assert_workspace_allowed,
     assert_writes_allowed,
 )
-from fabric_dw.mcp._helpers import fabric_err, make_sql_target, resolve_item
+from fabric_dw.mcp._helpers import fabric_err, make_sql_target, parse_iso8601, resolve_item
 from fabric_dw.models import SqlPool, SqlPoolClassifier
 from fabric_dw.services import query_insights as _qi_svc
 from fabric_dw.services import sql_pools as sql_pools_svc
@@ -269,15 +268,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             raise fabric_err(exc) from exc
         return result.model_dump(by_alias=True, mode="json")
 
-    def _parse_dt(value: str | None, param: str) -> datetime | None:
-        """Parse an ISO-8601 string to datetime, raising ToolError on bad input."""
-        if value is None:
-            return None
-        try:
-            return datetime.fromisoformat(value)
-        except ValueError as exc:
-            raise ToolError(f"invalid {param} {value!r}: expected ISO-8601") from exc
-
     @mcp.tool(name="list_sql_pool_insights")
     async def list_sql_pool_insights(
         workspace: str,
@@ -295,8 +285,8 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             since: Optional ISO-8601 lower bound on timestamp.
             until: Optional ISO-8601 upper bound on timestamp.
         """
-        since_dt = _parse_dt(since, "since")
-        until_dt = _parse_dt(until, "until")
+        since_dt = parse_iso8601(since, "since")
+        until_dt = parse_iso8601(until, "until")
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
