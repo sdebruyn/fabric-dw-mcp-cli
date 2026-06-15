@@ -14,6 +14,7 @@ from fabric_dw.exceptions import AuthError, NotFoundError, PermissionDeniedError
 from fabric_dw.sql import (
     SqlTarget,
     build_connection_string,
+    is_auth_failed_message,
     is_transient_connection_error,
     map_driver_error,
     reset_pool,
@@ -442,6 +443,45 @@ class TestMapDriverError:
         exc = Exception("Incorrect syntax near 'SELCT'")
         result = map_driver_error(exc)
         assert result is None
+
+    def test_could_not_login_bare_returns_auth_error(self) -> None:
+        """Bare 'Could not login (18456)' without 'authentication failed' -> AuthError."""
+        exc = Exception("Could not login (18456)")
+        result = map_driver_error(exc)
+        assert isinstance(result, AuthError)
+
+    def test_could_not_login_case_insensitive(self) -> None:
+        """'COULD NOT LOGIN' matches case-insensitively -> AuthError."""
+        exc = Exception("COULD NOT LOGIN because the login failed")
+        result = map_driver_error(exc)
+        assert isinstance(result, AuthError)
+
+
+# ---------------------------------------------------------------------------
+# is_auth_failed_message — public helper
+# ---------------------------------------------------------------------------
+
+
+class TestIsAuthFailedMessage:
+    """Tests for the is_auth_failed_message public helper."""
+
+    def test_authentication_failed_returns_true(self) -> None:
+        assert is_auth_failed_message("Authentication failed for user '' (token-based)")
+
+    def test_could_not_login_returns_true(self) -> None:
+        assert is_auth_failed_message("Could not login (18456)")
+
+    def test_could_not_login_upper_case_returns_true(self) -> None:
+        assert is_auth_failed_message("COULD NOT LOGIN because the login failed")
+
+    def test_unrelated_message_returns_false(self) -> None:
+        assert not is_auth_failed_message("connection timed out")
+
+    def test_permission_denied_returns_false(self) -> None:
+        assert not is_auth_failed_message("permission was denied")
+
+    def test_empty_string_returns_false(self) -> None:
+        assert not is_auth_failed_message("")
 
 
 # ---------------------------------------------------------------------------

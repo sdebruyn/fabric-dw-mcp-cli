@@ -61,6 +61,7 @@ __all__ = [
     "SQL_TRANSIENT_MAX_RETRIES",
     "SqlTarget",
     "build_connection_string",
+    "is_auth_failed_message",
     "is_snapshot_not_ready_error",
     "is_transient_connection_error",
     "map_driver_error",
@@ -125,7 +126,9 @@ _PERMISSION_DENIED_FRAGMENTS = (
 )
 
 # Entra authentication failures in driver error messages.
-_AUTH_FAILED_FRAGMENTS = ("authentication failed",)
+# "could not login" covers the bare SQL Server 18456 message form
+# ("Could not login (18456)") that does NOT embed "authentication failed".
+_AUTH_FAILED_FRAGMENTS = ("authentication failed", "could not login")
 
 # SQL Server native error numbers that indicate permission denied.
 # 229: SELECT permission denied; 230: INSERT; 297: execute permission denied.
@@ -731,6 +734,30 @@ def is_snapshot_not_ready_error(exc: BaseException) -> bool:
     """
     msg = str(exc).lower()
     return any(fragment in msg for fragment in _SNAPSHOT_NOT_READY_FRAGMENTS)
+
+
+def is_auth_failed_message(msg: str) -> bool:
+    """Return True when *msg* contains a known Entra authentication-failure fragment.
+
+    This is the public counterpart to the private :data:`_AUTH_FAILED_FRAGMENTS`
+    tuple.  It centralises the check so that callers outside this module (e.g.
+    integration test readiness probes) do not need to import the private constant.
+
+    Matching is case-insensitive.  Covered fragments include:
+
+    * ``"authentication failed"`` — the common Entra/ODBC wording.
+    * ``"could not login"`` — the bare SQL Server 18456 form that does **not**
+      embed the "authentication failed" substring (e.g. "Could not login (18456)").
+
+    Args:
+        msg: A string to test, typically ``str(exc)`` from a driver exception.
+
+    Returns:
+        ``True`` when *msg* contains at least one auth-failure fragment,
+        ``False`` otherwise.
+    """
+    lower = msg.lower()
+    return any(fragment in lower for fragment in _AUTH_FAILED_FRAGMENTS)
 
 
 # ---------------------------------------------------------------------------

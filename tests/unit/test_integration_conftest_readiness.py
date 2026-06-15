@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 import tests.integration.conftest as _conftest
-from fabric_dw.sql import _AUTH_FAILED_FRAGMENTS, SqlTarget
+from fabric_dw.sql import SqlTarget, is_auth_failed_message
 from tests.integration.conftest import _wait_for_sql_readiness
 
 # ---------------------------------------------------------------------------
@@ -167,8 +167,30 @@ class TestWaitForSqlReadinessAuthFailedRetry:
         await _wait_for_sql_readiness(_make_target(), timeout_s=10.0)
         assert call_count == 1
 
-    def test_auth_failed_fragments_constant_matches_expected(self) -> None:
-        """Sanity check: _AUTH_FAILED_FRAGMENTS includes 'authentication failed'."""
-        assert any("authentication failed" in frag for frag in _AUTH_FAILED_FRAGMENTS), (
-            "_AUTH_FAILED_FRAGMENTS must contain 'authentication failed'"
-        )
+    async def test_bare_could_not_login_is_retried(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Bare 'Could not login (18456)' without 'authentication failed' is retried."""
+        call_count = 0
+
+        def _probe(
+            _target: SqlTarget, _sql: str, **_kwargs: object
+        ) -> tuple[list[str], list[tuple[object, ...]]]:
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise _make_error("Could not login (18456)")
+            return [], []
+
+        monkeypatch.setattr(_conftest, "run_query", _probe)
+        monkeypatch.setattr(_conftest, "_SQL_READINESS_BACKOFF_INITIAL_S", 0.0)
+        monkeypatch.setattr(_conftest, "_SQL_READINESS_BACKOFF_MAX_S", 0.0)
+
+        await _wait_for_sql_readiness(_make_target(), timeout_s=10.0)
+        assert call_count == 3
+
+    def test_is_auth_failed_message_covers_both_fragments(self) -> None:
+        """is_auth_failed_message returns True for all covered auth-failure forms."""
+        assert is_auth_failed_message("Authentication failed for user '' (token-based)")
+        assert is_auth_failed_message("Could not login (18456)")
+        assert is_auth_failed_message("COULD NOT LOGIN because the login failed")
+        assert not is_auth_failed_message("connection timed out")
+        assert not is_auth_failed_message("permission was denied")

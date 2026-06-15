@@ -17,8 +17,8 @@ from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import Warehouse, WarehouseKind, WarehouseSnapshot
 from fabric_dw.services import schemas, snapshots, warehouses
 from fabric_dw.sql import (
-    _AUTH_FAILED_FRAGMENTS,
     SqlTarget,
+    is_auth_failed_message,
     is_transient_connection_error,
     run_query,
 )
@@ -75,14 +75,24 @@ async def _wait_for_sql_readiness(
     A freshly created Fabric warehouse or SQL analytics endpoint requires a
     warm-up period (database provisioning + permission propagation) before TDS
     connections succeed.  During warm-up the driver raises ``OperationalError``
-    with messages like "Login failed … database was not found" or "communication
-    link failure".  This function retries until the query succeeds or *timeout_s*
-    is exhausted.
+    with messages like "Login failed … database was not found", "authentication
+    failed", "Could not login (18456)", or "communication link failure".  This
+    function retries until the query succeeds or *timeout_s* is exhausted.
 
-    Only connection-level transient errors (detected by
-    :func:`~fabric_dw.sql.is_transient_connection_error`) and login-failed /
-    database-not-found errors are swallowed during the wait.  Any other error
-    (e.g. real SQL errors, unexpected exceptions) is re-raised immediately.
+    Three categories of errors are swallowed during the wait:
+
+    1. **Connection-level transients** — detected by
+       :func:`~fabric_dw.sql.is_transient_connection_error` (TCP drops,
+       "communication link failure", etc.).
+    2. **"database was not found"** — the classic Fabric warm-up variant where
+       the SQL endpoint exists but the database name has not propagated yet.
+    3. **Auth-failed variants** — detected by
+       :func:`~fabric_dw.sql.is_auth_failed_message` ("authentication failed",
+       "Could not login (18456)"); the service-principal's access has not yet
+       propagated to the new SQL endpoint.
+
+    Any other error (e.g. real SQL errors, unexpected exceptions) is re-raised
+    immediately.
 
     The underlying :func:`~fabric_dw.sql.run_query` is synchronous (TDS), so
     each probe is offloaded to a thread via ``asyncio.to_thread``, mirroring
@@ -108,7 +118,7 @@ async def _wait_for_sql_readiness(
         except Exception as exc:
             msg_lower = str(exc).lower()
             # Swallow transient connection drops AND the Fabric warm-up login
-            # failures.  Two provisioning-transient variants are recognised:
+            # failures.  Three provisioning-transient variants are recognised:
             #
             # 1. "database was not found" — the SQL endpoint exists but the
             #    database name has not propagated yet (classic warm-up).
@@ -117,18 +127,17 @@ async def _wait_for_sql_readiness(
             #    the database IS reachable but the service principal's access has
             #    not yet propagated to the new SQL endpoint.  Seen especially
             #    under xdist=8 where 8 warehouses are created concurrently.
-            #    Detected via the _AUTH_FAILED_FRAGMENTS constant (same source of
-            #    truth as map_driver_error) so literals are not duplicated.
+            #    Detected via is_auth_failed_message (public helper backed by
+            #    _AUTH_FAILED_FRAGMENTS, same source of truth as map_driver_error)
+            #    so neither private symbols nor string literals are duplicated.
             #
-            # Both variants are real provisioning transients and are safe to
+            # All variants are real provisioning transients and are safe to
             # retry within the warm-up window.  A genuine permanent auth
             # misconfiguration (wrong tenant, expired service-principal
             # credentials, etc.) will surface as TimeoutError after timeout_s —
             # that is the accepted trade-off for this readiness probe only.
             # The general run_query/_with_connect_retry path is NOT broadened.
-            is_warmup = "database was not found" in msg_lower or any(
-                frag in msg_lower for frag in _AUTH_FAILED_FRAGMENTS
-            )
+            is_warmup = "database was not found" in msg_lower or is_auth_failed_message(str(exc))
             if not (is_transient_connection_error(exc) or is_warmup):
                 # Unexpected error — surface it immediately.
                 raise
