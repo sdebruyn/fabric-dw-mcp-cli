@@ -1,5 +1,6 @@
 """Tests for fabric_dw.auth — written before implementation (TDD)."""
 
+import asyncio
 import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -717,6 +718,58 @@ def test_get_sql_token_struct_raises_config_error_missing_client_id(
 
     with pytest.raises(ConfigError, match="AZURE_CLIENT_ID"):
         get_sql_token_struct()
+
+
+# ---------------------------------------------------------------------------
+# C01: cross-client SyncCredentialAdapter lock serialises concurrent get_token
+# ---------------------------------------------------------------------------
+
+
+async def test_sync_adapter_lock_serializes_concurrent_get_token_calls() -> None:
+    """Two concurrent adapter.get_token calls must not execute inner.get_token concurrently.
+
+    The per-adapter ``_get_token_lock`` must ensure that even when two separate
+    FabricHttpClient instances share the same SyncCredentialAdapter, their
+    concurrent token fetches are serialised and the underlying MSAL cache is
+    never mutated from two threads simultaneously.
+
+    We verify this by checking that the ``start`` events for the two concurrent
+    calls are never interleaved: the pattern must be start/end/start/end, NOT
+    start/start/end/end.
+    """
+    events: list[str] = []
+
+    async def slow_get_token(*_args: object, **_kwargs: object) -> AccessToken:
+        # Record that we have started; then yield control to allow another coroutine
+        # to run; then record that we have ended.
+        events.append("start")
+        # A small asyncio.sleep yields to the event loop.  If the adapter lock does
+        # NOT serialise, a second coroutine can enter here concurrently, appending
+        # a second "start" before any "end" is recorded.
+        await asyncio.sleep(0)
+        events.append("end")
+        return AccessToken("tok", 9999999999)
+
+    inner = MagicMock()
+    # Patch asyncio.to_thread so the "thread offload" runs as a coroutine in the
+    # same event loop — this makes the concurrency behaviour visible without
+    # spawning real threads.
+    adapter = SyncCredentialAdapter(inner)
+
+    with patch(
+        "fabric_dw.auth.asyncio.to_thread",
+        side_effect=slow_get_token,
+    ):
+        # Fire two concurrent get_token calls through the same adapter.
+        await asyncio.gather(
+            adapter.get_token(FABRIC_SCOPE),
+            adapter.get_token(FABRIC_SCOPE),
+        )
+
+    # With serialisation the events must be: start, end, start, end
+    assert events == ["start", "end", "start", "end"], (
+        f"Concurrent access detected — events were not serialised: {events}"
+    )
 
 
 def test_get_sql_token_struct_caches_credential_across_calls(

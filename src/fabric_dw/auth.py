@@ -117,10 +117,17 @@ class SyncCredentialAdapter:
 
     Remove the ``InteractiveBrowserCredential`` usage of this adapter and switch to
     ``azure.identity.aio.InteractiveBrowserCredential`` once that ships in a stable release.
+
+    Thread-safety: ``_get_token_lock`` serialises concurrent ``get_token`` calls so that
+    multiple :class:`~fabric_dw.http_client.FabricHttpClient` instances sharing the same
+    credential do not race to mutate the underlying MSAL token cache concurrently.
     """
 
     def __init__(self, inner: _CloseableTokenCredential) -> None:
         self._inner = inner
+        # Per-credential async lock: serialises concurrent get_token calls across
+        # all FabricHttpClient instances that share this credential object.
+        self._get_token_lock: asyncio.Lock = asyncio.Lock()
 
     async def get_token(
         self,
@@ -130,14 +137,15 @@ class SyncCredentialAdapter:
         enable_cae: bool = False,
         **kwargs: object,
     ) -> AccessToken:
-        return await asyncio.to_thread(
-            self._inner.get_token,
-            *scopes,
-            claims=claims,
-            tenant_id=tenant_id,
-            enable_cae=enable_cae,
-            **kwargs,
-        )
+        async with self._get_token_lock:
+            return await asyncio.to_thread(
+                self._inner.get_token,
+                *scopes,
+                claims=claims,
+                tenant_id=tenant_id,
+                enable_cae=enable_cae,
+                **kwargs,
+            )
 
     async def close(self) -> None:
         await asyncio.to_thread(self._inner.close)

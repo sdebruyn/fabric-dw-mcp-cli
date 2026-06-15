@@ -14,9 +14,9 @@ Retry arithmetic
 Tenacity wraps ``_request_with_retry`` and retries on ``FabricServerError``
 (5xx) up to 3 attempts with exponential back-off.  Inside each attempt,
 ``_do_request`` executes a 429-loop of up to ``max_429_retries`` iterations.
-Worst-case total attempts = 3 tenacity attempts x 5 429-retries = 15 sends.
-In practice the 429-loop resets its counter on any non-429 response, so the
-two mechanisms are largely independent.
+Both mechanisms share a common wall-clock deadline (``_combined_deadline_s``
+seconds from the first attempt, default 120 s) so the combined worst-case
+latency is bounded even if the server returns large Retry-After values.
 
 Timeout retry safety
 ~~~~~~~~~~~~~~~~~~~~
@@ -25,18 +25,25 @@ is retried ONLY for idempotent HTTP methods (GET, HEAD, OPTIONS).  POST, PATCH,
 and DELETE are NOT retried on timeout because the server may have received and
 committed the request — re-sending a POST would duplicate the resource or cause
 a 409 Conflict.  LRO status polling (GET) is covered by the safe retry path.
+
+Credential ownership
+~~~~~~~~~~~~~~~~~~~~
+``FabricHttpClient`` does **not** close the credential passed to its constructor.
+The credential may be shared across multiple client instances or with other code,
+so its lifecycle is the caller's responsibility.  If you create a credential
+solely for one client, close it after the ``async with`` block completes.
 """
 
 from __future__ import annotations
 
 import asyncio
-import contextvars
 import datetime
 import http
+import json
 import logging
 import random
 import time as _time
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from email.utils import parsedate_to_datetime
 from enum import StrEnum
 from typing import Any
@@ -64,7 +71,6 @@ _logger = logging.getLogger("fabric_dw.http")
 __all__ = [
     "FabricHttpClient",
     "HttpBase",
-    "_parse_retry_after",
 ]
 
 # Module-level defaults (used as constructor defaults)
@@ -74,15 +80,16 @@ _MAX_429_RETRIES: int = 5
 _DEFAULT_POLL_INTERVAL: float = 2.0
 _TOKEN_REFRESH_BUFFER: float = 300.0  # seconds before expiry to refresh
 
+# Maximum wall-clock seconds for the combined 5xx-tenacity + 429-loop budget.
+# When this deadline is reached, whichever retry loop is active at that point
+# aborts and re-raises; this prevents unbounded waits when a server advertises
+# very large Retry-After values across multiple tenacity attempts.
+_DEFAULT_COMBINED_DEADLINE_S: float = 120.0
+
 # HTTP methods that are safe to retry on timeout: repeating them cannot duplicate
 # server-side state.  POST/PATCH/DELETE are excluded — a timed-out POST may have
 # committed server-side; re-sending it would create a duplicate resource or 409.
 _IDEMPOTENT_METHODS: frozenset[str] = frozenset({"GET", "HEAD", "OPTIONS"})
-
-# ContextVar that _request_with_retry sets before each call so the tenacity
-# retry predicate can inspect the HTTP method without changing the function
-# signature (tenacity only passes the exception to retry predicates).
-_current_method: contextvars.ContextVar[str] = contextvars.ContextVar("_current_method", default="")
 
 # Status code → exception class mapping (4xx errors only; 5xx handled separately)
 _STATUS_TO_EXC: dict[int, type[FabricError]] = {
@@ -105,6 +112,9 @@ def _parse_retry_after(value: str) -> float:
     Handles both the integer-seconds form and the HTTP-date form
     (RFC 7231 section 7.1.3).
 
+    Always returns a non-negative float; never raises — malformed values
+    fall back to 0.0.
+
     Args:
         value: The raw Retry-After header value.
 
@@ -113,32 +123,92 @@ def _parse_retry_after(value: str) -> float:
     """
     value = value.strip()
     try:
-        return float(value)
+        return max(0.0, float(value))
     except ValueError:
         pass
 
     # Try HTTP-date form, e.g. "Wed, 21 Oct 2026 07:28:00 GMT"
-    retry_dt = parsedate_to_datetime(value)
-    now = datetime.datetime.now(tz=datetime.UTC)
-    delta = (retry_dt - now).total_seconds()
-    return max(0.0, delta)
+    try:
+        retry_dt = parsedate_to_datetime(value)
+        now = datetime.datetime.now(tz=datetime.UTC)
+        delta = (retry_dt - now).total_seconds()
+        return max(0.0, delta)
+    except (TypeError, ValueError):
+        return 0.0
 
 
-def _should_retry(exc: BaseException) -> bool:
-    """Tenacity retry predicate: retry on 5xx *or* timeouts for idempotent methods.
+def _is_malformed_retry_after(value: str) -> bool:
+    """Return True when *value* is neither a valid numeric seconds string nor an HTTP date.
 
-    Returns ``True`` when tenacity should attempt another send:
-    - Always retry :class:`~fabric_dw.exceptions.FabricServerError` (5xx responses).
-    - Retry :class:`httpx.TimeoutException` ONLY when the current request method
-      is in :data:`_IDEMPOTENT_METHODS` (GET, HEAD, OPTIONS).  Non-idempotent
-      methods (POST, PATCH, DELETE) are NOT retried because the server may have
-      already committed the request.
+    Used by ``_do_request`` to distinguish a legitimately-zero Retry-After (e.g.
+    ``"0.00"``, ``"0.000"``) from a completely unrecognisable value that fell
+    through ``_parse_retry_after`` as ``0.0``.
+
+    Args:
+        value: The raw Retry-After header value (not yet stripped).
+
+    Returns:
+        ``True`` only when the value cannot be parsed as a number or an HTTP date.
     """
-    if isinstance(exc, FabricServerError):
-        return True
-    if isinstance(exc, httpx.TimeoutException):
-        return _current_method.get("") in _IDEMPOTENT_METHODS
-    return False
+    stripped = value.strip()
+    try:
+        float(stripped)
+    except ValueError:
+        pass
+    else:
+        return False  # valid number (including "0.00", "0.000", negative, etc.)
+    try:
+        parsedate_to_datetime(stripped)
+    except (TypeError, ValueError):
+        return True  # truly malformed
+    else:
+        return False  # valid HTTP date (even a past one mapping to 0.0)
+
+
+def _parse_json_body(resp: httpx.Response) -> dict[str, object] | None:
+    """Parse the response JSON as a dict, returning ``None`` on failure.
+
+    Narrows the broad exception to ``(ValueError, json.JSONDecodeError)``
+    (httpx uses ``json.JSONDecodeError`` for invalid JSON) and silently
+    returns ``None`` for any other content type or malformed body.
+    """
+    try:
+        parsed = resp.json()
+        if isinstance(parsed, dict):
+            return parsed  # type: ignore[return-value]
+    except (ValueError, json.JSONDecodeError):
+        pass
+    return None
+
+
+def _make_should_retry(method: str) -> Callable[[BaseException], bool]:
+    """Return a tenacity retry predicate bound to *method*.
+
+    Using a closure instead of a module-global ContextVar avoids shared
+    mutable state across concurrent coroutines and makes the method binding
+    explicit and testable.
+
+    Returns:
+        A predicate ``(exc: BaseException) -> bool`` that tenacity passes
+        to ``retry_if_exception``.
+    """
+    upper = method.upper()
+
+    def _should_retry(exc: BaseException) -> bool:
+        """Retry on 5xx *or* on timeout for idempotent methods.
+
+        - Always retry :class:`~fabric_dw.exceptions.FabricServerError` (5xx).
+        - Retry :class:`httpx.TimeoutException` ONLY for idempotent HTTP
+          methods (GET, HEAD, OPTIONS).  POST/PATCH/DELETE are not retried
+          on timeout — the server may have already committed the request.
+        """
+        if isinstance(exc, FabricServerError):
+            return True
+        if isinstance(exc, httpx.TimeoutException):
+            return upper in _IDEMPOTENT_METHODS
+        return False
+
+    return _should_retry
 
 
 class FabricHttpClient:
@@ -149,23 +219,32 @@ class FabricHttpClient:
         async with FabricHttpClient(credential) as client:
             resp = await client.request("GET", HttpBase.FABRIC, "/workspaces")
 
+    Credential ownership
+    ~~~~~~~~~~~~~~~~~~~~
+    This client does **not** close the credential.  The credential may be
+    shared with other clients or code, so its lifecycle is the caller's
+    responsibility.
+
     Retry arithmetic
     ~~~~~~~~~~~~~~~~
     Tenacity wraps ``_request_with_retry`` and retries on ``FabricServerError``
     (5xx) up to 3 attempts.  Inside each tenacity attempt, ``_do_request`` runs
-    a 429-loop of up to ``max_429_retries`` iterations.  Worst-case total sends
-    = 3 x ``max_429_retries`` (default 15).  The 429 counter resets on any
-    non-429 response, so both mechanisms are largely independent in practice.
+    a 429-loop of up to ``max_429_retries`` iterations.  Both mechanisms share a
+    common wall-clock deadline (``combined_deadline_s`` seconds from the first
+    send, default 120 s) so the total latency is bounded even when the server
+    advertises large ``Retry-After`` values.
 
     Args:
-        credential:          Azure credential used to fetch bearer tokens.
-        rps:                 Maximum requests per second (default 2).
-        timeout:             HTTP request timeout in seconds (default 60.0).
-        max_429_retries:     Maximum consecutive 429 responses before raising
-                             ``RateLimitedError`` (default 5).
-        poll_interval:       Default LRO polling interval in seconds (default 2.0).
-        token_refresh_buffer: Seconds before token expiry at which a refresh is
-                             triggered (default 300.0).
+        credential:             Azure credential used to fetch bearer tokens.
+        rps:                    Maximum requests per second (default 2).
+        timeout:                HTTP request timeout in seconds (default 60.0).
+        max_429_retries:        Maximum consecutive 429 responses before raising
+                                ``RateLimitedError`` (default 5).
+        poll_interval:          Default LRO polling interval in seconds (default 2.0).
+        token_refresh_buffer:   Seconds before token expiry at which a refresh is
+                                triggered (default 300.0).
+        combined_deadline_s:    Maximum wall-clock seconds for the combined
+                                5xx-retry + 429-loop budget (default 120.0).
     """
 
     def __init__(  # noqa: PLR0913
@@ -177,18 +256,26 @@ class FabricHttpClient:
         max_429_retries: int = _MAX_429_RETRIES,
         poll_interval: float = _DEFAULT_POLL_INTERVAL,
         token_refresh_buffer: float = _TOKEN_REFRESH_BUFFER,
+        combined_deadline_s: float = _DEFAULT_COMBINED_DEADLINE_S,
     ) -> None:
         self._credential = credential
         self._limiter = AsyncLimiter(max_rate=rps, time_period=1)
         self._http: httpx.AsyncClient | None = None
-        self._token: AccessToken | None = None
+        # Per-scope token cache: dict[scope, AccessToken]
+        self._tokens: dict[str, AccessToken] = {}
         self._token_lock = asyncio.Lock()
         self._timeout = timeout
         self._max_429_retries = max_429_retries
         self._poll_interval = poll_interval
         self._token_refresh_buffer = token_refresh_buffer
+        self._combined_deadline_s = combined_deadline_s
         # Monotonic deadline: sleep until this time before each send.
         # 0.0 means "no pause needed".
+        # Safety: this field is read and written by concurrent coroutines on
+        # the single-threaded asyncio event loop.  The read-modify-write
+        # ``self._pause_until = max(self._pause_until, deadline)`` in
+        # ``_do_request`` is not interrupted by an ``await``, so it is
+        # effectively atomic on CPython's event loop; no lock is needed.
         self._pause_until: float = 0.0
 
     async def __aenter__(self) -> FabricHttpClient:
@@ -204,20 +291,24 @@ class FabricHttpClient:
     # Token management
     # ------------------------------------------------------------------
 
-    async def _get_token(self) -> str:
-        """Return a valid bearer token, refreshing if close to expiry.
+    async def _get_token(self, scope: str = auth.FABRIC_SCOPE) -> str:
+        """Return a valid bearer token for *scope*, refreshing if close to expiry.
 
         A lock ensures that under concurrent calls only one refresh is
         performed even if multiple coroutines see the token as expired at
-        the same time.
+        the same time.  Tokens are cached per-scope so that different scopes
+        (e.g. ``FABRIC_SCOPE``, ``SQL_SCOPE``) do not share a single cache entry.
+
+        Args:
+            scope: The OAuth2 scope to request a token for.
+                   Defaults to :data:`~fabric_dw.auth.FABRIC_SCOPE`.
         """
         async with self._token_lock:
-            if (
-                self._token is None
-                or self._token.expires_on - _time.time() < self._token_refresh_buffer
-            ):
-                self._token = await self._credential.get_token(auth.FABRIC_SCOPE)
-        return self._token.token
+            token = self._tokens.get(scope)
+            if token is None or token.expires_on - _time.time() < self._token_refresh_buffer:
+                token = await self._credential.get_token(scope)
+                self._tokens[scope] = token
+        return token.token
 
     # ------------------------------------------------------------------
     # Core request
@@ -248,18 +339,16 @@ class FabricHttpClient:
             AuthError: On 401.
             PermissionDeniedError: On 403.
             NotFoundError: On 404.
-            RateLimitedError: After exactly ``max_429_retries`` consecutive 429 responses.
+            RateLimitedError: After exactly ``max_429_retries`` consecutive 429 responses
+                              or when the combined retry deadline is exceeded.
             FabricServerError: On persistent 5xx errors.
         """
         url = f"{base}{path}"
-        return await self._request_with_retry(method, url, json=json, params=params)
+        combined_deadline = _time.monotonic() + self._combined_deadline_s
+        return await self._request_with_retry(
+            method, url, json=json, params=params, combined_deadline=combined_deadline
+        )
 
-    @retry(
-        retry=retry_if_exception(_should_retry),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=0.1, min=0.1, max=2),
-        reraise=True,
-    )
     async def _request_with_retry(
         self,
         method: str,
@@ -267,15 +356,28 @@ class FabricHttpClient:
         *,
         json: object = None,
         params: Mapping[str, Any] | None = None,
+        combined_deadline: float | None = None,
     ) -> httpx.Response:
-        """Inner request method wrapped with tenacity 5xx and idempotent-timeout retry.
+        """Inner request with tenacity 5xx and idempotent-timeout retry.
 
-        Sets :data:`_current_method` so that :func:`_should_retry` can inspect the
-        HTTP method when deciding whether a :class:`httpx.TimeoutException` is safe
-        to retry.
+        The tenacity decorator is built per-call so the method is bound
+        directly in the retry predicate closure, avoiding a fragile module-
+        global ContextVar.
         """
-        _current_method.set(method.upper())
-        return await self._do_request(method, url, json=json, params=params)
+        should_retry = _make_should_retry(method)
+
+        @retry(
+            retry=retry_if_exception(should_retry),
+            stop=stop_after_attempt(3),
+            wait=wait_exponential(multiplier=0.1, min=0.1, max=2),
+            reraise=True,
+        )
+        async def _attempt() -> httpx.Response:
+            return await self._do_request(
+                method, url, json=json, params=params, combined_deadline=combined_deadline
+            )
+
+        return await _attempt()
 
     async def _do_request(
         self,
@@ -284,6 +386,7 @@ class FabricHttpClient:
         *,
         json: object = None,
         params: Mapping[str, Any] | None = None,
+        combined_deadline: float | None = None,
     ) -> httpx.Response:
         """Execute a request with rate limiting and 429 handling.
 
@@ -294,7 +397,8 @@ class FabricHttpClient:
 
         On 429: updates the shared monotonic deadline and retries up to
         ``_max_429_retries`` consecutive times before raising
-        ``RateLimitedError``.
+        ``RateLimitedError``.  Respects *combined_deadline* to bound the
+        total wall-clock wait shared with the tenacity 5xx-retry layer.
         """
         if self._http is None:
             msg = "Client must be used as an async context manager"
@@ -303,6 +407,13 @@ class FabricHttpClient:
         consecutive_429 = 0
 
         while True:
+            # Shared deadline check: abort if the combined retry budget is spent.
+            if combined_deadline is not None and _time.monotonic() >= combined_deadline:
+                raise RateLimitedError(
+                    f"Combined retry deadline exceeded for {url}",
+                    status=429,
+                )
+
             resp = await self._send_once(method, url, json=json, params=params)
 
             if resp.status_code == http.HTTPStatus.TOO_MANY_REQUESTS:
@@ -315,9 +426,14 @@ class FabricHttpClient:
                     )
 
                 retry_after_raw = resp.headers.get("Retry-After", "1")
-                try:
-                    wait_s = _parse_retry_after(retry_after_raw)
-                except ValueError:
+                wait_s = _parse_retry_after(retry_after_raw)
+                # Warn and override only when the header was truly unrecognizable.
+                # _parse_retry_after returns 0.0 both for a legitimate "0 seconds"
+                # value AND for a completely unparseable string.  Distinguish them
+                # by re-checking: if the raw value is a parseable number (any form
+                # of zero like "0.00") or a valid HTTP date (even a past one that
+                # maps to 0.0), treat it as intentional.  Only warn otherwise.
+                if wait_s == 0.0 and _is_malformed_retry_after(retry_after_raw):
                     _logger.warning(
                         "Malformed Retry-After header %r; falling back to 1.0s",
                         retry_after_raw,
@@ -325,6 +441,9 @@ class FabricHttpClient:
                     wait_s = 1.0
 
                 # Aggregate concurrent 429s: keep the latest (furthest) deadline.
+                # This read-modify-write is safe on the single-threaded asyncio
+                # event loop because there is no ``await`` between the read and
+                # the write — the assignment is effectively atomic.
                 deadline = _time.monotonic() + wait_s
                 self._pause_until = max(self._pause_until, deadline)
                 continue
@@ -399,21 +518,15 @@ class FabricHttpClient:
         Uses ``_STATUS_TO_EXC`` for known 4xx codes (401, 403, 404); raises
         ``BadRequestError`` for any other 4xx (including 400) so that Fabric
         error details are never silently discarded; raises ``FabricServerError``
-        for any 5xx response.  JSON body is parsed best-effort (parse errors
-        are silently swallowed).  The ``x-ms-request-id`` header is captured
-        for all raised exceptions.
+        for any 5xx response.  JSON body is parsed best-effort (only
+        ``ValueError``/``json.JSONDecodeError`` are suppressed).  The
+        ``x-ms-request-id`` header is captured for all raised exceptions.
         """
         status = resp.status_code
         request_id = resp.headers.get("x-ms-request-id")
 
-        # Best-effort JSON body parse
-        body: dict[str, object] | None = None
-        try:
-            parsed = resp.json()
-            if isinstance(parsed, dict):
-                body = parsed
-        except Exception:  # noqa: S110
-            pass
+        # Best-effort JSON body parse — narrowed to JSON-specific errors only
+        body = _parse_json_body(resp)
 
         exc_class = _STATUS_TO_EXC.get(status)
         if exc_class is not None:
@@ -469,12 +582,21 @@ class FabricHttpClient:
         """
         url: str | None = f"{base}{path}"
         first = True
+        # Apply the same combined wall-clock deadline used by request() so that
+        # 429 loops inside paginated fetches are time-bounded (C27).
+        combined_deadline = _time.monotonic() + self._combined_deadline_s
 
         while url is not None:
             # continuationUri is always a full URL; use _request_with_retry directly
-            resp = await self._request_with_retry("GET", url, params=params if first else None)
+            resp = await self._request_with_retry(
+                "GET", url, params=params if first else None, combined_deadline=combined_deadline
+            )
             first = False
-            data: dict[str, object] = resp.json()
+            raw = resp.json()
+            if not isinstance(raw, dict):
+                # Non-dict page body (e.g. an array or null): no items, no continuation.
+                break
+            data: dict[str, object] = raw
             raw_items = data.get(key, [])
             if isinstance(raw_items, list):
                 for item in raw_items:
@@ -500,15 +622,25 @@ class FabricHttpClient:
                 or parsed from the ``Location`` header path).
 
         Returns:
-            The result body, e.g. ``{"id": "...", "type": "WarehouseSnapshot", ...}``.
+            The result body as a ``dict``, e.g.
+            ``{"id": "...", "type": "WarehouseSnapshot", ...}``.
+            Raises ``FabricServerError`` if the response body is not a JSON object.
 
         Raises:
             NotFoundError: If the result is not available (404).
-            FabricServerError: On 5xx errors.
+            FabricServerError: On 5xx errors or a non-dict response body.
         """
         result_url = f"{HttpBase.FABRIC}/operations/{operation_id}/result"
-        resp = await self._request_with_retry("GET", result_url)
-        return resp.json()  # type: ignore[no-any-return]
+        combined_deadline = _time.monotonic() + self._combined_deadline_s
+        resp = await self._request_with_retry(
+            "GET", result_url, combined_deadline=combined_deadline
+        )
+        body = _parse_json_body(resp)
+        if body is None:
+            raise FabricServerError(
+                f"LRO result for {operation_id} returned a non-dict body: {resp.text!r}"
+            )
+        return body
 
     async def poll_operation(
         self,
@@ -530,13 +662,28 @@ class FabricHttpClient:
                 timeout is exceeded.
         """
         deadline = _time.monotonic() + timeout_s
+        # Apply the combined wall-clock deadline so that 429 loops inside
+        # each poll request are time-bounded (C27).  For poll_operation the
+        # natural combined deadline is per-request: reset it each iteration so
+        # that a fresh ``_combined_deadline_s`` budget is granted per poll GET,
+        # while the LRO ``deadline`` bounds the overall polling duration.
+        #
+        # Note: combined_deadline is intentionally re-computed each iteration
+        # inside the loop (see below) so that each poll attempt gets its own
+        # fresh 429-retry budget rather than sharing a single budget across
+        # potentially hundreds of polls.
 
         while True:
             if _time.monotonic() >= deadline:
                 raise FabricServerError(f"LRO timed out after {timeout_s}s for {location}")
 
-            resp = await self._request_with_retry("GET", location)
-            body: dict[str, object] = resp.json()
+            # Fresh combined_deadline per poll GET so the 429-retry window is
+            # scoped to each individual HTTP request, not the entire LRO wait.
+            poll_combined_deadline = _time.monotonic() + self._combined_deadline_s
+            resp = await self._request_with_retry(
+                "GET", location, combined_deadline=poll_combined_deadline
+            )
+            body = _parse_json_body(resp) or {}
             status = body.get("status", "")
 
             if status == "Succeeded":
@@ -544,10 +691,14 @@ class FabricHttpClient:
             if status == "Failed":
                 raise FabricServerError(f"LRO failed for {location}: {body.get('error', body)}")
 
-            # Not finished yet - honour Retry-After or fall back to default, with jitter
+            # Not finished yet - honour Retry-After or fall back to default, with jitter.
+            # _parse_retry_after always returns a float (never raises).
             retry_after_raw = resp.headers.get("Retry-After")
             base_wait = (
                 _parse_retry_after(retry_after_raw) if retry_after_raw else self._poll_interval
             )
+            # If parse returned 0 but a header was present, fall back to poll interval.
+            if base_wait == 0.0 and retry_after_raw is not None:
+                base_wait = self._poll_interval
             wait_s = base_wait + random.uniform(0, base_wait * 0.25)  # noqa: S311
             await asyncio.sleep(wait_s)

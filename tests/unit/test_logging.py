@@ -67,11 +67,36 @@ class TestRedactAuthHeader:
         redact_auth_header(headers)
         assert headers == original
 
-    def test_non_bearer_authorization_header_preserved(self) -> None:
+    def test_non_bearer_authorization_scheme_redacted_with_scheme_preserved(self) -> None:
+        """Any Authorization scheme value is redacted; the scheme word is preserved."""
         headers = {"Authorization": "Basic dXNlcjpwYXNz"}
         result = redact_auth_header(headers)
-        # Non-bearer tokens are left as-is (only Bearer is a concern for this codebase)
-        assert result["Authorization"] == "Basic dXNlcjpwYXNz"
+        # C10: all Authorization values are redacted (not only Bearer); scheme preserved.
+        assert result["Authorization"] == "Basic ***"
+
+    def test_case_insensitive_authorization_redacted(self) -> None:
+        """redact_auth_header must handle Authorization regardless of key casing."""
+        headers = {"authorization": "bearer mytoken"}
+        result = redact_auth_header(headers)
+        assert result["authorization"] == "bearer ***"
+
+    def test_proxy_authorization_redacted(self) -> None:
+        """Proxy-Authorization is also a sensitive auth-bearing header."""
+        headers = {"Proxy-Authorization": "Bearer proxytoken"}
+        result = redact_auth_header(headers)
+        assert result["Proxy-Authorization"] == "Bearer ***"
+
+    def test_cookie_header_redacted(self) -> None:
+        """Cookie header is sensitive and must be replaced wholesale."""
+        headers = {"Cookie": "session=abc123; user=foo"}
+        result = redact_auth_header(headers)
+        assert result["Cookie"] == "***"
+
+    def test_x_ms_authorization_auxiliary_redacted(self) -> None:
+        """x-ms-authorization-auxiliary is an Azure auth header and must be redacted."""
+        headers = {"X-Ms-Authorization-Auxiliary": "Bearer auxtoken"}
+        result = redact_auth_header(headers)
+        assert result["X-Ms-Authorization-Auxiliary"] == "***"
 
 
 class TestJsonFormatterExtraFields:

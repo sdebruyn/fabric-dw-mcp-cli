@@ -94,22 +94,46 @@ def setup_logging(level: int = logging.INFO) -> None:
     root.addHandler(handler)
 
 
-def redact_auth_header(headers: dict[str, str]) -> dict[str, str]:
-    """Return a copy of *headers* with the Bearer token replaced by ``***``.
+_SENSITIVE_HEADERS: frozenset[str] = frozenset(
+    {
+        "authorization",
+        "x-ms-authorization-auxiliary",
+        "proxy-authorization",
+        "cookie",
+    }
+)
 
-    Only the ``Authorization`` header is affected; the value is replaced with
-    ``Bearer ***`` when the original starts with ``Bearer `` (case-sensitive).
-    All other headers are copied as-is.
+# Headers for which the scheme word (e.g. "Bearer") is preserved in redacted output.
+_SCHEME_PRESERVING_HEADERS: frozenset[str] = frozenset({"authorization", "proxy-authorization"})
+
+
+def redact_auth_header(headers: dict[str, str]) -> dict[str, str]:
+    """Return a copy of *headers* with auth-bearing values replaced by ``***``.
+
+    Sensitive headers (``Authorization``, ``Proxy-Authorization``,
+    ``X-Ms-Authorization-Auxiliary``, ``Cookie``) are detected
+    case-insensitively.  For ``Authorization``/``Proxy-Authorization``,
+    the scheme word (e.g. ``Bearer``) is preserved so the token type is still
+    visible in logs: ``Bearer ***``.  Other sensitive headers are replaced
+    wholesale with ``***``.
 
     Args:
         headers: The original headers dict.  It is **not** mutated.
 
     Returns:
-        A new dict with the same keys; ``Authorization: Bearer <token>``
-        becomes ``Authorization: Bearer ***``.
+        A new dict with the same keys; sensitive credential values are redacted.
     """
-    result = dict(headers)
-    auth = result.get("Authorization", "")
-    if auth.startswith("Bearer "):
-        result["Authorization"] = "Bearer ***"
+    result: dict[str, str] = {}
+    for key, value in headers.items():
+        lower_key = key.lower()
+        if lower_key in _SENSITIVE_HEADERS:
+            # Preserve the scheme word (e.g. "Bearer") for token-bearing headers
+            # so the token type is still visible in debug logs.
+            parts = value.split(" ", 1)
+            if len(parts) == 2 and lower_key in _SCHEME_PRESERVING_HEADERS:  # noqa: PLR2004
+                result[key] = f"{parts[0]} ***"
+            else:
+                result[key] = "***"
+        else:
+            result[key] = value
     return result
