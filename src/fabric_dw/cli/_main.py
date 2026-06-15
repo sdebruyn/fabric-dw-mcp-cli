@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import sys
+import time
 
 import click
 
@@ -28,6 +30,12 @@ from fabric_dw.cli.commands.views import views_group
 from fabric_dw.cli.commands.warehouses import warehouses_group
 from fabric_dw.cli.commands.workspaces import workspaces_group
 from fabric_dw.logging import setup_logging
+from fabric_dw.telemetry import (
+    flush_telemetry,
+    maybe_print_first_run_notice,
+    record_app_exited,
+    record_app_started,
+)
 
 
 @click.group(invoke_without_command=False)
@@ -78,6 +86,38 @@ def cli(
         yes=yes,
         auth=CredentialMode(auth_mode),
     )
+
+    maybe_print_first_run_notice()
+    record_app_started("cli")
+
+    start_ms = time.monotonic() * 1000
+
+    def _on_close() -> None:
+        duration_ms = time.monotonic() * 1000 - start_ms
+        # Map the active exception (if any) to a categorical exit status (B3).
+        # call_on_close callbacks run inside Click's ExitStack __exit__, so
+        # sys.exc_info() reflects the exception that triggered teardown.
+        exc_type, exc_value, _ = sys.exc_info()
+        if exc_type is None:
+            exit_status = "ok"
+        elif exc_type is SystemExit:
+            code = getattr(exc_value, "code", None)
+            exit_status = "ok" if (code is None or code == 0) else "user_error"
+        elif issubclass(exc_type, click.exceptions.Exit):
+            code = getattr(exc_value, "code", 0)
+            exit_status = "ok" if code == 0 else "user_error"
+        elif issubclass(exc_type, (click.exceptions.Abort, click.exceptions.UsageError)):
+            exit_status = "user_error"
+        else:
+            exit_status = "user_error"
+        record_app_exited(
+            duration_ms=duration_ms,
+            exit_status=exit_status,
+            error_category=None,
+        )
+        flush_telemetry()
+
+    ctx.call_on_close(_on_close)
 
 
 cli.add_command(cache_group)

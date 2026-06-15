@@ -1,0 +1,8 @@
+# This file lists fingerprints of known false positives suppressed from gitleaks.
+# Fingerprint format: <commit>:<file>:<rule-id>:<line>
+
+# The Azure Monitor Application Insights InstrumentationKey in telemetry.py is a
+# write-only ingestion endpoint. Per Microsoft documentation this key has no read
+# or management access and is safe to embed in open-source code.
+# Original commit before the gitleaks:allow inline annotation was added.
+b91534a490a27f3dfdb0907c214ba901e06ff974:src/fabric_dw/telemetry.py:generic-api-key:52
