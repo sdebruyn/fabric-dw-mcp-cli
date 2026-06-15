@@ -60,6 +60,16 @@ class _InstrumentedGroup(click.Group):
     to record ``<group>.<leaf>`` in the root context's :attr:`click.Context.meta`
     dict.  The root group (``parent is None``) emits the ``command_invoked``
     event once the full call stack has unwound.
+
+    Flush ordering
+    --------------
+    ``flush_telemetry()`` must run AFTER ``emit_command_invoked`` so that the
+    ``command_invoked`` span is enqueued before the exporter is flushed.
+    Click's ``call_on_close`` callbacks run INSIDE ``super().invoke()``, so they
+    complete before this ``finally`` block executes.  For this reason the
+    ``_on_close`` callback registered on the CLI group context does NOT call
+    ``flush_telemetry()`` — the flush is performed here, after emission, by the
+    root group only.
     """
 
     def add_command(self, cmd: click.Command, name: str | None = None) -> None:
@@ -69,7 +79,7 @@ class _InstrumentedGroup(click.Group):
         super().add_command(cmd, name)
 
     def invoke(self, ctx: click.Context) -> object:
-        """Invoke the root group and emit ``command_invoked`` when done."""
+        """Invoke the root group, emit ``command_invoked``, then flush telemetry."""
         start = now_ms()
         exc_seen: BaseException | None = None
         try:
@@ -88,6 +98,12 @@ class _InstrumentedGroup(click.Group):
                     status=status,
                     duration_ms=duration,
                 )
+            # Flush AFTER emission so command_invoked is included in the batch.
+            # app_started and app_exited are emitted before this point (via
+            # record_app_started in the group callback and record_app_exited in
+            # _on_close which runs inside super().invoke()), so all three events
+            # are enqueued before this bounded flush runs.
+            flush_telemetry()
 
 
 def _build_command_name(root_ctx: click.Context) -> str | None:
@@ -239,7 +255,11 @@ def cli(
             exit_status=exit_status,
             error_category=None,
         )
-        flush_telemetry()
+        # NOTE: flush_telemetry() is NOT called here.  It is called in
+        # _InstrumentedGroup.invoke() AFTER emit_command_invoked() so that
+        # the command_invoked span is enqueued before the flush runs.
+        # (call_on_close callbacks run inside super().invoke(), which returns
+        # before the finally block in _InstrumentedGroup.invoke() executes.)
 
     ctx.call_on_close(_on_close)
 

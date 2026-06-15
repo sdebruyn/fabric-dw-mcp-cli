@@ -764,3 +764,121 @@ class TestMcpCommandInvokedInstrumentation:
             result = asyncio.run(wrapped())
 
         assert result == "result"
+
+    def test_mutating_tool_via_instrumented_mcp_emits_exactly_one_event(self) -> None:
+        """A mutating tool registered via mutating_tool() emits EXACTLY ONE command_invoked.
+
+        This is the regression test for the double-emission bug: mutating_tool()
+        calls _wrap_mcp_tool_with_telemetry (layer 1) and then mcp.tool() which
+        triggers InstrumentedFastMCP.tool() (potential layer 2).  The fix marks
+        already-wrapped callables with __fabric_telemetry_wrapped__ so that
+        InstrumentedFastMCP.tool() skips the second wrapping.
+        """
+        import asyncio  # noqa: PLC0415
+
+        from fabric_dw.mcp._helpers import InstrumentedFastMCP, mutating_tool  # noqa: PLC0415
+
+        instrumented_mcp: InstrumentedFastMCP = InstrumentedFastMCP("test-server")
+
+        @mutating_tool(instrumented_mcp, "create_warehouse")
+        async def create_warehouse(name: str) -> dict:  # type: ignore[return]
+            return {"name": name}
+
+        with patch(_TELEMETRY_ENABLED, return_value=True), patch(_EMIT_EVENT) as mock_emit:
+            asyncio.run(
+                instrumented_mcp._tool_manager.call_tool("create_warehouse", {"name": "wh1"})
+            )
+
+        command_invoked_calls = [
+            c for c in mock_emit.call_args_list if c[0][0] == "command_invoked"
+        ]
+        assert len(command_invoked_calls) == 1, (
+            f"Expected exactly 1 command_invoked event, got {len(command_invoked_calls)}"
+        )
+
+    def test_read_only_tool_via_instrumented_mcp_emits_exactly_one_event(self) -> None:
+        """A read-only tool registered via @mcp.tool() emits EXACTLY ONE command_invoked."""
+        import asyncio  # noqa: PLC0415
+
+        from fabric_dw.mcp._helpers import InstrumentedFastMCP  # noqa: PLC0415
+
+        instrumented_mcp: InstrumentedFastMCP = InstrumentedFastMCP("test-server-ro")
+
+        @instrumented_mcp.tool(name="list_warehouses")
+        async def list_warehouses(workspace: str) -> list:  # type: ignore[return]
+            _ = workspace
+            return []
+
+        with patch(_TELEMETRY_ENABLED, return_value=True), patch(_EMIT_EVENT) as mock_emit:
+            asyncio.run(
+                instrumented_mcp._tool_manager.call_tool("list_warehouses", {"workspace": "ws1"})
+            )
+
+        command_invoked_calls = [
+            c for c in mock_emit.call_args_list if c[0][0] == "command_invoked"
+        ]
+        assert len(command_invoked_calls) == 1, (
+            f"Expected exactly 1 command_invoked event, got {len(command_invoked_calls)}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# CLI flush ordering — command_invoked must be enqueued before flush
+# ---------------------------------------------------------------------------
+
+
+class TestCliFlushOrdering:
+    """Verify that command_invoked is emitted before flush_telemetry runs.
+
+    Regression tests for the ordering bug where flush_telemetry() (called via
+    call_on_close) ran BEFORE emit_command_invoked (in the finally block of
+    _InstrumentedGroup.invoke), causing the command_invoked event to be lost.
+    """
+
+    def _run_cli_capture_order(self, args: list[str], monkeypatch: pytest.MonkeyPatch) -> list[str]:
+        """Run CLI and return the sequence of telemetry calls in invocation order."""
+        from fabric_dw.cli._main import cli  # noqa: PLC0415
+
+        monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
+        monkeypatch.delenv("CI", raising=False)
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        monkeypatch.delenv("JENKINS_URL", raising=False)
+        monkeypatch.delenv("TRAVIS", raising=False)
+        monkeypatch.delenv("CIRCLECI", raising=False)
+        monkeypatch.delenv("GITLAB_CI", raising=False)
+        monkeypatch.delenv("TF_BUILD", raising=False)
+
+        call_order: list[str] = []
+
+        def _track_emit(event_name: str, _attrs: dict) -> None:
+            call_order.append(f"emit:{event_name}")
+
+        def _track_flush(_timeout_ms: int = 2000) -> None:
+            call_order.append("flush")
+
+        runner = CliRunner()  # type: ignore[no-untyped-call]
+        with (
+            patch(_TELEMETRY_ENABLED, return_value=True),
+            patch(_EMIT_EVENT, side_effect=_track_emit),
+            patch("fabric_dw.cli._main.flush_telemetry", side_effect=_track_flush),
+        ):
+            runner.invoke(cli, args, catch_exceptions=True)
+
+        return call_order
+
+    def test_command_invoked_enqueued_before_flush(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """command_invoked must appear in the call order BEFORE the final flush."""
+        order = self._run_cli_capture_order(["cache", "clear"], monkeypatch)
+
+        assert "emit:command_invoked" in order, "command_invoked event was never emitted"
+        assert "flush" in order, "flush_telemetry was never called"
+
+        last_command_invoked_idx = max(
+            i for i, e in enumerate(order) if e == "emit:command_invoked"
+        )
+        last_flush_idx = max(i for i, e in enumerate(order) if e == "flush")
+
+        assert last_command_invoked_idx < last_flush_idx, (
+            f"command_invoked (index {last_command_invoked_idx}) must come before "
+            f"flush (index {last_flush_idx}); actual order: {order}"
+        )

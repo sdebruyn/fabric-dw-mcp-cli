@@ -29,6 +29,7 @@ call (fire-and-forget, never raises).
 
 from __future__ import annotations
 
+import inspect
 import logging
 from collections.abc import Callable, Coroutine
 from datetime import datetime
@@ -73,6 +74,9 @@ _log = logging.getLogger(__name__)
 # No DDL guard is needed for these operations; only table DML/DDL is blocked.
 
 
+_TELEMETRY_WRAPPED_ATTR = "__fabric_telemetry_wrapped__"
+
+
 def _wrap_mcp_tool_with_telemetry(
     fn: Callable[_P, Coroutine[None, None, _R]],
     name: str,
@@ -85,6 +89,10 @@ def _wrap_mcp_tool_with_telemetry(
     string before calling :func:`~fabric_dw.telemetry_commands.emit_command_invoked`.
     Telemetry failures are swallowed inside ``emit_command_invoked``; they
     never propagate to the caller.
+
+    The wrapper sets ``__fabric_telemetry_wrapped__ = True`` on the returned
+    callable so that :class:`InstrumentedFastMCP` can detect already-wrapped
+    functions and skip the second wrapping (preventing double-emission).
 
     Args:
         fn: The async tool function to wrap.
@@ -115,6 +123,8 @@ def _wrap_mcp_tool_with_telemetry(
                 destructive=destructive,
             )
 
+    # Mark as already instrumented so InstrumentedFastMCP.tool() skips re-wrapping.
+    setattr(telemetry_wrapper, _TELEMETRY_WRAPPED_ATTR, True)
     return telemetry_wrapper
 
 
@@ -222,10 +232,12 @@ class InstrumentedFastMCP(FastMCP):
 
         def instrumented_decorator(fn: Any) -> Any:  # noqa: ANN401
             tool_name = name if name is not None else fn.__name__
+            # Skip wrapping when the callable is already instrumented (e.g. from
+            # mutating_tool) to guarantee exactly ONE command_invoked event per call.
+            already_wrapped = getattr(fn, _TELEMETRY_WRAPPED_ATTR, False)
             # Wrap only coroutine functions; passthrough for sync (safety net).
-            import asyncio  # noqa: PLC0415
-
-            if asyncio.iscoroutinefunction(fn):
+            # Use inspect.iscoroutinefunction (asyncio variant is deprecated in 3.12+).
+            if not already_wrapped and inspect.iscoroutinefunction(fn):
                 tel_fn = _wrap_mcp_tool_with_telemetry(fn, tool_name)
             else:
                 tel_fn = fn

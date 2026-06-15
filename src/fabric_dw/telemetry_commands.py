@@ -225,6 +225,27 @@ def resolve_domain(name: str) -> str:
     return "unknown"
 
 
+def _click_exit_code(exc: BaseException) -> int:
+    """Extract the exit code from a :class:`click.exceptions.Exit` instance.
+
+    Click stores the exit code in ``exit_code`` (the constructor attribute) or
+    ``code`` (the ``SystemExit`` base-class attribute).  The ``or``-chain
+    idiom ``getattr(exc, "exit_code", None) or getattr(exc, "code", 0)`` is
+    **incorrect** when the exit code is ``0`` (a falsy value): the chain would
+    fall through to ``code`` even though ``exit_code`` is explicitly ``0``.
+
+    This helper checks each attribute explicitly, using ``is None`` as the
+    sentinel, and defaults to ``0`` only when neither attribute is set.
+    """
+    v = getattr(exc, "exit_code", None)
+    if v is not None:
+        return int(v)
+    v = getattr(exc, "code", None)
+    if v is not None:
+        return int(v)
+    return 0
+
+
 def _is_click_user_error(exc: BaseException) -> bool:
     """Return True when *exc* is a Click user-facing error (usage/abort/non-zero exit)."""
     with contextlib.suppress(ImportError):
@@ -233,8 +254,7 @@ def _is_click_user_error(exc: BaseException) -> bool:
         if isinstance(exc, (click.exceptions.UsageError, click.exceptions.Abort)):
             return True
         if isinstance(exc, click.exceptions.Exit):
-            code = getattr(exc, "exit_code", None) or getattr(exc, "code", 0)
-            return code != 0
+            return _click_exit_code(exc) != 0
         if isinstance(exc, SystemExit):
             code = getattr(exc, "code", None)
             return not (code is None or code == 0)
@@ -247,8 +267,7 @@ def _is_click_exit_ok(exc: BaseException) -> bool:
         import click  # noqa: PLC0415
 
         if isinstance(exc, click.exceptions.Exit):
-            code = getattr(exc, "exit_code", None) or getattr(exc, "code", 0)
-            return code == 0
+            return _click_exit_code(exc) == 0
         if isinstance(exc, SystemExit):
             code = getattr(exc, "code", None)
             return code is None or code == 0
