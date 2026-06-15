@@ -2,9 +2,9 @@
 
 Run with: pytest -m integration tests/integration/test_services_tables.py
 
-Fixture note: uses ``ephemeral_sql_target`` from conftest.  The target points at
-a freshly-created warehouse for each test session; all tables created here are
-cleaned up in the roundtrip test itself.
+Fixture note: uses ``warehouse_schema`` from conftest, which creates a uniquely-named
+schema inside the session-shared warm warehouse and cascade-drops it on teardown.
+All tables are created inside that schema so tests are fully isolated from one another.
 """
 
 from __future__ import annotations
@@ -39,84 +39,87 @@ def _is_clone_at_unavailable(exc: BaseException) -> bool:
     return any(all(frag in msg for frag in frags) for frags in _CLONE_AT_SKIP_FRAGMENTS)
 
 
-async def test_list_tables_returns_list(ephemeral_sql_target: SqlTarget) -> None:
-    result = await tables.list_tables(ephemeral_sql_target)
+async def test_list_tables_returns_list(
+    warehouse_schema: tuple[SqlTarget, str],
+) -> None:
+    sql_target, _schema = warehouse_schema
+    result = await tables.list_tables(sql_target)
     assert isinstance(result, list)
 
 
-async def test_create_read_clear_delete_roundtrip(ephemeral_sql_target: SqlTarget) -> None:
-    schema = "dbo"
+async def test_create_read_clear_delete_roundtrip(
+    warehouse_schema: tuple[SqlTarget, str],
+) -> None:
+    sql_target, schema = warehouse_schema
     table_name = "pytest_tables_roundtrip"
     select_body = "SELECT 1 AS id, 'hello' AS greeting"
 
     try:
-        created = await tables.create_table(ephemeral_sql_target, schema, table_name, select_body)
+        created = await tables.create_table(sql_target, schema, table_name, select_body)
         assert isinstance(created, Table)
         assert created.schema_name == schema
         assert created.name == table_name
 
-        cols, rows = await tables.read_table(ephemeral_sql_target, schema, table_name, count=5)
+        cols, rows = await tables.read_table(sql_target, schema, table_name, count=5)
         assert "id" in cols or len(cols) > 0
         assert isinstance(rows, list)
 
-        all_tables = await tables.list_tables(ephemeral_sql_target)
+        all_tables = await tables.list_tables(sql_target)
         names = {t.name for t in all_tables}
         assert table_name in names
 
-        await tables.clear_table(ephemeral_sql_target, schema, table_name)
-        _, rows_after_clear = await tables.read_table(
-            ephemeral_sql_target, schema, table_name, count=5
-        )
+        await tables.clear_table(sql_target, schema, table_name)
+        _, rows_after_clear = await tables.read_table(sql_target, schema, table_name, count=5)
         assert rows_after_clear == []
 
     finally:
         with contextlib.suppress(Exception):
-            await tables.delete_table(ephemeral_sql_target, schema, table_name)
+            await tables.delete_table(sql_target, schema, table_name)
 
     with pytest.raises((NotFoundError, Exception)):
-        await tables.read_table(ephemeral_sql_target, schema, table_name)
+        await tables.read_table(sql_target, schema, table_name)
 
 
-async def test_clone_table_creates_identical_rows(ephemeral_sql_target: SqlTarget) -> None:
+async def test_clone_table_creates_identical_rows(
+    warehouse_schema: tuple[SqlTarget, str],
+) -> None:
     """clone_table (plain, no AT) creates a clone with the same rows as the source."""
-    schema = "dbo"
+    sql_target, schema = warehouse_schema
     source_name = "pytest_clone_source"
     clone_name = "pytest_clone_copy"
     select_body = "SELECT 1 AS id, 'hello' AS greeting"
 
     try:
         # Create the source table.
-        await tables.create_table(ephemeral_sql_target, schema, source_name, select_body)
+        await tables.create_table(sql_target, schema, source_name, select_body)
 
         # Clone it without a point-in-time.
         cloned = await tables.clone_table(
-            ephemeral_sql_target, f"{schema}.{source_name}", f"{schema}.{clone_name}"
+            sql_target, f"{schema}.{source_name}", f"{schema}.{clone_name}"
         )
         assert isinstance(cloned, Table)
         assert cloned.schema_name == schema
         assert cloned.name == clone_name
 
         # Verify the clone is visible and contains the same data.
-        all_tables = await tables.list_tables(ephemeral_sql_target, schema=schema)
+        all_tables = await tables.list_tables(sql_target, schema=schema)
         names = {t.name for t in all_tables}
         assert clone_name in names
 
-        src_cols, src_rows = await tables.read_table(
-            ephemeral_sql_target, schema, source_name, count=100
-        )
-        cln_cols, cln_rows = await tables.read_table(
-            ephemeral_sql_target, schema, clone_name, count=100
-        )
+        src_cols, src_rows = await tables.read_table(sql_target, schema, source_name, count=100)
+        cln_cols, cln_rows = await tables.read_table(sql_target, schema, clone_name, count=100)
         assert src_cols == cln_cols
         assert cln_rows == src_rows
     finally:
         with contextlib.suppress(Exception):
-            await tables.delete_table(ephemeral_sql_target, schema, source_name)
+            await tables.delete_table(sql_target, schema, source_name)
         with contextlib.suppress(Exception):
-            await tables.delete_table(ephemeral_sql_target, schema, clone_name)
+            await tables.delete_table(sql_target, schema, clone_name)
 
 
-async def test_clone_table_at_point_in_time(ephemeral_sql_target: SqlTarget) -> None:
+async def test_clone_table_at_point_in_time(
+    warehouse_schema: tuple[SqlTarget, str],
+) -> None:
     """clone_table with AT timestamp clones the table at the specified point in time.
 
     The AT timestamp must be >= the object creation time and <= the clone
@@ -131,7 +134,7 @@ async def test_clone_table_at_point_in_time(ephemeral_sql_target: SqlTarget) -> 
     have been committed *before* the AT time), the test is skipped rather than
     failed, as this is an expected engine limitation for freshly-created tables.
     """
-    schema = "dbo"
+    sql_target, schema = warehouse_schema
     source_name = "pytest_clone_at_source"
     clone_name = "pytest_clone_at_copy"
     select_body = "SELECT 42 AS value"
@@ -139,7 +142,7 @@ async def test_clone_table_at_point_in_time(ephemeral_sql_target: SqlTarget) -> 
     try:
         # Create the source table first so the server-side timestamp is taken
         # AFTER the DDL commit — guaranteeing AT >= object creation time.
-        await tables.create_table(ephemeral_sql_target, schema, source_name, select_body)
+        await tables.create_table(sql_target, schema, source_name, select_body)
 
         # Capture a server-side timestamp via SYSUTCDATETIME() executed on the
         # same Fabric warehouse.  This is always >= the DDL commit time (same
@@ -148,7 +151,7 @@ async def test_clone_table_at_point_in_time(ephemeral_sql_target: SqlTarget) -> 
         # where the client clock trails the server, making the AT appear to be
         # *before* the object was created from the server's perspective.
         def _get_server_ts() -> datetime:
-            _, rows = run_query(ephemeral_sql_target, "SELECT SYSUTCDATETIME() AS ts")
+            _, rows = run_query(sql_target, "SELECT SYSUTCDATETIME() AS ts")
             raw = rows[0][0]
             # mssql_python returns datetime objects; ensure timezone-aware UTC.
             if isinstance(raw, datetime):
@@ -172,7 +175,7 @@ async def test_clone_table_at_point_in_time(ephemeral_sql_target: SqlTarget) -> 
 
         try:
             cloned = await tables.clone_table(
-                ephemeral_sql_target,
+                sql_target,
                 f"{schema}.{source_name}",
                 f"{schema}.{clone_name}",
                 at=at_dt,
@@ -194,36 +197,38 @@ async def test_clone_table_at_point_in_time(ephemeral_sql_target: SqlTarget) -> 
         assert cloned.name == clone_name
     finally:
         with contextlib.suppress(Exception):
-            await tables.delete_table(ephemeral_sql_target, schema, source_name)
+            await tables.delete_table(sql_target, schema, source_name)
         with contextlib.suppress(Exception):
-            await tables.delete_table(ephemeral_sql_target, schema, clone_name)
+            await tables.delete_table(sql_target, schema, clone_name)
 
 
-async def test_rename_table_roundtrip(ephemeral_sql_target: SqlTarget) -> None:
+async def test_rename_table_roundtrip(
+    warehouse_schema: tuple[SqlTarget, str],
+) -> None:
     """Create a table, rename it, assert the old name is gone and the new name exists."""
-    schema = "dbo"
+    sql_target, schema = warehouse_schema
     old_name = "pytest_tables_rename_src"
     new_name = "pytest_tables_rename_dst"
     select_body = "SELECT 42 AS answer"
 
     try:
-        created = await tables.create_table(ephemeral_sql_target, schema, old_name, select_body)
+        created = await tables.create_table(sql_target, schema, old_name, select_body)
         assert isinstance(created, Table)
         assert created.name == old_name
 
-        renamed = await tables.rename_table(ephemeral_sql_target, f"{schema}.{old_name}", new_name)
+        renamed = await tables.rename_table(sql_target, f"{schema}.{old_name}", new_name)
         assert isinstance(renamed, Table)
         assert renamed.name == new_name
         assert renamed.schema_name == schema
         assert renamed.qualified_name == f"{schema}.{new_name}"
 
-        all_tables = await tables.list_tables(ephemeral_sql_target)
+        all_tables = await tables.list_tables(sql_target)
         names = {t.name for t in all_tables}
         assert new_name in names, f"New table {new_name!r} not found after rename"
         assert old_name not in names, f"Old table {old_name!r} still present after rename"
 
     finally:
         with contextlib.suppress(Exception):
-            await tables.delete_table(ephemeral_sql_target, schema, old_name)
+            await tables.delete_table(sql_target, schema, old_name)
         with contextlib.suppress(Exception):
-            await tables.delete_table(ephemeral_sql_target, schema, new_name)
+            await tables.delete_table(sql_target, schema, new_name)
