@@ -986,7 +986,10 @@ class TestOneLakeUploadFile:
         for req in captured_appends:
             cl = req.headers.get("content-length")
             assert cl is not None, f"Append PATCH must include Content-Length header; got {cl!r}"
-            assert int(cl) > 0, f"Append PATCH must carry a positive Content-Length; got {cl!r}"
+            body_bytes = req.read()
+            assert cl == str(len(body_bytes)), (
+                f"Append PATCH Content-Length {cl!r} must equal actual body size {len(body_bytes)}"
+            )
 
     @respx.mock
     async def test_flush_has_content_length_zero(self, tmp_path: Path) -> None:
@@ -1101,3 +1104,78 @@ class TestOneLakeUploadFile:
                 "data.parquet",
                 data_file,
             )
+
+    @respx.mock
+    async def test_append_non_2xx_raises(self, tmp_path: Path) -> None:
+        """A non-2xx response on any append PATCH must raise HTTPStatusError."""
+        data_file = tmp_path / "data.parquet"
+        data_file.write_bytes(b"DATA")
+
+        respx.put(self._DFS_BASE).mock(return_value=httpx.Response(201))
+        respx.patch(self._DFS_BASE).mock(return_value=httpx.Response(500))
+
+        with pytest.raises(httpx.HTTPStatusError):
+            await onelake_upload_file(
+                self._make_credential(),
+                self._WS_ID,
+                self._LH_ID,
+                "data.parquet",
+                data_file,
+            )
+
+    @respx.mock
+    async def test_flush_non_2xx_raises(self, tmp_path: Path) -> None:
+        """A non-2xx response on the flush PATCH must raise HTTPStatusError."""
+        data_file = tmp_path / "data.parquet"
+        data_file.write_bytes(b"DATA")
+
+        def _on_patch(request: httpx.Request) -> httpx.Response:
+            if request.url.params.get("action") == "append":
+                return httpx.Response(202)
+            # flush → server error
+            return httpx.Response(500)
+
+        respx.put(self._DFS_BASE).mock(return_value=httpx.Response(201))
+        respx.patch(self._DFS_BASE).mock(side_effect=_on_patch)
+
+        with pytest.raises(httpx.HTTPStatusError):
+            await onelake_upload_file(
+                self._make_credential(),
+                self._WS_ID,
+                self._LH_ID,
+                "data.parquet",
+                data_file,
+            )
+
+    @respx.mock
+    async def test_multi_chunk_append_positions(self, tmp_path: Path) -> None:
+        """With chunk_size=4, a 10-byte file must produce three appends at positions 0, 4, 8."""
+        payload = b"X" * 10
+        data_file = tmp_path / "data.parquet"
+        data_file.write_bytes(payload)
+
+        append_positions: list[int] = []
+
+        def _on_patch(request: httpx.Request) -> httpx.Response:
+            if request.url.params.get("action") == "append":
+                append_positions.append(int(request.url.params["position"]))
+                return httpx.Response(202)
+            # flush
+            return httpx.Response(200)
+
+        respx.put(self._DFS_BASE).mock(return_value=httpx.Response(201))
+        respx.patch(self._DFS_BASE).mock(side_effect=_on_patch)
+
+        await onelake_upload_file(
+            self._make_credential(),
+            self._WS_ID,
+            self._LH_ID,
+            "data.parquet",
+            data_file,
+            chunk_size=4,
+        )
+
+        # 10 bytes / 4-byte chunks → chunks of sizes 4, 4, 2 → positions 0, 4, 8
+        assert append_positions == [0, 4, 8], (
+            f"Expected append positions [0, 4, 8] for 3-chunk upload; got {append_positions}"
+        )

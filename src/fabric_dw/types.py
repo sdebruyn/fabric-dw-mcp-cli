@@ -70,8 +70,9 @@ def validate_tsql_type(sql_type: str) -> str:
     if not _TSQL_ALLOWLIST_RE.match(cleaned):
         msg = (
             f"Unsupported or unsafe T-SQL type {sql_type!r}. "
-            "Must be a Fabric-DW-supported type such as INT, VARCHAR(n), DECIMAL(p,s), "
-            "DATETIME2, DATE, BIT, BIGINT, REAL, FLOAT, VARBINARY(n)."
+            "Must be a Fabric-DW-supported type such as INT, VARCHAR(n) "
+            "(use VARCHAR instead of NVARCHAR/NCHAR — Fabric DW uses UTF-8 VARCHAR exclusively), "
+            "DECIMAL(p,s), DATETIME2, DATE, BIT, BIGINT, REAL, FLOAT, VARBINARY(n)."
         )
         raise ValueError(msg)
     return cleaned
