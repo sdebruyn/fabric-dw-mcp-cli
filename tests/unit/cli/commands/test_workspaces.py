@@ -312,3 +312,47 @@ def _make_response(status_code: int, text: str) -> MagicMock:
     mock_resp.json = MagicMock(return_value=json.loads(text) if text.strip() else {})
     mock_resp.headers = {}
     return mock_resp
+
+
+# ---------------------------------------------------------------------------
+# L04 — set-collation opens build_http_client exactly once
+# ---------------------------------------------------------------------------
+
+
+class TestSetCollationSingleHttpOpen:
+    """L04: set-collation must open build_http_client exactly once (not twice)."""
+
+    def test_set_collation_opens_http_client_once(self, runner: CliRunner, cache_env: Path) -> None:
+        """build_http_client must be entered exactly once for set-collation."""
+        _ = cache_env
+        open_count = 0
+        mock_http = AsyncMock()
+        mock_http.request = AsyncMock(return_value=_make_response(200, "{}"))
+
+        @asynccontextmanager
+        async def counting_cm(_ctx: object) -> AsyncIterator[object]:
+            nonlocal open_count
+            open_count += 1
+            yield mock_http
+
+        with (
+            patch(
+                "fabric_dw.cli.commands.workspaces.build_http_client",
+                new=counting_cm,
+            ),
+            patch(
+                "fabric_dw.cli.commands.workspaces.resolve_workspace_id",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+            patch(
+                "fabric_dw.services.workspaces.set_collation",
+                new=AsyncMock(return_value=None),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["--yes", "workspaces", "set-collation", WS_GUID, "Latin1_General_100_BIN2_UTF8"],
+            )
+
+        assert result.exit_code == 0, result.output
+        assert open_count == 1, f"build_http_client opened {open_count} times, expected 1"

@@ -10,12 +10,11 @@ from mcp.server.fastmcp import FastMCP
 from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
 from fabric_dw.mcp._guards import (
-    assert_destructive_allowed,
     assert_workspace_allowed,
-    assert_writes_allowed,
 )
 from fabric_dw.mcp._helpers import (
     make_sql_target,
+    mutating_tool,
     parse_qualified_name,
     resolve_item,
     tool_err,
@@ -83,7 +82,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             raise tool_err(exc) from exc
         return result.model_dump(mode="json")
 
-    @mcp.tool(name="create_procedure")
+    @mutating_tool(mcp, "create_procedure")
     async def create_procedure(
         workspace: str, item: str, qualified_name: str, body: str
     ) -> dict[str, Any]:
@@ -102,7 +101,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             body: The procedure body (the AS … section).
         """
         schema, proc_name = parse_qualified_name(qualified_name, kind="procedure")
-        assert_writes_allowed("create_procedure")
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
@@ -120,7 +118,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         ctx.resolver.clear_negative_cache()
         return result.model_dump(mode="json")
 
-    @mcp.tool(name="update_procedure")
+    @mutating_tool(mcp, "update_procedure")
     async def update_procedure(
         workspace: str, item: str, qualified_name: str, body: str
     ) -> dict[str, Any]:
@@ -139,7 +137,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             body: The new procedure body (the AS … section).
         """
         schema, proc_name = parse_qualified_name(qualified_name, kind="procedure")
-        assert_writes_allowed("update_procedure")
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
@@ -156,7 +153,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             raise tool_err(exc) from exc
         return result.model_dump(mode="json")
 
-    @mcp.tool(name="drop_procedure")
+    @mutating_tool(mcp, "drop_procedure", destructive=True)
     async def drop_procedure(workspace: str, item: str, qualified_name: str) -> dict[str, Any]:
         """Drop a stored procedure.
 
@@ -169,8 +166,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             qualified_name: Dot-separated qualified procedure name, e.g. ``dbo.usp_load``.
         """
         schema, proc_name = parse_qualified_name(qualified_name, kind="procedure")
-        assert_writes_allowed("drop_procedure")
-        assert_destructive_allowed()
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:

@@ -42,37 +42,14 @@ def register(mcp: FastMCP) -> None:
         cache = ctx.cache
         negative_cache_cleared = False
 
-        # Read current counts before clearing so we can report them.
-        # The LookupCache._read() is an internal helper, so we use the
-        # public JSON representation where possible.  Fall back to 0 on any
-        # access error so the tool never crashes during cleanup.
-        try:
-            with cache._lock:
-                data = cache._read()
-            ws_count = len(data.get("workspaces", {}))
-            items_data: dict[str, Any] = data.get("items", {})
-            items_count = len(items_data)
-        except Exception:  # pragma: no cover
-            ws_count = 0
-            items_count = 0
+        # Read current counts via the public API before clearing.
+        ws_count, items_count = cache.counts()
 
         if scope == "workspaces":
-            try:
-                with cache._lock:
-                    data = cache._read()
-                    data["workspaces"] = {}
-                    cache._write(data)
-            except Exception as exc:  # pragma: no cover
-                _log.warning("clear_cache(scope=workspaces) failed: %s", exc)
+            cache.clear_scope("workspaces")
             items_count = 0  # items not touched
         elif scope == "items":
-            try:
-                with cache._lock:
-                    data = cache._read()
-                    data["items"] = {}
-                    cache._write(data)
-            except Exception as exc:  # pragma: no cover
-                _log.warning("clear_cache(scope=items) failed: %s", exc)
+            cache.clear_scope("items")
             ws_count = 0  # workspaces not touched
         else:  # "all"
             cache.clear()

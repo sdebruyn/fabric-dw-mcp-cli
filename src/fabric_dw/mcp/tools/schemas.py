@@ -10,12 +10,11 @@ from mcp.server.fastmcp import FastMCP
 from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
 from fabric_dw.mcp._guards import (
-    assert_destructive_allowed,
     assert_workspace_allowed,
-    assert_writes_allowed,
 )
 from fabric_dw.mcp._helpers import (
     make_sql_target,
+    mutating_tool,
     resolve_item,
     tool_err,
 )
@@ -56,7 +55,7 @@ def register(mcp: FastMCP) -> None:
             raise tool_err(exc) from exc
         return [s.model_dump(mode="json") for s in result]
 
-    @mcp.tool(name="create_schema")
+    @mutating_tool(mcp, "create_schema")
     async def create_schema(workspace: str, item: str, name: str) -> dict[str, Any]:
         """Create a new SQL schema on a warehouse or SQL Analytics Endpoint.
 
@@ -68,7 +67,6 @@ def register(mcp: FastMCP) -> None:
             item: Warehouse or SQL Analytics Endpoint name or GUID.
             name: The schema name.  Must be a valid SQL identifier.
         """
-        assert_writes_allowed("create_schema")
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
@@ -81,7 +79,7 @@ def register(mcp: FastMCP) -> None:
             raise tool_err(exc) from exc
         return result.model_dump(mode="json")
 
-    @mcp.tool(name="delete_schema")
+    @mutating_tool(mcp, "delete_schema", destructive=True)
     async def delete_schema(
         workspace: str,
         item: str,
@@ -108,8 +106,6 @@ def register(mcp: FastMCP) -> None:
             cascade: When ``True``, drop all tables and views in the schema first.
                 Defaults to ``False``.
         """
-        assert_writes_allowed("delete_schema")
-        assert_destructive_allowed()
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:

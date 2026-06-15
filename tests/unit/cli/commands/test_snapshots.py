@@ -248,7 +248,7 @@ class TestSnapshotsRename:
         ):
             result = runner.invoke(
                 cli,
-                ["snapshots", "rename", WS_GUID, SNAP_GUID, "NewSnapshotName"],
+                ["snapshots", "rename", SNAP_GUID, "NewSnapshotName", WS_GUID],
             )
         assert result.exit_code == 0
 
@@ -271,7 +271,7 @@ class TestSnapshotsDelete:
                 new=AsyncMock(return_value=(WS_UUID, _make_snap_entry(), _cache)),
             ),
         ):
-            result = runner.invoke(cli, ["--yes", "snapshots", "delete", WS_GUID, SNAP_GUID])
+            result = runner.invoke(cli, ["--yes", "snapshots", "delete", SNAP_GUID, WS_GUID])
         assert result.exit_code == 0
 
     def test_delete_declined_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
@@ -289,7 +289,7 @@ class TestSnapshotsDelete:
                 new=AsyncMock(return_value=(WS_UUID, _make_snap_entry(), _cache)),
             ),
         ):
-            result = runner.invoke(cli, ["snapshots", "delete", WS_GUID, SNAP_GUID], input="n\n")
+            result = runner.invoke(cli, ["snapshots", "delete", SNAP_GUID, WS_GUID], input="n\n")
         assert result.exit_code == 0
         assert "Aborted." in result.output
 
@@ -485,3 +485,68 @@ def _make_response(status_code: int, text: str) -> MagicMock:
     )
     mock_resp.headers = {}
     return mock_resp
+
+
+# ---------------------------------------------------------------------------
+# L08 — rename/delete use default workspace from env (align with list/create)
+# ---------------------------------------------------------------------------
+
+
+class TestSnapshotsRenameDefaultWorkspace:
+    """L08: snapshots rename must honour FABRIC_DW_DEFAULT_WORKSPACE when workspace is omitted."""
+
+    def test_rename_uses_env_default_workspace(
+        self, runner: CliRunner, cache_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When FABRIC_DW_DEFAULT_WORKSPACE is set, snapshots rename must not require it as arg."""
+        monkeypatch.setenv("FABRIC_DW_DEFAULT_WORKSPACE", WS_GUID)
+        mock_http = AsyncMock()
+        mock_http.request = AsyncMock(
+            return_value=_make_response(200, json.dumps(_SNAPSHOT_DETAIL))
+        )
+        _cache = LookupCache(path=cache_env / "lookup.json")
+        with (
+            patch(
+                "fabric_dw.cli.commands.snapshots.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.snapshots.resolve_item_with_cache",
+                new=AsyncMock(return_value=(WS_UUID, _make_snap_entry(), _cache)),
+            ),
+        ):
+            # Omit workspace positional arg — should fall back to env var
+            result = runner.invoke(
+                cli,
+                ["snapshots", "rename", SNAP_GUID, "NewSnapshotName"],
+            )
+        assert result.exit_code == 0, result.output
+
+
+class TestSnapshotsDeleteDefaultWorkspace:
+    """L08: snapshots delete must honour FABRIC_DW_DEFAULT_WORKSPACE when workspace is omitted."""
+
+    def test_delete_uses_env_default_workspace(
+        self, runner: CliRunner, cache_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When FABRIC_DW_DEFAULT_WORKSPACE is set, snapshots delete must not require it as arg."""
+        monkeypatch.setenv("FABRIC_DW_DEFAULT_WORKSPACE", WS_GUID)
+        mock_http = AsyncMock()
+        mock_http.request = AsyncMock(return_value=_make_response(204, ""))
+        _cache = LookupCache(path=cache_env / "lookup.json")
+        with (
+            patch(
+                "fabric_dw.cli.commands.snapshots.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.snapshots.resolve_item_with_cache",
+                new=AsyncMock(return_value=(WS_UUID, _make_snap_entry(), _cache)),
+            ),
+        ):
+            # Omit workspace positional arg — should fall back to env var
+            result = runner.invoke(
+                cli,
+                ["--yes", "snapshots", "delete", SNAP_GUID],
+            )
+        assert result.exit_code == 0, result.output

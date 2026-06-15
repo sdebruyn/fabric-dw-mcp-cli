@@ -10,6 +10,32 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+# ---------------------------------------------------------------------------
+# Shared type aliases and low-level helpers
+# ---------------------------------------------------------------------------
+
+_AnyDict = dict[str, Any]
+_Flattener = Callable[[_AnyDict], _AnyDict]
+
+
+def _as_dict(data: object) -> _AnyDict | None:
+    """Return *data* cast to ``_AnyDict`` when it is a :class:`dict`, else ``None``.
+
+    Used in ``@model_validator(mode="before")`` methods to avoid repeating the
+    ``isinstance`` guard and ``cast`` on every validator:
+
+    .. code-block:: python
+
+        d = _as_dict(data)
+        if d is None:
+            return data
+        # work with d ...
+
+    """
+    if isinstance(data, dict):
+        return cast("_AnyDict", data)
+    return None
+
 
 class _FabricBase(BaseModel):
     """Shared config for all Fabric domain models."""
@@ -64,9 +90,9 @@ class Warehouse(_FabricBase):
         manually), the properties-flattening is skipped so the standard
         Pydantic constructor path keeps working.
         """
-        if not isinstance(data, dict):
+        d = _as_dict(data)
+        if d is None:
             return data
-        d = cast("_AnyDict", data)
         if "properties" not in d:
             # Already flat (or manually constructed without properties key).
             return d
@@ -95,16 +121,21 @@ class Warehouse(_FabricBase):
     def from_api(cls, payload: dict[str, object], kind: WarehouseKind) -> Warehouse:
         """Build a Warehouse from a raw API response dict.
 
-        .. deprecated::
-            Prefer ``Warehouse.model_validate({**payload, "kind": kind})`` directly.
-            This shim delegates to :meth:`model_validate` and is kept for
-            backward compatibility with existing call sites.
+        Delegates to :meth:`model_validate` with *kind* merged into the payload.
+        The :meth:`_flatten_api_payload` before-validator handles nested
+        ``properties`` → top-level field flattening transparently.
 
-        Picks up the connection string from the correct nested properties path
-        depending on whether the item is a WAREHOUSE or SQL_ENDPOINT.
+        Use ``Warehouse.model_validate({**payload, "kind": kind})`` directly
+        when you do not need the SNAPSHOT guard below.
+
+        Args:
+            payload: Raw dict from the Fabric REST API.
+            kind: The item kind; must not be :attr:`WarehouseKind.SNAPSHOT`.
 
         Raises:
-            ValueError: If *kind* is :attr:`WarehouseKind.SNAPSHOT`.
+            ValueError: If *kind* is :attr:`WarehouseKind.SNAPSHOT`.  Snapshots
+                have their own model (:class:`WarehouseSnapshot`); passing a
+                snapshot payload here would silently produce an invalid object.
         """
         if kind == WarehouseKind.SNAPSHOT:
             msg = f"from_api does not support kind={kind}"
@@ -158,9 +189,9 @@ class RestorePoint(_FabricBase):
         calling :meth:`model_validate` directly on an already-flat dict), the
         existing value is preserved.
         """
-        if not isinstance(data, dict):
+        d = _as_dict(data)
+        if d is None:
             return data
-        d = cast("_AnyDict", data)
         if "eventDateTime" in d or "creationDetails" not in d:
             return d
         details = d.get("creationDetails")
@@ -508,10 +539,6 @@ class PrincipalType(StrEnum):
     ENTIRE_TENANT = "EntireTenant"
 
 
-_AnyDict = dict[str, Any]
-_Flattener = Callable[[_AnyDict], _AnyDict]
-
-
 def _flatten_user(data: _AnyDict) -> _AnyDict:
     """Extract ``userPrincipalName`` from the ``userDetails`` sub-object."""
     user_details = data.get("userDetails")
@@ -586,9 +613,9 @@ class ItemAccessPrincipal(_FabricBase):
         keyed by the principal ``type`` string.  Unknown principal types fall
         back to a no-op so parsing never raises on new API variants.
         """
-        if not isinstance(data, dict):
+        d = _as_dict(data)
+        if d is None:
             return data
-        d = cast("_AnyDict", data)
         principal_type = str(d.get("type", ""))
         flattener = _PRINCIPAL_FLATTENERS.get(principal_type, _flatten_noop)
         return flattener(d)

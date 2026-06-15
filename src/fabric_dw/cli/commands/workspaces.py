@@ -69,16 +69,12 @@ async def set_collation_cmd(ctx: CliContext, workspace: str | None, collation: s
     try:
         async with build_http_client(ctx) as http:
             ws_id = await resolve_workspace_id(http, ws)
-    except FabricError as exc:
-        raise click.ClickException(str(exc)) from exc
-    if not confirm_destructive(
-        f"Set collation to {collation!r} for workspace {ws_id}?",
-        yes=ctx.yes,
-    ):
-        click.echo("Aborted.")
-        return
-    try:
-        async with build_http_client(ctx) as http:
+            if not confirm_destructive(
+                f"Set collation to {collation!r} for workspace {ws_id}?",
+                yes=ctx.yes,
+            ):
+                click.echo("Aborted.")
+                return
             await _workspaces_svc.set_collation(http, ws_id, collation)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc

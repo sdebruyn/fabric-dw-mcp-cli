@@ -698,3 +698,44 @@ def _make_response(status_code: int, text: str) -> MagicMock:
     mock_resp.headers = {}
     mock_resp.text = text
     return mock_resp
+
+
+# ---------------------------------------------------------------------------
+# L04 — takeover and set-collation open build_http_client exactly once
+# ---------------------------------------------------------------------------
+
+
+class TestTakeoverSingleHttpOpen:
+    """L04: takeover must open build_http_client exactly once (not twice)."""
+
+    def test_takeover_opens_http_client_once(self, runner: CliRunner, cache_env: Path) -> None:
+        """build_http_client must be entered exactly once for takeover."""
+        _ = cache_env
+        open_count = 0
+        mock_http = AsyncMock()
+        mock_http.request = AsyncMock(return_value=_make_response(200, "{}"))
+
+        @asynccontextmanager
+        async def counting_cm(_ctx: object) -> AsyncIterator[object]:
+            nonlocal open_count
+            open_count += 1
+            yield mock_http
+
+        with (
+            patch(
+                "fabric_dw.cli.commands.warehouses.build_http_client",
+                new=counting_cm,
+            ),
+            patch(
+                "fabric_dw.cli.commands.warehouses.resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry(WarehouseKind.WAREHOUSE))),
+            ),
+            patch(
+                "fabric_dw.services.ownership.takeover",
+                new=AsyncMock(return_value=None),
+            ),
+        ):
+            result = runner.invoke(cli, ["--yes", "warehouses", "takeover", WS_GUID, WH_GUID])
+
+        assert result.exit_code == 0, result.output
+        assert open_count == 1, f"build_http_client opened {open_count} times, expected 1"

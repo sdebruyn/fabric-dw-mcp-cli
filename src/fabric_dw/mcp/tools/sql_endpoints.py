@@ -13,10 +13,9 @@ from fabric_dw.mcp._context import get_context
 from fabric_dw.mcp._guards import (
     assert_destructive_allowed,
     assert_workspace_allowed,
-    assert_writes_allowed,
     workspace_allowlist_active,
 )
-from fabric_dw.mcp._helpers import fabric_err, resolve_item
+from fabric_dw.mcp._helpers import fabric_err, mutating_tool, resolve_item
 from fabric_dw.services import permissions as _permissions_svc
 from fabric_dw.services import sql_endpoints
 
@@ -73,7 +72,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             raise fabric_err(exc) from exc
         return result.model_dump(by_alias=True, mode="json")
 
-    @mcp.tool(name="refresh_sql_endpoint_metadata")
+    @mutating_tool(mcp, "refresh_sql_endpoint_metadata")
     async def refresh_sql_endpoint_metadata(
         workspace: str,
         endpoint: str,
@@ -89,9 +88,12 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             endpoint: SQL analytics endpoint name or GUID.
             recreate_tables: When ``True``, drop and recreate all tables during
                 the refresh.  Use to resolve inconsistencies or force a clean
-                rebuild.  **Destructive** — use with caution.
+                rebuild.  **Destructive** — use with caution.  Requires
+                ``FABRIC_MCP_ALLOW_DESTRUCTIVE=1`` when enabled.
         """
-        assert_writes_allowed("refresh_sql_endpoint_metadata")
+        # assert_writes_allowed is injected by mutating_tool above.
+        # The destructive guard is conditional on recreate_tables, so it is
+        # checked here rather than via mutating_tool(destructive=True).
         if recreate_tables:
             assert_destructive_allowed()
         assert_workspace_allowed(workspace)

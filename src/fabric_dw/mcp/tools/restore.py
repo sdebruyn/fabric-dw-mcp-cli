@@ -10,11 +10,9 @@ from mcp.server.fastmcp import FastMCP
 from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
 from fabric_dw.mcp._guards import (
-    assert_destructive_allowed,
     assert_workspace_allowed,
-    assert_writes_allowed,
 )
-from fabric_dw.mcp._helpers import fabric_err, resolve_item, tool_err
+from fabric_dw.mcp._helpers import fabric_err, mutating_tool, resolve_item, tool_err
 from fabric_dw.services import restore as restore_svc
 
 __all__ = ["register"]
@@ -61,7 +59,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             raise fabric_err(exc) from exc
         return result.model_dump(by_alias=True, mode="json")
 
-    @mcp.tool(name="create_restore_point")
+    @mutating_tool(mcp, "create_restore_point")
     async def create_restore_point(
         workspace: str,
         warehouse: str,
@@ -76,7 +74,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             name: Optional display name (max 128 chars).
             description: Optional description (max 512 chars).
         """
-        assert_writes_allowed("create_restore_point")
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
@@ -90,7 +87,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             raise fabric_err(exc) from exc
         return result.model_dump(by_alias=True, mode="json")
 
-    @mcp.tool(name="update_restore_point")
+    @mutating_tool(mcp, "update_restore_point")
     async def update_restore_point(
         workspace: str,
         warehouse: str,
@@ -109,7 +106,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             name: New display name (max 128 chars).
             description: New description (max 512 chars).
         """
-        assert_writes_allowed("update_restore_point")
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
@@ -128,7 +124,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             raise tool_err(exc) from exc
         return result.model_dump(by_alias=True, mode="json")
 
-    @mcp.tool(name="delete_restore_point")
+    @mutating_tool(mcp, "delete_restore_point", destructive=True)
     async def delete_restore_point(
         workspace: str, warehouse: str, restore_point_id: str
     ) -> dict[str, Any]:
@@ -141,8 +137,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             warehouse: Warehouse name or GUID.
             restore_point_id: The restore point ID string.
         """
-        assert_writes_allowed("delete_restore_point")
-        assert_destructive_allowed()
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
@@ -154,7 +148,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             raise fabric_err(exc) from exc
         return {"deleted": True, "restore_point_id": restore_point_id}
 
-    @mcp.tool(name="restore_warehouse_in_place")
+    @mutating_tool(mcp, "restore_warehouse_in_place", destructive=True)
     async def restore_warehouse_in_place(
         workspace: str, warehouse: str, restore_point_id: str
     ) -> dict[str, Any]:
@@ -169,8 +163,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             warehouse: Warehouse name or GUID.
             restore_point_id: The restore point ID string to restore to.
         """
-        assert_writes_allowed("restore_warehouse_in_place")
-        assert_destructive_allowed()
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:

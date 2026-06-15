@@ -10,13 +10,12 @@ from mcp.server.fastmcp import FastMCP
 from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
 from fabric_dw.mcp._guards import (
-    assert_destructive_allowed,
     assert_workspace_allowed,
-    assert_writes_allowed,
 )
 from fabric_dw.mcp._helpers import (
     fabric_err,
     make_sql_target,
+    mutating_tool,
     parse_iso8601,
     resolve_item,
     tool_err,
@@ -45,7 +44,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             raise fabric_err(exc) from exc
         return [s.model_dump(by_alias=True, mode="json") for s in result]
 
-    @mcp.tool(name="create_snapshot")
+    @mutating_tool(mcp, "create_snapshot")
     async def create_snapshot(
         workspace: str,
         warehouse: str,
@@ -62,7 +61,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             description: Optional description.
             snapshot_dt: Optional ISO-8601 datetime string for the snapshot point-in-time.
         """
-        assert_writes_allowed("create_snapshot")
         assert_workspace_allowed(workspace)
         parsed_dt = parse_iso8601(snapshot_dt, "snapshot_dt")
         ctx = get_context()
@@ -83,7 +81,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         ctx.resolver.clear_negative_cache()
         return result.model_dump(by_alias=True, mode="json")
 
-    @mcp.tool(name="rename_snapshot")
+    @mutating_tool(mcp, "rename_snapshot")
     async def rename_snapshot(
         workspace: str,
         snapshot: str,
@@ -91,7 +89,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         description: str | None = None,
     ) -> dict[str, Any]:
         """Rename a warehouse snapshot."""
-        assert_writes_allowed("rename_snapshot")
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
@@ -110,11 +107,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         ctx.resolver.clear_negative_cache()
         return result.model_dump(by_alias=True, mode="json")
 
-    @mcp.tool(name="delete_snapshot")
+    @mutating_tool(mcp, "delete_snapshot", destructive=True)
     async def delete_snapshot(workspace: str, snapshot: str) -> dict[str, Any]:
         """Delete a warehouse snapshot."""
-        assert_writes_allowed("delete_snapshot")
-        assert_destructive_allowed()
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
@@ -126,7 +121,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             raise tool_err(exc) from exc
         return {"deleted": True, "snapshot_id": str(snap_item.id)}
 
-    @mcp.tool(name="roll_snapshot_timestamp")
+    @mutating_tool(mcp, "roll_snapshot_timestamp")
     async def roll_snapshot_timestamp(
         workspace: str,
         warehouse: str,
@@ -141,7 +136,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             snapshot_name: The snapshot database name to roll.
             new_dt: Optional ISO-8601 datetime string; defaults to CURRENT_TIMESTAMP.
         """
-        assert_writes_allowed("roll_snapshot_timestamp")
         assert_workspace_allowed(workspace)
         parsed_dt = parse_iso8601(new_dt, "new_dt")
         ctx = get_context()

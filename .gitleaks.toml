@@ -1,0 +1,21 @@
+title = "fabric-dw-mcp-cli gitleaks configuration"
+
+[extend]
+# Keep all default gitleaks rules active; this file only adds targeted allowlists.
+useDefault = true
+
+# Extend the generic-api-key rule with a narrowly-scoped allowlist.
+# Synthetic test fixtures use recognisable prefixes (ws-*, wh-*, item-*, fake-*,
+# test-*, mock-*, dummy-*) that cannot be mistaken for real credentials.
+# The condition = "AND" means BOTH the path (tests/) AND the secret regex must
+# match before a finding is suppressed — a real credential accidentally committed
+# to a test file will still be reported.
+[[rules]]
+id = "generic-api-key"
+
+    [[rules.allowlists]]
+    description = "Synthetic test fixture identifiers (ws-*, wh-*, item-*, fake-*, test-*, mock-*, dummy-*) inside tests/ are not real secrets"
+    condition = "AND"
+    paths = ['''tests/''']
+    regexTarget = "secret"
+    regexes = ['''^(ws|wh|item|fake|test|mock|dummy)-[a-zA-Z0-9-]+$''']

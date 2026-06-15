@@ -11,12 +11,11 @@ from pydantic import Field
 from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
 from fabric_dw.mcp._guards import (
-    assert_destructive_allowed,
     assert_workspace_allowed,
-    assert_writes_allowed,
 )
 from fabric_dw.mcp._helpers import (
     make_sql_target,
+    mutating_tool,
     parse_qualified_name,
     resolve_item,
     safe_rows,
@@ -117,7 +116,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             raise tool_err(exc) from exc
         return result.model_dump(mode="json")
 
-    @mcp.tool(name="create_view")
+    @mutating_tool(mcp, "create_view")
     async def create_view(
         workspace: str, item: str, qualified_name: str, select_body: str
     ) -> dict[str, Any]:
@@ -133,7 +132,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             select_body: The SELECT statement that forms the view body.
         """
         schema, view_name = parse_qualified_name(qualified_name, kind="view")
-        assert_writes_allowed("create_view")
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
@@ -149,7 +147,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         ctx.resolver.clear_negative_cache()
         return result.model_dump(mode="json")
 
-    @mcp.tool(name="update_view")
+    @mutating_tool(mcp, "update_view")
     async def update_view(
         workspace: str, item: str, qualified_name: str, select_body: str
     ) -> dict[str, Any]:
@@ -165,7 +163,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             select_body: The new SELECT statement.
         """
         schema, view_name = parse_qualified_name(qualified_name, kind="view")
-        assert_writes_allowed("update_view")
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
@@ -178,9 +175,10 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
+        ctx.resolver.clear_negative_cache()
         return result.model_dump(mode="json")
 
-    @mcp.tool(name="drop_view")
+    @mutating_tool(mcp, "drop_view", destructive=True)
     async def drop_view(workspace: str, item: str, qualified_name: str) -> dict[str, Any]:
         """Drop a SQL view.
 
@@ -190,8 +188,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             qualified_name: Dot-separated qualified view name, e.g. ``dbo.vw_sales``.
         """
         schema, view_name = parse_qualified_name(qualified_name, kind="view")
-        assert_writes_allowed("drop_view")
-        assert_destructive_allowed()
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
@@ -202,9 +198,10 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             await views_svc.drop_view(target, schema, view_name, mode=ctx.auth_mode)
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
+        ctx.resolver.clear_negative_cache()
         return {"dropped": True}
 
-    @mcp.tool(name="rename_view")
+    @mutating_tool(mcp, "rename_view")
     async def rename_view(
         workspace: str, item: str, qualified_name: str, new_name: str
     ) -> dict[str, Any]:
@@ -222,7 +219,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 e.g. ``dbo.vw_sales``.
             new_name: New bare view name (no schema prefix), e.g. ``vw_revenue``.
         """
-        assert_writes_allowed("rename_view")
         assert_workspace_allowed(workspace)
         ctx = get_context()
         schema, old_view_name = parse_qualified_name(qualified_name, kind="view")
@@ -243,4 +239,5 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
+        ctx.resolver.clear_negative_cache()
         return result.model_dump(mode="json")
