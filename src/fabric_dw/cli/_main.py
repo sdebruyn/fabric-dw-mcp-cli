@@ -178,7 +178,11 @@ def _patch_group_for_telemetry(group: click.Group) -> None:
     group.invoke = _patched_invoke  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
 
 
-@click.group(invoke_without_command=False, cls=_InstrumentedGroup)
+@click.group(
+    invoke_without_command=False,
+    cls=_InstrumentedGroup,
+    context_settings={"help_option_names": ["-h", "--help"]},
+)
 @click.option(
     "--json",
     "json_output",
