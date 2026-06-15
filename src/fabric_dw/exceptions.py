@@ -1,3 +1,8 @@
+from __future__ import annotations
+
+import warnings
+
+
 class FabricCliError(Exception):
     """Common base for all fabric-dw exceptions raised to the CLI / MCP boundary.
 
@@ -93,7 +98,7 @@ class ConfigError(FabricCliError):
     """
 
     @classmethod
-    def missing_env_vars(cls, names: list[str]) -> "ConfigError":
+    def missing_env_vars(cls, names: list[str]) -> ConfigError:
         """Create a ConfigError for missing environment variables."""
         return cls(
             f"Missing required environment variable(s) for service principal auth: "
@@ -101,7 +106,7 @@ class ConfigError(FabricCliError):
         )
 
     @classmethod
-    def unknown_credential_mode(cls, mode: object) -> "ConfigError":
+    def unknown_credential_mode(cls, mode: object) -> ConfigError:
         """Create a ConfigError for an unrecognised credential mode."""
         return cls(f"Unknown credential mode: {mode!r}")
 
@@ -110,7 +115,28 @@ class ItemKindError(FabricError):
     """Raised when an operation is not valid for the resolved item kind."""
 
 
-# Deprecated aliases — remove after next release.
-PermissionDenied = PermissionDeniedError
-NotFound = NotFoundError
-AlreadyExists = AlreadyExistsError
+# ---------------------------------------------------------------------------
+# Deprecated name aliases (C19)
+# ---------------------------------------------------------------------------
+# These short names were used before the *Error suffix convention was adopted.
+# They emit a DeprecationWarning on first import via module __getattr__ below.
+# Remove after the next major release.
+
+_DEPRECATED_ALIASES: dict[str, type] = {
+    "PermissionDenied": PermissionDeniedError,
+    "NotFound": NotFoundError,
+    "AlreadyExists": AlreadyExistsError,
+}
+
+
+def __getattr__(name: str) -> type:
+    """Emit a DeprecationWarning when a deprecated alias is imported."""
+    if name in _DEPRECATED_ALIASES:
+        warnings.warn(
+            f"fabric_dw.exceptions.{name} is deprecated; "
+            f"use {_DEPRECATED_ALIASES[name].__name__} instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return _DEPRECATED_ALIASES[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

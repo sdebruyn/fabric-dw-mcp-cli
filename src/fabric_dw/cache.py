@@ -123,6 +123,21 @@ class LookupCache:
                 self._path,
             )
             return self._empty()
+        # Validate each per-workspace bucket inside 'items' is also a dict (C24).
+        # A corrupt bucket (e.g. a list or string) would raise AttributeError when
+        # callers invoke .get() on it, bypassing the "treat-as-empty" guarantee.
+        # Partial recovery: drop only the bad bucket(s) so healthy workspace
+        # entries are preserved and do not force unnecessary API round-trips.
+        items: Any = data["items"]
+        bad_buckets = [k for k, v in items.items() if not isinstance(v, dict)]
+        if bad_buckets:
+            _log.warning(
+                "Cache file %s has non-dict per-workspace bucket(s) %r; dropping corrupt bucket(s)",
+                self._path,
+                bad_buckets,
+            )
+            for k in bad_buckets:
+                del items[k]
         return data
 
     def _read(self) -> dict[str, Any]:
@@ -176,6 +191,34 @@ class LookupCache:
         # Reject future fetched_at (clock drift / corruption) and entries beyond TTL
         return now >= fetched_at and (now - fetched_at) < self._ttl
 
+    def _get_record(self, section: dict[str, Any], key: str) -> dict[str, Any] | None:
+        """Return a fresh, validated record dict from *section* under *key*, or None.
+
+        Handles the lock-read, isinstance-guard, and freshness check that is
+        shared between :meth:`get_workspace` and :meth:`get_item` (C09).
+        """
+        record = section.get(key)
+        if not isinstance(record, dict):
+            return None
+        if not self._is_fresh(record.get("fetched_at", "")):
+            return None
+        return record
+
+    @staticmethod
+    def _entry_to_dict(entry: ItemEntry) -> dict[str, Any]:
+        """Serialise *entry* to a JSON-compatible dict (C08).
+
+        Single source of truth for the item cache schema so that
+        :meth:`put_item` and :meth:`put_items` cannot diverge.
+        """
+        return {
+            "id": str(entry.id),
+            "kind": str(entry.kind),
+            "connection_string": entry.connection_string,
+            "fetched_at": entry.fetched_at.isoformat(),
+            "display_name": entry.display_name,
+        }
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -185,10 +228,8 @@ class LookupCache:
         with self._lock:
             data = self._read()
         workspaces: dict[str, Any] = data.get("workspaces", {})
-        record = workspaces.get(name.strip().lower())
-        if not isinstance(record, dict):
-            return None
-        if not self._is_fresh(record.get("fetched_at", "")):
+        record = self._get_record(workspaces, name.strip().lower())
+        if record is None:
             return None
         try:
             return WorkspaceEntry(
@@ -198,14 +239,14 @@ class LookupCache:
         except (KeyError, ValueError, TypeError):
             return None
 
-    def put_workspace(self, name: str, id: UUID) -> None:
+    def put_workspace(self, name: str, workspace_id: UUID) -> None:
         """Store a workspace name→UUID mapping with the current timestamp."""
         key = name.strip().lower()
         with self._lock:
             data = self._read()
             workspaces: dict[str, Any] = data.setdefault("workspaces", {})
             workspaces[key] = {
-                "id": str(id),
+                "id": str(workspace_id),
                 "fetched_at": datetime.now(tz=UTC).isoformat(),
             }
             self._write(data)
@@ -220,11 +261,13 @@ class LookupCache:
         with self._lock:
             data = self._read()
         items: dict[str, Any] = data.get("items", {})
-        ws_items: dict[str, Any] = items.get(str(workspace_id), {})
-        record = ws_items.get(name.strip().lower())
-        if not isinstance(record, dict):
+        ws_items: Any = items.get(str(workspace_id), {})
+        # Guard: per-workspace bucket must be a dict (C24 — _validate catches this
+        # for stored files, but in-memory mutations could bypass it).
+        if not isinstance(ws_items, dict):
             return None
-        if not self._is_fresh(record.get("fetched_at", "")):
+        record = self._get_record(ws_items, name.strip().lower())
+        if record is None:
             return None
         try:
             conn = record.get("connection_string")
@@ -250,13 +293,7 @@ class LookupCache:
             data = self._read()
             items: dict[str, Any] = data.setdefault("items", {})
             ws_items: dict[str, Any] = items.setdefault(str(workspace_id), {})
-            ws_items[key] = {
-                "id": str(entry.id),
-                "kind": str(entry.kind),
-                "connection_string": entry.connection_string,
-                "fetched_at": entry.fetched_at.isoformat(),
-                "display_name": entry.display_name,
-            }
+            ws_items[key] = self._entry_to_dict(entry)
             self._write(data)
 
     def put_items(self, workspace_id: UUID, entries: Iterable[tuple[str, ItemEntry]]) -> None:
@@ -276,13 +313,7 @@ class LookupCache:
             items: dict[str, Any] = data.setdefault("items", {})
             ws_items: dict[str, Any] = items.setdefault(str(workspace_id), {})
             for key, entry in pairs:
-                ws_items[key] = {
-                    "id": str(entry.id),
-                    "kind": str(entry.kind),
-                    "connection_string": entry.connection_string,
-                    "fetched_at": entry.fetched_at.isoformat(),
-                    "display_name": entry.display_name,
-                }
+                ws_items[key] = self._entry_to_dict(entry)
             self._write(data)
 
     def evict_item(self, workspace_id: UUID, name: str) -> None:

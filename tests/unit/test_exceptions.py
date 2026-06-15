@@ -5,12 +5,16 @@ Covers:
 - __str__ with/without hint and request_id
 - Every concrete subclass instantiates correctly
 - ConfigError factory classmethods
+- Deprecated aliases emit DeprecationWarning (C19)
 """
 
 from __future__ import annotations
 
+import warnings
+
 import pytest
 
+import fabric_dw.exceptions as exc_mod
 from fabric_dw.exceptions import (
     AlreadyExistsError,
     AuthError,
@@ -290,3 +294,64 @@ class TestConfigError:
     def test_config_error_message_preserved(self) -> None:
         err = ConfigError("cfg problem")
         assert "cfg problem" in str(err)
+
+
+# ---------------------------------------------------------------------------
+# C19: Deprecated aliases must emit DeprecationWarning via module __getattr__
+# ---------------------------------------------------------------------------
+
+
+class TestDeprecatedAliases:
+    """Deprecated short-name aliases must warn, resolve to the right class, and not be removed."""
+
+    @pytest.mark.parametrize(
+        ("alias", "canonical"),
+        [
+            ("PermissionDenied", PermissionDeniedError),
+            ("NotFound", NotFoundError),
+            ("AlreadyExists", AlreadyExistsError),
+        ],
+    )
+    def test_alias_emits_deprecation_warning(
+        self, alias: str, canonical: type[FabricError]
+    ) -> None:
+        """Accessing a deprecated alias via getattr must emit DeprecationWarning (C19)."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            resolved = getattr(exc_mod, alias)
+
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught), (
+            f"Expected DeprecationWarning when accessing {alias!r}, got: {caught}"
+        )
+        assert resolved is canonical
+
+    @pytest.mark.parametrize(
+        ("alias", "canonical"),
+        [
+            ("PermissionDenied", PermissionDeniedError),
+            ("NotFound", NotFoundError),
+            ("AlreadyExists", AlreadyExistsError),
+        ],
+    )
+    def test_alias_resolves_to_canonical_class(
+        self, alias: str, canonical: type[FabricError]
+    ) -> None:
+        """Deprecated alias must resolve to the correct canonical class."""
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            resolved = getattr(exc_mod, alias)
+        assert resolved is canonical
+
+    def test_unknown_attr_raises_attribute_error(self) -> None:
+        """Accessing an unknown attribute via __getattr__ must raise AttributeError."""
+        with pytest.raises(AttributeError, match="has no attribute"):
+            _ = exc_mod.ThisDoesNotExist  # type: ignore[attr-defined]
+
+    def test_deprecated_alias_is_still_raiseable(self) -> None:
+        """Deprecated aliases must still produce raiseable exception classes."""
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            alias_cls = exc_mod.NotFound
+
+        with pytest.raises(NotFoundError):
+            raise alias_cls("resource missing")

@@ -32,6 +32,13 @@ _STANDARD_LOGRECORD_ATTRS: frozenset[str] = frozenset(
 ) | {"message", "asctime"}
 
 
+# Only "level" and "time" need guarding here: they are core payload keys that
+# are NOT in _STANDARD_LOGRECORD_ATTRS, so they CAN arrive via extra={}.
+# "name" and "msg" are already in _STANDARD_LOGRECORD_ATTRS and are stripped
+# from extras before this check runs — guarding them would be dead code.
+_CORE_PAYLOAD_KEYS: frozenset[str] = frozenset({"level", "time"})
+
+
 class _JsonFormatter(logging.Formatter):
     """Minimal JSON log formatter.
 
@@ -39,25 +46,27 @@ class _JsonFormatter(logging.Formatter):
     ``level``, ``name``, ``msg``, and ``time`` (ISO-8601 UTC).
 
     Any extra fields passed via ``extra={...}`` to the logging call are
-    merged into the payload without overwriting the core keys.  Values that
+    merged into the payload.  If an extra field's name collides with a core
+    key it is stored under the prefix ``extra_<name>`` so that the core value
+    is preserved and the extra value is never silently lost (C12).  Values that
     are not JSON-serialisable are coerced to ``str``.
     """
 
     def format(self, record: logging.LogRecord) -> str:
         # Use the already-formatted message (handles % interpolation)
         message = record.getMessage()
-        payload = {
+        payload: dict[str, object] = {
             "level": record.levelname,
             "name": record.name,
             "msg": message,
             "time": self.formatTime(record, self.datefmt),
         }
 
-        # Merge extra= fields without overwriting core keys.
+        # Merge extra= fields; prefix colliding names to avoid silent data loss.
         extras = {k: v for k, v in record.__dict__.items() if k not in _STANDARD_LOGRECORD_ATTRS}
         for key, value in extras.items():
-            if key not in payload:
-                payload[key] = value
+            out_key = f"extra_{key}" if key in _CORE_PAYLOAD_KEYS else key
+            payload[out_key] = value
 
         return json.dumps(payload, default=str)
 
@@ -73,25 +82,33 @@ class _JsonFormatter(logging.Formatter):
 
 
 def setup_logging(level: int = logging.INFO) -> None:
-    """Configure the root logger with a JSON formatter.
+    """Configure the ``fabric_dw`` package logger with a JSON formatter.
+
+    Scoped to the ``fabric_dw`` named logger so that the host application's
+    root logger is not mutated and third-party loggers (azure-identity, httpx,
+    etc.) cannot emit sensitive data through our handler (C11).
 
     Safe to call multiple times; each call replaces the existing handlers on
-    the root logger so that the level and formatter are always up-to-date.
+    the ``fabric_dw`` logger so that the level and formatter are always
+    up-to-date.
 
     Args:
-        level: Logging level for the root logger (default: ``logging.INFO``).
+        level: Logging level (default: ``logging.INFO``).
     """
-    root = logging.getLogger()
-    root.setLevel(level)
+    pkg_logger = logging.getLogger("fabric_dw")
+    pkg_logger.setLevel(level)
+    # Prevent records from reaching the root logger (which may have its own
+    # handlers configured by the host application).
+    pkg_logger.propagate = False
 
-    # Remove any existing handlers to avoid duplicate output
-    for handler in list(root.handlers):
-        root.removeHandler(handler)
+    # Remove any existing handlers to avoid duplicate output on repeated calls.
+    for handler in list(pkg_logger.handlers):
+        pkg_logger.removeHandler(handler)
 
     handler = logging.StreamHandler()
     handler.setLevel(level)
     handler.setFormatter(_JsonFormatter())
-    root.addHandler(handler)
+    pkg_logger.addHandler(handler)
 
 
 _SENSITIVE_HEADERS: frozenset[str] = frozenset(
