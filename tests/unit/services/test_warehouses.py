@@ -387,7 +387,10 @@ async def test_create_no_resource_location_no_result_id_raises_fabric_server_err
 
         client = await _make_client()
         async with client:
-            with pytest.raises(FabricServerError, match="neither resourceLocation"):
+            with pytest.raises(
+                FabricServerError,
+                match=r"neither resourceLocation|operation result",
+            ):
                 await warehouses.create(client, _WORKSPACE_ID, "SalesWarehouse")
 
 
@@ -570,43 +573,18 @@ async def test_create_resource_location_present_does_not_call_get_operation_resu
 
 
 # ---------------------------------------------------------------------------
-# _operation_id_from_location
+# _operation_id_from_location — consolidated into _lro.extract_operation_id
+# Tests relocated to test_lro.py; ensure the symbol is no longer on warehouses.
 # ---------------------------------------------------------------------------
 
 
-def test_operation_id_from_location_plain_url() -> None:
-    """_operation_id_from_location must extract UUID from a plain operation URL."""
-    url = f"https://api.fabric.microsoft.com/v1/operations/{_OPERATION_ID}"
-    result = warehouses._operation_id_from_location(url)
-    assert result == str(_OPERATION_ID)
+def test_operation_id_from_location_not_on_warehouses_module() -> None:
+    """_operation_id_from_location must NOT exist on the warehouses module.
 
-
-def test_operation_id_from_location_trailing_slash() -> None:
-    """_operation_id_from_location must handle a trailing slash."""
-    url = f"https://api.fabric.microsoft.com/v1/operations/{_OPERATION_ID}/"
-    result = warehouses._operation_id_from_location(url)
-    assert result == str(_OPERATION_ID)
-
-
-def test_operation_id_from_location_with_query_string() -> None:
-    """_operation_id_from_location must strip query strings before parsing."""
-    url = f"https://api.fabric.microsoft.com/v1/operations/{_OPERATION_ID}?api-version=2023-11-01"
-    result = warehouses._operation_id_from_location(url)
-    assert result == str(_OPERATION_ID)
-
-
-def test_operation_id_from_location_garbage_raises_fabric_server_error() -> None:
-    """_operation_id_from_location must raise FabricServerError for a non-UUID last segment."""
-    url = "https://api.fabric.microsoft.com/v1/operations/not-a-uuid"
-    with pytest.raises(FabricServerError, match="not a UUID"):
-        warehouses._operation_id_from_location(url)
-
-
-def test_operation_id_from_location_empty_path_raises_fabric_server_error() -> None:
-    """_operation_id_from_location must raise FabricServerError when no path segments exist."""
-    url = "https://api.fabric.microsoft.com"
-    with pytest.raises(FabricServerError):
-        warehouses._operation_id_from_location(url)
+    The logic was consolidated into _lro.extract_operation_id.  This test guards
+    against accidental re-introduction of a duplicate.
+    """
+    assert not hasattr(warehouses, "_operation_id_from_location")
 
 
 # ---------------------------------------------------------------------------

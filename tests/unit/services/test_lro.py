@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
+from fabric_dw.exceptions import FabricServerError, NotFoundError
 from fabric_dw.services._lro import (
     LRO_DETAIL_WAIT_S,
     LRO_MAX_DETAIL_RETRIES,
@@ -12,8 +15,9 @@ from fabric_dw.services._lro import (
 )
 from tests.unit.services._helpers import _make_client
 
-_OP_ID = "abc-def-123"
-_LOCATION = f"https://api.fabric.microsoft.com/v1/operations/{_OP_ID}"
+_OP_UUID = "c1d2e3f4-a5b6-7890-cdef-123456789abc"
+_OP_ID = _OP_UUID
+_LOCATION = f"https://api.fabric.microsoft.com/v1/operations/{_OP_UUID}"
 
 
 # ---------------------------------------------------------------------------
@@ -34,18 +38,51 @@ def test_lro_detail_wait_s_is_positive_float() -> None:
 
 
 # ---------------------------------------------------------------------------
-# extract_operation_id
+# extract_operation_id — hardened UUID-validating implementation
 # ---------------------------------------------------------------------------
 
 
-def test_extract_operation_id_parses_last_segment() -> None:
-    """extract_operation_id should return the last path segment of the URL."""
-    assert extract_operation_id(_LOCATION) == _OP_ID
+def test_extract_operation_id_plain_url() -> None:
+    """extract_operation_id must return the UUID from a plain operation URL."""
+    assert extract_operation_id(_LOCATION) == _OP_UUID
 
 
-def test_extract_operation_id_simple_path() -> None:
-    """extract_operation_id works for simple path segments."""
-    assert extract_operation_id("https://example.com/ops/my-op-id") == "my-op-id"
+def test_extract_operation_id_trailing_slash() -> None:
+    """extract_operation_id must handle a trailing slash by skipping empty segments."""
+    url = f"{_LOCATION}/"
+    assert extract_operation_id(url) == _OP_UUID
+
+
+def test_extract_operation_id_query_string() -> None:
+    """extract_operation_id must strip query strings before parsing."""
+    url = f"{_LOCATION}?api-version=2023-11-01"
+    assert extract_operation_id(url) == _OP_UUID
+
+
+def test_extract_operation_id_non_uuid_raises() -> None:
+    """extract_operation_id must raise FabricServerError when last segment is not a UUID."""
+    url = "https://api.fabric.microsoft.com/v1/operations/not-a-uuid"
+    with pytest.raises(FabricServerError, match="not a UUID"):
+        extract_operation_id(url)
+
+
+def test_extract_operation_id_empty_path_raises() -> None:
+    """extract_operation_id must raise FabricServerError when URL has no path segments."""
+    url = "https://api.fabric.microsoft.com"
+    with pytest.raises(FabricServerError):
+        extract_operation_id(url)
+
+
+def test_extract_operation_id_result_suffix_raises() -> None:
+    """extract_operation_id must fail UUID validation when URL ends in /result.
+
+    A URL like .../operations/{uuid}/result has 'result' as the last path segment,
+    which is NOT a UUID.  This documents and guards the parsing behavior so callers
+    know to pass the bare operation URL (without /result) to this helper.
+    """
+    url = f"https://api.fabric.microsoft.com/v1/operations/{_OP_UUID}/result"
+    with pytest.raises(FabricServerError, match="not a UUID"):
+        extract_operation_id(url)
 
 
 # ---------------------------------------------------------------------------
@@ -166,3 +203,73 @@ async def test_resolve_lro_item_id_path_a_takes_priority_over_path_b() -> None:
     assert result == "path-a-id"
     # Path B should NOT have been called
     mock_result.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# resolve_lro_item_id — 404 race retry (Path B)
+# ---------------------------------------------------------------------------
+
+
+async def test_resolve_lro_item_id_404_then_success_retries() -> None:
+    """resolve_lro_item_id retries on 404 from /result and succeeds on second attempt."""
+    client = await _make_client()
+    call_count = 0
+
+    async def _side_effect(_op_id: str) -> dict[str, object]:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise NotFoundError("result not yet available")
+        return {"id": "retried-item-id"}
+
+    async with client:
+        with (
+            patch.object(client, "get_operation_result", side_effect=_side_effect),
+            patch("fabric_dw.services._lro.asyncio.sleep") as mock_sleep,
+        ):
+            result = await resolve_lro_item_id(
+                client,
+                operation_result={},
+                location=_LOCATION,
+            )
+
+    assert result == "retried-item-id"
+    assert call_count == 2
+    mock_sleep.assert_called_once()
+
+
+async def test_resolve_lro_item_id_persistent_404_raises_fabric_server_error() -> None:
+    """resolve_lro_item_id raises FabricServerError when /result keeps returning 404."""
+    client = await _make_client()
+
+    async def _always_404(_op_id: str) -> dict[str, object]:
+        raise NotFoundError("not found")
+
+    async with client:
+        with (
+            patch.object(client, "get_operation_result", side_effect=_always_404),
+            patch("fabric_dw.services._lro.asyncio.sleep"),
+        ):
+            with pytest.raises(FabricServerError, match=r"404|not yet available"):
+                await resolve_lro_item_id(
+                    client,
+                    operation_result={},
+                    location=_LOCATION,
+                )
+
+
+async def test_resolve_lro_item_id_404_race_does_not_suppress_other_exceptions() -> None:
+    """resolve_lro_item_id must NOT swallow non-404 exceptions from /result."""
+    client = await _make_client()
+
+    async def _server_error(_op_id: str) -> dict[str, object]:
+        raise FabricServerError("internal server error", status=500)
+
+    async with client:
+        with patch.object(client, "get_operation_result", side_effect=_server_error):
+            with pytest.raises(FabricServerError, match="internal server error"):
+                await resolve_lro_item_id(
+                    client,
+                    operation_result={},
+                    location=_LOCATION,
+                )
