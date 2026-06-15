@@ -10,6 +10,7 @@ from fabric_dw.exceptions import FabricServerError, NotFoundError, PermissionDen
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import TableSyncStatus, Warehouse, WarehouseKind
 from fabric_dw.services._helpers import scan_all_workspaces
+from fabric_dw.services.capacities import get_capacity_states
 from fabric_dw.services.workspaces import list_all as _list_all_workspaces
 
 _logger = logging.getLogger("fabric_dw.sql_endpoints")
@@ -55,24 +56,36 @@ async def list_all_workspaces(http: FabricHttpClient) -> list[Warehouse]:
 
     Iterates all workspaces returned by :func:`~fabric_dw.services.workspaces.list_all`
     and aggregates their SQL analytics endpoints using bounded concurrency (up to
-    8 workspaces in parallel).  Workspaces that raise
-    :class:`~fabric_dw.exceptions.PermissionDeniedError` or
-    :class:`~fabric_dw.exceptions.NotFoundError` are skipped with a per-workspace
-    warning; a summary warning is logged after the scan.
+    8 workspaces in parallel).
+
+    Workspaces whose capacity is not ``"Active"`` are skipped **before** the
+    data-plane call (proactive filter via ``GET /v1/capacities``), avoiding the
+    ~22s hang that paused-capacity workspaces incur.  If the caller lacks the
+    capacity-read permission, the proactive filter is unavailable and the
+    defensive fallback applies: a non-retriable 5xx per workspace is silently
+    skipped at ``DEBUG`` level.
+
+    Workspaces that raise :class:`~fabric_dw.exceptions.PermissionDeniedError`
+    or :class:`~fabric_dw.exceptions.NotFoundError` are skipped with a
+    per-workspace ``WARNING`` log; a summary ``WARNING`` is logged after the scan.
 
     Args:
         http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
 
     Returns:
         A flat list of :class:`~fabric_dw.models.Warehouse` instances (with
-        ``kind == SQL_ENDPOINT``) from all accessible workspaces.
+        ``kind == SQL_ENDPOINT``) from all accessible, active-capacity workspaces.
     """
-    workspaces = await _list_all_workspaces(http)
+    workspaces, capacity_states = await asyncio.gather(
+        _list_all_workspaces(http),
+        get_capacity_states(http),
+    )
     return await scan_all_workspaces(
         workspaces,
         lambda ws: list_endpoints(http, ws.id),  # type: ignore[union-attr]  # mypy false-positive: Sequence[_HasNameAndId] exposes id: UUID but mypy loses the concrete type through the Protocol abstraction
         logger=_logger,
         skip_errors=(PermissionDeniedError, NotFoundError),
+        capacity_states=capacity_states,
     )
 
 

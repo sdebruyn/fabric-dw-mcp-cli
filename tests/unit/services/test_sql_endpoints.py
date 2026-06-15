@@ -390,6 +390,10 @@ async def test_list_all_workspaces_endpoints_aggregates_across_workspaces() -> N
             new=AsyncMock(return_value=[ws_a, ws_b, ws_c]),
         ),
         patch(
+            "fabric_dw.services.sql_endpoints.get_capacity_states",
+            new=AsyncMock(return_value=None),  # proactive filter unavailable → no skip
+        ),
+        patch(
             "fabric_dw.services.sql_endpoints.list_endpoints",
             new=AsyncMock(
                 side_effect=[
@@ -424,6 +428,10 @@ async def test_list_all_workspaces_endpoints_skips_permission_denied(
         patch(
             "fabric_dw.services.sql_endpoints._list_all_workspaces",
             new=AsyncMock(return_value=[ws_a, ws_b, ws_c]),
+        ),
+        patch(
+            "fabric_dw.services.sql_endpoints.get_capacity_states",
+            new=AsyncMock(return_value=None),  # proactive filter unavailable → no proactive skip
         ),
         patch(
             "fabric_dw.services.sql_endpoints.list_endpoints",
@@ -462,6 +470,10 @@ async def test_list_all_workspaces_endpoints_skips_not_found(
         patch(
             "fabric_dw.services.sql_endpoints._list_all_workspaces",
             new=AsyncMock(return_value=[ws_a, ws_b, ws_c]),
+        ),
+        patch(
+            "fabric_dw.services.sql_endpoints.get_capacity_states",
+            new=AsyncMock(return_value=None),  # proactive filter unavailable → no proactive skip
         ),
         patch(
             "fabric_dw.services.sql_endpoints.list_endpoints",

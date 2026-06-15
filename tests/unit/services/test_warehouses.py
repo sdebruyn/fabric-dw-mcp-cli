@@ -664,6 +664,10 @@ async def test_list_all_workspaces_aggregates_across_workspaces() -> None:
             new=AsyncMock(return_value=[ws_a, ws_b, ws_c]),
         ),
         patch(
+            "fabric_dw.services.warehouses.get_capacity_states",
+            new=AsyncMock(return_value=None),  # proactive filter unavailable → no skip
+        ),
+        patch(
             "fabric_dw.services.warehouses.list_warehouses",
             new=AsyncMock(
                 side_effect=[
@@ -698,6 +702,10 @@ async def test_list_all_workspaces_skips_permission_denied(
         patch(
             "fabric_dw.services.warehouses._list_all_workspaces",
             new=AsyncMock(return_value=[ws_a, ws_b, ws_c]),
+        ),
+        patch(
+            "fabric_dw.services.warehouses.get_capacity_states",
+            new=AsyncMock(return_value=None),  # proactive filter unavailable → no proactive skip
         ),
         patch(
             "fabric_dw.services.warehouses.list_warehouses",
@@ -736,6 +744,10 @@ async def test_list_all_workspaces_skips_not_found(caplog: pytest.LogCaptureFixt
         patch(
             "fabric_dw.services.warehouses._list_all_workspaces",
             new=AsyncMock(return_value=[ws_a, ws_b, ws_c]),
+        ),
+        patch(
+            "fabric_dw.services.warehouses.get_capacity_states",
+            new=AsyncMock(return_value=None),  # proactive filter unavailable → no proactive skip
         ),
         patch(
             "fabric_dw.services.warehouses.list_warehouses",
