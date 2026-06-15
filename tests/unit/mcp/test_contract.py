@@ -46,7 +46,8 @@ from tests.unit.mcp.conftest import WS_ID, WS_NAME, make_item_entry
 # Expected tool count (sync with test_server.EXPECTED_TOOL_NAMES)
 # ---------------------------------------------------------------------------
 
-_EXPECTED_TOOL_COUNT = 85  # 77 baseline + 5 statistics + 1 dbt + 3 table-create + 6 functions
+# 77 baseline + 5 statistics + 1 dbt + 3 table-create + 6 functions + 1 load_table_from_url
+_EXPECTED_TOOL_COUNT = 86
 
 
 # ---------------------------------------------------------------------------

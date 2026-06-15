@@ -1796,6 +1796,67 @@ fabric-dw tables rename MyWorkspace SalesWH dbo.orders_2025 --new-name orders_ar
 
 ---
 
+### tables load
+
+**Targets:** Data Warehouse only
+
+Load data into a warehouse table via `COPY INTO` from either a local file or a remote URL.
+
+**Local file path** (`--file`): the file is staged to a temporary Lakehouse in OneLake (chunked DFS upload), loaded into the target table via `COPY INTO`, and the staging Lakehouse is automatically deleted in a `finally` block regardless of success or failure. JSON files are converted client-side to Parquet (requires `pyarrow`) before staging.
+
+**Remote URL** (`--url`): `COPY INTO` is issued directly from the given URL. For OneLake or same-tenant URLs no credential is needed. For secured external URLs (Azure Blob Storage, ADLS Gen2) supply `--credential-type` and `--secret`/`--identity` as appropriate.
+
+**Synopsis**
+
+```
+fabric-dw tables load [OPTIONS] [WORKSPACE] [ITEM] QUALIFIED_NAME
+```
+
+`QUALIFIED_NAME` is the dot-separated `schema.table_name` of the destination table, which must already exist.
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--file PATH` | — | Local file path (CSV, Parquet, or JSON). |
+| `--url TEXT` | — | Remote URL (OneLake DFS or external Azure Blob). |
+| `--format [csv\|parquet\|json]` | auto-detect | File format. For `--url`, only `csv` and `parquet` are supported. |
+| `--header/--no-header` | `--header` | Whether the CSV file contains a header row. |
+| `--delimiter TEXT` | `,` | CSV column delimiter. |
+| `--encoding TEXT` | — | CSV encoding (e.g. `UTF8`, `UTF8BOM`). |
+| `--field-quote TEXT` | — | CSV field-quote character. |
+| `--row-terminator TEXT` | — | CSV row terminator (e.g. `\n`, `\r\n`). |
+| `--credential-type [none\|sas\|managed-identity\|service-principal\|account-key]` | `none` | Credential type for secured external URLs. |
+| `--secret TEXT` | — | Credential secret (SAS token / client secret / account key). Never echoed. |
+| `--identity TEXT` | — | Identity for `managed-identity` or `service-principal`. |
+| `--staging-lakehouse TEXT` | auto-generated | Name for the temporary staging Lakehouse (local path only). |
+| `--keep-staging` | off | Keep the staging Lakehouse after load (for debugging). |
+| `--max-errors INT` | — | Maximum errors before aborting. |
+| `--rejected-row-location TEXT` | — | URL to write rejected rows to. |
+
+**Examples**
+
+```shell
+# Load a local CSV (header row present)
+fabric-dw tables load MyWorkspace SalesWH dbo.sales --file data.csv
+
+# Load a local Parquet file
+fabric-dw tables load MyWorkspace SalesWH dbo.events --file events.parquet
+
+# Load a local JSON file (converts to Parquet internally; requires pyarrow)
+fabric-dw tables load MyWorkspace SalesWH dbo.products --file products.json
+
+# Load from a remote OneLake URL (no credential needed)
+fabric-dw tables load MyWorkspace SalesWH dbo.orders \
+    --url "https://onelake.dfs.fabric.microsoft.com/ws/lh.Lakehouse/Files/orders.parquet" \
+    --format parquet
+
+# Load from Azure Blob with SAS token
+fabric-dw tables load MyWorkspace SalesWH dbo.events \
+    --url "https://myaccount.blob.core.windows.net/data/events.csv" \
+    --format csv --credential-type sas --secret "?sv=2021&..."
+```
+
+---
+
 ## fabric-dw schemas
 
 Manage SQL schemas on Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.

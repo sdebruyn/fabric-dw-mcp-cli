@@ -971,6 +971,38 @@ Rename a SQL table via `sp_rename`. Only supported on Fabric Data Warehouses (SQ
 
 ---
 
+### load_table_from_url
+
+**Targets:** Data Warehouse only
+
+Load data into a Data Warehouse table via `COPY INTO` from a remote URL. For OneLake or same-tenant URLs, no credential is needed. For secured external URLs (Azure Blob Storage, ADLS Gen2), supply `credential_type` and the appropriate `secret`/`identity` values.
+
+> **JSON not supported for remote URLs.** If you need to load JSON, download the file locally and use the CLI `tables load --file` command instead (which converts JSON to Parquet client-side).
+
+> **Secret safety.** The `secret` and `identity` parameters are accepted but are **never** logged or echoed in any server output.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse name or GUID. SQL Analytics Endpoints are rejected.
+- `qualified_name` (`str`) — dot-separated qualified table name, e.g. `dbo.sales`.
+- `url` (`str`) — source URL (OneLake DFS URL or external Azure Blob URL).
+- `file_type` (`"CSV" | "PARQUET"`) — file type to load.
+- `credential_type` (`"none" | "sas" | "managed-identity" | "service-principal" | "account-key"`, default `"none"`) — credential type for secured external URLs.
+- `secret` (`str | null`, optional) — credential secret (SAS token, client secret, or account key). Never logged.
+- `identity` (`str | null`, optional) — identity for `managed-identity` or `service-principal`.
+- `delimiter` (`str | null`, optional) — CSV column delimiter (e.g. `,`, `\t`).
+- `has_header` (`bool`, default `true`) — when `true`, the first CSV row is a header and is skipped.
+- `encoding` (`str | null`, optional) — CSV encoding (e.g. `UTF8`, `UTF8BOM`).
+- `field_quote` (`str | null`, optional) — CSV field-quote character.
+- `row_terminator` (`str | null`, optional) — CSV row terminator (e.g. `\n`, `\r\n`).
+- `max_errors` (`int | null`, optional) — maximum errors before aborting.
+- `rejected_row_location` (`str | null`, optional) — URL to write rejected rows to.
+
+**Returns:** `CopyIntoResult` — `{ "rows_loaded": int, "rows_rejected": int, "target": "schema.table" }`.
+
+---
+
 ## Procedures
 
 ### list_procedures

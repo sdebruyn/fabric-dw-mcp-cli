@@ -19,6 +19,7 @@ Domains
 - :mod:`.functions` — T-SQL user-defined function listing and CRUD
 - :mod:`.schemas` — SQL schema listing and DDL
 - :mod:`.tables` — SQL table listing, reading, DDL
+- :mod:`.load` — ``COPY INTO`` table loading (remote URL)
 - :mod:`.sql_pools` — SQL Pools beta API, pool insights DMV
 - :mod:`.statistics` — DW statistics listing, inspection, and DDL
 - :mod:`.cache` — cache management (clear_cache)
@@ -34,6 +35,7 @@ from fabric_dw.mcp.tools import (
     cache,
     dbt,
     functions,
+    load,
     procedures,
     queries,
     restore,
@@ -65,6 +67,7 @@ _DOMAINS = [
     functions,
     schemas,
     tables,
+    load,
     statistics,
     sql_pools,
     cache,
