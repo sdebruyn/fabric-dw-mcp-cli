@@ -13,6 +13,10 @@ Binary resolution
 2. The sibling ``bin/fabric-dw`` next to ``sys.executable`` — reliable fallback inside
    ``uv run`` where the venv bin directory may not be on PATH.
 
+If neither strategy finds the binary, all tests in this module are **skipped** (not
+collected with an error).  This keeps ``pytest`` (bare, from the repo root) working for
+developers who have not installed the package yet.
+
 ResourceWarning-as-error
 ------------------------
 Each subprocess is launched with ``PYTHONWARNINGS=error::ResourceWarning`` and
@@ -53,6 +57,12 @@ _STDERR_FORBIDDEN = (
     "Traceback (most recent call last)",
     "ResourceWarning",
     "_close_pool_connections",
+    # PerformanceCounters ZeroDivisionError signatures (#399 / #391).
+    # azure-monitor-opentelemetry PerformanceCounters callback crashes on
+    # short-lived processes with a ZeroDivisionError from _get_processor_time
+    # unless enable_performance_counters=False is passed at SDK init time.
+    "Error getting processor time",
+    "_get_processor_time",
 )
 
 # Known CI environment variable names that disable telemetry; unset in child env
@@ -68,7 +78,7 @@ _CI_ENV_VARS = (
 )
 
 # ---------------------------------------------------------------------------
-# Binary resolution
+# Binary resolution — deferred so a missing binary skips tests, not errors.
 # ---------------------------------------------------------------------------
 
 
@@ -103,7 +113,28 @@ def _resolve_binary() -> str:
     )
 
 
-_FABRIC_DW_BIN = _resolve_binary()
+# Resolve at module load time but store None on failure so that collection
+# succeeds even when the package is not installed.  The ``_require_binary``
+# fixture below gates every test on the resolved value and skips when absent.
+try:
+    _FABRIC_DW_BIN: str | None = _resolve_binary()
+except FileNotFoundError:
+    _FABRIC_DW_BIN = None
+
+# ---------------------------------------------------------------------------
+# Binary guard fixture — skip the whole module when binary is missing.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _require_binary() -> None:
+    """Skip all smoke tests when the ``fabric-dw`` binary is not installed."""
+    if _FABRIC_DW_BIN is None:
+        pytest.skip(
+            "fabric-dw binary not found; install the package first "
+            "(checked PATH and the venv bin directory)"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Child environment builder
@@ -187,15 +218,35 @@ def _run(
 
     Returns:
         :class:`subprocess.CompletedProcess` with ``stdout`` and ``stderr`` decoded.
+
+    Raises:
+        pytest.fail.Exception: When the subprocess exceeds *timeout* seconds,
+            including any partial stdout/stderr captured before the hang so the
+            failure is diagnosable.
     """
-    return subprocess.run(  # noqa: S603 — binary path is resolved from the installed package
-        [_FABRIC_DW_BIN, *args],
-        capture_output=True,
-        text=True,
-        env=env if env is not None else _child_env(),
-        timeout=timeout,
-        check=False,
-    )
+    assert _FABRIC_DW_BIN is not None, "_require_binary fixture should have skipped this test"
+    try:
+        return subprocess.run(  # noqa: S603 — binary path is resolved from the installed package
+            [_FABRIC_DW_BIN, *args],
+            capture_output=True,
+            text=True,
+            env=env if env is not None else _child_env(),
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raw_out = exc.stdout or b""
+        raw_err = exc.stderr or b""
+        decoded_out = (
+            raw_out.decode("utf-8", errors="replace") if isinstance(raw_out, bytes) else raw_out
+        )
+        decoded_err = (
+            raw_err.decode("utf-8", errors="replace") if isinstance(raw_err, bytes) else raw_err
+        )
+        pytest.fail(
+            f"fabric-dw {list(args)!r} timed out after {timeout}s.\n"
+            f"stdout:\n{decoded_out}\nstderr:\n{decoded_err}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +321,11 @@ def test_sql_exec_select1_clean_stderr(
     from the async aiohttp credential) through interpreter teardown.  The workspace
     and warehouse are supplied via FABRIC_DW_DEFAULT_* env vars injected by the
     ``_cli_smoke_sql_env`` fixture.
+
+    The ``_cli_smoke_sql_env`` async fixture is session-scoped and its resolved
+    value (a plain ``dict[str, str]``) is injected here synchronously by
+    pytest-asyncio under ``asyncio_mode = "auto"``.  No async machinery is needed
+    inside this test function itself.
     """
     child_env = _child_env(_cli_smoke_sql_env)
     result = _run("sql", "exec", "-q", "SELECT 1 AS n", env=child_env)
