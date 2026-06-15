@@ -103,6 +103,14 @@ def _append_idempotent(path: Path, script: str) -> None:
     Uses ``# >>> fabric-dw completion >>>`` / ``# <<< fabric-dw completion <<<``
     sentinel markers so the block is replaced rather than duplicated when the
     completion script changes (e.g. after a version upgrade).
+
+    **Lone-end-marker edge case:** if the rc-file contains ``_SENTINEL_END``
+    but *not* ``_SENTINEL_START`` (e.g. the file was manually edited and the
+    start marker was deleted), the ``_SENTINEL_START in existing`` guard is
+    ``False``, so the new block is appended normally.  The result is a file
+    with an orphaned end marker above the newly-written sentinel-wrapped block.
+    This is functionally safe — the next ``install`` run will find the new
+    ``_SENTINEL_START`` and replace the block correctly.
     """
     block = f"\n{_SENTINEL_START}\n{script.strip()}\n{_SENTINEL_END}\n"
     existing = path.read_text() if path.exists() else ""

@@ -96,10 +96,19 @@ class TestRenderTable:
         assert "abc" in output
         assert "foo" in output
 
-    def test_primitive_renders_repr(self, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_primitive_renders_str(self, capsys: pytest.CaptureFixture[str]) -> None:
         render(42, json_output=False)
         captured = capsys.readouterr()
         assert "42" in captured.out
+
+    def test_string_primitive_renders_without_quotes(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """str() is used, not repr() — so string primitives have no surrounding quotes."""
+        render("hello", json_output=False)
+        captured = capsys.readouterr()
+        assert "hello" in captured.out
+        assert "'hello'" not in captured.out
 
     def test_empty_list_renders_without_error(self) -> None:
         output = self._render_to_string([])
