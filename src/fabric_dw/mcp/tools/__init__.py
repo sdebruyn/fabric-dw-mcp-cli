@@ -21,6 +21,7 @@ Domains
 - :mod:`.sql_pools` — SQL Pools beta API, pool insights DMV
 - :mod:`.statistics` — DW statistics listing, inspection, and DDL
 - :mod:`.cache` — cache management (clear_cache)
+- :mod:`.dbt` — generate dbt-fabric project file contents
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ from mcp.server.fastmcp import FastMCP
 from fabric_dw.mcp.tools import (
     audit,
     cache,
+    dbt,
     procedures,
     queries,
     restore,
@@ -63,6 +65,7 @@ _DOMAINS = [
     statistics,
     sql_pools,
     cache,
+    dbt,
 ]
 
 

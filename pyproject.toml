@@ -87,6 +87,7 @@ dev = [
     "pytest-cov",
     "ruff>=0.15,<0.16",
     "ty==0.0.49",
+    "pyyaml>=6.0",
 ]
 docs = ["zensical>=0.0.42"]
 
