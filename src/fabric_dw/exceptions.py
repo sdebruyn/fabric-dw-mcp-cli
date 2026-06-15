@@ -64,7 +64,27 @@ class RateLimitedError(FabricError):
 
 
 class FabricServerError(FabricError):
-    """Raised on persistent 5xx errors or a failed LRO operation."""
+    """Raised on persistent 5xx errors or a failed LRO operation.
+
+    Attributes:
+        is_retriable: Mirrors the ``isRetriable`` flag from the Fabric error
+            envelope when present.  ``True`` by default (safe for existing
+            callers).  When ``False``, the HTTP retry layer will NOT retry the
+            request, failing fast instead of waiting through back-off cycles.
+    """
+
+    def __init__(  # noqa: PLR0913
+        self,
+        message: str,
+        *,
+        status: int | None = None,
+        request_id: str | None = None,
+        body: dict[str, object] | None = None,
+        hint: str | None = None,
+        is_retriable: bool = True,
+    ) -> None:
+        super().__init__(message, status=status, request_id=request_id, body=body, hint=hint)
+        self.is_retriable = is_retriable
 
 
 class BadRequestError(FabricError):

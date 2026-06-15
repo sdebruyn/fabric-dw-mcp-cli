@@ -202,13 +202,17 @@ def _make_should_retry(method: str) -> Callable[[BaseException], bool]:
     def _should_retry(exc: BaseException) -> bool:
         """Retry on 5xx *or* on timeout for idempotent methods.
 
-        - Always retry :class:`~fabric_dw.exceptions.FabricServerError` (5xx).
+        - Retry :class:`~fabric_dw.exceptions.FabricServerError` (5xx) ONLY
+          when ``is_retriable`` is ``True`` (the default).  A Fabric error
+          envelope with ``"isRetriable": false`` (e.g. the ~22s
+          InternalServerError from a paused-capacity workspace) must NOT be
+          retried — fail fast, no 60-70s back-off waste.
         - Retry :class:`httpx.TimeoutException` ONLY for idempotent HTTP
           methods (GET, HEAD, OPTIONS).  POST/PATCH/DELETE are not retried
           on timeout — the server may have already committed the request.
         """
         if isinstance(exc, FabricServerError):
-            return True
+            return exc.is_retriable
         if isinstance(exc, httpx.TimeoutException):
             return upper in _IDEMPOTENT_METHODS
         return False
@@ -576,11 +580,22 @@ class FabricHttpClient:
             )
 
         if status >= http.HTTPStatus.INTERNAL_SERVER_ERROR:
+            # Parse the isRetriable flag from the Fabric error envelope.
+            # Fabric sets isRetriable=false for errors like the ~22s
+            # InternalServerError from paused-capacity workspaces.  When
+            # false, the retry predicate in _make_should_retry will skip
+            # back-off entirely, failing fast rather than wasting 60-70s.
+            is_retriable = True
+            if body is not None:
+                raw_retriable = body.get("isRetriable")
+                if raw_retriable is False:
+                    is_retriable = False
             raise FabricServerError(
                 f"Server error {status} for {url}: {resp.text}",
                 status=status,
                 request_id=request_id,
                 body=body,
+                is_retriable=is_retriable,
             )
 
     # ------------------------------------------------------------------
