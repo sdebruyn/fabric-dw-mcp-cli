@@ -58,6 +58,8 @@ __all__ = [
     "POOL_MAX_IDLE",
     "POOL_MAX_IDLE_SECS",
     "SQL_COPT_SS_ACCESS_TOKEN",
+    "SQL_LOGIN_TIMEOUT_S",
+    "SQL_QUERY_TIMEOUT_S",
     "SQL_TRANSIENT_MAX_RETRIES",
     "SqlTarget",
     "build_connection_string",
@@ -77,11 +79,28 @@ __all__ = [
 
 # Maximum number of retry attempts for transient TDS connection drops.
 # Set to 0 to disable retries entirely.  Unit tests can monkeypatch this.
-SQL_TRANSIENT_MAX_RETRIES: int = 3
+SQL_TRANSIENT_MAX_RETRIES: int = 2
 
-# Backoff delays (seconds) between retry attempts.  Index 0 = delay before
+# Fixed delays (seconds) between retry attempts.  Index 0 = delay before
 # attempt 2, index 1 = delay before attempt 3, etc.  Extend if needed.
-_TRANSIENT_RETRY_DELAYS: tuple[float, ...] = (1.0, 2.0, 4.0)
+# A flat 10s gap is used so that a warming-up warehouse (which typically
+# takes several seconds to become ready after the first auth failure) has
+# enough time to finish provisioning before the next attempt.
+_TRANSIENT_RETRY_DELAYS: tuple[float, ...] = (10.0, 10.0)
+
+# ---------------------------------------------------------------------------
+# Timeout configuration
+# ---------------------------------------------------------------------------
+
+# Login / connection timeout (seconds) injected into the ODBC connection
+# string via "Connection Timeout=<value>".  The driver default is ~15s which
+# is too short for a freshly-warming Fabric warehouse.
+SQL_LOGIN_TIMEOUT_S: int = 60
+
+# Query / command timeout (seconds) injected into the ODBC connection string
+# via "Command Timeout=<value>".  A generous value prevents long-running
+# administrative queries from being cancelled prematurely.
+SQL_QUERY_TIMEOUT_S: int = 300
 
 # ---------------------------------------------------------------------------
 # Lazy driver import — @functools.cache avoids the module-level global and the
@@ -554,6 +573,10 @@ def build_connection_string(
         raw = _set_key(raw, "Authentication", _MODE_TO_AD_AUTH[mode])
     cs = _set_key(raw, "Encrypt", "yes")
     cs = _set_key(cs, "TrustServerCertificate", "no")
+    # Set an explicit login timeout (generous, to cover warehouse warm-up) and a
+    # command/query timeout so long-running admin queries are not cut off early.
+    cs = _set_key(cs, "Connection Timeout", str(SQL_LOGIN_TIMEOUT_S))
+    cs = _set_key(cs, "Command Timeout", str(SQL_QUERY_TIMEOUT_S))
     return _set_key(cs, "Database", target.database)
 
 
@@ -765,6 +788,37 @@ def is_auth_failed_message(msg: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _is_connect_retryable(exc: BaseException) -> bool:
+    """Return True when *exc* is retryable on the connect/login path.
+
+    In addition to the standard transient TDS transport errors, authentication
+    failures (error 18456 / SQLSTATE 28000) are also treated as retryable here
+    because a freshly-created or warming-up Fabric warehouse may reject the
+    login with "authentication failed" / "could not login" until the TDS
+    endpoint finishes provisioning — even when the credentials are correct.
+
+    **Trade-off**: a genuinely-wrong credential will now be retried 2x (~20s)
+    before the AuthError is surfaced to the caller.  This is intentional and
+    accepted because the warm-up case is far more common in production usage.
+
+    Scope: this helper is ONLY used by :func:`_with_connect_retry`.  It is NOT
+    used in the execute-phase retry logic — auth errors there are still mapped
+    to :class:`~fabric_dw.exceptions.AuthError` and raised immediately.
+    """
+    if is_transient_connection_error(exc):
+        return True
+    # Also retry auth-failed errors on the connect/login path.
+    # Use the same constants as map_driver_error() for consistency.
+    ddbc_error = getattr(exc, "ddbc_error", None)
+    if ddbc_error:
+        for match in _NATIVE_ERROR_RE.finditer(str(ddbc_error)):
+            raw_num = match.group(1) or match.group(2)
+            if raw_num and int(raw_num) in _AUTH_FAILED_ERROR_NUMBERS:
+                return True
+    msg = str(exc).lower()
+    return any(fragment in msg for fragment in _AUTH_FAILED_FRAGMENTS)
+
+
 def _with_connect_retry(
     target: SqlTarget,
     mode: CredentialMode,
@@ -784,6 +838,13 @@ def _with_connect_retry(
     server already received and applied the statement — retrying such errors
     for non-idempotent DML would risk duplicate execution.
 
+    Auth-failed retries
+    -------------------
+    Authentication failures (error 18456) are retried here because a
+    warming-up Fabric warehouse may reject the login until provisioning
+    completes — even with correct credentials.  See :func:`_is_connect_retryable`
+    for the trade-off note.
+
     Args:
         target: The :class:`SqlTarget` to connect to.
         mode: The credential mode for Entra authentication.
@@ -798,8 +859,8 @@ def _with_connect_retry(
           (``None`` on first-attempt success).
 
     Raises:
-        Any non-transient exception from ``open_connection`` immediately.
-        The last transient exception if all attempts are exhausted.
+        Any non-retryable exception from ``open_connection`` immediately.
+        The last retryable exception if all attempts are exhausted.
     """
     max_attempts = 1 + max(0, SQL_TRANSIENT_MAX_RETRIES)
     last_exc: BaseException | None = None
@@ -813,14 +874,14 @@ def _with_connect_retry(
         try:
             conn = open_connection(target, mode=mode, autocommit=autocommit)
         except Exception as exc:
-            if is_transient_connection_error(exc) and attempt < max_attempts - 1:
+            if _is_connect_retryable(exc) and attempt < max_attempts - 1:
                 last_exc = exc
                 continue
             raise
         else:
             return conn, attempt, max_attempts, last_exc
 
-    # Exhausted all attempts — re-raise the last transient error.
+    # Exhausted all attempts — re-raise the last retryable error.
     assert last_exc is not None  # noqa: S101  # guaranteed: loop ran ≥1 time
     raise last_exc  # pragma: no cover
 
