@@ -1,7 +1,13 @@
 name: Publish
 
+# Publish triggers:
+#   - push to main  → publishes a .devN pre-release to PyPI (continuous dev build;
+#                     no GitHub Release is created)
+#   - v* tag push   → publishes the clean release to PyPI AND creates a GitHub Release
+#   - workflow_dispatch (tag input) → same as tag push (manual release)
 on:
   push:
+    branches: [main]
     tags: ["v[0-9]*"]
   workflow_dispatch:
     inputs:
@@ -23,6 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: pypi
     steps:
+      # inputs.tag is only set for workflow_dispatch; on branch/tag pushes github.ref is used.
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
@@ -60,7 +67,23 @@ jobs:
             dist/*.tar.gz
 
       - name: Publish to PyPI (OIDC)
-        run: uv publish --trusted-publishing always
+        # hatch-vcs derives a unique .devN version per commit (distance since last v* tag),
+        # so a re-run would try to upload an already-existing version.  PyPI returns HTTP 400
+        # with "File already exists" in that case.  We treat that specific error as success
+        # (idempotent re-run) while still propagating any other failure.
+        run: |
+          set -o pipefail
+          uv publish --trusted-publishing always 2>&1 | tee /tmp/uv_publish_output.txt
+          exit_code=${PIPESTATUS[0]}
+          if [ "$exit_code" -ne 0 ]; then
+            if grep -qi "file already exists\|already been registered\|already exists" /tmp/uv_publish_output.txt; then
+              echo "Version already published to PyPI — treating as success (idempotent re-run)."
+            else
+              echo "Publish failed for an unexpected reason:" >&2
+              cat /tmp/uv_publish_output.txt >&2
+              exit "$exit_code"
+            fi
+          fi
 
       - name: Create GitHub Release (tag only)
         if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
