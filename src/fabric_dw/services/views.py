@@ -4,6 +4,7 @@ Public API
 ----------
 - :func:`validate_identifier` — re-exported from :mod:`fabric_dw.identifiers`.
 - :func:`list_views`          — list all views (optionally filtered by schema).
+- :func:`read_view`           — ``SELECT TOP (N) * FROM [schema].[view]``.
 - :func:`get_view`            — fetch a single view with its definition.
 - :func:`create_view`         — issue CREATE VIEW … AS <select_body>.
 - :func:`update_view`         — issue CREATE OR ALTER VIEW … AS <select_body>.
@@ -21,6 +22,7 @@ from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import NotFoundError
 from fabric_dw.identifiers import parse_qualified_name, quote_identifier, validate_identifier
 from fabric_dw.models import View
+from fabric_dw.services._helpers import reject_non_select
 from fabric_dw.sql import SqlTarget, run_query
 
 __all__ = [
@@ -123,14 +125,11 @@ async def list_views(
     """
     if schema is not None:
         validate_identifier(schema)
-
-    # Identifier is validated above; safe to embed via parameter binding.
-    # For schema filter we use ? binding; for the "all schemas" branch we use a
-    # tautology literal that is never user-controlled.
-    if schema is not None:
+        # Schema name is bound as a ? parameter — never interpolated into SQL.
         schema_filter = "s.name = ?"
         filter_params: list[object] = [schema]
     else:
+        # "all schemas" branch uses a tautology literal that is never user-controlled.
         schema_filter = "1=1"
         filter_params = []
 
@@ -191,11 +190,13 @@ async def read_view(
 
     def _run() -> tuple[list[str], list[tuple[object, ...]]]:
         # run_query raises NotFoundError (via map_driver_error) for SQL error 208
-        # (invalid object name) before returning, so a missing view never reaches
-        # here.  The cols guard that previously raised NotFoundError for empty
-        # columns was only reachable for the missing-view case and is therefore
-        # removed; SELECT * on an existing view always yields at least one column.
+        # (invalid object name) before returning.  The empty-cols guard below is
+        # a secondary check that mirrors read_table for consistency: if the driver
+        # returns no column metadata (description is None), treat it as not found.
         cols, rows = run_query(target, read_sql, mode=mode)
+        if not cols:
+            msg = f"View [{schema}].[{view_name}] not found"
+            raise NotFoundError(msg)
         return cols, list(rows)
 
     return await asyncio.to_thread(_run)
@@ -256,19 +257,22 @@ async def create_view(
         target: The warehouse to connect to.
         schema: The schema name.  Must pass :func:`validate_identifier`.
         view_name: The view name.  Must pass :func:`validate_identifier`.
-        select_body: The free-form SELECT statement.  Not validated — the caller
-            owns the SQL (same trust model as ``sql exec``).
+        select_body: The SELECT statement (or CTE) used as the view body.
+            The first non-comment keyword **must** be ``SELECT`` or ``WITH``
+            (for CTE-based queries); anything else raises :class:`ValueError`.
         mode: The credential mode for Entra authentication.
 
     Returns:
         The newly-created :class:`~fabric_dw.models.View` (fetched after DDL).
 
     Raises:
-        ValueError: If *schema* or *view_name* fails identifier validation.
+        ValueError: If *schema* or *view_name* fails identifier validation, or
+            if *select_body* does not start with SELECT or WITH (CTE).
         PermissionDeniedError: If the driver reports a CREATE VIEW permission error.
     """
     validate_identifier(schema)
     validate_identifier(view_name)
+    reject_non_select(select_body)
 
     ddl = f"CREATE VIEW {quote_identifier(schema)}.{quote_identifier(view_name)} AS {select_body}"
 
@@ -293,18 +297,22 @@ async def update_view(
         target: The warehouse to connect to.
         schema: The schema name.  Must pass :func:`validate_identifier`.
         view_name: The view name.  Must pass :func:`validate_identifier`.
-        select_body: The free-form SELECT statement.  Caller-owned.
+        select_body: The SELECT statement (or CTE) used as the view body.
+            The first non-comment keyword **must** be ``SELECT`` or ``WITH``
+            (for CTE-based queries); anything else raises :class:`ValueError`.
         mode: The credential mode for Entra authentication.
 
     Returns:
         The updated :class:`~fabric_dw.models.View` (fetched after DDL).
 
     Raises:
-        ValueError: If *schema* or *view_name* fails identifier validation.
+        ValueError: If *schema* or *view_name* fails identifier validation, or
+            if *select_body* does not start with SELECT or WITH (CTE).
         PermissionDeniedError: If the driver reports an ALTER VIEW permission error.
     """
     validate_identifier(schema)
     validate_identifier(view_name)
+    reject_non_select(select_body)
 
     ddl = (
         f"CREATE OR ALTER VIEW {quote_identifier(schema)}.{quote_identifier(view_name)}"

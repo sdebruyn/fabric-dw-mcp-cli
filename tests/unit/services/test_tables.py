@@ -73,62 +73,62 @@ class TestValidateIdentifierReexport:
 
 class TestRejectNonSelect:
     def test_plain_select_passes(self) -> None:
-        tables._reject_non_select("SELECT id FROM dbo.foo")
+        tables.reject_non_select("SELECT id FROM dbo.foo")
 
     def test_select_with_leading_whitespace(self) -> None:
-        tables._reject_non_select("   SELECT id FROM dbo.foo")
+        tables.reject_non_select("   SELECT id FROM dbo.foo")
 
     def test_select_with_leading_block_comment(self) -> None:
-        tables._reject_non_select("/* comment */ SELECT id FROM dbo.foo")
+        tables.reject_non_select("/* comment */ SELECT id FROM dbo.foo")
 
     def test_select_with_leading_line_comment(self) -> None:
-        tables._reject_non_select("-- comment\nSELECT id FROM dbo.foo")
+        tables.reject_non_select("-- comment\nSELECT id FROM dbo.foo")
 
     def test_select_case_insensitive(self) -> None:
-        tables._reject_non_select("select id from dbo.foo")
+        tables.reject_non_select("select id from dbo.foo")
 
     def test_with_cte_select_passes(self) -> None:
-        tables._reject_non_select("WITH cte AS (SELECT 1 AS x) SELECT * FROM cte")
+        tables.reject_non_select("WITH cte AS (SELECT 1 AS x) SELECT * FROM cte")
 
     def test_with_cte_multiline_passes(self) -> None:
-        tables._reject_non_select(
+        tables.reject_non_select(
             "WITH cte AS (\n    SELECT id, name FROM dbo.source\n)\nSELECT * FROM cte"
         )
 
     def test_with_case_insensitive(self) -> None:
-        tables._reject_non_select("with cte as (select 1) select * from cte")
+        tables.reject_non_select("with cte as (select 1) select * from cte")
 
     def test_with_leading_whitespace_passes(self) -> None:
-        tables._reject_non_select("   WITH cte AS (SELECT 1) SELECT * FROM cte")
+        tables.reject_non_select("   WITH cte AS (SELECT 1) SELECT * FROM cte")
 
     def test_with_leading_comment_passes(self) -> None:
-        tables._reject_non_select("-- build cte\nWITH cte AS (SELECT 1) SELECT * FROM cte")
+        tables.reject_non_select("-- build cte\nWITH cte AS (SELECT 1) SELECT * FROM cte")
 
     def test_insert_rejected(self) -> None:
         with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
-            tables._reject_non_select("INSERT INTO dbo.bar SELECT 1")
+            tables.reject_non_select("INSERT INTO dbo.bar SELECT 1")
 
     def test_drop_rejected(self) -> None:
         with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
-            tables._reject_non_select("DROP TABLE dbo.bar")
+            tables.reject_non_select("DROP TABLE dbo.bar")
 
     def test_create_rejected(self) -> None:
         with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
-            tables._reject_non_select("CREATE TABLE dbo.t AS SELECT 1")
+            tables.reject_non_select("CREATE TABLE dbo.t AS SELECT 1")
 
     def test_empty_body_rejected(self) -> None:
         with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
-            tables._reject_non_select("")
+            tables.reject_non_select("")
 
     def test_comment_only_rejected(self) -> None:
         with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
-            tables._reject_non_select("/* only a comment */")
+            tables.reject_non_select("/* only a comment */")
 
     def test_multiple_block_comments_then_select(self) -> None:
-        tables._reject_non_select("/* a */ /* b */ SELECT 1")
+        tables.reject_non_select("/* a */ /* b */ SELECT 1")
 
     def test_mixed_comments_then_select(self) -> None:
-        tables._reject_non_select("-- line\n/* block */ SELECT 1")
+        tables.reject_non_select("-- line\n/* block */ SELECT 1")
 
     # -----------------------------------------------------------------------
     # ReDoS regression tests (CodeQL py/redos — must complete in < 2 s)
@@ -146,7 +146,7 @@ class TestRejectNonSelect:
         malicious = "/*" + "*//*" * 50_000
         start = time.monotonic()
         with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
-            tables._reject_non_select(malicious)
+            tables.reject_non_select(malicious)
         elapsed = time.monotonic() - start
         assert elapsed < 2.0, f"ReDoS: took {elapsed:.3f}s (expected < 2s)"
 
@@ -155,7 +155,7 @@ class TestRejectNonSelect:
         malicious = "/* " * 50_000
         start = time.monotonic()
         with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
-            tables._reject_non_select(malicious)
+            tables.reject_non_select(malicious)
         elapsed = time.monotonic() - start
         assert elapsed < 2.0, f"ReDoS: took {elapsed:.3f}s (expected < 2s)"
 
@@ -164,7 +164,7 @@ class TestRejectNonSelect:
         preamble = "/* ok */ " * 5_000
         body = preamble + "SELECT 1"
         start = time.monotonic()
-        tables._reject_non_select(body)  # must not raise
+        tables.reject_non_select(body)  # must not raise
         elapsed = time.monotonic() - start
         assert elapsed < 2.0, f"ReDoS: took {elapsed:.3f}s (expected < 2s)"
 
@@ -781,6 +781,45 @@ class TestCloneTable:
         cursor = ddl_conn.cursor.return_value
         call_sql: str = cursor.execute.call_args[0][0]
         assert "AT '2024-05-20T14:00:00.123'" in call_sql
+        assert mock_open.call_args_list[0].kwargs.get("autocommit") is True
+
+    async def test_at_clause_rounds_sub_millisecond_up(self) -> None:
+        """V17: sub-millisecond precision is rounded, not truncated.
+
+        750 µs is >= 500 µs so it rounds to 1 ms.  The old truncation
+        (// 1000) would have produced .000, silently shifting the
+        point-in-time 0.75 ms earlier.
+        """
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        # 750 µs → rounds to 1 ms (not truncated to 0 ms)
+        at_dt = datetime(2024, 5, 20, 14, 0, 0, 750, tzinfo=UTC)
+        mock_oc = patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn])
+        with mock_oc as mock_open:
+            await tables.clone_table(target, "dbo.source_tbl", "dbo.sales", at=at_dt)
+        cursor = ddl_conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert "AT '2024-05-20T14:00:00.001'" in call_sql
+        assert mock_open.call_args_list[0].kwargs.get("autocommit") is True
+
+    async def test_at_clause_rounds_carry_into_seconds(self) -> None:
+        """V17: when rounding rolls microseconds to 1000 ms the carry propagates.
+
+        999_750 µs rounds to 1000 ms = 1 s, so the second in the literal
+        must increment and the millisecond part reset to .000.
+        """
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        # 999_750 µs → rounds to 1000 ms → 1 s carry → 14:00:01.000
+        at_dt = datetime(2024, 5, 20, 14, 0, 0, 999_750, tzinfo=UTC)
+        mock_oc = patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn])
+        with mock_oc as mock_open:
+            await tables.clone_table(target, "dbo.source_tbl", "dbo.sales", at=at_dt)
+        cursor = ddl_conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert "AT '2024-05-20T14:00:01.000'" in call_sql
         assert mock_open.call_args_list[0].kwargs.get("autocommit") is True
 
     async def test_returns_table_object(self) -> None:

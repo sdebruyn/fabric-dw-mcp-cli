@@ -659,54 +659,80 @@ async def test_request_history_since_and_until_produce_and_clause() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Column-alignment tests: every canonical column appears in the SQL template
+# Column-alignment tests: every canonical column appears in the generated SQL
 # ---------------------------------------------------------------------------
 
 
 def test_exec_requests_history_sql_contains_all_canonical_columns() -> None:
     """Every column in EXEC_REQUESTS_HISTORY_COLUMNS must appear in the SELECT."""
-    sql = query_insights._REQUEST_HISTORY_SQL_TEMPLATE.format(limit=100, where="")
+    sql = query_insights._build_sql(
+        "exec_requests_history", EXEC_REQUESTS_HISTORY_COLUMNS, "submit_time", 100, ""
+    )
     for col in EXEC_REQUESTS_HISTORY_COLUMNS:
         assert col in sql, f"Column {col!r} missing from exec_requests_history SQL"
 
 
 def test_exec_sessions_history_sql_contains_all_canonical_columns() -> None:
     """Every column in EXEC_SESSIONS_HISTORY_COLUMNS must appear in the SELECT."""
-    sql = query_insights._SESSION_HISTORY_SQL_TEMPLATE.format(limit=100, where="")
+    sql = query_insights._build_sql(
+        "exec_sessions_history",
+        EXEC_SESSIONS_HISTORY_COLUMNS,
+        "session_start_time",
+        100,
+        "",
+    )
     for col in EXEC_SESSIONS_HISTORY_COLUMNS:
         assert col in sql, f"Column {col!r} missing from exec_sessions_history SQL"
 
 
 def test_frequently_run_queries_sql_contains_all_canonical_columns() -> None:
     """Every column in FREQUENTLY_RUN_QUERIES_COLUMNS must appear in the SELECT."""
-    sql = query_insights._FREQUENT_QUERIES_SQL_TEMPLATE.format(limit=100, where="")
+    sql = query_insights._build_sql(
+        "frequently_run_queries", FREQUENTLY_RUN_QUERIES_COLUMNS, "number_of_runs", 100, ""
+    )
     for col in FREQUENTLY_RUN_QUERIES_COLUMNS:
         assert col in sql, f"Column {col!r} missing from frequently_run_queries SQL"
 
 
 def test_long_running_queries_sql_contains_all_canonical_columns() -> None:
     """Every column in LONG_RUNNING_QUERIES_COLUMNS must appear in the SELECT."""
-    sql = query_insights._LONG_RUNNING_SQL_TEMPLATE.format(limit=100, where="")
+    sql = query_insights._build_sql(
+        "long_running_queries",
+        LONG_RUNNING_QUERIES_COLUMNS,
+        "median_total_elapsed_time_ms",
+        100,
+        "",
+    )
     for col in LONG_RUNNING_QUERIES_COLUMNS:
         assert col in sql, f"Column {col!r} missing from long_running_queries SQL"
 
 
 def test_sql_pool_insights_sql_contains_all_canonical_columns() -> None:
     """Every column in SQL_POOL_INSIGHTS_COLUMNS must appear in the SELECT."""
-    sql = query_insights._SQL_POOL_INSIGHTS_SQL_TEMPLATE.format(limit=100, where="")
+    sql = query_insights._build_sql(
+        "sql_pool_insights", SQL_POOL_INSIGHTS_COLUMNS, "timestamp", 100, ""
+    )
     for col in SQL_POOL_INSIGHTS_COLUMNS:
         assert col in sql, f"Column {col!r} missing from sql_pool_insights SQL"
 
 
 def test_frequently_run_queries_sql_excludes_last_run_session_id() -> None:
     """last_run_session_id must NOT appear — it crashes on live Fabric (#195)."""
-    sql = query_insights._FREQUENT_QUERIES_SQL_TEMPLATE.format(limit=100, where="")
+    sql = query_insights._build_sql(
+        "frequently_run_queries", FREQUENTLY_RUN_QUERIES_COLUMNS, "number_of_runs", 100, ""
+    )
     assert "last_run_session_id" not in sql
 
 
 def test_long_running_queries_sql_excludes_last_run_session_id() -> None:
     """last_run_session_id must NOT appear — it crashes on live Fabric (#195)."""
-    sql = query_insights._LONG_RUNNING_SQL_TEMPLATE.format(limit=100, where="")
+    sql = query_insights._build_sql(
+        "long_running_queries",
+        LONG_RUNNING_QUERIES_COLUMNS,
+        "median_total_elapsed_time_ms",
+        100,
+        "",
+    )
     assert "last_run_session_id" not in sql
 
 

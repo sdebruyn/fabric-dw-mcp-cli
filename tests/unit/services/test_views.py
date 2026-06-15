@@ -322,10 +322,8 @@ class TestReadView:
     async def test_raises_not_found_for_missing_view(self) -> None:
         """A missing view raises NotFoundError via SQL error 208 mapping in run_query.
 
-        Before this PR, read_view detected a missing view via ``if not cols``
-        after run_query returned empty columns.  Now, map_driver_error converts
-        SQL error 208 ("invalid object name") to NotFoundError inside run_query,
-        which re-raises it before returning.  The cursor error is the trigger.
+        map_driver_error converts SQL error 208 ("invalid object name") to
+        NotFoundError inside run_query, which re-raises it before returning.
         """
         target = _make_target()
         conn = MagicMock()
@@ -338,6 +336,25 @@ class TestReadView:
                 return "Invalid object name 'dbo.vw_nonexistent'"
 
         cursor.execute.side_effect = _Err208Error()
+        conn.cursor.return_value = cursor
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(NotFoundError),
+        ):
+            await read_view(target, "dbo", "vw_nonexistent")
+
+    async def test_raises_not_found_when_no_columns_v10(self) -> None:
+        """V10: read_view raises NotFoundError on empty column metadata (no cols guard).
+
+        This mirrors read_table's behaviour: both functions now raise NotFoundError
+        when the driver returns no column metadata (``description`` is None),
+        providing a consistent not-found contract across both zuster-methods.
+        """
+        target = _make_target()
+        cursor = MagicMock()
+        cursor.description = None
+        cursor.fetchall.return_value = []
+        conn = MagicMock()
         conn.cursor.return_value = cursor
         with (
             patch("fabric_dw.sql.open_connection", return_value=conn),
@@ -543,6 +560,32 @@ class TestCreateView:
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await views.create_view(target, "dbo", "vw_ok] WITH SCHEMABINDING--", "SELECT 1")
 
+    async def test_rejects_non_select_body_v23(self) -> None:
+        """V23: create_view must validate that select_body starts with SELECT or WITH."""
+        target = _make_target()
+        with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
+            await views.create_view(target, "dbo", "vw_sales", "INSERT INTO foo SELECT 1")
+
+    async def test_accepts_cte_body_v23(self) -> None:
+        """V23: create_view must accept a CTE (WITH … SELECT) body."""
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_VIEW_ROW_GET], _GET_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            result = await views.create_view(
+                target,
+                "dbo",
+                "vw_sales",
+                "WITH cte AS (SELECT id FROM dbo.src) SELECT * FROM cte",
+            )
+        assert isinstance(result, View)
+
+    async def test_rejects_drop_body_in_create_view_v23(self) -> None:
+        """V23: DROP TABLE as body must be rejected by create_view."""
+        target = _make_target()
+        with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
+            await views.create_view(target, "dbo", "vw_sales", "DROP TABLE dbo.foo")
+
 
 # ===========================================================================
 # update_view
@@ -616,6 +659,26 @@ class TestUpdateView:
             pytest.raises(PermissionDeniedError),
         ):
             await views.update_view(target, "dbo", "vw_sales", "SELECT 1")
+
+    async def test_rejects_non_select_body_v23(self) -> None:
+        """V23: update_view must validate that select_body starts with SELECT or WITH."""
+        target = _make_target()
+        with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
+            await views.update_view(target, "dbo", "vw_sales", "DELETE FROM foo")
+
+    async def test_accepts_cte_body_v23(self) -> None:
+        """V23: update_view must accept a CTE (WITH … SELECT) body."""
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_VIEW_ROW_GET], _GET_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            result = await views.update_view(
+                target,
+                "dbo",
+                "vw_sales",
+                "WITH cte AS (SELECT id FROM dbo.src) SELECT * FROM cte",
+            )
+        assert isinstance(result, View)
 
 
 # ===========================================================================
