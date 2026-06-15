@@ -517,10 +517,14 @@ async def onelake_upload_file(
 
     async with httpx.AsyncClient(timeout=300.0) as client:
         # Step 1: create an empty file.
+        # The ADLS Gen2 DFS API requires Content-Length: 0 on the PUT create
+        # call — omitting it or sending a non-zero value results in a 400
+        # ContentLengthMustBeZero error from OneLake.
         create_resp = await client.put(
             dfs_base,
             params={"resource": "file"},
-            headers=headers,
+            headers={**headers, "Content-Length": "0"},
+            content=b"",
         )
         create_resp.raise_for_status()
 
@@ -535,16 +539,22 @@ async def onelake_upload_file(
                     dfs_base,
                     params={"action": "append", "position": offset},
                     content=chunk,
-                    headers={**headers, "Content-Type": "application/octet-stream"},
+                    headers={
+                        **headers,
+                        "Content-Type": "application/octet-stream",
+                        "Content-Length": str(len(chunk)),
+                    },
                 )
                 append_resp.raise_for_status()
                 offset += len(chunk)
 
         # Step 3: flush (commit).
+        # Content-Length must be 0 for the flush call (no request body).
         flush_resp = await client.patch(
             dfs_base,
             params={"action": "flush", "position": offset},
-            headers=headers,
+            headers={**headers, "Content-Length": "0"},
+            content=b"",
         )
         flush_resp.raise_for_status()
 
