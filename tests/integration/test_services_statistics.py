@@ -2,9 +2,13 @@
 
 Run with: pytest -m integration tests/integration/test_services_statistics.py
 
-Fixture note: uses ``ephemeral_sql_target`` (warehouse) from conftest for
-write operations, and ``ephemeral_sql_endpoint`` (SQL Analytics Endpoint, a
-``Warehouse`` object) for read-only / endpoint-guard tests.
+Fixture note: the full lifecycle roundtrip uses ``warehouse_schema``, which creates
+a uniquely-named schema inside the session-shared warm warehouse and cascade-drops
+it on teardown.  Statistics are schema-scoped so each test is fully isolated.
+Client-side guard tests (create/update/drop endpoint rejection) use ``shared_warehouse``
+directly — the ``ItemKindError`` is raised before any SQL, so no per-test schema DDL
+is needed.  The SQL Analytics Endpoint read-only test uses ``ephemeral_sql_endpoint``
+because it requires an actual SQL Analytics Endpoint (Lakehouse-backed item).
 """
 
 from __future__ import annotations
@@ -14,10 +18,11 @@ from uuid import UUID
 
 import pytest
 
-from fabric_dw.exceptions import FabricError, ItemKindError, NotFoundError
+from fabric_dw.exceptions import ItemKindError, NotFoundError
 from fabric_dw.models import Statistic, StatisticDetails, Warehouse, WarehouseKind
 from fabric_dw.services import statistics, tables
 from fabric_dw.sql import SqlTarget
+from tests.integration.conftest import SharedWarehouseTarget
 
 pytestmark = pytest.mark.integration
 
@@ -53,12 +58,12 @@ async def test_list_statistics_on_sql_endpoint(
 
 
 async def test_create_statistics_endpoint_guard_rejected(
-    ephemeral_sql_target: SqlTarget,
+    shared_warehouse: SharedWarehouseTarget,
 ) -> None:
     """create_statistics raises ItemKindError on SQL Analytics Endpoints (client-side guard)."""
     with pytest.raises(ItemKindError, match="read-only"):
         await statistics.create_statistics(
-            ephemeral_sql_target,
+            shared_warehouse.sql_target,
             "dbo.nonexistent_table",
             "id",
             name="should_never_be_created",
@@ -67,12 +72,12 @@ async def test_create_statistics_endpoint_guard_rejected(
 
 
 async def test_update_statistics_endpoint_guard_rejected(
-    ephemeral_sql_target: SqlTarget,
+    shared_warehouse: SharedWarehouseTarget,
 ) -> None:
     """update_statistics raises ItemKindError on SQL Analytics Endpoints (client-side guard)."""
     with pytest.raises(ItemKindError, match="read-only"):
         await statistics.update_statistics(
-            ephemeral_sql_target,
+            shared_warehouse.sql_target,
             "dbo.nonexistent_table",
             "should_not_update",
             kind=WarehouseKind.SQL_ENDPOINT,
@@ -80,12 +85,12 @@ async def test_update_statistics_endpoint_guard_rejected(
 
 
 async def test_drop_statistics_endpoint_guard_rejected(
-    ephemeral_sql_target: SqlTarget,
+    shared_warehouse: SharedWarehouseTarget,
 ) -> None:
     """drop_statistics raises ItemKindError on SQL Analytics Endpoints (client-side guard)."""
     with pytest.raises(ItemKindError, match="read-only"):
         await statistics.drop_statistics(
-            ephemeral_sql_target,
+            shared_warehouse.sql_target,
             "dbo.nonexistent_table",
             "should_not_drop",
             kind=WarehouseKind.SQL_ENDPOINT,
@@ -93,28 +98,28 @@ async def test_drop_statistics_endpoint_guard_rejected(
 
 
 # ---------------------------------------------------------------------------
-# Full create → list → show → update → drop round-trip on ephemeral warehouse
+# Full create → list → show → update → drop round-trip on shared warehouse
 # ---------------------------------------------------------------------------
 
 
 async def test_create_list_show_update_drop_roundtrip(
-    ephemeral_sql_target: SqlTarget,
+    warehouse_schema: tuple[SqlTarget, str],
 ) -> None:
     """Full lifecycle: create a table, build a statistic, inspect it, then drop all."""
-    schema = "dbo"
+    sql_target, schema = warehouse_schema
     table_name = "pytest_stat_roundtrip"
     stat_name = "pytest_stat_on_id"
     select_body = "SELECT 1 AS id, 'hello' AS name"
 
     try:
-        # Create the table
-        await tables.create_table(ephemeral_sql_target, schema, table_name, select_body)
+        # Create the table inside the per-test schema.
+        await tables.create_table(sql_target, schema, table_name, select_body)
 
         qualified_table = f"{schema}.{table_name}"
 
         # Create the statistic (fullscan)
         created = await statistics.create_statistics(
-            ephemeral_sql_target,
+            sql_target,
             qualified_table,
             "id",
             name=stat_name,
@@ -128,47 +133,43 @@ async def test_create_list_show_update_drop_roundtrip(
         assert created.auto_created is False
 
         # list_statistics — stat must be visible
-        all_stats = await statistics.list_statistics(ephemeral_sql_target)
+        all_stats = await statistics.list_statistics(sql_target)
         stat_names = {s.name for s in all_stats}
         assert stat_name in stat_names
 
         # list_statistics filtered by schema and table
         filtered = await statistics.list_statistics(
-            ephemeral_sql_target, schema=schema, table=table_name, user_only=True
+            sql_target, schema=schema, table=table_name, user_only=True
         )
         assert any(s.name == stat_name for s in filtered)
 
         # show_statistics — stat header must be populated
-        details = await statistics.show_statistics(ephemeral_sql_target, qualified_table, stat_name)
+        details = await statistics.show_statistics(sql_target, qualified_table, stat_name)
         assert isinstance(details, StatisticDetails)
         assert details.stat_header is not None
         assert details.stat_header.name == stat_name
 
         # show_statistics with histogram_only
         hist_details = await statistics.show_statistics(
-            ephemeral_sql_target, qualified_table, stat_name, histogram_only=True
+            sql_target, qualified_table, stat_name, histogram_only=True
         )
         assert isinstance(hist_details, StatisticDetails)
         assert hist_details.stat_header is None  # skipped
 
         # update_statistics
-        await statistics.update_statistics(
-            ephemeral_sql_target, qualified_table, stat_name, fullscan=True
-        )
+        await statistics.update_statistics(sql_target, qualified_table, stat_name, fullscan=True)
 
         # After update, show still works
-        updated_details = await statistics.show_statistics(
-            ephemeral_sql_target, qualified_table, stat_name
-        )
+        updated_details = await statistics.show_statistics(sql_target, qualified_table, stat_name)
         assert updated_details.stat_header is not None
 
         # drop_statistics
-        await statistics.drop_statistics(ephemeral_sql_target, qualified_table, stat_name)
+        await statistics.drop_statistics(sql_target, qualified_table, stat_name)
 
-        # After drop, show should raise NotFoundError or similar
-        with pytest.raises((NotFoundError, FabricError, Exception)):
-            await statistics.show_statistics(ephemeral_sql_target, qualified_table, stat_name)
+        # After drop, show should raise NotFoundError (statistics.py raises it at line ~408)
+        with pytest.raises(NotFoundError):
+            await statistics.show_statistics(sql_target, qualified_table, stat_name)
 
     finally:
         with contextlib.suppress(Exception):
-            await tables.delete_table(ephemeral_sql_target, schema, table_name)
+            await tables.delete_table(sql_target, schema, table_name)
