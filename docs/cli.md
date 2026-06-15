@@ -1995,6 +1995,91 @@ fabric-dw sql-pools insights MyWorkspace SalesWH
 
 ---
 
+## fabric-dw statistics
+
+Manage user-defined statistics on Fabric Data Warehouses and read their details on SQL Analytics Endpoints.
+
+> **Note:** Only **single-column, histogram-based** statistics can be created or updated (Fabric limitation). Multi-column statistics are not supported.
+> DDL operations (`create`, `update`, `delete`) require a **Data Warehouse** — they are rejected client-side on SQL Analytics Endpoints. `list` and `show` work on both item kinds.
+
+### statistics list
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+List statistics on an item.
+
+```
+fabric-dw statistics list [WORKSPACE] [ITEM] [OPTIONS]
+```
+
+| Option | Description | Default |
+| --- | --- | --- |
+| `--schema NAME` | Filter by schema name. | (all schemas) |
+| `--table NAME` | Filter by table name (unqualified). | (all tables) |
+| `--user-only` | Only show user-created statistics. | off |
+| `--auto-only` | Only show auto-created statistics. | off |
+
+### statistics show
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Show details of a named statistic using `DBCC SHOW_STATISTICS`. Returns the stat header, density vector, and histogram steps.
+
+```
+fabric-dw statistics show [WORKSPACE] [ITEM] QUALIFIED_TABLE STAT_NAME [OPTIONS]
+```
+
+`QUALIFIED_TABLE` must be a dot-separated qualified name, e.g. `dbo.sales`.
+
+| Option | Description | Default |
+| --- | --- | --- |
+| `--histogram` | Show only the histogram steps (skip header and density vector). | off |
+
+### statistics create
+
+**Targets:** Data Warehouse only
+
+Create a new single-column statistic.
+
+```
+fabric-dw statistics create [WORKSPACE] [ITEM] --table schema.table --column COL --name NAME [OPTIONS]
+```
+
+| Option | Description | Default |
+| --- | --- | --- |
+| `--table schema.table` | Qualified table name (required). | — |
+| `--column COL` | Column name to build the statistic on (required). Single column only. | — |
+| `--name NAME` | Statistic name (required). | — |
+| `--fullscan` | Use `WITH FULLSCAN` (default). Mutually exclusive with `--sample-percent`. | on |
+| `--sample-percent N` | Sample `N`% of the table (1–100). Overrides `--fullscan`. | — |
+
+### statistics update
+
+**Targets:** Data Warehouse only
+
+Update an existing statistic via `UPDATE STATISTICS`.
+
+```
+fabric-dw statistics update [WORKSPACE] [ITEM] QUALIFIED_TABLE STAT_NAME [OPTIONS]
+```
+
+| Option | Description | Default |
+| --- | --- | --- |
+| `--fullscan` | Use `WITH FULLSCAN` (default). | on |
+| `--sample-percent N` | Sample `N`% of the table (1–100). Overrides `--fullscan`. | — |
+
+### statistics delete
+
+**Targets:** Data Warehouse only
+
+Drop a statistic via `DROP STATISTICS`. Prompts for confirmation unless `--yes` is passed.
+
+```
+fabric-dw statistics delete [WORKSPACE] [ITEM] QUALIFIED_TABLE STAT_NAME
+```
+
+---
+
 ## fabric-dw cache
 
 Manage the local name-to-UUID lookup cache. `fabric-dw` caches workspace and item name-to-GUID mappings to avoid repeated API round-trips. Use these commands if you rename items outside the CLI or need to force a fresh lookup.

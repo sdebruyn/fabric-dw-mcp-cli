@@ -450,6 +450,67 @@ class Table(_FabricBase):
 
 
 # ---------------------------------------------------------------------------
+# Statistics
+# ---------------------------------------------------------------------------
+
+
+class Statistic(_FabricBase):
+    """A user-defined or auto-created statistic on a Fabric Data Warehouse table.
+
+    Sourced from ``sys.stats JOIN sys.stats_columns JOIN STATS_DATE``.
+    """
+
+    name: str
+    qualified_table: str  # schema.table
+    column: str
+    auto_created: bool
+    user_created: bool
+    last_updated: datetime | None
+    generation_method: str | None
+
+
+class StatisticHeaderRow(_FabricBase):
+    """The STAT_HEADER result from ``DBCC SHOW_STATISTICS … WITH STAT_HEADER``."""
+
+    name: str
+    updated: datetime | None
+    rows: int | None
+    rows_sampled: int | None
+    steps: int | None
+    density: float | None
+    average_key_length: float | None
+    string_index: str | None
+    filter_expression: str | None
+    unfiltered_rows: int | None
+
+
+class StatisticDensityRow(_FabricBase):
+    """One density-vector row from ``DBCC SHOW_STATISTICS … WITH DENSITY_VECTOR``."""
+
+    all_density: float | None
+    average_length: float | None
+    columns: str | None
+
+
+class StatisticHistogramStep(_FabricBase):
+    """One histogram step from ``DBCC SHOW_STATISTICS … WITH HISTOGRAM``."""
+
+    range_hi_key: str | None  # serialised as string; actual type depends on the column
+    range_rows: float | None
+    eq_rows: float | None
+    distinct_range_rows: float | None
+    avg_range_rows: float | None
+
+
+class StatisticDetails(_FabricBase):
+    """Full details from ``DBCC SHOW_STATISTICS``, composed of three result sets."""
+
+    stat_header: StatisticHeaderRow | None
+    density_vector: list[StatisticDensityRow]
+    histogram: list[StatisticHistogramStep]
+
+
+# ---------------------------------------------------------------------------
 # SQL Pools (beta)
 # ---------------------------------------------------------------------------
 
