@@ -104,6 +104,11 @@ def _build_subprocess_env() -> dict[str, str]:
     env.pop("FABRIC_DISABLE_TELEMETRY", None)
     env.pop("DO_NOT_TRACK", None)
 
+    # Strip any caller-side statsbeat override so our setdefault in _get_tracer
+    # is always exercised — a runner env with this set to "false" would otherwise
+    # make setdefault a no-op and defeat the statsbeat-disable fix (#418).
+    env.pop("APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL", None)
+
     # Use a temp config dir so the first-run notice state is isolated.
     env["XDG_CONFIG_HOME"] = "/tmp/fabric_dw_test_shutdown_clean"  # noqa: S108
 

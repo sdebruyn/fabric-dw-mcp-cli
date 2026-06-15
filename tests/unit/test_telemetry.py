@@ -887,16 +887,16 @@ def test_get_tracer_passes_instrumentation_options_to_configure(
 
     mod._get_tracer()
 
-    # Reset SDK state so the module is clean for any subsequent tests.
-    mod._sdk_initialised = False
-    mod._tracer = None
-
     raw_options: Any = captured_kwargs.get("instrumentation_options", {})
     assert isinstance(raw_options, dict), "instrumentation_options must be a dict"
     for lib in ("requests", "urllib", "urllib3", "azure_sdk"):
         assert lib in raw_options, f"instrumentation_options must disable '{lib}'"
         lib_opts: Any = raw_options[lib]
         assert lib_opts.get("enabled") is False, f"'{lib}' must have enabled=False"
+
+    # Reset SDK state so the module is clean for any subsequent tests.
+    mod._sdk_initialised = False
+    mod._tracer = None
 
 
 # ---------------------------------------------------------------------------
@@ -946,13 +946,14 @@ def test_get_tracer_passes_enable_performance_counters_false(
 
     mod._get_tracer()
 
-    mod._sdk_initialised = False
-    mod._tracer = None
-
     assert captured_kwargs.get("enable_performance_counters") is False, (
         "configure_azure_monitor must receive enable_performance_counters=False "
         "to suppress PerformanceCounters ZeroDivisionError on short-lived processes (#399)"
     )
+
+    # Reset SDK state so the module is clean for any subsequent tests.
+    mod._sdk_initialised = False
+    mod._tracer = None
 
 
 # ---------------------------------------------------------------------------
