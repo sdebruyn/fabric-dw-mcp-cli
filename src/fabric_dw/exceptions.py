@@ -87,32 +87,6 @@ class FabricServerError(FabricError):
         self.is_retriable = is_retriable
 
 
-class CapacityUnavailableError(FabricServerError):
-    """Raised when a workspace's capacity is paused or has no capacity.
-
-    This is a subclass of :class:`FabricServerError` with ``is_retriable=False``
-    to prevent the HTTP client from retrying the ~22s-hanging data-plane call.
-    It is used as a signal for proactive and defensive per-workspace skipping
-    in ``-A`` scans.
-    """
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        status: int | None = None,
-        request_id: str | None = None,
-        body: dict[str, object] | None = None,
-    ) -> None:
-        super().__init__(
-            message,
-            status=status,
-            request_id=request_id,
-            body=body,
-            is_retriable=False,
-        )
-
-
 class BadRequestError(FabricError):
     """Raised on HTTP 400 - the request body or parameters were invalid.
 

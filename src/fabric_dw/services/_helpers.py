@@ -8,6 +8,8 @@ from collections.abc import Callable, Coroutine, Mapping, Sequence
 from typing import Protocol, TypeVar
 from uuid import UUID
 
+from fabric_dw.services.capacities import ACTIVE_STATE
+
 __all__ = ["compact", "reject_non_select", "scan_all_workspaces"]
 
 _T = TypeVar("_T")
@@ -52,7 +54,7 @@ def compact(mapping: Mapping[str, object]) -> dict[str, object]:
 
 
 def _is_capacity_active(
-    ws: _HasNameAndId,
+    ws: _HasNameIdAndCapacity,
     capacity_states: dict[str, str] | None,
 ) -> bool:
     """Return ``True`` when *ws* should be included in a scan.
@@ -69,8 +71,8 @@ def _is_capacity_active(
     per-workspace error handling takes over.
 
     Args:
-        ws: Workspace object.  Must implement :class:`_HasNameAndId`; optionally
-            also implements :class:`_HasNameIdAndCapacity`.
+        ws: Workspace object — must implement :class:`_HasNameIdAndCapacity`
+            (i.e. exposes ``name``, ``id``, and ``capacity_id``).
         capacity_states: Lower-cased ``{capacity_id: state}`` map as returned
             by :func:`~fabric_dw.services.capacities.get_capacity_states`, or
             ``None`` when proactive filtering is unavailable.
@@ -83,23 +85,22 @@ def _is_capacity_active(
         # Proactive filtering unavailable — let the defensive path handle it.
         return True
 
-    cap_id: UUID | None = getattr(ws, "capacity_id", None)
+    cap_id: UUID | None = ws.capacity_id
     if cap_id is None:
         return False
 
     state = capacity_states.get(str(cap_id).lower())
     if state is None:
-        # Capacity not found in map — treat as unavailable (conservative).
+        # Capacity ID present but absent from the capacity map — treat as
+        # unavailable (conservative skip).
         return False
-
-    from fabric_dw.services.capacities import ACTIVE_STATE  # noqa: PLC0415
 
     return state == ACTIVE_STATE
 
 
 async def scan_all_workspaces(
-    workspaces: Sequence[_HasNameAndId],
-    fetch: Callable[[_HasNameAndId], Coroutine[object, object, list[_T]]],
+    workspaces: Sequence[_HasNameIdAndCapacity],
+    fetch: Callable[[_HasNameIdAndCapacity], Coroutine[object, object, list[_T]]],
     *,
     logger: logging.Logger,
     skip_errors: tuple[type[BaseException], ...],
@@ -122,14 +123,27 @@ async def scan_all_workspaces(
     Defensive fallback
     ~~~~~~~~~~~~~~~~~~
     When *capacity_states* is ``None`` (the caller lacks the capacity-read
-    permission), all workspaces are attempted.  A
-    :class:`~fabric_dw.exceptions.CapacityUnavailableError` (non-retriable
-    ``FabricServerError`` with ``is_retriable=False``) on a per-workspace call
-    is treated as a silent skip (``DEBUG`` log), not a fatal error.
+    permission), all workspaces are attempted.  A non-retriable
+    :class:`~fabric_dw.exceptions.FabricServerError` (``is_retriable=False``)
+    on a per-workspace call is treated as a silent skip (``DEBUG`` log), not a
+    fatal error.
+
+    Result-classification precedence
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    For each per-workspace result the checks are applied in this order:
+
+    1. ``FabricServerError`` with ``is_retriable=False`` → silent ``DEBUG``
+       skip (defensive capacity path).  Checked first so that a
+       ``FabricServerError`` subclass that also happens to appear in
+       *skip_errors* still gets the quieter treatment.
+    2. ``isinstance(result, skip_errors)`` → ``WARNING``-level skip (access
+       errors: 403, 404, …).
+    3. Any other ``BaseException`` → propagate (unexpected error).
+    4. Otherwise → aggregate into the output list.
 
     Args:
-        workspaces: Sequence of workspace objects.  Each element must have a
-            ``name`` attribute used in log messages.
+        workspaces: Sequence of workspace objects.  Each element must implement
+            :class:`_HasNameIdAndCapacity` (``name``, ``id``, ``capacity_id``).
         fetch: Async callable that receives a workspace object and returns a
             ``list[T]`` of items for that workspace.
         logger: Logger for per-workspace and summary warnings.
@@ -149,7 +163,7 @@ async def scan_all_workspaces(
     # Proactive capacity filter: skip paused/no-capacity workspaces before
     # issuing any data-plane call.  Only active when capacity_states is known.
     capacity_skipped = 0
-    active_workspaces: list[_HasNameAndId] = []
+    active_workspaces: list[_HasNameIdAndCapacity] = []
     for ws in workspaces:
         if _is_capacity_active(ws, capacity_states):
             active_workspaces.append(ws)
@@ -166,7 +180,10 @@ async def scan_all_workspaces(
             capacity_skipped,
         )
 
-    total = len(workspaces)
+    # The denominator for the access-error summary is the number of workspaces
+    # that actually entered the fan-out (after the proactive capacity filter),
+    # not the total across all workspaces.
+    fan_out_total = len(active_workspaces)
     raw = await bounded_gather(
         [lambda ws=ws: fetch(ws) for ws in active_workspaces],  # type: ignore[misc]
         return_exceptions=True,
@@ -176,10 +193,10 @@ async def scan_all_workspaces(
     access_skipped = 0
     capacity_defensive_skipped = 0
     for ws, result in zip(active_workspaces, raw, strict=True):
-        if isinstance(result, skip_errors):
-            logger.warning("skipping workspace %s: %s", ws.name, result)
-            access_skipped += 1
-        elif isinstance(result, FabricServerError) and not result.is_retriable:
+        # Precedence matters — check non-retriable FabricServerError FIRST so
+        # that a FabricServerError subclass that also satisfies skip_errors
+        # still gets the silent DEBUG treatment (defensive capacity path).
+        if isinstance(result, FabricServerError) and not result.is_retriable:
             # Non-retriable 5xx: most likely a paused capacity (defensive path
             # when proactive capacity filter was unavailable).  Skip silently.
             logger.debug(
@@ -187,13 +204,20 @@ async def scan_all_workspaces(
                 ws.name,
             )
             capacity_defensive_skipped += 1
+        elif isinstance(result, skip_errors):
+            logger.warning("skipping workspace %s: %s", ws.name, result)
+            access_skipped += 1
         elif isinstance(result, BaseException):
             raise result
         else:
             out.extend(result)  # type: ignore[arg-type]
 
     if access_skipped:
-        logger.warning("skipped %d of %d workspaces due to access errors", access_skipped, total)
+        logger.warning(
+            "skipped %d of %d workspaces due to access errors",
+            access_skipped,
+            fan_out_total,
+        )
     if capacity_defensive_skipped:
         logger.debug(
             "defensively skipped %d workspace(s) with non-retriable server errors "

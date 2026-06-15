@@ -540,12 +540,14 @@ def test_fabric_server_error_explicit_non_retriable() -> None:
     assert err.is_retriable is False
 
 
-def test_capacity_unavailable_error_is_non_retriable() -> None:
-    """CapacityUnavailableError must always have is_retriable=False."""
-    from fabric_dw.exceptions import CapacityUnavailableError  # noqa: PLC0415
+def test_capacity_unavailable_error_removed() -> None:
+    """CapacityUnavailableError has been removed — the is_retriable-flag routing is the
+    real mechanism.  Importing it must raise AttributeError (not ImportError).
+    """
+    import fabric_dw.exceptions as exc_mod  # noqa: PLC0415
 
-    err = CapacityUnavailableError("paused", status=500)
-    assert err.is_retriable is False
+    with pytest.raises(AttributeError):
+        _ = exc_mod.CapacityUnavailableError  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------
@@ -661,3 +663,105 @@ async def test_sql_endpoints_proactive_skip_inactive_capacity(
     assert len(result) == 1
     assert _WS_INACTIVE not in fetch_call_ids
     assert _WS_ACTIVE in fetch_call_ids
+
+
+# ---------------------------------------------------------------------------
+# (l) _make_should_retry: missing isRetriable key defaults to retry=True
+# ---------------------------------------------------------------------------
+
+
+async def test_make_should_retry_no_is_retriable_key_defaults_to_retry() -> None:
+    """When the Fabric error envelope has NO isRetriable key, the HTTP client
+    must default is_retriable=True (safe default — keep retrying as usual).
+    The server error should be retried up to 3 attempts.
+    """
+    call_count = 0
+
+    def _side_effect(_request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        # No "isRetriable" key at all in the error body.
+        return httpx.Response(
+            500,
+            json={"errorCode": "InternalServerError", "message": "transient failure"},
+        )
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(f"{_WAREHOUSES_ACTIVE_URL}").mock(side_effect=_side_effect)
+
+        client = await _make_client()
+        async with client:
+            with pytest.raises(FabricServerError) as exc_info:
+                await client.request(
+                    "GET",
+                    HttpBase.FABRIC,
+                    f"/workspaces/{_WS_ACTIVE}/warehouses",
+                )
+
+    # Absent isRetriable → defaults to True → 3 retry attempts.
+    assert call_count == 3, f"Expected 3 attempts (default retry); got {call_count}"
+    assert exc_info.value.is_retriable is True
+
+
+# ---------------------------------------------------------------------------
+# (m) _is_capacity_active: capacity_id present but absent from the map → skip
+# ---------------------------------------------------------------------------
+
+
+def test_is_capacity_active_unknown_capacity_id_returns_false() -> None:
+    """A workspace whose capacity_id is set but absent from the capacity map
+    must be conservatively skipped (return False).
+    """
+    from fabric_dw.services._helpers import _is_capacity_active  # noqa: PLC0415
+
+    unknown_cap = UUID("dddddddd-cafe-0000-0000-000000000099")
+    ws = _make_workspace(_WS_ACTIVE, unknown_cap)
+
+    # The capacity map only knows about _CAP_ACTIVE and _CAP_INACTIVE.
+    states = _make_capacity_states()
+    assert str(unknown_cap).lower() not in states
+
+    result = _is_capacity_active(ws, states)
+    assert result is False, "Expected False (conservative skip) when capacity_id is not in the map"
+
+
+# ---------------------------------------------------------------------------
+# (n) Retriable FabricServerError that exhausts retries must propagate
+# ---------------------------------------------------------------------------
+
+
+async def test_retriable_server_error_exhausting_retries_propagates() -> None:
+    """A FabricServerError(is_retriable=True) that exhausts all retries must
+    propagate out of scan_all_workspaces — it must NOT be swallowed by the
+    non-retriable defensive skip guard.
+    """
+    from fabric_dw.services.warehouses import list_all_workspaces  # noqa: PLC0415
+
+    ws_a = _make_workspace(_WS_ACTIVE, _CAP_ACTIVE)
+
+    retriable_err = FabricServerError(
+        "Server error 500: transient failure",
+        status=500,
+        is_retriable=True,  # explicitly retriable — not a paused-capacity error
+    )
+
+    with (
+        patch(
+            "fabric_dw.services.warehouses._list_all_workspaces",
+            new=AsyncMock(return_value=[ws_a]),
+        ),
+        patch(
+            "fabric_dw.services.warehouses.get_capacity_states",
+            new=AsyncMock(return_value=None),  # defensive path
+        ),
+        patch(
+            "fabric_dw.services.warehouses.list_warehouses",
+            new=AsyncMock(side_effect=retriable_err),
+        ),
+        pytest.raises(FabricServerError) as exc_info,
+    ):
+        await list_all_workspaces(AsyncMock())
+
+    assert exc_info.value.is_retriable is True, (
+        "Retriable FabricServerError must propagate, not be silently swallowed"
+    )

@@ -160,13 +160,30 @@ async def list_all_workspaces(http: FabricHttpClient) -> list[Warehouse]:
         A flat list of :class:`~fabric_dw.models.Warehouse` instances from all
         accessible, active-capacity workspaces.
     """
+    # Fetch workspaces and capacity states concurrently.  Capacity-state
+    # fetching is best-effort: if GET /v1/capacities fails for any reason
+    # other than 403 (which get_capacity_states already handles internally),
+    # degrade to capacity_states=None and continue the scan via the defensive
+    # per-workspace fallback.  The workspace listing must never abort just
+    # because the capacity endpoint is unavailable.
+    async def _get_capacity_states_safe() -> dict[str, str] | None:
+        try:
+            return await get_capacity_states(http)
+        except Exception as exc:  # noqa: BLE001
+            _logger.debug(
+                "GET /v1/capacities failed (%s) — proactive capacity filtering unavailable; "
+                "falling back to defensive per-workspace error handling",
+                exc,
+            )
+            return None
+
     workspaces, capacity_states = await asyncio.gather(
         _list_all_workspaces(http),
-        get_capacity_states(http),
+        _get_capacity_states_safe(),
     )
     return await scan_all_workspaces(
         workspaces,
-        lambda ws: list_warehouses(http, ws.id),  # type: ignore[union-attr]  # mypy false-positive: Sequence[_HasNameAndId] exposes id: UUID but mypy loses the concrete type through the Protocol abstraction
+        lambda ws: list_warehouses(http, ws.id),  # type: ignore[union-attr]  # mypy false-positive: Sequence[_HasNameIdAndCapacity] exposes id: UUID but mypy loses the concrete type through the Protocol abstraction
         logger=_logger,
         skip_errors=(PermissionDeniedError, NotFoundError),
         capacity_states=capacity_states,
