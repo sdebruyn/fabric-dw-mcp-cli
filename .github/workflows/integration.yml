@@ -192,6 +192,8 @@ jobs:
           FABRIC_TEST_IS_TENANT_ADMIN: "true"
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          XDIST_WORKERS_INPUT: ${{ inputs.xdist_workers }}
+          PYTEST_K_INPUT: ${{ inputs.pytest_k }}
         run: |
           # Worker-count rationale
           # ----------------------
@@ -207,22 +209,28 @@ jobs:
           #
           # The xdist_workers workflow_dispatch input lets you tune this without
           # code changes.  For push events (no input), WORKERS defaults to 4.
-          WORKERS="${{ inputs.xdist_workers }}"
-          WORKERS="${WORKERS:-4}"
+          WORKERS="${XDIST_WORKERS_INPUT:-4}"
+
+          # Validate that WORKERS is a positive integer; reject 0, negatives, and
+          # non-numeric values before they reach pytest (which aborts with a
+          # cryptic error on -n 0 or -n -1).
+          [[ "${WORKERS}" =~ ^[1-9][0-9]*$ ]] || {
+            echo "ERROR: xdist_workers must be a positive integer, got: ${WORKERS}" >&2
+            exit 1
+          }
 
           # Default dist mode is "load" (xdist default): work-stealing scheduler
           # that keeps all workers busy.  This is the right choice here because
           # test durations vary widely (snapshot/restore tests are 10x slower than
           # query/schema tests).  "loadscope" would bin by module, which could
           # serialise the slow tests onto one worker and starve the rest.
-          CMD="uv run pytest tests/integration -m integration -v -n ${WORKERS}"
 
-          if [ -n "${{ inputs.pytest_k }}" ]; then
-            echo "Running subset: -k '${{ inputs.pytest_k }}' with ${WORKERS} worker(s)"
-            ${CMD} -k "${{ inputs.pytest_k }}"
+          if [ -n "${PYTEST_K_INPUT}" ]; then
+            echo "Running subset: -k '${PYTEST_K_INPUT}' with ${WORKERS} worker(s)"
+            uv run pytest tests/integration -m integration -v -n "${WORKERS}" -k "${PYTEST_K_INPUT}"
           else
             echo "Running full integration suite with ${WORKERS} worker(s)"
-            ${CMD}
+            uv run pytest tests/integration -m integration -v -n "${WORKERS}"
           fi
 
       - name: Post-test full workspace wipe
