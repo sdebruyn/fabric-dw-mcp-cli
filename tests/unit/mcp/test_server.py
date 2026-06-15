@@ -134,6 +134,7 @@ EXPECTED_TOOL_NAMES: frozenset[str] = frozenset(
         "clear_table",
         # Load
         "load_table_from_url",
+        "import_table_from_url",
         # Restore Points
         "list_restore_points",
         "get_restore_point",

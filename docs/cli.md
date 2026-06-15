@@ -1806,13 +1806,34 @@ Load data into a warehouse table via `COPY INTO` from either a local file or a r
 
 **Remote URL** (`--url`): `COPY INTO` is issued directly from the given URL. For OneLake or same-tenant URLs no credential is needed. For secured external URLs (Azure Blob Storage, ADLS Gen2) supply `--credential-type` and `--secret`/`--identity` as appropriate.
 
+**Auto-create (create-and-load)** — Pass `--create` to auto-create the target table from the source schema before loading (local files only; requires `pyarrow`). The schema is inferred from the source:
+
+- **Parquet**: exact types are read from the Parquet footer (no row data is read).
+- **CSV**: the header row and up to `--sample-rows` rows are read for type inference. Use `--all-varchar` to skip inference and force every column to `VARCHAR`.
+- **JSON**: the file is converted to Parquet internally (as required for staging); the schema is read from the resulting Parquet footer.
+
+Use `--if-exists` to control behaviour when the table already exists:
+
+| `--if-exists` value | Table exists | Table absent |
+| --- | --- | --- |
+| `fail` (default with `--create`) | Error — table already exists | Create + load |
+| `append` | Skip create, `COPY INTO` existing | Create + load |
+| `truncate` ⚠️ **DESTRUCTIVE** | `TRUNCATE` existing table, then load | Create + load |
+| `replace` ⚠️ **DESTRUCTIVE** | `DROP` + recreate from inferred schema, then load | Create + load |
+
+`truncate` and `replace` are permanently destructive and require confirmation (or `--yes` / `-y`).
+
+Use `--cleanup-on-failure` to drop the table if WE created it in this call and the subsequent `COPY INTO` fails. A pre-existing table is never dropped by this flag.
+
+> **Not atomic.** `CREATE TABLE` and `COPY INTO` are separate statements. A failure between them may leave an empty table. Use `--cleanup-on-failure` to auto-drop in that case.
+
 **Synopsis**
 
 ```
 fabric-dw tables load [OPTIONS] [WORKSPACE] [ITEM] QUALIFIED_NAME
 ```
 
-`QUALIFIED_NAME` is the dot-separated `schema.table_name` of the destination table, which must already exist.
+`QUALIFIED_NAME` is the dot-separated `schema.table_name` of the destination table.
 
 | Option | Default | Description |
 | --- | --- | --- |
@@ -1831,18 +1852,38 @@ fabric-dw tables load [OPTIONS] [WORKSPACE] [ITEM] QUALIFIED_NAME
 | `--keep-staging` | off | Keep the staging Lakehouse after load (for debugging). |
 | `--max-errors INT` | — | Maximum errors before aborting. |
 | `--rejected-row-location TEXT` | — | URL to write rejected rows to. |
+| `--create` | off | Auto-create the target table from the source schema (local files only). |
+| `--if-exists [fail\|append\|truncate\|replace]` | `fail` (with `--create`) | What to do when the target table already exists. `truncate` and `replace` are destructive and require confirmation. |
+| `--all-varchar` | off | (CSV, `--create`) Force all columns to `VARCHAR`; skip type inference. |
+| `--varchar-length INT` | `8000` | (`--create`) Default VARCHAR/VARBINARY length for inferred columns. |
+| `--sample-rows INT` | `1000` | (CSV, `--create`) Maximum rows to sample for type inference. |
+| `--cleanup-on-failure` | off | Drop the table if WE created it and the load fails. Never drops a pre-existing table. |
 
 **Examples**
 
 ```shell
-# Load a local CSV (header row present)
+# Load a local CSV into an existing table (header row present)
 fabric-dw tables load MyWorkspace SalesWH dbo.sales --file data.csv
 
-# Load a local Parquet file
+# Load a local Parquet file into an existing table
 fabric-dw tables load MyWorkspace SalesWH dbo.events --file events.parquet
 
 # Load a local JSON file (converts to Parquet internally; requires pyarrow)
 fabric-dw tables load MyWorkspace SalesWH dbo.products --file products.json
+
+# Auto-create the table from a Parquet schema, then load
+fabric-dw tables load MyWorkspace SalesWH dbo.sales --file data.parquet --create
+
+# Auto-create from CSV, force all columns to VARCHAR
+fabric-dw tables load MyWorkspace SalesWH dbo.raw --file raw.csv --create --all-varchar
+
+# Replace the existing table (drop + recreate schema + load), skip confirmation
+fabric-dw tables load MyWorkspace SalesWH dbo.sales --file data.parquet --create \
+    --if-exists replace -y
+
+# Auto-create; drop the table if the load fails (cleanup_on_failure)
+fabric-dw tables load MyWorkspace SalesWH dbo.sales --file data.parquet --create \
+    --cleanup-on-failure
 
 # Load from a remote OneLake URL (no credential needed)
 fabric-dw tables load MyWorkspace SalesWH dbo.orders \

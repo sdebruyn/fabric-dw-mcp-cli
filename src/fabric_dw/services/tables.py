@@ -46,6 +46,8 @@ __all__ = [
     "create_table_from_csv",
     "create_table_from_parquet",
     "delete_table",
+    "infer_columns_from_csv",
+    "infer_columns_from_parquet",
     "list_tables",
     "read_table",
     "rename_table",
@@ -334,6 +336,49 @@ async def create_empty_table(
     return await _fetch_table(target, schema, table_name, mode=mode)
 
 
+async def infer_columns_from_parquet(
+    parquet_path: Path,
+    *,
+    varchar_length: int = 8000,
+) -> list[ColumnSpec]:
+    """Infer a :class:`~fabric_dw.models.ColumnSpec` list from a Parquet file footer.
+
+    Reads **only the Parquet footer** (schema metadata) — no data rows are ever
+    loaded.  Arrow types are mapped to Fabric-DW-supported T-SQL types via
+    :func:`~fabric_dw.types.arrow_type_to_tsql`.  Nullability is taken from the
+    Arrow schema field.
+
+    Args:
+        parquet_path: Path to the Parquet file.  Only the file footer is read.
+        varchar_length: Default VARCHAR/VARBINARY length for string and binary
+            columns.  Defaults to 8000 (Fabric DW non-MAX maximum).
+
+    Returns:
+        A list of :class:`~fabric_dw.models.ColumnSpec` instances (one per column).
+
+    Raises:
+        FileNotFoundError: If *parquet_path* does not exist.
+        ValueError: If any Parquet field maps to an unsupported T-SQL type.
+    """
+    import pyarrow.parquet as pq  # noqa: PLC0415
+
+    if not parquet_path.exists():
+        msg = f"Parquet file not found: {parquet_path}"
+        raise FileNotFoundError(msg)
+
+    # Read schema only — pq.read_schema reads the footer without loading any row groups.
+    arrow_schema = await asyncio.to_thread(pq.read_schema, str(parquet_path))
+
+    columns: list[ColumnSpec] = []
+    for field in arrow_schema:
+        sql_type = arrow_type_to_tsql(field.type, field.name, varchar_length=varchar_length)
+        nullable = field.nullable
+        columns.append(ColumnSpec(name=field.name, sql_type=sql_type, nullable=nullable))
+
+    _log.debug("infer_columns_from_parquet: %d columns from %s", len(columns), parquet_path.name)
+    return columns
+
+
 async def create_table_from_parquet(
     target: SqlTarget,
     schema: str,
@@ -372,25 +417,136 @@ async def create_table_from_parquet(
             or if any derived identifier fails validation.
         FileNotFoundError: If *parquet_path* does not exist.
     """
-    import pyarrow.parquet as pq  # noqa: PLC0415
-
     _assert_not_sql_endpoint(kind)
-    if not parquet_path.exists():
-        msg = f"Parquet file not found: {parquet_path}"
-        raise FileNotFoundError(msg)
-
-    # Read schema only — pq.read_schema reads the footer without loading any row groups.
-    # Wrapped in asyncio.to_thread for consistency with other blocking I/O in this module.
-    arrow_schema = await asyncio.to_thread(pq.read_schema, str(parquet_path))
-
-    columns: list[ColumnSpec] = []
-    for field in arrow_schema:
-        sql_type = arrow_type_to_tsql(field.type, field.name, varchar_length=varchar_length)
-        nullable = field.nullable
-        columns.append(ColumnSpec(name=field.name, sql_type=sql_type, nullable=nullable))
-
+    columns = await infer_columns_from_parquet(parquet_path, varchar_length=varchar_length)
     _log.debug("create_table_from_parquet: %d columns from %s", len(columns), parquet_path.name)
     return await create_empty_table(target, schema, table_name, columns, kind=kind, mode=mode)
+
+
+async def infer_columns_from_csv(
+    csv_path: Path,
+    *,
+    all_varchar: bool = False,
+    varchar_length: int = 8000,
+    sample_rows: int = 1000,
+    delimiter: str = ",",
+    encoding: str = "utf-8-sig",
+) -> list[ColumnSpec]:
+    """Infer a :class:`~fabric_dw.models.ColumnSpec` list from a CSV file.
+
+    Reads the CSV **header row + a bounded sample** of rows for type inference.
+    No data is inserted into the warehouse; this is a pure inference operation.
+
+    When *all_varchar* is ``True``, every column becomes
+    ``VARCHAR(*varchar_length*)`` regardless of observed values.
+
+    Args:
+        csv_path: Path to the CSV file.  Only the header + a bounded sample are read.
+        all_varchar: Force all columns to ``VARCHAR(*varchar_length*)``, overriding
+            inference.  Useful when inference produces unexpected results.
+        varchar_length: Length for VARCHAR columns (default 8000).
+        sample_rows: Maximum number of rows to read for type inference (default 1000).
+        delimiter: CSV field delimiter (default ``,``).
+        encoding: File encoding (default ``utf-8-sig`` to strip BOM if present).
+
+    Returns:
+        A list of :class:`~fabric_dw.models.ColumnSpec` instances (one per column).
+
+    Raises:
+        FileNotFoundError: If *csv_path* does not exist.
+        ValueError: If the CSV file is empty (no header row), or if any inferred
+            Arrow type cannot be mapped to a T-SQL type and fallback fails.
+    """
+    if not csv_path.exists():
+        msg = f"CSV file not found: {csv_path}"
+        raise FileNotFoundError(msg)
+
+    if all_varchar:
+        # Read just the header row to get column names.
+        import csv  # noqa: PLC0415
+
+        with csv_path.open(encoding=encoding, newline="") as fh:
+            reader = csv.reader(fh, delimiter=delimiter)
+            try:
+                header = next(reader)
+            except StopIteration:
+                msg = f"CSV file is empty: {csv_path}"
+                raise ValueError(msg) from None
+
+        return [
+            ColumnSpec(name=col_name, sql_type=f"VARCHAR({varchar_length})", nullable=True)
+            for col_name in header
+        ]
+
+    # Read header + a bounded sample for type inference via pyarrow.csv.
+    # Use open_csv() (streaming batches) so that only a prefix of the file
+    # is ever loaded into memory — read_csv() would buffer the entire file
+    # before slice() could discard excess rows.
+    import pyarrow as pa  # noqa: PLC0415
+    import pyarrow.csv as pa_csv  # noqa: PLC0415
+
+    read_opts = pa_csv.ReadOptions(encoding=encoding)
+    parse_opts = pa_csv.ParseOptions(delimiter=delimiter)
+    # ConvertOptions: auto-convert types, treat empty fields as null
+    convert_opts = pa_csv.ConvertOptions(null_values=["", "NULL", "null", "NA", "N/A"])
+
+    def _read_csv_sample() -> pa.Table:
+        """Read at most *sample_rows* rows via the streaming CSV reader.
+
+        Uses :func:`pyarrow.csv.open_csv` (batch streaming) so that the
+        file is read lazily and iteration stops as soon as *sample_rows*
+        rows have been accumulated.  Only the prefix of the file is ever
+        loaded into memory, regardless of total file size.
+        """
+        reader = pa_csv.open_csv(
+            str(csv_path),
+            read_options=read_opts,
+            parse_options=parse_opts,
+            convert_options=convert_opts,
+        )
+        # reader.schema is available before iteration and reflects inferred types.
+        inferred_schema = reader.schema
+        batches: list[pa.RecordBatch] = []
+        rows_seen = 0
+        for batch in reader:
+            remaining = sample_rows - rows_seen
+            chunk = batch.slice(0, remaining) if batch.num_rows > remaining else batch
+            batches.append(chunk)
+            rows_seen += chunk.num_rows
+            if rows_seen >= sample_rows:
+                break
+        if not batches:
+            # Header-only CSV — return a zero-row table so schema is preserved.
+            return inferred_schema.empty_table()
+        return pa.Table.from_batches(batches)
+
+    arrow_table = await asyncio.to_thread(_read_csv_sample)
+    _log.debug(
+        "infer_columns_from_csv: read %d sample rows from %s for type inference",
+        arrow_table.num_rows,
+        csv_path.name,
+    )
+
+    columns: list[ColumnSpec] = []
+    for i, name in enumerate(arrow_table.schema.names):
+        field = arrow_table.schema.field(i)
+        try:
+            sql_type = arrow_type_to_tsql(field.type, name, varchar_length=varchar_length)
+        except ValueError:
+            # Fall back to VARCHAR for non-mappable inferred types.
+            _log.warning(
+                "Column %r: inferred Arrow type %r has no T-SQL equivalent; "
+                "falling back to VARCHAR(%d)",
+                name,
+                field.type,
+                varchar_length,
+            )
+            sql_type = f"VARCHAR({varchar_length})"
+        # CSV columns are always nullable (empty cells).
+        columns.append(ColumnSpec(name=name, sql_type=sql_type, nullable=True))
+
+    _log.debug("infer_columns_from_csv: %d columns from %s", len(columns), csv_path.name)
+    return columns
 
 
 async def create_table_from_csv(
@@ -448,98 +604,15 @@ async def create_table_from_csv(
             or if any column name fails identifier validation.
         FileNotFoundError: If *csv_path* does not exist.
     """
-    import pyarrow.csv as pa_csv  # noqa: PLC0415
-
     _assert_not_sql_endpoint(kind)
-    if not csv_path.exists():
-        msg = f"CSV file not found: {csv_path}"
-        raise FileNotFoundError(msg)
-
-    use_varchar = all_varchar or not infer_types
-
-    if use_varchar:
-        # Read just the header row to get column names.
-        import csv  # noqa: PLC0415
-
-        with csv_path.open(encoding=encoding, newline="") as fh:
-            reader = csv.reader(fh, delimiter=delimiter)
-            try:
-                header = next(reader)
-            except StopIteration:
-                msg = f"CSV file is empty: {csv_path}"
-                raise ValueError(msg) from None
-
-        columns = [
-            ColumnSpec(name=col_name, sql_type=f"VARCHAR({varchar_length})", nullable=True)
-            for col_name in header
-        ]
-    else:
-        # Read header + a bounded sample for type inference via pyarrow.csv.
-        # Use open_csv() (streaming batches) so that only a prefix of the file
-        # is ever loaded into memory — read_csv() would buffer the entire file
-        # before slice() could discard excess rows.
-        import pyarrow as pa  # noqa: PLC0415
-
-        read_opts = pa_csv.ReadOptions(encoding=encoding)
-        parse_opts = pa_csv.ParseOptions(delimiter=delimiter)
-        # ConvertOptions: auto-convert types, treat empty fields as null
-        convert_opts = pa_csv.ConvertOptions(null_values=["", "NULL", "null", "NA", "N/A"])
-
-        def _read_csv_sample() -> pa.Table:
-            """Read at most *sample_rows* rows via the streaming CSV reader.
-
-            Uses :func:`pyarrow.csv.open_csv` (batch streaming) so that the
-            file is read lazily and iteration stops as soon as *sample_rows*
-            rows have been accumulated.  Only the prefix of the file is ever
-            loaded into memory, regardless of total file size.
-            """
-            reader = pa_csv.open_csv(
-                str(csv_path),
-                read_options=read_opts,
-                parse_options=parse_opts,
-                convert_options=convert_opts,
-            )
-            # reader.schema is available before iteration and reflects inferred types.
-            inferred_schema = reader.schema
-            batches: list[pa.RecordBatch] = []
-            rows_seen = 0
-            for batch in reader:
-                remaining = sample_rows - rows_seen
-                chunk = batch.slice(0, remaining) if batch.num_rows > remaining else batch
-                batches.append(chunk)
-                rows_seen += chunk.num_rows
-                if rows_seen >= sample_rows:
-                    break
-            if not batches:
-                # Header-only CSV — return a zero-row table so schema is preserved.
-                return inferred_schema.empty_table()
-            return pa.Table.from_batches(batches)
-
-        arrow_table = await asyncio.to_thread(_read_csv_sample)
-        _log.debug(
-            "create_table_from_csv: read %d sample rows from %s for type inference",
-            arrow_table.num_rows,
-            csv_path.name,
-        )
-
-        columns = []
-        for i, name in enumerate(arrow_table.schema.names):
-            field = arrow_table.schema.field(i)
-            try:
-                sql_type = arrow_type_to_tsql(field.type, name, varchar_length=varchar_length)
-            except ValueError:
-                # Fall back to VARCHAR for non-mappable inferred types.
-                _log.warning(
-                    "Column %r: inferred Arrow type %r has no T-SQL equivalent; "
-                    "falling back to VARCHAR(%d)",
-                    name,
-                    field.type,
-                    varchar_length,
-                )
-                sql_type = f"VARCHAR({varchar_length})"
-            # CSV columns are always nullable (empty cells).
-            columns.append(ColumnSpec(name=name, sql_type=sql_type, nullable=True))
-
+    columns = await infer_columns_from_csv(
+        csv_path,
+        all_varchar=all_varchar or not infer_types,
+        varchar_length=varchar_length,
+        sample_rows=sample_rows,
+        delimiter=delimiter,
+        encoding=encoding,
+    )
     _log.debug("create_table_from_csv: %d columns from %s", len(columns), csv_path.name)
     return await create_empty_table(target, schema, table_name, columns, kind=kind, mode=mode)
 

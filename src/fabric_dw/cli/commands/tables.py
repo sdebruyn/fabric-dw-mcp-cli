@@ -32,7 +32,9 @@ from fabric_dw.models import ColumnSpec, CopyIntoResult
 from fabric_dw.services import tables as _tables_svc
 from fabric_dw.services.load import (
     CopyIntoCsvOptions,
+    IfExistsPolicy,
     copy_into_from_url,
+    create_and_load,
     infer_file_format,
     load_local_file,
 )
@@ -652,9 +654,64 @@ def _resolve_url_file_type(fmt: str | None, url: str) -> str:
     default=None,
     help="URL for rejected-row output.",
 )
+# ── Create-and-load options ──────────────────────────────────────────────────
+@click.option(
+    "--create/--no-create",
+    "create",
+    default=False,
+    help=(
+        "Auto-create the target table from the source schema before loading. "
+        "Only supported for local files (--file). "
+        "Requires pyarrow."
+    ),
+)
+@click.option(
+    "--if-exists",
+    "if_exists",
+    type=click.Choice(["fail", "append", "truncate", "replace"], case_sensitive=False),
+    default=None,
+    help=(
+        "What to do when the target table already exists. "
+        "Default: 'fail' with --create; 'append' without --create. "
+        "'truncate' and 'replace' are destructive and require confirmation."
+    ),
+)
+@click.option(
+    "--all-varchar",
+    "all_varchar",
+    is_flag=True,
+    default=False,
+    help="(--create, CSV) Force all columns to VARCHAR; skip type inference.",
+)
+@click.option(
+    "--varchar-length",
+    "varchar_length",
+    default=8000,
+    show_default=True,
+    type=click.IntRange(1, 8000),
+    help="(--create) Default VARCHAR/VARBINARY length for inferred columns.",
+)
+@click.option(
+    "--sample-rows",
+    "sample_rows",
+    default=1000,
+    show_default=True,
+    type=click.IntRange(1, 100_000),
+    help="(--create, CSV) Maximum rows to sample for type inference.",
+)
+@click.option(
+    "--cleanup-on-failure",
+    "cleanup_on_failure",
+    is_flag=True,
+    default=False,
+    help=(
+        "Drop the table if WE created it and the subsequent load fails. "
+        "Never drops a pre-existing table."
+    ),
+)
 @click.pass_obj
 @coro
-async def load_cmd(
+async def load_cmd(  # noqa: PLR0912
     ctx: CliContext,
     workspace: str | None,
     item: str | None,
@@ -674,6 +731,12 @@ async def load_cmd(
     keep_staging: bool,
     max_errors: int | None,
     rejected_row_location: str | None,
+    create: bool,
+    if_exists: str | None,
+    all_varchar: bool,
+    varchar_length: int,
+    sample_rows: int,
+    cleanup_on_failure: bool,
 ) -> None:
     """Load data into QUALIFIED_NAME (schema.table) on ITEM in WORKSPACE via COPY INTO.
 
@@ -685,9 +748,21 @@ async def load_cmd(
     JSON files are converted to Parquet client-side before staging.
 
     \b
+    With --create, the target table is auto-created from the source schema
+    before loading (local files only, requires pyarrow).
+    Use --if-exists to control behaviour when the table already exists:
+      fail      Error if table exists (default with --create).
+      append    Load into existing table without modifying it.
+      truncate  TRUNCATE the existing table, then load.  [DESTRUCTIVE]
+      replace   DROP + recreate from inferred schema, then load.  [DESTRUCTIVE]
+
+    \b
     Examples:
       fabric-dw tables load myws mywarehouse dbo.sales --file data.csv
       fabric-dw tables load myws mywarehouse dbo.sales --url https://... --format parquet
+      fabric-dw tables load myws mywarehouse dbo.sales --file data.parquet --create
+      fabric-dw tables load myws mywarehouse dbo.sales \
+          --file data.csv --create --if-exists replace -y
     """
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, item)
@@ -697,6 +772,46 @@ async def load_cmd(
         raise click.UsageError("Provide either --file or --url, not both.")
     if not file_path and not url:
         raise click.UsageError("Provide --file (local path) or --url (remote URL).")
+
+    # --create is only supported for local files.
+    if create and url:
+        raise click.UsageError("--create is only supported for local files (--file).")
+
+    # --all-varchar / --sample-rows only make sense with --create.
+    if all_varchar and not create:
+        raise click.UsageError("--all-varchar requires --create.")
+    # sample_rows != default only matters with --create; silently ignore otherwise.
+    if sample_rows != 1000 and not create:  # noqa: PLR2004
+        pass  # silently ignore — it only takes effect with --create
+
+    # Resolve --if-exists default.
+    effective_if_exists: IfExistsPolicy
+    if if_exists is not None:
+        effective_if_exists = cast("IfExistsPolicy", if_exists)
+    elif create:
+        effective_if_exists = "fail"
+    else:
+        effective_if_exists = "append"
+
+    # truncate/replace are only meaningful on the --create path (local files).
+    # For --url there is no schema to infer, and for --file without --create the
+    # destructive policies are undefined.  Reject early with a clear message.
+    if effective_if_exists in ("truncate", "replace") and not create:
+        raise click.UsageError(
+            f"--if-exists {effective_if_exists} requires --create "
+            "(destructive policies only apply to the auto-create load path)."
+        )
+
+    # Destructive confirmation for truncate / replace.
+    is_destructive = effective_if_exists in ("truncate", "replace")
+    if is_destructive:
+        action = "TRUNCATE" if effective_if_exists == "truncate" else "DROP+recreate"
+        if not confirm_destructive(
+            f"{action} table [{schema}].[{table_name}] before loading?",
+            yes=ctx.yes,
+        ):
+            click.echo("Aborted.")
+            return
 
     csv_kw = {
         "has_header": has_header,
@@ -718,22 +833,45 @@ async def load_cmd(
             )
 
             if file_path:
-                result = await _load_cmd_local(
-                    ctx,
-                    http,
-                    ws_id,
-                    sql_target,
-                    entry,
-                    schema,
-                    table_name,
-                    file_path,
-                    fmt,
-                    csv_kw,
-                    staging_lakehouse_name,
-                    keep_staging,
-                    max_errors,
-                    rejected_row_location,
-                )
+                if create:
+                    result = await _load_cmd_create_and_load(
+                        ctx,
+                        http,
+                        ws_id,
+                        sql_target,
+                        entry,
+                        schema,
+                        table_name,
+                        file_path,
+                        fmt,
+                        csv_kw,
+                        staging_lakehouse_name,
+                        keep_staging,
+                        max_errors,
+                        rejected_row_location,
+                        effective_if_exists,
+                        all_varchar,
+                        varchar_length,
+                        sample_rows,
+                        cleanup_on_failure,
+                    )
+                else:
+                    result = await _load_cmd_local(
+                        ctx,
+                        http,
+                        ws_id,
+                        sql_target,
+                        entry,
+                        schema,
+                        table_name,
+                        file_path,
+                        fmt,
+                        csv_kw,
+                        staging_lakehouse_name,
+                        keep_staging,
+                        max_errors,
+                        rejected_row_location,
+                    )
             else:
                 assert url is not None  # noqa: S101 — checked above
                 result = await _load_cmd_url(
@@ -821,6 +959,86 @@ async def _load_cmd_local(
         rejected_row_location=rejected_row_location,
         kind=entry.kind,
         mode=ctx.auth,
+    )
+
+
+async def _load_cmd_create_and_load(
+    ctx: CliContext,
+    http: FabricHttpClient,
+    ws_id: UUID,
+    sql_target: SqlTarget,
+    entry: ItemEntry,
+    schema: str,
+    table_name: str,
+    file_path: str,
+    fmt: str | None,
+    csv_kw: Mapping[str, object],
+    staging_lakehouse_name: str | None,
+    keep_staging: bool,
+    max_errors: int | None,
+    rejected_row_location: str | None,
+    if_exists: IfExistsPolicy,
+    all_varchar: bool,
+    varchar_length: int,
+    sample_rows: int,
+    cleanup_on_failure: bool,
+) -> CopyIntoResult:
+    """Dispatch the create-and-load sub-path (--create)."""
+    from fabric_dw import auth as _auth  # noqa: PLC0415
+    from fabric_dw.services.load import FileFormat  # noqa: PLC0415
+
+    local = Path(file_path)
+    if not local.exists():
+        raise click.UsageError(f"File not found: {file_path}")
+
+    try:
+        raw_format = fmt or infer_file_format(local)
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+
+    file_format: FileFormat = cast("FileFormat", raw_format)
+
+    # Build CSV load options (for the COPY INTO step).
+    csv_options = (
+        _make_csv_options(
+            has_header=bool(csv_kw.get("has_header", True)),
+            delimiter=cast("str | None", csv_kw.get("delimiter") or None),
+            encoding=cast("str | None", csv_kw.get("encoding") or None),
+            field_quote=cast("str | None", csv_kw.get("field_quote") or None),
+            row_terminator=cast("str | None", csv_kw.get("row_terminator") or None),
+        )
+        if file_format == "csv"
+        else None
+    )
+
+    # CSV delimiter for schema inference (from csv_kw or default).
+    infer_delimiter = cast("str", csv_kw.get("delimiter") or ",")
+    infer_encoding = cast("str", csv_kw.get("encoding") or "utf-8-sig")
+
+    credential = _auth.get_credential(ctx.auth)
+    return await create_and_load(
+        http,
+        credential,
+        ws_id,
+        sql_target,
+        schema,
+        table_name,
+        local,
+        if_exists=if_exists,
+        file_format=file_format,
+        staging_lakehouse_name=staging_lakehouse_name,
+        keep_staging=keep_staging,
+        csv_options=csv_options,
+        max_errors=max_errors,
+        rejected_row_location=rejected_row_location,
+        kind=entry.kind,
+        mode=ctx.auth,
+        cleanup_on_failure=cleanup_on_failure,
+        all_varchar=all_varchar,
+        varchar_length=varchar_length,
+        sample_rows=sample_rows,
+        csv_delimiter=infer_delimiter,
+        csv_encoding=infer_encoding,
     )
 
 
