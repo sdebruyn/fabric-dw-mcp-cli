@@ -1136,3 +1136,291 @@ def test_first_run_notice_marker_written_after_print(
     assert captured.err != "", "Notice must be printed to stderr"
     # Marker file must exist after a successful print (written *after* print = A3).
     assert marker_file.exists(), "Marker file must exist after notice is printed"
+
+
+# ---------------------------------------------------------------------------
+# #366: decode_tid_from_token — JWT payload tid claim extraction
+# ---------------------------------------------------------------------------
+
+
+def _make_jwt(payload_dict: dict[str, object]) -> str:
+    """Construct a minimal JWT-shaped string with the given payload dict.
+
+    The header and signature are fake — only the payload segment is real.
+    """
+    import base64  # noqa: PLC0415
+    import json  # noqa: PLC0415
+
+    header = base64.urlsafe_b64encode(b'{"alg":"RS256","typ":"JWT"}').rstrip(b"=").decode()
+    payload_bytes = json.dumps(payload_dict).encode()
+    payload = base64.urlsafe_b64encode(payload_bytes).rstrip(b"=").decode()
+    signature = "fakesig"
+    return f"{header}.{payload}.{signature}"
+
+
+def test_decode_tid_returns_tid_from_valid_jwt() -> None:
+    """decode_tid_from_token returns the tid claim from a well-formed JWT payload."""
+    import importlib  # noqa: PLC0415
+
+    mod = importlib.import_module("fabric_dw.telemetry")
+    tenant = "aaaabbbb-1234-5678-abcd-000011112222"
+    token = _make_jwt(
+        {"tid": tenant, "oid": "some-oid", "iss": "https://login.microsoftonline.com/"}
+    )
+    result = mod.decode_tid_from_token(token)  # type: ignore[attr-defined]
+    assert result == tenant
+
+
+def test_decode_tid_returns_none_when_tid_missing() -> None:
+    """decode_tid_from_token returns None when the JWT payload has no tid claim."""
+    import importlib  # noqa: PLC0415
+
+    mod = importlib.import_module("fabric_dw.telemetry")
+    token = _make_jwt({"oid": "some-oid", "iss": "https://login.microsoftonline.com/"})
+    result = mod.decode_tid_from_token(token)  # type: ignore[attr-defined]
+    assert result is None
+
+
+def test_decode_tid_returns_none_for_malformed_token() -> None:
+    """decode_tid_from_token returns None (no exception) for garbage input."""
+    import importlib  # noqa: PLC0415
+
+    mod = importlib.import_module("fabric_dw.telemetry")
+    for bad_token in [
+        "",
+        "notajwt",
+        "only.two",
+        "too.many.parts.here.five",
+        "header.!!invalid_base64!!.sig",
+        "a.eyJub3RqExon.c",  # valid base64 but JSON parse fails (example)
+    ]:
+        result = mod.decode_tid_from_token(bad_token)  # type: ignore[attr-defined]
+        assert result is None, f"Expected None for {bad_token!r}, got {result!r}"
+
+
+def test_decode_tid_handles_missing_padding() -> None:
+    """decode_tid_from_token correctly handles base64url payloads with stripped padding."""
+    import base64  # noqa: PLC0415
+    import importlib  # noqa: PLC0415
+    import json  # noqa: PLC0415
+
+    mod = importlib.import_module("fabric_dw.telemetry")
+    tenant = "ccccdddd-1234-5678-efgh-000011112222"
+    # Build a payload whose base64url length mod 4 != 0 (i.e. needs padding)
+    payload_bytes = json.dumps({"tid": tenant}).encode()
+    payload_b64 = base64.urlsafe_b64encode(payload_bytes).rstrip(b"=").decode()
+    # Confirm there is actually missing padding in this fixture
+    assert len(payload_b64) % 4 != 0, "Fixture must have unpadded base64"
+    token = f"header.{payload_b64}.sig"
+    result = mod.decode_tid_from_token(token)  # type: ignore[attr-defined]
+    assert result == tenant
+
+
+def test_decode_tid_returns_none_for_non_string_tid() -> None:
+    """decode_tid_from_token returns None when tid is not a string (e.g. an int)."""
+    import importlib  # noqa: PLC0415
+
+    mod = importlib.import_module("fabric_dw.telemetry")
+    token = _make_jwt({"tid": 12345})
+    result = mod.decode_tid_from_token(token)  # type: ignore[attr-defined]
+    assert result is None
+
+
+def test_decode_tid_returns_none_for_empty_string_tid() -> None:
+    """decode_tid_from_token returns None when tid is an empty string."""
+    import importlib  # noqa: PLC0415
+
+    mod = importlib.import_module("fabric_dw.telemetry")
+    token = _make_jwt({"tid": ""})
+    result = mod.decode_tid_from_token(token)  # type: ignore[attr-defined]
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# #366: cache_tenant_id_from_token — integration with telemetry_enabled guard
+# ---------------------------------------------------------------------------
+
+
+def test_cache_tenant_id_sets_override_when_enabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """cache_tenant_id_from_token sets _tenant_id_override when telemetry is on."""
+    for var in [
+        "FABRIC_TELEMETRY",
+        "FABRIC_DISABLE_TELEMETRY",
+        "DO_NOT_TRACK",
+        "CI",
+        "GITHUB_ACTIONS",
+        "JENKINS_URL",
+        "TRAVIS",
+        "CIRCLECI",
+        "GITLAB_CI",
+        "TF_BUILD",
+    ]:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    mod = _reload_telemetry()
+    tenant = "aaaabbbb-0000-1111-2222-333344445555"
+    token = _make_jwt({"tid": tenant})
+
+    mod.cache_tenant_id_from_token(token)  # type: ignore[attr-defined]
+    assert mod._tenant_id_override == tenant  # type: ignore[attr-defined]
+
+
+def test_cache_tenant_id_does_not_decode_when_telemetry_disabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """cache_tenant_id_from_token is a no-op (no decode) when telemetry is disabled."""
+    monkeypatch.setenv("FABRIC_DISABLE_TELEMETRY", "1")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    mod = _reload_telemetry()
+    tenant = "aaaabbbb-0000-1111-2222-333344445555"
+    token = _make_jwt({"tid": tenant})
+
+    # Track whether decode_tid_from_token is called
+    decode_calls: list[str] = []
+    original_decode = mod.decode_tid_from_token  # type: ignore[attr-defined]
+
+    def spy_decode(t: str) -> str | None:
+        decode_calls.append(t)
+        return original_decode(t)
+
+    with patch.object(mod, "decode_tid_from_token", side_effect=spy_decode):  # type: ignore[attr-defined]
+        mod.cache_tenant_id_from_token(token)  # type: ignore[attr-defined]
+
+    assert decode_calls == [], "decode_tid_from_token must not be called when telemetry is disabled"
+    assert mod._tenant_id_override is None  # type: ignore[attr-defined]
+
+
+def test_cache_tenant_id_is_idempotent_skips_decode_when_override_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """cache_tenant_id_from_token skips decode when _tenant_id_override is already set."""
+    for var in [
+        "FABRIC_TELEMETRY",
+        "FABRIC_DISABLE_TELEMETRY",
+        "DO_NOT_TRACK",
+        "CI",
+        "GITHUB_ACTIONS",
+        "JENKINS_URL",
+        "TRAVIS",
+        "CIRCLECI",
+        "GITLAB_CI",
+        "TF_BUILD",
+    ]:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    mod = _reload_telemetry()
+    existing_tenant = "existing-tenant-id"
+    mod._tenant_id_override = existing_tenant  # type: ignore[attr-defined]
+
+    decode_calls: list[str] = []
+    original_decode = mod.decode_tid_from_token  # type: ignore[attr-defined]
+
+    def spy_decode(t: str) -> str | None:
+        decode_calls.append(t)
+        return original_decode(t)
+
+    new_token = _make_jwt({"tid": "new-tenant-should-not-override"})
+    with patch.object(mod, "decode_tid_from_token", side_effect=spy_decode):  # type: ignore[attr-defined]
+        mod.cache_tenant_id_from_token(new_token)  # type: ignore[attr-defined]
+
+    assert decode_calls == [], "decode must be skipped when override is already set"
+    assert mod._tenant_id_override == existing_tenant  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# #366: env-var fallback precedence in _build_envelope
+# ---------------------------------------------------------------------------
+
+
+def test_envelope_uses_token_tid_over_env_var(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The decoded tid from a token takes precedence over AZURE_TENANT_ID env var.
+
+    This tests that _tenant_id_override (set via cache_tenant_id_from_token)
+    wins over the env-var fallback in _build_envelope.
+    """
+    for var in [
+        "FABRIC_TELEMETRY",
+        "FABRIC_DISABLE_TELEMETRY",
+        "DO_NOT_TRACK",
+        "CI",
+        "GITHUB_ACTIONS",
+        "JENKINS_URL",
+        "TRAVIS",
+        "CIRCLECI",
+        "GITLAB_CI",
+        "TF_BUILD",
+    ]:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("AZURE_TENANT_ID", "env-var-tenant-id")
+
+    mod = _reload_telemetry()
+    tid_value = "token-tenant-id-from-tid-claim"
+    mod._tenant_id_override = tid_value  # type: ignore[attr-defined]
+
+    envelope = mod._build_envelope("cli")  # type: ignore[attr-defined]
+    assert envelope.get("tenant_id") == tid_value
+
+
+def test_envelope_falls_back_to_azure_tenant_id_env_when_no_override(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """_build_envelope falls back to AZURE_TENANT_ID when no token override is set."""
+    for var in [
+        "FABRIC_TELEMETRY",
+        "FABRIC_DISABLE_TELEMETRY",
+        "DO_NOT_TRACK",
+        "CI",
+        "GITHUB_ACTIONS",
+        "JENKINS_URL",
+        "TRAVIS",
+        "CIRCLECI",
+        "GITLAB_CI",
+        "TF_BUILD",
+        "FABRIC_INTERACTIVE_TENANT_ID",
+    ]:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("AZURE_TENANT_ID", "fallback-env-tenant")
+
+    mod = _reload_telemetry()
+    # Ensure no override is set
+    mod._tenant_id_override = None  # type: ignore[attr-defined]
+
+    envelope = mod._build_envelope("cli")  # type: ignore[attr-defined]
+    assert envelope.get("tenant_id") == "fallback-env-tenant"
+
+
+def test_envelope_omits_tenant_id_when_no_source(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """_build_envelope omits tenant_id when neither override nor env vars are set."""
+    for var in [
+        "FABRIC_TELEMETRY",
+        "FABRIC_DISABLE_TELEMETRY",
+        "DO_NOT_TRACK",
+        "CI",
+        "GITHUB_ACTIONS",
+        "JENKINS_URL",
+        "TRAVIS",
+        "CIRCLECI",
+        "GITLAB_CI",
+        "TF_BUILD",
+        "AZURE_TENANT_ID",
+        "FABRIC_INTERACTIVE_TENANT_ID",
+    ]:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    mod = _reload_telemetry()
+    mod._tenant_id_override = None  # type: ignore[attr-defined]
+
+    envelope = mod._build_envelope("cli")  # type: ignore[attr-defined]
+    assert "tenant_id" not in envelope

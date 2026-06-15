@@ -38,6 +38,8 @@ import uuid
 from pathlib import Path
 
 __all__ = [
+    "cache_tenant_id_from_token",
+    "decode_tid_from_token",
     "emit_event",
     "flush_telemetry",
     "maybe_print_first_run_notice",
@@ -517,13 +519,73 @@ def maybe_print_first_run_notice() -> None:
 def set_tenant_id(tenant_id: str) -> None:
     """Store the tenant ID so the envelope reads it at runtime.
 
-    Follow-up #366 decodes the ``tid`` claim from the access token and calls
-    this function to propagate the value into every subsequent event envelope.
-    Until #366 lands the envelope falls back to the ``AZURE_TENANT_ID`` and
-    ``FABRIC_INTERACTIVE_TENANT_ID`` environment variables.
+    The ``tid`` claim decoded from an access token by :func:`decode_tid_from_token`
+    is propagated here so every subsequent event envelope carries the tenant.
+    Env-var fallback (``AZURE_TENANT_ID`` / ``FABRIC_INTERACTIVE_TENANT_ID``) is
+    used by :func:`_build_envelope` when this override has not been set.
 
     Args:
         tenant_id: The tenant UUID string extracted from the access token.
     """
     global _tenant_id_override  # noqa: PLW0603
     _tenant_id_override = tenant_id
+
+
+def decode_tid_from_token(token: str) -> str | None:
+    """Decode the ``tid`` claim from a JWT access token without verification.
+
+    Only the payload segment (the middle of three base64url-encoded parts) is
+    decoded — no signature verification, no network call, no new dependency.
+
+    The function is entirely fail-safe: any malformed, missing, or garbage
+    token returns ``None`` and never raises.
+
+    Args:
+        token: A JWT string in the form ``header.payload.signature``.
+
+    Returns:
+        The ``tid`` claim value as a string, or ``None`` if it cannot be read.
+    """
+    import base64  # noqa: PLC0415 (stdlib, always available)
+    import json  # noqa: PLC0415
+
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:  # noqa: PLR2004
+            return None
+
+        payload_b64 = parts[1]
+        # base64url requires padding to a multiple of 4.
+        padding = (4 - len(payload_b64) % 4) % 4
+        payload_bytes = base64.b64decode(payload_b64 + "=" * padding, validate=False)
+        claims = json.loads(payload_bytes)
+        tid = claims.get("tid")
+        return str(tid) if isinstance(tid, str) and tid else None
+    except Exception:
+        return None
+
+
+def cache_tenant_id_from_token(token: str) -> None:
+    """Decode ``tid`` from *token* and cache it via :func:`set_tenant_id`.
+
+    A no-op when:
+    - Telemetry is disabled (avoids any decode work on opt-out paths).
+    - The tenant ID override is already set (idempotent — avoids redundant work
+      on subsequent token refreshes within the same session).
+    - The ``tid`` claim cannot be decoded from *token*.
+
+    Call this once after acquiring any access token.  Thread-safe for
+    concurrent callers on the asyncio event loop (the assignment to
+    ``_tenant_id_override`` is atomic on CPython).
+
+    Args:
+        token: The raw JWT access-token string returned by
+            ``credential.get_token(...).token``.
+    """
+    if not telemetry_enabled():
+        return
+    if _tenant_id_override is not None:
+        return
+    tid = decode_tid_from_token(token)
+    if tid is not None:
+        set_tenant_id(tid)
