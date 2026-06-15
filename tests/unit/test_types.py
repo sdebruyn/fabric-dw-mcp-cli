@@ -27,7 +27,16 @@ class TestValidateTsqlType:
         assert validate_tsql_type("VARBINARY(8000)") == "VARBINARY(8000)"
         assert validate_tsql_type("DATETIME2(7)") == "DATETIME2(7)"
         assert validate_tsql_type("TIME(7)") == "TIME(7)"
-        assert validate_tsql_type("NVARCHAR(100)") == "NVARCHAR(100)"
+
+    def test_nvarchar_rejected(self) -> None:
+        """Fabric DW does not support nvarchar; it must be rejected by the allowlist."""
+        with pytest.raises(ValueError, match="Unsupported or unsafe"):
+            validate_tsql_type("NVARCHAR(100)")
+
+    def test_nchar_rejected(self) -> None:
+        """Fabric DW does not support nchar; it must be rejected by the allowlist."""
+        with pytest.raises(ValueError, match="Unsupported or unsafe"):
+            validate_tsql_type("NCHAR(10)")
 
     def test_injection_rejected(self) -> None:
         with pytest.raises(ValueError, match="Unsupported or unsafe"):

@@ -36,7 +36,7 @@ _TSQL_ALLOWLIST_RE = re.compile(
         | BIT
         | DECIMAL | NUMERIC
         | DATE | DATETIME2 | TIME | DATETIMEOFFSET
-        | VARCHAR | NVARCHAR | CHAR | NCHAR
+        | VARCHAR | CHAR
         | VARBINARY
         | UNIQUEIDENTIFIER
     )
@@ -166,7 +166,7 @@ def arrow_type_to_tsql(
         arrow_type: The Arrow data type from a Parquet field or CSV-inferred schema.
         field_name: The column name — used only in error messages so the caller
             can identify which column triggered the error.
-        varchar_length: Default length for ``VARCHAR``/``NVARCHAR`` / ``VARBINARY``
+        varchar_length: Default length for ``VARCHAR`` / ``VARBINARY``
             columns when the type carries no length information.  Defaults to 8000
             (Fabric DW maximum for non-MAX varchar).
 
