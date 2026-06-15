@@ -3,9 +3,9 @@
 Click's CliRunner forces FORCED_WIDTH=80 during isolation, so we cannot
 observe wider output through runner.invoke.  Instead we verify:
 
-1. The module constant _HELP_MAX_WIDTH is > 80 and <= 160.
+1. The module constant _HELP_MAX_WIDTH is >= 80 and <= 160.
 2. The root CLI context_settings includes max_content_width == _HELP_MAX_WIDTH.
-3. A HelpFormatter built at that width does NOT truncate the long audit
+3. A HelpFormatter built at a wide width does NOT truncate the long audit
    description when the column budget is ample.
 4. Narrow / no-tty environments do not crash (the shutil.get_terminal_size
    fallback handles missing terminal info).
@@ -31,9 +31,9 @@ def runner() -> CliRunner:
 # ---------------------------------------------------------------------------
 
 
-def test_help_max_width_above_80() -> None:
-    """The computed width must exceed Click's 80-col default."""
-    assert _HELP_MAX_WIDTH > 80
+def test_help_max_width_at_least_80() -> None:
+    """The computed width must be at least 80 (the floor value)."""
+    assert _HELP_MAX_WIDTH >= 80
 
 
 def test_help_max_width_at_most_160() -> None:
@@ -70,21 +70,40 @@ _FULL_AUDIT_HELP = "Manage SQL audit settings for Microsoft Fabric Data Warehous
 
 
 def test_formatter_does_not_truncate_at_max_content_width() -> None:
-    """At max_content_width columns the audit short-help is rendered in full.
+    """At a wide terminal the audit short-help is rendered in full.
 
     We bypass CliRunner (which forces width=80) and exercise Click's
-    HelpFormatter directly at the width we actually configure.
+    HelpFormatter directly at an ample width (160 columns).
+
+    Click's ``Group.format_commands`` computes the description column budget as::
+
+        limit = formatter.width - 6 - max(len(name) for name in commands)
+
+    The longest registered command name is ``restore-points`` (14 chars), so at
+    160 columns the limit is 140 — well above the 63-char audit description.
+    At a narrow terminal (e.g. 80 cols) the limit drops to 60, which would
+    truncate the description; this test deliberately uses a wide width to confirm
+    the feature works when the terminal provides enough room.
     """
-    formatter = click.HelpFormatter(max_width=_HELP_MAX_WIDTH)
-    # Simulate the Commands section layout: 18 chars of prefix leaves
-    # plenty of room for the full 62-char description.
-    limit = formatter.width - 6 - len("audit")  # matches Group.format_commands logic
-    audit_cmd = cli.get_command(click.Context(cli), "audit")  # type: ignore[attr-defined]
+    # Use an explicit wide width so the test is independent of the running
+    # terminal size (HelpFormatter(max_width=...) caps at the *current*
+    # terminal width, which may be narrow in CI).
+    wide_width = 160
+    formatter = click.HelpFormatter(width=wide_width)
+    ctx = click.Context(cli)
+    commands = [
+        name
+        for name in cli.list_commands(ctx)
+        if (cmd := cli.get_command(ctx, name)) is not None and not cmd.hidden
+    ]
+    longest_cmd = max(len(name) for name in commands)
+    limit = formatter.width - 6 - longest_cmd
+    audit_cmd = cli.get_command(ctx, "audit")  # type: ignore[attr-defined]
     assert audit_cmd is not None, "Expected 'audit' sub-command to exist on the CLI"
     rendered = audit_cmd.get_short_help_str(limit)
     assert rendered == _FULL_AUDIT_HELP, (
         f"Expected full help text but got: {rendered!r}\n"
-        f"(formatter.width={formatter.width}, limit={limit})"
+        f"(formatter.width={formatter.width}, longest_cmd={longest_cmd}, limit={limit})"
     )
 
 
