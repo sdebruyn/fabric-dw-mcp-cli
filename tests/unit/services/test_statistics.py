@@ -304,6 +304,9 @@ class TestShowStatistics:
         ([stat_name]) in the second argument — that causes 'Could not locate
         statistics'.  Both arguments must be single-quoted string literals, as
         shown in the official Fabric DW documentation examples.
+
+        All three DBCC variants (STAT_HEADER, DENSITY_VECTOR, HISTOGRAM) are
+        asserted so that a regression in any individual template is caught.
         """
         target = _make_target()
         header_conn = _make_conn([_HEADER_ROW], _HEADER_COLS)
@@ -314,11 +317,21 @@ class TestShowStatistics:
             side_effect=[header_conn, density_conn, hist_conn],
         ):
             await statistics.show_statistics(target, "dbo.sales", "stat_sales_id")
-        call_sql: str = header_conn.cursor.return_value.execute.call_args[0][0]
-        # Stat name must be a string literal, not a bracket-quoted identifier.
-        assert "'stat_sales_id'" in call_sql
-        # Regression: must NOT have bracket-quoted stat name (the #403 bug).
-        assert "[stat_sales_id]" not in call_sql
+        # All three DBCC templates must embed the stat name as a string literal.
+        for label, conn in [
+            ("STAT_HEADER", header_conn),
+            ("DENSITY_VECTOR", density_conn),
+            ("HISTOGRAM", hist_conn),
+        ]:
+            call_sql: str = conn.cursor.return_value.execute.call_args[0][0]
+            # Stat name must be a string literal, not a bracket-quoted identifier.
+            assert "'stat_sales_id'" in call_sql, (
+                f"{label}: expected single-quoted stat name in SQL, got: {call_sql!r}"
+            )
+            # Regression: must NOT have bracket-quoted stat name (the #403 bug).
+            assert "[stat_sales_id]" not in call_sql, (
+                f"{label}: bracket-quoted stat name found in SQL (regression): {call_sql!r}"
+            )
 
     async def test_raises_not_found_when_header_empty(self) -> None:
         target = _make_target()

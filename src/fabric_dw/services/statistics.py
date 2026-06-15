@@ -133,9 +133,11 @@ ORDER BY s.name, t.name, st.name;
 # Both schema, table, and stat_name are validated via validate_identifier
 # (allowlist [A-Za-z_][A-Za-z0-9_]*) before embedding, so none can contain
 # a single-quote — no escaping is required.
-_DBCC_STAT_HEADER_SQL = "DBCC SHOW_STATISTICS ('{table_s}', '{stat_s}') WITH STAT_HEADER;"
-_DBCC_DENSITY_SQL = "DBCC SHOW_STATISTICS ('{table_s}', '{stat_s}') WITH DENSITY_VECTOR;"
-_DBCC_HISTOGRAM_SQL = "DBCC SHOW_STATISTICS ('{table_s}', '{stat_s}') WITH HISTOGRAM;"
+# The format key {stat_literal} is intentionally named to signal that the
+# stat name is embedded as a string literal (not a bracket-quoted identifier).
+_DBCC_STAT_HEADER_SQL = "DBCC SHOW_STATISTICS ('{table_s}', '{stat_literal}') WITH STAT_HEADER;"
+_DBCC_DENSITY_SQL = "DBCC SHOW_STATISTICS ('{table_s}', '{stat_literal}') WITH DENSITY_VECTOR;"
+_DBCC_HISTOGRAM_SQL = "DBCC SHOW_STATISTICS ('{table_s}', '{stat_literal}') WITH HISTOGRAM;"
 
 # CREATE STATISTICS: identifiers are bracket-quoted; FULLSCAN/SAMPLE are keywords.
 _CREATE_STAT_FULLSCAN_SQL = "CREATE STATISTICS {stat_q} ON {table_q} ({col_q}) WITH FULLSCAN;"
@@ -423,11 +425,11 @@ async def show_statistics(
     # [A-Za-z_][A-Za-z0-9_]*), so none can contain single-quotes — no escaping
     # is required.
     table_s = f"{schema}.{table}"
-    stat_s = stat_name  # already validated; used as a single-quoted string literal
+    stat_literal = stat_name  # already validated; embedded as a single-quoted string literal
 
-    header_sql = _DBCC_STAT_HEADER_SQL.format(table_s=table_s, stat_s=stat_s)
-    density_sql = _DBCC_DENSITY_SQL.format(table_s=table_s, stat_s=stat_s)
-    histogram_sql = _DBCC_HISTOGRAM_SQL.format(table_s=table_s, stat_s=stat_s)
+    header_sql = _DBCC_STAT_HEADER_SQL.format(table_s=table_s, stat_literal=stat_literal)
+    density_sql = _DBCC_DENSITY_SQL.format(table_s=table_s, stat_literal=stat_literal)
+    histogram_sql = _DBCC_HISTOGRAM_SQL.format(table_s=table_s, stat_literal=stat_literal)
 
     def _run() -> StatisticDetails:
         if histogram_only:
