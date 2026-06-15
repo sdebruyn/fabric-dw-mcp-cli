@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from collections.abc import Mapping
@@ -943,23 +944,37 @@ async def _load_cmd_local(
         else None
     )
     credential = _auth.get_credential(ctx.auth)
-    return await load_local_file(
-        http,
-        credential,
-        ws_id,
-        sql_target,
-        schema,
-        table_name,
-        local,
-        file_format=file_format,
-        staging_lakehouse_name=staging_lakehouse_name,
-        keep_staging=keep_staging,
-        csv_options=csv_options,
-        max_errors=max_errors,
-        rejected_row_location=rejected_row_location,
-        kind=entry.kind,
-        mode=ctx.auth,
-    )
+    try:
+        return await load_local_file(
+            http,
+            credential,
+            ws_id,
+            sql_target,
+            schema,
+            table_name,
+            local,
+            file_format=file_format,
+            staging_lakehouse_name=staging_lakehouse_name,
+            keep_staging=keep_staging,
+            csv_options=csv_options,
+            max_errors=max_errors,
+            rejected_row_location=rejected_row_location,
+            kind=entry.kind,
+            mode=ctx.auth,
+        )
+    finally:
+        # Close the storage-scope credential to release its internal aiohttp
+        # session (azure.identity.aio credentials hold one).  Mirror the same
+        # robust pattern used in FabricHttpClient.__aexit__: call close(),
+        # await if it returns a coroutine, suppress any teardown error.
+        _close = getattr(credential, "close", None)
+        if callable(_close):
+            try:
+                result = _close()
+                if asyncio.iscoroutine(result):
+                    await result
+            except Exception:  # noqa: S110
+                pass
 
 
 async def _load_cmd_create_and_load(

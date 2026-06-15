@@ -28,12 +28,14 @@ a 409 Conflict.  LRO status polling (GET) is covered by the safe retry path.
 
 Credential ownership
 ~~~~~~~~~~~~~~~~~~~~
-``FabricHttpClient`` closes the credential on ``__aexit__`` when the credential
-exposes an async ``close`` coroutine (as ``azure.identity.aio`` credentials do).
-The close is idempotent, never raises (errors are suppressed so teardown does not
-abort the command), and is awaited before the event loop shuts down.  Credentials
-that do not expose an async ``close`` (e.g. plain ``AsyncTokenCredential``
-protocol implementations without a close method) are left unclosed — callers are
+``FabricHttpClient`` calls ``credential.close()`` on ``__aexit__`` whenever the
+credential exposes a callable ``close`` attribute.  If ``close()`` returns a
+coroutine (as ``azure.identity.aio`` credentials do — they hold an internal
+``aiohttp.ClientSession``), the result is awaited; bare sync ``close()`` methods
+are called without awaiting.  The close is guarded against teardown failures
+(errors are suppressed so a broken credential teardown never aborts the CLI
+command).  Credentials that do not expose a ``close`` attribute at all (e.g. plain
+``AsyncTokenCredential`` protocol implementations) are left unclosed — callers are
 responsible for their lifecycle in that case.
 """
 
@@ -224,11 +226,13 @@ class FabricHttpClient:
 
     Credential ownership
     ~~~~~~~~~~~~~~~~~~~~
-    ``FabricHttpClient`` closes the credential in ``__aexit__`` when the credential
-    exposes an async ``close`` coroutine method (as all ``azure.identity.aio``
-    credentials do).  The close is guarded — a missing or non-awaitable ``close``
-    attribute is silently ignored, and any exception raised by ``close()`` is
-    suppressed so that teardown never aborts the command.
+    ``FabricHttpClient`` calls ``credential.close()`` in ``__aexit__`` whenever the
+    credential exposes a callable ``close`` attribute.  If the return value is a
+    coroutine (as ``azure.identity.aio`` credentials return — they hold an internal
+    ``aiohttp.ClientSession``), it is awaited; bare sync ``close()`` methods are
+    called without awaiting.  A missing ``close`` attribute is silently ignored, and
+    any exception raised by ``close()`` is suppressed so teardown never aborts the
+    command.
 
     Retry arithmetic
     ~~~~~~~~~~~~~~~~

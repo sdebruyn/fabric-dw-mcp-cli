@@ -1729,8 +1729,10 @@ async def test_aexit_closes_credential_with_async_close() -> None:
 async def test_aexit_credential_close_called_even_on_request_exception() -> None:
     """credential.close() must be awaited in __aexit__ even when the body raises.
 
-    Ensures that an exception raised inside the ``async with`` block does not
-    short-circuit the credential teardown path in ``__aexit__``.
+    This is guaranteed by the async context manager protocol: Python always
+    calls ``__aexit__`` regardless of whether the body raises.  The test acts
+    as a regression guard to confirm the teardown path is not accidentally
+    gated on a success flag or moved inside a try/else branch.
     """
     cred = MagicMock(spec=AsyncTokenCredential)
     cred.get_token = AsyncMock(return_value=_FAKE_TOKEN)
