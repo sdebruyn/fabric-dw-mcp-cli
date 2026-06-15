@@ -313,15 +313,16 @@ async def shared_warehouse(
     name = f"pytest-{worker}-{uid}-wh"
 
     wh = await warehouses.create(_session_http, _session_workspace_id, name)
-    assert wh.connection_string, f"Warehouse {wh.id} returned no connection_string"
-
-    sql_target = SqlTarget(
-        workspace_id=str(_session_workspace_id),
-        database=wh.name,
-        connection_string=wh.connection_string,
-    )
 
     try:
+        assert wh.connection_string, f"Warehouse {wh.id} returned no connection_string"
+
+        sql_target = SqlTarget(
+            workspace_id=str(_session_workspace_id),
+            database=wh.name,
+            connection_string=wh.connection_string,
+        )
+
         # Wait for the SQL engine to accept connections before doing anything else.
         await _wait_for_sql_readiness(sql_target)
 

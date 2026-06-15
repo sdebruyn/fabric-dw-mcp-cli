@@ -69,8 +69,7 @@ async def test_list_procedures_includes_created_procedure(
         await procedures.create_procedure(sql_target, schema, proc_name, body)
 
         all_procs = await procedures.list_procedures(sql_target)
-        names = {p.name for p in all_procs}
-        assert proc_name in names
+        assert any(p.name == proc_name and p.schema_name == schema for p in all_procs)
 
         # Also verify schema filter narrows correctly
         schema_procs = await procedures.list_procedures(sql_target, schema=schema)
@@ -149,13 +148,13 @@ async def test_drop_procedure_removes_procedure(
 
     # Confirm it exists before dropping
     before = await procedures.list_procedures(sql_target)
-    assert any(p.name == proc_name for p in before)
+    assert any(p.name == proc_name and p.schema_name == schema for p in before)
 
     await procedures.drop_procedure(sql_target, schema, proc_name)
 
     # Must not appear in listing after drop
     after = await procedures.list_procedures(sql_target)
-    assert not any(p.name == proc_name for p in after)
+    assert not any(p.name == proc_name and p.schema_name == schema for p in after)
 
     # get_procedure must raise NotFoundError
     with pytest.raises(NotFoundError):
@@ -180,7 +179,7 @@ async def test_create_procedure_full_roundtrip(
 
         # --- list ---
         all_procs = await procedures.list_procedures(sql_target)
-        assert any(p.name == proc_name for p in all_procs)
+        assert any(p.name == proc_name and p.schema_name == schema for p in all_procs)
 
         # --- get (definition contains body) ---
         fetched = await procedures.get_procedure(sql_target, schema, proc_name)
