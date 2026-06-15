@@ -242,7 +242,7 @@ class TestSnapshotsRename:
         ):
             result = runner.invoke(
                 cli,
-                ["--json", "snapshots", "rename", WS_GUID, SNAP_GUID, "NewSnapshotName"],
+                ["--json", "snapshots", "rename", SNAP_GUID, "NewSnapshotName"],
             )
         assert result.exit_code == 0
         # Verify that the PATCH request body contained the NEW display name, not the old one.
