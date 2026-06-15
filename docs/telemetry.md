@@ -28,7 +28,42 @@ Every telemetry event includes a shared envelope of anonymous fields:
 | `mcp_server_started` | When the MCP server boots | — |
 | `app_exited` | On process exit | `duration_ms`, `exit_status` (ok / user_error / api_error), `error_category` |
 
-> **Note:** Per-command usage tracking (`command_invoked`) is a planned follow-up (#367) and is **not** included in this release.
+### `command_invoked` — per-command usage
+
+One `command_invoked` event is emitted after every CLI command and every MCP tool call completes (success or failure).
+
+| Field | Description |
+|---|---|
+| `name` | Command name. CLI: `<group>.<subcommand>` (e.g. `warehouses.list`). MCP: tool name (e.g. `create_table`). Never SQL text or identifiers. |
+| `domain` | Rolled-up feature area (see table below). |
+| `surface` | `cli` or `mcp`. |
+| `status` | `success`, `user_error` (validation/usage problems), or `api_error` (HTTP/driver/unexpected). |
+| `duration_ms_bucket` | Bucketed wall-clock duration: `<100ms`, `<1s`, `<10s`, or `>10s`. |
+| `destructive_op` | `true` only for permanently-destructive MCP tools (delete, clear, restore in-place). Omitted otherwise. |
+
+#### Domain rollup
+
+| Domain | CLI group(s) | Representative MCP tools |
+|---|---|---|
+| `workspaces` | `workspaces` | `list_workspaces`, `get_workspace`, `set_workspace_collation` |
+| `warehouses` | `warehouses` | `list_warehouses`, `create_warehouse`, `delete_warehouse`, … |
+| `sql_endpoints` | `sql-endpoints` | `list_sql_endpoints`, `get_sql_endpoint`, … |
+| `sql` | `sql` | `execute_sql` |
+| `tables` | `tables` | `list_tables`, `create_table`, `delete_table`, … |
+| `views` | `views` | `list_views`, `create_view`, `drop_view`, … |
+| `procedures` | `procedures` | `list_procedures`, `create_procedure`, `drop_procedure`, … |
+| `functions` | `functions` | `list_functions`, `create_function`, `drop_function`, … |
+| `schemas` | `schemas` | `list_schemas`, `create_schema`, `delete_schema` |
+| `statistics` | `statistics` | `list_statistics`, `create_statistics`, `delete_statistics` |
+| `snapshots` | `snapshots` | `list_snapshots`, `create_snapshot`, `delete_snapshot`, … |
+| `restore_points` | `restore-points` | `list_restore_points`, `create_restore_point`, `restore_warehouse_in_place`, … |
+| `audit` | `audit` | `get_audit_settings`, `enable_audit`, `disable_audit`, … |
+| `queries` | `queries` | `list_running_queries`, `kill_session`, `list_request_history`, … |
+| `sql_pools` | `sql-pools` | `list_sql_pools`, `create_sql_pool`, `delete_sql_pool`, … |
+| `dbt` | `dbt` | `generate_dbt_profile` |
+| `cache` | `cache` | `clear_cache` |
+| `config` | `config` | — |
+| `completion` | `completion` | — |
 
 ### What is deliberately NOT collected
 
