@@ -49,15 +49,25 @@ async def bounded_gather(
 
     Takes *zero-argument callables* that each return a coroutine (factories),
     rather than pre-created coroutines.  This avoids the "coroutine was never
-    awaited" warning that arises when ``asyncio.Semaphore`` queues work that
-    was already scheduled but not yet started.
+    awaited" warning that arises when a pre-created coroutine is queued but
+    not yet started.
+
+    Concurrency model
+    ~~~~~~~~~~~~~~~~~
+    All N worker Tasks are created up-front (to preserve result ordering), but
+    each task acquires a :class:`asyncio.Semaphore` before invoking its factory.
+    This means at most *concurrency* factories are executing concurrently.  The
+    semaphore bounds **in-flight factory executions**, not the number of Task
+    objects — all N tasks exist in the event loop; only *concurrency* of them
+    have passed the acquire point at any time.  For the typical workspace
+    fan-out (tens to low hundreds of items) this is sufficient.
 
     Args:
         factories: A sequence of zero-argument callables, each returning an
             awaitable.  They are started in order but may complete out of
             order; the result list is reordered to match input order.
-        concurrency: Maximum number of coroutines running simultaneously.
-            Defaults to 8.
+        concurrency: Maximum number of factory coroutines executing
+            simultaneously.  Defaults to 8.
         return_exceptions: When ``False`` (default) the first exception
             propagates immediately and cancels remaining tasks.  When
             ``True`` exceptions are caught and placed in the result list
@@ -77,6 +87,14 @@ async def bounded_gather(
 
     semaphore = asyncio.Semaphore(concurrency)
 
+    # All N worker Tasks are created up-front (preserving input order), but each
+    # worker acquires the semaphore before calling its factory, so at most
+    # ``concurrency`` factories are executing concurrently.  The semaphore bounds
+    # *in-flight executions*, not the number of Task objects — all N tasks exist
+    # in the event loop, but only ``concurrency`` of them are past the ``acquire``
+    # at any given moment.  For the typical workspace fan-out (tens to low
+    # hundreds of items) this is sufficient; a lazy-task worker-pool would be
+    # needed only for N in the tens-of-thousands.
     async def _run(factory: Callable[[], Awaitable[T]]) -> T:
         async with semaphore:
             return await factory()

@@ -65,16 +65,41 @@ async def test_resolve_lro_item_id_path_a_resourceid() -> None:
     assert result == "res-123"
 
 
-async def test_resolve_lro_item_id_path_a_id() -> None:
-    """resolve_lro_item_id returns the id from 'id' in the status body (Path A fallback)."""
+async def test_resolve_lro_item_id_path_a_id_not_in_default_keys() -> None:
+    """'id' is NOT in the default result_id_keys for Path A.
+
+    A bare 'id' field in the LRO status body is ambiguous — it may be the
+    operation ID, not the resource ID.  The default Path A key set intentionally
+    excludes 'id'; callers that need 'id' from the status body must pass it
+    explicitly via result_id_keys.  The authoritative 'id' for a created resource
+    comes from the /result endpoint (Path B).
+    """
+    client = await _make_client()
+    async with client:
+        with patch.object(client, "get_operation_result", new_callable=AsyncMock) as mock_result:
+            mock_result.return_value = {}  # Path B also returns nothing
+            result = await resolve_lro_item_id(
+                client,
+                operation_result={"status": "Succeeded", "id": "op-id-456"},
+                location=_LOCATION,
+                # default result_id_keys — does NOT include "id"
+            )
+    # "id" in status body is NOT used when not in result_id_keys → falls through to Path B
+    # Path B also returns nothing → result is None
+    assert result is None
+
+
+async def test_resolve_lro_item_id_path_a_id_explicit_key() -> None:
+    """'id' in the status body IS used when explicitly included in result_id_keys."""
     client = await _make_client()
     async with client:
         result = await resolve_lro_item_id(
             client,
-            operation_result={"status": "Succeeded", "id": "item-456"},
+            operation_result={"status": "Succeeded", "id": "explicit-item-456"},
             location=_LOCATION,
+            result_id_keys=("resourceId", "createdItemId", "itemId", "id"),
         )
-    assert result == "item-456"
+    assert result == "explicit-item-456"
 
 
 async def test_resolve_lro_item_id_path_a_custom_keys() -> None:

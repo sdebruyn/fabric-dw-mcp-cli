@@ -6,11 +6,11 @@ different places depending on the API version and response shape:
 - **Path A** — the LRO status body contains ``resourceId``, ``createdItemId``,
   or ``itemId`` directly.
 - **Path B** — the LRO status body has no ID; the ``GET /operations/{id}/result``
-  sub-endpoint returns the created item.
+  sub-endpoint returns the created item (under the key ``"id"``).
 - **Path C** — last resort: list all items of the relevant type and return the one
   that matches a supplied predicate (typically the newest user-defined item).
 
-Use :func:`extract_created_id` to encode this three-path fallback **once** with
+Use :func:`resolve_lro_item_id` to encode this three-path fallback **once** with
 named constants for retry behaviour.
 """
 
@@ -20,7 +20,12 @@ from typing import TypeVar
 
 from fabric_dw.http_client import FabricHttpClient
 
-__all__ = ["LRO_DETAIL_WAIT_S", "LRO_MAX_DETAIL_RETRIES", "extract_operation_id"]
+__all__ = [
+    "LRO_DETAIL_WAIT_S",
+    "LRO_MAX_DETAIL_RETRIES",
+    "extract_operation_id",
+    "resolve_lro_item_id",
+]
 
 # ---------------------------------------------------------------------------
 # Named constants — previously scattered as bare literals across services
@@ -57,16 +62,22 @@ async def resolve_lro_item_id(
     *,
     operation_result: dict[str, object],
     location: str,
-    result_id_keys: tuple[str, ...] = ("resourceId", "createdItemId", "itemId", "id"),
+    result_id_keys: tuple[str, ...] = ("resourceId", "createdItemId", "itemId"),
 ) -> str | None:
     """Attempt to resolve the created item's ID from an LRO result, in priority order.
 
     Tries **Path A** then **Path B**.  Returns ``None`` if neither path yields an ID
     (caller is responsible for implementing **Path C** if needed).
 
-    **Path A** — look for known ID keys in the LRO status body.
+    **Path A** — look for *resource-specific* ID keys in the LRO status body
+    (``resourceId``, ``createdItemId``, ``itemId``, or caller-supplied keys).
+    The generic ``"id"`` key is intentionally excluded from the default set
+    because a status body ``"id"`` field is often the *operation* ID, not the
+    *resource* ID, and would incorrectly short-circuit Path B.
 
     **Path B** — call ``GET /operations/{op_id}/result`` and look for ``"id"``.
+    This is the correct place to resolve the generic ``"id"`` field because the
+    ``/result`` sub-endpoint returns the *created resource*, not the operation.
 
     Args:
         http: Authenticated Fabric HTTP client.

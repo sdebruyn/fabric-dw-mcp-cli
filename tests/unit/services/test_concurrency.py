@@ -96,6 +96,43 @@ async def test_concurrency_cap_not_exceeded() -> None:
     assert max_concurrent <= cap
 
 
+async def test_concurrency_lower_bound_met() -> None:
+    """At least *concurrency* factories run simultaneously when N > concurrency.
+
+    Verifies that the semaphore does not artificially serialise more than needed:
+    with cap=3 and 6 factories, exactly 3 should be in-flight at a time.
+    This guards against a regression where the semaphore is acquired too eagerly
+    and factories end up serialised beyond the intended cap.
+    """
+    peak_concurrent = 0
+    active = 0
+    gate = asyncio.Event()
+
+    async def _gated() -> None:
+        nonlocal peak_concurrent, active
+        active += 1
+        peak_concurrent = max(peak_concurrent, active)
+        await gate.wait()  # all cap-many tasks block here simultaneously
+        active -= 1
+
+    cap = 3
+    n = cap * 2  # 6 factories, only 3 can be in-flight at once
+
+    task = asyncio.create_task(  # noqa: RUF006 - task IS awaited below; ruff false-positive on multi-line
+        bounded_gather([_gated for _ in range(n)], concurrency=cap)
+    )
+
+    # Give the event loop a chance to start the first `cap` tasks.
+    for _ in range(cap + 2):
+        await asyncio.sleep(0)
+
+    # At this point at least `cap` tasks should be blocked at gate.wait().
+    assert peak_concurrent >= cap
+
+    gate.set()
+    await task
+
+
 async def test_concurrency_cap_of_one_runs_serially() -> None:
     """concurrency=1 must result in strictly serial execution."""
     order: list[str] = []

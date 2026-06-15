@@ -31,6 +31,56 @@ __all__ = [
 _ACTION_GROUP_RE = re.compile(r"^[A-Z0-9_]+$")
 
 
+def _validate_action_group(name: str) -> None:
+    """Raise :exc:`ValueError` if *name* does not match ``^[A-Z0-9_]+$``.
+
+    Args:
+        name: The action-group name to validate.
+
+    Raises:
+        ValueError: If *name* contains characters outside the allowed set.
+    """
+    if not _ACTION_GROUP_RE.match(name):
+        msg = (
+            f"Invalid action_group name {name!r}: "
+            "names must match ^[A-Z0-9_]+$ (upper-case letters, digits, and underscores only)"
+        )
+        raise ValueError(msg)
+
+
+async def _require_enabled(
+    http: FabricHttpClient,
+    workspace_id: UUID,
+    warehouse_id: UUID,
+    *,
+    msg: str = "audit is disabled; enable first",
+) -> AuditSettings:
+    """Fetch current audit settings and raise if auditing is disabled.
+
+    Performs a ``GET /settings/sqlAudit`` and raises :exc:`ValueError` when the
+    returned state is ``"Disabled"``.  Used as a shared pre-flight guard by
+    :func:`add_action_group` and :func:`remove_action_group`.
+
+    Args:
+        http: Authenticated Fabric HTTP client.
+        workspace_id: GUID of the Fabric workspace.
+        warehouse_id: GUID of the Data Warehouse.
+        msg: Error message to use when auditing is disabled.
+
+    Returns:
+        The current :class:`~fabric_dw.models.AuditSettings`.
+
+    Raises:
+        ValueError: If auditing is currently disabled.
+        PermissionDeniedError: If the caller lacks the required permission (HTTP 403).
+        NotFoundError: If the warehouse does not exist (HTTP 404).
+    """
+    current = await get_settings(http, workspace_id, warehouse_id)
+    if current.state == "Disabled":
+        raise ValueError(msg)
+    return current
+
+
 def _audit_path(workspace_id: UUID, warehouse_id: UUID) -> str:
     """Return the relative path for the sqlAudit settings endpoint."""
     return f"/workspaces/{workspace_id}/warehouses/{warehouse_id}/settings/sqlAudit"
@@ -159,10 +209,12 @@ async def set_retention(
         msg = f"days must be >= 1; got {days}"
         raise ValueError(msg)
 
-    current = await get_settings(http, workspace_id, warehouse_id)
-    if current.state == "Disabled":
-        msg = "audit is disabled; enable first before setting retention"
-        raise ValueError(msg)
+    await _require_enabled(
+        http,
+        workspace_id,
+        warehouse_id,
+        msg="audit is disabled; enable first before setting retention",
+    )
 
     path = _audit_path(workspace_id, warehouse_id)
     await http.request("PATCH", HttpBase.FABRIC, path, json={"retentionDays": days})
@@ -190,10 +242,21 @@ async def set_action_groups(
         warehouse_id: GUID of the Data Warehouse.
         action_groups: List of action-group name strings to set.  Pass an empty
             list to clear all action groups.
-        ensure_enabled: When ``True`` (default), the PATCH also sets
-            ``state=Enabled`` so that auditing is active after the call even if
-            it was previously disabled.  When ``False``, only the action-group
-            list is changed and the current audit state is left untouched.
+        ensure_enabled: Controls whether auditing is simultaneously activated.
+            When ``True`` (default), the PATCH also sets ``state=Enabled`` so
+            that auditing is active after the call even if it was previously
+            disabled — this is the typical "set groups and start auditing" path.
+            When ``False``, only the action-group list is changed and the current
+            audit state is preserved; a :exc:`ValueError` is raised if the audit
+            is currently disabled (consistent with :func:`add_action_group` and
+            :func:`remove_action_group`).
+
+            Note:
+                This is an intentional design choice: ``set_action_groups``
+                doubles as "initialise auditing" (default) and "update groups
+                on a live audit" (``ensure_enabled=False``).  When only
+                updating groups is desired, pass ``ensure_enabled=False`` to
+                preserve the current audit state.
 
     Returns:
         The authoritative :class:`~fabric_dw.models.AuditSettings` after the
@@ -210,20 +273,15 @@ async def set_action_groups(
         PermissionDeniedError: If the caller lacks the required permission (HTTP 403).
     """
     for name in action_groups:
-        if not _ACTION_GROUP_RE.match(name):
-            msg = (
-                f"Invalid action_group name {name!r}: "
-                "names must match ^[A-Z0-9_]+$ (upper-case letters, digits, and underscores only)"
-            )
-            raise ValueError(msg)
+        _validate_action_group(name)
 
     # Pre-flight GET to obtain current settings so we can construct the
     # authoritative post-PATCH state without a stale re-fetch.
-    current = await get_settings(http, workspace_id, warehouse_id)
-
-    if not ensure_enabled and current.state == "Disabled":
-        msg = "audit is disabled; enable first"
-        raise ValueError(msg)
+    if not ensure_enabled:
+        # ensure_enabled=False: guard against writing to a disabled audit config.
+        current = await _require_enabled(http, workspace_id, warehouse_id)
+    else:
+        current = await get_settings(http, workspace_id, warehouse_id)
 
     path = _audit_path(workspace_id, warehouse_id)
 
@@ -295,18 +353,9 @@ async def add_action_group(
         PermissionDeniedError: If the caller lacks the required permission (HTTP 403).
         NotFoundError: If the warehouse does not exist (HTTP 404).
     """
-    if not _ACTION_GROUP_RE.match(group):
-        msg = (
-            f"Invalid action_group name {group!r}: "
-            "names must match ^[A-Z0-9_]+$ (upper-case letters, digits, and underscores only)"
-        )
-        raise ValueError(msg)
+    _validate_action_group(group)
 
-    current = await get_settings(http, workspace_id, warehouse_id)
-
-    if current.state == "Disabled":
-        msg = "audit is disabled; enable first"
-        raise ValueError(msg)
+    current = await _require_enabled(http, workspace_id, warehouse_id)
 
     if group in current.action_groups:
         return current
@@ -374,18 +423,9 @@ async def remove_action_group(
         PermissionDeniedError: If the caller lacks the required permission (HTTP 403).
         NotFoundError: If the warehouse does not exist (HTTP 404).
     """
-    if not _ACTION_GROUP_RE.match(group):
-        msg = (
-            f"Invalid action_group name {group!r}: "
-            "names must match ^[A-Z0-9_]+$ (upper-case letters, digits, and underscores only)"
-        )
-        raise ValueError(msg)
+    _validate_action_group(group)
 
-    current = await get_settings(http, workspace_id, warehouse_id)
-
-    if current.state == "Disabled":
-        msg = "audit is disabled; enable first"
-        raise ValueError(msg)
+    current = await _require_enabled(http, workspace_id, warehouse_id)
 
     if group not in current.action_groups:
         # Group already absent — idempotent success, no PATCH needed.

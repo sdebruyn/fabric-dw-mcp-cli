@@ -935,13 +935,14 @@ def run_statements(
     *,
     mode: CredentialMode = CredentialMode.DEFAULT,
     autocommit: bool = False,
+    commit_per_statement: bool = True,
 ) -> None:
     """Execute multiple DDL/DML *statements* on a **single** connection.
 
-    Opens ONE connection, executes each statement in sequence (committing after
-    each), then closes the connection.  This avoids the N x TCP+TLS+TDS handshake
-    overhead that arises when opening a new connection per statement (relevant
-    for ``_drop_schema_objects`` with many tables/views).
+    Opens ONE connection, executes each statement in sequence, then closes the
+    connection.  This avoids the N x TCP+TLS+TDS handshake overhead that arises
+    when opening a new connection per statement (relevant for
+    ``_drop_schema_objects`` with many tables/views).
 
     Retry boundary
     --------------
@@ -951,6 +952,19 @@ def run_statements(
     **not** retried — the connection state is unknown and re-executing DDL/DML
     could cause duplicates or inconsistency.
 
+    Atomicity
+    ---------
+    When ``commit_per_statement=True`` (default) each statement is committed
+    individually.  If an error occurs midway, previously committed statements
+    are permanent and the schema is left in a partial state.
+
+    When ``commit_per_statement=False`` all statements are executed inside a
+    **single transaction** that is committed only after the last statement
+    succeeds.  Any failure rolls back the entire batch, providing all-or-nothing
+    semantics.  Use this when the full sequence must be atomic (e.g. cascade
+    drop that includes the containing schema).  Has no effect when
+    ``autocommit=True``.
+
     Args:
         target: The :class:`SqlTarget` identifying the warehouse.
         statements: Sequence of SQL strings to execute in order.
@@ -959,7 +973,13 @@ def run_statements(
             so the driver does not wrap statements in explicit transactions.
             Use this for DDL that SQL Server disallows inside transactions
             (e.g. ``ALTER DATABASE``).  When ``True``, ``conn.commit()`` is
-            not called (the driver commits each statement automatically).
+            not called (the driver commits each statement automatically) and
+            ``commit_per_statement`` has no effect.
+        commit_per_statement: When ``True`` (default) commit after each
+            statement (best-effort, partial-failure mode).  When ``False``
+            defer the commit until all statements have executed, giving
+            all-or-nothing transaction semantics.  Ignored when
+            ``autocommit=True``.
 
     Raises:
         PermissionDeniedError: If the driver reports a permission error on any statement.
@@ -973,7 +993,7 @@ def run_statements(
         for stmt in statements:
             try:
                 cursor.execute(stmt)
-                if not autocommit:
+                if not autocommit and commit_per_statement:
                     conn.commit()
             except Exception as exc:
                 if isinstance(conn, _PooledConnection):
@@ -982,7 +1002,8 @@ def run_statements(
                 if mapped:
                     raise mapped from exc
                 raise
-        # All statements succeeded — return (outer try/finally closes conn).
-        return
+        # All statements executed — commit once if deferred.
+        if not autocommit and not commit_per_statement:
+            conn.commit()
     finally:
         conn.close()
