@@ -87,6 +87,7 @@ class TestSchemasList:
     def test_list_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
+        mock_list = AsyncMock(return_value=[_make_schema()])
         with (
             patch(
                 "fabric_dw.cli.commands.schemas.build_http_client",
@@ -98,11 +99,13 @@ class TestSchemasList:
             ),
             patch(
                 "fabric_dw.services.schemas.list_schemas",
-                new=AsyncMock(return_value=[_make_schema()]),
+                new=mock_list,
             ),
         ):
             result = runner.invoke(cli, ["schemas", "list", WS_GUID, WH_GUID])
         assert result.exit_code == 0
+        mock_list.assert_awaited_once()
+        assert "sales" in result.output
 
     def test_list_json_output(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -175,6 +178,7 @@ class TestSchemasCreate:
     def test_create_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
+        mock_create = AsyncMock(return_value=_make_schema())
         with (
             patch(
                 "fabric_dw.cli.commands.schemas.build_http_client",
@@ -186,11 +190,13 @@ class TestSchemasCreate:
             ),
             patch(
                 "fabric_dw.services.schemas.create_schema",
-                new=AsyncMock(return_value=_make_schema()),
+                new=mock_create,
             ),
         ):
             result = runner.invoke(cli, ["schemas", "create", WS_GUID, WH_GUID, "sales"])
         assert result.exit_code == 0
+        mock_create.assert_awaited_once()
+        assert "sales" in result.output
 
     def test_create_json_output_contains_name(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -218,6 +224,7 @@ class TestSchemasCreate:
         """CREATE SCHEMA is supported on SQL Analytics Endpoints (Fabric T-SQL reference)."""
         _ = cache_env
         mock_http = AsyncMock()
+        mock_create = AsyncMock(return_value=_make_schema())
         with (
             patch(
                 "fabric_dw.cli.commands.schemas.build_http_client",
@@ -229,11 +236,13 @@ class TestSchemasCreate:
             ),
             patch(
                 "fabric_dw.services.schemas.create_schema",
-                new=AsyncMock(return_value=_make_schema()),
+                new=mock_create,
             ),
         ):
             result = runner.invoke(cli, ["schemas", "create", WS_GUID, WH_GUID, "sales"])
         assert result.exit_code == 0
+        mock_create.assert_awaited_once()
+        assert "sales" in result.output
 
     def test_create_permission_error_returns_nonzero(
         self, runner: CliRunner, cache_env: Path
@@ -380,6 +389,7 @@ class TestSchemasDelete:
     def test_delete_cascade_warns_on_stderr(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
+        mock_delete = AsyncMock(return_value=None)
         with (
             patch(
                 "fabric_dw.cli.commands.schemas.build_http_client",
@@ -391,15 +401,17 @@ class TestSchemasDelete:
             ),
             patch(
                 "fabric_dw.services.schemas.delete_schema",
-                new=AsyncMock(return_value=None),
+                new=mock_delete,
             ),
         ):
             result = runner.invoke(
                 cli,
                 ["-y", "schemas", "delete", WS_GUID, WH_GUID, "sales", "--cascade"],
             )
-        # With --yes the prompt is skipped entirely; the command exits cleanly.
+        # With --yes the prompt is skipped entirely; the command exits cleanly and reports the drop.
         assert result.exit_code == 0
+        mock_delete.assert_awaited_once()
+        assert "dropped" in result.output
 
     def test_delete_permission_error_returns_nonzero(
         self, runner: CliRunner, cache_env: Path

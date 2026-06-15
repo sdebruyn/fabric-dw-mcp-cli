@@ -113,8 +113,11 @@ class TestRestorePointsList:
                 new=AsyncMock(return_value=[rp]),
             ),
         ):
-            result = runner.invoke(cli, ["restore-points", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["--json", "restore-points", "list", WS_GUID, WH_GUID])
         assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert isinstance(parsed, list)
+        assert parsed[0]["id"] == RP_ID
 
     def test_list_json_output_is_list(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -157,8 +160,10 @@ class TestRestorePointsList:
                 new=AsyncMock(return_value=[]),
             ),
         ):
-            result = runner.invoke(cli, ["restore-points", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["--json", "restore-points", "list", WS_GUID, WH_GUID])
         assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed == []
 
     def test_list_fabric_error_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -219,8 +224,13 @@ class TestRestorePointsGet:
                 new=AsyncMock(return_value=rp),
             ),
         ):
-            result = runner.invoke(cli, ["restore-points", "get", WS_GUID, WH_GUID, RP_ID])
+            result = runner.invoke(
+                cli, ["--json", "restore-points", "get", WS_GUID, WH_GUID, RP_ID]
+            )
         assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["id"] == RP_ID
+        assert parsed["displayName"] == "RestorePoint_20240315"
 
     def test_get_json_output_has_id(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -280,6 +290,7 @@ class TestRestorePointsCreate:
         _ = cache_env
         mock_http = AsyncMock()
         rp = _make_restore_point()
+        mock_create = AsyncMock(return_value=rp)
         with (
             patch(
                 "fabric_dw.cli.commands.restore_points.build_http_client",
@@ -291,11 +302,14 @@ class TestRestorePointsCreate:
             ),
             patch(
                 "fabric_dw.services.restore.create_point",
-                new=AsyncMock(return_value=rp),
+                new=mock_create,
             ),
         ):
-            result = runner.invoke(cli, ["restore-points", "create", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["--json", "restore-points", "create", WS_GUID, WH_GUID])
         assert result.exit_code == 0
+        mock_create.assert_awaited_once()
+        parsed = json.loads(result.output)
+        assert parsed["id"] == RP_ID
 
     def test_create_with_name_and_description(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -366,6 +380,7 @@ class TestRestorePointsRename:
         _ = cache_env
         mock_http = AsyncMock()
         rp = _make_restore_point(name="NewName")
+        mock_update = AsyncMock(return_value=rp)
         with (
             patch(
                 "fabric_dw.cli.commands.restore_points.build_http_client",
@@ -377,14 +392,17 @@ class TestRestorePointsRename:
             ),
             patch(
                 "fabric_dw.services.restore.update_point",
-                new=AsyncMock(return_value=rp),
+                new=mock_update,
             ),
         ):
             result = runner.invoke(
                 cli,
-                ["restore-points", "rename", WS_GUID, WH_GUID, RP_ID, "NewName"],
+                ["--json", "restore-points", "rename", WS_GUID, WH_GUID, RP_ID, "NewName"],
             )
         assert result.exit_code == 0
+        mock_update.assert_awaited_once()
+        parsed = json.loads(result.output)
+        assert parsed["displayName"] == "NewName"
 
     def test_rename_with_description(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -675,6 +693,7 @@ class TestRestorePointsDefaultFallback:
         runner.invoke(cli, ["config", "set", "workspace", WS_GUID])
         runner.invoke(cli, ["config", "set", "warehouse", WH_GUID])
         mock_http = AsyncMock()
+        mock_resolve = AsyncMock(return_value=(WS_UUID, _make_wh_entry()))
         with (
             patch(
                 "fabric_dw.cli.commands.restore_points.build_http_client",
@@ -682,15 +701,19 @@ class TestRestorePointsDefaultFallback:
             ),
             patch(
                 "fabric_dw.cli.commands.restore_points.resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_wh_entry())),
+                new=mock_resolve,
             ),
             patch(
                 "fabric_dw.services.restore.list_points",
                 new=AsyncMock(return_value=[]),
             ),
         ):
-            result = runner.invoke(cli, ["restore-points", "list"])
+            result = runner.invoke(cli, ["--json", "restore-points", "list"])
         assert result.exit_code == 0
+        # resolve_item was called (workspace/warehouse resolved from config defaults)
+        mock_resolve.assert_awaited_once()
+        parsed = json.loads(result.output)
+        assert parsed == []
 
     def test_list_missing_workspace_raises_error(
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
