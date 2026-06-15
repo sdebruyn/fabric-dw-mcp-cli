@@ -13,33 +13,7 @@ from fabric_dw.services.schemas import validate_identifier
 from fabric_dw.sql import (
     _PooledConnection,  # type: ignore[attr-defined]
 )
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_target() -> MagicMock:
-    return MagicMock()
-
-
-def _make_conn(rows: list[tuple[object, ...]], columns: list[str]) -> MagicMock:
-    cursor = MagicMock()
-    cursor.description = [(c, None) for c in columns]
-    cursor.fetchall.return_value = rows
-    conn = MagicMock()
-    conn.cursor.return_value = cursor
-    return conn
-
-
-def _make_conn_for_ddl() -> MagicMock:
-    cursor = MagicMock()
-    cursor.description = None
-    cursor.fetchall.return_value = []
-    conn = MagicMock()
-    conn.cursor.return_value = cursor
-    return conn
-
+from tests.unit.services._helpers import _make_conn, _make_conn_for_ddl, _make_target
 
 # ---------------------------------------------------------------------------
 # Fixture data

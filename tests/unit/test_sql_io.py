@@ -61,17 +61,32 @@ class TestColumnsRowsToArrow:
         assert result.column("val")[1].as_py() == 42
 
     def test_datetime_column(self) -> None:
+        """datetime values are stored in Arrow as timestamp[us, tz=UTC] and round-trip exactly."""
         dt = datetime(2024, 1, 1, tzinfo=UTC)
         result = columns_rows_to_arrow(["ts"], [(dt,)])
         assert result.num_rows == 1
+        stored = result.column("ts")[0].as_py()
+        assert stored is not None
+        # Normalise both to UTC for comparison (Arrow returns zoneinfo.ZoneInfo('UTC'))
+        assert stored.replace(tzinfo=UTC) == dt
 
-    def test_bytes_coerced_to_string(self) -> None:
-        result = columns_rows_to_arrow(["data"], [(b"\x01\x02",)])
+    def test_bytes_stored_as_binary(self) -> None:
+        """bytes values are stored as Arrow binary — the value is preserved, not coerced."""
+        raw = b"\x01\x02"
+        result = columns_rows_to_arrow(["data"], [(raw,)])
         assert result.num_rows == 1
+        stored = result.column("data")[0].as_py()
+        # Arrow stores bytes as binary — the round-trip value must equal the original.
+        assert stored == raw, f"Expected {raw!r}, got {stored!r}"
 
     def test_mixed_type_column_coerced_to_string(self) -> None:
         result = columns_rows_to_arrow(["val"], [(1,), ("two",), (3.0,)])
         assert result.num_rows == 3
+        # Mixed column falls back to string; every value must be a string.
+        col = result.column("val")
+        assert col[0].as_py() == "1"
+        assert col[1].as_py() == "two"
+        assert col[2].as_py() == "3.0"
 
     def test_mixed_type_column_emits_warning(self, caplog: pytest.LogCaptureFixture) -> None:
         with caplog.at_level(logging.WARNING, logger="fabric_dw.sql_io"):

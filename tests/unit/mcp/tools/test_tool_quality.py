@@ -435,45 +435,75 @@ async def test_update_sql_pool_next_fallback() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 9. clear_cache scope + stats
+# 9. clear_cache scope + stats  (T05: use real LookupCache, not mock internals)
 # ---------------------------------------------------------------------------
 
 
-async def test_clear_cache_all_returns_stats() -> None:
+def _make_ctx_with_real_cache(tmp_path: Any) -> ServerContext:
+    """Return a ServerContext with a real LookupCache backed by a temp directory.
+
+    *tmp_path* should be the pytest ``tmp_path`` fixture (a :class:`pathlib.Path`).
+    """
+    from pathlib import Path  # noqa: PLC0415
+
+    from fabric_dw.cache import LookupCache  # noqa: PLC0415
+
+    real_cache = LookupCache(path=Path(tmp_path) / "lookup.json")
+    mock_http = AsyncMock()
+    mock_resolver = AsyncMock()
+    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_resolver.item = AsyncMock(return_value=_make_entry())
+    mock_resolver.clear_negative_cache = MagicMock()
+    return ServerContext(
+        http=mock_http,
+        cache=real_cache,
+        resolver=mock_resolver,
+        auth_mode=_auth.CredentialMode.DEFAULT,
+    )
+
+
+async def test_clear_cache_all_returns_stats(tmp_path: Any) -> None:
+    """clear_cache(scope='all') reports 0 counts on an empty cache and calls resolver.clear."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
-    ctx = _make_ctx()
-    # Provide minimal _read/_write so the pre-clear count is zero.
-    # ctx.cache is a MagicMock; cast to Any to avoid ty spurious attribute errors.
-    from typing import cast as _cast  # noqa: PLC0415
-
-    cache_mock: Any = _cast(Any, ctx.cache)
-    resolver_mock: Any = _cast(Any, ctx.resolver)
-    cache_mock._lock = __import__("threading").Lock()
-    cache_mock._read = lambda: {"version": 1, "workspaces": {}, "items": {}}
-    cache_mock._write = lambda _: None
+    ctx = _make_ctx_with_real_cache(tmp_path)
 
     with patch("fabric_dw.mcp._context._SERVER_CTX", ctx):
         result = await mcp._tool_manager.call_tool("clear_cache", {"scope": "all"})
 
     assert result["scope"] == "all"
-    assert "workspaces_cleared" in result
-    assert "items_cleared" in result
+    assert result["workspaces_cleared"] == 0
+    assert result["items_cleared"] == 0
     assert result["negative_cache_cleared"] is True
-    cache_mock.clear.assert_called_once()
-    resolver_mock.clear_negative_cache.assert_called_once()
-
-
-async def test_clear_cache_workspaces_scope() -> None:
+    # ctx.resolver is an AsyncMock; cast to Any so static checkers don't flag
+    # the assertion methods that are only available on Mock objects.
     from typing import cast as _cast  # noqa: PLC0415
 
+    _cast(Any, ctx.resolver).clear_negative_cache.assert_called_once()
+
+
+async def test_clear_cache_workspaces_scope(tmp_path: Any) -> None:
+    """clear_cache(scope='workspaces') reports 2 cleared when 2 workspaces are present."""
+
+    from uuid import UUID  # noqa: PLC0415
+
+    from fabric_dw.cache import LookupCache  # noqa: PLC0415
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
-    ctx = _make_ctx()
-    cache_mock: Any = _cast(Any, ctx.cache)
-    cache_mock._lock = __import__("threading").Lock()
-    cache_mock._read = lambda: {"version": 1, "workspaces": {"ws1": {}, "ws2": {}}, "items": {}}
-    cache_mock._write = lambda _: None
+    # Seed the real cache with two workspace entries.
+    real_cache = LookupCache(path=tmp_path / "lookup_ws.json")
+    real_cache.put_workspace("ws1", UUID("11111111-0000-0000-0000-000000000001"))
+    real_cache.put_workspace("ws2", UUID("11111111-0000-0000-0000-000000000002"))
+
+    mock_http = AsyncMock()
+    mock_resolver = AsyncMock()
+    mock_resolver.clear_negative_cache = MagicMock()
+    ctx = ServerContext(
+        http=mock_http,
+        cache=real_cache,
+        resolver=mock_resolver,
+        auth_mode=_auth.CredentialMode.DEFAULT,
+    )
 
     with patch("fabric_dw.mcp._context._SERVER_CTX", ctx):
         result = await mcp._tool_manager.call_tool("clear_cache", {"scope": "workspaces"})
@@ -482,23 +512,45 @@ async def test_clear_cache_workspaces_scope() -> None:
     assert result["workspaces_cleared"] == 2
     assert result["items_cleared"] == 0
     assert result["negative_cache_cleared"] is False
-    cache_mock.clear.assert_not_called()
+    mock_resolver.clear_negative_cache.assert_not_called()
+
+    # Verify the workspace entries are actually gone.
+    assert real_cache.get_workspace("ws1") is None
+    assert real_cache.get_workspace("ws2") is None
 
 
-async def test_clear_cache_items_scope() -> None:
-    from typing import cast as _cast  # noqa: PLC0415
+async def test_clear_cache_items_scope(tmp_path: Any) -> None:
+    """clear_cache(scope='items') reports 2 cleared when 2 workspace item buckets exist."""
+    from datetime import UTC, datetime  # noqa: PLC0415
+    from uuid import UUID  # noqa: PLC0415
 
+    from fabric_dw.cache import ItemEntry, LookupCache  # noqa: PLC0415
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+    from fabric_dw.models import WarehouseKind  # noqa: PLC0415
 
-    ctx = _make_ctx()
-    cache_mock: Any = _cast(Any, ctx.cache)
-    cache_mock._lock = __import__("threading").Lock()
-    cache_mock._read = lambda: {
-        "version": 1,
-        "workspaces": {},
-        "items": {"ws-a": {"x": {}}, "ws-b": {"y": {}}},
-    }
-    cache_mock._write = lambda _: None
+    ws_a = UUID("aaaaaaaa-0000-0000-0000-000000000001")
+    ws_b = UUID("bbbbbbbb-0000-0000-0000-000000000002")
+    item_entry = ItemEntry(
+        id=UUID("cccccccc-0000-0000-0000-000000000003"),
+        kind=WarehouseKind.WAREHOUSE,
+        connection_string=None,
+        fetched_at=datetime.now(tz=UTC),
+    )
+
+    # Seed the real cache with items in two workspace buckets.
+    real_cache = LookupCache(path=tmp_path / "lookup_items.json")
+    real_cache.put_item(ws_a, "item-x", item_entry)
+    real_cache.put_item(ws_b, "item-y", item_entry)
+
+    mock_http = AsyncMock()
+    mock_resolver = AsyncMock()
+    mock_resolver.clear_negative_cache = MagicMock()
+    ctx = ServerContext(
+        http=mock_http,
+        cache=real_cache,
+        resolver=mock_resolver,
+        auth_mode=_auth.CredentialMode.DEFAULT,
+    )
 
     with patch("fabric_dw.mcp._context._SERVER_CTX", ctx):
         result = await mcp._tool_manager.call_tool("clear_cache", {"scope": "items"})
@@ -507,7 +559,11 @@ async def test_clear_cache_items_scope() -> None:
     assert result["workspaces_cleared"] == 0
     assert result["items_cleared"] == 2
     assert result["negative_cache_cleared"] is False
-    cache_mock.clear.assert_not_called()
+    mock_resolver.clear_negative_cache.assert_not_called()
+
+    # Verify the item entries are actually gone.
+    assert real_cache.get_item(ws_a, "item-x") is None
+    assert real_cache.get_item(ws_b, "item-y") is None
 
 
 # ---------------------------------------------------------------------------

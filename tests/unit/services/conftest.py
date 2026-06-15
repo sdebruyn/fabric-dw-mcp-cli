@@ -28,10 +28,12 @@ Current status (June 2026)
 * ``test_sql_endpoints.py``: uses ``AsyncMock()`` as a *pass-through argument*
   to functions that are themselves patched.  The mock client is never called;
   no HTTP is exercised.  This is acceptable as-is; a full respx migration is
-  tracked as follow-up in GitHub issue #TBD.
+  a future improvement (no issue tracked — low priority since the client is
+  never actually invoked in these tests).
 * ``test_lro.py``: tests the LRO-polling helper which builds on FabricHttpClient.
-  The tests use AsyncMock against the client.  Migrating to respx is tracked as
-  follow-up in GitHub issue #TBD.
+  The tests use AsyncMock against the client.  Migrating to respx is a future
+  improvement (no issue tracked — the polling logic is thin and the real risk
+  is in the callers, which use respx already).
 
 Rule of thumb
 ^^^^^^^^^^^^^

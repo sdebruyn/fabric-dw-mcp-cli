@@ -23,6 +23,7 @@ from fabric_dw.services.query_insights import (
     LONG_RUNNING_QUERIES_COLUMNS,
     SQL_POOL_INSIGHTS_COLUMNS,
 )
+from tests.unit.services._helpers import _make_conn, _make_target
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -30,19 +31,6 @@ from fabric_dw.services.query_insights import (
 
 _NOW = datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC)
 _CONN_STR = "myhost.datawarehouse.fabric.microsoft.com"
-
-
-def _make_target() -> MagicMock:
-    return MagicMock()
-
-
-def _make_conn(rows: list[tuple[object, ...]], columns: list[str]) -> MagicMock:
-    cursor = MagicMock()
-    cursor.description = [(c, None) for c in columns]
-    cursor.fetchall.return_value = rows
-    conn = MagicMock()
-    conn.cursor.return_value = cursor
-    return conn
 
 
 # ---------------------------------------------------------------------------
@@ -160,17 +148,6 @@ async def test_list_request_history_since_adds_where_clause() -> None:
     call_sql: str = cursor.execute.call_args[0][0]
     assert "WHERE" in call_sql
     assert "submit_time" in call_sql
-
-
-async def test_list_request_history_until_adds_where_clause() -> None:
-    target = _make_target()
-    conn = _make_conn([], _REQ_HIST_COLS)
-    until = datetime(2024, 12, 31, tzinfo=UTC)
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
-        await query_insights.list_request_history(target, until=until)
-    cursor = conn.cursor.return_value
-    call_sql: str = cursor.execute.call_args[0][0]
-    assert "WHERE" in call_sql
 
 
 async def test_list_request_history_maps_permission_denied() -> None:

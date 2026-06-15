@@ -432,6 +432,69 @@ async def test_create_uses_operation_result_endpoint_when_no_resource_id() -> No
 
 
 # ---------------------------------------------------------------------------
+# T13: detail-retry exhaustion + inject-fallback
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+async def test_create_exhausts_detail_retries_and_injects_parent() -> None:
+    """create injects parentWarehouseId after LRO_MAX_DETAIL_RETRIES failed detail fetches.
+
+    Regression: when Fabric never returns parentWarehouseId in the detail response
+    (even after all retries), create() must inject the value that was sent in the
+    request body so callers always receive a complete WarehouseSnapshot.
+
+    This test exercises the ``else`` branch of the ``for _attempt in range(...)``
+    loop (i.e. loop exhausted without a ``break``) and verifies that:
+    - GET /warehouseSnapshots/{id} is called exactly LRO_MAX_DETAIL_RETRIES times.
+    - The returned snapshot has parent_warehouse_id set to the original value.
+    """
+    from fabric_dw.services._lro import LRO_MAX_DETAIL_RETRIES  # noqa: PLC0415
+
+    lro_location = f"{_BASE_URL}/operations/{_LRO_OP_ID}"
+
+    # Every detail response has parentWarehouseId = None
+    detail_never_has_parent: dict[str, Any] = {
+        "id": str(_SNAP_ID),
+        "displayName": "NeverReadySnapshot",
+        "type": "WarehouseSnapshot",
+        "workspaceId": str(_WS_ID),
+        "properties": {
+            "parentWarehouseId": None,
+            "snapshotDateTime": None,
+            "connectionString": None,
+        },
+    }
+
+    detail_call_count = 0
+
+    def _always_missing(_request: Any) -> httpx.Response:
+        nonlocal detail_call_count
+        detail_call_count += 1
+        return httpx.Response(200, json=detail_never_has_parent)
+
+    respx.post(_ITEMS_URL).mock(
+        return_value=httpx.Response(202, headers={"Location": lro_location})
+    )
+    respx.get(_TYPED_SNAP_URL).mock(side_effect=_always_missing)
+
+    async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
+        with patch.object(http, "poll_operation", new_callable=AsyncMock) as mock_poll:
+            mock_poll.return_value = {"status": "Succeeded", "resourceId": str(_SNAP_ID)}
+            result = await snapshots.create(http, _WS_ID, _PARENT_WH_ID, "NeverReadySnapshot")
+
+    # All retries were exhausted — exactly LRO_MAX_DETAIL_RETRIES GET calls.
+    assert detail_call_count == LRO_MAX_DETAIL_RETRIES, (
+        f"Expected {LRO_MAX_DETAIL_RETRIES} detail GETs; got {detail_call_count}"
+    )
+    # The fallback must inject the parent that was originally sent.
+    assert isinstance(result, WarehouseSnapshot)
+    assert result.parent_warehouse_id == _PARENT_WH_ID, (
+        f"Expected injected parent {_PARENT_WH_ID}; got {result.parent_warehouse_id}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # rename
 # ---------------------------------------------------------------------------
 
