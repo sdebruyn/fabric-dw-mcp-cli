@@ -297,7 +297,17 @@ class TestShowStatistics:
         # Regression: must NOT have stray dot outside the string (the original bug).
         assert "[dbo].[sales]" not in call_sql
 
-    async def test_sql_bracket_quotes_stat_identifier(self) -> None:
+    async def test_sql_uses_string_literal_for_stat_name(self) -> None:
+        """show_statistics must pass the stat name as a string literal 'stat_name'.
+
+        Fabric DW DBCC SHOW_STATISTICS does not accept bracket-quoted identifiers
+        ([stat_name]) in the second argument — that causes 'Could not locate
+        statistics'.  Both arguments must be single-quoted string literals, as
+        shown in the official Fabric DW documentation examples.
+
+        All three DBCC variants (STAT_HEADER, DENSITY_VECTOR, HISTOGRAM) are
+        asserted so that a regression in any individual template is caught.
+        """
         target = _make_target()
         header_conn = _make_conn([_HEADER_ROW], _HEADER_COLS)
         density_conn = _make_conn([_DENSITY_ROW], _DENSITY_COLS)
@@ -307,8 +317,21 @@ class TestShowStatistics:
             side_effect=[header_conn, density_conn, hist_conn],
         ):
             await statistics.show_statistics(target, "dbo.sales", "stat_sales_id")
-        call_sql: str = header_conn.cursor.return_value.execute.call_args[0][0]
-        assert "[stat_sales_id]" in call_sql
+        # All three DBCC templates must embed the stat name as a string literal.
+        for label, conn in [
+            ("STAT_HEADER", header_conn),
+            ("DENSITY_VECTOR", density_conn),
+            ("HISTOGRAM", hist_conn),
+        ]:
+            call_sql: str = conn.cursor.return_value.execute.call_args[0][0]
+            # Stat name must be a string literal, not a bracket-quoted identifier.
+            assert "'stat_sales_id'" in call_sql, (
+                f"{label}: expected single-quoted stat name in SQL, got: {call_sql!r}"
+            )
+            # Regression: must NOT have bracket-quoted stat name (the #403 bug).
+            assert "[stat_sales_id]" not in call_sql, (
+                f"{label}: bracket-quoted stat name found in SQL (regression): {call_sql!r}"
+            )
 
     async def test_raises_not_found_when_header_empty(self) -> None:
         target = _make_target()
@@ -379,6 +402,17 @@ class TestShowStatistics:
         target = _make_target()
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await statistics.show_statistics(target, "dbo.sales'", "stat")
+
+    async def test_single_quote_in_stat_name_rejected(self) -> None:
+        """Single-quote in stat name must be rejected before it can reach the string literal.
+
+        DBCC SHOW_STATISTICS embeds the stat name as 'stat_name' (string literal).
+        validate_identifier must block any name containing a quote so that the
+        literal is safe without explicit escaping.
+        """
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await statistics.show_statistics(target, "dbo.sales", "stat'name")
 
 
 # ===========================================================================
@@ -892,10 +926,15 @@ class TestExactSqlRoundtripRegression:
     _QUALIFIED = f"{_SCHEMA}.{_TABLE}"
 
     async def test_show_statistics_exact_sql_no_stray_dot(self) -> None:
-        """DBCC SHOW_STATISTICS must use string literal for table, not [schema].[table].
+        """DBCC SHOW_STATISTICS must use string literals for both table and stat name.
 
-        Regression: passing [schema].[table] caused 'Incorrect syntax near .' on
-        real Fabric DW.  The first argument must be 'schema.table' (string literal).
+        Regression #371: passing [schema].[table] caused 'Incorrect syntax near .'
+        on real Fabric DW.  The first argument must be 'schema.table' (string literal).
+
+        Regression #403: passing [stat_name] caused 'Could not locate statistics'
+        on real Fabric DW.  The second argument must also be 'stat_name' (string
+        literal), matching the official Fabric DW documentation examples.
+
         All three DBCC templates (STAT_HEADER, DENSITY_VECTOR, HISTOGRAM) are pinned.
         """
         target = _make_target()
@@ -909,36 +948,46 @@ class TestExactSqlRoundtripRegression:
             await statistics.show_statistics(target, self._QUALIFIED, self._STAT)
 
         table_literal = f"'{self._SCHEMA}.{self._TABLE}'"
-        stat_q = f"[{self._STAT}]"
+        stat_literal = f"'{self._STAT}'"
 
         # --- STAT_HEADER ---
         header_sql: str = header_conn.cursor.return_value.execute.call_args[0][0]
-        expected_header = f"DBCC SHOW_STATISTICS ({table_literal}, {stat_q}) WITH STAT_HEADER;"
+        expected_header = (
+            f"DBCC SHOW_STATISTICS ({table_literal}, {stat_literal}) WITH STAT_HEADER;"
+        )
         assert header_sql == expected_header, (
             f"STAT_HEADER SQL mismatch.\nGot:      {header_sql!r}\nExpected: {expected_header!r}"
         )
         assert ".." not in header_sql
         assert f"[{self._SCHEMA}].[{self._TABLE}]" not in header_sql
+        # Regression #403: stat name must NOT be bracket-quoted.
+        assert f"[{self._STAT}]" not in header_sql
 
         # --- DENSITY_VECTOR ---
         density_sql: str = density_conn.cursor.return_value.execute.call_args[0][0]
-        expected_density = f"DBCC SHOW_STATISTICS ({table_literal}, {stat_q}) WITH DENSITY_VECTOR;"
+        expected_density = (
+            f"DBCC SHOW_STATISTICS ({table_literal}, {stat_literal}) WITH DENSITY_VECTOR;"
+        )
         assert density_sql == expected_density, (
             f"DENSITY_VECTOR SQL mismatch.\n"
             f"Got:      {density_sql!r}\nExpected: {expected_density!r}"
         )
         assert ".." not in density_sql
         assert f"[{self._SCHEMA}].[{self._TABLE}]" not in density_sql
+        assert f"[{self._STAT}]" not in density_sql
 
         # --- HISTOGRAM ---
         histogram_sql: str = hist_conn.cursor.return_value.execute.call_args[0][0]
-        expected_histogram = f"DBCC SHOW_STATISTICS ({table_literal}, {stat_q}) WITH HISTOGRAM;"
+        expected_histogram = (
+            f"DBCC SHOW_STATISTICS ({table_literal}, {stat_literal}) WITH HISTOGRAM;"
+        )
         assert histogram_sql == expected_histogram, (
             f"HISTOGRAM SQL mismatch.\n"
             f"Got:      {histogram_sql!r}\nExpected: {expected_histogram!r}"
         )
         assert ".." not in histogram_sql
         assert f"[{self._SCHEMA}].[{self._TABLE}]" not in histogram_sql
+        assert f"[{self._STAT}]" not in histogram_sql
 
     async def test_create_statistics_exact_sql(self) -> None:
         """CREATE STATISTICS SQL must be bracket-quoted with no stray dots."""
