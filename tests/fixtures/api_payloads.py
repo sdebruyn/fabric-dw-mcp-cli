@@ -280,6 +280,14 @@ WAREHOUSE_OPERATION_SUCCEEDED_NO_LOCATION_PAYLOAD = """{
   "resourceLocation": null
 }"""
 
+# GET /v1/operations/{id}/result body for a completed warehouse creation LRO
+WAREHOUSE_OPERATION_RESULT_PAYLOAD = """{
+  "id": "d4e5f6a7-b8c9-0123-def0-123456789abc",
+  "type": "Warehouse",
+  "displayName": "SalesWarehouse",
+  "workspaceId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+}"""
+
 # Item access details — single-page response with User, Group, ServicePrincipal entries
 ITEM_ACCESS_DETAILS_PAYLOAD = """{
   "accessDetails": [

@@ -28,6 +28,7 @@ from tests.fixtures.api_payloads import (
     WAREHOUSE_GET_PAYLOAD,
     WAREHOUSE_LIST_PAGE2_PAYLOAD,
     WAREHOUSE_LIST_PAYLOAD,
+    WAREHOUSE_OPERATION_RESULT_PAYLOAD,
     WAREHOUSE_OPERATION_SUCCEEDED_NO_LOCATION_PAYLOAD,
     WAREHOUSE_OPERATION_SUCCEEDED_PAYLOAD,
     WAREHOUSE_SQL_ENDPOINTS_PAGE1_PAYLOAD,
@@ -48,7 +49,9 @@ _BASE = "https://api.fabric.microsoft.com/v1"
 _WAREHOUSES_URL = f"{_BASE}/workspaces/{_WORKSPACE_ID}/warehouses"
 _SQL_ENDPOINTS_URL = f"{_BASE}/workspaces/{_WORKSPACE_ID}/sqlEndpoints"
 _WAREHOUSE_URL = f"{_WAREHOUSES_URL}/{_WAREHOUSE_ID}"
-_OPERATION_URL = f"{_BASE}/operations/op-abc123"
+_OPERATION_ID = UUID("c1d2e3f4-a5b6-7890-cdef-123456789abc")
+_OPERATION_URL = f"{_BASE}/operations/{_OPERATION_ID}"
+_OPERATION_RESULT_URL = f"{_OPERATION_URL}/result"
 
 
 # ---------------------------------------------------------------------------
@@ -331,9 +334,18 @@ async def test_create_whitespace_only_name_raises_value_error() -> None:
                 await warehouses.create(client, _WORKSPACE_ID, "   ")
 
 
-async def test_create_missing_resource_location_raises_fabric_server_error() -> None:
-    """create must raise FabricServerError when LRO completes with null resourceLocation."""
+async def test_create_no_resource_location_falls_back_to_operation_result() -> None:
+    """create must fall back to GET /operations/{id}/result when resourceLocation is absent.
+
+    This is the primary fix for issue #417: Fabric does not guarantee that the LRO status
+    body contains ``resourceLocation``.  When it is absent, the warehouse id must be fetched
+    from the operation result endpoint.
+    """
     op_no_location = json.loads(WAREHOUSE_OPERATION_SUCCEEDED_NO_LOCATION_PAYLOAD)
+    op_result = json.loads(WAREHOUSE_OPERATION_RESULT_PAYLOAD)
+    wh_payload = json.loads(WAREHOUSE_GET_PAYLOAD)
+    new_wh_id = UUID("d4e5f6a7-b8c9-0123-def0-123456789abc")
+    new_wh_url = f"{_WAREHOUSES_URL}/{new_wh_id}"
 
     with respx.mock:
         respx.post(_WAREHOUSES_URL).mock(
@@ -344,10 +356,38 @@ async def test_create_missing_resource_location_raises_fabric_server_error() -> 
             )
         )
         respx.get(_OPERATION_URL).mock(return_value=httpx.Response(200, json=op_no_location))
+        respx.get(_OPERATION_RESULT_URL).mock(return_value=httpx.Response(200, json=op_result))
+        respx.get(new_wh_url).mock(return_value=httpx.Response(200, json=wh_payload))
 
         client = await _make_client()
         async with client:
-            with pytest.raises(FabricServerError, match="resourceLocation"):
+            result = await warehouses.create(client, _WORKSPACE_ID, "SalesWarehouse")
+
+    assert isinstance(result, Warehouse)
+    assert result.id == new_wh_id
+    assert result.kind == WarehouseKind.WAREHOUSE
+
+
+async def test_create_no_resource_location_no_result_id_raises_fabric_server_error() -> None:
+    """create must raise FabricServerError when both resourceLocation and result id are absent."""
+    op_no_location = json.loads(WAREHOUSE_OPERATION_SUCCEEDED_NO_LOCATION_PAYLOAD)
+    # Return an operation result body without an "id" field
+    empty_result: dict[str, object] = {"type": "Warehouse", "displayName": "SalesWarehouse"}
+
+    with respx.mock:
+        respx.post(_WAREHOUSES_URL).mock(
+            return_value=httpx.Response(
+                202,
+                json={},
+                headers={"Location": _OPERATION_URL},
+            )
+        )
+        respx.get(_OPERATION_URL).mock(return_value=httpx.Response(200, json=op_no_location))
+        respx.get(_OPERATION_RESULT_URL).mock(return_value=httpx.Response(200, json=empty_result))
+
+        client = await _make_client()
+        async with client:
+            with pytest.raises(FabricServerError, match="neither resourceLocation"):
                 await warehouses.create(client, _WORKSPACE_ID, "SalesWarehouse")
 
 
@@ -500,6 +540,119 @@ async def test_create_existing_path_with_location_header_still_works() -> None:
     assert isinstance(result, Warehouse)
     assert result.id == new_wh_id
     assert result.kind == WarehouseKind.WAREHOUSE
+
+
+async def test_create_resource_location_present_does_not_call_get_operation_result() -> None:
+    """create must NOT call get_operation_result when resourceLocation is present."""
+    op_succeeded = json.loads(WAREHOUSE_OPERATION_SUCCEEDED_PAYLOAD)
+    wh_payload = json.loads(WAREHOUSE_GET_PAYLOAD)
+    new_wh_id = UUID("d4e5f6a7-b8c9-0123-def0-123456789abc")
+    new_wh_url = f"{_WAREHOUSES_URL}/{new_wh_id}"
+
+    with respx.mock as mock_router:
+        mock_router.post(_WAREHOUSES_URL).mock(
+            return_value=httpx.Response(
+                202,
+                json={},
+                headers={"Location": _OPERATION_URL},
+            )
+        )
+        mock_router.get(_OPERATION_URL).mock(return_value=httpx.Response(200, json=op_succeeded))
+        mock_router.get(new_wh_url).mock(return_value=httpx.Response(200, json=wh_payload))
+        # If get_operation_result is called it will hit an unmocked URL and respx will error.
+
+        client = await _make_client()
+        async with client:
+            result = await warehouses.create(client, _WORKSPACE_ID, "SalesWarehouse")
+
+    assert isinstance(result, Warehouse)
+    assert result.id == new_wh_id
+
+
+# ---------------------------------------------------------------------------
+# _operation_id_from_location
+# ---------------------------------------------------------------------------
+
+
+def test_operation_id_from_location_plain_url() -> None:
+    """_operation_id_from_location must extract UUID from a plain operation URL."""
+    url = f"https://api.fabric.microsoft.com/v1/operations/{_OPERATION_ID}"
+    result = warehouses._operation_id_from_location(url)
+    assert result == str(_OPERATION_ID)
+
+
+def test_operation_id_from_location_trailing_slash() -> None:
+    """_operation_id_from_location must handle a trailing slash."""
+    url = f"https://api.fabric.microsoft.com/v1/operations/{_OPERATION_ID}/"
+    result = warehouses._operation_id_from_location(url)
+    assert result == str(_OPERATION_ID)
+
+
+def test_operation_id_from_location_with_query_string() -> None:
+    """_operation_id_from_location must strip query strings before parsing."""
+    url = f"https://api.fabric.microsoft.com/v1/operations/{_OPERATION_ID}?api-version=2023-11-01"
+    result = warehouses._operation_id_from_location(url)
+    assert result == str(_OPERATION_ID)
+
+
+def test_operation_id_from_location_garbage_raises_fabric_server_error() -> None:
+    """_operation_id_from_location must raise FabricServerError for a non-UUID last segment."""
+    url = "https://api.fabric.microsoft.com/v1/operations/not-a-uuid"
+    with pytest.raises(FabricServerError, match="not a UUID"):
+        warehouses._operation_id_from_location(url)
+
+
+def test_operation_id_from_location_empty_path_raises_fabric_server_error() -> None:
+    """_operation_id_from_location must raise FabricServerError when no path segments exist."""
+    url = "https://api.fabric.microsoft.com"
+    with pytest.raises(FabricServerError):
+        warehouses._operation_id_from_location(url)
+
+
+# ---------------------------------------------------------------------------
+# _resolve_warehouse_id_from_lro
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_warehouse_id_from_lro_with_resource_location() -> None:
+    """_resolve_warehouse_id_from_lro must return the UUID when resourceLocation is present."""
+    lro_result: dict[str, object] = {
+        "status": "Succeeded",
+        "resourceLocation": f"https://api.fabric.microsoft.com/v1/workspaces/{_WORKSPACE_ID}/warehouses/{_WAREHOUSE_ID}",
+    }
+    result = warehouses._resolve_warehouse_id_from_lro(lro_result)
+    assert result == _WAREHOUSE_ID
+
+
+def test_resolve_warehouse_id_from_lro_absent_returns_none() -> None:
+    """_resolve_warehouse_id_from_lro must return None when resourceLocation is absent."""
+    lro_result: dict[str, object] = {
+        "status": "Succeeded",
+        "percentComplete": 100,
+        "error": None,
+    }
+    result = warehouses._resolve_warehouse_id_from_lro(lro_result)
+    assert result is None
+
+
+def test_resolve_warehouse_id_from_lro_null_returns_none() -> None:
+    """_resolve_warehouse_id_from_lro must return None when resourceLocation is null."""
+    lro_result: dict[str, object] = {
+        "status": "Succeeded",
+        "resourceLocation": None,
+    }
+    result = warehouses._resolve_warehouse_id_from_lro(lro_result)
+    assert result is None
+
+
+def test_resolve_warehouse_id_from_lro_empty_string_returns_none() -> None:
+    """_resolve_warehouse_id_from_lro must return None when resourceLocation is an empty string."""
+    lro_result: dict[str, object] = {
+        "status": "Succeeded",
+        "resourceLocation": "",
+    }
+    result = warehouses._resolve_warehouse_id_from_lro(lro_result)
+    assert result is None
 
 
 # ---------------------------------------------------------------------------

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime
+from urllib.parse import urlparse
 from uuid import UUID
 
 from fabric_dw.cache import ItemEntry, LookupCache
@@ -76,23 +77,61 @@ async def _post_create_with_retry(
     raise FabricServerError(msg)
 
 
-def _resolve_warehouse_id_from_lro(lro_result: dict[str, object]) -> UUID:
-    """Extract the new warehouse UUID from a completed LRO status body.
+def _resolve_warehouse_id_from_lro(lro_result: dict[str, object]) -> UUID | None:
+    """Extract the new warehouse UUID from a completed LRO status body, if available.
+
+    Per the Fabric LRO contract, ``resourceLocation`` is NOT guaranteed to be present in
+    the operation status body.  When it is absent, the caller should fall back to
+    :meth:`~fabric_dw.http_client.FabricHttpClient.get_operation_result`.
 
     Args:
         lro_result: The dict returned by :meth:`FabricHttpClient.poll_operation`.
 
     Returns:
-        The UUID of the newly created warehouse.
-
-    Raises:
-        FabricServerError: If ``resourceLocation`` is absent or empty.
+        The UUID of the newly created warehouse if ``resourceLocation`` is present and
+        non-empty, or ``None`` if the field is absent/null/empty.
     """
     resource_location = lro_result.get("resourceLocation")
     if isinstance(resource_location, str) and resource_location:
         return UUID(resource_location.rsplit("/", 1)[-1])
-    msg = f"create warehouse LRO completed but no resourceLocation returned: {lro_result}"
-    raise FabricServerError(msg)
+    return None
+
+
+def _operation_id_from_location(location: str) -> str:
+    """Parse the LRO operation UUID from a Fabric ``Location`` header URL.
+
+    Fabric LRO ``Location`` headers have the form
+    ``https://api.fabric.microsoft.com/v1/operations/{operationId}`` (possibly with a
+    trailing slash or query string).  This helper strips any query/fragment, takes the
+    last non-empty path segment, and validates that it is a UUID.
+
+    Args:
+        location: The ``Location`` header value returned on a 202 response.
+
+    Returns:
+        The operation UUID as a string (lower-case, hyphen-separated).
+
+    Raises:
+        FabricServerError: If the last path segment cannot be parsed as a UUID.
+    """
+    parsed = urlparse(location)
+    # Remove query/fragment and split on '/', dropping empty segments from trailing slash.
+    segments = [seg for seg in parsed.path.split("/") if seg]
+    if not segments:
+        msg = (
+            "create warehouse: cannot parse operation id from Location URL "
+            f"(no path segments): {location!r}"
+        )
+        raise FabricServerError(msg)
+    candidate = segments[-1]
+    try:
+        return str(UUID(candidate))
+    except ValueError:
+        msg = (
+            f"create warehouse: last path segment {candidate!r} of Location URL "
+            f"is not a UUID: {location!r}"
+        )
+        raise FabricServerError(msg) from None
 
 
 __all__ = [
@@ -267,12 +306,26 @@ async def create(
         new_id = UUID(str(resp_body["id"]))
         return await get_warehouse(http, workspace_id, new_id)
 
-    # 202 LRO path: poll then resolve the warehouse ID from resourceLocation.
+    # 202 LRO path: poll until complete, then resolve the new warehouse ID.
+    # Per the Fabric LRO contract, the operation status body is NOT guaranteed to
+    # include ``resourceLocation``.  We try it first for backward compatibility, and
+    # fall back to GET /v1/operations/{id}/result when it is absent.
     # location is non-None here because _post_create_with_retry only returns (None, body)
     # for the synchronous 201 path (handled above) or (location_str, None) for LRO.
     assert location is not None  # noqa: S101
     lro_result = await http.poll_operation(location)
     new_id = _resolve_warehouse_id_from_lro(lro_result)
+    if new_id is None:
+        operation_id = _operation_id_from_location(location)
+        result = await http.get_operation_result(operation_id)
+        result_id = result.get("id")
+        if not result_id:
+            msg = (
+                f"create warehouse: LRO {operation_id} completed but neither resourceLocation "
+                f"nor operation result returned an id: lro={lro_result} result={result}"
+            )
+            raise FabricServerError(msg)
+        new_id = UUID(str(result_id))
     return await get_warehouse(http, workspace_id, new_id)
 
 
