@@ -12,10 +12,21 @@ Identifier safety
 -----------------
 All table, column, schema, and stat names are identifiers that CANNOT be bound
 as SQL parameters.  Every such name is validated via
-:func:`~fabric_dw.identifiers.validate_identifier` (allowlist regex + explicit
-forbidden-char guards) and then bracket-quoted via
-:func:`~fabric_dw.identifiers.quote_identifier` (which escapes ``]`` as ``]]``
-for defence-in-depth) before being embedded in SQL.
+:func:`~fabric_dw.identifiers.validate_identifier` (allowlist regex
+``^[A-Za-z_][A-Za-z0-9_]{0,127}$`` — single-quotes and brackets are outside
+this charset and therefore always rejected).
+
+**CREATE / UPDATE / DROP** statements then bracket-quote identifiers via
+:func:`~fabric_dw.identifiers.quote_identifier` (which additionally escapes
+``]`` as ``]]`` for defence-in-depth) before embedding them in SQL.
+
+**DBCC SHOW_STATISTICS** is different: Fabric DW does not accept bracket-quoted
+identifiers in the first (table) argument position — doing so causes
+``Incorrect syntax near '.'``.  The table argument is therefore embedded as a
+**single-quoted string literal** of the form ``'schema.table'``.  Because
+``validate_identifier`` has already accepted both parts, neither can contain a
+single-quote, so no ``'``→``''`` escaping is needed.  The stat-name (second
+argument) is still bracket-quoted in the normal way.
 
 The ``sample_percent`` argument is a numeric value; it is range-validated as an
 :class:`int` (1-100) and embedded as a literal integer — never an arbitrary
