@@ -16,8 +16,13 @@ named constants for retry behaviour.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from typing import TypeVar
+from urllib.parse import urlparse
+from uuid import UUID
 
+from fabric_dw.exceptions import FabricServerError, NotFoundError
 from fabric_dw.http_client import FabricHttpClient
 
 __all__ = [
@@ -26,6 +31,8 @@ __all__ = [
     "extract_operation_id",
     "resolve_lro_item_id",
 ]
+
+_logger = logging.getLogger("fabric_dw.lro")
 
 # ---------------------------------------------------------------------------
 # Named constants — previously scattered as bare literals across services
@@ -38,23 +45,46 @@ LRO_MAX_DETAIL_RETRIES: int = 5
 #: Seconds to wait between each detail-GET retry.
 LRO_DETAIL_WAIT_S: float = 3.0
 
+#: Maximum number of times to retry ``GET /operations/{id}/result`` on 404.
+#: Fabric's ``/result`` endpoint can transiently return 404 for a short window
+#: immediately after the operation status transitions to ``Succeeded``.
+_LRO_RESULT_404_MAX_RETRIES: int = 2
+
+#: Seconds to wait between 404 retries on the ``/result`` endpoint.
+_LRO_RESULT_404_WAIT_S: float = 1.5
+
 T = TypeVar("T")
 
 
 def extract_operation_id(location: str) -> str:
-    """Parse the operation ID from a Fabric LRO ``Location`` header value.
+    """Parse the LRO operation UUID from a Fabric ``Location`` header URL.
 
-    Fabric ``Location`` headers follow the pattern::
-
-        https://api.fabric.microsoft.com/v1/operations/{op_id}
+    Fabric LRO ``Location`` headers have the form
+    ``https://api.fabric.microsoft.com/v1/operations/{operationId}`` (possibly with a
+    trailing slash or query string).  This helper strips any query/fragment, takes the
+    last non-empty path segment, and validates that it is a UUID.
 
     Args:
-        location: The full ``Location`` header string.
+        location: The ``Location`` header value returned on a 202 response.
 
     Returns:
-        The operation ID (the last path segment of *location*).
+        The operation UUID as a string (lower-case, hyphen-separated).
+
+    Raises:
+        FabricServerError: If the last path segment cannot be parsed as a UUID.
     """
-    return location.rsplit("/", 1)[-1]
+    parsed = urlparse(location)
+    # Remove query/fragment and split on '/', dropping empty segments from trailing slash.
+    segments = [seg for seg in parsed.path.split("/") if seg]
+    if not segments:
+        msg = f"LRO: cannot parse operation id from Location URL (no path segments): {location!r}"
+        raise FabricServerError(msg)
+    candidate = segments[-1]
+    try:
+        return str(UUID(candidate))
+    except ValueError:
+        msg = f"LRO: last path segment {candidate!r} of Location URL is not a UUID: {location!r}"
+        raise FabricServerError(msg) from None
 
 
 async def resolve_lro_item_id(
@@ -78,6 +108,10 @@ async def resolve_lro_item_id(
     **Path B** — call ``GET /operations/{op_id}/result`` and look for ``"id"``.
     This is the correct place to resolve the generic ``"id"`` field because the
     ``/result`` sub-endpoint returns the *created resource*, not the operation.
+    A bounded retry (up to :data:`_LRO_RESULT_404_MAX_RETRIES` attempts with
+    :data:`_LRO_RESULT_404_WAIT_S` delay) handles the transient 404 window that
+    Fabric can return immediately after a ``Succeeded`` status.  If 404 persists,
+    :class:`~fabric_dw.exceptions.FabricServerError` is raised with context.
 
     Args:
         http: Authenticated Fabric HTTP client.
@@ -89,6 +123,10 @@ async def resolve_lro_item_id(
 
     Returns:
         The created resource ID as a string, or ``None`` if both paths failed.
+
+    Raises:
+        FabricServerError: If the ``/result`` endpoint returns 404 after all
+            retries are exhausted (operation result not yet available).
     """
     # Path A: check the status body directly.
     for key in result_id_keys:
@@ -96,11 +134,33 @@ async def resolve_lro_item_id(
         if raw is not None:
             return str(raw)
 
-    # Path B: fall back to the /result sub-endpoint.
+    # Path B: fall back to the /result sub-endpoint with bounded 404 retry.
     op_id = extract_operation_id(location)
-    lro_result = await http.get_operation_result(op_id)
-    result_id_raw = lro_result.get("id")
-    if result_id_raw is not None:
-        return str(result_id_raw)
+    last_exc: NotFoundError | None = None
+    for attempt in range(_LRO_RESULT_404_MAX_RETRIES + 1):
+        if attempt > 0:
+            _logger.warning(
+                "LRO %s: GET /result returned 404 (attempt %d/%d) — "
+                "Fabric result endpoint not yet available; retrying in %ss",
+                op_id,
+                attempt,
+                _LRO_RESULT_404_MAX_RETRIES,
+                _LRO_RESULT_404_WAIT_S,
+            )
+            await asyncio.sleep(_LRO_RESULT_404_WAIT_S)
+        try:
+            lro_result = await http.get_operation_result(op_id)
+        except NotFoundError as exc:
+            last_exc = exc
+            continue
+        result_id_raw = lro_result.get("id")
+        if result_id_raw is not None:
+            return str(result_id_raw)
+        return None
 
-    return None
+    # All retries exhausted — surface a clear error instead of a confusing NotFoundError.
+    msg = (
+        f"LRO {op_id}: GET /operations/{op_id}/result returned 404 after "
+        f"{_LRO_RESULT_404_MAX_RETRIES + 1} attempt(s) — operation result not yet available"
+    )
+    raise FabricServerError(msg) from last_exc
