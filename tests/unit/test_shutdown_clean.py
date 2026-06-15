@@ -50,12 +50,20 @@ _BOGUS_CONNECTION_STRING = (
     "LiveEndpoint=http://127.0.0.1:1/"
 )
 
-# Stderr substrings that indicate a leaked pool / broken teardown.
+# Stderr substrings that indicate a leaked pool / broken teardown, or a
+# PerformanceCounters crash (ZeroDivisionError from _get_processor_time on
+# short-lived processes — #399).
 _FORBIDDEN_STDERR_SUBSTRINGS = [
     "Unclosed client session",
     "Exception ignored in",
     "Traceback (most recent call last)",
     "_close_pool_connections",
+    # #399: azure-monitor-opentelemetry PerformanceCounters ZeroDivisionError.
+    # These appear even with disable_metrics=True unless
+    # enable_performance_counters=False is also passed.
+    "Error getting processor time",
+    "_get_processor_time",
+    "_performance_counters",
 ]
 
 # Invoke fabric-dw via ``python -c "from fabric_dw.cli import main; main()"``
@@ -108,16 +116,21 @@ def test_cli_exits_without_shutdown_noise_on_help() -> None:
 
     Runs ``fabric-dw --help`` which exercises full CLI init (telemetry SDK
     initialisation, tracer creation, provider setup) and then exits cleanly
-    via the teardown path (flush_telemetry + shutdown_telemetry).
+    via the teardown path (shutdown_telemetry, which flushes internally).
 
     ``--help`` exits without any auth/network call to Fabric, so the test is
     fully hermetic; only the telemetry exporter endpoint is attempted (and
     immediately refused by the bogus endpoint, completing fast).
 
-    Note: the aiohttp ``Unclosed client session`` assertion (covered by #387)
-    also passes here because ``--help`` does not create a credential and so
-    no aiohttp session is ever opened.  Both assertions are present so the
-    full teardown regression suite is exercised in one place.
+    Note on the ``Unclosed client session`` assertion: ``--help`` does not
+    create a credential and therefore never opens an aiohttp session, so this
+    particular assertion is vacuous for this test variant.  It is kept in the
+    shared ``_FORBIDDEN_STDERR_SUBSTRINGS`` list so that the full teardown
+    regression suite is exercised in one place and any future command added to
+    the test suite automatically inherits the check.  Real aiohttp coverage is
+    provided by the slow ``test_cli_exits_without_shutdown_noise_on_auth_command``
+    variant which creates a ``DefaultAzureCredential`` (and the aiohttp session
+    it owns).
     """
     result = subprocess.run(  # noqa: S603
         [*_CLI_RUNNER, "--help"],

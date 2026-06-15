@@ -897,6 +897,62 @@ def test_get_tracer_passes_instrumentation_options_to_configure(
 
 
 # ---------------------------------------------------------------------------
+# A1: #399 — configure_azure_monitor must pass enable_performance_counters=False
+# ---------------------------------------------------------------------------
+
+
+def test_get_tracer_passes_enable_performance_counters_false(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """_get_tracer must pass enable_performance_counters=False to configure_azure_monitor.
+
+    In azure-monitor-opentelemetry 1.8+ the PerformanceCounters subsystem has
+    its own flag and is NOT disabled by ``disable_metrics=True``.  On
+    short-lived processes its ``_get_processor_time`` callback divides by zero
+    and writes a full traceback to stderr (#399).
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
+    monkeypatch.delenv("CI", raising=False)
+    for ci_var in ("GITHUB_ACTIONS", "JENKINS_URL", "TRAVIS", "CIRCLECI", "GITLAB_CI", "TF_BUILD"):
+        monkeypatch.delenv(ci_var, raising=False)
+
+    mod = _reload_telemetry()
+
+    captured_kwargs: dict[str, object] = {}
+
+    def fake_configure(**kwargs: object) -> None:
+        captured_kwargs.update(kwargs)
+
+    fake_tracer = object()
+
+    class _FakeTrace(types.ModuleType):
+        def get_tracer(self, *_args: object, **_kw: object) -> object:
+            return fake_tracer
+
+    fake_azure_mod: Any = types.ModuleType("azure.monitor.opentelemetry")
+    fake_azure_mod.configure_azure_monitor = fake_configure
+
+    fake_trace_mod = _FakeTrace("opentelemetry.trace")
+
+    mod._sdk_initialised = False
+    mod._tracer = None
+
+    monkeypatch.setitem(sys.modules, "azure.monitor.opentelemetry", fake_azure_mod)
+    monkeypatch.setitem(sys.modules, "opentelemetry.trace", fake_trace_mod)
+
+    mod._get_tracer()
+
+    mod._sdk_initialised = False
+    mod._tracer = None
+
+    assert captured_kwargs.get("enable_performance_counters") is False, (
+        "configure_azure_monitor must receive enable_performance_counters=False "
+        "to suppress PerformanceCounters ZeroDivisionError on short-lived processes (#399)"
+    )
+
+
+# ---------------------------------------------------------------------------
 # B1: privacy — _INSTRUMENTATION_OPTIONS constant disables all HTTP libs
 # ---------------------------------------------------------------------------
 

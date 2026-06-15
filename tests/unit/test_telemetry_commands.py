@@ -827,12 +827,15 @@ class TestMcpCommandInvokedInstrumentation:
 # ---------------------------------------------------------------------------
 
 
-class TestCliFlushOrdering:
-    """Verify that command_invoked is emitted before flush_telemetry runs.
+class TestCliShutdownOrdering:
+    """Verify that command_invoked is emitted before shutdown_telemetry runs.
 
-    Regression tests for the ordering bug where flush_telemetry() (called via
+    Regression tests for the ordering bug where teardown (called via
     call_on_close) ran BEFORE emit_command_invoked (in the finally block of
     _InstrumentedGroup.invoke), causing the command_invoked event to be lost.
+
+    shutdown_telemetry() internally flushes via provider.shutdown(), so no
+    separate flush_telemetry() call is needed.
     """
 
     def _run_cli_capture_order(self, args: list[str], monkeypatch: pytest.MonkeyPatch) -> list[str]:
@@ -853,32 +856,34 @@ class TestCliFlushOrdering:
         def _track_emit(event_name: str, _attrs: dict) -> None:
             call_order.append(f"emit:{event_name}")
 
-        def _track_flush(_timeout_ms: int = 2000) -> None:
-            call_order.append("flush")
+        def _track_shutdown(_timeout_ms: int = 2000) -> None:
+            call_order.append("shutdown")
 
         runner = CliRunner()  # type: ignore[no-untyped-call]
         with (
             patch(_TELEMETRY_ENABLED, return_value=True),
             patch(_EMIT_EVENT, side_effect=_track_emit),
-            patch("fabric_dw.cli._main.flush_telemetry", side_effect=_track_flush),
+            patch("fabric_dw.cli._main.shutdown_telemetry", side_effect=_track_shutdown),
         ):
             runner.invoke(cli, args, catch_exceptions=True)
 
         return call_order
 
-    def test_command_invoked_enqueued_before_flush(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """command_invoked must appear in the call order BEFORE the final flush."""
+    def test_command_invoked_enqueued_before_shutdown(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """command_invoked must appear in the call order BEFORE shutdown_telemetry."""
         order = self._run_cli_capture_order(["cache", "clear"], monkeypatch)
 
         assert "emit:command_invoked" in order, "command_invoked event was never emitted"
-        assert "flush" in order, "flush_telemetry was never called"
+        assert "shutdown" in order, "shutdown_telemetry was never called"
 
         last_command_invoked_idx = max(
             i for i, e in enumerate(order) if e == "emit:command_invoked"
         )
-        last_flush_idx = max(i for i, e in enumerate(order) if e == "flush")
+        last_shutdown_idx = max(i for i, e in enumerate(order) if e == "shutdown")
 
-        assert last_command_invoked_idx < last_flush_idx, (
+        assert last_command_invoked_idx < last_shutdown_idx, (
             f"command_invoked (index {last_command_invoked_idx}) must come before "
-            f"flush (index {last_flush_idx}); actual order: {order}"
+            f"shutdown (index {last_shutdown_idx}); actual order: {order}"
         )
