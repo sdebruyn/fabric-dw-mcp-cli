@@ -2,11 +2,13 @@
 
 Run with: pytest -m integration tests/integration/test_services_statistics.py
 
-Fixture note: mutating tests use ``warehouse_schema`` from conftest, which creates
+Fixture note: the full lifecycle roundtrip uses ``warehouse_schema``, which creates
 a uniquely-named schema inside the session-shared warm warehouse and cascade-drops
 it on teardown.  Statistics are schema-scoped so each test is fully isolated.
-The SQL Analytics Endpoint read-only test uses ``ephemeral_sql_endpoint`` because
-it requires an actual SQL Analytics Endpoint (Lakehouse-backed item).
+Client-side guard tests (create/update/drop endpoint rejection) use ``shared_warehouse``
+directly — the ``ItemKindError`` is raised before any SQL, so no per-test schema DDL
+is needed.  The SQL Analytics Endpoint read-only test uses ``ephemeral_sql_endpoint``
+because it requires an actual SQL Analytics Endpoint (Lakehouse-backed item).
 """
 
 from __future__ import annotations
@@ -16,10 +18,11 @@ from uuid import UUID
 
 import pytest
 
-from fabric_dw.exceptions import FabricError, ItemKindError, NotFoundError
+from fabric_dw.exceptions import ItemKindError, NotFoundError
 from fabric_dw.models import Statistic, StatisticDetails, Warehouse, WarehouseKind
 from fabric_dw.services import statistics, tables
 from fabric_dw.sql import SqlTarget
+from tests.integration.conftest import SharedWarehouseTarget
 
 pytestmark = pytest.mark.integration
 
@@ -55,13 +58,12 @@ async def test_list_statistics_on_sql_endpoint(
 
 
 async def test_create_statistics_endpoint_guard_rejected(
-    warehouse_schema: tuple[SqlTarget, str],
+    shared_warehouse: SharedWarehouseTarget,
 ) -> None:
     """create_statistics raises ItemKindError on SQL Analytics Endpoints (client-side guard)."""
-    sql_target, _schema = warehouse_schema
     with pytest.raises(ItemKindError, match="read-only"):
         await statistics.create_statistics(
-            sql_target,
+            shared_warehouse.sql_target,
             "dbo.nonexistent_table",
             "id",
             name="should_never_be_created",
@@ -70,13 +72,12 @@ async def test_create_statistics_endpoint_guard_rejected(
 
 
 async def test_update_statistics_endpoint_guard_rejected(
-    warehouse_schema: tuple[SqlTarget, str],
+    shared_warehouse: SharedWarehouseTarget,
 ) -> None:
     """update_statistics raises ItemKindError on SQL Analytics Endpoints (client-side guard)."""
-    sql_target, _schema = warehouse_schema
     with pytest.raises(ItemKindError, match="read-only"):
         await statistics.update_statistics(
-            sql_target,
+            shared_warehouse.sql_target,
             "dbo.nonexistent_table",
             "should_not_update",
             kind=WarehouseKind.SQL_ENDPOINT,
@@ -84,13 +85,12 @@ async def test_update_statistics_endpoint_guard_rejected(
 
 
 async def test_drop_statistics_endpoint_guard_rejected(
-    warehouse_schema: tuple[SqlTarget, str],
+    shared_warehouse: SharedWarehouseTarget,
 ) -> None:
     """drop_statistics raises ItemKindError on SQL Analytics Endpoints (client-side guard)."""
-    sql_target, _schema = warehouse_schema
     with pytest.raises(ItemKindError, match="read-only"):
         await statistics.drop_statistics(
-            sql_target,
+            shared_warehouse.sql_target,
             "dbo.nonexistent_table",
             "should_not_drop",
             kind=WarehouseKind.SQL_ENDPOINT,
@@ -166,8 +166,8 @@ async def test_create_list_show_update_drop_roundtrip(
         # drop_statistics
         await statistics.drop_statistics(sql_target, qualified_table, stat_name)
 
-        # After drop, show should raise NotFoundError or similar
-        with pytest.raises((NotFoundError, FabricError, Exception)):
+        # After drop, show should raise NotFoundError (statistics.py raises it at line ~408)
+        with pytest.raises(NotFoundError):
             await statistics.show_statistics(sql_target, qualified_table, stat_name)
 
     finally:
