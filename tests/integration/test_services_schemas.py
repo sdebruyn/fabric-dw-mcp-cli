@@ -2,9 +2,18 @@
 
 Run with: pytest -m integration tests/integration/test_services_schemas.py
 
-Fixture note: uses ``ephemeral_sql_target`` from conftest.  The target points at
-a freshly-created warehouse for each test session; all schemas created here are
-cleaned up in the respective test's ``finally`` block.
+Fixture note: uses ``shared_warehouse`` (for read-only / listing tests) and
+``warehouse_schema`` (for tests that create or delete schemas) from conftest.
+``warehouse_schema`` itself creates a uniquely-named schema in the shared warm
+warehouse and cascade-drops it on teardown, so all nested schemas created by
+the tests below are cleaned up by that outer cascade or by the test's own
+try/finally block.
+
+Design: The schema-CRUD tests below create *additional* schemas inside the
+shared warehouse (not inside ``warehouse_schema``'s isolation schema, because
+schemas cannot be nested on Fabric).  Each test is responsible for deleting
+its own schema in a finally block.  The shared warehouse teardown at session
+end provides a backstop.
 """
 
 from __future__ import annotations
@@ -32,21 +41,27 @@ def _unique_schema_name() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Tests
+# Read-only tests (use the shared warehouse SQL target directly)
 # ---------------------------------------------------------------------------
 
 
-async def test_list_schemas_returns_list(ephemeral_sql_target: SqlTarget) -> None:
+async def test_list_schemas_returns_list(
+    warehouse_schema: tuple[SqlTarget, str],
+) -> None:
     """list_schemas returns a list (dbo is always present on a fresh warehouse)."""
-    result = await schemas.list_schemas(ephemeral_sql_target)
+    sql_target, _schema = warehouse_schema
+    result = await schemas.list_schemas(sql_target)
     assert isinstance(result, list)
     # dbo is user-writable and must appear on every fresh Fabric DW.
     schema_names = {s.name for s in result}
     assert "dbo" in schema_names
 
 
-async def test_list_schemas_excludes_system_schemas(ephemeral_sql_target: SqlTarget) -> None:
+async def test_list_schemas_excludes_system_schemas(
+    warehouse_schema: tuple[SqlTarget, str],
+) -> None:
     """System schemas must not appear in list_schemas output."""
+    sql_target, _schema = warehouse_schema
     system_schemas = {
         "sys",
         "INFORMATION_SCHEMA",
@@ -61,48 +76,62 @@ async def test_list_schemas_excludes_system_schemas(ephemeral_sql_target: SqlTar
         "db_denydatareader",
         "db_denydatawriter",
     }
-    result = await schemas.list_schemas(ephemeral_sql_target)
+    result = await schemas.list_schemas(sql_target)
     schema_names = {s.name for s in result}
     overlap = schema_names & system_schemas
     assert not overlap, f"System schemas leaked into list_schemas output: {overlap}"
 
 
-async def test_create_schema_returns_schema_model(ephemeral_sql_target: SqlTarget) -> None:
+# ---------------------------------------------------------------------------
+# Mutating tests — each creates its own uniquely-named schema on the shared
+# warehouse and cleans it up in a finally block.
+# ---------------------------------------------------------------------------
+
+
+async def test_create_schema_returns_schema_model(
+    warehouse_schema: tuple[SqlTarget, str],
+) -> None:
     """create_schema returns a Schema with the correct name."""
+    sql_target, _parent_schema = warehouse_schema
     name = _unique_schema_name()
     try:
-        created = await schemas.create_schema(ephemeral_sql_target, name)
+        created = await schemas.create_schema(sql_target, name)
         assert isinstance(created, Schema)
         assert created.name == name
         assert created.principal_id is not None
     finally:
         with contextlib.suppress(Exception):
-            await schemas.delete_schema(ephemeral_sql_target, name)
+            await schemas.delete_schema(sql_target, name)
 
 
-async def test_create_list_delete_roundtrip(ephemeral_sql_target: SqlTarget) -> None:
+async def test_create_list_delete_roundtrip(
+    warehouse_schema: tuple[SqlTarget, str],
+) -> None:
     """Create a schema, verify it appears in list_schemas, then delete it."""
+    sql_target, _parent_schema = warehouse_schema
     name = _unique_schema_name()
     try:
-        await schemas.create_schema(ephemeral_sql_target, name)
+        await schemas.create_schema(sql_target, name)
 
-        listed = await schemas.list_schemas(ephemeral_sql_target)
+        listed = await schemas.list_schemas(sql_target)
         listed_names = {s.name for s in listed}
         assert name in listed_names, f"Newly-created schema {name!r} missing from list_schemas"
 
-        await schemas.delete_schema(ephemeral_sql_target, name)
+        await schemas.delete_schema(sql_target, name)
 
-        after_delete = await schemas.list_schemas(ephemeral_sql_target)
+        after_delete = await schemas.list_schemas(sql_target)
         after_delete_names = {s.name for s in after_delete}
         assert name not in after_delete_names, f"Schema {name!r} still present after delete_schema"
     finally:
         # Guard: ensure the schema is gone even if the test assertion failed
         # before the explicit delete above.
         with contextlib.suppress(Exception):
-            await schemas.delete_schema(ephemeral_sql_target, name)
+            await schemas.delete_schema(sql_target, name)
 
 
-async def test_delete_schema_cascade_drops_table(ephemeral_sql_target: SqlTarget) -> None:
+async def test_delete_schema_cascade_drops_table(
+    warehouse_schema: tuple[SqlTarget, str],
+) -> None:
     """delete_schema(cascade=True) drops contained tables before dropping the schema.
 
     Steps:
@@ -111,24 +140,25 @@ async def test_delete_schema_cascade_drops_table(ephemeral_sql_target: SqlTarget
     3. Call delete_schema(cascade=True) — must succeed without a "schema not empty" error.
     4. Verify the schema is gone from list_schemas.
     """
+    sql_target, _parent_schema = warehouse_schema
     schema_name = _unique_schema_name()
     table_name = "pytest_cascade_tbl"
 
     try:
-        await schemas.create_schema(ephemeral_sql_target, schema_name)
+        await schemas.create_schema(sql_target, schema_name)
 
         # Create a table inside the new schema so the schema is non-empty.
         await tables.create_table(
-            ephemeral_sql_target,
+            sql_target,
             schema_name,
             table_name,
             "SELECT 1 AS id",
         )
 
         # cascade=True must drop the table then the schema without raising.
-        await schemas.delete_schema(ephemeral_sql_target, schema_name, cascade=True)
+        await schemas.delete_schema(sql_target, schema_name, cascade=True)
 
-        after_delete = await schemas.list_schemas(ephemeral_sql_target)
+        after_delete = await schemas.list_schemas(sql_target)
         after_names = {s.name for s in after_delete}
         assert schema_name not in after_names, (
             f"Schema {schema_name!r} still present after cascade delete"
@@ -136,21 +166,24 @@ async def test_delete_schema_cascade_drops_table(ephemeral_sql_target: SqlTarget
     finally:
         # Belt-and-suspenders cleanup: suppress errors if already cleaned up.
         with contextlib.suppress(Exception):
-            await tables.delete_table(ephemeral_sql_target, schema_name, table_name)
+            await tables.delete_table(sql_target, schema_name, table_name)
         with contextlib.suppress(Exception):
-            await schemas.delete_schema(ephemeral_sql_target, schema_name)
+            await schemas.delete_schema(sql_target, schema_name)
 
 
-async def test_delete_plain_schema_no_cascade(ephemeral_sql_target: SqlTarget) -> None:
+async def test_delete_plain_schema_no_cascade(
+    warehouse_schema: tuple[SqlTarget, str],
+) -> None:
     """delete_schema without cascade succeeds on an empty schema."""
+    sql_target, _parent_schema = warehouse_schema
     name = _unique_schema_name()
     try:
-        await schemas.create_schema(ephemeral_sql_target, name)
+        await schemas.create_schema(sql_target, name)
         # Plain delete (no cascade) on an empty schema must succeed.
-        await schemas.delete_schema(ephemeral_sql_target, name)
+        await schemas.delete_schema(sql_target, name)
 
-        after = await schemas.list_schemas(ephemeral_sql_target)
+        after = await schemas.list_schemas(sql_target)
         assert name not in {s.name for s in after}
     finally:
         with contextlib.suppress(Exception):
-            await schemas.delete_schema(ephemeral_sql_target, name)
+            await schemas.delete_schema(sql_target, name)
