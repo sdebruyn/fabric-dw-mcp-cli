@@ -38,9 +38,15 @@ from typing import Literal
 
 import httpx
 from azure.core.credentials_async import AsyncTokenCredential
+from azure.core.exceptions import ClientAuthenticationError
 
 from fabric_dw.auth import STORAGE_SCOPE
-from fabric_dw.exceptions import FabricError, FabricServerError, ItemKindError
+from fabric_dw.exceptions import (
+    FabricError,
+    FabricServerError,
+    ItemKindError,
+    auth_error_from_credential_exc,
+)
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.identifiers import quote_identifier, validate_identifier
 from fabric_dw.models import CopyIntoResult, WarehouseKind
@@ -573,7 +579,10 @@ async def onelake_upload_file(
             error code and body).
     """
     # Fetch a storage-scoped token.
-    token_obj = await credential.get_token(STORAGE_SCOPE)
+    try:
+        token_obj = await credential.get_token(STORAGE_SCOPE)
+    except ClientAuthenticationError as exc:
+        raise auth_error_from_credential_exc(exc) from exc
     token = token_obj.token
 
     # Base headers sent with every DFS request.

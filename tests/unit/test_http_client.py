@@ -14,6 +14,8 @@ import pytest
 import respx
 from azure.core.credentials import AccessToken
 from azure.core.credentials_async import AsyncTokenCredential
+from azure.core.exceptions import ClientAuthenticationError
+from azure.identity import CredentialUnavailableError
 from freezegun import freeze_time
 
 from fabric_dw.auth import FABRIC_SCOPE, SQL_SCOPE
@@ -1802,3 +1804,72 @@ async def test_aexit_skips_close_for_sync_close_method() -> None:
         pass
 
     sync_close.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# T30: Azure credential failure → AuthError (no raw traceback for the user)
+# ---------------------------------------------------------------------------
+
+
+async def test_get_token_maps_client_auth_error_to_auth_error() -> None:
+    """ClientAuthenticationError from the credential must be re-raised as AuthError.
+
+    This covers the common 'not logged in' case (DefaultAzureCredential exhausts
+    all credential providers) so the CLI prints a single clean error line instead
+    of a multi-line Azure traceback.
+    """
+    cred = MagicMock(spec=AsyncTokenCredential)
+    cred.get_token = AsyncMock(
+        side_effect=ClientAuthenticationError("DefaultAzureCredential failed to retrieve a token")
+    )
+
+    client = FabricHttpClient(credential=cred, rps=10)
+    async with client:
+        with pytest.raises(AuthError) as exc_info:
+            await client._get_token()  # type: ignore[attr-defined]
+
+    msg = str(exc_info.value)
+    assert "az login" in msg, f"Expected 'az login' hint in error message, got: {msg!r}"
+    assert "Azure authentication failed" in msg
+    # Original exception must be chained so verbose debug mode can see it.
+    assert exc_info.value.__cause__ is not None
+
+
+async def test_get_token_maps_credential_unavailable_to_auth_error() -> None:
+    """CredentialUnavailableError from the credential must also be re-raised as AuthError.
+
+    CredentialUnavailableError is a subclass of ClientAuthenticationError, so the
+    same catch block handles it.  This test verifies that the subclass is caught
+    and that the actionable hint is present in the message.
+    """
+    cred = MagicMock(spec=AsyncTokenCredential)
+    cred.get_token = AsyncMock(
+        side_effect=CredentialUnavailableError("No credential was available")
+    )
+
+    client = FabricHttpClient(credential=cred, rps=10)
+    async with client:
+        with pytest.raises(AuthError) as exc_info:
+            await client._get_token()  # type: ignore[attr-defined]
+
+    msg = str(exc_info.value)
+    assert "az login" in msg, f"Expected 'az login' hint in error message, got: {msg!r}"
+    assert "Azure authentication failed" in msg
+    assert exc_info.value.__cause__ is not None
+
+
+async def test_get_token_does_not_remap_non_auth_errors() -> None:
+    """A non-authentication error from the credential must propagate unchanged.
+
+    Only ClientAuthenticationError (and its subclasses such as
+    CredentialUnavailableError) must be mapped to AuthError.  Generic errors
+    (e.g. RuntimeError from a buggy credential implementation) must not be swallowed
+    or wrapped so callers see the real root cause.
+    """
+    cred = MagicMock(spec=AsyncTokenCredential)
+    cred.get_token = AsyncMock(side_effect=RuntimeError("unexpected credential crash"))
+
+    client = FabricHttpClient(credential=cred, rps=10)
+    async with client:
+        with pytest.raises(RuntimeError, match="unexpected credential crash"):
+            await client._get_token()  # type: ignore[attr-defined]

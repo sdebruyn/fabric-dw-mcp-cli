@@ -57,6 +57,7 @@ import httpx
 from aiolimiter import AsyncLimiter
 from azure.core.credentials import AccessToken
 from azure.core.credentials_async import AsyncTokenCredential
+from azure.core.exceptions import ClientAuthenticationError
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from fabric_dw import auth, telemetry
@@ -68,6 +69,7 @@ from fabric_dw.exceptions import (
     NotFoundError,
     PermissionDeniedError,
     RateLimitedError,
+    auth_error_from_credential_exc,
 )
 from fabric_dw.logging import redact_auth_header
 
@@ -334,7 +336,10 @@ class FabricHttpClient:
         async with self._token_lock:
             token = self._tokens.get(scope)
             if token is None or token.expires_on - time.time() < self._token_refresh_buffer:
-                token = await self._credential.get_token(scope)
+                try:
+                    token = await self._credential.get_token(scope)
+                except ClientAuthenticationError as exc:
+                    raise auth_error_from_credential_exc(exc) from exc
                 self._tokens[scope] = token
                 # Decode the tid claim from the new token and cache it in the
                 # telemetry layer (no-op when telemetry is disabled or tid is
