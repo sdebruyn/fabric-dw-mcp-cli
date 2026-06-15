@@ -5,6 +5,7 @@ import os
 import time
 import uuid
 from collections.abc import AsyncIterator
+from typing import NamedTuple
 from uuid import UUID
 
 import pytest
@@ -14,7 +15,7 @@ from fabric_dw.auth import get_credential
 from fabric_dw.exceptions import NotFoundError
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import Warehouse, WarehouseKind, WarehouseSnapshot
-from fabric_dw.services import snapshots, warehouses
+from fabric_dw.services import schemas, snapshots, warehouses
 from fabric_dw.sql import SqlTarget, is_transient_connection_error, run_query
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,25 @@ _SQL_READINESS_BACKOFF_MAX_S = 5.0
 _SNAP_SQL_READINESS_TIMEOUT_S = 600.0  # 10 min — Fabric preview snapshot SQL-layer provisioning
 # Polling interval (seconds) between snapshot readiness probes.
 _SNAP_SQL_READINESS_POLL_S = 5.0
+
+# Name of the read-only seed schema pre-populated in the shared warehouse.
+# Tests that only READ data (list / get / query) may use this schema directly.
+# Tests that mutate state MUST use the ``warehouse_schema`` fixture instead.
+SEED_SCHEMA_NAME = "sample"
+
+
+class SharedWarehouseTarget(NamedTuple):
+    """Container yielded by ``shared_warehouse``.
+
+    Attributes:
+        warehouse: The live :class:`~fabric_dw.models.Warehouse` item.
+        sql_target: A :class:`~fabric_dw.sql.SqlTarget` pointing at it.
+        workspace_id: The workspace UUID.
+    """
+
+    warehouse: Warehouse
+    sql_target: SqlTarget
+    workspace_id: UUID
 
 
 async def _wait_for_sql_readiness(
@@ -216,6 +236,181 @@ async def _wait_for_snapshot_sql_readiness(
             )
 
         await asyncio.sleep(_SNAP_SQL_READINESS_POLL_S)
+
+
+# ---------------------------------------------------------------------------
+# Session-scoped helpers (shared by both shared_warehouse and legacy fixtures)
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture(loop_scope="session", scope="session")
+async def _session_workspace_id() -> UUID:
+    """Resolve FABRIC_TEST_WORKSPACE_ID once per session.
+
+    Session-scoped variant of ``workspace_id`` used exclusively by
+    ``shared_warehouse``.  The function-scoped ``workspace_id`` fixture (below)
+    remains unchanged so that tests that request it directly continue to work.
+    """
+    raw = os.environ.get("FABRIC_TEST_WORKSPACE_ID")
+    if not raw:
+        pytest.skip("set FABRIC_TEST_WORKSPACE_ID to run integration tests")
+    return UUID(raw)
+
+
+@pytest_asyncio.fixture(loop_scope="session", scope="session")
+async def _session_http() -> AsyncIterator[FabricHttpClient]:
+    """Long-lived HTTP client shared across all tests in the session.
+
+    Session-scoped variant of ``http`` used exclusively by ``shared_warehouse``.
+    The function-scoped ``http`` fixture remains unchanged so that tests that
+    request it directly continue to work.
+    """
+    cred = get_credential()
+    async with FabricHttpClient(cred) as client:
+        yield client
+
+
+# ---------------------------------------------------------------------------
+# Shared warm warehouse (session-scoped, one per xdist worker)
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture(loop_scope="session", scope="session")
+async def shared_warehouse(
+    _session_http: FabricHttpClient,
+    _session_workspace_id: UUID,
+) -> AsyncIterator[SharedWarehouseTarget]:
+    """Create ONE warm warehouse per session (per xdist worker) and reuse it.
+
+    Naming convention
+    -----------------
+    The warehouse name embeds ``PYTEST_XDIST_WORKER`` (defaulting to
+    ``"master"`` when xdist is not active) and a random UUID fragment so that
+    parallel workers each get their own warehouse without cross-process
+    coordination.
+
+    Seed schema
+    -----------
+    After the warehouse warms up, a read-only ``sample`` schema is created with
+    a couple of small tables so that pure-read tests can query real rows without
+    creating their own objects.  The schema name is exposed as
+    ``conftest.SEED_SCHEMA_NAME``.
+
+    **Tests MUST NOT mutate the seed schema.**  Mutating tests must use the
+    ``warehouse_schema`` fixture instead, which creates a uniquely-named schema
+    per test and cascade-drops it on teardown.
+
+    xdist compatibility
+    -------------------
+    Each xdist worker runs its own session, so this session-scoped fixture
+    runs once per worker — not once globally.  No cross-process locking is
+    required.  The ``loop_scope="session"`` argument aligns the asyncio event
+    loop lifetime with the session scope, which pytest-asyncio >= 0.23 /
+    1.x requires for session-scoped async fixtures.
+    """
+    worker = os.environ.get("PYTEST_XDIST_WORKER", "master")
+    uid = uuid.uuid4().hex[:8]
+    name = f"pytest-{worker}-{uid}-wh"
+
+    wh = await warehouses.create(_session_http, _session_workspace_id, name)
+
+    try:
+        assert wh.connection_string, f"Warehouse {wh.id} returned no connection_string"
+
+        sql_target = SqlTarget(
+            workspace_id=str(_session_workspace_id),
+            database=wh.name,
+            connection_string=wh.connection_string,
+        )
+
+        # Wait for the SQL engine to accept connections before doing anything else.
+        await _wait_for_sql_readiness(sql_target)
+
+        # Populate the read-only seed schema with a handful of small tables so
+        # pure-read tests have real data to work with without creating objects.
+        await schemas.create_schema(sql_target, SEED_SCHEMA_NAME)
+        await _seed_sample_data(sql_target)
+
+        logger.info(
+            "shared_warehouse %r ready for worker %r (workspace %s)",
+            wh.name,
+            worker,
+            _session_workspace_id,
+        )
+
+        yield SharedWarehouseTarget(
+            warehouse=wh,
+            sql_target=sql_target,
+            workspace_id=_session_workspace_id,
+        )
+    finally:
+        with contextlib.suppress(Exception):
+            await warehouses.delete(_session_http, _session_workspace_id, wh.id)
+
+
+async def _seed_sample_data(target: SqlTarget) -> None:
+    """Create two small read-only tables in the ``sample`` schema.
+
+    ``sample.colors``  — a tiny reference table with an id and name column.
+    ``sample.numbers`` — a numeric table with id and value columns.
+
+    These are intentionally small (a few rows each) so that read-only tests get
+    predictable, deterministic data without heavy setup cost.
+    """
+    from fabric_dw.services import tables  # noqa: PLC0415 — local import avoids circular dep
+
+    await tables.create_table(
+        target,
+        SEED_SCHEMA_NAME,
+        "colors",
+        "SELECT 1 AS id, 'red' AS name UNION ALL SELECT 2, 'green' UNION ALL SELECT 3, 'blue'",
+    )
+    await tables.create_table(
+        target,
+        SEED_SCHEMA_NAME,
+        "numbers",
+        "SELECT 1 AS id, 10 AS value UNION ALL SELECT 2, 20 UNION ALL SELECT 3, 30",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Per-test schema isolation fixture
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def warehouse_schema(
+    shared_warehouse: SharedWarehouseTarget,
+) -> AsyncIterator[tuple[SqlTarget, str]]:
+    """Create a uniquely-named schema in the shared warehouse and cascade-drop it on teardown.
+
+    Yields ``(sql_target, schema_name)`` so the test can qualify every object
+    it creates under ``schema_name`` and remain fully isolated from every other
+    concurrently running test.
+
+    Design notes
+    ------------
+    - Each test gets a collision-resistant schema name (``pytest_<8-hex-chars>``).
+    - Teardown calls ``schemas.delete_schema(..., cascade=True)`` so the test
+      does not need to clean up individual objects — the cascade drop handles it.
+    - If setup fails (e.g. schema creation raises) the finally block is still
+      executed, but ``contextlib.suppress`` guards against delete failures on a
+      schema that was never fully created.
+    """
+    schema_name = f"pytest_{uuid.uuid4().hex[:8]}"
+    sql_target = shared_warehouse.sql_target
+
+    await schemas.create_schema(sql_target, schema_name)
+    try:
+        yield sql_target, schema_name
+    finally:
+        with contextlib.suppress(Exception):
+            await schemas.delete_schema(sql_target, schema_name, cascade=True)
+
+
+# ---------------------------------------------------------------------------
+# Legacy function-scoped fixtures (kept for tests that need a dedicated item)
+# ---------------------------------------------------------------------------
 
 
 @pytest_asyncio.fixture
