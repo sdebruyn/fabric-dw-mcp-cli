@@ -1700,3 +1700,103 @@ async def test_combined_deadline_aborts_paginated_429_loop() -> None:
                 # Exhaust the async generator — the first _request_with_retry call
                 # must raise RateLimitedError before returning any items.
                 _ = [item async for item in client.iter_paginated(HttpBase.FABRIC, "/items")]
+
+
+# ---------------------------------------------------------------------------
+# Credential close on __aexit__ (issue-385)
+# ---------------------------------------------------------------------------
+
+
+async def test_aexit_closes_credential_with_async_close() -> None:
+    """__aexit__ must await credential.close() when it exposes an async close method.
+
+    azure.identity.aio credentials hold an aiohttp.ClientSession internally.
+    Failing to await close() leaves the session open and triggers an
+    'Unclosed client session' ResourceWarning on process exit.
+    """
+    cred = MagicMock(spec=AsyncTokenCredential)
+    cred.get_token = AsyncMock(return_value=_FAKE_TOKEN)
+    close_spy = AsyncMock()
+    cred.close = close_spy
+
+    client = FabricHttpClient(credential=cred, rps=10)
+    async with client:
+        pass  # enter and immediately exit
+
+    close_spy.assert_awaited_once()
+
+
+async def test_aexit_credential_close_called_even_on_request_exception() -> None:
+    """credential.close() must be awaited in __aexit__ even when the body raises.
+
+    Ensures that an exception raised inside the ``async with`` block does not
+    short-circuit the credential teardown path in ``__aexit__``.
+    """
+    cred = MagicMock(spec=AsyncTokenCredential)
+    cred.get_token = AsyncMock(return_value=_FAKE_TOKEN)
+    close_spy = AsyncMock()
+    cred.close = close_spy
+
+    client = FabricHttpClient(credential=cred, rps=10)
+    with pytest.raises(RuntimeError, match="boom"):
+        async with client:
+            raise RuntimeError("boom")
+
+    close_spy.assert_awaited_once()
+
+
+async def test_aexit_skips_close_when_credential_has_no_close() -> None:
+    """__aexit__ must not raise when the credential has no close() method.
+
+    Plain AsyncTokenCredential protocol implementations that do not expose
+    close() should be silently ignored — no AttributeError, no crash.
+    """
+    cred = MagicMock(spec=AsyncTokenCredential)
+    cred.get_token = AsyncMock(return_value=_FAKE_TOKEN)
+    # Ensure there is no 'close' attribute on the mock (spec=AsyncTokenCredential
+    # already excludes it since the protocol has no close, but be explicit).
+    if hasattr(cred, "close"):
+        del cred.close
+
+    client = FabricHttpClient(credential=cred, rps=10)
+    # Must not raise
+    async with client:
+        pass
+
+
+async def test_aexit_suppresses_exception_from_credential_close() -> None:
+    """__aexit__ must swallow exceptions raised by credential.close().
+
+    A broken credential teardown must not crash the CLI command or propagate
+    to the caller — teardown errors are logged at DEBUG level and suppressed.
+    """
+    cred = MagicMock(spec=AsyncTokenCredential)
+    cred.get_token = AsyncMock(return_value=_FAKE_TOKEN)
+    close_spy = AsyncMock(side_effect=RuntimeError("credential teardown failed"))
+    cred.close = close_spy
+
+    client = FabricHttpClient(credential=cred, rps=10)
+    # Must not raise RuntimeError from close()
+    async with client:
+        pass
+
+    close_spy.assert_awaited_once()
+
+
+async def test_aexit_skips_close_for_sync_close_method() -> None:
+    """When credential.close() is synchronous (not a coroutine), it must be called but not awaited.
+
+    Some credential wrappers may expose a plain (non-async) close().  The guard
+    must call it without awaiting so no TypeError is raised.
+    """
+    cred = MagicMock(spec=AsyncTokenCredential)
+    cred.get_token = AsyncMock(return_value=_FAKE_TOKEN)
+    sync_close = unittest.mock.MagicMock()  # non-coroutine callable
+    cred.close = sync_close
+
+    client = FabricHttpClient(credential=cred, rps=10)
+    # Must not raise (sync close returns a non-coroutine, so iscoroutine check skips await)
+    async with client:
+        pass
+
+    sync_close.assert_called_once()
