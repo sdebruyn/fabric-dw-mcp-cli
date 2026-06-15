@@ -18,7 +18,6 @@ class CliContext:
     json_output: bool = False
     yes: bool = False
     auth: CredentialMode = field(default_factory=lambda: CredentialMode.DEFAULT)
-    verbose: bool = False
     _config: UserConfig | None = field(default=None, repr=False, compare=False)
 
     @property

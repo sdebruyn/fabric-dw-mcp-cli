@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
-import logging
-
 import click
 
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import render, render_permissions_table, render_refresh_table
 from fabric_dw.cli.commands._utils import (
-    _coro,
-    _resolve_item,
     build_http_client,
+    coro,
     make_resolver,
+    resolve_item,
     resolve_warehouse_arg,
     resolve_workspace_arg,
     validate_workspace_or_all_workspaces,
@@ -20,8 +18,6 @@ from fabric_dw.cli.commands._utils import (
 from fabric_dw.exceptions import FabricError
 from fabric_dw.services import permissions as _permissions_svc
 from fabric_dw.services import sql_endpoints as _sql_endpoints_svc
-
-_log = logging.getLogger(__name__)
 
 
 @click.group("sql-endpoints")
@@ -40,7 +36,7 @@ def sql_endpoints_group() -> None:
     help="Scan all visible workspaces and aggregate results.",
 )
 @click.pass_obj
-@_coro
+@coro
 async def list_cmd(ctx: CliContext, workspace: str | None, all_workspaces: bool) -> None:
     """List all SQL analytics endpoints in WORKSPACE (name or GUID).
 
@@ -57,7 +53,9 @@ async def list_cmd(ctx: CliContext, workspace: str | None, all_workspaces: bool)
             if all_workspaces:
                 items = await _sql_endpoints_svc.list_all_workspaces(http)
             else:
-                assert resolved_workspace is not None  # noqa: S101 - validated above
+                # resolved_workspace is guaranteed non-None by validate_workspace_or_all_workspaces
+                if resolved_workspace is None:  # pragma: no cover — defensive
+                    raise click.UsageError("Provide WORKSPACE or pass --all-workspaces / -A.")
                 resolver, _ = make_resolver(http)
                 ws_id = await resolver.workspace_id(resolved_workspace)
                 items = await _sql_endpoints_svc.list_endpoints(http, ws_id)
@@ -74,14 +72,14 @@ async def list_cmd(ctx: CliContext, workspace: str | None, all_workspaces: bool)
 @click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.pass_obj
-@_coro
+@coro
 async def get_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> None:
     """Get details for ITEM (SQL analytics endpoint) in WORKSPACE (both accept name or GUID)."""
     ws = resolve_workspace_arg(ctx, workspace)
     ep = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
-            ws_id, entry = await _resolve_item(http, ws, ep)
+            ws_id, entry = await resolve_item(http, ws, ep)
             obj = await _sql_endpoints_svc.get_endpoint(http, ws_id, entry.id)
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except FabricError as exc:
@@ -103,7 +101,7 @@ async def get_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> N
     ),
 )
 @click.pass_obj
-@_coro
+@coro
 async def refresh_cmd(
     ctx: CliContext, workspace: str | None, item: str | None, recreate_tables: bool
 ) -> None:
@@ -119,7 +117,7 @@ async def refresh_cmd(
     ep = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
-            ws_id, entry = await _resolve_item(http, ws, ep)
+            ws_id, entry = await resolve_item(http, ws, ep)
             statuses = await _sql_endpoints_svc.refresh_metadata(
                 http, ws_id, entry.id, recreate_tables=recreate_tables
             )
@@ -138,7 +136,7 @@ async def refresh_cmd(
 @click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.pass_obj
-@_coro
+@coro
 async def permissions_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> None:
     """List principals with access to ITEM (SQL endpoint) in WORKSPACE (both accept name or GUID).
 
@@ -149,7 +147,7 @@ async def permissions_cmd(ctx: CliContext, workspace: str | None, item: str | No
     ep = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
-            ws_id, entry = await _resolve_item(http, ws, ep)
+            ws_id, entry = await resolve_item(http, ws, ep)
             items = await _permissions_svc.list_item_access(http, ws_id, entry.id)
             render_permissions_table(
                 items,

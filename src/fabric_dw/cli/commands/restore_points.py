@@ -2,24 +2,20 @@
 
 from __future__ import annotations
 
-import logging
-
 import click
 
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import render
 from fabric_dw.cli.commands._utils import (
-    _coro,
     build_http_client,
     confirm_destructive,
+    coro,
     resolve_item,
     resolve_warehouse_arg,
     resolve_workspace_arg,
 )
 from fabric_dw.exceptions import FabricError
 from fabric_dw.services import restore as _restore_svc
-
-_log = logging.getLogger(__name__)
 
 
 @click.group("restore-points")
@@ -31,7 +27,7 @@ def restore_points_group() -> None:
 @click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.pass_obj
-@_coro
+@coro
 async def list_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> None:
     """List all restore points for ITEM (warehouse) in WORKSPACE."""
     ws = resolve_workspace_arg(ctx, workspace)
@@ -55,7 +51,7 @@ async def list_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> 
 @click.argument("item", required=False, default=None)
 @click.argument("restore_point_id")
 @click.pass_obj
-@_coro
+@coro
 async def get_cmd(
     ctx: CliContext,
     workspace: str | None,
@@ -81,7 +77,7 @@ async def get_cmd(
 @click.option("--name", default=None, help="Optional display name (max 128 chars).")
 @click.option("--description", default=None, help="Optional description (max 512 chars).")
 @click.pass_obj
-@_coro
+@coro
 async def create_cmd(
     ctx: CliContext,
     workspace: str | None,
@@ -111,7 +107,7 @@ async def create_cmd(
 @click.argument("new_name")
 @click.option("--description", default=None, help="Optional new description.")
 @click.pass_obj
-@_coro
+@coro
 async def rename_cmd(
     ctx: CliContext,
     workspace: str | None,
@@ -145,7 +141,7 @@ async def rename_cmd(
 @click.argument("item", required=False, default=None)
 @click.argument("restore_point_id")
 @click.pass_obj
-@_coro
+@coro
 async def delete_cmd(
     ctx: CliContext,
     workspace: str | None,
@@ -185,7 +181,7 @@ async def delete_cmd(
 @click.argument("item", required=False, default=None)
 @click.argument("restore_point_id")
 @click.pass_obj
-@_coro
+@coro
 async def restore_cmd(
     ctx: CliContext,
     workspace: str | None,

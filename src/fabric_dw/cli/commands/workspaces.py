@@ -2,23 +2,19 @@
 
 from __future__ import annotations
 
-import logging
-
 import click
 
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import render
 from fabric_dw.cli.commands._utils import (
-    _coro,
     build_http_client,
     confirm_destructive,
+    coro,
     resolve_workspace_arg,
     resolve_workspace_id,
 )
 from fabric_dw.exceptions import FabricError
 from fabric_dw.services import workspaces as _workspaces_svc
-
-_log = logging.getLogger(__name__)
 
 
 @click.group("workspaces")
@@ -28,7 +24,7 @@ def workspaces_group() -> None:
 
 @workspaces_group.command("list")
 @click.pass_obj
-@_coro
+@coro
 async def list_cmd(ctx: CliContext) -> None:
     """List all workspaces the authenticated principal has access to."""
     try:
@@ -46,7 +42,7 @@ async def list_cmd(ctx: CliContext) -> None:
 @workspaces_group.command("get")
 @click.argument("workspace", required=False, default=None)
 @click.pass_obj
-@_coro
+@coro
 async def get_cmd(ctx: CliContext, workspace: str | None) -> None:
     """Get details for WORKSPACE (name or GUID)."""
     ws = resolve_workspace_arg(ctx, workspace)
@@ -63,7 +59,7 @@ async def get_cmd(ctx: CliContext, workspace: str | None) -> None:
 @click.argument("workspace", required=False, default=None)
 @click.argument("collation")
 @click.pass_obj
-@_coro
+@coro
 async def set_collation_cmd(ctx: CliContext, workspace: str | None, collation: str) -> None:
     """Set the default Data Warehouse COLLATION for WORKSPACE (name or GUID).
 

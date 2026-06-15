@@ -102,7 +102,7 @@ class TestSnapshotsList:
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.snapshots._resolve_item",
+                "fabric_dw.cli.commands.snapshots.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_wh_entry())),
             ),
         ):
@@ -119,7 +119,7 @@ class TestSnapshotsList:
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.snapshots._resolve_item",
+                "fabric_dw.cli.commands.snapshots.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_wh_entry())),
             ),
         ):
@@ -137,7 +137,7 @@ class TestSnapshotsList:
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.snapshots._resolve_item",
+                "fabric_dw.cli.commands.snapshots.resolve_item",
                 new=AsyncMock(side_effect=NotFoundError("not found")),
             ),
         ):
@@ -171,7 +171,7 @@ class TestSnapshotsCreate:
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.snapshots._resolve_item",
+                "fabric_dw.cli.commands.snapshots.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_wh_entry())),
             ),
             patch("asyncio.sleep", new=AsyncMock()),
@@ -242,7 +242,7 @@ class TestSnapshotsRename:
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.snapshots._resolve_item_with_cache",
+                "fabric_dw.cli.commands.snapshots.resolve_item_with_cache",
                 new=AsyncMock(return_value=(WS_UUID, _make_snap_entry(), _cache)),
             ),
         ):
@@ -267,7 +267,7 @@ class TestSnapshotsDelete:
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.snapshots._resolve_item_with_cache",
+                "fabric_dw.cli.commands.snapshots.resolve_item_with_cache",
                 new=AsyncMock(return_value=(WS_UUID, _make_snap_entry(), _cache)),
             ),
         ):
@@ -285,7 +285,7 @@ class TestSnapshotsDelete:
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.snapshots._resolve_item_with_cache",
+                "fabric_dw.cli.commands.snapshots.resolve_item_with_cache",
                 new=AsyncMock(return_value=(WS_UUID, _make_snap_entry(), _cache)),
             ),
         ):
@@ -445,7 +445,7 @@ class TestSnapshotsDefaultFallback:
                 new=_make_http_cm(mock_http),
             ),
             patch(
-                "fabric_dw.cli.commands.snapshots._resolve_item",
+                "fabric_dw.cli.commands.snapshots.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_wh_entry())),
             ),
         ):

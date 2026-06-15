@@ -49,7 +49,7 @@ def render(
         data: The data to render. Supported shapes:
             - ``list[dict]`` → Rich Table (or JSON array).
             - ``dict`` → Rich Panel (or JSON object).
-            - primitives → ``repr()`` string (or JSON scalar).
+            - other → ``str()`` conversion via ``click.echo`` (or JSON scalar).
         json_output: When *True*, emit indented JSON via ``click.echo``.
             When *False*, use Rich for human-friendly output.
         console: Optional Rich Console instance. When *None* the module-level
@@ -68,7 +68,7 @@ def render(
     elif isinstance(data, dict):
         _render_panel({str(k): v for k, v in data.items()}, console=con, title=table_title)
     else:
-        click.echo(repr(data))
+        click.echo(str(data))
 
 
 def _cell(value: object) -> str:
@@ -80,6 +80,21 @@ def _cell(value: object) -> str:
     if value is None:
         return "[dim]NULL[/dim]"
     return str(value)
+
+
+def _column_is_all_null(col: str, norm_rows: list[dict[str, object] | object]) -> bool:
+    """Return *True* when every dict-row in *norm_rows* has a ``None`` value for *col*.
+
+    Non-dict rows (scalars) are never considered to "have" a value for any
+    column, so they are skipped.  A column is kept as soon as one dict-row
+    provides a non-``None`` value.
+    """
+    for row in norm_rows:
+        if not isinstance(row, dict):
+            continue
+        if row.get(col) is not None:
+            return False
+    return True
 
 
 def _render_table(rows: Sequence[object], *, console: Console, title: str | None) -> None:
@@ -115,14 +130,7 @@ def _render_table(rows: Sequence[object], *, console: Console, title: str | None
     # Drop columns where every dict-row's value is None (or the key is absent).
     # Non-dict rows (scalars) are never counted as "having" any column value, so
     # a column is only kept if at least one dict-row provides a non-None value.
-    all_null: set[str] = {
-        col
-        for col in columns
-        if all(
-            (isinstance(r, dict) and r.get(col) is None) or not isinstance(r, dict)
-            for r in norm_rows
-        )
-    }
+    all_null = {col for col in columns if _column_is_all_null(col, norm_rows)}
     visible_columns = [col for col in columns if col not in all_null]
 
     for col in visible_columns:
@@ -170,7 +178,7 @@ def render_permissions_table(
         )
         return
 
-    con = console or Console()
+    con = console if console is not None else _DEFAULT_CONSOLE
     table = Table(title=title, show_header=True, header_style="bold")
     table.add_column("Display Name", no_wrap=True)
     table.add_column("UPN / App ID")
@@ -194,7 +202,7 @@ def render_refresh_table(
     statuses: list[TableSyncStatus], *, console: Console | None = None
 ) -> None:
     """Render a list of :class:`~fabric_dw.models.TableSyncStatus` as a Rich table."""
-    con = console or Console()
+    con = console if console is not None else _DEFAULT_CONSOLE
     table = Table(title="Metadata Refresh Results", show_header=True, header_style="bold")
     table.add_column("Table", no_wrap=True)
     table.add_column("Status")

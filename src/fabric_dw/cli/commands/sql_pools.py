@@ -7,18 +7,18 @@
 
 from __future__ import annotations
 
-import logging
-from datetime import datetime
-
 import click
 
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import confirm, render
 from fabric_dw.cli.commands._utils import (
-    _coro,
+    LIMIT_OPTION,
+    SINCE_OPTION,
+    UNTIL_OPTION,
     build_http_client,
     build_sql_target,
-    parse_iso_datetime,
+    coro,
+    parse_iso_optional,
     resolve_warehouse_arg,
     resolve_workspace_arg,
     resolve_workspace_id,
@@ -32,8 +32,6 @@ from fabric_dw.exceptions import (
 from fabric_dw.models import SqlPool, SqlPoolClassifier
 from fabric_dw.services import query_insights as _qi_svc
 from fabric_dw.services import sql_pools as _svc
-
-_log = logging.getLogger(__name__)
 
 
 def _permission_hint(exc: PermissionDeniedError) -> click.ClickException:
@@ -53,7 +51,7 @@ def sql_pools_group() -> None:
 @sql_pools_group.command("get")
 @click.argument("workspace", required=False, default=None)
 @click.pass_obj
-@_coro
+@coro
 async def get_cmd(ctx: CliContext, workspace: str | None) -> None:
     """Fetch the SQL Pools configuration for WORKSPACE."""
     ws = resolve_workspace_arg(ctx, workspace)
@@ -79,7 +77,7 @@ async def get_cmd(ctx: CliContext, workspace: str | None) -> None:
 @sql_pools_group.command("list")
 @click.argument("workspace", required=False, default=None)
 @click.pass_obj
-@_coro
+@coro
 async def list_cmd(ctx: CliContext, workspace: str | None) -> None:
     """List all SQL pools in WORKSPACE."""
     ws = resolve_workspace_arg(ctx, workspace)
@@ -104,7 +102,7 @@ async def list_cmd(ctx: CliContext, workspace: str | None) -> None:
 @click.argument("workspace", required=False, default=None)
 @click.option("--name", required=True, help="Name of the pool to show.")
 @click.pass_obj
-@_coro
+@coro
 async def show_cmd(ctx: CliContext, workspace: str | None, name: str) -> None:
     """Show details for a single SQL pool in WORKSPACE."""
     ws = resolve_workspace_arg(ctx, workspace)
@@ -164,7 +162,7 @@ async def show_cmd(ctx: CliContext, workspace: str | None, name: str) -> None:
     help="Classifier value(s). Repeat for multiple values.",
 )
 @click.pass_obj
-@_coro
+@coro
 async def create_cmd(
     ctx: CliContext,
     workspace: str | None,
@@ -249,7 +247,7 @@ async def create_cmd(
     help="New classifier value(s). Repeat for multiple values. Replaces all existing values.",
 )
 @click.pass_obj
-@_coro
+@coro
 async def update_cmd(
     ctx: CliContext,
     workspace: str | None,
@@ -299,7 +297,7 @@ async def update_cmd(
 @click.argument("workspace", required=False, default=None)
 @click.option("--name", required=True, help="Name of the pool to delete.")
 @click.pass_obj
-@_coro
+@coro
 async def delete_cmd(ctx: CliContext, workspace: str | None, name: str) -> None:
     """Remove an SQL pool from WORKSPACE."""
     ws = resolve_workspace_arg(ctx, workspace)
@@ -327,7 +325,7 @@ async def delete_cmd(ctx: CliContext, workspace: str | None, name: str) -> None:
 @sql_pools_group.command("enable")
 @click.argument("workspace", required=False, default=None)
 @click.pass_obj
-@_coro
+@coro
 async def enable_cmd(ctx: CliContext, workspace: str | None) -> None:
     """Enable custom SQL Pools for WORKSPACE (preserves pool configuration)."""
     ws = resolve_workspace_arg(ctx, workspace)
@@ -348,7 +346,7 @@ async def enable_cmd(ctx: CliContext, workspace: str | None) -> None:
 @sql_pools_group.command("disable")
 @click.argument("workspace", required=False, default=None)
 @click.pass_obj
-@_coro
+@coro
 async def disable_cmd(ctx: CliContext, workspace: str | None) -> None:
     """Disable custom SQL Pools for WORKSPACE (preserves pool configuration).
 
@@ -374,37 +372,14 @@ async def disable_cmd(ctx: CliContext, workspace: str | None) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _parse_iso(value: str | None, param_name: str) -> datetime | None:
-    """Parse an optional ISO-8601 string; raise UsageError on bad input."""
-    if value is None:
-        return None
-    return parse_iso_datetime(value, param_name, assume_utc=False)
-
-
 @sql_pools_group.command("insights")
 @click.argument("workspace", required=False, default=None)
 @click.argument("warehouse", required=False, default=None)
-@click.option(
-    "--limit",
-    default=100,
-    show_default=True,
-    type=click.IntRange(1, 10_000),
-    help="Maximum number of rows to return (1-10 000).",
-)
-@click.option(
-    "--since",
-    default=None,
-    metavar="ISO8601",
-    help="Return rows with timestamp >= this value (ISO-8601).",
-)
-@click.option(
-    "--until",
-    default=None,
-    metavar="ISO8601",
-    help="Return rows with timestamp <= this value (ISO-8601).",
-)
+@LIMIT_OPTION
+@SINCE_OPTION
+@UNTIL_OPTION
 @click.pass_obj
-@_coro
+@coro
 async def insights_cmd(
     ctx: CliContext,
     workspace: str | None,
@@ -416,8 +391,8 @@ async def insights_cmd(
     """List SQL pool insights from queryinsights.sql_pool_insights."""
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, warehouse)
-    since_dt = _parse_iso(since, "--since")
-    until_dt = _parse_iso(until, "--until")
+    since_dt = parse_iso_optional(since, "--since")
+    until_dt = parse_iso_optional(until, "--until")
     try:
         async with build_http_client(ctx) as http:
             target, _ = await build_sql_target(http, ws, wh)

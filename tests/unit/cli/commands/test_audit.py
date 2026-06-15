@@ -67,7 +67,7 @@ class TestAuditGet:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.audit._resolve_item",
+                "fabric_dw.cli.commands.audit.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
         ):
@@ -84,7 +84,7 @@ class TestAuditGet:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.audit._resolve_item",
+                "fabric_dw.cli.commands.audit.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
         ):
@@ -102,7 +102,7 @@ class TestAuditGet:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.audit._resolve_item",
+                "fabric_dw.cli.commands.audit.resolve_item",
                 new=AsyncMock(side_effect=NotFoundError("not found")),
             ),
         ):
@@ -123,7 +123,7 @@ class TestAuditEnable:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.audit._resolve_item",
+                "fabric_dw.cli.commands.audit.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
         ):
@@ -140,7 +140,7 @@ class TestAuditEnable:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.audit._resolve_item",
+                "fabric_dw.cli.commands.audit.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
         ):
@@ -164,7 +164,7 @@ class TestAuditEnable:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.audit._resolve_item",
+                "fabric_dw.cli.commands.audit.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
             patch(
@@ -222,7 +222,7 @@ class TestAuditDisable:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.audit._resolve_item",
+                "fabric_dw.cli.commands.audit.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
         ):
@@ -239,7 +239,7 @@ class TestAuditDisable:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.audit._resolve_item",
+                "fabric_dw.cli.commands.audit.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
         ):
@@ -261,7 +261,7 @@ class TestAuditSetRetention:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.audit._resolve_item",
+                "fabric_dw.cli.commands.audit.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
         ):
@@ -280,7 +280,7 @@ class TestAuditSetRetention:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.audit._resolve_item",
+                "fabric_dw.cli.commands.audit.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
         ):
@@ -302,7 +302,7 @@ class TestAuditSetRetention:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.audit._resolve_item",
+                "fabric_dw.cli.commands.audit.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
             patch(
@@ -348,7 +348,7 @@ class TestAuditSetRetention:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.audit._resolve_item",
+                "fabric_dw.cli.commands.audit.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
         ):
@@ -371,7 +371,7 @@ class TestAuditSetGroups:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.audit._resolve_item",
+                "fabric_dw.cli.commands.audit.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
         ):
@@ -401,7 +401,7 @@ class TestAuditSetGroups:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.audit._resolve_item",
+                "fabric_dw.cli.commands.audit.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
         ):
@@ -437,7 +437,7 @@ class TestAuditAddGroup:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.audit._resolve_item",
+                "fabric_dw.cli.commands.audit.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
         ):
@@ -463,7 +463,7 @@ class TestAuditAddGroup:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.audit._resolve_item",
+                "fabric_dw.cli.commands.audit.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
         ):
@@ -486,7 +486,7 @@ class TestAuditAddGroup:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.audit._resolve_item",
+                "fabric_dw.cli.commands.audit.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
         ):
@@ -507,7 +507,7 @@ class TestAuditAddGroup:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.audit._resolve_item",
+                "fabric_dw.cli.commands.audit.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
             patch(
@@ -534,7 +534,7 @@ class TestAuditRemoveGroup:
                 new=_make_cm(AsyncMock(), None),
             ),
             patch(
-                "fabric_dw.cli.commands.audit._resolve_item",
+                "fabric_dw.cli.commands.audit.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
             patch(
@@ -563,7 +563,7 @@ class TestAuditRemoveGroup:
                 new=_make_cm(AsyncMock(), None),
             ),
             patch(
-                "fabric_dw.cli.commands.audit._resolve_item",
+                "fabric_dw.cli.commands.audit.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
             patch(
@@ -590,7 +590,7 @@ class TestAuditRemoveGroup:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.audit._resolve_item",
+                "fabric_dw.cli.commands.audit.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
         ):
@@ -611,7 +611,7 @@ class TestAuditRemoveGroup:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.audit._resolve_item",
+                "fabric_dw.cli.commands.audit.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
             patch(
@@ -646,7 +646,7 @@ class TestAuditDefaultFallback:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.audit._resolve_item",
+                "fabric_dw.cli.commands.audit.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
         ):

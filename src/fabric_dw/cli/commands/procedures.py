@@ -2,26 +2,22 @@
 
 from __future__ import annotations
 
-import logging
-
 import click
 
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import confirm, render
 from fabric_dw.cli.commands._utils import (
-    _coro,
     build_http_client,
     build_sql_target,
     confirm_destructive,
-    load_select_body,
+    coro,
+    load_sql_body,
     parse_qualified_name,
     resolve_warehouse_arg,
     resolve_workspace_arg,
 )
 from fabric_dw.exceptions import FabricError
 from fabric_dw.services import procedures as _procs_svc
-
-_log = logging.getLogger(__name__)
 
 
 @click.group("procedures")
@@ -34,7 +30,7 @@ def procedures_group() -> None:
 @click.argument("item", required=False, default=None)
 @click.option("--schema", default=None, help="Filter by schema name.")
 @click.pass_obj
-@_coro
+@coro
 async def list_cmd(
     ctx: CliContext, workspace: str | None, item: str | None, schema: str | None
 ) -> None:
@@ -59,7 +55,7 @@ async def list_cmd(
 @click.argument("item", required=False, default=None)
 @click.argument("qualified_name")
 @click.pass_obj
-@_coro
+@coro
 async def get_cmd(
     ctx: CliContext,
     workspace: str | None,
@@ -88,7 +84,7 @@ async def get_cmd(
     "--from-file", default=None, help="Path to a .sql file containing the procedure body."
 )
 @click.pass_obj
-@_coro
+@coro
 async def create_cmd(
     ctx: CliContext,
     workspace: str | None,
@@ -101,7 +97,7 @@ async def create_cmd(
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, item)
     schema, proc_name = parse_qualified_name(qualified_name, kind="procedure")
-    proc_body = load_select_body(body, from_file)
+    proc_body = load_sql_body(body, from_file, inline_opt="--body")
     try:
         async with build_http_client(ctx) as http:
             target, _entry = await build_sql_target(http, ws, wh)
@@ -122,7 +118,7 @@ async def create_cmd(
     "--from-file", default=None, help="Path to a .sql file containing the procedure body."
 )
 @click.pass_obj
-@_coro
+@coro
 async def update_cmd(
     ctx: CliContext,
     workspace: str | None,
@@ -135,7 +131,7 @@ async def update_cmd(
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, item)
     schema, proc_name = parse_qualified_name(qualified_name, kind="procedure")
-    proc_body = load_select_body(body, from_file)
+    proc_body = load_sql_body(body, from_file, inline_opt="--body")
     try:
         async with build_http_client(ctx) as http:
             target, entry = await build_sql_target(http, ws, wh)
@@ -159,7 +155,7 @@ async def update_cmd(
 @click.argument("item", required=False, default=None)
 @click.argument("qualified_name")
 @click.pass_obj
-@_coro
+@coro
 async def drop_cmd(
     ctx: CliContext,
     workspace: str | None,

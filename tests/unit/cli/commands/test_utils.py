@@ -19,7 +19,7 @@ from fabric_dw.cli.commands._utils import (
     build_sql_target,
     confirm_destructive,
     get_ctx,
-    load_select_body,
+    load_sql_body,
     make_resolver,
     parse_iso_datetime,
     parse_qualified_name,
@@ -321,42 +321,51 @@ class TestParseQualifiedName:
 
 
 # ---------------------------------------------------------------------------
-# load_select_body
+# load_sql_body
 # ---------------------------------------------------------------------------
 
 
-class TestLoadSelectBody:
-    """load_select_body returns the body text or raises UsageError."""
+class TestLoadSqlBody:
+    """load_sql_body returns the body text or raises UsageError."""
 
     def test_returns_inline_select(self) -> None:
-        body = load_select_body("SELECT 1", None)
+        body = load_sql_body("SELECT 1", None)
         assert body == "SELECT 1"
 
     def test_returns_file_contents(self, tmp_path: Path) -> None:
         f = tmp_path / "query.sql"
         f.write_text("SELECT 2", encoding="utf-8")
-        body = load_select_body(None, str(f))
+        body = load_sql_body(None, str(f))
         assert body == "SELECT 2"
 
     def test_file_bom_stripped(self, tmp_path: Path) -> None:
         f = tmp_path / "query.sql"
         f.write_bytes(b"\xef\xbb\xbfSELECT 3")  # UTF-8 BOM
-        body = load_select_body(None, str(f))
+        body = load_sql_body(None, str(f))
         assert body == "SELECT 3"
 
     def test_both_raises_usage_error(self, tmp_path: Path) -> None:
         f = tmp_path / "q.sql"
         f.write_text("x", encoding="utf-8")
         with pytest.raises(click.UsageError, match="not both"):
-            load_select_body("SELECT 1", str(f))
+            load_sql_body("SELECT 1", str(f))
 
     def test_neither_raises_usage_error(self) -> None:
         with pytest.raises(click.UsageError):
-            load_select_body(None, None)
+            load_sql_body(None, None)
 
     def test_missing_file_raises_usage_error(self) -> None:
         with pytest.raises(click.UsageError, match="not found"):
-            load_select_body(None, "/nonexistent/path/query.sql")
+            load_sql_body(None, "/nonexistent/path/query.sql")
+
+    def test_custom_option_names_in_error_messages(self, tmp_path: Path) -> None:
+        """Callers can pass custom option names into error messages."""
+        f = tmp_path / "q.sql"
+        f.write_text("x", encoding="utf-8")
+        with pytest.raises(click.UsageError, match="--body"):
+            load_sql_body("SELECT 1", str(f), inline_opt="--body")
+        with pytest.raises(click.UsageError, match="--body"):
+            load_sql_body(None, None, inline_opt="--body")
 
 
 # ---------------------------------------------------------------------------

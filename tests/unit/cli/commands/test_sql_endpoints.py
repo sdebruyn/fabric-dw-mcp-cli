@@ -227,7 +227,7 @@ class TestEndpointsGet:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_endpoints._resolve_item",
+                "fabric_dw.cli.commands.sql_endpoints.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
         ):
@@ -243,7 +243,7 @@ class TestEndpointsGet:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_endpoints._resolve_item",
+                "fabric_dw.cli.commands.sql_endpoints.resolve_item",
                 new=AsyncMock(side_effect=NotFoundError("endpoint not found")),
             ),
         ):
@@ -288,7 +288,7 @@ class TestEndpointsRefresh:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_endpoints._resolve_item",
+                "fabric_dw.cli.commands.sql_endpoints.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
             patch(
@@ -310,7 +310,7 @@ class TestEndpointsRefresh:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_endpoints._resolve_item",
+                "fabric_dw.cli.commands.sql_endpoints.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
             patch(
@@ -339,7 +339,7 @@ class TestEndpointsRefresh:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_endpoints._resolve_item",
+                "fabric_dw.cli.commands.sql_endpoints.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
             patch(
@@ -369,7 +369,7 @@ class TestEndpointsRefresh:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_endpoints._resolve_item",
+                "fabric_dw.cli.commands.sql_endpoints.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
             patch(
@@ -400,7 +400,7 @@ class TestEndpointsRefresh:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_endpoints._resolve_item",
+                "fabric_dw.cli.commands.sql_endpoints.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
             patch(
@@ -423,7 +423,7 @@ class TestEndpointsRefresh:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_endpoints._resolve_item",
+                "fabric_dw.cli.commands.sql_endpoints.resolve_item",
                 new=AsyncMock(side_effect=NotFoundError("endpoint not found")),
             ),
         ):

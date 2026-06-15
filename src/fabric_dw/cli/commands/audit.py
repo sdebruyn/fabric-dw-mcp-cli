@@ -2,23 +2,19 @@
 
 from __future__ import annotations
 
-import logging
-
 import click
 
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import confirm, render
 from fabric_dw.cli.commands._utils import (
-    _coro,
-    _resolve_item,
     build_http_client,
+    coro,
+    resolve_item,
     resolve_warehouse_arg,
     resolve_workspace_arg,
 )
 from fabric_dw.exceptions import FabricError
 from fabric_dw.services import audit as _audit_svc
-
-_log = logging.getLogger(__name__)
 
 
 @click.group("audit")
@@ -30,14 +26,14 @@ def audit_group() -> None:
 @click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.pass_obj
-@_coro
+@coro
 async def get_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> None:
     """Get the current audit settings for ITEM (warehouse) in WORKSPACE."""
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
-            ws_id, entry = await _resolve_item(http, ws, wh)
+            ws_id, entry = await resolve_item(http, ws, wh)
             obj = await _audit_svc.get_settings(http, ws_id, entry.id)
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
@@ -63,7 +59,7 @@ async def get_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> N
     "Mutually exclusive with --retention-days.",
 )
 @click.pass_obj
-@_coro
+@coro
 async def enable_cmd(
     ctx: CliContext,
     workspace: str | None,
@@ -91,7 +87,7 @@ async def enable_cmd(
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
-            ws_id, entry = await _resolve_item(http, ws, wh)
+            ws_id, entry = await resolve_item(http, ws, wh)
             obj = await _audit_svc.enable(http, ws_id, entry.id, retention_days=effective_days)
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
@@ -102,14 +98,14 @@ async def enable_cmd(
 @click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.pass_obj
-@_coro
+@coro
 async def disable_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> None:
     """Disable SQL auditing on ITEM (warehouse) in WORKSPACE."""
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
-            ws_id, entry = await _resolve_item(http, ws, wh)
+            ws_id, entry = await resolve_item(http, ws, wh)
             confirmed = confirm(
                 f"Disable auditing on warehouse {entry.display_name!r} ({entry.id})?",
                 yes=ctx.yes,
@@ -133,7 +129,7 @@ async def disable_cmd(ctx: CliContext, workspace: str | None, item: str | None) 
     help="Retention period in days (>= 1). Does not change the audit enabled/disabled state.",
 )
 @click.pass_obj
-@_coro
+@coro
 async def set_retention_cmd(
     ctx: CliContext,
     workspace: str | None,
@@ -149,7 +145,7 @@ async def set_retention_cmd(
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
-            ws_id, entry = await _resolve_item(http, ws, wh)
+            ws_id, entry = await resolve_item(http, ws, wh)
             obj = await _audit_svc.set_retention(http, ws_id, entry.id, days=days)
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
@@ -168,7 +164,7 @@ async def set_retention_cmd(
     help="Audit action group name (repeat for multiple).",
 )
 @click.pass_obj
-@_coro
+@coro
 async def set_groups_cmd(
     ctx: CliContext, workspace: str | None, item: str | None, groups: tuple[str, ...]
 ) -> None:
@@ -181,7 +177,7 @@ async def set_groups_cmd(
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
-            ws_id, entry = await _resolve_item(http, ws, wh)
+            ws_id, entry = await resolve_item(http, ws, wh)
             obj = await _audit_svc.set_action_groups(http, ws_id, entry.id, list(groups))
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
@@ -193,7 +189,7 @@ async def set_groups_cmd(
 @click.argument("item", required=False, default=None)
 @click.argument("group")
 @click.pass_obj
-@_coro
+@coro
 async def add_group_cmd(
     ctx: CliContext, workspace: str | None, item: str | None, group: str
 ) -> None:
@@ -206,7 +202,7 @@ async def add_group_cmd(
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
-            ws_id, entry = await _resolve_item(http, ws, wh)
+            ws_id, entry = await resolve_item(http, ws, wh)
             obj = await _audit_svc.add_action_group(http, ws_id, entry.id, group)
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
@@ -218,7 +214,7 @@ async def add_group_cmd(
 @click.argument("item", required=False, default=None)
 @click.argument("group")
 @click.pass_obj
-@_coro
+@coro
 async def remove_group_cmd(
     ctx: CliContext, workspace: str | None, item: str | None, group: str
 ) -> None:
@@ -231,7 +227,7 @@ async def remove_group_cmd(
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
-            ws_id, entry = await _resolve_item(http, ws, wh)
+            ws_id, entry = await resolve_item(http, ws, wh)
             obj = await _audit_svc.remove_action_group(http, ws_id, entry.id, group)
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
