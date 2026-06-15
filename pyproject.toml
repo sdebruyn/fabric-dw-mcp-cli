@@ -79,6 +79,7 @@ fabric-dw-mcp = "fabric_dw.mcp.server:run"
 dev = [
     "pytest>=9.0",
     "pytest-asyncio>=1.4",
+    "pytest-xdist>=3.5",
     "anyio[trio]",
     "respx>=0.23",
     "freezegun>=1.5",
