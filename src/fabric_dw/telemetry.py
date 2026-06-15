@@ -22,8 +22,12 @@ Architecture notes
   (it comes from env vars; token-claim extraction is deferred to #366).
 - Auto-HTTP instrumentation is explicitly disabled to prevent MSAL OAuth
   request URLs (containing tenant IDs) from leaking as span attributes.
-- ``shutdown_on_exit`` is disabled; a bounded ``force_flush`` (≤2 s) is
-  performed at app exit in a daemon thread so the CLI never hangs.
+- ``shutdown_on_exit`` is disabled; a bounded ``provider.shutdown()`` (≤2 s)
+  is performed at app exit in a daemon thread so the CLI never hangs.
+  ``provider.shutdown()`` flushes all pending spans before tearing down
+  processors, so a separate ``force_flush`` step is not required.
+- ``enable_performance_counters=False`` suppresses the PerformanceCounters
+  subsystem, which divides by zero on short-lived processes (#399).
 """
 
 from __future__ import annotations
@@ -47,6 +51,7 @@ __all__ = [
     "record_app_started",
     "record_mcp_server_started",
     "set_tenant_id",
+    "shutdown_telemetry",
     "telemetry_enabled",
 ]
 
@@ -344,11 +349,15 @@ def _get_tracer() -> object | None:
     - ``instrumentation_options`` explicitly disables all auto-HTTP and Azure SDK
       instrumentors so MSAL OAuth URLs (containing tenant IDs) are never captured
       as span attributes (B1).
-    - ``disable_metrics=True`` prevents PerformanceCounters background threads
-      from starting (A1).
+    - ``disable_metrics=True`` prevents generic metric exporters from starting.
+    - ``enable_performance_counters=False`` disables the PerformanceCounters
+      subsystem (CPU / memory poller) which is NOT covered by ``disable_metrics``
+      in azure-monitor-opentelemetry 1.8+.  On short-lived processes its
+      ``_get_processor_time`` callback divides by zero and logs a full traceback
+      to stderr (A1 / #399).
     - ``shutdown_on_exit=False`` prevents the default 30-second atexit flush that
-      can hang the CLI process (B2).  A bounded ``force_flush`` is performed by
-      ``flush_telemetry()`` instead.
+      can hang the CLI process (B2).  A bounded ``provider.shutdown()`` is
+      performed by ``shutdown_telemetry()`` instead.
     """
     global _tracer, _sdk_initialised  # noqa: PLW0603
 
@@ -366,6 +375,10 @@ def _get_tracer() -> object | None:
             logger_name="fabric_dw.telemetry",
             disable_logging=True,
             disable_metrics=True,
+            # A1: disable PerformanceCounters — not covered by disable_metrics in
+            # azure-monitor-opentelemetry 1.8+; its _get_processor_time callback
+            # divides by zero on short-lived processes and logs a traceback (#399).
+            enable_performance_counters=False,
             # B2: disable unbounded (30 s) atexit flush — we do our own bounded flush.
             shutdown_on_exit=False,
             # B1: disable all auto-HTTP / Azure SDK instrumentors (privacy).
@@ -403,6 +416,63 @@ def flush_telemetry(timeout_ms: int = 2000) -> None:
                 force_flush(timeout_millis=timeout_ms)
 
     t = threading.Thread(target=_do_flush, daemon=True)
+    t.start()
+    t.join(timeout=timeout_ms / 1000 + 0.1)  # join with a slightly larger wall-clock timeout
+
+
+# Track whether we have already shut down so shutdown_telemetry is idempotent.
+_sdk_shutdown: bool = False
+
+
+def shutdown_telemetry(timeout_ms: int = 2000) -> None:
+    """Shut down the OpenTelemetry provider with a bounded timeout.
+
+    Calling ``provider.shutdown()`` flushes remaining spans AND closes all span
+    processors and their exporters, which releases the ``requests``/urllib3
+    connection pool held by the Azure Monitor exporter.  Without this call the
+    pool is finalized by the GC at interpreter exit — after the ``queue`` module
+    globals have been torn down — which triggers:
+
+        AttributeError: 'NoneType' object has no attribute 'Empty'
+
+    in ``urllib3.connectionpool._close_pool_connections``.
+
+    The shutdown runs in a daemon thread so it can never block process exit
+    (same bounded pattern as :func:`flush_telemetry`).  A ≤2 s join ensures
+    the call returns promptly even if the exporter's HTTP session is slow to
+    drain.
+
+    This function is idempotent: subsequent calls after the first shutdown
+    are silent no-ops.
+
+    Implementation note — ``_sdk_shutdown`` is set to ``True`` on the *calling*
+    thread, before the daemon thread is started.  This is intentional: if the
+    daemon thread is killed (process exit) or the provider raises, the flag
+    remains set so no retry is attempted.  Retrying ``provider.shutdown()`` at
+    exit would be unsafe and is not needed — the process is terminating.
+
+    Args:
+        timeout_ms: Maximum milliseconds to wait for the shutdown.  Defaults to
+            2000 (2 s).  Must not exceed the B2 hang budget.
+    """
+    global _sdk_shutdown  # noqa: PLW0603
+
+    if not _sdk_initialised or _tracer is None:
+        return
+    if _sdk_shutdown:
+        return
+    _sdk_shutdown = True
+
+    def _do_shutdown() -> None:
+        with contextlib.suppress(Exception):
+            from opentelemetry import trace as _trace  # noqa: PLC0415
+
+            provider = _trace.get_tracer_provider()
+            shutdown_fn = getattr(provider, "shutdown", None)
+            if callable(shutdown_fn):
+                shutdown_fn()
+
+    t = threading.Thread(target=_do_shutdown, daemon=True)
     t.start()
     t.join(timeout=timeout_ms / 1000 + 0.1)  # join with a slightly larger wall-clock timeout
 

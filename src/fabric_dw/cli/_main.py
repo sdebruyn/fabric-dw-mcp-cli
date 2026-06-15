@@ -32,10 +32,10 @@ from fabric_dw.cli.commands.warehouses import warehouses_group
 from fabric_dw.cli.commands.workspaces import workspaces_group
 from fabric_dw.logging import setup_logging
 from fabric_dw.telemetry import (
-    flush_telemetry,
     maybe_print_first_run_notice,
     record_app_exited,
     record_app_started,
+    shutdown_telemetry,
 )
 from fabric_dw.telemetry_commands import (
     emit_command_invoked,
@@ -61,15 +61,16 @@ class _InstrumentedGroup(click.Group):
     dict.  The root group (``parent is None``) emits the ``command_invoked``
     event once the full call stack has unwound.
 
-    Flush ordering
-    --------------
-    ``flush_telemetry()`` must run AFTER ``emit_command_invoked`` so that the
-    ``command_invoked`` span is enqueued before the exporter is flushed.
-    Click's ``call_on_close`` callbacks run INSIDE ``super().invoke()``, so they
-    complete before this ``finally`` block executes.  For this reason the
-    ``_on_close`` callback registered on the CLI group context does NOT call
-    ``flush_telemetry()`` — the flush is performed here, after emission, by the
-    root group only.
+    Shutdown ordering
+    -----------------
+    ``shutdown_telemetry()`` must run AFTER ``emit_command_invoked`` so that the
+    ``command_invoked`` span is enqueued before the provider is shut down.
+    ``provider.shutdown()`` flushes all pending spans internally, so no separate
+    ``flush_telemetry()`` call is needed.  Click's ``call_on_close`` callbacks
+    run INSIDE ``super().invoke()``, completing before this ``finally`` block
+    executes.  For this reason the ``_on_close`` callback does NOT call
+    ``shutdown_telemetry()`` — the teardown is performed here, after emission,
+    by the root group only.
     """
 
     def add_command(self, cmd: click.Command, name: str | None = None) -> None:
@@ -79,7 +80,7 @@ class _InstrumentedGroup(click.Group):
         super().add_command(cmd, name)
 
     def invoke(self, ctx: click.Context) -> object:
-        """Invoke the root group, emit ``command_invoked``, then flush telemetry."""
+        """Invoke the root group, emit ``command_invoked``, then shut down telemetry."""
         start = now_ms()
         exc_seen: BaseException | None = None
         try:
@@ -98,12 +99,18 @@ class _InstrumentedGroup(click.Group):
                     status=status,
                     duration_ms=duration,
                 )
-            # Flush AFTER emission so command_invoked is included in the batch.
-            # app_started and app_exited are emitted before this point (via
-            # record_app_started in the group callback and record_app_exited in
-            # _on_close which runs inside super().invoke()), so all three events
-            # are enqueued before this bounded flush runs.
-            flush_telemetry()
+            # Shut down the provider AFTER emission so the command_invoked span
+            # is enqueued before teardown begins.  provider.shutdown() flushes
+            # all pending spans internally before closing processors/exporters,
+            # so a separate force_flush step is not needed (and would add up to
+            # an extra 2 s to the total hang budget).  Releasing the exporter's
+            # requests/urllib3 connection pool via shutdown() prevents the pool
+            # from being finalized by the GC after the queue module globals are
+            # torn down — which would trigger:
+            #   AttributeError: 'NoneType' object has no attribute 'Empty'
+            # shutdown_telemetry runs in a daemon thread with a single ≤2 s join
+            # so it cannot hang the process (B2).
+            shutdown_telemetry()
 
 
 def _build_command_name(root_ctx: click.Context) -> str | None:
@@ -259,9 +266,9 @@ def cli(
             exit_status=exit_status,
             error_category=None,
         )
-        # NOTE: flush_telemetry() is NOT called here.  It is called in
+        # NOTE: shutdown_telemetry() is NOT called here.  It is called in
         # _InstrumentedGroup.invoke() AFTER emit_command_invoked() so that
-        # the command_invoked span is enqueued before the flush runs.
+        # the command_invoked span is enqueued before teardown begins.
         # (call_on_close callbacks run inside super().invoke(), which returns
         # before the finally block in _InstrumentedGroup.invoke() executes.)
 
