@@ -365,6 +365,16 @@ def get_sql_token_struct(mode: CredentialMode = CredentialMode.DEFAULT) -> bytes
     # invoked when the assertion itself needs refreshing (every ~5 min in CI).
     # We must NOT cache the resulting struct here — let the credential decide expiry.
     token = credential.get_token(SQL_SCOPE).token
+
+    # Populate telemetry tenant_id from the SQL token's tid claim.  This covers
+    # the GitHub OIDC path where the HTTP client also acquires a token, but the
+    # SQL path runs synchronously before the async HTTP client initialises.
+    # cache_tenant_id_from_token is a no-op when telemetry is disabled or the
+    # override is already set; it never raises.
+    from fabric_dw import telemetry as _telemetry  # noqa: PLC0415
+
+    _telemetry.cache_tenant_id_from_token(token)
+
     token_bytes = token.encode("UTF-16-LE")
     return struct.pack(f"<I{len(token_bytes)}s", len(token_bytes), token_bytes)
 

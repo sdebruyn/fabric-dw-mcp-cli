@@ -54,7 +54,7 @@ from azure.core.credentials import AccessToken
 from azure.core.credentials_async import AsyncTokenCredential
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
-from fabric_dw import auth
+from fabric_dw import auth, telemetry
 from fabric_dw.exceptions import (
     AuthError,
     BadRequestError,
@@ -308,6 +308,10 @@ class FabricHttpClient:
             if token is None or token.expires_on - time.time() < self._token_refresh_buffer:
                 token = await self._credential.get_token(scope)
                 self._tokens[scope] = token
+                # Decode the tid claim from the new token and cache it in the
+                # telemetry layer (no-op when telemetry is disabled or tid is
+                # already known).  Never raises — fail-safe wrapper.
+                telemetry.cache_tenant_id_from_token(token.token)
         return token.token
 
     # ------------------------------------------------------------------
