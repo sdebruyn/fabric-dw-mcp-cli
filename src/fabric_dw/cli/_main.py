@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import sys
 import time
 from typing import Any
@@ -45,6 +46,12 @@ from fabric_dw.telemetry_commands import (
 
 _CLI_TELEMETRY_KEY = "fabric_dw_telemetry_command_name"
 _CLI_SEGMENTS_KEY = _CLI_TELEMETRY_KEY + "_segments"
+
+# Use actual terminal width so help text adapts to the user's screen.
+# Floor of 80 preserves readable wrapping on narrow terminals and in CI
+# (where get_terminal_size falls back to the (120, 24) default).
+# Cap of 160 prevents absurdly long lines on ultra-wide monitors.
+_HELP_MAX_WIDTH = max(80, min(shutil.get_terminal_size(fallback=(120, 24)).columns, 160))
 
 
 class _InstrumentedGroup(click.Group):
@@ -188,7 +195,7 @@ def _patch_group_for_telemetry(group: click.Group) -> None:
 @click.group(
     invoke_without_command=False,
     cls=_InstrumentedGroup,
-    context_settings={"help_option_names": ["-h", "--help"]},
+    context_settings={"help_option_names": ["-h", "--help"], "max_content_width": _HELP_MAX_WIDTH},
 )
 @click.option(
     "--json",
