@@ -907,19 +907,19 @@ def test_negative_clear_scope_removes_matching_scope_only(tmp_path: Path) -> Non
     mock_http = MagicMock()
     resolver = Resolver(http=mock_http, cache=cache)
 
-    ws_key = "ws-uuid-1234"
-    other_key = "ws-other-5678"
+    ws_id = "ws-uuid-1234"
+    other_ws_id = "ws-other-5678"
 
-    resolver._negative[(ws_key, "item_a")] = time.monotonic()
-    resolver._negative[(ws_key, "item_b")] = time.monotonic()
-    resolver._negative[(other_key, "item_c")] = time.monotonic()
+    resolver._negative[(ws_id, "item_a")] = time.monotonic()
+    resolver._negative[(ws_id, "item_b")] = time.monotonic()
+    resolver._negative[(other_ws_id, "item_c")] = time.monotonic()
 
-    resolver._negative_clear_scope(ws_key)
+    resolver._negative_clear_scope(ws_id)
 
-    assert (ws_key, "item_a") not in resolver._negative
-    assert (ws_key, "item_b") not in resolver._negative
+    assert (ws_id, "item_a") not in resolver._negative
+    assert (ws_id, "item_b") not in resolver._negative
     # Entries from a different scope must be preserved
-    assert (other_key, "item_c") in resolver._negative
+    assert (other_ws_id, "item_c") in resolver._negative
 
 
 # ---------------------------------------------------------------------------
