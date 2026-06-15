@@ -142,6 +142,12 @@ EXPECTED_TOOL_NAMES: frozenset[str] = frozenset(
         "disable_sql_pools",
         # Connections
         "list_connections",
+        # Statistics
+        "list_statistics",
+        "show_statistics",
+        "create_statistics",
+        "update_statistics",
+        "delete_statistics",
     }
 )
 
