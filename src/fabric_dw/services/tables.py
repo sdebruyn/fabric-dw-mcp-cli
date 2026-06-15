@@ -380,7 +380,8 @@ async def create_table_from_parquet(
         raise FileNotFoundError(msg)
 
     # Read schema only — pq.read_schema reads the footer without loading any row groups.
-    arrow_schema = pq.read_schema(str(parquet_path))
+    # Wrapped in asyncio.to_thread for consistency with other blocking I/O in this module.
+    arrow_schema = await asyncio.to_thread(pq.read_schema, str(parquet_path))
 
     columns: list[ColumnSpec] = []
     for field in arrow_schema:
@@ -473,32 +474,53 @@ async def create_table_from_csv(
             for col_name in header
         ]
     else:
-        # Read header + sample for inference via pyarrow.csv.
-        read_opts = pa_csv.ReadOptions(
-            encoding=encoding,
-            block_size=max(1, sample_rows) * 1024,  # approximate; pyarrow clips if needed
-        )
+        # Read header + a bounded sample for type inference via pyarrow.csv.
+        # Use open_csv() (streaming batches) so that only a prefix of the file
+        # is ever loaded into memory — read_csv() would buffer the entire file
+        # before slice() could discard excess rows.
+        import pyarrow as pa  # noqa: PLC0415
+
+        read_opts = pa_csv.ReadOptions(encoding=encoding)
         parse_opts = pa_csv.ParseOptions(delimiter=delimiter)
         # ConvertOptions: auto-convert types, treat empty fields as null
         convert_opts = pa_csv.ConvertOptions(null_values=["", "NULL", "null", "NA", "N/A"])
 
-        # pyarrow reads the whole file by default — we limit via block_size above
-        # but also wrap with a bounded read to avoid loading huge files.
+        def _read_csv_sample() -> pa.Table:
+            """Read at most *sample_rows* rows via the streaming CSV reader.
 
-        arrow_table = pa_csv.read_csv(
-            str(csv_path),
-            read_options=read_opts,
-            parse_options=parse_opts,
-            convert_options=convert_opts,
-        )
-
-        # Trim to sample_rows to bound the inference sample.
-        if arrow_table.num_rows > sample_rows:
-            arrow_table = arrow_table.slice(0, sample_rows)
-            _log.debug(
-                "create_table_from_csv: trimmed to %d sample rows for type inference",
-                sample_rows,
+            Uses :func:`pyarrow.csv.open_csv` (batch streaming) so that the
+            file is read lazily and iteration stops as soon as *sample_rows*
+            rows have been accumulated.  Only the prefix of the file is ever
+            loaded into memory, regardless of total file size.
+            """
+            reader = pa_csv.open_csv(
+                str(csv_path),
+                read_options=read_opts,
+                parse_options=parse_opts,
+                convert_options=convert_opts,
             )
+            # reader.schema is available before iteration and reflects inferred types.
+            inferred_schema = reader.schema
+            batches: list[pa.RecordBatch] = []
+            rows_seen = 0
+            for batch in reader:
+                remaining = sample_rows - rows_seen
+                chunk = batch.slice(0, remaining) if batch.num_rows > remaining else batch
+                batches.append(chunk)
+                rows_seen += chunk.num_rows
+                if rows_seen >= sample_rows:
+                    break
+            if not batches:
+                # Header-only CSV — return a zero-row table so schema is preserved.
+                return inferred_schema.empty_table()
+            return pa.Table.from_batches(batches)
+
+        arrow_table = await asyncio.to_thread(_read_csv_sample)
+        _log.debug(
+            "create_table_from_csv: read %d sample rows from %s for type inference",
+            arrow_table.num_rows,
+            csv_path.name,
+        )
 
         columns = []
         for i, name in enumerate(arrow_table.schema.names):

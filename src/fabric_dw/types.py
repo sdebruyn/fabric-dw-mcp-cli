@@ -93,8 +93,12 @@ def _arrow_primitive_to_tsql(  # noqa: PLR0911,PLR0912
         return "SMALLINT"
     if pa.types.is_int32(at) or pa.types.is_uint16(at):
         return "INT"
-    if pa.types.is_int64(at) or pa.types.is_uint32(at) or pa.types.is_uint64(at):
+    if pa.types.is_int64(at) or pa.types.is_uint32(at):
         return "BIGINT"
+    # uint64 can hold values up to 2^64-1, which overflows BIGINT (max 2^63-1).
+    # DECIMAL(20,0) safely covers the full uint64 range without silent truncation.
+    if pa.types.is_uint64(at):
+        return "DECIMAL(20,0)"
     # Floats
     if pa.types.is_float16(at) or pa.types.is_float32(at):
         return "REAL"
@@ -106,6 +110,12 @@ def _arrow_primitive_to_tsql(  # noqa: PLR0911,PLR0912
     # Decimal
     if pa.types.is_decimal(at):
         dec = at  # type: ignore[assignment]
+        if dec.precision > 38:  # noqa: PLR2004
+            msg = (
+                f"Decimal type has precision {dec.precision}, which exceeds the Fabric DW "
+                "maximum of 38. Use --all-varchar or reduce precision before export."
+            )
+            raise ValueError(msg)
         return f"DECIMAL({dec.precision},{dec.scale})"
     # Dates / times
     if pa.types.is_date(at):
@@ -113,6 +123,12 @@ def _arrow_primitive_to_tsql(  # noqa: PLR0911,PLR0912
     if pa.types.is_time(at):
         return "TIME(7)"
     if pa.types.is_timestamp(at):
+        # Preserve timezone offset when the Arrow type carries timezone info.
+        # DATETIMEOFFSET stores the UTC value plus the original UTC offset,
+        # while DATETIME2 silently drops the offset.
+        ts = at  # type: ignore[assignment]
+        if ts.tz is not None:
+            return "DATETIMEOFFSET(7)"
         return "DATETIME2(7)"
     if pa.types.is_duration(at):
         return "BIGINT"

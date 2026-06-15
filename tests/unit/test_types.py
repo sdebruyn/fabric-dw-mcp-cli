@@ -87,8 +87,10 @@ class TestArrowTypeToTsqlSupported:
     def test_uint32_to_bigint(self) -> None:
         assert arrow_type_to_tsql(pa.uint32()) == "BIGINT"
 
-    def test_uint64_to_bigint(self) -> None:
-        assert arrow_type_to_tsql(pa.uint64()) == "BIGINT"
+    def test_uint64_to_decimal20(self) -> None:
+        # uint64 can hold values up to 2^64-1, overflowing BIGINT (max 2^63-1).
+        # DECIMAL(20,0) covers the full uint64 range without silent truncation.
+        assert arrow_type_to_tsql(pa.uint64()) == "DECIMAL(20,0)"
 
     # --- floats ---
     def test_float16_to_real(self) -> None:
@@ -129,8 +131,12 @@ class TestArrowTypeToTsqlSupported:
     def test_timestamp_to_datetime2(self) -> None:
         assert arrow_type_to_tsql(pa.timestamp("us")) == "DATETIME2(7)"
 
-    def test_timestamp_tz_to_datetime2(self) -> None:
-        assert arrow_type_to_tsql(pa.timestamp("us", tz="UTC")) == "DATETIME2(7)"
+    def test_timestamp_tz_to_datetimeoffset(self) -> None:
+        # tz-aware timestamps map to DATETIMEOFFSET to preserve the UTC offset.
+        assert arrow_type_to_tsql(pa.timestamp("us", tz="UTC")) == "DATETIMEOFFSET(7)"
+
+    def test_timestamp_tz_named_zone_to_datetimeoffset(self) -> None:
+        assert arrow_type_to_tsql(pa.timestamp("s", tz="Europe/Brussels")) == "DATETIMEOFFSET(7)"
 
     # --- duration ---
     def test_duration_to_bigint(self) -> None:
@@ -196,3 +202,16 @@ class TestArrowTypeToTsqlUnsupported:
     def test_fixed_size_list_raises(self) -> None:
         with pytest.raises(ValueError, match=r"(?i)nested"):
             arrow_type_to_tsql(pa.list_(pa.float32(), 3), "vec")
+
+    def test_decimal256_precision_39_raises(self) -> None:
+        # decimal256 allows up to precision 76, but Fabric DW caps at 38.
+        with pytest.raises(ValueError, match="precision 39"):
+            arrow_type_to_tsql(pa.decimal256(39, 10), "amount")
+
+    def test_decimal256_precision_76_raises(self) -> None:
+        with pytest.raises(ValueError, match="precision 76"):
+            arrow_type_to_tsql(pa.decimal256(76, 10), "amount")
+
+    def test_decimal_precision_38_accepted(self) -> None:
+        # Exactly 38 is the maximum — must succeed.
+        assert arrow_type_to_tsql(pa.decimal128(38, 10)) == "DECIMAL(38,10)"

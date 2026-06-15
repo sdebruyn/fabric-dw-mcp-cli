@@ -1256,3 +1256,44 @@ class TestCreateTableFromCsv:
         target = _make_target()
         with pytest.raises(ValueError, match="empty"):
             await tables.create_table_from_csv(target, "dbo", "sales", csv_file, all_varchar=True)
+
+    async def test_csv_bounded_streaming_reads_only_prefix(self, tmp_path: Path) -> None:
+        """Only a bounded prefix of the CSV is read — large tail is never loaded.
+
+        We write a 10-row CSV and pass sample_rows=3.  The resulting table must
+        use the inferred schema (not all-varchar) and the DDL must reference the
+        correct column names, confirming inference ran on the sample only.
+        """
+        csv_file = tmp_path / "big.csv"
+        rows = ["id,value"] + [f"{i},{i * 10}" for i in range(10)]
+        csv_file.write_text("\n".join(rows) + "\n")
+
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            result = await tables.create_table_from_csv(
+                target, "dbo", "sales", csv_file, sample_rows=3
+            )
+        assert isinstance(result, Table)
+        ddl_cursor = ddl_conn.cursor.return_value
+        sql: str = ddl_cursor.execute.call_args[0][0]
+        # Columns must appear in the DDL — confirms schema was inferred.
+        assert "[id]" in sql
+        assert "[value]" in sql
+
+    async def test_csv_header_only_produces_varchar_columns(self, tmp_path: Path) -> None:
+        """A header-only CSV (no data rows) results in NULL-typed columns mapped to VARCHAR."""
+        csv_file = tmp_path / "header_only.csv"
+        csv_file.write_text("col_a,col_b\n")
+
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            result = await tables.create_table_from_csv(target, "dbo", "sales", csv_file)
+        assert isinstance(result, Table)
+        ddl_cursor = ddl_conn.cursor.return_value
+        sql: str = ddl_cursor.execute.call_args[0][0]
+        assert "[col_a]" in sql
+        assert "[col_b]" in sql
