@@ -1854,6 +1854,7 @@ async def test_get_token_maps_credential_unavailable_to_auth_error() -> None:
 
     msg = str(exc_info.value)
     assert "az login" in msg, f"Expected 'az login' hint in error message, got: {msg!r}"
+    assert "Azure authentication failed" in msg
     assert exc_info.value.__cause__ is not None
 
 

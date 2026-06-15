@@ -69,6 +69,7 @@ from fabric_dw.exceptions import (
     NotFoundError,
     PermissionDeniedError,
     RateLimitedError,
+    auth_error_from_credential_exc,
 )
 from fabric_dw.logging import redact_auth_header
 
@@ -338,12 +339,7 @@ class FabricHttpClient:
                 try:
                     token = await self._credential.get_token(scope)
                 except ClientAuthenticationError as exc:
-                    short = str(exc).splitlines()[0]
-                    raise AuthError(
-                        "Azure authentication failed. "
-                        "Run 'az login' (or set AZURE_CLIENT_ID / AZURE_CLIENT_SECRET / "
-                        f"AZURE_TENANT_ID). Details: {short}"
-                    ) from exc
+                    raise auth_error_from_credential_exc(exc) from exc
                 self._tokens[scope] = token
                 # Decode the tid claim from the new token and cache it in the
                 # telemetry layer (no-op when telemetry is disabled or tid is

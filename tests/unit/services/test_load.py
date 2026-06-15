@@ -1574,3 +1574,86 @@ class TestOneLakeUploadFile:
         assert error_logs, "Expected at least one ERROR log on 400 flush"
         combined = "\n".join(r.getMessage() for r in error_logs)
         assert "InvalidFlushPosition" in combined, f"Error code not in log: {combined!r}"
+
+
+# ---------------------------------------------------------------------------
+# T-LOAD-AUTH: credential failures in onelake_upload_file → AuthError
+# ---------------------------------------------------------------------------
+
+
+class TestOnelakeUploadFileAuthError:
+    """Credential failures during DFS upload must surface as AuthError, not raw tracebacks.
+
+    The call to ``credential.get_token(STORAGE_SCOPE)`` inside
+    ``onelake_upload_file`` is outside ``FabricHttpClient._get_token``, so it
+    needs its own mapping from :class:`~azure.core.exceptions.ClientAuthenticationError`
+    to :class:`~fabric_dw.exceptions.AuthError`.  Both the base exception class
+    and its subclass :class:`~azure.identity.CredentialUnavailableError` must be
+    handled.
+    """
+
+    _WS_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+    _LH_ID = "ffffffff-0000-1111-2222-333333333333"
+
+    def _make_failing_credential(self, exc: Exception) -> AsyncTokenCredential:
+        from unittest.mock import AsyncMock, MagicMock  # noqa: PLC0415
+
+        cred = MagicMock(spec=AsyncTokenCredential)
+        cred.get_token = AsyncMock(side_effect=exc)
+        return cred  # type: ignore[return-value]
+
+    @pytest.mark.asyncio
+    async def test_client_auth_error_maps_to_auth_error(self, tmp_path: Path) -> None:
+        """ClientAuthenticationError from get_token must be re-raised as AuthError."""
+        from azure.core.exceptions import ClientAuthenticationError  # noqa: PLC0415
+
+        from fabric_dw.exceptions import AuthError  # noqa: PLC0415
+
+        data_file = tmp_path / "data.parquet"
+        data_file.write_bytes(b"PAR1")
+
+        cred = self._make_failing_credential(
+            ClientAuthenticationError("DefaultAzureCredential failed to retrieve a token")
+        )
+
+        with pytest.raises(AuthError) as exc_info:
+            await onelake_upload_file(
+                cred,
+                self._WS_ID,
+                self._LH_ID,
+                "data.parquet",
+                data_file,
+            )
+
+        msg = str(exc_info.value)
+        assert "Azure authentication failed" in msg
+        assert "az login" in msg
+        assert exc_info.value.__cause__ is not None
+
+    @pytest.mark.asyncio
+    async def test_credential_unavailable_maps_to_auth_error(self, tmp_path: Path) -> None:
+        """CredentialUnavailableError (subclass of ClientAuthenticationError) maps to AuthError."""
+        from azure.identity import CredentialUnavailableError  # noqa: PLC0415
+
+        from fabric_dw.exceptions import AuthError  # noqa: PLC0415
+
+        data_file = tmp_path / "data.parquet"
+        data_file.write_bytes(b"PAR1")
+
+        cred = self._make_failing_credential(
+            CredentialUnavailableError("No credential was available")
+        )
+
+        with pytest.raises(AuthError) as exc_info:
+            await onelake_upload_file(
+                cred,
+                self._WS_ID,
+                self._LH_ID,
+                "data.parquet",
+                data_file,
+            )
+
+        msg = str(exc_info.value)
+        assert "Azure authentication failed" in msg
+        assert "az login" in msg
+        assert exc_info.value.__cause__ is not None
