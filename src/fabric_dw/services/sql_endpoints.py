@@ -76,6 +76,7 @@ async def list_all_workspaces(http: FabricHttpClient) -> list[Warehouse]:
         A flat list of :class:`~fabric_dw.models.Warehouse` instances (with
         ``kind == SQL_ENDPOINT``) from all accessible, active-capacity workspaces.
     """
+
     # Fetch workspaces and capacity states concurrently.  Capacity-state
     # fetching is best-effort: if GET /v1/capacities fails for any reason
     # other than 403 (which get_capacity_states already handles internally),
