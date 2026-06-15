@@ -16,7 +16,7 @@ _logger = logging.getLogger("fabric_dw.sql_endpoints")
 
 # Bounded polling for eventual-consistency fields (e.g. connection_string).
 _CONN_STRING_POLL_INTERVAL: float = 5.0
-_CONN_STRING_POLL_TIMEOUT: float = 120.0
+_CONN_STRING_POLL_TIMEOUT: float = 600.0  # 10 min — Fabric preview eventual-consistency window
 
 __all__ = [
     "get_endpoint",
@@ -122,7 +122,7 @@ async def get_endpoint_connection_string(
         workspace_id: The UUID of the workspace containing the endpoint.
         endpoint_id: The UUID of the SQL analytics endpoint.
         poll_interval: Seconds between polls (default 5.0).
-        timeout: Maximum wall-clock seconds to wait (default 120.0).
+        timeout: Maximum wall-clock seconds to wait (default 600.0, i.e. 10 min).
 
     Returns:
         The non-empty connection string.
