@@ -47,6 +47,7 @@ __all__ = [
     "record_app_started",
     "record_mcp_server_started",
     "set_tenant_id",
+    "shutdown_telemetry",
     "telemetry_enabled",
 ]
 
@@ -403,6 +404,57 @@ def flush_telemetry(timeout_ms: int = 2000) -> None:
                 force_flush(timeout_millis=timeout_ms)
 
     t = threading.Thread(target=_do_flush, daemon=True)
+    t.start()
+    t.join(timeout=timeout_ms / 1000 + 0.1)  # join with a slightly larger wall-clock timeout
+
+
+# Track whether we have already shut down so shutdown_telemetry is idempotent.
+_sdk_shutdown: bool = False
+
+
+def shutdown_telemetry(timeout_ms: int = 2000) -> None:
+    """Shut down the OpenTelemetry provider with a bounded timeout.
+
+    Calling ``provider.shutdown()`` flushes remaining spans AND closes all span
+    processors and their exporters, which releases the ``requests``/urllib3
+    connection pool held by the Azure Monitor exporter.  Without this call the
+    pool is finalized by the GC at interpreter exit — after the ``queue`` module
+    globals have been torn down — which triggers:
+
+        AttributeError: 'NoneType' object has no attribute 'Empty'
+
+    in ``urllib3.connectionpool._close_pool_connections``.
+
+    The shutdown runs in a daemon thread so it can never block process exit
+    (same bounded pattern as :func:`flush_telemetry`).  A ≤2 s join ensures
+    the call returns promptly even if the exporter's HTTP session is slow to
+    drain.
+
+    This function is idempotent: subsequent calls after the first shutdown
+    are silent no-ops.
+
+    Args:
+        timeout_ms: Maximum milliseconds to wait for the shutdown.  Defaults to
+            2000 (2 s).  Must not exceed the B2 hang budget.
+    """
+    global _sdk_shutdown  # noqa: PLW0603
+
+    if not _sdk_initialised or _tracer is None:
+        return
+    if _sdk_shutdown:
+        return
+    _sdk_shutdown = True
+
+    def _do_shutdown() -> None:
+        with contextlib.suppress(Exception):
+            from opentelemetry import trace as _trace  # noqa: PLC0415
+
+            provider = _trace.get_tracer_provider()
+            shutdown_fn = getattr(provider, "shutdown", None)
+            if callable(shutdown_fn):
+                shutdown_fn()
+
+    t = threading.Thread(target=_do_shutdown, daemon=True)
     t.start()
     t.join(timeout=timeout_ms / 1000 + 0.1)  # join with a slightly larger wall-clock timeout
 

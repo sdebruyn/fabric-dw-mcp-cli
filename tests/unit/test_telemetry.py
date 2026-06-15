@@ -1467,3 +1467,134 @@ def test_envelope_omits_tenant_id_when_no_source(
 
     envelope = mod._build_envelope("cli")  # type: ignore[attr-defined]
     assert "tenant_id" not in envelope
+
+
+# ---------------------------------------------------------------------------
+# shutdown_telemetry: bounded provider.shutdown() releases urllib3 pool
+# ---------------------------------------------------------------------------
+
+
+def _make_fake_trace_module(provider: Any) -> types.ModuleType:
+    """Build a minimal fake ``opentelemetry.trace`` module with *provider*."""
+    fake: Any = types.ModuleType("opentelemetry.trace_fake")
+    fake.get_tracer_provider = lambda: provider
+    return fake  # type: ignore[return-value]
+
+
+def _install_fake_otel_trace(monkeypatch: pytest.MonkeyPatch, provider: Any) -> None:
+    """Install *provider* as the fake OTel tracer provider for the current test.
+
+    Sets both ``sys.modules["opentelemetry.trace"]`` and the ``trace``
+    attribute on the already-loaded ``opentelemetry`` package so that
+    ``from opentelemetry import trace`` inside the shutdown thread picks up
+    our fake regardless of import-cache ordering or test execution order.
+    """
+    fake_module = _make_fake_trace_module(provider)
+    monkeypatch.setitem(sys.modules, "opentelemetry.trace", fake_module)
+
+    # Also patch the attribute on the opentelemetry package object so that
+    # ``from opentelemetry import trace`` resolves to our fake when the package
+    # is already loaded in a previous test's import cache.
+    import opentelemetry as _otel_pkg  # noqa: PLC0415
+
+    monkeypatch.setattr(_otel_pkg, "trace", fake_module, raising=False)
+
+
+def test_shutdown_telemetry_calls_provider_shutdown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """shutdown_telemetry must call provider.shutdown() within the timeout."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    mod = _reload_telemetry()
+
+    # Mark SDK as initialised so shutdown_telemetry proceeds past the guard.
+    mod._sdk_initialised = True  # type: ignore[attr-defined]
+    mod._tracer = object()  # type: ignore[attr-defined]
+    mod._sdk_shutdown = False  # type: ignore[attr-defined]
+
+    shutdown_called: list[bool] = []
+    fake_provider = types.SimpleNamespace(shutdown=lambda: shutdown_called.append(True))
+    _install_fake_otel_trace(monkeypatch, fake_provider)
+
+    mod.shutdown_telemetry()  # type: ignore[attr-defined]
+
+    assert shutdown_called, "provider.shutdown() was not called by shutdown_telemetry()"
+
+
+def test_shutdown_telemetry_is_bounded_when_shutdown_is_slow(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """shutdown_telemetry must not block longer than ~2 s even with a slow provider."""
+    import time  # noqa: PLC0415
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    mod = _reload_telemetry()
+
+    mod._sdk_initialised = True  # type: ignore[attr-defined]
+    mod._tracer = object()  # type: ignore[attr-defined]
+    mod._sdk_shutdown = False  # type: ignore[attr-defined]
+
+    fake_provider = types.SimpleNamespace(shutdown=lambda: __import__("time").sleep(10))
+    _install_fake_otel_trace(monkeypatch, fake_provider)
+
+    start = time.monotonic()
+    mod.shutdown_telemetry(timeout_ms=300)  # type: ignore[attr-defined]
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 3.0, f"shutdown_telemetry blocked for {elapsed:.1f} s — hang detected"
+
+
+def test_shutdown_telemetry_is_noop_when_sdk_not_initialised(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """shutdown_telemetry is a no-op when the SDK was never initialised."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    mod = _reload_telemetry()
+
+    assert mod._sdk_initialised is False  # type: ignore[attr-defined]
+    # Must not raise
+    mod.shutdown_telemetry()  # type: ignore[attr-defined]
+
+
+def test_shutdown_telemetry_is_idempotent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """shutdown_telemetry is idempotent — a second call is a silent no-op."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    mod = _reload_telemetry()
+
+    mod._sdk_initialised = True  # type: ignore[attr-defined]
+    mod._tracer = object()  # type: ignore[attr-defined]
+    mod._sdk_shutdown = False  # type: ignore[attr-defined]
+
+    shutdown_call_count: list[int] = []
+    fake_provider = types.SimpleNamespace(shutdown=lambda: shutdown_call_count.append(1))
+    _install_fake_otel_trace(monkeypatch, fake_provider)
+
+    mod.shutdown_telemetry()  # type: ignore[attr-defined]
+    mod.shutdown_telemetry()  # type: ignore[attr-defined]
+    mod.shutdown_telemetry()  # type: ignore[attr-defined]
+
+    assert len(shutdown_call_count) == 1, (
+        f"provider.shutdown() was called {len(shutdown_call_count)} times — expected 1"
+    )
+
+
+def test_shutdown_telemetry_never_raises_on_provider_exception(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """shutdown_telemetry suppresses any exception from provider.shutdown()."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    mod = _reload_telemetry()
+
+    mod._sdk_initialised = True  # type: ignore[attr-defined]
+    mod._tracer = object()  # type: ignore[attr-defined]
+    mod._sdk_shutdown = False  # type: ignore[attr-defined]
+
+    def _boom() -> None:
+        msg = "exporter explosion"
+        raise RuntimeError(msg)
+
+    fake_provider = types.SimpleNamespace(shutdown=_boom)
+    _install_fake_otel_trace(monkeypatch, fake_provider)
+
+    # Must not raise
+    mod.shutdown_telemetry()  # type: ignore[attr-defined]

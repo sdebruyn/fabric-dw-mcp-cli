@@ -36,6 +36,7 @@ from fabric_dw.telemetry import (
     maybe_print_first_run_notice,
     record_app_exited,
     record_app_started,
+    shutdown_telemetry,
 )
 from fabric_dw.telemetry_commands import (
     emit_command_invoked,
@@ -104,6 +105,14 @@ class _InstrumentedGroup(click.Group):
             # _on_close which runs inside super().invoke()), so all three events
             # are enqueued before this bounded flush runs.
             flush_telemetry()
+            # Shut down the provider to release the Azure Monitor exporter's
+            # requests/urllib3 connection pool.  Without an explicit shutdown
+            # the pool is finalized by the GC at interpreter exit — after the
+            # queue module globals are torn down — triggering:
+            #   AttributeError: 'NoneType' object has no attribute 'Empty'
+            # shutdown_telemetry is bounded (≤2 s daemon thread) so it cannot
+            # hang the process.
+            shutdown_telemetry()
 
 
 def _build_command_name(root_ctx: click.Context) -> str | None:
