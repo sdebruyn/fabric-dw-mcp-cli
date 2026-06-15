@@ -64,6 +64,7 @@ from fabric_dw.logging import setup_logging
 from fabric_dw.mcp._context import fabric_lifespan
 from fabric_dw.mcp._guards import env_flag as _guards_env_flag
 from fabric_dw.mcp.tools import register_all
+from fabric_dw.telemetry import record_app_started, record_mcp_server_started
 
 __all__ = ["mcp", "run"]
 
@@ -166,4 +167,6 @@ def run(argv: Sequence[str] | None = None) -> None:
         mcp.settings.host = args.host
         mcp.settings.port = args.port
 
+    record_app_started("mcp")
+    record_mcp_server_started()
     mcp.run(transport=transport)

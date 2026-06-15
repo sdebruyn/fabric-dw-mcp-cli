@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 
 import click
 
@@ -28,6 +29,7 @@ from fabric_dw.cli.commands.views import views_group
 from fabric_dw.cli.commands.warehouses import warehouses_group
 from fabric_dw.cli.commands.workspaces import workspaces_group
 from fabric_dw.logging import setup_logging
+from fabric_dw.telemetry import maybe_print_first_run_notice, record_app_exited, record_app_started
 
 
 @click.group(invoke_without_command=False)
@@ -78,6 +80,21 @@ def cli(
         yes=yes,
         auth=CredentialMode(auth_mode),
     )
+
+    maybe_print_first_run_notice()
+    record_app_started("cli")
+
+    start_ms = time.monotonic() * 1000
+
+    def _on_close() -> None:
+        duration_ms = time.monotonic() * 1000 - start_ms
+        record_app_exited(
+            duration_ms=duration_ms,
+            exit_status="ok",
+            error_category=None,
+        )
+
+    ctx.call_on_close(_on_close)
 
 
 cli.add_command(cache_group)
