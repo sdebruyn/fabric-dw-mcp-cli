@@ -19,3 +19,10 @@ id = "generic-api-key"
     paths = ['''tests/''']
     regexTarget = "secret"
     regexes = ['''^(ws|wh|item|fake|test|mock|dummy)-[a-zA-Z0-9-]+$''']
+
+    [[rules.allowlists]]
+    description = "Base64-encoded test pagination tokens inside tests/ are not real secrets — eyJ0b2tlbiI6InRlc3QifQ decodes to {\"token\":\"test\"}"
+    condition = "AND"
+    paths = ['''tests/''']
+    regexTarget = "secret"
+    regexes = ['''^eyJ0b2tlbiI6InRlc3QifQ$''']
