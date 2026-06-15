@@ -16,6 +16,7 @@ import click
 
 from fabric_dw import auth as _auth
 from fabric_dw.cache import ItemEntry, LookupCache
+from fabric_dw.exceptions import ConfigError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.identifiers import parse_qualified_name as _parse_qn
 from fabric_dw.resolver import Resolver
@@ -72,8 +73,17 @@ async def build_http_client(ctx: CliContext) -> AsyncIterator[FabricHttpClient]:
 
     Centralises the ``get_credential(ctx.auth)`` + ``FabricHttpClient(credential)``
     pattern that was previously duplicated in every command module.
+
+    Raises:
+        click.UsageError: When ``get_credential`` raises :class:`~fabric_dw.exceptions.ConfigError`
+            (e.g. missing environment variables or an unrecognised credential mode).
+            This ensures the error surfaces as a clean CLI message rather than a raw
+            traceback, even though ``ConfigError`` is not a subtype of ``FabricError``.
     """
-    credential = _auth.get_credential(ctx.auth)
+    try:
+        credential = _auth.get_credential(ctx.auth)
+    except ConfigError as exc:
+        raise click.UsageError(str(exc)) from exc
     async with FabricHttpClient(credential) as http:
         yield http
 

@@ -13,6 +13,7 @@ import pytest
 
 from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.cli._context import CliContext
+from fabric_dw.cli._main import cli
 from fabric_dw.cli.commands._utils import (
     build_http_client,
     build_sql_target,
@@ -26,6 +27,7 @@ from fabric_dw.cli.commands._utils import (
     resolve_workspace_id,
     validate_workspace_or_all_workspaces,
 )
+from fabric_dw.exceptions import ConfigError
 from fabric_dw.models import WarehouseKind
 from fabric_dw.resolver import Resolver
 from fabric_dw.sql import SqlTarget
@@ -94,6 +96,56 @@ class TestBuildHttpClient:
 
         # The result should be our mock (the value returned by __aenter__).
         assert result is mock_http
+
+    def test_config_error_is_translated_to_usage_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A ConfigError from get_credential must become a click.UsageError (C22).
+
+        This ensures that configuration problems (e.g. missing env vars, unknown
+        credential mode) surface as a clean click message rather than a raw traceback,
+        even though ConfigError is not a subtype of FabricError.
+        """
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        mock_ctx = MagicMock()
+        mock_ctx.auth = "sp"
+
+        with patch(
+            "fabric_dw.cli.commands._utils._auth.get_credential",
+            side_effect=ConfigError("Missing required env vars: AZURE_TENANT_ID"),
+        ):
+
+            async def _run() -> None:
+                async with build_http_client(mock_ctx):
+                    pass  # pragma: no cover
+
+            with pytest.raises(click.UsageError, match="AZURE_TENANT_ID"):
+                anyio.run(_run)
+
+
+class TestBuildHttpClientCliPresentation:
+    """End-to-end: ConfigError from get_credential must not produce a traceback."""
+
+    def test_cli_presents_config_error_cleanly(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A ConfigError raised during credential setup must be shown as a UsageError.
+
+        No raw Python traceback must appear in the output; the CLI must exit non-zero
+        with a human-readable message.
+        """
+        from click.testing import CliRunner  # noqa: PLC0415
+
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        runner = CliRunner()
+        with patch(
+            "fabric_dw.cli.commands._utils._auth.get_credential",
+            side_effect=ConfigError("Missing required env vars: AZURE_TENANT_ID"),
+        ):
+            result = runner.invoke(cli, ["workspaces", "list"])
+        assert result.exit_code != 0
+        assert "Traceback" not in (result.output or "")
+        assert "AZURE_TENANT_ID" in (result.output or "")
 
 
 # ---------------------------------------------------------------------------

@@ -747,3 +747,188 @@ def test_get_sql_token_struct_caches_credential_across_calls(
     mock_cred_class.assert_called_once()
     # get_token must be called each time (fresh struct per call).
     assert mock_cred_instance.get_token.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# C23 — SyncCredentialAdapter.get_token forwards extra **kwargs (bug fix)
+# ---------------------------------------------------------------------------
+
+
+async def test_sync_adapter_get_token_forwards_extra_kwargs() -> None:
+    """Extra **kwargs must be forwarded to the inner get_token (C23).
+
+    azure-identity may pass additional keyword args (e.g. a future ``pop_key``
+    parameter) that this adapter must not silently drop.
+    """
+    inner = MagicMock()
+    inner.get_token.return_value = AccessToken("tok", 9999999999)
+    adapter = SyncCredentialAdapter(inner)
+
+    await adapter.get_token(
+        FABRIC_SCOPE, claims="custom-claim", tenant_id="t1", enable_cae=True, pop_key="pk"
+    )
+
+    inner.get_token.assert_called_once_with(
+        FABRIC_SCOPE,
+        claims="custom-claim",
+        tenant_id="t1",
+        enable_cae=True,
+        pop_key="pk",
+    )
+
+
+async def test_sync_adapter_get_token_dispatches_extra_kwargs_via_to_thread() -> None:
+    """asyncio.to_thread must receive the forwarded extra kwargs (C23).
+
+    We verify that the extra kwarg is forwarded without hardcoding the full set
+    of default keyword values (which would make the test brittle to signature
+    changes).  The positional args (callable and scope) are pinned; the keyword
+    presence of ``future_param`` is asserted via ``call_args``.
+    """
+    inner = MagicMock()
+    inner.get_token.return_value = AccessToken("tok", 9999999999)
+    adapter = SyncCredentialAdapter(inner)
+
+    with patch("fabric_dw.auth.asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
+        mock_to_thread.return_value = AccessToken("tok", 9999999999)
+        await adapter.get_token(FABRIC_SCOPE, future_param="x")
+        mock_to_thread.assert_called_once()
+        args, kwargs = mock_to_thread.call_args
+        # First two positional args: the callable and the scope.
+        assert args[0] is inner.get_token
+        assert args[1] == FABRIC_SCOPE
+        # The extra kwarg must be forwarded unchanged.
+        assert kwargs.get("future_param") == "x"
+
+
+# ---------------------------------------------------------------------------
+# C05 — token cache does not silently fall back to unencrypted storage
+# ---------------------------------------------------------------------------
+
+
+def test_build_cache_options_default_does_not_allow_unencrypted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_build_cache_options must default to allow_unencrypted_storage=False (C05).
+
+    Unencrypted persistence must NOT be enabled without an explicit opt-in.
+    """
+    monkeypatch.delenv("FABRIC_ALLOW_UNENCRYPTED_TOKEN_CACHE", raising=False)
+    opts = auth_module._build_cache_options()
+    # TokenCachePersistenceOptions stores the flag as allow_unencrypted_storage.
+    assert opts.allow_unencrypted_storage is False
+
+
+def test_build_cache_options_opt_in_allows_unencrypted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Setting FABRIC_ALLOW_UNENCRYPTED_TOKEN_CACHE=1 enables plaintext fallback (C05)."""
+    monkeypatch.setenv("FABRIC_ALLOW_UNENCRYPTED_TOKEN_CACHE", "1")
+    opts = auth_module._build_cache_options()
+    assert opts.allow_unencrypted_storage is True
+
+
+def test_build_cache_options_opt_in_logs_warning(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A clear WARNING must be emitted when unencrypted cache is opted-in (C05)."""
+    import logging  # noqa: PLC0415
+
+    monkeypatch.setenv("FABRIC_ALLOW_UNENCRYPTED_TOKEN_CACHE", "1")
+    with caplog.at_level(logging.WARNING, logger="fabric_dw.auth"):
+        auth_module._build_cache_options()
+    assert any("FABRIC_ALLOW_UNENCRYPTED_TOKEN_CACHE" in r.message for r in caplog.records)
+    assert any("WARNING" in r.levelname or r.levelno >= logging.WARNING for r in caplog.records)
+
+
+def test_build_cache_options_no_warning_when_not_set(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No warning must be emitted when the env var is absent (C05)."""
+    import logging  # noqa: PLC0415
+
+    monkeypatch.delenv("FABRIC_ALLOW_UNENCRYPTED_TOKEN_CACHE", raising=False)
+    with caplog.at_level(logging.WARNING, logger="fabric_dw.auth"):
+        auth_module._build_cache_options()
+    assert not any("FABRIC_ALLOW_UNENCRYPTED_TOKEN_CACHE" in r.message for r in caplog.records)
+
+
+def test_build_cache_options_falsy_values_do_not_enable_unencrypted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Values other than '1' must not enable unencrypted storage (C05)."""
+    for falsy in ("0", "false", "yes", "true", ""):
+        monkeypatch.setenv("FABRIC_ALLOW_UNENCRYPTED_TOKEN_CACHE", falsy)
+        opts = auth_module._build_cache_options()
+        assert opts.allow_unencrypted_storage is False, f"Expected False for value {falsy!r}"
+
+
+# ---------------------------------------------------------------------------
+# C21 — _fetch_github_oidc_jwt guards the response body
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_github_oidc_jwt_raises_config_error_on_missing_value_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_fetch_github_oidc_jwt must raise ConfigError when 'value' key is absent (C21)."""
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://pipelines.example.com/token")
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "runner-tok")
+
+    with respx.mock:
+        respx.get("https://pipelines.example.com/token").mock(
+            return_value=httpx.Response(200, json={"not_value": "something"})
+        )
+        with pytest.raises(ConfigError, match="value"):
+            auth_module._fetch_github_oidc_jwt()
+
+
+def test_fetch_github_oidc_jwt_raises_config_error_on_non_string_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_fetch_github_oidc_jwt must raise ConfigError when 'value' is not a string (C21)."""
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://pipelines.example.com/token")
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "runner-tok")
+
+    with respx.mock:
+        respx.get("https://pipelines.example.com/token").mock(
+            return_value=httpx.Response(200, json={"value": 12345})
+        )
+        with pytest.raises(ConfigError, match="non-string"):
+            auth_module._fetch_github_oidc_jwt()
+
+
+def test_fetch_github_oidc_jwt_raises_config_error_on_empty_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_fetch_github_oidc_jwt must raise ConfigError on non-JSON or empty body (C21)."""
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://pipelines.example.com/token")
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "runner-tok")
+
+    with respx.mock:
+        respx.get("https://pipelines.example.com/token").mock(
+            return_value=httpx.Response(200, text="not-json")
+        )
+        with pytest.raises(ConfigError):
+            auth_module._fetch_github_oidc_jwt()
+
+
+# ---------------------------------------------------------------------------
+# C22 — ConfigError is not a FabricError
+# ---------------------------------------------------------------------------
+
+
+def test_config_error_is_not_caught_by_fabric_error_handler() -> None:
+    """ConfigError must NOT be caught by 'except FabricError' handlers (C22).
+
+    Broad except-FabricError blocks in MCP tool / CLI call sites must not
+    silently absorb local configuration problems.
+    """
+    from fabric_dw.exceptions import ConfigError, FabricCliError, FabricError  # noqa: PLC0415
+
+    assert not issubclass(ConfigError, FabricError)
+    # Both share a common base so CLI/MCP boundaries can catch either.
+    assert issubclass(ConfigError, FabricCliError)
+    assert issubclass(FabricError, FabricCliError)
