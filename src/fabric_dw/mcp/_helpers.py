@@ -19,10 +19,17 @@ This module provides utilities imported by every domain tool module:
   round-trip so tools avoid the double workspace-lookup pattern.
 - :func:`safe_rows` — apply ``json_safe`` to every cell in a row-set in one
   place, removing duplicated list-comprehensions.
+
+Telemetry
+---------
+Both :func:`mutating_tool` and the :class:`InstrumentedFastMCP` subclass
+wrap every registered tool with a timing + ``command_invoked`` telemetry
+call (fire-and-forget, never raises).
 """
 
 from __future__ import annotations
 
+import inspect
 import logging
 from collections.abc import Callable, Coroutine
 from datetime import datetime
@@ -39,8 +46,14 @@ from fabric_dw.mcp import _guards
 from fabric_dw.resolver import Resolver
 from fabric_dw.sql import SqlTarget
 from fabric_dw.sql_io import json_safe as _json_safe
+from fabric_dw.telemetry_commands import (
+    emit_command_invoked,
+    map_status,
+    now_ms,
+)
 
 __all__ = [
+    "InstrumentedFastMCP",
     "fabric_err",
     "make_sql_target",
     "mutating_tool",
@@ -59,6 +72,60 @@ _log = logging.getLogger(__name__)
 # Note: CREATE/DROP SCHEMA, views, procedures, and functions are all supported
 # on SQL Analytics Endpoints — see T-SQL Applies-to reference for Fabric.
 # No DDL guard is needed for these operations; only table DML/DDL is blocked.
+
+
+_TELEMETRY_WRAPPED_ATTR = "__fabric_telemetry_wrapped__"
+
+
+def _wrap_mcp_tool_with_telemetry(
+    fn: Callable[_P, Coroutine[None, None, _R]],
+    name: str,
+    *,
+    destructive: bool = False,
+) -> Callable[_P, Coroutine[None, None, _R]]:
+    """Return *fn* wrapped with a fire-and-forget ``command_invoked`` telemetry call.
+
+    The wrapper records wall-clock duration and maps the outcome to a status
+    string before calling :func:`~fabric_dw.telemetry_commands.emit_command_invoked`.
+    Telemetry failures are swallowed inside ``emit_command_invoked``; they
+    never propagate to the caller.
+
+    The wrapper sets ``__fabric_telemetry_wrapped__ = True`` on the returned
+    callable so that :class:`InstrumentedFastMCP` can detect already-wrapped
+    functions and skip the second wrapping (preventing double-emission).
+
+    Args:
+        fn: The async tool function to wrap.
+        name: The MCP tool name string (used as the ``name`` attribute).
+        destructive: When ``True``, the ``destructive_op`` attribute is set.
+
+    Returns:
+        A new coroutine function with the same signature that emits telemetry.
+    """
+
+    @wraps(fn)
+    async def telemetry_wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        start = now_ms()
+        exc_seen: BaseException | None = None
+        try:
+            return await fn(*args, **kwargs)
+        except BaseException as exc:
+            exc_seen = exc
+            raise
+        finally:
+            duration = now_ms() - start
+            status = map_status(exc_seen)
+            emit_command_invoked(
+                name=name,
+                surface="mcp",
+                status=status,
+                duration_ms=duration,
+                destructive=destructive,
+            )
+
+    # Mark as already instrumented so InstrumentedFastMCP.tool() skips re-wrapping.
+    setattr(telemetry_wrapper, _TELEMETRY_WRAPPED_ATTR, True)
+    return telemetry_wrapper
 
 
 def mutating_tool(
@@ -81,6 +148,9 @@ def mutating_tool(
     :func:`~fabric_dw.mcp._guards.assert_destructive_allowed` call is injected
     after the write guard, eliminating the second duplicate for permanently-destructive
     tools (drop, delete, clear, restore-in-place, etc.).
+
+    A fire-and-forget ``command_invoked`` telemetry event is emitted after the
+    wrapped function returns or raises, regardless of outcome.
 
     Usage::
 
@@ -109,17 +179,71 @@ def mutating_tool(
         fn: Callable[_P, Coroutine[None, None, _R]],
     ) -> Callable[_P, Coroutine[None, None, _R]]:
         @wraps(fn)
-        async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        async def guard_wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
             _guards.assert_writes_allowed(name)
             if destructive:
                 _guards.assert_destructive_allowed()
             return await fn(*args, **kwargs)
 
+        # Add telemetry around the guard wrapper.
+        tel_wrapped = _wrap_mcp_tool_with_telemetry(guard_wrapper, name, destructive=destructive)
+
         # Register the wrapper (which includes the guard) under the given name.
-        registered: Callable[_P, Coroutine[None, None, _R]] = mcp.tool(name=name)(wrapper)
+        registered: Callable[_P, Coroutine[None, None, _R]] = mcp.tool(name=name)(tel_wrapped)
         return registered
 
     return decorator
+
+
+class InstrumentedFastMCP(FastMCP):
+    """A :class:`~mcp.server.fastmcp.FastMCP` subclass that wraps every
+    ``@mcp.tool(name=...)`` call with a fire-and-forget ``command_invoked``
+    telemetry event.
+
+    This class is used as the single choke-point for MCP telemetry
+    instrumentation for *read-only* tools (those registered with
+    ``@mcp.tool(name=...)``).  Mutating tools use :func:`mutating_tool`
+    which wraps telemetry explicitly.
+
+    No changes to any tool registration code are required: all existing
+    ``@mcp.tool(name=...)`` calls automatically gain instrumentation.
+    """
+
+    def tool(  # type: ignore[override]  # noqa: PLR0913
+        self,
+        name: str | None = None,
+        title: str | None = None,
+        description: str | None = None,
+        annotations: Any = None,  # noqa: ANN401
+        icons: Any = None,  # noqa: ANN401
+        meta: dict[str, Any] | None = None,
+        structured_output: bool | None = None,  # noqa: FBT001
+    ) -> Callable[[Any], Any]:
+        """Override :meth:`FastMCP.tool` to inject per-call telemetry."""
+        parent_decorator = super().tool(
+            name=name,
+            title=title,
+            description=description,
+            annotations=annotations,
+            icons=icons,
+            meta=meta,
+            structured_output=structured_output,
+        )
+
+        def instrumented_decorator(fn: Any) -> Any:  # noqa: ANN401
+            tool_name = name if name is not None else fn.__name__
+            # Skip wrapping when the callable is already instrumented (e.g. from
+            # mutating_tool) to guarantee exactly ONE command_invoked event per call.
+            already_wrapped = getattr(fn, _TELEMETRY_WRAPPED_ATTR, False)
+            # Wrap only coroutine functions; passthrough for sync (safety net).
+            # Use inspect.iscoroutinefunction (asyncio variant is deprecated in 3.12+).
+            if not already_wrapped and inspect.iscoroutinefunction(fn):
+                tel_fn = _wrap_mcp_tool_with_telemetry(fn, tool_name)
+            else:
+                tel_fn = fn
+            return parent_decorator(tel_fn)
+
+        return instrumented_decorator
 
 
 def fabric_err(exc: Exception) -> ToolError:

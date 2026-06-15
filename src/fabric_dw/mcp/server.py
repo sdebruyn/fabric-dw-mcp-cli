@@ -58,11 +58,10 @@ import sys
 from collections.abc import Sequence
 from typing import Literal
 
-from mcp.server.fastmcp import FastMCP
-
 from fabric_dw.logging import setup_logging
 from fabric_dw.mcp._context import fabric_lifespan
 from fabric_dw.mcp._guards import env_flag as _guards_env_flag
+from fabric_dw.mcp._helpers import InstrumentedFastMCP
 from fabric_dw.mcp.tools import register_all
 from fabric_dw.telemetry import (
     maybe_print_first_run_notice,
@@ -73,10 +72,10 @@ from fabric_dw.telemetry import (
 __all__ = ["mcp", "run"]
 
 # ---------------------------------------------------------------------------
-# FastMCP server instance
+# FastMCP server instance (instrumented subclass emits command_invoked events)
 # ---------------------------------------------------------------------------
 
-mcp: FastMCP = FastMCP("fabric-dw", lifespan=fabric_lifespan)
+mcp: InstrumentedFastMCP = InstrumentedFastMCP("fabric-dw", lifespan=fabric_lifespan)
 
 # ---------------------------------------------------------------------------
 # Register all domain tools
