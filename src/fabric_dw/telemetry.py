@@ -20,6 +20,10 @@ Architecture notes
 - No network calls are made when telemetry is disabled.
 - ``tenant_id`` is included in the envelope only when telemetry is enabled
   (it comes from env vars; token-claim extraction is deferred to #366).
+- Auto-HTTP instrumentation is explicitly disabled to prevent MSAL OAuth
+  request URLs (containing tenant IDs) from leaking as span attributes.
+- ``shutdown_on_exit`` is disabled; a bounded ``force_flush`` (≤2 s) is
+  performed at app exit in a daemon thread so the CLI never hangs.
 """
 
 from __future__ import annotations
@@ -28,12 +32,14 @@ import contextlib
 import logging
 import os
 import sys
+import threading
 import tomllib
 import uuid
 from pathlib import Path
 
 __all__ = [
     "emit_event",
+    "flush_telemetry",
     "maybe_print_first_run_notice",
     "record_app_exited",
     "record_app_started",
@@ -188,29 +194,44 @@ def _get_install_id() -> str:
 
 
 def _detect_install_method() -> str:
-    """Best-effort detection of how this package was installed."""
-    # Check for uv: uv sets UV_VIRTUAL_ENV or VIRTUAL_ENV path often contains '.venv'
-    # and the uv runner sets UV in the environment
+    """Best-effort detection of how this package was installed.
+
+    Detection priority:
+    1. ``UV`` / ``UV_VIRTUAL_ENV`` env vars → ``"uv"`` (set by uv runner).
+    2. ``PIPX_HOME`` or ``"pipx"`` in ``sys.executable`` → ``"pipx"``.
+    3. Editable / source checkout (no dist-info or ``.egg-link``) → ``"source"``.
+    4. ``importlib.metadata`` resolves the package version → ``"pip"``.
+    5. Fallback → ``"unknown"``.
+
+    Note: a plain ``.venv`` in ``sys.executable`` is NOT used to infer ``"uv"``
+    because pip can also install into a ``.venv``; that would be a false positive.
+    """
+    # uv explicitly sets UV or UV_VIRTUAL_ENV in the runner environment.
     if os.environ.get("UV") or os.environ.get("UV_VIRTUAL_ENV"):
         return "uv"
 
-    # Check for pipx: PIPX_HOME or the executable path contains 'pipx'
+    # pipx: either the dedicated env var or the executable lives inside a pipx dir.
     if os.environ.get("PIPX_HOME"):
         return "pipx"
     executable = sys.executable or ""
     if "pipx" in executable:
         return "pipx"
-    if ".venv" in executable or "venv" in executable:
-        return "uv"
 
-    # Check if running from source (editable install or no dist-info)
+    # Source / editable checkout: importlib.metadata won't find the package
+    # (no dist-info installed), or it will resolve with a direct_url that has
+    # "editable": true.
     with contextlib.suppress(Exception):
         import importlib.metadata  # noqa: PLC0415
 
-        importlib.metadata.version("fabric-dw")
+        dist = importlib.metadata.distribution("fabric-dw")
+        # Check for an editable install via direct_url.json
+        direct_url = dist.read_text("direct_url.json")
+        if direct_url and '"editable": true' in direct_url:
+            return "source"
         return "pip"
 
-    return "unknown"
+    # importlib.metadata raised PackageNotFoundError → running from source tree.
+    return "source"
 
 
 def _detect_auth_mode() -> str:
@@ -237,6 +258,13 @@ def _detect_auth_mode() -> str:
     return "interactive"
 
 
+# ---------------------------------------------------------------------------
+# Tenant ID override (set_tenant_id / #366 hook)
+# ---------------------------------------------------------------------------
+
+_tenant_id_override: str | None = None
+
+
 def _build_envelope(surface: str) -> dict[str, object]:
     """Build the shared telemetry envelope attached to every event."""
     import platform as _platform  # noqa: PLC0415
@@ -249,11 +277,13 @@ def _build_envelope(surface: str) -> dict[str, object]:
     python_info = sys.version_info
     python_version = f"{python_info.major}.{python_info.minor}"
 
-    tenant_id = (
+    # Prefer the runtime-set override (populated by #366 token-claim hook),
+    # then fall back to environment variables.
+    tenant_id = _tenant_id_override or (
         os.environ.get("AZURE_TENANT_ID") or os.environ.get("FABRIC_INTERACTIVE_TENANT_ID") or None
     )
 
-    return {
+    envelope: dict[str, object] = {
         "anonymous_install_id": _get_install_id(),
         "session_id": _SESSION_ID,
         "app_version": _version,
@@ -264,8 +294,12 @@ def _build_envelope(surface: str) -> dict[str, object]:
         "surface": surface,
         "is_ci": _is_ci(),
         "auth_mode": _detect_auth_mode(),
-        "tenant_id": tenant_id,
     }
+    # Only include tenant_id when a value is known — OTel attributes do not
+    # accept None, and omitting the key is cleaner than an empty string.
+    if tenant_id is not None:
+        envelope["tenant_id"] = tenant_id
+    return envelope
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +309,21 @@ def _build_envelope(surface: str) -> dict[str, object]:
 _tracer: object | None = None
 _sdk_initialised: bool = False
 _current_surface: str = "cli"
+
+# Instrumentation options passed to configure_azure_monitor.
+# ALL auto-HTTP / Azure SDK instrumentors are DISABLED so that MSAL's OAuth
+# token-request URLs (which contain tenant IDs) are never captured as span
+# attributes.  We only emit our own explicit events — no auto-instrumentation.
+_INSTRUMENTATION_OPTIONS: dict[str, dict[str, bool]] = {
+    "azure_sdk": {"enabled": False},
+    "django": {"enabled": False},
+    "fastapi": {"enabled": False},
+    "flask": {"enabled": False},
+    "psycopg2": {"enabled": False},
+    "requests": {"enabled": False},
+    "urllib": {"enabled": False},
+    "urllib3": {"enabled": False},
+}
 
 
 def _get_connection_string() -> str:
@@ -287,6 +336,17 @@ def _get_tracer() -> object | None:
 
     Returns the tracer on success, or None if initialisation fails.
     Raises nothing.
+
+    Privacy / hang safeguards
+    -------------------------
+    - ``instrumentation_options`` explicitly disables all auto-HTTP and Azure SDK
+      instrumentors so MSAL OAuth URLs (containing tenant IDs) are never captured
+      as span attributes (B1).
+    - ``disable_metrics=True`` prevents PerformanceCounters background threads
+      from starting (A1).
+    - ``shutdown_on_exit=False`` prevents the default 30-second atexit flush that
+      can hang the CLI process (B2).  A bounded ``force_flush`` is performed by
+      ``flush_telemetry()`` instead.
     """
     global _tracer, _sdk_initialised  # noqa: PLW0603
 
@@ -302,9 +362,12 @@ def _get_tracer() -> object | None:
         configure_azure_monitor(
             connection_string=_get_connection_string(),
             logger_name="fabric_dw.telemetry",
-            # Disable automatic instrumentation we don't need
             disable_logging=True,
-            disable_metrics=False,
+            disable_metrics=True,
+            # B2: disable unbounded (30 s) atexit flush — we do our own bounded flush.
+            shutdown_on_exit=False,
+            # B1: disable all auto-HTTP / Azure SDK instrumentors (privacy).
+            instrumentation_options=_INSTRUMENTATION_OPTIONS,
         )
         _tracer = trace.get_tracer("fabric_dw.telemetry")
     except Exception:
@@ -312,6 +375,34 @@ def _get_tracer() -> object | None:
         _tracer = None
 
     return _tracer
+
+
+def flush_telemetry(timeout_ms: int = 2000) -> None:
+    """Flush pending telemetry spans with a bounded timeout.
+
+    Runs in a daemon thread so it can never block process exit even if the
+    exporter is slow or unreachable.  The thread is daemon so the OS kills it
+    when the main thread exits (no hang possible).
+
+    Args:
+        timeout_ms: Maximum milliseconds to wait for the flush.  Defaults to
+            2000 (2 s) to satisfy the B2 hang requirement.
+    """
+    if not _sdk_initialised or _tracer is None:
+        return
+
+    def _do_flush() -> None:
+        with contextlib.suppress(Exception):
+            from opentelemetry import trace as _trace  # noqa: PLC0415
+
+            provider = _trace.get_tracer_provider()
+            force_flush = getattr(provider, "force_flush", None)
+            if callable(force_flush):
+                force_flush(timeout_millis=timeout_ms)
+
+    t = threading.Thread(target=_do_flush, daemon=True)
+    t.start()
+    t.join(timeout=timeout_ms / 1000 + 0.1)  # join with a slightly larger wall-clock timeout
 
 
 # ---------------------------------------------------------------------------
@@ -392,6 +483,11 @@ def maybe_print_first_run_notice() -> None:
     - Telemetry is disabled.
     - Running in a CI environment.
     - The marker file already exists (notice was already shown).
+
+    The marker file is written **after** the notice is successfully printed
+    (A3) so that a failed print does not permanently suppress future notices.
+
+    The output always goes to stderr so it can never pollute MCP stdio output.
     """
     if not telemetry_enabled():
         return
@@ -404,10 +500,7 @@ def maybe_print_first_run_notice() -> None:
         if marker_file.exists():
             return
 
-    with contextlib.suppress(Exception):
-        _config_dir().mkdir(parents=True, exist_ok=True)
-        marker_file.write_text("1", encoding="utf-8")
-
+    # Print the notice first; only write the marker if this succeeds (A3).
     print(  # noqa: T201
         "fabric-dw collects anonymous usage telemetry to improve the tool. "
         "To opt out: set FABRIC_DISABLE_TELEMETRY=1. "
@@ -415,11 +508,22 @@ def maybe_print_first_run_notice() -> None:
         file=sys.stderr,
     )
 
+    # Write marker after successful print (A3: a print failure won't suppress future notices).
+    with contextlib.suppress(Exception):
+        _config_dir().mkdir(parents=True, exist_ok=True)
+        marker_file.write_text("1", encoding="utf-8")
+
 
 def set_tenant_id(tenant_id: str) -> None:
-    """Stub for #366: set tenant ID from token claims.
+    """Store the tenant ID so the envelope reads it at runtime.
 
-    In this foundation PR the tenant ID is read from env vars only.
-    Follow-up #366 will decode the ``tid`` claim from the access token
-    and call this function to update the global envelope at runtime.
+    Follow-up #366 decodes the ``tid`` claim from the access token and calls
+    this function to propagate the value into every subsequent event envelope.
+    Until #366 lands the envelope falls back to the ``AZURE_TENANT_ID`` and
+    ``FABRIC_INTERACTIVE_TENANT_ID`` environment variables.
+
+    Args:
+        tenant_id: The tenant UUID string extracted from the access token.
     """
+    global _tenant_id_override  # noqa: PLW0603
+    _tenant_id_override = tenant_id
