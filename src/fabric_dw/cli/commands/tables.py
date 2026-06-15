@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from pathlib import Path
+from typing import cast
+from uuid import UUID
 
 import click
 
+from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import render
 from fabric_dw.cli.commands._utils import (
@@ -18,12 +22,21 @@ from fabric_dw.cli.commands._utils import (
     load_sql_body,
     parse_iso_datetime,
     parse_qualified_name,
+    resolve_item,
     resolve_warehouse_arg,
     resolve_workspace_arg,
 )
 from fabric_dw.exceptions import FabricError
-from fabric_dw.models import ColumnSpec
+from fabric_dw.http_client import FabricHttpClient
+from fabric_dw.models import ColumnSpec, CopyIntoResult
 from fabric_dw.services import tables as _tables_svc
+from fabric_dw.services.load import (
+    CopyIntoCsvOptions,
+    copy_into_from_url,
+    infer_file_format,
+    load_local_file,
+)
+from fabric_dw.sql import SqlTarget
 from fabric_dw.sql_io import OutputFormat, columns_rows_to_arrow, write_arrow
 
 
@@ -525,6 +538,338 @@ async def clone_cmd(
             render(t.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
+
+
+def _make_csv_options(
+    has_header: bool,
+    delimiter: str | None,
+    encoding: str | None,
+    field_quote: str | None,
+    row_terminator: str | None,
+) -> CopyIntoCsvOptions:
+    """Build a :class:`CopyIntoCsvOptions` from CLI option values."""
+    return CopyIntoCsvOptions(
+        delimiter=delimiter,
+        first_row=2 if has_header else 1,
+        encoding=encoding,
+        field_quote=field_quote,
+        row_terminator=row_terminator,
+    )
+
+
+def _resolve_url_file_type(fmt: str | None, url: str) -> str:
+    """Resolve the COPY INTO FILE_TYPE for a remote URL.
+
+    Raises:
+        click.UsageError: If JSON is requested or format cannot be inferred.
+    """
+    _json_err = (
+        "JSON remote URLs are not supported by COPY INTO. "
+        "Download the file locally and use --file instead."
+    )
+    if fmt:
+        upper = fmt.upper()
+        if upper == "JSON":
+            raise click.UsageError(_json_err)
+        return upper
+    # Try to infer from URL path.
+    from urllib.parse import urlparse  # noqa: PLC0415
+
+    try:
+        guessed = infer_file_format(Path(urlparse(url).path))
+    except ValueError:
+        raise click.UsageError(
+            "Cannot infer format from URL; pass --format csv or --format parquet."
+        ) from None
+    if guessed == "json":
+        raise click.UsageError(_json_err)
+    return guessed.upper()
+
+
+@tables_group.command("load")
+@click.argument("workspace", required=False, default=None)
+@click.argument("item", required=False, default=None)
+@click.argument("qualified_name")
+@click.option("--file", "file_path", default=None, help="Path to a local file to load.")
+@click.option("--url", "url", default=None, help="Remote URL to COPY INTO from.")
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["csv", "json", "parquet"], case_sensitive=False),
+    default=None,
+    help="File format (inferred from extension when omitted).",
+)
+@click.option("--delimiter", default=None, help="CSV column delimiter.")
+@click.option(
+    "--header/--no-header",
+    "has_header",
+    default=True,
+    show_default=True,
+    help="CSV has a header row.",
+)
+@click.option("--encoding", default=None, help="CSV file encoding (e.g. UTF8, UTF8BOM).")
+@click.option("--field-quote", default=None, help="CSV field-quote character.")
+@click.option("--row-terminator", default=None, help="CSV row terminator.")
+@click.option(
+    "--credential-type",
+    "credential_type",
+    type=click.Choice(
+        ["none", "sas", "managed-identity", "service-principal", "account-key"],
+        case_sensitive=False,
+    ),
+    default="none",
+    show_default=True,
+    help="Credential type for secured external URLs.",
+)
+@click.option("--secret", default=None, help="Credential secret (SAS token or account key).")
+@click.option(
+    "--identity",
+    default=None,
+    help="Identity for managed-identity or service-principal credentials.",
+)
+@click.option(
+    "--staging-lakehouse",
+    "staging_lakehouse_name",
+    default=None,
+    help="Staging Lakehouse name (auto-generated if omitted).",
+)
+@click.option(
+    "--keep-staging",
+    is_flag=True,
+    default=False,
+    help="Do not delete the staging Lakehouse after loading.",
+)
+@click.option(
+    "--max-errors",
+    "max_errors",
+    default=None,
+    type=int,
+    help="Maximum errors before aborting the load.",
+)
+@click.option(
+    "--rejected-row-location",
+    "rejected_row_location",
+    default=None,
+    help="URL for rejected-row output.",
+)
+@click.pass_obj
+@coro
+async def load_cmd(
+    ctx: CliContext,
+    workspace: str | None,
+    item: str | None,
+    qualified_name: str,
+    file_path: str | None,
+    url: str | None,
+    fmt: str | None,
+    delimiter: str | None,
+    has_header: bool,
+    encoding: str | None,
+    field_quote: str | None,
+    row_terminator: str | None,
+    credential_type: str,
+    secret: str | None,
+    identity: str | None,
+    staging_lakehouse_name: str | None,
+    keep_staging: bool,
+    max_errors: int | None,
+    rejected_row_location: str | None,
+) -> None:
+    """Load data into QUALIFIED_NAME (schema.table) on ITEM in WORKSPACE via COPY INTO.
+
+    Exactly one of --file (local path) or --url (remote URL) must be provided.
+
+    Local files are staged to a temporary Lakehouse in OneLake, then loaded
+    via COPY INTO, and the staging Lakehouse is automatically cleaned up.
+
+    JSON files are converted to Parquet client-side before staging.
+
+    \b
+    Examples:
+      fabric-dw tables load myws mywarehouse dbo.sales --file data.csv
+      fabric-dw tables load myws mywarehouse dbo.sales --url https://... --format parquet
+    """
+    ws = resolve_workspace_arg(ctx, workspace)
+    wh = resolve_warehouse_arg(ctx, item)
+    schema, table_name = parse_qualified_name(qualified_name, kind="table")
+
+    if file_path and url:
+        raise click.UsageError("Provide either --file or --url, not both.")
+    if not file_path and not url:
+        raise click.UsageError("Provide --file (local path) or --url (remote URL).")
+
+    csv_kw = {
+        "has_header": has_header,
+        "delimiter": delimiter,
+        "encoding": encoding,
+        "field_quote": field_quote,
+        "row_terminator": row_terminator,
+    }
+
+    try:
+        async with build_http_client(ctx) as http:
+            ws_id, entry = await resolve_item(http, ws, wh)
+            if entry.connection_string is None:
+                raise click.ClickException(f"Item {entry.display_name!r} has no connection string.")
+            sql_target = SqlTarget(
+                workspace_id=str(ws_id),
+                database=entry.display_name,
+                connection_string=entry.connection_string,
+            )
+
+            if file_path:
+                result = await _load_cmd_local(
+                    ctx,
+                    http,
+                    ws_id,
+                    sql_target,
+                    entry,
+                    schema,
+                    table_name,
+                    file_path,
+                    fmt,
+                    csv_kw,
+                    staging_lakehouse_name,
+                    keep_staging,
+                    max_errors,
+                    rejected_row_location,
+                )
+            else:
+                assert url is not None  # noqa: S101 — checked above
+                result = await _load_cmd_url(
+                    ctx,
+                    sql_target,
+                    entry,
+                    schema,
+                    table_name,
+                    url,
+                    fmt,
+                    csv_kw,
+                    credential_type,
+                    secret,
+                    identity,
+                    max_errors,
+                    rejected_row_location,
+                )
+
+        if ctx.json_output:
+            render(result.model_dump(mode="json"), json_output=True)
+        else:
+            suffix = f" ({result.rows_rejected} rejected)" if result.rows_rejected else ""
+            click.echo(
+                f"Loaded {result.rows_loaded} row(s) into [{schema}].[{table_name}]{suffix}."
+            )
+    except (ValueError, FabricError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+async def _load_cmd_local(
+    ctx: CliContext,
+    http: FabricHttpClient,
+    ws_id: UUID,
+    sql_target: SqlTarget,
+    entry: ItemEntry,
+    schema: str,
+    table_name: str,
+    file_path: str,
+    fmt: str | None,
+    csv_kw: Mapping[str, object],
+    staging_lakehouse_name: str | None,
+    keep_staging: bool,
+    max_errors: int | None,
+    rejected_row_location: str | None,
+) -> CopyIntoResult:
+    """Dispatch the local-file load sub-path."""
+    from fabric_dw import auth as _auth  # noqa: PLC0415
+    from fabric_dw.services.load import FileFormat  # noqa: PLC0415
+
+    local = Path(file_path)
+    if not local.exists():
+        raise click.UsageError(f"File not found: {file_path}")
+
+    try:
+        raw_format = fmt or infer_file_format(local)
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+
+    file_format: FileFormat = cast("FileFormat", raw_format)
+    csv_options = (
+        _make_csv_options(
+            has_header=bool(csv_kw.get("has_header", True)),
+            delimiter=cast("str | None", csv_kw.get("delimiter") or None),
+            encoding=cast("str | None", csv_kw.get("encoding") or None),
+            field_quote=cast("str | None", csv_kw.get("field_quote") or None),
+            row_terminator=cast("str | None", csv_kw.get("row_terminator") or None),
+        )
+        if file_format == "csv"
+        else None
+    )
+    credential = _auth.get_credential(ctx.auth)
+    return await load_local_file(
+        http,
+        credential,
+        ws_id,
+        sql_target,
+        schema,
+        table_name,
+        local,
+        file_format=file_format,
+        staging_lakehouse_name=staging_lakehouse_name,
+        keep_staging=keep_staging,
+        csv_options=csv_options,
+        max_errors=max_errors,
+        rejected_row_location=rejected_row_location,
+        kind=entry.kind,
+        mode=ctx.auth,
+    )
+
+
+async def _load_cmd_url(
+    ctx: CliContext,
+    sql_target: SqlTarget,
+    entry: ItemEntry,
+    schema: str,
+    table_name: str,
+    url: str,
+    fmt: str | None,
+    csv_kw: Mapping[str, object],
+    credential_type: str,
+    secret: str | None,
+    identity: str | None,
+    max_errors: int | None,
+    rejected_row_location: str | None,
+) -> CopyIntoResult:
+    """Dispatch the remote-URL load sub-path."""
+    from fabric_dw.services.load import CopyIntoCredentialType  # noqa: PLC0415
+
+    file_type = _resolve_url_file_type(fmt, url)
+    csv_options = (
+        _make_csv_options(
+            has_header=bool(csv_kw.get("has_header", True)),
+            delimiter=cast("str | None", csv_kw.get("delimiter") or None),
+            encoding=cast("str | None", csv_kw.get("encoding") or None),
+            field_quote=cast("str | None", csv_kw.get("field_quote") or None),
+            row_terminator=cast("str | None", csv_kw.get("row_terminator") or None),
+        )
+        if file_type == "CSV"
+        else None
+    )
+    cred_type: CopyIntoCredentialType = cast("CopyIntoCredentialType", credential_type)
+    return await copy_into_from_url(
+        sql_target,
+        schema,
+        table_name,
+        url,
+        file_type=file_type,
+        credential_type=cred_type,
+        secret=secret,
+        identity=identity,
+        csv_options=csv_options,
+        max_errors=max_errors,
+        rejected_row_location=rejected_row_location,
+        kind=entry.kind,
+        mode=ctx.auth,
+    )
 
 
 @tables_group.command("rename")
