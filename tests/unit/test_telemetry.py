@@ -1198,6 +1198,49 @@ def test_decode_tid_returns_none_for_malformed_token() -> None:
         assert result is None, f"Expected None for {bad_token!r}, got {result!r}"
 
 
+def test_decode_tid_handles_urlsafe_chars_in_payload() -> None:
+    """decode_tid_from_token correctly handles payloads with '-' in the base64url encoding.
+
+    This is a regression test for the b64decode vs urlsafe_b64decode bug.  The
+    standard base64 alphabet uses '+' and '/' where base64url uses '-' and '_'.
+    ``base64.b64decode`` with ``validate=False`` silently discards '-' and '_'
+    characters before the padding check, producing an incorrect result or an
+    ``Incorrect padding`` error — both of which cause the function to return
+    ``None`` instead of the tid.
+
+    The tid value ``"~~~"`` (three tildes) is chosen because JSON.encode of
+    ``{"tid": "~~~"}`` produces a byte sequence whose base64url encoding
+    contains '-' (specifically the group encoding the tilde bytes maps to
+    value 62 → '-' in base64url).
+
+    This test FAILS with ``base64.b64decode`` and PASSES with
+    ``base64.urlsafe_b64decode``.
+    """
+    import base64  # noqa: PLC0415
+    import importlib  # noqa: PLC0415
+    import json  # noqa: PLC0415
+
+    mod = importlib.import_module("fabric_dw.telemetry")
+
+    # '~~~' is chosen because json.dumps({'tid': '~~~'}) produces bytes whose
+    # base64url encoding contains '-', guaranteed by the tilde (0x7E) character.
+    tid_value = "~~~"
+    payload_bytes = json.dumps({"tid": tid_value}).encode()
+    b64url = base64.urlsafe_b64encode(payload_bytes).rstrip(b"=").decode()
+
+    # Sanity-check: the fixture must exercise the URL-safe character path.
+    assert any(c in "-_" for c in b64url), (
+        f"Fixture must contain '-' or '_' to exercise the bug; got: {b64url!r}"
+    )
+
+    token = f"fake_header.{b64url}.fake_sig"
+    result = mod.decode_tid_from_token(token)  # type: ignore[attr-defined]
+    assert result == tid_value, (
+        f"Expected {tid_value!r} but got {result!r}. "
+        "This indicates b64decode is being used instead of urlsafe_b64decode."
+    )
+
+
 def test_decode_tid_handles_missing_padding() -> None:
     """decode_tid_from_token correctly handles base64url payloads with stripped padding."""
     import base64  # noqa: PLC0415

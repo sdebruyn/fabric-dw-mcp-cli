@@ -555,9 +555,10 @@ def decode_tid_from_token(token: str) -> str | None:
             return None
 
         payload_b64 = parts[1]
-        # base64url requires padding to a multiple of 4.
-        padding = (4 - len(payload_b64) % 4) % 4
-        payload_bytes = base64.b64decode(payload_b64 + "=" * padding, validate=False)
+        # JWT payloads use base64url encoding ('-' → 62, '_' → 63).
+        # urlsafe_b64decode handles both standard and URL-safe alphabets.
+        # Padding is added to satisfy the 4-byte block requirement.
+        payload_bytes = base64.urlsafe_b64decode(payload_b64 + "=" * (-len(payload_b64) % 4))
         claims = json.loads(payload_bytes)
         tid = claims.get("tid")
         return str(tid) if isinstance(tid, str) and tid else None
@@ -582,10 +583,13 @@ def cache_tenant_id_from_token(token: str) -> None:
         token: The raw JWT access-token string returned by
             ``credential.get_token(...).token``.
     """
-    if not telemetry_enabled():
-        return
-    if _tenant_id_override is not None:
-        return
-    tid = decode_tid_from_token(token)
-    if tid is not None:
-        set_tenant_id(tid)
+    try:
+        if _tenant_id_override is not None:
+            return
+        if not telemetry_enabled():
+            return
+        tid = decode_tid_from_token(token)
+        if tid is not None:
+            set_tenant_id(tid)
+    except Exception:  # noqa: S110
+        pass  # telemetry must never break the auth path
