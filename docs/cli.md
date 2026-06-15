@@ -1359,6 +1359,176 @@ fabric-dw --yes procedures drop MyWorkspace SalesWH dbo.usp_archive_orders
 
 ---
 
+## fabric-dw functions
+
+Manage T-SQL user-defined functions on Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
+
+> **Preview:** Scalar UDFs (`FN`) and inline TVFs (`IF`) are preview features as of mid-2026. Function DDL is supported on both Data Warehouses and SQL Analytics Endpoints — no endpoint guard is applied.
+
+### functions list
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+List T-SQL user-defined functions on a warehouse or SQL Analytics Endpoint. Pass `--schema` to filter by schema, or `--kind` to filter by function kind.
+
+**Synopsis**
+
+```
+fabric-dw functions list [OPTIONS] [WORKSPACE] [ITEM]
+```
+
+| Option | Description |
+| --- | --- |
+| `--schema TEXT` | Only list functions in this schema. |
+| `--kind [scalar\|inline-tvf\|all]` | Filter by function kind: `scalar` (FN), `inline-tvf` (IF), or `all` (default). |
+
+**Example**
+
+```shell
+fabric-dw functions list MyWorkspace SalesWH --schema dbo --kind scalar
+```
+
+```
+ schema_name  name           kind    is_inlineable  created               modified
+ ------------ -------------- ------- -------------- --------------------- ---------------------
+ dbo          fn_clean_input  scalar  True           2026-06-01T08:00:00Z  2026-06-10T12:00:00Z
+```
+
+---
+
+### functions get
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Get the full definition of a single T-SQL user-defined function, including its parameter list.
+
+**Synopsis**
+
+```
+fabric-dw functions get [WORKSPACE] [ITEM] QUALIFIED_NAME
+```
+
+`QUALIFIED_NAME` must be a dot-separated `schema.fn_name` string, e.g. `dbo.fn_clean_input`.
+
+**Example**
+
+```shell
+fabric-dw functions get MyWorkspace SalesWH dbo.fn_clean_input
+```
+
+---
+
+### functions create
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Create a new T-SQL user-defined function. Scalar UDFs and inline TVFs are preview features.
+
+**Synopsis**
+
+```
+fabric-dw functions create [OPTIONS] [WORKSPACE] [ITEM]
+```
+
+| Option | Description |
+| --- | --- |
+| `--name SCHEMA.FN` | **Required.** Qualified function name (e.g. `dbo.fn_clean_input`). |
+| `--body TEXT` | Inline function body (parameter list, RETURNS clause, and implementation). |
+| `--from-file PATH` | Path to a `.sql` file containing the function body. |
+
+Exactly one of `--body` or `--from-file` must be provided.
+
+**Example**
+
+```shell
+fabric-dw functions create MyWorkspace SalesWH \
+  --name dbo.fn_clean_input \
+  --body "(@input NVARCHAR(100)) RETURNS NVARCHAR(100) AS BEGIN RETURN LTRIM(RTRIM(@input)) END"
+```
+
+---
+
+### functions update
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Redefine an existing T-SQL user-defined function via `CREATE OR ALTER FUNCTION`.
+
+> **Note:** `ALTER FUNCTION` cannot change the function kind (e.g. scalar to inline TVF). The body must be compatible with the original function's kind.
+
+**Synopsis**
+
+```
+fabric-dw functions update [OPTIONS] [WORKSPACE] [ITEM] QUALIFIED_NAME
+```
+
+`QUALIFIED_NAME` is the dot-separated `schema.fn_name` to update.
+
+| Option | Description |
+| --- | --- |
+| `--body TEXT` | Inline function body. |
+| `--from-file PATH` | Path to a `.sql` file containing the function body. |
+
+Exactly one of `--body` or `--from-file` must be provided. You will be asked to confirm unless `--yes` is passed.
+
+**Example**
+
+```shell
+fabric-dw functions update MyWorkspace SalesWH dbo.fn_clean_input \
+  --from-file ./fns/fn_clean_input_v2.sql
+```
+
+---
+
+### functions drop
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Drop a T-SQL user-defined function. You will be asked to confirm unless `--yes` is passed.
+
+**Synopsis**
+
+```
+fabric-dw functions drop [OPTIONS] [WORKSPACE] [ITEM] QUALIFIED_NAME
+```
+
+| Option | Description |
+| --- | --- |
+| `--if-exists` | No-op when the function does not exist (`DROP FUNCTION IF EXISTS`). |
+
+**Example**
+
+```shell
+fabric-dw --yes functions drop MyWorkspace SalesWH dbo.fn_clean_input
+```
+
+---
+
+### functions rename
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Rename a T-SQL user-defined function via `EXEC sp_rename`. The new name must be a bare (unqualified) identifier — `sp_rename` cannot move a function to a different schema. You will be asked to confirm unless `--yes` is passed.
+
+**Synopsis**
+
+```
+fabric-dw functions rename [OPTIONS] [WORKSPACE] [ITEM] QUALIFIED_NAME
+```
+
+| Option | Description |
+| --- | --- |
+| `--new-name TEXT` | **Required.** New bare (unqualified) function name. |
+
+**Example**
+
+```shell
+fabric-dw --yes functions rename MyWorkspace SalesWH dbo.fn_clean_input \
+  --new-name fn_sanitize_input
+```
+
+---
+
 ## fabric-dw tables
 
 Manage SQL tables on Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
