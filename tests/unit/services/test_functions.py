@@ -659,47 +659,251 @@ class TestDropFunction:
 # rename_function
 # ===========================================================================
 
+# Definition as stored in sys.sql_modules — starts with the full CREATE preamble.
+_RENAME_DEF_BRACKET = (
+    "CREATE FUNCTION [dbo].[fn_clean]"
+    "(@input NVARCHAR(100)) RETURNS NVARCHAR(100) AS BEGIN RETURN LTRIM(RTRIM(@input)) END"
+)
+_RENAME_DEF_UNQUOTED = (
+    "CREATE FUNCTION dbo.fn_clean"
+    "(@input NVARCHAR(100)) RETURNS NVARCHAR(100) AS BEGIN RETURN LTRIM(RTRIM(@input)) END"
+)
+
+_GET_ROW_FN_WITH_DEF = (
+    "dbo",
+    "fn_clean",
+    "FN",
+    "SQL_SCALAR_FUNCTION",
+    _NOW,
+    _LATER,
+    _RENAME_DEF_BRACKET,
+    1,
+)
+_GET_ROW_FN_UNQUOTED = (
+    "dbo",
+    "fn_clean",
+    "FN",
+    "SQL_SCALAR_FUNCTION",
+    _NOW,
+    _LATER,
+    _RENAME_DEF_UNQUOTED,
+    1,
+)
+
 
 class TestRenameFunction:
-    async def test_emits_sp_rename_ddl(self) -> None:
-        target = _make_target()
-        ddl_conn = _make_conn_for_ddl()
-        conn_fn = _make_conn([_GET_ROW_FN], _GET_COLS)
-        conn_params = _make_conn([_PARAM_RETURN, _PARAM_INPUT], _PARAM_COLS)
+    """rename_function uses DROP + CREATE (not sp_rename) because Fabric DW rejects
+    sp_rename for user-defined functions.  The Microsoft T-SQL reference explicitly
+    recommends dropping and re-creating functions instead."""
 
-        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, conn_fn, conn_params]):
+    # ------------------------------------------------------------------
+    # Happy-path: sequence of calls
+    # ------------------------------------------------------------------
+
+    async def test_issues_create_function_ddl(self) -> None:
+        """The rename must emit a CREATE FUNCTION DDL for the new name."""
+        target = _make_target()
+        # Connections consumed in order:
+        # 1) get_function (old) → metadata fetch
+        # 2) get_function (old) → params fetch
+        # 3) create_function DDL
+        # 4) get_function (new) → metadata fetch (inside create_function)
+        # 5) get_function (new) → params fetch (inside create_function)
+        # 6) drop_function DDL
+        # 7) get_function (new) → final fetch metadata
+        # 8) get_function (new) → final fetch params
+        conn_get_old_fn = _make_conn([_GET_ROW_FN_WITH_DEF], _GET_COLS)
+        conn_get_old_params = _make_conn([_PARAM_RETURN, _PARAM_INPUT], _PARAM_COLS)
+        conn_create_ddl = _make_conn_for_ddl()
+        conn_get_new_fn = _make_conn([_GET_ROW_FN], _GET_COLS)
+        conn_get_new_params = _make_conn([_PARAM_RETURN, _PARAM_INPUT], _PARAM_COLS)
+        conn_drop_ddl = _make_conn_for_ddl()
+        conn_final_fn = _make_conn([_GET_ROW_FN], _GET_COLS)
+        conn_final_params = _make_conn([_PARAM_RETURN, _PARAM_INPUT], _PARAM_COLS)
+
+        with patch(
+            "fabric_dw.sql.open_connection",
+            side_effect=[
+                conn_get_old_fn,
+                conn_get_old_params,
+                conn_create_ddl,
+                conn_get_new_fn,
+                conn_get_new_params,
+                conn_drop_ddl,
+                conn_final_fn,
+                conn_final_params,
+            ],
+        ):
             await functions.rename_function(target, "dbo.fn_clean", "fn_sanitize")
 
-        cursor = ddl_conn.cursor.return_value
-        call_sql: str = cursor.execute.call_args[0][0].upper()
-        assert "SP_RENAME" in call_sql
+        create_cursor = conn_create_ddl.cursor.return_value
+        create_sql: str = create_cursor.execute.call_args[0][0].upper()
+        assert "CREATE FUNCTION" in create_sql
+        assert "[FN_SANITIZE]" in create_sql or "FN_SANITIZE" in create_sql
 
-    async def test_passes_old_and_new_name_as_params(self) -> None:
+    async def test_issues_drop_function_ddl(self) -> None:
+        """The rename must emit a DROP FUNCTION DDL for the old name."""
         target = _make_target()
-        ddl_conn = _make_conn_for_ddl()
-        conn_fn = _make_conn([_GET_ROW_FN], _GET_COLS)
-        conn_params = _make_conn([_PARAM_RETURN, _PARAM_INPUT], _PARAM_COLS)
+        conn_get_old_fn = _make_conn([_GET_ROW_FN_WITH_DEF], _GET_COLS)
+        conn_get_old_params = _make_conn([_PARAM_RETURN, _PARAM_INPUT], _PARAM_COLS)
+        conn_create_ddl = _make_conn_for_ddl()
+        conn_get_new_fn = _make_conn([_GET_ROW_FN], _GET_COLS)
+        conn_get_new_params = _make_conn([_PARAM_RETURN, _PARAM_INPUT], _PARAM_COLS)
+        conn_drop_ddl = _make_conn_for_ddl()
+        conn_final_fn = _make_conn([_GET_ROW_FN], _GET_COLS)
+        conn_final_params = _make_conn([_PARAM_RETURN, _PARAM_INPUT], _PARAM_COLS)
 
-        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, conn_fn, conn_params]):
+        with patch(
+            "fabric_dw.sql.open_connection",
+            side_effect=[
+                conn_get_old_fn,
+                conn_get_old_params,
+                conn_create_ddl,
+                conn_get_new_fn,
+                conn_get_new_params,
+                conn_drop_ddl,
+                conn_final_fn,
+                conn_final_params,
+            ],
+        ):
             await functions.rename_function(target, "dbo.fn_clean", "fn_sanitize")
 
-        cursor = ddl_conn.cursor.return_value
-        call_args = cursor.execute.call_args
-        params = list(call_args[0][1]) if len(call_args[0]) > 1 else []
-        assert "dbo.fn_clean" in params
-        assert "fn_sanitize" in params
+        drop_cursor = conn_drop_ddl.cursor.return_value
+        drop_sql: str = drop_cursor.execute.call_args[0][0].upper()
+        assert "DROP FUNCTION" in drop_sql
+        assert "[FN_CLEAN]" in drop_sql or "FN_CLEAN" in drop_sql
 
     async def test_returns_function_details_with_new_name(self) -> None:
+        """rename_function must return FunctionDetails (fetched after DDL)."""
         target = _make_target()
-        ddl_conn = _make_conn_for_ddl()
-        # get_function is called with new name — mock it returning fn_clean details
-        conn_fn = _make_conn([_GET_ROW_FN], _GET_COLS)
-        conn_params = _make_conn([_PARAM_RETURN, _PARAM_INPUT], _PARAM_COLS)
+        conn_get_old_fn = _make_conn([_GET_ROW_FN_WITH_DEF], _GET_COLS)
+        conn_get_old_params = _make_conn([_PARAM_RETURN, _PARAM_INPUT], _PARAM_COLS)
+        conn_create_ddl = _make_conn_for_ddl()
+        conn_get_new_fn = _make_conn([_GET_ROW_FN], _GET_COLS)
+        conn_get_new_params = _make_conn([_PARAM_RETURN, _PARAM_INPUT], _PARAM_COLS)
+        conn_drop_ddl = _make_conn_for_ddl()
+        conn_final_fn = _make_conn([_GET_ROW_FN], _GET_COLS)
+        conn_final_params = _make_conn([_PARAM_RETURN, _PARAM_INPUT], _PARAM_COLS)
 
-        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, conn_fn, conn_params]):
+        with patch(
+            "fabric_dw.sql.open_connection",
+            side_effect=[
+                conn_get_old_fn,
+                conn_get_old_params,
+                conn_create_ddl,
+                conn_get_new_fn,
+                conn_get_new_params,
+                conn_drop_ddl,
+                conn_final_fn,
+                conn_final_params,
+            ],
+        ):
             result = await functions.rename_function(target, "dbo.fn_clean", "fn_sanitize")
 
         assert isinstance(result, FunctionDetails)
+
+    async def test_does_not_emit_sp_rename(self) -> None:
+        """Fabric DW rejects sp_rename for UDFs — must NOT appear in any DDL."""
+        target = _make_target()
+        conn_get_old_fn = _make_conn([_GET_ROW_FN_WITH_DEF], _GET_COLS)
+        conn_get_old_params = _make_conn([_PARAM_RETURN, _PARAM_INPUT], _PARAM_COLS)
+        conn_create_ddl = _make_conn_for_ddl()
+        conn_get_new_fn = _make_conn([_GET_ROW_FN], _GET_COLS)
+        conn_get_new_params = _make_conn([_PARAM_RETURN, _PARAM_INPUT], _PARAM_COLS)
+        conn_drop_ddl = _make_conn_for_ddl()
+        conn_final_fn = _make_conn([_GET_ROW_FN], _GET_COLS)
+        conn_final_params = _make_conn([_PARAM_RETURN, _PARAM_INPUT], _PARAM_COLS)
+
+        all_conns = [
+            conn_get_old_fn,
+            conn_get_old_params,
+            conn_create_ddl,
+            conn_get_new_fn,
+            conn_get_new_params,
+            conn_drop_ddl,
+            conn_final_fn,
+            conn_final_params,
+        ]
+
+        with patch("fabric_dw.sql.open_connection", side_effect=all_conns):
+            await functions.rename_function(target, "dbo.fn_clean", "fn_sanitize")
+
+        for conn in all_conns:
+            cursor = conn.cursor.return_value
+            if cursor.execute.called:
+                sql: str = cursor.execute.call_args[0][0].upper()
+                assert "SP_RENAME" not in sql, f"sp_rename must not be used; got: {sql!r}"
+
+    async def test_strips_create_preamble_bracket_quoted(self) -> None:
+        """Body extraction must work when sys.sql_modules returns bracket-quoted names."""
+        target = _make_target()
+        conn_get_old_fn = _make_conn([_GET_ROW_FN_WITH_DEF], _GET_COLS)
+        conn_get_old_params = _make_conn([_PARAM_RETURN, _PARAM_INPUT], _PARAM_COLS)
+        conn_create_ddl = _make_conn_for_ddl()
+        conn_get_new_fn = _make_conn([_GET_ROW_FN], _GET_COLS)
+        conn_get_new_params = _make_conn([_PARAM_RETURN, _PARAM_INPUT], _PARAM_COLS)
+        conn_drop_ddl = _make_conn_for_ddl()
+        conn_final_fn = _make_conn([_GET_ROW_FN], _GET_COLS)
+        conn_final_params = _make_conn([_PARAM_RETURN, _PARAM_INPUT], _PARAM_COLS)
+
+        with patch(
+            "fabric_dw.sql.open_connection",
+            side_effect=[
+                conn_get_old_fn,
+                conn_get_old_params,
+                conn_create_ddl,
+                conn_get_new_fn,
+                conn_get_new_params,
+                conn_drop_ddl,
+                conn_final_fn,
+                conn_final_params,
+            ],
+        ):
+            await functions.rename_function(target, "dbo.fn_clean", "fn_sanitize")
+
+        create_cursor = conn_create_ddl.cursor.return_value
+        create_sql: str = create_cursor.execute.call_args[0][0]
+        # Body content must be passed through correctly
+        assert "LTRIM" in create_sql.upper() or "ltrim" in create_sql.lower()
+        # The old name must not appear as the function name in the CREATE statement.
+        after_fn_kw = create_sql.split("CREATE FUNCTION", 1)[-1]
+        before_params = after_fn_kw.split("(", maxsplit=1)[0]
+        assert "fn_clean" not in before_params.lower()
+
+    async def test_strips_create_preamble_unquoted(self) -> None:
+        """Body extraction must also handle unquoted names in sys.sql_modules."""
+        target = _make_target()
+        conn_get_old_fn = _make_conn([_GET_ROW_FN_UNQUOTED], _GET_COLS)
+        conn_get_old_params = _make_conn([_PARAM_RETURN, _PARAM_INPUT], _PARAM_COLS)
+        conn_create_ddl = _make_conn_for_ddl()
+        conn_get_new_fn = _make_conn([_GET_ROW_FN], _GET_COLS)
+        conn_get_new_params = _make_conn([_PARAM_RETURN, _PARAM_INPUT], _PARAM_COLS)
+        conn_drop_ddl = _make_conn_for_ddl()
+        conn_final_fn = _make_conn([_GET_ROW_FN], _GET_COLS)
+        conn_final_params = _make_conn([_PARAM_RETURN, _PARAM_INPUT], _PARAM_COLS)
+
+        with patch(
+            "fabric_dw.sql.open_connection",
+            side_effect=[
+                conn_get_old_fn,
+                conn_get_old_params,
+                conn_create_ddl,
+                conn_get_new_fn,
+                conn_get_new_params,
+                conn_drop_ddl,
+                conn_final_fn,
+                conn_final_params,
+            ],
+        ):
+            await functions.rename_function(target, "dbo.fn_clean", "fn_sanitize")
+
+        create_cursor = conn_create_ddl.cursor.return_value
+        create_sql: str = create_cursor.execute.call_args[0][0]
+        assert "LTRIM" in create_sql.upper() or "ltrim" in create_sql.lower()
+
+    # ------------------------------------------------------------------
+    # Validation / error-path
+    # ------------------------------------------------------------------
 
     async def test_rejects_schema_qualified_new_name(self) -> None:
         target = _make_target()
@@ -726,27 +930,58 @@ class TestRenameFunction:
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await functions.rename_function(target, "dbo.fn_clean", "fn_ok] WHERE 1=1--")
 
-    async def test_raises_not_found_when_post_rename_get_fails(self) -> None:
+    async def test_raises_not_found_when_source_function_missing(self) -> None:
+        """get_function for the old name raises NotFoundError when it does not exist."""
         target = _make_target()
-        ddl_conn = _make_conn_for_ddl()
         empty_conn = _make_conn([], _GET_COLS)
 
         with (
-            patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, empty_conn]),
-            pytest.raises(NotFoundError, match="not found after rename"),
+            patch("fabric_dw.sql.open_connection", return_value=empty_conn),
+            pytest.raises(NotFoundError),
         ):
             await functions.rename_function(target, "dbo.fn_clean", "fn_sanitize")
 
-    async def test_commits_after_execute(self) -> None:
+    async def test_raises_not_found_when_definition_is_none(self) -> None:
+        """If definition is NULL in sys.sql_modules, rename must raise NotFoundError."""
         target = _make_target()
-        ddl_conn = _make_conn_for_ddl()
-        conn_fn = _make_conn([_GET_ROW_FN], _GET_COLS)
+        row_no_def = ("dbo", "fn_clean", "FN", "SQL_SCALAR_FUNCTION", _NOW, _LATER, None, 1)
+        conn_fn = _make_conn([row_no_def], _GET_COLS)
         conn_params = _make_conn([_PARAM_RETURN, _PARAM_INPUT], _PARAM_COLS)
 
-        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, conn_fn, conn_params]):
+        with (
+            patch("fabric_dw.sql.open_connection", side_effect=[conn_fn, conn_params]),
+            pytest.raises(NotFoundError),
+        ):
             await functions.rename_function(target, "dbo.fn_clean", "fn_sanitize")
 
-        ddl_conn.commit.assert_called_once()
+    async def test_raises_not_found_when_post_rename_get_fails(self) -> None:
+        """Final get_function fails → NotFoundError with 'not found after rename'."""
+        target = _make_target()
+        conn_get_old_fn = _make_conn([_GET_ROW_FN_WITH_DEF], _GET_COLS)
+        conn_get_old_params = _make_conn([_PARAM_RETURN, _PARAM_INPUT], _PARAM_COLS)
+        conn_create_ddl = _make_conn_for_ddl()
+        conn_get_new_fn = _make_conn([_GET_ROW_FN], _GET_COLS)
+        conn_get_new_params = _make_conn([_PARAM_RETURN, _PARAM_INPUT], _PARAM_COLS)
+        conn_drop_ddl = _make_conn_for_ddl()
+        # Final get_function returns empty → NotFoundError
+        conn_final_empty = _make_conn([], _GET_COLS)
+
+        with (
+            patch(
+                "fabric_dw.sql.open_connection",
+                side_effect=[
+                    conn_get_old_fn,
+                    conn_get_old_params,
+                    conn_create_ddl,
+                    conn_get_new_fn,
+                    conn_get_new_params,
+                    conn_drop_ddl,
+                    conn_final_empty,
+                ],
+            ),
+            pytest.raises(NotFoundError, match="not found after rename"),
+        ):
+            await functions.rename_function(target, "dbo.fn_clean", "fn_sanitize")
 
 
 # ===========================================================================
