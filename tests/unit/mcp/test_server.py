@@ -821,6 +821,43 @@ async def test_list_sql_endpoints_all_workspaces(ctx_patch) -> None:
 
 
 # ---------------------------------------------------------------------------
+# all_workspaces=True blocked when FABRIC_MCP_WORKSPACES is set (M18)
+# ---------------------------------------------------------------------------
+
+
+async def test_list_warehouses_all_workspaces_blocked_by_allowlist(ctx_patch) -> None:
+    """all_workspaces=True raises ToolError when FABRIC_MCP_WORKSPACES is set (warehouses)."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "my-ws"}),
+        pytest.raises(ToolError, match="not permitted"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "list_warehouses", {"workspace": "", "all_workspaces": True}
+        )
+
+
+async def test_list_sql_endpoints_all_workspaces_blocked_by_allowlist(ctx_patch) -> None:
+    """all_workspaces=True raises ToolError when FABRIC_MCP_WORKSPACES is set (sql_endpoints)."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "my-ws"}),
+        pytest.raises(ToolError, match="not permitted"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "list_sql_endpoints", {"workspace": "", "all_workspaces": True}
+        )
+
+
+# ---------------------------------------------------------------------------
 # add_audit_group / remove_audit_group happy paths
 # ---------------------------------------------------------------------------
 

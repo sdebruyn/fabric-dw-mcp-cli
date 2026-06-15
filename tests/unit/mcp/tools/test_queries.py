@@ -427,6 +427,46 @@ async def test_kill_session_workspace_not_allowed(ctx_patch) -> None:
         )
 
 
+@pytest.mark.parametrize("bad_session_id", [0, -1])
+async def test_kill_session_rejects_non_positive_session_id(ctx_patch, bad_session_id: int) -> None:
+    """kill_session raises ToolError for session_id=0 or session_id=-1 (Field(ge=1) bound)."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with (
+        ctx_patch,
+        pytest.raises(ToolError, match="greater than or equal to 1"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "kill_session",
+            {"workspace": _WS_NAME, "item": _WH_NAME, "session_id": bad_session_id},
+        )
+
+
+async def test_kill_session_accepts_positive_session_id(mock_ctx, ctx_patch) -> None:
+    """kill_session accepts a positive session_id (ge=1 boundary: session_id=1 is valid)."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.queries.kill",
+            new=AsyncMock(return_value=None),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "kill_session",
+            {"workspace": _WS_NAME, "item": _WH_NAME, "session_id": 1},
+        )
+
+    assert result == {"killed": True, "session_id": 1}
+
+
 # ---------------------------------------------------------------------------
 # list_request_history
 # ---------------------------------------------------------------------------
