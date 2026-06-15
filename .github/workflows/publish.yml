@@ -53,16 +53,24 @@ jobs:
       - run: uv build
 
       - name: Generate CycloneDX SBOM
+        # Use `--from cyclonedx-bom` to invoke the real tool (not the unrelated `cyclonedx-py`
+        # package on PyPI, which does not accept --outfile and would fail with exit 2).
+        # Flags: --of JSON (output format), -o <file> (output file) — correct for cyclonedx-bom.
+        # continue-on-error: true so an SBOM failure can never block the PyPI publish.
+        continue-on-error: true
         run: |
-          uvx cyclonedx-py environment --output-format json --outfile dist/sbom.cdx.json
+          uvx --from 'cyclonedx-bom==7.3.0' cyclonedx-py environment --of JSON -o dist/sbom.cdx.json "$(uv python find)"
           python -c "import json,sys; d=json.load(open('dist/sbom.cdx.json')); print(f'SBOM: {len(d.get(\"components\",[]))} components')"
 
       - name: Upload SBOM artifact
+        # Only upload if the SBOM was actually generated (SBOM step may have been skipped/failed).
+        if: ${{ hashFiles('dist/sbom.cdx.json') != '' }}
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: sbom-cyclonedx
           path: dist/sbom.cdx.json
-          if-no-files-found: error
+          if-no-files-found: warn
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v4
@@ -103,5 +111,6 @@ jobs:
             dist/*.whl
             dist/*.tar.gz
             dist/sbom.cdx.json
+          fail_on_unmatched_files: false
           generate_release_notes: true
           name: ${{ github.ref_name }}
