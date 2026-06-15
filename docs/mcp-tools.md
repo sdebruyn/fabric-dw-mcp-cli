@@ -981,6 +981,8 @@ Load data into a Data Warehouse table via `COPY INTO` from a remote URL. For One
 
 > **Secret safety.** The `secret` and `identity` parameters are accepted but are **never** logged or echoed in any server output.
 
+> **Table must exist.** This tool does not create the target table. Use [`import_table_from_url`](#import_table_from_url) for a load-only flow with `if_exists` control over an existing table, or the CLI `tables load --file --create` for auto-create from a local file with schema inference.
+
 **Parameters:**
 
 - `workspace` (`str`) — workspace name or GUID.
@@ -988,6 +990,50 @@ Load data into a Data Warehouse table via `COPY INTO` from a remote URL. For One
 - `qualified_name` (`str`) — dot-separated qualified table name, e.g. `dbo.sales`.
 - `url` (`str`) — source URL (OneLake DFS URL or external Azure Blob URL).
 - `file_type` (`"CSV" | "PARQUET"`) — file type to load.
+- `credential_type` (`"none" | "sas" | "managed-identity" | "service-principal" | "account-key"`, default `"none"`) — credential type for secured external URLs.
+- `secret` (`str | null`, optional) — credential secret (SAS token, client secret, or account key). Never logged.
+- `identity` (`str | null`, optional) — identity for `managed-identity` or `service-principal`.
+- `delimiter` (`str | null`, optional) — CSV column delimiter (e.g. `,`, `\t`).
+- `has_header` (`bool`, default `true`) — when `true`, the first CSV row is a header and is skipped.
+- `encoding` (`str | null`, optional) — CSV encoding (e.g. `UTF8`, `UTF8BOM`).
+- `field_quote` (`str | null`, optional) — CSV field-quote character.
+- `row_terminator` (`str | null`, optional) — CSV row terminator (e.g. `\n`, `\r\n`).
+- `max_errors` (`int | null`, optional) — maximum errors before aborting.
+- `rejected_row_location` (`str | null`, optional) — URL to write rejected rows to.
+
+**Returns:** `CopyIntoResult` — `{ "rows_loaded": int, "rows_rejected": int, "target": "schema.table" }`.
+
+---
+
+### import_table_from_url
+
+**Targets:** Data Warehouse only
+
+Load data from a remote URL into an existing Data Warehouse table with control over what happens when the table already has data. This tool extends [`load_table_from_url`](#load_table_from_url) with an `if_exists` policy.
+
+> **Schema inference not supported for remote URLs.** This tool does not auto-create the target table from the source schema (downloading the full file just for schema inference is not practical for remote sources). To auto-create a table from schema, use the CLI `tables load --file --create` with a local file. For `if_exists="replace"`, use the CLI instead.
+
+> **`truncate` and `replace` are destructive** and require `FABRIC_MCP_ALLOW_DESTRUCTIVE=1`.
+
+> **Secret safety.** The `secret` and `identity` parameters are accepted but are **never** logged or echoed in any server output.
+
+**`if_exists` policy:**
+
+| Value | Table exists | Table absent |
+| --- | --- | --- |
+| `"fail"` (default) | Error — table already exists | Load normally |
+| `"append"` | Load into existing table | Load normally |
+| `"truncate"` ⚠️ | `TRUNCATE` existing table, then load | Load normally |
+| `"replace"` ⚠️ | Not supported for remote URLs — use CLI | Load normally |
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse name or GUID. SQL Analytics Endpoints are rejected.
+- `qualified_name` (`str`) — dot-separated qualified table name, e.g. `dbo.sales`.
+- `url` (`str`) — source URL (OneLake DFS URL or external Azure Blob URL).
+- `file_type` (`"CSV" | "PARQUET"`) — file type to load. JSON is not supported for remote URLs.
+- `if_exists` (`"fail" | "append" | "truncate" | "replace"`, default `"fail"`) — what to do when the target table already exists.
 - `credential_type` (`"none" | "sas" | "managed-identity" | "service-principal" | "account-key"`, default `"none"`) — credential type for secured external URLs.
 - `secret` (`str | null`, optional) — credential secret (SAS token, client secret, or account key). Never logged.
 - `identity` (`str | null`, optional) — identity for `managed-identity` or `service-principal`.

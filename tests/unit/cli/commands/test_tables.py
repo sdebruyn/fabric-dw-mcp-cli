@@ -1601,3 +1601,188 @@ class TestTablesCreateEmpty:
             ],
         )
         assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# tables load --create (create-and-load)
+# ---------------------------------------------------------------------------
+
+
+class TestLoadCreateAndLoad:
+    """Tests for 'tables load --create' (auto-create + load)."""
+
+    def _invoke(self, runner: CliRunner, args: list[str]) -> object:
+        return runner.invoke(cli, ["tables", "load", *args], catch_exceptions=False)
+
+    def test_create_with_url_raises_usage_error(self, runner: CliRunner) -> None:
+        """--create is not supported with --url."""
+        result = runner.invoke(
+            cli,
+            [
+                "tables",
+                "load",
+                "ws",
+                "wh",
+                "dbo.sales",
+                "--url",
+                "https://example.com/f.parquet",
+                "--create",
+            ],
+            catch_exceptions=False,
+        )
+        assert result.exit_code != 0
+        assert "local files" in result.output.lower() or "file" in result.output.lower()
+
+    def test_all_varchar_without_create_raises_usage_error(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """--all-varchar requires --create."""
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("id\n1\n", encoding="utf-8")
+
+        result = runner.invoke(
+            cli,
+            [
+                "tables",
+                "load",
+                "ws",
+                "wh",
+                "dbo.sales",
+                "--file",
+                str(csv_file),
+                "--all-varchar",
+            ],
+            catch_exceptions=False,
+        )
+        assert result.exit_code != 0
+
+    def test_create_and_load_happy_path(self, runner: CliRunner, tmp_path: Path) -> None:
+        """--create with a local Parquet file invokes create_and_load."""
+        from fabric_dw.http_client import FabricHttpClient  # noqa: PLC0415
+        from fabric_dw.models import CopyIntoResult  # noqa: PLC0415
+
+        parquet_file = tmp_path / "data.parquet"
+        parquet_file.write_bytes(b"PAR1")
+
+        mock_result = CopyIntoResult(rows_loaded=5, rows_rejected=0, target="dbo.sales")
+        mock_http = AsyncMock(spec=FabricHttpClient)
+        mock_entry = _make_item_entry()
+
+        _http_patch = "fabric_dw.cli.commands.tables.build_http_client"
+        with (
+            patch(_http_patch, new=_make_http_cm(mock_http)),
+            patch(
+                "fabric_dw.cli.commands.tables.resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, mock_entry)),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.create_and_load",
+                new=AsyncMock(return_value=mock_result),
+            ) as mock_cal,
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "tables",
+                    "load",
+                    "ws",
+                    "wh",
+                    "dbo.sales",
+                    "--file",
+                    str(parquet_file),
+                    "--create",
+                ],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        assert "5" in result.output
+        mock_cal.assert_called_once()
+
+    def test_create_and_load_if_exists_replace_requires_confirmation(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """--if-exists replace requires destructive confirmation; 'n' aborts."""
+        parquet_file = tmp_path / "data.parquet"
+        parquet_file.write_bytes(b"PAR1")
+
+        from fabric_dw.http_client import FabricHttpClient  # noqa: PLC0415
+
+        mock_http = AsyncMock(spec=FabricHttpClient)
+        mock_entry = _make_item_entry()
+
+        _http_patch = "fabric_dw.cli.commands.tables.build_http_client"
+        with (
+            patch(_http_patch, new=_make_http_cm(mock_http)),
+            patch(
+                "fabric_dw.cli.commands.tables.resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, mock_entry)),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "tables",
+                    "load",
+                    "ws",
+                    "wh",
+                    "dbo.sales",
+                    "--file",
+                    str(parquet_file),
+                    "--create",
+                    "--if-exists",
+                    "replace",
+                ],
+                input="n\n",
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0
+        assert "aborted" in result.output.lower()
+
+    def test_create_and_load_if_exists_replace_with_yes_flag(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """--if-exists replace with -y skips confirmation."""
+        from fabric_dw.http_client import FabricHttpClient  # noqa: PLC0415
+        from fabric_dw.models import CopyIntoResult  # noqa: PLC0415
+
+        parquet_file = tmp_path / "data.parquet"
+        parquet_file.write_bytes(b"PAR1")
+
+        mock_result = CopyIntoResult(rows_loaded=2, rows_rejected=0, target="dbo.sales")
+        mock_http = AsyncMock(spec=FabricHttpClient)
+        mock_entry = _make_item_entry()
+
+        _http_patch = "fabric_dw.cli.commands.tables.build_http_client"
+        with (
+            patch(_http_patch, new=_make_http_cm(mock_http)),
+            patch(
+                "fabric_dw.cli.commands.tables.resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, mock_entry)),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.create_and_load",
+                new=AsyncMock(return_value=mock_result),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-y",
+                    "tables",
+                    "load",
+                    "ws",
+                    "wh",
+                    "dbo.sales",
+                    "--file",
+                    str(parquet_file),
+                    "--create",
+                    "--if-exists",
+                    "replace",
+                ],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        assert "2" in result.output

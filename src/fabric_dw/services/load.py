@@ -49,13 +49,17 @@ from fabric_dw.sql import SqlTarget, run_query
 __all__ = [
     "CopyIntoCredentialType",
     "CopyIntoCsvOptions",
+    "IfExistsPolicy",
     "copy_into_from_url",
+    "create_and_load",
     "create_staging_lakehouse",
     "delete_lakehouse",
     "infer_file_format",
     "load_local_file",
     "onelake_upload_file",
 ]
+
+IfExistsPolicy = Literal["fail", "append", "truncate", "replace"]
 
 _logger = logging.getLogger(__name__)
 
@@ -872,3 +876,387 @@ async def load_local_file(  # noqa: PLR0912, PLR0915
                     converted_path,
                     exc,
                 )
+
+
+# ---------------------------------------------------------------------------
+# Table existence check
+# ---------------------------------------------------------------------------
+
+
+async def _table_exists(
+    target: SqlTarget,
+    schema: str,
+    table: str,
+    mode: object = None,
+) -> bool:
+    """Return True when ``[schema].[table]`` exists in ``sys.tables``."""
+    from fabric_dw.auth import CredentialMode  # noqa: PLC0415
+
+    _mode = mode if isinstance(mode, CredentialMode) else CredentialMode.DEFAULT
+
+    _sql = (
+        "SELECT 1 FROM sys.tables t "
+        "JOIN sys.schemas s ON s.schema_id = t.schema_id "
+        "WHERE s.name = ? AND t.name = ?;"
+    )
+
+    def _run() -> bool:
+        _cols, rows = run_query(target, _sql, params=[schema, table], mode=_mode)
+        return bool(rows)
+
+    return await asyncio.to_thread(_run)
+
+
+async def _drop_table_sql(
+    target: SqlTarget,
+    schema: str,
+    table: str,
+    mode: object = None,
+) -> None:
+    """Issue ``DROP TABLE [schema].[table]``."""
+    from fabric_dw.auth import CredentialMode  # noqa: PLC0415
+
+    _mode = mode if isinstance(mode, CredentialMode) else CredentialMode.DEFAULT
+    ddl = f"DROP TABLE {quote_identifier(schema)}.{quote_identifier(table)}"
+
+    def _run() -> None:
+        run_query(target, ddl, mode=_mode, commit=True, fetch="none")
+
+    await asyncio.to_thread(_run)
+
+
+async def _truncate_table_sql(
+    target: SqlTarget,
+    schema: str,
+    table: str,
+    mode: object = None,
+) -> None:
+    """Issue ``TRUNCATE TABLE [schema].[table]``."""
+    from fabric_dw.auth import CredentialMode  # noqa: PLC0415
+
+    _mode = mode if isinstance(mode, CredentialMode) else CredentialMode.DEFAULT
+    ddl = f"TRUNCATE TABLE {quote_identifier(schema)}.{quote_identifier(table)}"
+
+    def _run() -> None:
+        run_query(target, ddl, mode=_mode, commit=True, fetch="none")
+
+    await asyncio.to_thread(_run)
+
+
+# ---------------------------------------------------------------------------
+# Schema inference for local files (reuse #308 helpers)
+# ---------------------------------------------------------------------------
+
+
+async def _infer_columns_from_local(  # noqa: PLR0915
+    local_path: Path,
+    fmt: FileFormat,
+    *,
+    all_varchar: bool = False,
+    varchar_length: int = 8000,
+    sample_rows: int = 1000,
+    csv_delimiter: str = ",",
+    csv_encoding: str = "utf-8-sig",
+) -> list:
+    """Infer :class:`~fabric_dw.models.ColumnSpec` list from a local file.
+
+    Uses the #308 helpers from :mod:`fabric_dw.services.tables`:
+    - Parquet: ``pq.read_schema`` (footer only).
+    - CSV: ``pyarrow.csv.open_csv`` with bounded sampling.
+    - JSON: convert to Parquet via :func:`_json_to_parquet`, then read schema.
+
+    Returns a list of :class:`~fabric_dw.models.ColumnSpec`.
+    """
+    from fabric_dw.models import ColumnSpec  # noqa: PLC0415
+    from fabric_dw.types import arrow_type_to_tsql  # noqa: PLC0415
+
+    if fmt == "parquet":
+        import pyarrow.parquet as pq  # noqa: PLC0415
+
+        arrow_schema = await asyncio.to_thread(pq.read_schema, str(local_path))
+        columns: list[ColumnSpec] = []
+        for field in arrow_schema:
+            sql_type = arrow_type_to_tsql(field.type, field.name, varchar_length=varchar_length)
+            columns.append(ColumnSpec(name=field.name, sql_type=sql_type, nullable=field.nullable))
+        return columns
+
+    if fmt == "json":
+        # JSON → Parquet (same path used by load_local_file); schema comes for free.
+        converted: Path | None = None
+        try:
+            converted = await asyncio.to_thread(_json_to_parquet, local_path)
+            return await _infer_columns_from_local(
+                converted,
+                "parquet",
+                all_varchar=all_varchar,
+                varchar_length=varchar_length,
+            )
+        finally:
+            if converted is not None:
+                import contextlib as _cl  # noqa: PLC0415
+
+                with _cl.suppress(OSError):
+                    converted.unlink(missing_ok=True)
+
+    # CSV
+    import pyarrow as pa  # noqa: PLC0415
+    import pyarrow.csv as pa_csv  # noqa: PLC0415
+
+    if all_varchar:
+        import csv  # noqa: PLC0415
+
+        with local_path.open(encoding=csv_encoding, newline="") as fh:
+            reader = csv.reader(fh, delimiter=csv_delimiter)
+            try:
+                header = next(reader)
+            except StopIteration:
+                msg = f"CSV file is empty: {local_path}"
+                raise ValueError(msg) from None
+        from fabric_dw.models import ColumnSpec  # noqa: PLC0415
+
+        return [
+            ColumnSpec(name=col_name, sql_type=f"VARCHAR({varchar_length})", nullable=True)
+            for col_name in header
+        ]
+
+    read_opts = pa_csv.ReadOptions(encoding=csv_encoding)
+    parse_opts = pa_csv.ParseOptions(delimiter=csv_delimiter)
+    convert_opts = pa_csv.ConvertOptions(null_values=["", "NULL", "null", "NA", "N/A"])
+
+    def _read_csv_sample() -> pa.Table:
+        reader = pa_csv.open_csv(
+            str(local_path),
+            read_options=read_opts,
+            parse_options=parse_opts,
+            convert_options=convert_opts,
+        )
+        inferred_schema = reader.schema
+        batches: list[pa.RecordBatch] = []
+        rows_seen = 0
+        for batch in reader:
+            remaining = sample_rows - rows_seen
+            chunk = batch.slice(0, remaining) if batch.num_rows > remaining else batch
+            batches.append(chunk)
+            rows_seen += chunk.num_rows
+            if rows_seen >= sample_rows:
+                break
+        if not batches:
+            return inferred_schema.empty_table()
+        return pa.Table.from_batches(batches)
+
+    arrow_table = await asyncio.to_thread(_read_csv_sample)
+    columns_csv: list[ColumnSpec] = []  # type: ignore[type-arg]
+    for i, name in enumerate(arrow_table.schema.names):
+        field = arrow_table.schema.field(i)
+        try:
+            sql_type = arrow_type_to_tsql(field.type, name, varchar_length=varchar_length)
+        except ValueError:
+            _logger.warning(
+                "create_and_load CSV: column %r inferred type %r has no T-SQL mapping; "
+                "falling back to VARCHAR(%d)",
+                name,
+                field.type,
+                varchar_length,
+            )
+            sql_type = f"VARCHAR({varchar_length})"
+        columns_csv.append(ColumnSpec(name=name, sql_type=sql_type, nullable=True))
+    return columns_csv
+
+
+# ---------------------------------------------------------------------------
+# create_and_load — public API
+# ---------------------------------------------------------------------------
+
+
+async def create_and_load(
+    http: FabricHttpClient,
+    credential: AsyncTokenCredential,
+    workspace_id: uuid.UUID,
+    target: SqlTarget,
+    schema: str,
+    table: str,
+    local_path: Path,
+    *,
+    if_exists: IfExistsPolicy = "fail",
+    file_format: FileFormat | None = None,
+    staging_lakehouse_name: str | None = None,
+    keep_staging: bool = False,
+    csv_options: CopyIntoCsvOptions | None = None,
+    max_errors: int | None = None,
+    rejected_row_location: str | None = None,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
+    mode: object = None,
+    cleanup_on_failure: bool = False,
+    # Schema-inference options
+    all_varchar: bool = False,
+    varchar_length: int = 8000,
+    sample_rows: int = 1000,
+    csv_delimiter: str = ",",
+    csv_encoding: str = "utf-8-sig",
+) -> CopyIntoResult:
+    """Create the target table from the source schema and load data into it.
+
+    Combines schema inference (#308) with ``COPY INTO`` (#309) in a single call.
+
+    Flow
+    ----
+    1. Guard: SQL Analytics Endpoints are rejected (CREATE TABLE + COPY INTO are
+       Data Warehouse-only).
+    2. Infer columns from *local_path* (Parquet footer / CSV header+sample /
+       JSON→Parquet; reuses #308 helpers).
+    3. Check whether ``[schema].[table]`` already exists.
+    4. Apply the *if_exists* policy:
+
+       - ``"fail"`` — raise :class:`ValueError` when the table already exists.
+       - ``"append"`` — skip CREATE, load into the existing table.
+       - ``"truncate"`` — TRUNCATE the existing table, then load.
+       - ``"replace"`` — DROP + recreate from inferred schema, then load.
+
+    5. Create the table when needed (via #308 ``create_empty_table``).
+    6. Load via #309 ``load_local_file``.
+    7. If we created the table and *cleanup_on_failure* is ``True``, drop the
+       table on load failure — but **never** drop a pre-existing table.
+
+    Args:
+        http: Authenticated Fabric HTTP client.
+        credential: Azure credential for storage-scoped token (DFS upload).
+        workspace_id: Workspace in which to stage and load.
+        target: SQL connection target (warehouse connection string).
+        schema: Validated SQL schema name.
+        table: Validated SQL table name.
+        local_path: Path to the local file (CSV, Parquet, or JSON).
+        if_exists: Policy when the table already exists.  One of ``"fail"``,
+            ``"append"``, ``"truncate"``, or ``"replace"``.
+        file_format: Explicit format; inferred from extension when ``None``.
+        staging_lakehouse_name: Explicit staging Lakehouse name; auto-generated
+            when ``None``.
+        keep_staging: Keep the staging Lakehouse after loading (debugging).
+        csv_options: CSV loading options (used when file_format is ``"csv"``).
+        max_errors: Maximum errors before aborting the load.
+        rejected_row_location: URL for rejected-row output.
+        kind: Warehouse item kind.  SQL Analytics Endpoints are rejected.
+        mode: Credential mode for SQL authentication.
+        cleanup_on_failure: Drop the table if WE created it and the load fails.
+            Pre-existing tables are never dropped.
+        all_varchar: Force all CSV columns to ``VARCHAR(*varchar_length*)``.
+        varchar_length: Default VARCHAR/VARBINARY length for inferred columns.
+        sample_rows: Maximum rows to sample for CSV type inference.
+        csv_delimiter: CSV field delimiter (used for schema inference only).
+        csv_encoding: CSV encoding for schema inference.
+
+    Returns:
+        A :class:`~fabric_dw.models.CopyIntoResult`.
+
+    Raises:
+        ItemKindError: If *kind* is SQL_ENDPOINT.
+        ValueError: If the table exists and *if_exists* is ``"fail"``, or if
+            the file format is unrecognised or unsupported.
+        FileNotFoundError: If *local_path* does not exist.
+    """
+    _assert_not_sql_endpoint(kind)
+    validate_identifier(schema)
+    validate_identifier(table)
+
+    if not local_path.exists():
+        msg = f"Local file not found: {local_path}"
+        raise FileNotFoundError(msg)
+
+    fmt = file_format or infer_file_format(local_path)
+
+    # Step 1: infer schema from the source file.
+    _logger.debug("create_and_load: inferring schema from %s (format=%s)", local_path.name, fmt)
+    columns = await _infer_columns_from_local(
+        local_path,
+        fmt,
+        all_varchar=all_varchar,
+        varchar_length=varchar_length,
+        sample_rows=sample_rows,
+        csv_delimiter=csv_delimiter,
+        csv_encoding=csv_encoding,
+    )
+
+    # Step 2: check existence.
+    exists = await _table_exists(target, schema, table, mode=mode)
+
+    # Track whether WE created the table so cleanup_on_failure is scoped.
+    we_created = False
+
+    if exists:
+        if if_exists == "fail":
+            msg = (
+                f"Table [{schema}].[{table}] already exists. "
+                "Use --if-exists append/truncate/replace to handle existing tables."
+            )
+            raise ValueError(msg)
+        if if_exists == "truncate":
+            _logger.info("create_and_load: TRUNCATE TABLE [%s].[%s]", schema, table)
+            await _truncate_table_sql(target, schema, table, mode=mode)
+        elif if_exists == "replace":
+            _logger.info("create_and_load: DROP + recreate TABLE [%s].[%s]", schema, table)
+            await _drop_table_sql(target, schema, table, mode=mode)
+            await _create_table_from_columns(target, schema, table, columns, kind=kind, mode=mode)
+            we_created = True
+        # "append": do nothing — COPY INTO will add rows to the existing table.
+    else:
+        # Table does not exist — create it (for "fail", "replace", "append" with no table).
+        _logger.info("create_and_load: CREATE TABLE [%s].[%s]", schema, table)
+        await _create_table_from_columns(target, schema, table, columns, kind=kind, mode=mode)
+        we_created = True
+
+    # Step 3: load data.
+    try:
+        result = await load_local_file(
+            http,
+            credential,
+            workspace_id,
+            target,
+            schema,
+            table,
+            local_path,
+            file_format=fmt,
+            staging_lakehouse_name=staging_lakehouse_name,
+            keep_staging=keep_staging,
+            csv_options=csv_options,
+            max_errors=max_errors,
+            rejected_row_location=rejected_row_location,
+            kind=kind,
+            mode=mode,
+        )
+    except Exception:
+        if cleanup_on_failure and we_created:
+            _logger.info("create_and_load: cleanup_on_failure — dropping [%s].[%s]", schema, table)
+            try:
+                await _drop_table_sql(target, schema, table, mode=mode)
+            except Exception as drop_exc:
+                _logger.warning("create_and_load: cleanup_on_failure drop failed: %s", drop_exc)
+        raise
+
+    _logger.info(
+        "create_and_load: loaded %d rows into [%s].[%s] (rejected=%d)",
+        result.rows_loaded,
+        schema,
+        table,
+        result.rows_rejected,
+    )
+    return result
+
+
+async def _create_table_from_columns(
+    target: SqlTarget,
+    schema: str,
+    table: str,
+    columns: list,
+    *,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
+    mode: object = None,
+) -> None:
+    """Create an empty table from an inferred column list.
+
+    Thin wrapper delegating to
+    :func:`~fabric_dw.services.tables.create_empty_table`.
+    """
+    from fabric_dw.auth import CredentialMode  # noqa: PLC0415
+    from fabric_dw.services.tables import create_empty_table  # noqa: PLC0415
+
+    _mode = mode if isinstance(mode, CredentialMode) else CredentialMode.DEFAULT
+    await create_empty_table(target, schema, table, columns, kind=kind, mode=_mode)
