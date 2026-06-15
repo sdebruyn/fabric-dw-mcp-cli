@@ -16,7 +16,7 @@ from click.testing import CliRunner
 from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.cli._main import cli
 from fabric_dw.exceptions import FabricError, NotFoundError
-from fabric_dw.models import WarehouseKind
+from fabric_dw.models import Warehouse, WarehouseKind
 from tests.fixtures.api_payloads import (
     WAREHOUSE_CREATE_202_PAYLOAD,
     WAREHOUSE_GET_PAYLOAD,
@@ -29,23 +29,24 @@ WS_UUID = UUID(WS_GUID)
 WH_UUID = UUID(WH_GUID)
 
 
-@pytest.fixture
-def runner() -> CliRunner:
-    return CliRunner()
-
-
-@pytest.fixture
-def cache_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
-    return tmp_path
-
-
 def _make_cm(http: object, _sql: object = None) -> object:
     @asynccontextmanager
     async def _cm(_ctx: object) -> AsyncIterator[object]:
         yield http
 
     return _cm
+
+
+def _make_warehouse(name: str = "SalesWarehouse") -> Warehouse:
+    return Warehouse.model_validate(
+        {
+            "id": WH_GUID,
+            "displayName": name,
+            "workspaceId": WS_GUID,
+            "kind": WarehouseKind.WAREHOUSE,
+            "connectionString": "wh.datawarehouse.fabric.microsoft.com",
+        }
+    )
 
 
 def _make_item_entry(kind: WarehouseKind = WarehouseKind.WAREHOUSE) -> ItemEntry:
@@ -83,6 +84,13 @@ class TestWarehousesList:
         ):
             result = runner.invoke(cli, ["warehouses", "list", WS_GUID])
         assert result.exit_code == 0
+        # iter_paginated must have been called with a URL containing the resolved workspace UUID,
+        # proving workspace resolution happened and the list call reached the service layer.
+        # This assert would fail if workspace_id were wrong or the call were never made.
+        calls = mock_http.iter_paginated.call_args_list
+        assert len(calls) >= 1
+        called_path = calls[0].args[1] if calls[0].args else str(calls[0])
+        assert str(WS_UUID) in called_path
 
     def test_list_json_output(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -133,8 +141,11 @@ class TestWarehousesGet:
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
         ):
-            result = runner.invoke(cli, ["warehouses", "get", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["--json", "warehouses", "get", WS_GUID, WH_GUID])
         assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["displayName"] == "SalesWarehouse"
+        assert parsed["id"] == WH_GUID
 
     def test_get_not_found_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -192,6 +203,7 @@ class TestWarehousesRename:
         mock_http = AsyncMock()
         mock_http.request = AsyncMock(return_value=_make_response(200, WAREHOUSE_GET_PAYLOAD))
         _cache = LookupCache(path=cache_env / "lookup.json")
+        mock_rename = AsyncMock(return_value=_make_warehouse("NewName"))
         with (
             patch(
                 "fabric_dw.cli.commands.warehouses.build_http_client",
@@ -201,12 +213,16 @@ class TestWarehousesRename:
                 "fabric_dw.cli.commands.warehouses.resolve_item_with_cache",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry(), _cache)),
             ),
+            patch("fabric_dw.services.warehouses.rename", new=mock_rename),
         ):
             result = runner.invoke(
                 cli,
-                ["--yes", "warehouses", "rename", WS_GUID, WH_GUID, "NewName"],
+                ["--json", "--yes", "warehouses", "rename", WS_GUID, WH_GUID, "NewName"],
             )
         assert result.exit_code == 0
+        mock_rename.assert_awaited_once()
+        data = json.loads(result.output)
+        assert data["displayName"] == "NewName"
 
     def test_rename_declined_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         """Declining rename is a clean no-op (exit 0, policy: decline != error)."""
@@ -240,6 +256,7 @@ class TestWarehousesDelete:
         mock_http = AsyncMock()
         mock_http.request = AsyncMock(return_value=_make_response(204, ""))
         _cache = LookupCache(path=cache_env / "lookup.json")
+        mock_delete = AsyncMock(return_value=None)
         with (
             patch(
                 "fabric_dw.cli.commands.warehouses.build_http_client",
@@ -249,9 +266,11 @@ class TestWarehousesDelete:
                 "fabric_dw.cli.commands.warehouses.resolve_item_with_cache",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry(), _cache)),
             ),
+            patch("fabric_dw.services.warehouses.delete", new=mock_delete),
         ):
             result = runner.invoke(cli, ["--yes", "warehouses", "delete", WS_GUID, WH_GUID])
         assert result.exit_code == 0
+        mock_delete.assert_awaited_once()
 
     def test_delete_declined_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         """Declining delete is a clean no-op (exit 0, policy: decline != error)."""
@@ -350,6 +369,7 @@ class TestWarehousesTakeover:
         _ = cache_env
         mock_http = AsyncMock()
         mock_http.request = AsyncMock(return_value=_make_response(200, "{}"))
+        mock_takeover = AsyncMock(return_value=None)
         with (
             patch(
                 "fabric_dw.cli.commands.warehouses.build_http_client",
@@ -359,9 +379,11 @@ class TestWarehousesTakeover:
                 "fabric_dw.cli.commands.warehouses.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry(WarehouseKind.WAREHOUSE))),
             ),
+            patch("fabric_dw.services.ownership.takeover", new=mock_takeover),
         ):
             result = runner.invoke(cli, ["--yes", "warehouses", "takeover", WS_GUID, WH_GUID])
         assert result.exit_code == 0
+        mock_takeover.assert_awaited_once()
 
     def test_takeover_sql_endpoint_refused(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -408,8 +430,11 @@ class TestWarehousesDefaultFallback:
                 new=AsyncMock(return_value=WS_UUID),
             ),
         ):
-            result = runner.invoke(cli, ["warehouses", "list", WS_GUID])
+            result = runner.invoke(cli, ["--json", "warehouses", "list", WS_GUID])
         assert result.exit_code == 0
+        # Empty list renders as valid JSON array when no warehouses exist
+        parsed = json.loads(result.output)
+        assert isinstance(parsed, list)
 
     def test_list_uses_config_default_workspace(
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -422,6 +447,7 @@ class TestWarehousesDefaultFallback:
         assert setup.exit_code == 0
         mock_http = AsyncMock()
         mock_http.iter_paginated = MagicMock(return_value=_async_iter([]))
+        mock_ws_id = AsyncMock(return_value=WS_UUID)
         with (
             patch(
                 "fabric_dw.cli.commands.warehouses.build_http_client",
@@ -429,12 +455,16 @@ class TestWarehousesDefaultFallback:
             ),
             patch(
                 "fabric_dw.resolver.Resolver.workspace_id",
-                new=AsyncMock(return_value=WS_UUID),
+                new=mock_ws_id,
             ),
         ):
             # No WORKSPACE argument — must fall back to config default.
-            result = runner.invoke(cli, ["warehouses", "list"])
+            result = runner.invoke(cli, ["--json", "warehouses", "list"])
         assert result.exit_code == 0
+        # Resolver must have been called (workspace resolved from config default)
+        mock_ws_id.assert_awaited_once()
+        parsed = json.loads(result.output)
+        assert isinstance(parsed, list)
 
     def test_list_missing_workspace_raises_usage_error(
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -655,8 +685,12 @@ class TestWarehousesPermissions:
                 new=AsyncMock(return_value=[access]),
             ),
         ):
-            result = runner.invoke(cli, ["warehouses", "permissions", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["--json", "warehouses", "permissions", WS_GUID, WH_GUID])
         assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert isinstance(parsed, list)
+        # Alice's principal must appear in the rendered permissions list
+        assert any(p.get("principal", {}).get("displayName") == "Alice" for p in parsed)
 
     def test_permissions_fabric_error_exits_nonzero(
         self, runner: CliRunner, cache_env: Path

@@ -10,7 +10,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
-import pytest
 from click.testing import CliRunner
 
 from fabric_dw.cache import ItemEntry
@@ -25,17 +24,6 @@ WS_UUID = UUID(WS_GUID)
 WH_UUID = UUID(WH_GUID)
 
 _NOW = datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC)
-
-
-@pytest.fixture
-def runner() -> CliRunner:
-    return CliRunner()
-
-
-@pytest.fixture
-def cache_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
-    return tmp_path
 
 
 def _make_sql_target() -> SqlTarget:
@@ -98,8 +86,12 @@ class TestViewsList:
                 new=AsyncMock(return_value=[_make_view()]),
             ),
         ):
-            result = runner.invoke(cli, ["views", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["--json", "views", "list", WS_GUID, WH_GUID])
         assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert isinstance(parsed, list)
+        assert parsed[0]["name"] == "vw_sales"
+        assert parsed[0]["schema_name"] == "dbo"
 
     def test_list_json_output(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -184,6 +176,10 @@ class TestViewsRead:
         ):
             result = runner.invoke(cli, ["views", "read", WS_GUID, WH_GUID, "dbo.vw_sales"])
         assert result.exit_code == 0
+        # Default output is JSON
+        parsed = json.loads(result.output)
+        assert parsed[0]["id"] == 1
+        assert parsed[0]["name"] == "Alice"
 
     def test_read_json_output_to_stdout(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -255,6 +251,8 @@ class TestViewsRead:
             )
         assert result.exit_code == 0
         assert out_file.exists()
+        content = out_file.read_text()
+        assert "id" in content  # CSV header present
 
     def test_read_bad_qualified_name_exits_nonzero(
         self, runner: CliRunner, cache_env: Path
@@ -307,8 +305,14 @@ class TestViewsGet:
                 new=AsyncMock(return_value=_make_view(with_definition=True)),
             ),
         ):
-            result = runner.invoke(cli, ["views", "get", WS_GUID, WH_GUID, "dbo.vw_sales"])
+            result = runner.invoke(
+                cli,
+                ["--json", "views", "get", WS_GUID, WH_GUID, "dbo.vw_sales"],
+            )
         assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["name"] == "vw_sales"
+        assert "SELECT id FROM dbo.sales" in parsed.get("definition", "")
 
     def test_get_json_output(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -369,6 +373,7 @@ class TestViewsCreate:
     def test_create_with_select_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
+        mock_create = AsyncMock(return_value=_make_view(with_definition=True))
         with (
             patch(
                 "fabric_dw.cli.commands.views.build_http_client",
@@ -380,12 +385,13 @@ class TestViewsCreate:
             ),
             patch(
                 "fabric_dw.services.views.create_view",
-                new=AsyncMock(return_value=_make_view(with_definition=True)),
+                new=mock_create,
             ),
         ):
             result = runner.invoke(
                 cli,
                 [
+                    "--json",
                     "views",
                     "create",
                     WS_GUID,
@@ -397,12 +403,16 @@ class TestViewsCreate:
                 ],
             )
         assert result.exit_code == 0
+        mock_create.assert_awaited_once()
+        parsed = json.loads(result.output)
+        assert parsed["name"] == "vw_sales"
 
     def test_create_with_file(self, runner: CliRunner, cache_env: Path, tmp_path: Path) -> None:
         _ = cache_env
         sql_file = tmp_path / "view.sql"
         sql_file.write_text("SELECT id FROM dbo.sales")
         mock_http = AsyncMock()
+        mock_create = AsyncMock(return_value=_make_view(with_definition=True))
         with (
             patch(
                 "fabric_dw.cli.commands.views.build_http_client",
@@ -414,12 +424,13 @@ class TestViewsCreate:
             ),
             patch(
                 "fabric_dw.services.views.create_view",
-                new=AsyncMock(return_value=_make_view(with_definition=True)),
+                new=mock_create,
             ),
         ):
             result = runner.invoke(
                 cli,
                 [
+                    "--json",
                     "views",
                     "create",
                     WS_GUID,
@@ -431,6 +442,9 @@ class TestViewsCreate:
                 ],
             )
         assert result.exit_code == 0
+        mock_create.assert_awaited_once()
+        parsed = json.loads(result.output)
+        assert parsed["name"] == "vw_sales"
 
     def test_create_no_select_fails(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -550,6 +564,7 @@ class TestViewsUpdate:
     def test_update_with_yes_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
+        mock_update = AsyncMock(return_value=_make_view(with_definition=True))
         with (
             patch(
                 "fabric_dw.cli.commands.views.build_http_client",
@@ -561,13 +576,14 @@ class TestViewsUpdate:
             ),
             patch(
                 "fabric_dw.services.views.update_view",
-                new=AsyncMock(return_value=_make_view(with_definition=True)),
+                new=mock_update,
             ),
         ):
             result = runner.invoke(
                 cli,
                 [
                     "--yes",
+                    "--json",
                     "views",
                     "update",
                     WS_GUID,
@@ -578,6 +594,9 @@ class TestViewsUpdate:
                 ],
             )
         assert result.exit_code == 0
+        mock_update.assert_awaited_once()
+        parsed = json.loads(result.output)
+        assert parsed["name"] == "vw_sales"
 
     def test_update_declined_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         """Declining update is a clean no-op (exit 0, policy: decline != error)."""
@@ -661,6 +680,7 @@ class TestViewsDrop:
     def test_drop_with_yes_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
+        mock_drop = AsyncMock(return_value=None)
         with (
             patch(
                 "fabric_dw.cli.commands.views.build_http_client",
@@ -672,13 +692,14 @@ class TestViewsDrop:
             ),
             patch(
                 "fabric_dw.services.views.drop_view",
-                new=AsyncMock(return_value=None),
+                new=mock_drop,
             ),
         ):
             result = runner.invoke(
                 cli, ["--yes", "views", "drop", WS_GUID, WH_GUID, "dbo.vw_sales"]
             )
         assert result.exit_code == 0
+        mock_drop.assert_awaited_once()
 
     def test_drop_declined_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         """Declining drop is a clean no-op (exit 0, policy: decline != error)."""
@@ -753,6 +774,7 @@ class TestViewsRename:
     def test_rename_with_yes_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
+        mock_rename = AsyncMock(return_value=self._make_renamed_view())
         with (
             patch(
                 "fabric_dw.cli.commands.views.build_http_client",
@@ -764,13 +786,14 @@ class TestViewsRename:
             ),
             patch(
                 "fabric_dw.services.views.rename_view",
-                new=AsyncMock(return_value=self._make_renamed_view()),
+                new=mock_rename,
             ),
         ):
             result = runner.invoke(
                 cli,
                 [
                     "--yes",
+                    "--json",
                     "views",
                     "rename",
                     WS_GUID,
@@ -781,6 +804,9 @@ class TestViewsRename:
                 ],
             )
         assert result.exit_code == 0
+        mock_rename.assert_awaited_once()
+        parsed = json.loads(result.output)
+        assert parsed["name"] == "vw_revenue"
 
     def test_rename_json_output_contains_new_name(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env

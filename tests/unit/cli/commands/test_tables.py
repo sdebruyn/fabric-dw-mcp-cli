@@ -10,7 +10,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
-import pytest
 from click.testing import CliRunner
 
 from fabric_dw.cache import ItemEntry
@@ -28,17 +27,6 @@ WS_UUID = UUID(WS_GUID)
 WH_UUID = UUID(WH_GUID)
 
 _NOW = datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC)
-
-
-@pytest.fixture
-def runner() -> CliRunner:
-    return CliRunner()
-
-
-@pytest.fixture
-def cache_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
-    return tmp_path
 
 
 def _make_sql_target() -> SqlTarget:
@@ -110,8 +98,12 @@ class TestTablesList:
                 new=AsyncMock(return_value=[_make_table()]),
             ),
         ):
-            result = runner.invoke(cli, ["tables", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["--json", "tables", "list", WS_GUID, WH_GUID])
         assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert isinstance(parsed, list)
+        assert parsed[0]["name"] == "sales"
+        assert parsed[0]["schema_name"] == "dbo"
 
     def test_list_json_output(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -134,6 +126,7 @@ class TestTablesList:
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert isinstance(parsed, list)
+        assert parsed[0]["qualified_name"] == "dbo.sales"
 
     def test_list_with_schema_filter(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -196,6 +189,10 @@ class TestTablesRead:
         ):
             result = runner.invoke(cli, ["tables", "read", WS_GUID, WH_GUID, "dbo.sales"])
         assert result.exit_code == 0
+        # Default output is JSON; row data must appear
+        parsed = json.loads(result.output)
+        assert parsed[0]["id"] == 1
+        assert parsed[0]["name"] == "Alice"
 
     def test_read_json_output_to_stdout(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -267,6 +264,8 @@ class TestTablesRead:
             )
         assert result.exit_code == 0
         assert out_file.exists()
+        content = out_file.read_text()
+        assert "id" in content  # CSV header row present
 
     def test_read_explicit_format_beats_json_flag(
         self, runner: CliRunner, cache_env: Path, tmp_path: Path
@@ -348,6 +347,7 @@ class TestTablesCreate:
     def test_create_with_select_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
+        mock_create = AsyncMock(return_value=_make_table())
         with (
             patch(
                 "fabric_dw.cli.commands.tables.build_http_client",
@@ -359,12 +359,13 @@ class TestTablesCreate:
             ),
             patch(
                 "fabric_dw.services.tables.create_table",
-                new=AsyncMock(return_value=_make_table()),
+                new=mock_create,
             ),
         ):
             result = runner.invoke(
                 cli,
                 [
+                    "--json",
                     "tables",
                     "create",
                     WS_GUID,
@@ -376,12 +377,16 @@ class TestTablesCreate:
                 ],
             )
         assert result.exit_code == 0
+        mock_create.assert_awaited_once()
+        parsed = json.loads(result.output)
+        assert parsed["name"] == "sales"
 
     def test_create_with_file(self, runner: CliRunner, cache_env: Path, tmp_path: Path) -> None:
         _ = cache_env
         sql_file = tmp_path / "ctas.sql"
         sql_file.write_text("SELECT id FROM src.raw")
         mock_http = AsyncMock()
+        mock_create = AsyncMock(return_value=_make_table())
         with (
             patch(
                 "fabric_dw.cli.commands.tables.build_http_client",
@@ -393,12 +398,13 @@ class TestTablesCreate:
             ),
             patch(
                 "fabric_dw.services.tables.create_table",
-                new=AsyncMock(return_value=_make_table()),
+                new=mock_create,
             ),
         ):
             result = runner.invoke(
                 cli,
                 [
+                    "--json",
                     "tables",
                     "create",
                     WS_GUID,
@@ -410,6 +416,12 @@ class TestTablesCreate:
                 ],
             )
         assert result.exit_code == 0
+        # Verify SQL from file was passed to the service
+        mock_create.assert_awaited_once()
+        # 4th positional arg is the select_body
+        assert "SELECT id FROM src.raw" in mock_create.call_args.args[3]
+        parsed = json.loads(result.output)
+        assert parsed["name"] == "sales"
 
     def test_create_no_select_fails(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -480,6 +492,7 @@ class TestTablesCreate:
         """Warehouse items should not be blocked by the SQL Endpoint guard."""
         _ = cache_env
         mock_http = AsyncMock()
+        mock_create = AsyncMock(return_value=_make_table())
         with (
             patch(
                 "fabric_dw.cli.commands.tables.build_http_client",
@@ -491,12 +504,13 @@ class TestTablesCreate:
             ),
             patch(
                 "fabric_dw.services.tables.create_table",
-                new=AsyncMock(return_value=_make_table()),
+                new=mock_create,
             ),
         ):
             result = runner.invoke(
                 cli,
                 [
+                    "--json",
                     "tables",
                     "create",
                     WS_GUID,
@@ -508,6 +522,10 @@ class TestTablesCreate:
                 ],
             )
         assert result.exit_code == 0
+        # Must have actually called create (not short-circuited by DDL guard)
+        mock_create.assert_awaited_once()
+        parsed = json.loads(result.output)
+        assert parsed["qualified_name"] == "dbo.sales"
 
     def test_create_sql_endpoint_rejected(self, runner: CliRunner, cache_env: Path) -> None:
         """SQL Endpoint items must be rejected by the service-layer guard before issuing DDL."""
@@ -549,6 +567,7 @@ class TestTablesDelete:
     def test_delete_with_yes_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
+        mock_delete = AsyncMock(return_value=None)
         with (
             patch(
                 "fabric_dw.cli.commands.tables.build_http_client",
@@ -560,13 +579,14 @@ class TestTablesDelete:
             ),
             patch(
                 "fabric_dw.services.tables.delete_table",
-                new=AsyncMock(return_value=None),
+                new=mock_delete,
             ),
         ):
             result = runner.invoke(
                 cli, ["--yes", "tables", "delete", WS_GUID, WH_GUID, "dbo.sales"]
             )
         assert result.exit_code == 0
+        mock_delete.assert_awaited_once()
 
     def test_delete_declined_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         """Declining delete is a clean no-op (exit 0, policy: decline != error)."""
@@ -625,6 +645,7 @@ class TestTablesDelete:
         """Warehouse items should not be blocked by the SQL Endpoint guard."""
         _ = cache_env
         mock_http = AsyncMock()
+        mock_delete = AsyncMock(return_value=None)
         with (
             patch(
                 "fabric_dw.cli.commands.tables.build_http_client",
@@ -636,13 +657,15 @@ class TestTablesDelete:
             ),
             patch(
                 "fabric_dw.services.tables.delete_table",
-                new=AsyncMock(return_value=None),
+                new=mock_delete,
             ),
         ):
             result = runner.invoke(
                 cli, ["--yes", "tables", "delete", WS_GUID, WH_GUID, "dbo.sales"]
             )
         assert result.exit_code == 0
+        # Must have proceeded to actual delete (DDL guard passed)
+        mock_delete.assert_awaited_once()
 
     def test_delete_sql_endpoint_rejected(self, runner: CliRunner, cache_env: Path) -> None:
         """SQL Endpoint items must be rejected by the service-layer guard before issuing DDL."""
@@ -674,6 +697,7 @@ class TestTablesClear:
     def test_clear_with_yes_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
+        mock_clear = AsyncMock(return_value=None)
         with (
             patch(
                 "fabric_dw.cli.commands.tables.build_http_client",
@@ -685,11 +709,12 @@ class TestTablesClear:
             ),
             patch(
                 "fabric_dw.services.tables.clear_table",
-                new=AsyncMock(return_value=None),
+                new=mock_clear,
             ),
         ):
             result = runner.invoke(cli, ["--yes", "tables", "clear", WS_GUID, WH_GUID, "dbo.sales"])
         assert result.exit_code == 0
+        mock_clear.assert_awaited_once()
 
     def test_clear_declined_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         """Declining clear is a clean no-op (exit 0, policy: decline != error)."""
@@ -746,6 +771,7 @@ class TestTablesClear:
         """Warehouse items should not be blocked by the SQL Endpoint guard."""
         _ = cache_env
         mock_http = AsyncMock()
+        mock_clear = AsyncMock(return_value=None)
         with (
             patch(
                 "fabric_dw.cli.commands.tables.build_http_client",
@@ -757,11 +783,13 @@ class TestTablesClear:
             ),
             patch(
                 "fabric_dw.services.tables.clear_table",
-                new=AsyncMock(return_value=None),
+                new=mock_clear,
             ),
         ):
             result = runner.invoke(cli, ["--yes", "tables", "clear", WS_GUID, WH_GUID, "dbo.sales"])
         assert result.exit_code == 0
+        # Must have proceeded to actual clear (DDL guard passed)
+        mock_clear.assert_awaited_once()
 
     def test_clear_sql_endpoint_rejected(self, runner: CliRunner, cache_env: Path) -> None:
         """SQL Endpoint items must be rejected by the service-layer guard before issuing DDL."""
@@ -791,6 +819,13 @@ class TestTablesClone:
     def test_clone_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
+        clone_result = Table(
+            schema_name="dbo",
+            name="sales_clone",
+            qualified_name="dbo.sales_clone",
+            created=_NOW,
+            modified=_NOW,
+        )
         with (
             patch(
                 "fabric_dw.cli.commands.tables.build_http_client",
@@ -802,12 +837,13 @@ class TestTablesClone:
             ),
             patch(
                 "fabric_dw.services.tables.clone_table",
-                new=AsyncMock(return_value=_make_table()),
+                new=AsyncMock(return_value=clone_result),
             ),
         ):
             result = runner.invoke(
                 cli,
                 [
+                    "--json",
                     "tables",
                     "clone",
                     WS_GUID,
@@ -819,6 +855,8 @@ class TestTablesClone:
                 ],
             )
         assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["name"] == "sales_clone"
 
     def test_clone_json_output(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -1018,6 +1056,7 @@ class TestTablesClone:
         """Warehouse items should not be blocked by the SQL Endpoint guard."""
         _ = cache_env
         mock_http = AsyncMock()
+        mock_clone = AsyncMock(return_value=_make_table())
         with (
             patch(
                 "fabric_dw.cli.commands.tables.build_http_client",
@@ -1029,7 +1068,7 @@ class TestTablesClone:
             ),
             patch(
                 "fabric_dw.services.tables.clone_table",
-                new=AsyncMock(return_value=_make_table()),
+                new=mock_clone,
             ),
         ):
             result = runner.invoke(
@@ -1046,6 +1085,8 @@ class TestTablesClone:
                 ],
             )
         assert result.exit_code == 0
+        # DDL guard passed — clone must have been invoked
+        mock_clone.assert_awaited_once()
 
     def test_clone_permission_denied_returns_nonzero(
         self, runner: CliRunner, cache_env: Path
@@ -1093,6 +1134,7 @@ class TestTablesRename:
             created=_NOW,
             modified=_NOW,
         )
+        mock_rename = AsyncMock(return_value=renamed)
         with (
             patch(
                 "fabric_dw.cli.commands.tables.build_http_client",
@@ -1104,14 +1146,26 @@ class TestTablesRename:
             ),
             patch(
                 "fabric_dw.services.tables.rename_table",
-                new=AsyncMock(return_value=renamed),
+                new=mock_rename,
             ),
         ):
             result = runner.invoke(
                 cli,
-                ["tables", "rename", WS_GUID, WH_GUID, "dbo.sales", "--new-name", "sales_v2"],
+                [
+                    "--json",
+                    "tables",
+                    "rename",
+                    WS_GUID,
+                    WH_GUID,
+                    "dbo.sales",
+                    "--new-name",
+                    "sales_v2",
+                ],
             )
         assert result.exit_code == 0
+        mock_rename.assert_awaited_once()
+        parsed = json.loads(result.output)
+        assert parsed["name"] == "sales_v2"
 
     def test_rename_json_output(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env

@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 from click.testing import CliRunner
 
 from fabric_dw.cli._main import cli
@@ -15,11 +14,6 @@ from fabric_dw.cli.commands.completion import (
     _append_idempotent,
     _completion_script,
 )
-
-
-@pytest.fixture
-def runner() -> CliRunner:
-    return CliRunner()
 
 
 class TestCompletionInstallPrintOnly:

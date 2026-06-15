@@ -27,17 +27,6 @@ WH_UUID = UUID(WH_GUID)
 SNAP_UUID = UUID(SNAP_GUID)
 
 
-@pytest.fixture
-def runner() -> CliRunner:
-    return CliRunner()
-
-
-@pytest.fixture
-def cache_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
-    return tmp_path
-
-
 def _make_http_cm(http: object) -> object:
     """Build an asynccontextmanager that yields just the http client."""
 
@@ -106,8 +95,10 @@ class TestSnapshotsList:
                 new=AsyncMock(return_value=(WS_UUID, _make_wh_entry())),
             ),
         ):
-            result = runner.invoke(cli, ["snapshots", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["--json", "snapshots", "list", WS_GUID, WH_GUID])
         assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert isinstance(parsed, list)
 
     def test_list_json_output(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -178,9 +169,12 @@ class TestSnapshotsCreate:
         ):
             result = runner.invoke(
                 cli,
-                ["snapshots", "create", WS_GUID, WH_GUID, "MySnapshot"],
+                ["--json", "snapshots", "create", WS_GUID, WH_GUID, "MySnapshot"],
             )
         assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["id"] == SNAP_GUID
+        assert data["displayName"] == "SalesWarehouse_Snapshot_20240315"
 
 
 class TestSnapshotsCreateDatetime:
@@ -248,9 +242,21 @@ class TestSnapshotsRename:
         ):
             result = runner.invoke(
                 cli,
-                ["snapshots", "rename", SNAP_GUID, "NewSnapshotName", WS_GUID],
+                ["--json", "snapshots", "rename", SNAP_GUID, "NewSnapshotName", WS_GUID],
             )
         assert result.exit_code == 0
+        # Verify that the PATCH request body contained the NEW display name, not the old one.
+        # This would fail if new_name were ignored (regression detection).
+        patch_call = next(
+            call
+            for call in mock_http.request.call_args_list
+            if call.args and call.args[0] == "PATCH"
+        )
+        patch_json = patch_call.kwargs.get("json", {})
+        assert patch_json.get("displayName") == "NewSnapshotName"
+        # Also verify the rendered output returned the snapshot id
+        data = json.loads(result.output)
+        assert data["id"] == SNAP_GUID
 
 
 class TestSnapshotsDelete:
@@ -273,6 +279,10 @@ class TestSnapshotsDelete:
         ):
             result = runner.invoke(cli, ["--yes", "snapshots", "delete", SNAP_GUID, WS_GUID])
         assert result.exit_code == 0
+        mock_http.request.assert_awaited_once()
+        # Assert only the real success signal — the snapshot name is always in the fixture
+        # so the second disjunct would never catch a regression.
+        assert "deleted" in result.output
 
     def test_delete_declined_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         """Declining delete is a clean no-op (exit 0, policy: decline != error)."""
@@ -300,6 +310,7 @@ class TestSnapshotsRoll:
     def test_roll_with_yes_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
+        mock_roll = AsyncMock(return_value=None)
         with (
             patch(
                 "fabric_dw.cli.commands.snapshots.build_http_client",
@@ -311,7 +322,7 @@ class TestSnapshotsRoll:
             ),
             patch(
                 "fabric_dw.services.snapshots.roll_timestamp",
-                new=AsyncMock(return_value=None),
+                new=mock_roll,
             ),
         ):
             result = runner.invoke(
@@ -326,10 +337,15 @@ class TestSnapshotsRoll:
                 ],
             )
         assert result.exit_code == 0
+        mock_roll.assert_awaited_once()
+        # Assert only the real success signal — the snapshot name is always in the fixture
+        # so the second disjunct would never catch a regression.
+        assert "rolled" in result.output
 
     def test_roll_with_at_flag_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
+        mock_roll = AsyncMock(return_value=None)
         with (
             patch(
                 "fabric_dw.cli.commands.snapshots.build_http_client",
@@ -341,7 +357,7 @@ class TestSnapshotsRoll:
             ),
             patch(
                 "fabric_dw.services.snapshots.roll_timestamp",
-                new=AsyncMock(return_value=None),
+                new=mock_roll,
             ),
         ):
             result = runner.invoke(
@@ -358,6 +374,12 @@ class TestSnapshotsRoll:
                 ],
             )
         assert result.exit_code == 0
+        mock_roll.assert_awaited_once()
+        # The --at datetime must have been parsed to the exact UTC datetime and forwarded.
+        # This assert would fail if parse_iso_datetime were skipped or the wrong value passed.
+        _args, _kwargs = mock_roll.call_args
+        expected_dt = datetime(2024, 3, 15, 12, 0, 0, tzinfo=UTC)
+        assert _args[2] == expected_dt, f"Expected {expected_dt!r}, got {_args[2]!r}"
 
     def test_roll_declined_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         """Declining roll is a clean no-op (exit 0, policy: decline != error)."""
@@ -439,6 +461,7 @@ class TestSnapshotsDefaultFallback:
         runner.invoke(cli, ["config", "set", "warehouse", WH_GUID])
         mock_http = AsyncMock()
         mock_http.iter_paginated = MagicMock(return_value=_async_iter([]))
+        mock_resolve = AsyncMock(return_value=(WS_UUID, _make_wh_entry()))
         with (
             patch(
                 "fabric_dw.cli.commands.snapshots.build_http_client",
@@ -446,11 +469,15 @@ class TestSnapshotsDefaultFallback:
             ),
             patch(
                 "fabric_dw.cli.commands.snapshots.resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_wh_entry())),
+                new=mock_resolve,
             ),
         ):
-            result = runner.invoke(cli, ["snapshots", "list"])
+            result = runner.invoke(cli, ["--json", "snapshots", "list"])
         assert result.exit_code == 0
+        # resolve_item must have been called (config defaults were picked up)
+        mock_resolve.assert_awaited_once()
+        parsed = json.loads(result.output)
+        assert isinstance(parsed, list)
 
     def test_list_missing_workspace_raises_usage_error(
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

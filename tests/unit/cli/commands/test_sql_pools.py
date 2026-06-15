@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
-import pytest
 from click.testing import CliRunner
 
 from fabric_dw.cli._main import cli
@@ -80,17 +80,6 @@ _CONFIG_EMPTY = SqlPoolsConfiguration.model_validate(POOLS_EMPTY_PAYLOAD)
 _CONFIG_MULTI = SqlPoolsConfiguration.model_validate(MULTI_POOL_PAYLOAD)
 
 
-@pytest.fixture
-def runner() -> CliRunner:
-    return CliRunner()
-
-
-@pytest.fixture
-def cache_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
-    return tmp_path
-
-
 def _make_http_cm(http: object) -> object:
     @asynccontextmanager
     async def _cm(_ctx: object) -> AsyncIterator[object]:
@@ -116,8 +105,11 @@ class TestSqlPoolsGet:
                 new=AsyncMock(return_value=_CONFIG),
             ),
         ):
-            result = runner.invoke(cli, ["sql-pools", "get", WS_GUID])
+            result = runner.invoke(cli, ["--json", "sql-pools", "get", WS_GUID])
         assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["customSQLPoolsEnabled"] is True
+        assert len(data["customSQLPools"]) == 1
 
     def test_get_json_output(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -179,8 +171,13 @@ class TestSqlPoolsList:
                 new=AsyncMock(return_value=_CONFIG_MULTI),
             ),
         ):
-            result = runner.invoke(cli, ["sql-pools", "list", WS_GUID])
+            result = runner.invoke(cli, ["--json", "sql-pools", "list", WS_GUID])
         assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert isinstance(data, list)
+        pool_names = [p["name"] for p in data]
+        assert "ETL" in pool_names
+        assert "Reporting" in pool_names
 
     def test_list_json_shows_pool_array(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -225,8 +222,11 @@ class TestSqlPoolsShow:
                 new=AsyncMock(return_value=_CONFIG_MULTI),
             ),
         ):
-            result = runner.invoke(cli, ["sql-pools", "show", WS_GUID, "--name", "ETL"])
+            result = runner.invoke(cli, ["--json", "sql-pools", "show", WS_GUID, "--name", "ETL"])
         assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["name"] == "ETL"
+        assert data["maxResourcePercentage"] == 40
 
     def test_show_missing_pool_exits_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -600,6 +600,7 @@ class TestSqlPoolsDelete:
 class TestSqlPoolsEnable:
     def test_enable_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
+        mock_enable = AsyncMock(return_value=_CONFIG)
         with (
             patch(
                 "fabric_dw.cli.commands.sql_pools.build_http_client",
@@ -611,11 +612,14 @@ class TestSqlPoolsEnable:
             ),
             patch(
                 "fabric_dw.cli.commands.sql_pools._svc.enable",
-                new=AsyncMock(return_value=_CONFIG),
+                new=mock_enable,
             ),
         ):
-            result = runner.invoke(cli, ["sql-pools", "enable", WS_GUID])
+            result = runner.invoke(cli, ["--json", "sql-pools", "enable", WS_GUID])
         assert result.exit_code == 0
+        mock_enable.assert_awaited_once()
+        data = json.loads(result.output)
+        assert data["customSQLPoolsEnabled"] is True
 
     def test_enable_403_shows_permission_hint(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -641,6 +645,7 @@ class TestSqlPoolsEnable:
 class TestSqlPoolsDisable:
     def test_disable_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
+        mock_disable = AsyncMock(return_value=_CONFIG_DISABLED)
         with (
             patch(
                 "fabric_dw.cli.commands.sql_pools.build_http_client",
@@ -652,11 +657,14 @@ class TestSqlPoolsDisable:
             ),
             patch(
                 "fabric_dw.cli.commands.sql_pools._svc.disable",
-                new=AsyncMock(return_value=_CONFIG_DISABLED),
+                new=mock_disable,
             ),
         ):
-            result = runner.invoke(cli, ["sql-pools", "disable", WS_GUID])
+            result = runner.invoke(cli, ["--json", "sql-pools", "disable", WS_GUID])
         assert result.exit_code == 0
+        mock_disable.assert_awaited_once()
+        data = json.loads(result.output)
+        assert data["customSQLPoolsEnabled"] is False
 
 
 class TestSqlPoolsGetFabricError:
@@ -1021,6 +1029,7 @@ class TestSqlPoolsInsights:
 
     def test_insights_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
+        mock_insights = AsyncMock(return_value=[])
         with (
             patch(
                 "fabric_dw.cli.commands.sql_pools.build_http_client",
@@ -1032,15 +1041,19 @@ class TestSqlPoolsInsights:
             ),
             patch(
                 "fabric_dw.cli.commands.sql_pools._qi_svc.list_sql_pool_insights",
-                new=AsyncMock(return_value=[]),
+                new=mock_insights,
             ),
         ):
-            result = runner.invoke(cli, ["sql-pools", "insights", WS_GUID, WS_GUID])
+            result = runner.invoke(cli, ["--json", "sql-pools", "insights", WS_GUID, WS_GUID])
         assert result.exit_code == 0
+        mock_insights.assert_awaited_once()
+        data = json.loads(result.output)
+        assert isinstance(data, list)
 
     def test_insights_with_since_and_until(self, runner: CliRunner, cache_env: Path) -> None:
         """Passes --since and --until to exercise the _parse_iso line 410."""
         _ = cache_env
+        mock_insights = AsyncMock(return_value=[])
         with (
             patch(
                 "fabric_dw.cli.commands.sql_pools.build_http_client",
@@ -1052,12 +1065,13 @@ class TestSqlPoolsInsights:
             ),
             patch(
                 "fabric_dw.cli.commands.sql_pools._qi_svc.list_sql_pool_insights",
-                new=AsyncMock(return_value=[]),
+                new=mock_insights,
             ),
         ):
             result = runner.invoke(
                 cli,
                 [
+                    "--json",
                     "sql-pools",
                     "insights",
                     WS_GUID,
@@ -1069,6 +1083,19 @@ class TestSqlPoolsInsights:
                 ],
             )
         assert result.exit_code == 0
+        # since/until must have been parsed to the exact datetime values and forwarded.
+        # These asserts would fail if parse_iso_datetime were skipped or wrong values passed.
+        mock_insights.assert_awaited_once()
+        _, kwargs = mock_insights.call_args
+        # The CLI uses parse_iso_optional(assume_utc=False), so naive input stays naive.
+        expected_since = datetime(2024, 1, 1, 0, 0, 0)  # noqa: DTZ001 — testing naive CLI output
+        expected_until = datetime(2024, 12, 31, 23, 59, 59)  # noqa: DTZ001
+        assert kwargs.get("since") == expected_since, (
+            f"Expected since={expected_since!r}, got {kwargs.get('since')!r}"
+        )
+        assert kwargs.get("until") == expected_until, (
+            f"Expected until={expected_until!r}, got {kwargs.get('until')!r}"
+        )
 
     def test_insights_fabric_error_exits_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
