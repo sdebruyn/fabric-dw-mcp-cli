@@ -466,6 +466,124 @@ async def test_cleanup_on_failure_replace_policy_two_drops(tmp_path: Path) -> No
     assert len(drop_calls) == 2
 
 
+async def test_cleanup_on_failure_truncate_preexisting_does_not_drop(tmp_path: Path) -> None:
+    """if_exists=truncate + pre-existing table + cleanup_on_failure=True + load fails.
+
+    TRUNCATE runs (data is lost, but schema is kept), then the load fails.
+    cleanup_on_failure must NOT drop the pre-existing table — we didn't create it.
+    """
+    import uuid  # noqa: PLC0415
+
+    from fabric_dw.models import ColumnSpec  # noqa: PLC0415
+    from fabric_dw.services.load import create_and_load  # noqa: PLC0415
+
+    parquet_file = tmp_path / "data.parquet"
+    parquet_file.write_bytes(b"PAR1")
+    ws_id = uuid.UUID(_WS_ID)
+    _columns = [ColumnSpec(name="id", sql_type="INT", nullable=False)]
+
+    with (
+        patch(
+            "fabric_dw.services.load._infer_columns_from_local",
+            new=AsyncMock(return_value=_columns),
+        ),
+        patch(
+            "fabric_dw.services.load._table_exists",
+            new=AsyncMock(return_value=True),  # pre-existing table
+        ),
+        patch(
+            "fabric_dw.services.load._truncate_table_sql",
+            new=AsyncMock(),
+        ) as mock_truncate,
+        patch(
+            "fabric_dw.services.load._drop_table_sql",
+            new=AsyncMock(),
+        ) as mock_drop,
+        patch(
+            "fabric_dw.services.load.load_local_file",
+            new=AsyncMock(side_effect=RuntimeError("load failed")),
+        ),
+        pytest.raises(RuntimeError, match="load failed"),
+    ):
+        await create_and_load(
+            AsyncMock(),
+            AsyncMock(),
+            ws_id,
+            MagicMock(),
+            _SCHEMA,
+            _TABLE,
+            parquet_file,
+            file_format="parquet",
+            if_exists="truncate",
+            cleanup_on_failure=True,
+        )
+
+    # TRUNCATE fired once (the truncate policy).
+    mock_truncate.assert_called_once()
+    # Pre-existing table must NEVER be dropped by cleanup_on_failure.
+    mock_drop.assert_not_called()
+
+
+async def test_cleanup_on_failure_replace_not_exists_drops_created_table(tmp_path: Path) -> None:
+    """if_exists=replace + table does NOT exist + cleanup_on_failure=True + load fails.
+
+    When the table is absent, replace falls through to the create path (we_created=True).
+    If the load then fails, cleanup_on_failure must drop exactly the table we created.
+    """
+    import uuid  # noqa: PLC0415
+
+    from fabric_dw.models import ColumnSpec  # noqa: PLC0415
+    from fabric_dw.services.load import create_and_load  # noqa: PLC0415
+
+    parquet_file = tmp_path / "data.parquet"
+    parquet_file.write_bytes(b"PAR1")
+    ws_id = uuid.UUID(_WS_ID)
+    _columns = [ColumnSpec(name="id", sql_type="INT", nullable=False)]
+    drop_calls: list[str] = []
+
+    async def _track_drop(*_args, **_kwargs) -> None:
+        drop_calls.append("drop")
+
+    with (
+        patch(
+            "fabric_dw.services.load._infer_columns_from_local",
+            new=AsyncMock(return_value=_columns),
+        ),
+        patch(
+            "fabric_dw.services.load._table_exists",
+            new=AsyncMock(return_value=False),  # table absent → create path
+        ),
+        patch(
+            "fabric_dw.services.load._create_table_from_columns",
+            new=AsyncMock(),
+        ),
+        patch(
+            "fabric_dw.services.load._drop_table_sql",
+            new=AsyncMock(side_effect=_track_drop),
+        ),
+        patch(
+            "fabric_dw.services.load.load_local_file",
+            new=AsyncMock(side_effect=RuntimeError("load failed")),
+        ),
+        pytest.raises(RuntimeError, match="load failed"),
+    ):
+        await create_and_load(
+            AsyncMock(),
+            AsyncMock(),
+            ws_id,
+            MagicMock(),
+            _SCHEMA,
+            _TABLE,
+            parquet_file,
+            file_format="parquet",
+            if_exists="replace",
+            cleanup_on_failure=True,
+        )
+
+    # Exactly one drop: the cleanup_on_failure drop of the table we created.
+    assert len(drop_calls) == 1
+
+
 # ---------------------------------------------------------------------------
 # File-not-found guard
 # ---------------------------------------------------------------------------

@@ -85,7 +85,7 @@ async def test_import_table_from_url_rejects_sql_endpoint(
 async def test_import_table_from_url_truncate_blocked_without_destructive_flag(
     mock_ctx, ctx_patch, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """truncate is blocked when FABRIC_MCP_ALLOW_DESTRUCTIVE is unset."""
+    """truncate is blocked when FABRIC_MCP_ALLOW_DESTRUCTIVE is unset (table exists)."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     monkeypatch.delenv("FABRIC_MCP_READONLY", raising=False)
@@ -94,7 +94,14 @@ async def test_import_table_from_url_truncate_blocked_without_destructive_flag(
     mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
     mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
 
-    with ctx_patch, pytest.raises(ToolError, match="destructive"):
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.load.table_exists",
+            new=AsyncMock(return_value=True),
+        ),
+        pytest.raises(ToolError, match="destructive"),
+    ):
         await mcp._tool_manager.call_tool(
             "import_table_from_url",
             {
@@ -123,7 +130,7 @@ async def test_import_table_from_url_replace_raises_tool_error(
     with (
         ctx_patch,
         patch(
-            "fabric_dw.services.load._table_exists",
+            "fabric_dw.services.load.table_exists",
             new=AsyncMock(return_value=True),
         ),
         pytest.raises(ToolError, match=r"replace.*remote"),
@@ -161,7 +168,7 @@ async def test_import_table_from_url_fail_when_table_exists(
     with (
         ctx_patch,
         patch(
-            "fabric_dw.services.load._table_exists",
+            "fabric_dw.services.load.table_exists",
             new=AsyncMock(return_value=True),
         ),
         pytest.raises(ToolError, match="already exists"),
@@ -198,7 +205,7 @@ async def test_import_table_from_url_append_table_not_exists_happy_path(
     with (
         ctx_patch,
         patch(
-            "fabric_dw.services.load._table_exists",
+            "fabric_dw.services.load.table_exists",
             new=AsyncMock(return_value=False),
         ),
         patch(
@@ -242,11 +249,11 @@ async def test_import_table_from_url_truncate_with_flag_succeeds(
     with (
         ctx_patch,
         patch(
-            "fabric_dw.services.load._table_exists",
+            "fabric_dw.services.load.table_exists",
             new=AsyncMock(return_value=True),
         ),
         patch(
-            "fabric_dw.services.load._truncate_table_sql",
+            "fabric_dw.services.load.truncate_table",
             new=AsyncMock(),
         ) as mock_truncate,
         patch(
@@ -295,5 +302,76 @@ async def test_import_table_from_url_rejects_json_file_type(
                 "qualified_name": "dbo.sales",
                 "url": "https://example.com/f.json",
                 "file_type": "JSON",
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
+# import_table_from_url — table absent with truncate/replace
+# ---------------------------------------------------------------------------
+
+
+async def test_import_table_from_url_truncate_absent_table_raises(
+    mock_ctx, ctx_patch, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """import_table_from_url with if_exists=truncate raises ToolError when table does not exist."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    monkeypatch.delenv("FABRIC_MCP_READONLY", raising=False)
+    monkeypatch.setenv("FABRIC_MCP_ALLOW_DESTRUCTIVE", "1")
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.load.table_exists",
+            new=AsyncMock(return_value=False),
+        ),
+        pytest.raises(ToolError, match="does not exist"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "import_table_from_url",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "qualified_name": "dbo.sales",
+                "url": "https://example.com/f.parquet",
+                "file_type": "PARQUET",
+                "if_exists": "truncate",
+            },
+        )
+
+
+async def test_import_table_from_url_replace_absent_table_raises(
+    mock_ctx, ctx_patch, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """import_table_from_url with if_exists=replace raises ToolError when table does not exist."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    monkeypatch.delenv("FABRIC_MCP_READONLY", raising=False)
+    monkeypatch.setenv("FABRIC_MCP_ALLOW_DESTRUCTIVE", "1")
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.load.table_exists",
+            new=AsyncMock(return_value=False),
+        ),
+        pytest.raises(ToolError, match="does not exist"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "import_table_from_url",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "qualified_name": "dbo.sales",
+                "url": "https://example.com/f.parquet",
+                "file_type": "PARQUET",
+                "if_exists": "replace",
             },
         )

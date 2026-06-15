@@ -290,16 +290,22 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             Field(description="URL to write rejected rows to.", default=None),
         ] = None,
     ) -> dict[str, Any]:
-        """Load data into a Data Warehouse table via ``COPY INTO`` from a remote URL.
+        """Load data into an existing Data Warehouse table via ``COPY INTO`` from a remote URL.
 
-        Unlike ``load_table_from_url``, this tool does **not** require the target
-        table to exist — it loads data directly from the given URL.  The target
-        table must already exist and have a compatible schema; use the CLI
-        ``tables load --file --create`` for auto-create with schema inference
-        (local files only, as remote schema inference requires downloading).
+        The target table **must already exist** and have a compatible schema.
+        For auto-create with schema inference from local files, use the CLI
+        ``tables load --file --create`` command instead.
 
-        When ``if_exists`` is ``"truncate"`` or ``"replace"`` the operation is
-        **destructive** and requires ``FABRIC_MCP_ALLOW_DESTRUCTIVE=1``.
+        ``if_exists`` controls behaviour when the table already exists:
+
+        - ``"fail"`` (default): raise an error if the table already exists.
+        - ``"append"``: load rows into the existing table without modification.
+        - ``"truncate"``: TRUNCATE the existing table first, then load.
+          Requires ``FABRIC_MCP_ALLOW_DESTRUCTIVE=1``.  Raises an error if the
+          table does **not** exist.
+        - ``"replace"``: not supported for remote URLs (schema inference requires
+          downloading the file).  Use ``"truncate"`` to keep the current schema,
+          or download locally and use the CLI with ``--create --if-exists replace``.
 
         Supported file types: ``CSV``, ``PARQUET``.  JSON remote URLs require
         downloading and converting locally first; use the CLI ``tables load``
@@ -309,7 +315,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         external URLs supply ``credential_type`` and the appropriate
         ``secret``/``identity`` values.
 
-        CAUTION: ``truncate`` and ``replace`` are permanently destructive.
+        CAUTION: ``truncate`` is permanently destructive.
         Confirm the source URL and target table before calling.
 
         Note: ``secret`` / ``identity`` values are accepted but are NEVER logged
@@ -321,7 +327,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             qualified_name: Dot-separated qualified table name, e.g. ``dbo.sales``.
             url: Source URL (OneLake DFS URL or external Azure Blob URL).
             file_type: ``CSV`` or ``PARQUET``.
-            if_exists: Policy for an existing target table.
+            if_exists: Policy when the target table already exists.
             credential_type: Credential type for the source URL.
             secret: Credential secret (not logged).
             identity: Identity for managed-identity or service-principal.
@@ -340,14 +346,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_workspace_allowed(workspace)
         ctx = get_context()
 
-        # Destructive guard for truncate / replace.
-        if if_exists in ("truncate", "replace"):
-            from fabric_dw.mcp._guards import assert_destructive_allowed  # noqa: PLC0415
-
-            assert_destructive_allowed()
-
-        # SQL Endpoint guard: CREATE TABLE + COPY INTO are Warehouse-only.
-        # The file_type validation and credential handling mirror load_table_from_url.
+        # SQL Endpoint guard: COPY INTO is Warehouse-only.
         if file_type not in ("CSV", "PARQUET"):
             from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
 
@@ -387,22 +386,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             )
             sql_target = make_sql_target(ws_id, entry, item)
 
-            # This tool loads from a URL (no create-from-schema for remote sources
-            # without downloading), so we delegate directly to copy_into_from_url
-            # after applying the if_exists policy via SQL.
-            from fabric_dw.services.load import (  # noqa: PLC0415
-                _assert_not_sql_endpoint,
-                _table_exists,
-                _truncate_table_sql,
+            from mcp.server.fastmcp.exceptions import (  # noqa: PLC0415
+                ToolError as _ToolError,
             )
 
-            # The SQL Endpoint guard was already checked above, but guard helpers
-            # accept the kind for a consistent pattern.
-            _assert_not_sql_endpoint(entry.kind)
+            from fabric_dw.services.load import table_exists, truncate_table  # noqa: PLC0415
 
-            from mcp.server.fastmcp.exceptions import ToolError as _ToolError  # noqa: PLC0415
-
-            exists = await _table_exists(sql_target, schema, table_name, mode=ctx.auth_mode)
+            exists = await table_exists(sql_target, schema, table_name, mode=ctx.auth_mode)
             if exists:
                 if if_exists == "fail":
                     raise _ToolError(
@@ -410,17 +400,43 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                         "Use if_exists='append', 'truncate', or 'replace'."
                     )
                 if if_exists == "truncate":
-                    await _truncate_table_sql(sql_target, schema, table_name, mode=ctx.auth_mode)
+                    # Destructive guard: only fire when a TRUNCATE will actually execute.
+                    from fabric_dw.mcp._guards import assert_destructive_allowed  # noqa: PLC0415
+
+                    assert_destructive_allowed()
+                    await truncate_table(sql_target, schema, table_name, mode=ctx.auth_mode)
                 elif if_exists == "replace":
+                    # replace requires destructive flag even though it raises below —
+                    # the intent is destructive regardless of the error.
+                    from fabric_dw.mcp._guards import assert_destructive_allowed  # noqa: PLC0415
+
+                    assert_destructive_allowed()
                     # For remote URLs we cannot infer schema without downloading;
                     # the user should use the CLI for auto-create from local files.
                     raise _ToolError(
-                        "if_exists='replace' for remote URLs requires a pre-existing schema. "
-                        "Use if_exists='truncate' to keep the current schema, or download "
-                        "the file locally and use the CLI 'tables load --file --create "
-                        "--if-exists replace' for full auto-create from schema."
+                        "if_exists='replace' for remote URLs requires downloading the file "
+                        "to infer schema. Use if_exists='truncate' to keep the current schema, "
+                        "or download the file locally and use the CLI "
+                        "'tables load --file --create --if-exists replace'."
                     )
-                # "append": do nothing
+                # "append": do nothing — COPY INTO will add rows to the existing table.
+            else:
+                # Table does not exist.
+                if if_exists == "truncate":
+                    raise _ToolError(
+                        f"Table [{schema}].[{table_name}] does not exist; "
+                        "nothing to truncate. Create the table first or use "
+                        "if_exists='fail' / 'append'."
+                    )
+                if if_exists == "replace":
+                    raise _ToolError(
+                        f"Table [{schema}].[{table_name}] does not exist; "
+                        "if_exists='replace' for remote URLs requires downloading the file "
+                        "to infer schema. Use the CLI "
+                        "'tables load --file --create --if-exists replace' instead."
+                    )
+                # "fail" or "append" on absent table: proceed; COPY INTO will raise a
+                # clear SQL error if the table truly does not exist.
 
             result = await copy_into_from_url(
                 sql_target,

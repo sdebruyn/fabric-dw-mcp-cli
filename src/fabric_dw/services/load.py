@@ -57,6 +57,8 @@ __all__ = [
     "infer_file_format",
     "load_local_file",
     "onelake_upload_file",
+    "table_exists",
+    "truncate_table",
 ]
 
 IfExistsPolicy = Literal["fail", "append", "truncate", "replace"]
@@ -883,6 +885,26 @@ async def load_local_file(  # noqa: PLR0912, PLR0915
 # ---------------------------------------------------------------------------
 
 
+async def table_exists(
+    target: SqlTarget,
+    schema: str,
+    table: str,
+    mode: object = None,
+) -> bool:
+    """Return ``True`` when ``[schema].[table]`` exists in ``sys.tables``."""
+    return await _table_exists(target, schema, table, mode=mode)
+
+
+async def truncate_table(
+    target: SqlTarget,
+    schema: str,
+    table: str,
+    mode: object = None,
+) -> None:
+    """Issue ``TRUNCATE TABLE [schema].[table]``."""
+    await _truncate_table_sql(target, schema, table, mode=mode)
+
+
 async def _table_exists(
     target: SqlTarget,
     schema: str,
@@ -948,7 +970,7 @@ async def _truncate_table_sql(
 # ---------------------------------------------------------------------------
 
 
-async def _infer_columns_from_local(  # noqa: PLR0915
+async def _infer_columns_from_local(
     local_path: Path,
     fmt: FileFormat,
     *,
@@ -960,37 +982,31 @@ async def _infer_columns_from_local(  # noqa: PLR0915
 ) -> list:
     """Infer :class:`~fabric_dw.models.ColumnSpec` list from a local file.
 
-    Uses the #308 helpers from :mod:`fabric_dw.services.tables`:
-    - Parquet: ``pq.read_schema`` (footer only).
-    - CSV: ``pyarrow.csv.open_csv`` with bounded sampling.
-    - JSON: convert to Parquet via :func:`_json_to_parquet`, then read schema.
+    Delegates to the public helpers in :mod:`fabric_dw.services.tables`:
+
+    - Parquet: :func:`~fabric_dw.services.tables.infer_columns_from_parquet`
+      (reads the Parquet footer only — no data rows).
+    - CSV: :func:`~fabric_dw.services.tables.infer_columns_from_csv`
+      (header + bounded sample via ``pyarrow.csv``).
+    - JSON: converts to Parquet via :func:`_json_to_parquet`, then delegates
+      to the Parquet path above.
 
     Returns a list of :class:`~fabric_dw.models.ColumnSpec`.
     """
-    from fabric_dw.models import ColumnSpec  # noqa: PLC0415
-    from fabric_dw.types import arrow_type_to_tsql  # noqa: PLC0415
+    from fabric_dw.services.tables import (  # noqa: PLC0415
+        infer_columns_from_csv,
+        infer_columns_from_parquet,
+    )
 
     if fmt == "parquet":
-        import pyarrow.parquet as pq  # noqa: PLC0415
-
-        arrow_schema = await asyncio.to_thread(pq.read_schema, str(local_path))
-        columns: list[ColumnSpec] = []
-        for field in arrow_schema:
-            sql_type = arrow_type_to_tsql(field.type, field.name, varchar_length=varchar_length)
-            columns.append(ColumnSpec(name=field.name, sql_type=sql_type, nullable=field.nullable))
-        return columns
+        return await infer_columns_from_parquet(local_path, varchar_length=varchar_length)
 
     if fmt == "json":
         # JSON → Parquet (same path used by load_local_file); schema comes for free.
         converted: Path | None = None
         try:
             converted = await asyncio.to_thread(_json_to_parquet, local_path)
-            return await _infer_columns_from_local(
-                converted,
-                "parquet",
-                all_varchar=all_varchar,
-                varchar_length=varchar_length,
-            )
+            return await infer_columns_from_parquet(converted, varchar_length=varchar_length)
         finally:
             if converted is not None:
                 import contextlib as _cl  # noqa: PLC0415
@@ -999,68 +1015,14 @@ async def _infer_columns_from_local(  # noqa: PLR0915
                     converted.unlink(missing_ok=True)
 
     # CSV
-    import pyarrow as pa  # noqa: PLC0415
-    import pyarrow.csv as pa_csv  # noqa: PLC0415
-
-    if all_varchar:
-        import csv  # noqa: PLC0415
-
-        with local_path.open(encoding=csv_encoding, newline="") as fh:
-            reader = csv.reader(fh, delimiter=csv_delimiter)
-            try:
-                header = next(reader)
-            except StopIteration:
-                msg = f"CSV file is empty: {local_path}"
-                raise ValueError(msg) from None
-        from fabric_dw.models import ColumnSpec  # noqa: PLC0415
-
-        return [
-            ColumnSpec(name=col_name, sql_type=f"VARCHAR({varchar_length})", nullable=True)
-            for col_name in header
-        ]
-
-    read_opts = pa_csv.ReadOptions(encoding=csv_encoding)
-    parse_opts = pa_csv.ParseOptions(delimiter=csv_delimiter)
-    convert_opts = pa_csv.ConvertOptions(null_values=["", "NULL", "null", "NA", "N/A"])
-
-    def _read_csv_sample() -> pa.Table:
-        reader = pa_csv.open_csv(
-            str(local_path),
-            read_options=read_opts,
-            parse_options=parse_opts,
-            convert_options=convert_opts,
-        )
-        inferred_schema = reader.schema
-        batches: list[pa.RecordBatch] = []
-        rows_seen = 0
-        for batch in reader:
-            remaining = sample_rows - rows_seen
-            chunk = batch.slice(0, remaining) if batch.num_rows > remaining else batch
-            batches.append(chunk)
-            rows_seen += chunk.num_rows
-            if rows_seen >= sample_rows:
-                break
-        if not batches:
-            return inferred_schema.empty_table()
-        return pa.Table.from_batches(batches)
-
-    arrow_table = await asyncio.to_thread(_read_csv_sample)
-    columns_csv: list[ColumnSpec] = []  # type: ignore[type-arg]
-    for i, name in enumerate(arrow_table.schema.names):
-        field = arrow_table.schema.field(i)
-        try:
-            sql_type = arrow_type_to_tsql(field.type, name, varchar_length=varchar_length)
-        except ValueError:
-            _logger.warning(
-                "create_and_load CSV: column %r inferred type %r has no T-SQL mapping; "
-                "falling back to VARCHAR(%d)",
-                name,
-                field.type,
-                varchar_length,
-            )
-            sql_type = f"VARCHAR({varchar_length})"
-        columns_csv.append(ColumnSpec(name=name, sql_type=sql_type, nullable=True))
-    return columns_csv
+    return await infer_columns_from_csv(
+        local_path,
+        all_varchar=all_varchar,
+        varchar_length=varchar_length,
+        sample_rows=sample_rows,
+        delimiter=csv_delimiter,
+        encoding=csv_encoding,
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -793,6 +793,15 @@ async def load_cmd(  # noqa: PLR0912
     else:
         effective_if_exists = "append"
 
+    # truncate/replace are only meaningful on the --create path (local files).
+    # For --url there is no schema to infer, and for --file without --create the
+    # destructive policies are undefined.  Reject early with a clear message.
+    if effective_if_exists in ("truncate", "replace") and not create:
+        raise click.UsageError(
+            f"--if-exists {effective_if_exists} requires --create "
+            "(destructive policies only apply to the auto-create load path)."
+        )
+
     # Destructive confirmation for truncate / replace.
     is_destructive = effective_if_exists in ("truncate", "replace")
     if is_destructive:

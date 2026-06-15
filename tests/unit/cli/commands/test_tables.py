@@ -1786,3 +1786,72 @@ class TestLoadCreateAndLoad:
 
         assert result.exit_code == 0, result.output
         assert "2" in result.output
+
+    def test_if_exists_truncate_without_create_raises_usage_error(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """--if-exists truncate without --create raises UsageError."""
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("id\n1\n", encoding="utf-8")
+
+        result = runner.invoke(
+            cli,
+            [
+                "tables",
+                "load",
+                "ws",
+                "wh",
+                "dbo.sales",
+                "--file",
+                str(csv_file),
+                "--if-exists",
+                "truncate",
+            ],
+            catch_exceptions=False,
+        )
+        assert result.exit_code != 0
+        assert "truncate" in result.output.lower() or "create" in result.output.lower()
+
+    def test_if_exists_replace_without_create_raises_usage_error(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """--if-exists replace without --create raises UsageError."""
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("id\n1\n", encoding="utf-8")
+
+        result = runner.invoke(
+            cli,
+            [
+                "tables",
+                "load",
+                "ws",
+                "wh",
+                "dbo.sales",
+                "--file",
+                str(csv_file),
+                "--if-exists",
+                "replace",
+            ],
+            catch_exceptions=False,
+        )
+        assert result.exit_code != 0
+        assert "replace" in result.output.lower() or "create" in result.output.lower()
+
+    def test_if_exists_truncate_with_url_raises_usage_error(self, runner: CliRunner) -> None:
+        """--if-exists truncate with --url raises UsageError (no --create for URL path)."""
+        result = runner.invoke(
+            cli,
+            [
+                "tables",
+                "load",
+                "ws",
+                "wh",
+                "dbo.sales",
+                "--url",
+                "https://example.com/f.parquet",
+                "--if-exists",
+                "truncate",
+            ],
+            catch_exceptions=False,
+        )
+        assert result.exit_code != 0
