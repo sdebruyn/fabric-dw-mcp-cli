@@ -12,9 +12,9 @@ on:
         required: false
         default: ""
       xdist_workers:
-        description: "Number of parallel pytest-xdist workers (1 = serial, default 4)"
+        description: "Number of parallel pytest-xdist workers (1 = serial, default 8)"
         required: false
-        default: "4"
+        default: "8"
 
 permissions:
   id-token: write
@@ -201,15 +201,14 @@ jobs:
           # shared_warehouse fixture, named pytest-<worker>-<uid>-wh).  Fabric
           # capacity (CU) budget, the per-workspace item limit, and the HTTP 429
           # rate-limit all constrain how many parallel warehouses are safe.
-          # 4 workers is a conservative default that fits within a single F4/F8
-          # capacity unit budget and leaves headroom for ephemeral items created
-          # by snapshot/restore/lakehouse tests.  Raise to 6 if the target
-          # capacity is F16+ and the workspace item limit is not an issue.
+          # 8 workers is the default and targets F8+ capacity.  Reduce to 4 if
+          # running on F4 or hitting 429 rate-limit pressure.  Raise above 8 if
+          # the target capacity is F16+ and the workspace item limit allows it.
           # Reduce to 1 (serial) to debug flaky tests without parallelism noise.
           #
           # The xdist_workers workflow_dispatch input lets you tune this without
-          # code changes.  For push events (no input), WORKERS defaults to 4.
-          WORKERS="${XDIST_WORKERS_INPUT:-4}"
+          # code changes.  For push events (no input), WORKERS defaults to 8.
+          WORKERS="${XDIST_WORKERS_INPUT:-8}"
 
           # Validate that WORKERS is a positive integer; reject 0, negatives, and
           # non-numeric values before they reach pytest (which aborts with a
