@@ -2108,6 +2108,87 @@ Cache cleared.
 
 ---
 
+## fabric-dw dbt
+
+Scaffold a [dbt](https://docs.getdbt.com/) project pre-wired to a Microsoft Fabric Data Warehouse using the [dbt-fabric](https://docs.getdbt.com/docs/core/connect-data-platform/fabric-setup) adapter.
+
+No dbt installation is required to run these commands — `fabric-dw` generates all project files itself. A `requirements.txt` inside the scaffolded project lists the required pip packages (`dbt-core`, `dbt-fabric`) so you can install them in a separate environment when you are ready to run dbt.
+
+### dbt init
+
+**Targets:** Data Warehouse
+
+Scaffold a new dbt project directory connected to a Fabric Data Warehouse. The command creates the folder, writes `dbt_project.yml`, `profiles.yml`, `requirements.txt`, `.gitignore`, standard dbt model directories, a sample model, and a README. If `git` is on your PATH and the target folder is not already a git repository, `git init` is run automatically.
+
+> **Security note** — when `--auth sp` (Service Principal) is used, `profiles.yml` emits Jinja2 `env_var()` placeholders (`{{ env_var('AZURE_TENANT_ID') }}` etc.) instead of literal secrets. You must set `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, and `AZURE_CLIENT_SECRET` in your environment before running dbt.
+
+**Usage**
+
+```shell
+fabric-dw dbt init [OPTIONS] [WORKSPACE] [ITEM] FOLDER
+```
+
+**Arguments**
+
+| Argument | Description |
+| --- | --- |
+| `WORKSPACE` | Name or ID of the Fabric workspace (optional if set via `fabric-dw config set workspace`). |
+| `ITEM` | Name or ID of the Fabric Data Warehouse item (optional if set via `fabric-dw config set warehouse`). |
+| `FOLDER` | Path to the folder to create. Must not exist (unless `--force` is passed). |
+
+**Options**
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--project-name TEXT` | derived from `ITEM` name | dbt project name (sanitised: lowercase, non-alphanumeric chars replaced with `_`). |
+| `--profile-name TEXT` | same as `--project-name` | dbt profile name written into `profiles.yml` and `dbt_project.yml`. |
+| `--schema TEXT` | `dbo` | Default target schema for dbt models. |
+| `--target TEXT` | `dev` | dbt target name inside the profile. |
+| `--threads INTEGER RANGE` | `4` | Number of dbt threads (1–64). |
+| `--auth [auto\|CLI\|ServicePrincipal\|interactive\|sp]` | derived from active credential mode | Authentication method. `interactive` is an alias for `CLI`; `sp` is an alias for `ServicePrincipal`. |
+| `--profiles-dir [project\|home]` | `project` | Where to write `profiles.yml`. `project` writes it next to `dbt_project.yml`; `home` merges it into `~/.dbt/profiles.yml` (backs up existing file first). |
+| `--with-sources` | off | Introspect the live warehouse and generate a `_sources.yml` file listing all schemas and tables. |
+| `--force` | off | Overwrite an existing non-empty directory. |
+
+**Examples**
+
+```shell
+# Minimal — uses configured defaults
+fabric-dw dbt init MyWorkspace SalesWH ./my_dbt_project
+
+# Service Principal auth; write profiles.yml to ~/.dbt/
+fabric-dw dbt init MyWorkspace SalesWH ./sales_dbt \
+  --auth sp --profiles-dir home
+
+# Scaffold with live source introspection (auto-generates _sources.yml)
+fabric-dw dbt init MyWorkspace SalesWH ./sales_dbt --with-sources
+
+# Force-overwrite an existing folder
+fabric-dw dbt init MyWorkspace SalesWH ./sales_dbt --force
+```
+
+**Scaffolded layout**
+
+```
+<FOLDER>/
+├── .gitignore
+├── README.md
+├── dbt_project.yml
+├── profiles.yml          # only when --profiles-dir project (default)
+├── requirements.txt      # pip install -r requirements.txt
+├── models/
+│   ├── staging/
+│   │   └── _sources.yml  # placeholder, or real entries with --with-sources
+│   └── my_first_model.sql
+├── seeds/
+├── snapshots/
+├── tests/
+├── macros/
+└── analyses/
+```
+
+---
+
 ## fabric-dw completion
 
 Manage shell completion scripts. See [Shell Completion](completion.md) for full installation details.

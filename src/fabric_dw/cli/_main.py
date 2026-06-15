@@ -12,6 +12,7 @@ from fabric_dw.cli.commands.audit import audit_group
 from fabric_dw.cli.commands.cache import cache_group
 from fabric_dw.cli.commands.completion import completion_group
 from fabric_dw.cli.commands.config import config_group
+from fabric_dw.cli.commands.dbt import dbt_group
 from fabric_dw.cli.commands.procedures import procedures_group
 from fabric_dw.cli.commands.queries import queries_group
 from fabric_dw.cli.commands.restore_points import restore_points_group
@@ -81,6 +82,7 @@ def cli(
 cli.add_command(cache_group)
 cli.add_command(completion_group)
 cli.add_command(config_group)
+cli.add_command(dbt_group)
 cli.add_command(workspaces_group)
 cli.add_command(warehouses_group)
 cli.add_command(sql_endpoints_group)

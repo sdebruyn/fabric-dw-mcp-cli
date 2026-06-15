@@ -148,6 +148,8 @@ EXPECTED_TOOL_NAMES: frozenset[str] = frozenset(
         "create_statistics",
         "update_statistics",
         "delete_statistics",
+        # dbt scaffold
+        "generate_dbt_profile",
     }
 )
 

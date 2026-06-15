@@ -1349,6 +1349,40 @@ Drop a statistic via `DROP STATISTICS`. **Destructive and irreversible.** Requir
 
 ---
 
+## dbt scaffold
+
+Generate [dbt-fabric](https://docs.getdbt.com/docs/core/connect-data-platform/fabric-setup) project file contents pre-wired to a Microsoft Fabric Data Warehouse. Unlike the CLI `dbt init` command, these tools return file contents as text rather than writing files to disk, making them suitable for AI-assisted workflows where the AI agent writes the files.
+
+> **Security note** — when `authentication="ServicePrincipal"` is used, the returned `profiles_yml` contains Jinja2 `env_var()` placeholders (`{{ env_var('AZURE_TENANT_ID') }}` etc.) rather than literal secrets. Never hard-code secrets into source-controlled files.
+
+### generate_dbt_profile
+
+**Targets:** Data Warehouse
+
+Return the contents of all files needed to bootstrap a dbt project that connects to a Fabric Data Warehouse. No files are written; the caller is responsible for persisting the returned strings.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — Data Warehouse name or GUID.
+- `project_name` (`str`, optional) — dbt project name. Defaults to the warehouse display name (sanitised to lowercase + underscores).
+- `profile_name` (`str`, optional) — dbt profile name. Defaults to the project name.
+- `schema` (`str`, default `"dbo"`) — default target schema for dbt models.
+- `target` (`str`, default `"dev"`) — dbt target name.
+- `threads` (`int`, default `4`) — number of dbt threads (1–64).
+- `authentication` (`str`, optional) — authentication method (`"auto"`, `"CLI"`, `"ServicePrincipal"`). Defaults to the MCP server's active credential mode.
+- `with_sources` (`bool`, default `False`) — when `True`, introspect the live warehouse and include all schemas/tables in the returned `sources_yml`.
+
+**Returns:** object with:
+
+- `profiles_yml` (`str`) — contents for `profiles.yml` (write next to `dbt_project.yml` or into `~/.dbt/profiles.yml`).
+- `dbt_project_yml` (`str`) — contents for `dbt_project.yml`.
+- `sources_yml` (`str`) — contents for `models/staging/_sources.yml` (placeholder or real entries when `with_sources=True`).
+- `requirements_txt` (`str`) — pip requirements listing `dbt-core` and `dbt-fabric`.
+- `gitignore` (`str`) — contents for `.gitignore`, pre-configured for dbt projects.
+
+---
+
 ## Cache
 
 ### clear_cache
