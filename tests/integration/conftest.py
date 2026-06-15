@@ -16,7 +16,12 @@ from fabric_dw.exceptions import NotFoundError
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import Warehouse, WarehouseKind, WarehouseSnapshot
 from fabric_dw.services import schemas, snapshots, warehouses
-from fabric_dw.sql import SqlTarget, is_transient_connection_error, run_query
+from fabric_dw.sql import (
+    _AUTH_FAILED_FRAGMENTS,
+    SqlTarget,
+    is_transient_connection_error,
+    run_query,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -102,14 +107,28 @@ async def _wait_for_sql_readiness(
             await asyncio.to_thread(_probe)
         except Exception as exc:
             msg_lower = str(exc).lower()
-            # Swallow transient connection drops AND the Fabric warm-up
-            # "database was not found" flavour (AuthError from map_driver_error).
-            # We do NOT swallow all "login failed" messages — that is too broad
-            # and would hide genuine permanent auth misconfiguration (wrong tenant,
-            # expired service principal, etc.) for the full 600 s timeout.
-            # "database was not found" uniquely identifies the provisioning-transient
-            # variant of login-failed (error 18456), so it is the right signal here.
-            is_warmup = "database was not found" in msg_lower
+            # Swallow transient connection drops AND the Fabric warm-up login
+            # failures.  Two provisioning-transient variants are recognised:
+            #
+            # 1. "database was not found" — the SQL endpoint exists but the
+            #    database name has not propagated yet (classic warm-up).
+            #
+            # 2. "authentication failed" / "could not login" (error 18456) —
+            #    the database IS reachable but the service principal's access has
+            #    not yet propagated to the new SQL endpoint.  Seen especially
+            #    under xdist=8 where 8 warehouses are created concurrently.
+            #    Detected via the _AUTH_FAILED_FRAGMENTS constant (same source of
+            #    truth as map_driver_error) so literals are not duplicated.
+            #
+            # Both variants are real provisioning transients and are safe to
+            # retry within the warm-up window.  A genuine permanent auth
+            # misconfiguration (wrong tenant, expired service-principal
+            # credentials, etc.) will surface as TimeoutError after timeout_s —
+            # that is the accepted trade-off for this readiness probe only.
+            # The general run_query/_with_connect_retry path is NOT broadened.
+            is_warmup = "database was not found" in msg_lower or any(
+                frag in msg_lower for frag in _AUTH_FAILED_FRAGMENTS
+            )
             if not (is_transient_connection_error(exc) or is_warmup):
                 # Unexpected error — surface it immediately.
                 raise
