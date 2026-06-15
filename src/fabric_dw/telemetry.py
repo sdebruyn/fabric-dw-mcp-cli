@@ -55,7 +55,7 @@ _log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _DEFAULT_CONNECTION_STRING = (
-    "InstrumentationKey=bd1668b7-aa94-49cc-8998-9a09a6b232c6;"
+    "InstrumentationKey=bd1668b7-aa94-49cc-8998-9a09a6b232c6;"  # gitleaks:allow
     "IngestionEndpoint=https://westeurope-5.in.applicationinsights.azure.com/;"
     "LiveEndpoint=https://westeurope.livediagnostics.monitor.azure.com/;"
     "ApplicationId=36d5e7bd-b436-4445-a693-8c93c25cc2fb"
