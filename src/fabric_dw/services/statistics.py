@@ -106,11 +106,15 @@ WHERE ({schema_filter})
 ORDER BY s.name, t.name, st.name;
 """
 
-# DBCC SHOW_STATISTICS takes identifier tokens for table and stat_name.
-# Both are validated + bracket-quoted before embedding.
-_DBCC_STAT_HEADER_SQL = "DBCC SHOW_STATISTICS ({table_q}, {stat_q}) WITH STAT_HEADER;"
-_DBCC_DENSITY_SQL = "DBCC SHOW_STATISTICS ({table_q}, {stat_q}) WITH DENSITY_VECTOR;"
-_DBCC_HISTOGRAM_SQL = "DBCC SHOW_STATISTICS ({table_q}, {stat_q}) WITH HISTOGRAM;"
+# DBCC SHOW_STATISTICS on Fabric DW requires the table as a string literal
+# ('schema.table') — NOT as bracket-quoted identifier tokens ([schema].[table]).
+# Passing bracket-quoted identifiers causes "Incorrect syntax near '.'" because
+# the parser does not accept a two-part identifier in that argument position.
+# The stat name (second argument) is still bracket-quoted as an identifier token.
+# Both parts are validated via validate_identifier before embedding.
+_DBCC_STAT_HEADER_SQL = "DBCC SHOW_STATISTICS ('{table_s}', {stat_q}) WITH STAT_HEADER;"
+_DBCC_DENSITY_SQL = "DBCC SHOW_STATISTICS ('{table_s}', {stat_q}) WITH DENSITY_VECTOR;"
+_DBCC_HISTOGRAM_SQL = "DBCC SHOW_STATISTICS ('{table_s}', {stat_q}) WITH HISTOGRAM;"
 
 # CREATE STATISTICS: identifiers are bracket-quoted; FULLSCAN/SAMPLE are keywords.
 _CREATE_STAT_FULLSCAN_SQL = "CREATE STATISTICS {stat_q} ON {table_q} ({col_q}) WITH FULLSCAN;"
@@ -384,15 +388,20 @@ async def show_statistics(
     validate_identifier(table)
     validate_identifier(stat_name)
 
-    # DBCC SHOW_STATISTICS takes a two-part table ref and a stat name.
-    # Use [schema].[table] notation for the table argument — it must be
-    # bracket-quoted as a whole token (not as a string literal parameter).
-    table_q = f"{quote_identifier(schema)}.{quote_identifier(table)}"
+    # DBCC SHOW_STATISTICS on Fabric DW requires the table as a string literal
+    # ('schema.table'), NOT as bracket-quoted identifier tokens ([schema].[table]).
+    # Using bracket-quoted identifiers in the first DBCC argument causes
+    # "Incorrect syntax near '.'" on real Fabric (the parser does not accept a
+    # two-part identifier in that position).  The stat name (second arg) is still
+    # bracket-quoted as a regular identifier token.
+    # Both schema and table have already been validated via validate_identifier
+    # (allowlist [A-Za-z_][A-Za-z0-9_]*), so they cannot contain single-quotes.
+    table_s = f"{schema}.{table}"
     stat_q = quote_identifier(stat_name)
 
-    header_sql = _DBCC_STAT_HEADER_SQL.format(table_q=table_q, stat_q=stat_q)
-    density_sql = _DBCC_DENSITY_SQL.format(table_q=table_q, stat_q=stat_q)
-    histogram_sql = _DBCC_HISTOGRAM_SQL.format(table_q=table_q, stat_q=stat_q)
+    header_sql = _DBCC_STAT_HEADER_SQL.format(table_s=table_s, stat_q=stat_q)
+    density_sql = _DBCC_DENSITY_SQL.format(table_s=table_s, stat_q=stat_q)
+    histogram_sql = _DBCC_HISTOGRAM_SQL.format(table_s=table_s, stat_q=stat_q)
 
     def _run() -> StatisticDetails:
         if histogram_only:
