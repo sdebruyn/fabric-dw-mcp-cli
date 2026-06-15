@@ -719,3 +719,128 @@ class TestSqlEndpointGuard:
                 kind=WarehouseKind.WAREHOUSE,
             )
         assert isinstance(result, Statistic)
+
+
+# ===========================================================================
+# Row-parser zero-value correctness
+# ===========================================================================
+
+
+class TestRowParserZeroValues:
+    """Verify that zero int/float DB values are not corrupted to None by the parsers."""
+
+    async def test_header_zero_rows_preserved(self) -> None:
+        """Rows=0 must survive as 0, not fall through to None."""
+        target = _make_target()
+        zero_row: tuple[object, ...] = (
+            "stat_empty",  # Name
+            _NOW,  # Updated
+            0,  # Rows        ← zero int
+            0,  # Rows Sampled← zero int
+            0,  # Steps       ← zero int
+            0.0,  # Density    ← zero float
+            0.0,  # Average Key Length ← zero float
+            "NO",  # String Index
+            None,  # Filter Expression
+            0,  # Unfiltered Rows ← zero int
+        )
+        header_conn = _make_conn([zero_row], _HEADER_COLS)
+        density_conn = _make_conn([], _DENSITY_COLS)
+        hist_conn = _make_conn([], _HISTOGRAM_COLS)
+        with patch(
+            "fabric_dw.sql.open_connection",
+            side_effect=[header_conn, density_conn, hist_conn],
+        ):
+            result = await statistics.show_statistics(target, "dbo.sales", "stat_empty")
+        hdr = result.stat_header
+        assert hdr is not None
+        assert hdr.rows == 0, f"Expected 0, got {hdr.rows!r}"
+        assert hdr.rows_sampled == 0, f"Expected 0, got {hdr.rows_sampled!r}"
+        assert hdr.steps == 0, f"Expected 0, got {hdr.steps!r}"
+        assert hdr.density == 0.0, f"Expected 0.0, got {hdr.density!r}"
+        assert hdr.average_key_length == 0.0, f"Expected 0.0, got {hdr.average_key_length!r}"
+        assert hdr.unfiltered_rows == 0, f"Expected 0, got {hdr.unfiltered_rows!r}"
+
+    async def test_density_zero_values_preserved(self) -> None:
+        """all_density=0.0 and average_length=0.0 must survive as 0.0, not None."""
+        target = _make_target()
+        zero_density_row: tuple[object, ...] = (0.0, 0.0, "id")  # all_density, avg_length, cols
+        header_conn = _make_conn([_HEADER_ROW], _HEADER_COLS)
+        density_conn = _make_conn([zero_density_row], _DENSITY_COLS)
+        hist_conn = _make_conn([], _HISTOGRAM_COLS)
+        with patch(
+            "fabric_dw.sql.open_connection",
+            side_effect=[header_conn, density_conn, hist_conn],
+        ):
+            result = await statistics.show_statistics(target, "dbo.sales", "stat_sales_id")
+        assert len(result.density_vector) == 1
+        dv = result.density_vector[0]
+        assert dv.all_density == 0.0, f"Expected 0.0, got {dv.all_density!r}"
+        assert dv.average_length == 0.0, f"Expected 0.0, got {dv.average_length!r}"
+
+    async def test_histogram_zero_float_values_preserved(self) -> None:
+        """RANGE_ROWS=0.0 and EQ_ROWS=0.0 must survive as 0.0, not None."""
+        target = _make_target()
+        zero_hist_row: tuple[object, ...] = (
+            "100",  # RANGE_HI_KEY
+            0.0,  # RANGE_ROWS       ← zero float
+            0.0,  # EQ_ROWS          ← zero float
+            0.0,  # DISTINCT_RANGE_ROWS ← zero float
+            0.0,  # AVG_RANGE_ROWS   ← zero float
+        )
+        hist_conn = _make_conn([zero_hist_row], _HISTOGRAM_COLS)
+        with patch("fabric_dw.sql.open_connection", return_value=hist_conn):
+            result = await statistics.show_statistics(
+                target, "dbo.sales", "stat_sales_id", histogram_only=True
+            )
+        assert len(result.histogram) == 1
+        step = result.histogram[0]
+        assert step.range_rows == 0.0, f"Expected 0.0, got {step.range_rows!r}"
+        assert step.eq_rows == 0.0, f"Expected 0.0, got {step.eq_rows!r}"
+        assert step.distinct_range_rows == 0.0, f"Expected 0.0, got {step.distinct_range_rows!r}"
+        assert step.avg_range_rows == 0.0, f"Expected 0.0, got {step.avg_range_rows!r}"
+
+
+# ===========================================================================
+# Injection safety — embedded ] in a single identifier segment
+# ===========================================================================
+
+
+class TestBracketInjection:
+    """Test that a bare ] inside a single identifier segment is rejected by validate_identifier."""
+
+    async def test_bracket_in_stat_name_rejected(self) -> None:
+        """show_statistics: stat_name containing ] must raise ValueError."""
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await statistics.show_statistics(target, "dbo.sales", "my]stat")
+
+    async def test_bracket_in_schema_rejected(self) -> None:
+        """show_statistics: schema part containing ] must raise ValueError."""
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await statistics.show_statistics(target, "my]schema.sales", "stat")
+
+    async def test_bracket_in_table_rejected(self) -> None:
+        """show_statistics: table part containing ] must raise ValueError."""
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await statistics.show_statistics(target, "dbo.my]table", "stat")
+
+    async def test_bracket_in_create_stat_name_rejected(self) -> None:
+        """create_statistics: stat name containing ] must raise ValueError."""
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await statistics.create_statistics(target, "dbo.sales", "id", name="my]stat")
+
+    async def test_bracket_in_update_stat_name_rejected(self) -> None:
+        """update_statistics: stat name containing ] must raise ValueError."""
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await statistics.update_statistics(target, "dbo.sales", "my]stat")
+
+    async def test_bracket_in_drop_stat_name_rejected(self) -> None:
+        """drop_statistics: stat name containing ] must raise ValueError."""
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await statistics.drop_statistics(target, "dbo.sales", "my]stat")

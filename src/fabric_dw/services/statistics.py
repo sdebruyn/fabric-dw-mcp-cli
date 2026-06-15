@@ -117,7 +117,6 @@ _CREATE_STAT_FULLSCAN_SQL = "CREATE STATISTICS {stat_q} ON {table_q} ({col_q}) W
 _CREATE_STAT_SAMPLE_SQL = (
     "CREATE STATISTICS {stat_q} ON {table_q} ({col_q}) WITH SAMPLE {pct} PERCENT;"
 )
-_CREATE_STAT_DEFAULT_SQL = "CREATE STATISTICS {stat_q} ON {table_q} ({col_q});"
 
 # UPDATE STATISTICS: identifiers are bracket-quoted.
 _UPDATE_STAT_FULLSCAN_SQL = "UPDATE STATISTICS {table_q} ({stat_q}) WITH FULLSCAN;"
@@ -161,6 +160,30 @@ def _normalize_ts(ts: object) -> datetime | None:
     return None
 
 
+def _coalesce(data: dict[str, object], *keys: str) -> object:
+    """Return the value of the first key in *data* whose value is not ``None``.
+
+    This is used to handle DBCC output where column names may arrive in
+    mixed-case (e.g. ``"Rows"``) or lower-case (e.g. ``"rows"`` in test
+    fixtures) form.  Unlike ``data.get(k1) or data.get(k2)``, this helper
+    correctly returns ``0`` / ``0.0`` instead of falling through to the next
+    key when the DB value is zero-valued (falsy but present).
+
+    Args:
+        data: The row dict to look up keys in.
+        *keys: Keys to try in order; the value of the first non-``None`` hit is
+            returned.
+
+    Returns:
+        The first non-``None`` value found, or ``None`` if all keys are absent
+        or map to ``None``.
+    """
+    for k in keys:
+        if (v := data.get(k)) is not None:
+            return v
+    return None
+
+
 def _row_to_statistic(cols: list[str], row: tuple[object, ...]) -> Statistic:
     """Build a :class:`Statistic` from a column-name list and a result row."""
     data = dict(zip(cols, row, strict=True))
@@ -180,67 +203,62 @@ def _row_to_statistic(cols: list[str], row: tuple[object, ...]) -> Statistic:
 
 
 def _row_to_header(cols: list[str], row: tuple[object, ...]) -> StatisticHeaderRow:
-    """Build a :class:`StatisticHeaderRow` from STAT_HEADER output."""
-    data = dict(zip(cols, row, strict=True))
-    updated_raw = data.get("Updated") or data.get("updated")
+    """Build a :class:`StatisticHeaderRow` from STAT_HEADER output.
+
+    Column names are normalised to lower-case with spaces collapsed to
+    underscores so that mixed-case DBCC output and lower-case test fixtures
+    are handled by a single lookup key.
+    """
+    # Normalise: lower-case, spaces → underscores.  E.g. "Rows Sampled" → "rows_sampled".
+    data: dict[str, object] = {
+        k.lower().replace(" ", "_"): v for k, v in zip(cols, row, strict=True)
+    }
     return StatisticHeaderRow(
-        name=str(data.get("Name") or data.get("name") or ""),
-        updated=_normalize_ts(updated_raw),
-        rows=cast("int | None", data.get("Rows") or data.get("rows")),
-        rows_sampled=cast("int | None", data.get("Rows Sampled") or data.get("rows_sampled")),
-        steps=cast("int | None", data.get("Steps") or data.get("steps")),
-        density=cast("float | None", data.get("Density") or data.get("density")),
-        average_key_length=cast(
-            "float | None",
-            data.get("Average Key Length") or data.get("average_key_length"),
-        ),
-        string_index=cast(
-            "str | None",
-            data.get("String Index") or data.get("string_index"),
-        ),
-        filter_expression=cast(
-            "str | None",
-            data.get("Filter Expression") or data.get("filter_expression"),
-        ),
-        unfiltered_rows=cast(
-            "int | None",
-            data.get("Unfiltered Rows") or data.get("unfiltered_rows"),
-        ),
+        name=str(data.get("name") or ""),
+        updated=_normalize_ts(data.get("updated")),
+        rows=cast("int | None", _coalesce(data, "rows")),
+        rows_sampled=cast("int | None", _coalesce(data, "rows_sampled")),
+        steps=cast("int | None", _coalesce(data, "steps")),
+        density=cast("float | None", _coalesce(data, "density")),
+        average_key_length=cast("float | None", _coalesce(data, "average_key_length")),
+        string_index=cast("str | None", _coalesce(data, "string_index")),
+        filter_expression=cast("str | None", _coalesce(data, "filter_expression")),
+        unfiltered_rows=cast("int | None", _coalesce(data, "unfiltered_rows")),
     )
 
 
 def _row_to_density(cols: list[str], row: tuple[object, ...]) -> StatisticDensityRow:
-    """Build a :class:`StatisticDensityRow` from DENSITY_VECTOR output."""
-    data = dict(zip(cols, row, strict=True))
+    """Build a :class:`StatisticDensityRow` from DENSITY_VECTOR output.
+
+    Column names are normalised to lower-case with spaces collapsed to
+    underscores so that mixed-case DBCC output and lower-case test fixtures
+    are handled by a single lookup key.
+    """
+    data: dict[str, object] = {
+        k.lower().replace(" ", "_"): v for k, v in zip(cols, row, strict=True)
+    }
     return StatisticDensityRow(
-        all_density=cast(
-            "float | None",
-            data.get("All density") or data.get("all_density"),
-        ),
-        average_length=cast(
-            "float | None",
-            data.get("Average Length") or data.get("average_length"),
-        ),
-        columns=cast("str | None", data.get("Columns") or data.get("columns")),
+        all_density=cast("float | None", _coalesce(data, "all_density")),
+        average_length=cast("float | None", _coalesce(data, "average_length")),
+        columns=cast("str | None", _coalesce(data, "columns")),
     )
 
 
 def _row_to_histogram(cols: list[str], row: tuple[object, ...]) -> StatisticHistogramStep:
-    """Build a :class:`StatisticHistogramStep` from HISTOGRAM output."""
-    data = dict(zip(cols, row, strict=True))
-    range_hi = data.get("RANGE_HI_KEY") or data.get("range_hi_key")
+    """Build a :class:`StatisticHistogramStep` from HISTOGRAM output.
+
+    Column names are normalised to lower-case so that mixed-case DBCC output
+    (``RANGE_HI_KEY``) and lower-case test fixtures (``range_hi_key``) are
+    handled by a single lookup key.
+    """
+    data: dict[str, object] = {k.lower(): v for k, v in zip(cols, row, strict=True)}
+    range_hi = _coalesce(data, "range_hi_key")
     return StatisticHistogramStep(
         range_hi_key=str(range_hi) if range_hi is not None else None,
-        range_rows=cast("float | None", data.get("RANGE_ROWS") or data.get("range_rows")),
-        eq_rows=cast("float | None", data.get("EQ_ROWS") or data.get("eq_rows")),
-        distinct_range_rows=cast(
-            "float | None",
-            data.get("DISTINCT_RANGE_ROWS") or data.get("distinct_range_rows"),
-        ),
-        avg_range_rows=cast(
-            "float | None",
-            data.get("AVG_RANGE_ROWS") or data.get("avg_range_rows"),
-        ),
+        range_rows=cast("float | None", _coalesce(data, "range_rows")),
+        eq_rows=cast("float | None", _coalesce(data, "eq_rows")),
+        distinct_range_rows=cast("float | None", _coalesce(data, "distinct_range_rows")),
+        avg_range_rows=cast("float | None", _coalesce(data, "avg_range_rows")),
     )
 
 
@@ -424,9 +442,9 @@ async def create_statistics(
             Both parts must pass :func:`~fabric_dw.identifiers.validate_identifier`.
         column: Column name to build the statistic on.
             Must pass :func:`~fabric_dw.identifiers.validate_identifier`.
-        name: Optional statistic name.  When omitted the SQL engine assigns
-            a default name.  Must pass
-            :func:`~fabric_dw.identifiers.validate_identifier` when provided.
+        name: Statistic name.  Fabric requires an explicit statistic name;
+            omitting this argument raises :class:`ValueError`.  Must pass
+            :func:`~fabric_dw.identifiers.validate_identifier`.
         fullscan: When ``True`` (default), uses ``WITH FULLSCAN``.
             Ignored when *sample_percent* is provided.
         sample_percent: Sample percentage (1-100).  When provided, overrides
@@ -449,12 +467,15 @@ async def create_statistics(
     """
     _assert_not_sql_endpoint(kind)
 
+    if name is None:
+        msg = "stat name is required: Fabric requires an explicit statistic name"
+        raise ValueError(msg)
+
     schema, table = parse_qualified_name(qualified_table)
     validate_identifier(schema)
     validate_identifier(table)
     validate_identifier(column)
-    if name is not None:
-        validate_identifier(name)
+    validate_identifier(name)
 
     if sample_percent is not None:
         pct = int(sample_percent)
@@ -464,29 +485,22 @@ async def create_statistics(
 
     table_q = f"{quote_identifier(schema)}.{quote_identifier(table)}"
     col_q = quote_identifier(column)
+    stat_q = quote_identifier(name)
 
-    stat_q = quote_identifier(name) if name is not None else None
-
-    if stat_q is not None:
-        if sample_percent is not None:
-            ddl = _CREATE_STAT_SAMPLE_SQL.format(
-                stat_q=stat_q, table_q=table_q, col_q=col_q, pct=int(sample_percent)
-            )
-        elif fullscan:
-            ddl = _CREATE_STAT_FULLSCAN_SQL.format(stat_q=stat_q, table_q=table_q, col_q=col_q)
-        else:
-            ddl = _CREATE_STAT_DEFAULT_SQL.format(stat_q=stat_q, table_q=table_q, col_q=col_q)
+    if sample_percent is not None:
+        ddl = _CREATE_STAT_SAMPLE_SQL.format(
+            stat_q=stat_q, table_q=table_q, col_q=col_q, pct=int(sample_percent)
+        )
+    elif fullscan:
+        ddl = _CREATE_STAT_FULLSCAN_SQL.format(stat_q=stat_q, table_q=table_q, col_q=col_q)
     else:
-        # Name is omitted — use a generated name placeholder; engine picks one.
-        # We cannot omit the name in CREATE STATISTICS — always require a name.
-        msg = "stat name is required: Fabric requires an explicit statistic name"
-        raise ValueError(msg)
+        # No scan option specified — let the engine use its default sampling.
+        ddl = f"CREATE STATISTICS {stat_q} ON {table_q} ({col_q});"
 
     def _run_ddl() -> None:
         run_query(target, ddl, mode=mode, commit=True, fetch="none")
 
     await asyncio.to_thread(_run_ddl)
-    assert name is not None  # raised ValueError above when name is None
     return await _fetch_statistic(target, schema, table, name, mode=mode)
 
 
