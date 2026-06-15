@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import time
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 from fabric_dw.exceptions import AuthError, ItemKindError, NotFoundError, PermissionDeniedError
-from fabric_dw.models import Table, WarehouseKind
+from fabric_dw.models import ColumnSpec, Table, WarehouseKind
 from fabric_dw.services import tables
 from fabric_dw.services.tables import validate_identifier
 from tests.unit.services._helpers import _make_conn, _make_conn_for_ddl, _make_target
@@ -1019,3 +1022,237 @@ class TestRenameTable:
                 target, "dbo.sales", "sales_v2", kind=WarehouseKind.WAREHOUSE
             )
         assert isinstance(result, Table)
+
+
+# ===========================================================================
+# create_empty_table
+# ===========================================================================
+
+
+class TestCreateEmptyTable:
+    _COLS = _LIST_COLS  # schema_name, name, created, modified
+
+    async def test_basic_ddl_executed_and_table_returned(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        cols = [
+            ColumnSpec(name="id", sql_type="INT", nullable=False),
+            ColumnSpec(name="name", sql_type="VARCHAR(255)", nullable=True),
+        ]
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            result = await tables.create_empty_table(target, "dbo", "sales", cols)
+        assert isinstance(result, Table)
+        assert result.name == "sales"
+
+    async def test_ddl_contains_create_table(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        cols = [ColumnSpec(name="id", sql_type="INT", nullable=False)]
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await tables.create_empty_table(target, "dbo", "sales", cols)
+        ddl_cursor = ddl_conn.cursor.return_value
+        sql: str = ddl_cursor.execute.call_args[0][0]
+        assert "CREATE TABLE" in sql
+        assert "[dbo]" in sql
+        assert "[sales]" in sql
+
+    async def test_ddl_uses_not_null(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        cols = [ColumnSpec(name="id", sql_type="INT", nullable=False)]
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await tables.create_empty_table(target, "dbo", "sales", cols)
+        ddl_cursor = ddl_conn.cursor.return_value
+        sql: str = ddl_cursor.execute.call_args[0][0]
+        assert "NOT NULL" in sql
+
+    async def test_ddl_uses_null(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        cols = [ColumnSpec(name="desc", sql_type="VARCHAR(100)", nullable=True)]
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await tables.create_empty_table(target, "dbo", "sales", cols)
+        ddl_cursor = ddl_conn.cursor.return_value
+        sql: str = ddl_cursor.execute.call_args[0][0]
+        assert " NULL" in sql
+
+    async def test_rejects_empty_columns(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="empty"):
+            await tables.create_empty_table(target, "dbo", "sales", [])
+
+    async def test_rejects_sql_endpoint(self) -> None:
+        target = _make_target()
+        cols = [ColumnSpec(name="id", sql_type="INT", nullable=True)]
+        with pytest.raises(ItemKindError):
+            await tables.create_empty_table(
+                target, "dbo", "sales", cols, kind=WarehouseKind.SQL_ENDPOINT
+            )
+
+    async def test_rejects_invalid_schema(self) -> None:
+        target = _make_target()
+        cols = [ColumnSpec(name="id", sql_type="INT", nullable=True)]
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await tables.create_empty_table(target, "bad;schema", "sales", cols)
+
+    async def test_rejects_invalid_table_name(self) -> None:
+        target = _make_target()
+        cols = [ColumnSpec(name="id", sql_type="INT", nullable=True)]
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await tables.create_empty_table(target, "dbo", "bad--table", cols)
+
+    async def test_rejects_invalid_column_name(self) -> None:
+        target = _make_target()
+        cols = [ColumnSpec(name="bad]col", sql_type="INT", nullable=True)]
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await tables.create_empty_table(target, "dbo", "sales", cols)
+
+    async def test_rejects_unsupported_sql_type(self) -> None:
+        target = _make_target()
+        cols = [ColumnSpec(name="col", sql_type="TEXT", nullable=True)]
+        with pytest.raises(ValueError, match="Unsupported"):
+            await tables.create_empty_table(target, "dbo", "sales", cols)
+
+    async def test_rejects_injection_in_type(self) -> None:
+        target = _make_target()
+        cols = [ColumnSpec(name="col", sql_type="INT; DROP TABLE foo--", nullable=True)]
+        with pytest.raises(ValueError, match="Unsupported"):
+            await tables.create_empty_table(target, "dbo", "sales", cols)
+
+    async def test_rejects_injection_in_col_name(self) -> None:
+        target = _make_target()
+        cols = [ColumnSpec(name="col]; DROP TABLE foo--", sql_type="INT", nullable=True)]
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await tables.create_empty_table(target, "dbo", "sales", cols)
+
+    async def test_warehouse_kind_allowed(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        cols = [ColumnSpec(name="id", sql_type="INT", nullable=True)]
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            result = await tables.create_empty_table(
+                target, "dbo", "sales", cols, kind=WarehouseKind.WAREHOUSE
+            )
+        assert isinstance(result, Table)
+
+
+# ===========================================================================
+# create_table_from_parquet
+# ===========================================================================
+
+
+class TestCreateTableFromParquet:
+    async def test_creates_table_from_parquet_schema(self, tmp_path: Path) -> None:
+        parquet_file = tmp_path / "data.parquet"
+        schema = pa.schema(
+            [
+                pa.field("id", pa.int32(), nullable=False),
+                pa.field("name", pa.string(), nullable=True),
+            ]
+        )
+        pq.write_table(
+            pa.table(
+                {"id": pa.array([], type=pa.int32()), "name": pa.array([], type=pa.string())},
+                schema=schema,
+            ),
+            str(parquet_file),
+        )
+
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            result = await tables.create_table_from_parquet(target, "dbo", "sales", parquet_file)
+        assert isinstance(result, Table)
+
+    async def test_parquet_ddl_uses_bracket_quoted_names(self, tmp_path: Path) -> None:
+        parquet_file = tmp_path / "data.parquet"
+        schema = pa.schema([pa.field("id", pa.int32())])
+        pq.write_table(
+            pa.table({"id": pa.array([], type=pa.int32())}, schema=schema),
+            str(parquet_file),
+        )
+
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await tables.create_table_from_parquet(target, "dbo", "sales", parquet_file)
+        ddl_cursor = ddl_conn.cursor.return_value
+        sql: str = ddl_cursor.execute.call_args[0][0]
+        assert "[dbo]" in sql
+        assert "[sales]" in sql
+        assert "[id]" in sql
+
+    async def test_parquet_rejects_sql_endpoint(self, tmp_path: Path) -> None:
+        parquet_file = tmp_path / "data.parquet"
+        pq.write_table(pa.table({"id": pa.array([], type=pa.int32())}), str(parquet_file))
+        target = _make_target()
+        with pytest.raises(ItemKindError):
+            await tables.create_table_from_parquet(
+                target, "dbo", "sales", parquet_file, kind=WarehouseKind.SQL_ENDPOINT
+            )
+
+    async def test_parquet_raises_file_not_found(self, tmp_path: Path) -> None:
+        target = _make_target()
+        with pytest.raises(FileNotFoundError):
+            await tables.create_table_from_parquet(
+                target, "dbo", "sales", tmp_path / "nonexistent.parquet"
+            )
+
+
+# ===========================================================================
+# create_table_from_csv
+# ===========================================================================
+
+
+class TestCreateTableFromCsv:
+    async def test_creates_table_from_csv_header(self, tmp_path: Path) -> None:
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("id,name\n1,Alice\n2,Bob\n")
+
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            result = await tables.create_table_from_csv(target, "dbo", "sales", csv_file)
+        assert isinstance(result, Table)
+
+    async def test_all_varchar_uses_varchar(self, tmp_path: Path) -> None:
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("count,label\n1,foo\n")
+
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await tables.create_table_from_csv(target, "dbo", "sales", csv_file, all_varchar=True)
+        ddl_cursor = ddl_conn.cursor.return_value
+        sql: str = ddl_cursor.execute.call_args[0][0]
+        assert "VARCHAR" in sql
+
+    async def test_csv_rejects_sql_endpoint(self, tmp_path: Path) -> None:
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("id\n1\n")
+        target = _make_target()
+        with pytest.raises(ItemKindError):
+            await tables.create_table_from_csv(
+                target, "dbo", "sales", csv_file, kind=WarehouseKind.SQL_ENDPOINT
+            )
+
+    async def test_csv_raises_file_not_found(self, tmp_path: Path) -> None:
+        target = _make_target()
+        with pytest.raises(FileNotFoundError):
+            await tables.create_table_from_csv(target, "dbo", "sales", tmp_path / "nonexistent.csv")
+
+    async def test_csv_empty_file_raises(self, tmp_path: Path) -> None:
+        csv_file = tmp_path / "empty.csv"
+        csv_file.write_text("")
+        target = _make_target()
+        with pytest.raises(ValueError, match="empty"):
+            await tables.create_table_from_csv(target, "dbo", "sales", csv_file, all_varchar=True)

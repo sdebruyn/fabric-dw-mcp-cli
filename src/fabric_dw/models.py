@@ -702,6 +702,27 @@ class ItemAccess(_FabricBase):
         return cls.model_validate(raw)
 
 
+class ColumnSpec(_FabricBase):
+    """Specification for a single column in a DDL CREATE TABLE statement.
+
+    Used by :func:`~fabric_dw.services.tables.create_empty_table` and the
+    ``create_empty_table`` MCP tool to describe each column independently of
+    any source file (Parquet or CSV inference is done before constructing these).
+
+    Attributes:
+        name: The column identifier.  Must pass
+            :func:`~fabric_dw.identifiers.validate_identifier`.
+        sql_type: A Fabric-DW-supported T-SQL type string, e.g. ``"INT"``,
+            ``"VARCHAR(255)"``, ``"DECIMAL(18,2)"``.
+        nullable: When ``True`` (default) the column gets a ``NULL`` constraint;
+            when ``False`` it gets ``NOT NULL``.
+    """
+
+    name: str
+    sql_type: str
+    nullable: bool = True
+
+
 class SqlResult(_FabricBase):
     """Result set returned by :func:`~fabric_dw.services.sql_exec.execute`.
 

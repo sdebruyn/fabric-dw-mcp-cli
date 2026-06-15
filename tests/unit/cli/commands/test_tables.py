@@ -10,10 +10,15 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
+import click
+import pyarrow as pa
+import pyarrow.parquet as pq
+import pytest
 from click.testing import CliRunner
 
 from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._main import cli
+from fabric_dw.cli.commands.tables import _parse_column_spec, _parse_schema_file
 from fabric_dw.exceptions import ItemKindError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import Table, WarehouseKind
 from fabric_dw.sql import SqlTarget
@@ -1307,4 +1312,292 @@ class TestTablesRename:
                 cli,
                 ["tables", "rename", WS_GUID, WH_GUID, "dbo.sales", "--new-name", "sales_v2"],
             )
+        assert result.exit_code != 0
+
+
+# ===========================================================================
+# tables create — empty DDL path
+# ===========================================================================
+
+
+class TestTablesCreateEmpty:
+    """Tests for the empty-DDL source flags on tables create."""
+
+    def test_column_flag_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_create_empty = AsyncMock(return_value=_make_table())
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.create_empty_table",
+                new=mock_create_empty,
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "--json",
+                    "tables",
+                    "create",
+                    WS_GUID,
+                    WH_GUID,
+                    "--name",
+                    "dbo.sales",
+                    "--column",
+                    "id:INT:notnull",
+                    "--column",
+                    "name:VARCHAR(100)",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        mock_create_empty.assert_awaited_once()
+        parsed = json.loads(result.output)
+        assert parsed["name"] == "sales"
+
+    def test_from_schema_file_exits_zero(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        _ = cache_env
+        schema_file = tmp_path / "schema.json"
+        schema_file.write_text(
+            '[{"name": "id", "type": "INT", "nullable": false}, '
+            '{"name": "label", "type": "VARCHAR(100)"}]'
+        )
+        mock_http = AsyncMock()
+        mock_create_empty = AsyncMock(return_value=_make_table())
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.create_empty_table",
+                new=mock_create_empty,
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "--json",
+                    "tables",
+                    "create",
+                    WS_GUID,
+                    WH_GUID,
+                    "--name",
+                    "dbo.sales",
+                    "--from-schema",
+                    str(schema_file),
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        mock_create_empty.assert_awaited_once()
+
+    def test_from_parquet_exits_zero(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        _ = cache_env
+        parquet_file = tmp_path / "data.parquet"
+        schema = pa.schema([pa.field("id", pa.int32()), pa.field("name", pa.string())])
+        pq.write_table(
+            pa.table(
+                {"id": pa.array([], type=pa.int32()), "name": pa.array([], type=pa.string())},
+                schema=schema,
+            ),
+            str(parquet_file),
+        )
+        mock_http = AsyncMock()
+        mock_create_empty = AsyncMock(return_value=_make_table())
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.create_table_from_parquet",
+                new=mock_create_empty,
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "--json",
+                    "tables",
+                    "create",
+                    WS_GUID,
+                    WH_GUID,
+                    "--name",
+                    "dbo.sales",
+                    "--from-parquet",
+                    str(parquet_file),
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        mock_create_empty.assert_awaited_once()
+
+    def test_from_csv_exits_zero(self, runner: CliRunner, cache_env: Path, tmp_path: Path) -> None:
+        _ = cache_env
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("id,name\n1,Alice\n2,Bob\n")
+        mock_http = AsyncMock()
+        mock_create_empty = AsyncMock(return_value=_make_table())
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.create_table_from_csv",
+                new=mock_create_empty,
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "--json",
+                    "tables",
+                    "create",
+                    WS_GUID,
+                    WH_GUID,
+                    "--name",
+                    "dbo.sales",
+                    "--from-csv",
+                    str(csv_file),
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        mock_create_empty.assert_awaited_once()
+
+    def test_no_source_fails(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        result = runner.invoke(
+            cli,
+            ["tables", "create", WS_GUID, WH_GUID, "--name", "dbo.sales"],
+        )
+        assert result.exit_code != 0
+
+    def test_ctas_and_parquet_mutually_exclusive(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        _ = cache_env
+        parquet_file = tmp_path / "data.parquet"
+        pq.write_table(pa.table({"id": pa.array([], type=pa.int32())}), str(parquet_file))
+        result = runner.invoke(
+            cli,
+            [
+                "tables",
+                "create",
+                WS_GUID,
+                WH_GUID,
+                "--name",
+                "dbo.sales",
+                "--select",
+                "SELECT 1",
+                "--from-parquet",
+                str(parquet_file),
+            ],
+        )
+        assert result.exit_code != 0
+
+    def test_parquet_and_csv_mutually_exclusive(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        _ = cache_env
+        parquet_file = tmp_path / "data.parquet"
+        csv_file = tmp_path / "data.csv"
+        pq.write_table(pa.table({"id": pa.array([], type=pa.int32())}), str(parquet_file))
+        csv_file.write_text("id\n1\n")
+        result = runner.invoke(
+            cli,
+            [
+                "tables",
+                "create",
+                WS_GUID,
+                WH_GUID,
+                "--name",
+                "dbo.sales",
+                "--from-parquet",
+                str(parquet_file),
+                "--from-csv",
+                str(csv_file),
+            ],
+        )
+        assert result.exit_code != 0
+
+    def test_parse_column_spec_null(self) -> None:
+        spec = _parse_column_spec("my_col:VARCHAR(100):null")
+        assert spec.name == "my_col"
+        assert spec.sql_type == "VARCHAR(100)"
+        assert spec.nullable is True
+
+    def test_parse_column_spec_notnull(self) -> None:
+        spec = _parse_column_spec("id:INT:notnull")
+        assert spec.name == "id"
+        assert spec.sql_type == "INT"
+        assert spec.nullable is False
+
+    def test_parse_column_spec_default_nullable(self) -> None:
+        spec = _parse_column_spec("label:BIGINT")
+        assert spec.nullable is True
+
+    def test_parse_column_spec_invalid_format(self) -> None:
+        with pytest.raises(click.UsageError):
+            _parse_column_spec("notype")
+
+    def test_parse_schema_file_valid(self, tmp_path: Path) -> None:
+        f = tmp_path / "s.json"
+        f.write_text(
+            '[{"name": "id", "type": "INT"},'
+            ' {"name": "lbl", "type": "VARCHAR(100)", "nullable": false}]'
+        )
+        specs = _parse_schema_file(str(f))
+        assert len(specs) == 2
+        assert specs[0].name == "id"
+        assert specs[1].nullable is False
+
+    def test_parse_schema_file_missing(self) -> None:
+        with pytest.raises(click.UsageError, match="not found"):
+            _parse_schema_file("/nonexistent/path.json")
+
+    def test_parse_schema_file_invalid_json(self, tmp_path: Path) -> None:
+        f = tmp_path / "bad.json"
+        f.write_text("not json")
+        with pytest.raises(click.UsageError, match="Invalid JSON"):
+            _parse_schema_file(str(f))
+
+    def test_all_varchar_requires_from_csv(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        result = runner.invoke(
+            cli,
+            [
+                "tables",
+                "create",
+                WS_GUID,
+                WH_GUID,
+                "--name",
+                "dbo.sales",
+                "--column",
+                "id:INT",
+                "--all-varchar",
+            ],
+        )
         assert result.exit_code != 0

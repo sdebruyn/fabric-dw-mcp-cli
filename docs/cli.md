@@ -1435,7 +1435,10 @@ fabric-dw tables read MyWorkspace SalesWH dbo.orders --count 5
 
 **Targets:** Data Warehouse only
 
-Create a new table via CTAS (`CREATE TABLE … AS SELECT`). The body must start with `SELECT` (leading block and line comments are allowed).
+Create a new table on a Fabric Data Warehouse. Two modes are available:
+
+- **CTAS** (`CREATE TABLE … AS SELECT`) — supply `--select` or `--from-file`. The body must start with `SELECT` (leading block/line comments are allowed).
+- **Empty DDL** (`CREATE TABLE … (col TYPE, …)`) — supply one or more of `--from-parquet`, `--from-csv`, `--from-schema`, or `--column`. No data is ever read or inserted; this scaffolds the table structure only.
 
 **Synopsis**
 
@@ -1443,20 +1446,81 @@ Create a new table via CTAS (`CREATE TABLE … AS SELECT`). The body must start 
 fabric-dw tables create [OPTIONS] [WORKSPACE] [WAREHOUSE]
 ```
 
+#### CTAS options
+
 | Option | Description |
 | --- | --- |
 | `--name SCHEMA.TABLE` | **Required.** Qualified table name. |
-| `--select TEXT` | Inline SELECT statement. |
+| `--select TEXT` | Inline SELECT statement for CTAS. |
 | `--from-file PATH` | Path to a `.sql` file containing the SELECT body (UTF-8/UTF-8-sig). |
 
-Exactly one of `--select` or `--from-file` must be provided.
+Exactly one of `--select` or `--from-file` must be provided for the CTAS path. Cannot be combined with empty-DDL options.
 
-**Example**
+#### Empty-DDL options
+
+| Option | Description |
+| --- | --- |
+| `--name SCHEMA.TABLE` | **Required.** Qualified table name. |
+| `--from-parquet PATH` | Derive schema from a Parquet file (reads footer only — no data loaded). |
+| `--from-csv PATH` | Derive schema from a CSV header + bounded sample (no data loaded). |
+| `--from-schema PATH` | JSON file with column specs: `[{"name": "…", "type": "…", "nullable": true}]`. |
+| `--column NAME:TYPE[:null\|notnull]` | Inline column definition (repeatable). Can be combined with `--from-schema`. |
+| `--all-varchar` | (CSV) Force all columns to `VARCHAR`; skip type inference. |
+| `--varchar-length N` | Default VARCHAR/VARBINARY length for string/binary columns (1–8000, default `8000`). |
+| `--delimiter CHAR` | (CSV) Field delimiter (default `,`). |
+| `--encoding ENC` | (CSV) File encoding (default `utf-8-sig`). |
+| `--sample-rows N` | (CSV) Rows to sample for type inference (1–100 000, default `1000`). |
+
+`--from-parquet`, `--from-csv`, and `--from-schema`/`--column` are mutually exclusive with each other and with the CTAS path. For the explicit-schema path at least one `--from-schema` or `--column` must be provided.
+
+**Arrow → T-SQL type mapping (Parquet / CSV inference)**
+
+| Arrow type | T-SQL type |
+| --- | --- |
+| `int8`, `int16`, `uint8` | `SMALLINT` |
+| `int32`, `uint16` | `INT` |
+| `int64`, `uint32`, `uint64` | `BIGINT` |
+| `float16`, `float32` | `REAL` |
+| `float64` | `FLOAT` |
+| `bool` | `BIT` |
+| `decimal128(p,s)` | `DECIMAL(p,s)` |
+| `date32`, `date64` | `DATE` |
+| `time*` | `TIME(7)` |
+| `timestamp*` | `DATETIME2(7)` |
+| `string`, `large_string` | `VARCHAR(n)` |
+| `binary`, `large_binary` | `VARBINARY(n)` |
+| nested / list / struct | **Error** — use `--all-varchar` or `--from-schema` to override |
+
+**Examples**
 
 ```shell
+# CTAS
 fabric-dw tables create MyWorkspace SalesWH \
   --name dbo.orders_2026 \
   --select "SELECT * FROM dbo.orders WHERE YEAR(sale_date) = 2026"
+
+# Empty table from Parquet schema
+fabric-dw tables create MyWorkspace SalesWH \
+  --name dbo.sales_empty \
+  --from-parquet ./exports/sales.parquet
+
+# Empty table from CSV header (type inference)
+fabric-dw tables create MyWorkspace SalesWH \
+  --name staging.raw_products \
+  --from-csv ./data/products.csv --varchar-length 500
+
+# Empty table with explicit inline columns
+fabric-dw tables create MyWorkspace SalesWH \
+  --name dbo.events \
+  --column "event_id:BIGINT:notnull" \
+  --column "event_type:VARCHAR(100)" \
+  --column "occurred_at:DATETIME2(7)"
+
+# Explicit schema from JSON file + extra columns
+fabric-dw tables create MyWorkspace SalesWH \
+  --name dbo.audit_log \
+  --from-schema ./schemas/audit_log.json \
+  --column "inserted_at:DATETIME2(7):notnull"
 ```
 
 ---

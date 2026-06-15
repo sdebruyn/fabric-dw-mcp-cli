@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 
 import click
@@ -20,6 +22,7 @@ from fabric_dw.cli.commands._utils import (
     resolve_workspace_arg,
 )
 from fabric_dw.exceptions import FabricError
+from fabric_dw.models import ColumnSpec
 from fabric_dw.services import tables as _tables_svc
 from fabric_dw.sql_io import OutputFormat, columns_rows_to_arrow, write_arrow
 
@@ -105,33 +108,288 @@ async def read_cmd(
         raise click.ClickException(str(exc)) from exc
 
 
+_COLUMN_SPEC_RE = re.compile(
+    r"^(?P<name>[A-Za-z_][A-Za-z0-9_]{0,127})"
+    r":(?P<type>[^:]+)"
+    r"(?::(?P<nullability>null|notnull))?$",
+    re.IGNORECASE,
+)
+
+
+def _parse_column_spec(value: str) -> ColumnSpec:
+    """Parse a ``name:TYPE[:null|notnull]`` column spec string.
+
+    Args:
+        value: The raw spec string, e.g. ``"id:INT:notnull"`` or ``"name:VARCHAR(100)"``.
+
+    Returns:
+        A :class:`~fabric_dw.models.ColumnSpec` instance.
+
+    Raises:
+        click.UsageError: If *value* does not match the expected format.
+    """
+    m = _COLUMN_SPEC_RE.match(value.strip())
+    if not m:
+        raise click.UsageError(
+            f"Invalid --column spec {value!r}. "
+            "Expected format: name:TYPE or name:TYPE:null or name:TYPE:notnull. "
+            "Example: id:INT:notnull or description:VARCHAR(255)"
+        )
+    name = m.group("name")
+    sql_type = m.group("type").strip()
+    nullability = (m.group("nullability") or "null").lower()
+    nullable = nullability != "notnull"
+    return ColumnSpec(name=name, sql_type=sql_type, nullable=nullable)
+
+
+def _parse_schema_file(path: str) -> list[ColumnSpec]:
+    """Load a JSON column spec file as a list of :class:`~fabric_dw.models.ColumnSpec`.
+
+    The file must contain a JSON array of objects, each with ``name`` and ``type``
+    keys, and an optional ``nullable`` boolean.
+
+    Args:
+        path: Path to the JSON file.
+
+    Returns:
+        A list of :class:`~fabric_dw.models.ColumnSpec` instances.
+
+    Raises:
+        click.UsageError: If the file does not exist, is not valid JSON,
+            or does not match the expected schema.
+    """
+    p = Path(path)
+    if not p.is_file():
+        raise click.UsageError(f"Schema file not found: {path}")
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise click.UsageError(f"Invalid JSON in --from-schema {path!r}: {exc}") from exc
+    if not isinstance(raw, list):
+        raise click.UsageError(
+            f"--from-schema {path!r} must be a JSON array of objects, got {type(raw).__name__}"
+        )
+    specs: list[ColumnSpec] = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise click.UsageError(
+                f"--from-schema {path!r}: element {i} must be an object, got {type(item).__name__}"
+            )
+        name = item.get("name")
+        sql_type = item.get("type")
+        if not name or not sql_type:
+            raise click.UsageError(
+                f"--from-schema {path!r}: element {i} must have 'name' and 'type' keys"
+            )
+        nullable = bool(item.get("nullable", True))
+        specs.append(ColumnSpec(name=str(name), sql_type=str(sql_type), nullable=nullable))
+    if not specs:
+        raise click.UsageError(f"--from-schema {path!r}: schema file contains no columns")
+    return specs
+
+
 @tables_group.command("create")
 @click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.option("--name", "qualified_name", required=True, help="Qualified name: schema.table.")
+# CTAS path
 @click.option("--select", "select_body", default=None, help="Inline SELECT statement for CTAS.")
 @click.option("--from-file", default=None, help="Path to a .sql file containing the SELECT body.")
+# Empty-table DDL path — sources (mutually exclusive with each other and with CTAS)
+@click.option(
+    "--from-parquet",
+    "parquet_path",
+    default=None,
+    metavar="PATH",
+    help="Create an empty table whose schema is derived from a Parquet file (no data is loaded).",
+)
+@click.option(
+    "--from-csv",
+    "csv_path",
+    default=None,
+    metavar="PATH",
+    help="Create an empty table whose schema is derived from a CSV file header.",
+)
+@click.option(
+    "--from-schema",
+    "schema_file",
+    default=None,
+    metavar="PATH",
+    help=(
+        "Create an empty table from a JSON spec file (array of {name, type, nullable?} objects)."
+    ),
+)
+@click.option(
+    "--column",
+    "column_specs",
+    multiple=True,
+    metavar="NAME:TYPE[:null|notnull]",
+    help=(
+        "Add a column in NAME:TYPE[:null|notnull] format (repeatable). "
+        "Can be combined with --from-schema."
+    ),
+)
+# CSV-specific options
+@click.option(
+    "--all-varchar",
+    is_flag=True,
+    default=False,
+    help="(CSV) Force all columns to VARCHAR; skip type inference.",
+)
+@click.option(
+    "--varchar-length",
+    default=8000,
+    show_default=True,
+    type=click.IntRange(1, 8000),
+    help="Default VARCHAR/VARBINARY length for string/binary columns.",
+)
+@click.option(
+    "--delimiter",
+    default=",",
+    show_default=True,
+    help="(CSV) Field delimiter.",
+)
+@click.option(
+    "--encoding",
+    default="utf-8-sig",
+    show_default=True,
+    help="(CSV) File encoding.",
+)
+@click.option(
+    "--sample-rows",
+    default=1000,
+    show_default=True,
+    type=click.IntRange(1, 100_000),
+    help="(CSV) Maximum number of rows to sample for type inference.",
+)
 @click.pass_obj
 @coro
-async def create_cmd(
+async def create_cmd(  # noqa: PLR0912
     ctx: CliContext,
     workspace: str | None,
     item: str | None,
     qualified_name: str,
     select_body: str | None,
     from_file: str | None,
+    parquet_path: str | None,
+    csv_path: str | None,
+    schema_file: str | None,
+    column_specs: tuple[str, ...],
+    all_varchar: bool,
+    varchar_length: int,
+    delimiter: str,
+    encoding: str,
+    sample_rows: int,
 ) -> None:
-    """Create a new table via CTAS (CREATE TABLE AS SELECT) on ITEM in WORKSPACE."""
+    """Create a new table on ITEM in WORKSPACE.
+
+    \b
+    Two modes are available:
+      CTAS (CREATE TABLE AS SELECT) — supply --select or --from-file.
+      Empty DDL — supply one of --from-parquet, --from-csv, --from-schema,
+                  or --column (repeatable).  These can be combined:
+                  --from-schema adds base columns and --column appends extras.
+
+    \b
+    CSV options (only with --from-csv):
+      --all-varchar     Force all columns to VARCHAR, skipping type inference.
+      --varchar-length  Default VARCHAR length (1-8000, default 8000).
+      --delimiter       Field delimiter (default ',').
+      --encoding        File encoding (default 'utf-8-sig').
+      --sample-rows     Rows to sample for inference (default 1000).
+    """
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, item)
     schema, table_name = parse_qualified_name(qualified_name, kind="table")
-    body = load_sql_body(select_body, from_file)
+
+    # Determine which mode the user wants and validate mutual exclusivity.
+    has_ctas = bool(select_body or from_file)
+    has_parquet = parquet_path is not None
+    has_csv = csv_path is not None
+    has_explicit = schema_file is not None or bool(column_specs)
+
+    # Count distinct source groups.
+    source_count = sum([has_ctas, has_parquet, has_csv, has_explicit])
+
+    if source_count == 0:
+        raise click.UsageError(
+            "Specify a source: --select/--from-file (CTAS), --from-parquet, "
+            "--from-csv, --from-schema, or --column."
+        )
+
+    # CTAS cannot be combined with empty-DDL sources.
+    if has_ctas and (has_parquet or has_csv or has_explicit):
+        raise click.UsageError(
+            "--select/--from-file (CTAS) cannot be combined with "
+            "--from-parquet, --from-csv, --from-schema, or --column."
+        )
+
+    # Parquet, CSV, and explicit schema are mutually exclusive with each other.
+    if has_parquet and has_csv:
+        raise click.UsageError("--from-parquet and --from-csv are mutually exclusive.")
+    if has_parquet and schema_file:
+        raise click.UsageError("--from-parquet and --from-schema are mutually exclusive.")
+    if has_parquet and column_specs:
+        raise click.UsageError("--from-parquet and --column are mutually exclusive.")
+    if has_csv and schema_file:
+        raise click.UsageError("--from-csv and --from-schema are mutually exclusive.")
+    if has_csv and column_specs:
+        raise click.UsageError("--from-csv and --column are mutually exclusive.")
+
+    # --all-varchar only makes sense with --from-csv.
+    if all_varchar and not has_csv:
+        raise click.UsageError("--all-varchar requires --from-csv.")
+
     try:
         async with build_http_client(ctx) as http:
             target, entry = await build_sql_target(http, ws, wh)
-            t = await _tables_svc.create_table(
-                target, schema, table_name, body, kind=entry.kind, mode=ctx.auth
-            )
+
+            if has_ctas:
+                body = load_sql_body(select_body, from_file)
+                t = await _tables_svc.create_table(
+                    target, schema, table_name, body, kind=entry.kind, mode=ctx.auth
+                )
+
+            elif has_parquet:
+                t = await _tables_svc.create_table_from_parquet(
+                    target,
+                    schema,
+                    table_name,
+                    Path(parquet_path),  # type: ignore[arg-type]
+                    kind=entry.kind,
+                    mode=ctx.auth,
+                    varchar_length=varchar_length,
+                )
+
+            elif has_csv:
+                t = await _tables_svc.create_table_from_csv(
+                    target,
+                    schema,
+                    table_name,
+                    Path(csv_path),  # type: ignore[arg-type]
+                    kind=entry.kind,
+                    mode=ctx.auth,
+                    all_varchar=all_varchar,
+                    varchar_length=varchar_length,
+                    delimiter=delimiter,
+                    encoding=encoding,
+                    sample_rows=sample_rows,
+                )
+
+            else:
+                # Explicit schema via --from-schema and/or --column.
+                cols: list[ColumnSpec] = []
+                if schema_file:
+                    cols.extend(_parse_schema_file(schema_file))
+                cols.extend(_parse_column_spec(s) for s in column_specs)
+                if not cols:
+                    raise click.UsageError(
+                        "--from-schema or at least one --column is required for the DDL path."
+                    )
+                t = await _tables_svc.create_empty_table(
+                    target, schema, table_name, cols, kind=entry.kind, mode=ctx.auth
+                )
+
             render(t.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
