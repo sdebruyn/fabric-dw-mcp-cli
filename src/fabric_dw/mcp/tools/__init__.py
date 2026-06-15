@@ -16,6 +16,7 @@ Domains
 - :mod:`.restore` — restore points CRUD, in-place restore
 - :mod:`.views` — SQL view listing, reading, CRUD
 - :mod:`.procedures` — stored procedure listing and CRUD
+- :mod:`.functions` — T-SQL user-defined function listing and CRUD
 - :mod:`.schemas` — SQL schema listing and DDL
 - :mod:`.tables` — SQL table listing, reading, DDL
 - :mod:`.sql_pools` — SQL Pools beta API, pool insights DMV
@@ -32,6 +33,7 @@ from fabric_dw.mcp.tools import (
     audit,
     cache,
     dbt,
+    functions,
     procedures,
     queries,
     restore,
@@ -60,6 +62,7 @@ _DOMAINS = [
     restore,
     views,
     procedures,
+    functions,
     schemas,
     tables,
     statistics,

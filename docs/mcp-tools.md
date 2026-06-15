@@ -1059,6 +1059,117 @@ Drop a stored procedure.
 
 ---
 
+## Functions
+
+> **Preview:** Scalar UDFs (`FN`) and inline TVFs (`IF`) are preview features on Fabric DW as of mid-2026. Function DDL is supported on both Data Warehouses and SQL Analytics Endpoints — no endpoint guard applies.
+
+### list_functions
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+List T-SQL user-defined functions on a warehouse or SQL Analytics Endpoint, optionally filtered by schema or kind.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
+- `schema` (`str | null`, optional) — when provided, only functions in this schema are returned.
+- `kind` (`str`, optional) — filter by function kind: `"scalar"` (FN only), `"inline-tvf"` (IF only), or `"all"` (FN + IF + TF, the default).
+
+**Returns:** `list[Function]` — array of function objects, each with `schema_name`, `name`, `qualified_name`, `kind`, `is_inlineable`, `created`, and `modified`.
+
+---
+
+### get_function
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Fetch the full definition of a single T-SQL user-defined function, including its parameter list.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
+- `qualified_name` (`str`) — dot-separated qualified function name, e.g. `dbo.fn_clean_input`.
+
+**Returns:** `FunctionDetails` — single function object with `definition` (from `sys.sql_modules`) and `parameters` (from `sys.parameters`).
+
+---
+
+### create_function
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Create a new T-SQL user-defined function. Scalar UDFs and inline TVFs are preview features.
+
+> **CAUTION:** `body` is executed verbatim as DDL. Ensure the body matches the user's intent before calling this tool.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
+- `qualified_name` (`str`) — dot-separated qualified function name, e.g. `dbo.fn_clean_input`.
+- `body` (`str`) — the function body (parameter list, RETURNS clause, and implementation).
+
+**Returns:** `FunctionDetails` — the newly-created function object.
+
+---
+
+### update_function
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Redefine a T-SQL user-defined function via `CREATE OR ALTER FUNCTION`.
+
+> **Note:** `ALTER FUNCTION` cannot change the function kind (e.g. scalar to inline TVF). The body must be compatible with the original function's kind.
+
+> **CAUTION:** `body` is executed verbatim as DDL. Ensure the body matches the user's intent before calling this tool.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
+- `qualified_name` (`str`) — dot-separated qualified function name, e.g. `dbo.fn_clean_input`.
+- `body` (`str`) — the new function body (parameter list, RETURNS clause, and implementation).
+
+**Returns:** `FunctionDetails` — the updated function object.
+
+---
+
+### drop_function
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Drop a T-SQL user-defined function.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
+- `qualified_name` (`str`) — dot-separated qualified function name, e.g. `dbo.fn_clean_input`.
+- `if_exists` (`bool`, optional) — when `true`, emits `DROP FUNCTION IF EXISTS` (no-op when function does not exist). Defaults to `false`.
+
+**Returns:** `{ "dropped": true }` — confirmation.
+
+---
+
+### rename_function
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Rename a T-SQL user-defined function via `sp_rename`. The new name must be a bare (unqualified) identifier — `sp_rename` cannot move a function across schemas.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
+- `qualified_name` (`str`) — current dot-separated qualified function name, e.g. `dbo.fn_clean_input`.
+- `new_name` (`str`) — new bare function name (no schema prefix), e.g. `fn_sanitize_input`.
+
+**Returns:** `FunctionDetails` — the renamed function record.
+
+---
+
 ## Schemas
 
 > **List-source note** — no public REST API exists for enumerating warehouse schemas. `list_schemas` uses TDS `sys.schemas`, filtering out `sys`, `INFORMATION_SCHEMA`, `guest`, and `db_*` fixed-role schemas. `dbo` is always included because it is user-writable.
