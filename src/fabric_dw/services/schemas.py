@@ -89,10 +89,11 @@ _SYSTEM_SCHEMAS: frozenset[str] = frozenset(
 )
 
 # Build the IN-clause using parameter binding (? placeholders).
-# The placeholders string is constructed from the frozenset length; the actual
-# values are passed as params so the driver handles quoting/escaping.
-_SYSTEM_SCHEMA_PLACEHOLDERS = ", ".join("?" for _ in _SYSTEM_SCHEMAS)
+# Both the placeholder string and the ordered param tuple are derived from the
+# same sorted sequence so that "len(placeholders) == len(params)" is a
+# structural guarantee, not an implicit invariant between two separate constants.
 _SYSTEM_SCHEMA_PARAMS: tuple[str, ...] = tuple(sorted(_SYSTEM_SCHEMAS))
+_SYSTEM_SCHEMA_PLACEHOLDERS = ", ".join("?" for _ in _SYSTEM_SCHEMA_PARAMS)
 
 _LIST_SCHEMAS_SQL = f"""\
 SELECT
