@@ -357,8 +357,12 @@ def _harden_azure_sdk_logging() -> None:
        ("Exporter is missing a valid region.").
 
     2. ``azure.core.pipeline.policies``
-       The azure-core retry policy logs "Retrying due to server request error" at
-       WARNING level via ``azure.core.pipeline.policies._retry``.
+       Belt-and-suspenders suppression.  At the pinned versions (azure-monitor-opentelemetry
+       1.8.8 / exporter 1.0.0b53) ``azure.core.pipeline.policies._retry`` defines ``_LOGGER``
+       but has **zero call sites** — the "Retrying due to server request error" message is
+       actually emitted by ``azure.monitor.opentelemetry.exporter.export._base`` (already
+       covered by entry 1).  This entry guards against future SDK versions adding log calls
+       to the azure-core pipeline tree.
 
     We set CRITICAL (instead of logging.NOTSET) and propagate=False so that no
     record at WARNING/ERROR/EXCEPTION from these trees ever reaches the root
@@ -371,8 +375,11 @@ def _harden_azure_sdk_logging() -> None:
         # A2: Azure Monitor exporter — covers retry warnings, statsbeat "missing a
         # valid region", and quickpulse _ping tracebacks via a single parent logger.
         "azure.monitor.opentelemetry.exporter",
-        # A3: azure-core pipeline retry policy — "Retrying due to server request error"
-        # at WARNING, emitted by azure.core.pipeline.policies._retry and siblings.
+        # A3: azure-core pipeline — belt-and-suspenders only at pinned versions
+        # (azure.core.pipeline.policies._retry defines _LOGGER but has zero call sites;
+        # the "Retrying due to server request error" message comes from
+        # azure.monitor.opentelemetry.exporter.export._base, already covered above).
+        # Kept here to guard against future SDK versions emitting from this tree.
         "azure.core.pipeline.policies",
     ):
         lgr = logging.getLogger(name)
