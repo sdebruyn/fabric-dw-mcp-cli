@@ -126,15 +126,18 @@ class LookupCache:
         # Validate each per-workspace bucket inside 'items' is also a dict (C24).
         # A corrupt bucket (e.g. a list or string) would raise AttributeError when
         # callers invoke .get() on it, bypassing the "treat-as-empty" guarantee.
+        # Partial recovery: drop only the bad bucket(s) so healthy workspace
+        # entries are preserved and do not force unnecessary API round-trips.
         items: Any = data["items"]
         bad_buckets = [k for k, v in items.items() if not isinstance(v, dict)]
         if bad_buckets:
             _log.warning(
-                "Cache file %s has non-dict per-workspace bucket(s) %r; treating as empty",
+                "Cache file %s has non-dict per-workspace bucket(s) %r; dropping corrupt bucket(s)",
                 self._path,
                 bad_buckets,
             )
-            return self._empty()
+            for k in bad_buckets:
+                del items[k]
         return data
 
     def _read(self) -> dict[str, Any]:

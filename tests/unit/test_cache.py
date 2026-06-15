@@ -640,11 +640,12 @@ def test_put_items_case_insensitive_keys(tmp_path: Path) -> None:
 def test_corrupt_inner_item_bucket_treated_as_empty(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """If a per-workspace bucket inside 'items' is not a dict, _read returns empty (C24).
+    """If a per-workspace bucket inside 'items' is not a dict, the bucket is dropped (C24).
 
     Previously _validate only checked the top-level 'items' dict; a corrupt
     bucket (e.g. a list) would reach get_item and raise AttributeError.  Now
-    the whole file is treated as empty and a warning is emitted.
+    the corrupt bucket is removed and a warning is emitted; healthy buckets are
+    kept (partial recovery).
     """
     cache_file = tmp_path / "lookup.json"
     cache_file.write_text(
@@ -666,7 +667,7 @@ def test_corrupt_inner_item_bucket_treated_as_empty(
 
 
 def test_corrupt_inner_bucket_string_treated_as_empty(tmp_path: Path) -> None:
-    """A string per-workspace bucket must be treated as empty (not raise AttributeError)."""
+    """A string per-workspace bucket is dropped; must not raise AttributeError."""
     cache_file = tmp_path / "lookup.json"
     cache_file.write_text(
         json.dumps(
@@ -680,6 +681,35 @@ def test_corrupt_inner_bucket_string_treated_as_empty(tmp_path: Path) -> None:
     cache = LookupCache(path=cache_file)
     # Must not raise AttributeError; must degrade gracefully.
     assert cache.get_item(WS_ID, "anything") is None
+
+
+def test_partial_recovery_keeps_healthy_buckets(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Only the corrupt per-workspace bucket is dropped; healthy buckets are preserved (C24).
+
+    Verifies that partial recovery does not evict good entries from other
+    workspaces when only one bucket is corrupt.
+    """
+    cache_file = tmp_path / "lookup.json"
+    entry = _make_item_entry()
+    cache = LookupCache(path=cache_file)
+    # Write a healthy entry for WS_ID_2
+    cache.put_item(WS_ID_2, "healthy-wh", entry)
+
+    # Inject a corrupt bucket for WS_ID directly into the JSON
+    data = json.loads(cache_file.read_text())
+    data["items"][str(WS_ID)] = ["corrupt"]
+    cache_file.write_text(json.dumps(data))
+
+    with caplog.at_level(logging.WARNING, logger="fabric_dw.cache"):
+        # Corrupt bucket is gone
+        assert cache.get_item(WS_ID, "anything") is None
+        # Healthy bucket for WS_ID_2 must still be present
+        result = cache.get_item(WS_ID_2, "healthy-wh")
+    assert result is not None, "healthy bucket must survive partial recovery"
+    assert result.id == ITEM_ID
+    assert any("non-dict per-workspace bucket" in r.message for r in caplog.records)
 
 
 def test_valid_file_with_proper_buckets_not_affected(tmp_path: Path) -> None:

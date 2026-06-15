@@ -34,6 +34,7 @@ import filelock
 import tomli_w
 
 __all__ = [
+    "ConfigError",
     "Defaults",
     "UserConfig",
     "clear_config",
@@ -46,6 +47,10 @@ __all__ = [
 _log = logging.getLogger(__name__)
 
 _LOCK_TIMEOUT = 5  # seconds
+
+
+class ConfigError(RuntimeError):
+    """Raised when a config write operation cannot complete (e.g. lock timeout)."""
 
 
 @dataclass(frozen=True)
@@ -71,6 +76,27 @@ def default_path() -> Path:
     xdg = os.environ.get("XDG_CONFIG_HOME")
     base = Path(xdg) if xdg else Path.home() / ".config"
     return base / "fabric-dw" / "config.toml"
+
+
+def _write_config_unlocked(resolved: Path, data: dict[str, object]) -> None:
+    """Atomically write *data* to *resolved* — caller must hold the FileLock.
+
+    Uses ``tempfile.mkstemp`` + ``os.replace`` for crash-safe atomic writes.
+    On any I/O error the temp file is cleaned up before re-raising.
+    """
+    fd, tmp_name = tempfile.mkstemp(
+        dir=resolved.parent,
+        prefix=".config_tmp_",
+        suffix=".toml",
+    )
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            tomli_w.dump(data, fh)
+        os.replace(tmp_name, resolved)
+    except Exception:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise
 
 
 def load_config(path: Path | None = None) -> UserConfig:
@@ -143,19 +169,7 @@ def save_config(config: UserConfig, path: Path | None = None) -> None:
 
     lock = filelock.FileLock(str(resolved) + ".lock", timeout=_LOCK_TIMEOUT)
     with lock:
-        fd, tmp_name = tempfile.mkstemp(
-            dir=resolved.parent,
-            prefix=".config_tmp_",
-            suffix=".toml",
-        )
-        try:
-            with os.fdopen(fd, "wb") as fh:
-                tomli_w.dump(data, fh)
-            os.replace(tmp_name, resolved)
-        except Exception:
-            with contextlib.suppress(OSError):
-                os.unlink(tmp_name)
-            raise
+        _write_config_unlocked(resolved, data)
 
 
 def set_default(key: str, value: str | None, path: Path | None = None) -> None:
@@ -181,53 +195,46 @@ def set_default(key: str, value: str | None, path: Path | None = None) -> None:
     resolved.parent.mkdir(parents=True, exist_ok=True)
     lock = filelock.FileLock(str(resolved) + ".lock", timeout=_LOCK_TIMEOUT)
 
-    with lock:
-        # Read inside the lock so the full read-modify-write is atomic.
-        if not resolved.exists():
-            current = Defaults()
-        else:
-            try:
-                raw = resolved.read_text(encoding="utf-8")
-                data = tomllib.loads(raw)
-                defaults_raw = data.get("defaults", {})
-                if isinstance(defaults_raw, dict):
-                    ws = defaults_raw.get("workspace")
-                    wh = defaults_raw.get("warehouse")
-                    current = Defaults(
-                        workspace=ws if isinstance(ws, str) else None,
-                        warehouse=wh if isinstance(wh, str) else None,
-                    )
-                else:
-                    current = Defaults()
-            except (OSError, tomllib.TOMLDecodeError):
+    try:
+        with lock:
+            # Read inside the lock so the full read-modify-write is atomic.
+            if not resolved.exists():
                 current = Defaults()
+            else:
+                try:
+                    raw = resolved.read_text(encoding="utf-8")
+                    data = tomllib.loads(raw)
+                    defaults_raw = data.get("defaults", {})
+                    if isinstance(defaults_raw, dict):
+                        ws = defaults_raw.get("workspace")
+                        wh = defaults_raw.get("warehouse")
+                        current = Defaults(
+                            workspace=ws if isinstance(ws, str) else None,
+                            warehouse=wh if isinstance(wh, str) else None,
+                        )
+                    else:
+                        current = Defaults()
+                except (OSError, tomllib.TOMLDecodeError):
+                    current = Defaults()
 
-        new_defaults = Defaults(
-            workspace=value if key == "workspace" else current.workspace,
-            warehouse=value if key == "warehouse" else current.warehouse,
-        )
-        # save_config acquires its own lock internally, so call the internal
-        # write logic directly to stay within our single lock cycle.
-        defaults_dict: dict[str, str] = {}
-        if new_defaults.workspace is not None:
-            defaults_dict["workspace"] = new_defaults.workspace
-        if new_defaults.warehouse is not None:
-            defaults_dict["warehouse"] = new_defaults.warehouse
-        toml_data: dict[str, object] = {"defaults": defaults_dict}
-
-        fd, tmp_name = tempfile.mkstemp(
-            dir=resolved.parent,
-            prefix=".config_tmp_",
-            suffix=".toml",
-        )
-        try:
-            with os.fdopen(fd, "wb") as fh:
-                tomli_w.dump(toml_data, fh)
-            os.replace(tmp_name, resolved)
-        except Exception:
-            with contextlib.suppress(OSError):
-                os.unlink(tmp_name)
-            raise
+            new_defaults = Defaults(
+                workspace=value if key == "workspace" else current.workspace,
+                warehouse=value if key == "warehouse" else current.warehouse,
+            )
+            # _write_config_unlocked is called inside the lock so the full
+            # read-modify-write stays within a single lock cycle (C20).
+            defaults_dict: dict[str, str] = {}
+            if new_defaults.workspace is not None:
+                defaults_dict["workspace"] = new_defaults.workspace
+            if new_defaults.warehouse is not None:
+                defaults_dict["warehouse"] = new_defaults.warehouse
+            toml_data: dict[str, object] = {"defaults": defaults_dict}
+            _write_config_unlocked(resolved, toml_data)
+    except filelock.Timeout:
+        raise ConfigError(
+            f"Could not acquire lock for {resolved} within {_LOCK_TIMEOUT}s; "
+            "another process may be holding it."
+        ) from None
 
 
 def clear_config(path: Path | None = None) -> None:

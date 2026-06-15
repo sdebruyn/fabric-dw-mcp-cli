@@ -10,6 +10,7 @@ import filelock
 import pytest
 
 from fabric_dw.config import (
+    ConfigError,
     Defaults,
     UserConfig,
     clear_config,
@@ -264,6 +265,17 @@ def test_set_default_invalid_key_raises(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
     with pytest.raises(ValueError, match="Unknown config key"):
         set_default("nonexistent_key", "value", path)
+
+
+def test_set_default_lock_timeout_raises_config_error(tmp_path: Path) -> None:
+    """set_default must raise ConfigError (not a raw filelock.Timeout) on lock timeout."""
+    path = tmp_path / "config.toml"
+    lock_side_effect = filelock.Timeout(str(path) + ".lock")
+    with (
+        patch("filelock.FileLock.acquire", side_effect=lock_side_effect),
+        pytest.raises(ConfigError, match="Could not acquire lock"),
+    ):
+        set_default("workspace", "SalesWS", path)
 
 
 def test_set_default_concurrent_no_lost_update(tmp_path: Path) -> None:

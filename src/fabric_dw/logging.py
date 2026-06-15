@@ -32,7 +32,11 @@ _STANDARD_LOGRECORD_ATTRS: frozenset[str] = frozenset(
 ) | {"message", "asctime"}
 
 
-_CORE_PAYLOAD_KEYS: frozenset[str] = frozenset({"level", "name", "msg", "time"})
+# Only "level" and "time" need guarding here: they are core payload keys that
+# are NOT in _STANDARD_LOGRECORD_ATTRS, so they CAN arrive via extra={}.
+# "name" and "msg" are already in _STANDARD_LOGRECORD_ATTRS and are stripped
+# from extras before this check runs — guarding them would be dead code.
+_CORE_PAYLOAD_KEYS: frozenset[str] = frozenset({"level", "time"})
 
 
 class _JsonFormatter(logging.Formatter):
