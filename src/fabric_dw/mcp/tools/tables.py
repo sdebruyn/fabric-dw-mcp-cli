@@ -12,12 +12,11 @@ from pydantic import Field
 from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
 from fabric_dw.mcp._guards import (
-    assert_destructive_allowed,
     assert_workspace_allowed,
-    assert_writes_allowed,
 )
 from fabric_dw.mcp._helpers import (
     make_sql_target,
+    mutating_tool,
     parse_iso8601,
     parse_qualified_name,
     resolve_item,
@@ -97,7 +96,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             "rows": safe_rows(rows),
         }
 
-    @mcp.tool(name="create_table")
+    @mutating_tool(mcp, "create_table")
     async def create_table(
         workspace: str, item: str, qualified_name: str, select_body: str
     ) -> dict[str, Any]:
@@ -114,7 +113,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             select_body: The SELECT statement that becomes the CTAS source.
         """
         schema, table_name = parse_qualified_name(qualified_name, kind="table")
-        assert_writes_allowed("create_table")
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
@@ -132,7 +130,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         ctx.resolver.clear_negative_cache()
         return result.model_dump(mode="json")
 
-    @mcp.tool(name="delete_table")
+    @mutating_tool(mcp, "delete_table", destructive=True)
     async def delete_table(workspace: str, item: str, qualified_name: str) -> dict[str, Any]:
         """Drop a SQL table.
 
@@ -145,8 +143,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             qualified_name: Dot-separated qualified table name, e.g. ``dbo.sales``.
         """
         schema, table_name = parse_qualified_name(qualified_name, kind="table")
-        assert_writes_allowed("delete_table")
-        assert_destructive_allowed()
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
@@ -163,7 +159,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             raise tool_err(exc) from exc
         return {"dropped": True}
 
-    @mcp.tool(name="clear_table")
+    @mutating_tool(mcp, "clear_table", destructive=True)
     async def clear_table(workspace: str, item: str, qualified_name: str) -> dict[str, Any]:
         """Truncate a SQL table (remove all rows, keep structure).
 
@@ -177,8 +173,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             qualified_name: Dot-separated qualified table name, e.g. ``dbo.sales``.
         """
         schema, table_name = parse_qualified_name(qualified_name, kind="table")
-        assert_writes_allowed("clear_table")
-        assert_destructive_allowed()
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
@@ -193,7 +187,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             raise tool_err(exc) from exc
         return {"truncated": True}
 
-    @mcp.tool(name="clone_table")
+    @mutating_tool(mcp, "clone_table")
     async def clone_table(
         workspace: str,
         item: str,
@@ -215,7 +209,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 window (30 days by default).  When omitted, the clone reflects the
                 current state of the source table.
         """
-        assert_writes_allowed("clone_table")
         assert_workspace_allowed(workspace)
 
         at_dt_raw = parse_iso8601(at, "at")
@@ -255,7 +248,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         ctx.resolver.clear_negative_cache()
         return result.model_dump(mode="json")
 
-    @mcp.tool(name="rename_table")
+    @mutating_tool(mcp, "rename_table")
     async def rename_table(
         workspace: str, item: str, qualified_name: str, new_name: str
     ) -> dict[str, Any]:
@@ -277,7 +270,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 contain a dot.
         """
         parse_qualified_name(qualified_name, kind="table")
-        assert_writes_allowed("rename_table")
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:

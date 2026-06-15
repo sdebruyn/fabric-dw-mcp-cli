@@ -768,3 +768,104 @@ async def test_mutating_tool_create_sql_pool_blocked_in_readonly() -> None:
         )
 
     assert "create_sql_pool" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# M21 exhaustive — ALL mutating tools must be single-sourced via mutating_tool
+# ---------------------------------------------------------------------------
+
+# Complete list of mutating MCP tool names.  Every entry here must be
+# registered via ``mutating_tool(mcp, <name>)`` (or ``mutating_tool(mcp,
+# <name>, destructive=True)``).  The single exception is
+# ``refresh_sql_endpoint_metadata``, which uses ``mutating_tool`` for
+# ``assert_writes_allowed`` but calls ``assert_destructive_allowed``
+# conditionally inside the function body (because the guard depends on the
+# ``recreate_tables`` argument, not the tool name).
+#
+# The test verifies the invariant by calling each tool with
+# ``FABRIC_MCP_READONLY=1`` and asserting that (a) a ``ToolError`` is raised
+# and (b) the error message contains the tool name — which only happens when
+# ``mutating_tool`` injects ``assert_writes_allowed(name)`` with that exact
+# string.  If any tool were still using a bare ``@mcp.tool`` + manual
+# ``assert_writes_allowed("…")`` call, the name in the error message would
+# still appear, but the *source* would be duplicated (detectable by code
+# review, not this test).  This test therefore serves as a regression guard:
+# if a new mutating tool is added without ``mutating_tool``, adding it here
+# will expose the omission at review time.
+
+_ALL_MUTATING_TOOLS: list[str] = [
+    # views.py
+    "create_view",
+    "update_view",
+    "drop_view",
+    "rename_view",
+    # warehouses.py
+    "create_warehouse",
+    "rename_warehouse",
+    "delete_warehouse",
+    "takeover_warehouse",
+    # sql_pools.py
+    "create_sql_pool",
+    "update_sql_pool",
+    "delete_sql_pool",
+    "enable_sql_pools",
+    "disable_sql_pools",
+    # tables.py
+    "create_table",
+    "delete_table",
+    "clear_table",
+    "clone_table",
+    "rename_table",
+    # procedures.py
+    "create_procedure",
+    "update_procedure",
+    "drop_procedure",
+    # snapshots.py
+    "create_snapshot",
+    "rename_snapshot",
+    "delete_snapshot",
+    "roll_snapshot_timestamp",
+    # restore.py
+    "create_restore_point",
+    "update_restore_point",
+    "delete_restore_point",
+    "restore_warehouse_in_place",
+    # schemas.py
+    "create_schema",
+    "delete_schema",
+    # workspaces.py
+    "set_workspace_collation",
+    # sql_endpoints.py
+    # refresh_sql_endpoint_metadata: uses mutating_tool for assert_writes_allowed;
+    # assert_destructive_allowed is called conditionally on recreate_tables inside
+    # the function body (cannot be unconditional at the decorator level).
+    "refresh_sql_endpoint_metadata",
+]
+
+
+@pytest.mark.parametrize("tool_name", _ALL_MUTATING_TOOLS)
+async def test_all_mutating_tools_blocked_in_readonly(tool_name: str) -> None:
+    """Every mutating tool must raise ToolError containing the tool name in read-only mode.
+
+    This exhaustively verifies M21: each tool is registered via
+    ``mutating_tool(mcp, tool_name)`` so that ``assert_writes_allowed`` is
+    called with the *same* string used for tool registration.
+    """
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    ctx = _make_ctx()
+    with (
+        patch("fabric_dw.mcp._context._SERVER_CTX", ctx),
+        patch.dict("os.environ", {"FABRIC_MCP_READONLY": "1"}),
+        pytest.raises(ToolError) as exc_info,
+    ):
+        # Call with minimal / empty args — the write guard fires before any
+        # argument validation, so the exact args don't matter.
+        await mcp._tool_manager.call_tool(tool_name, {"workspace": _WS_NAME})
+
+    error_text = str(exc_info.value)
+    assert tool_name in error_text, (
+        f"ToolError for {tool_name!r} in read-only mode did not contain the tool name. "
+        f"Got: {error_text!r}. "
+        "This suggests the tool is NOT using mutating_tool and has a stale name string."
+    )

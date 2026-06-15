@@ -11,9 +11,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
 from fabric_dw.mcp._guards import (
-    assert_destructive_allowed,
     assert_workspace_allowed,
-    assert_writes_allowed,
     workspace_allowlist_active,
 )
 from fabric_dw.mcp._helpers import fabric_err, mutating_tool, resolve_item, tool_err
@@ -115,7 +113,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         ctx.resolver.clear_negative_cache()
         return result.model_dump(by_alias=True, mode="json")
 
-    @mcp.tool(name="rename_warehouse")
+    @mutating_tool(mcp, "rename_warehouse")
     async def rename_warehouse(
         workspace: str,
         warehouse: str,
@@ -123,7 +121,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         description: str | None = None,
     ) -> dict[str, Any]:
         """Rename a Warehouse (and optionally update its description)."""
-        assert_writes_allowed("rename_warehouse")
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
@@ -138,11 +135,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         ctx.resolver.clear_negative_cache()
         return result.model_dump(by_alias=True, mode="json")
 
-    @mcp.tool(name="delete_warehouse")
+    @mutating_tool(mcp, "delete_warehouse", destructive=True)
     async def delete_warehouse(workspace: str, warehouse: str) -> dict[str, Any]:
         """Delete a Warehouse."""
-        assert_writes_allowed("delete_warehouse")
-        assert_destructive_allowed()
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
@@ -154,10 +149,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             raise fabric_err(exc) from exc
         return {"deleted": True, "warehouse_id": str(item.id)}
 
-    @mcp.tool(name="takeover_warehouse")
+    @mutating_tool(mcp, "takeover_warehouse")
     async def takeover_warehouse(workspace: str, warehouse: str) -> dict[str, Any]:
         """Take ownership of a Warehouse."""
-        assert_writes_allowed("takeover_warehouse")
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:

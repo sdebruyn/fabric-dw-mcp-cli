@@ -11,8 +11,8 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
-from fabric_dw.mcp._guards import assert_workspace_allowed, assert_writes_allowed
-from fabric_dw.mcp._helpers import fabric_err
+from fabric_dw.mcp._guards import assert_workspace_allowed
+from fabric_dw.mcp._helpers import fabric_err, mutating_tool
 from fabric_dw.models import Workspace
 from fabric_dw.services import workspaces
 
@@ -65,7 +65,7 @@ def register(mcp: FastMCP) -> None:
             raise fabric_err(exc) from exc
         return result.model_dump(by_alias=True, mode="json")
 
-    @mcp.tool(name="set_workspace_collation")
+    @mutating_tool(mcp, "set_workspace_collation")
     async def set_workspace_collation(workspace: str, collation: str) -> dict[str, Any]:
         """Set the default Data Warehouse collation for a workspace.
 
@@ -83,7 +83,6 @@ def register(mcp: FastMCP) -> None:
                 return an error.  See the Fabric documentation for the full
                 list of supported collations.
         """
-        assert_writes_allowed("set_workspace_collation")
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:

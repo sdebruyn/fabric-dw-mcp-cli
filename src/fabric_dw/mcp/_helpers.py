@@ -35,7 +35,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw.cache import ItemEntry as _ItemEntry
 from fabric_dw.exceptions import FabricError
-from fabric_dw.mcp._guards import assert_writes_allowed as _assert_writes_allowed
+from fabric_dw.mcp import _guards
 from fabric_dw.resolver import Resolver
 from fabric_dw.sql import SqlTarget
 from fabric_dw.sql_io import json_safe as _json_safe
@@ -64,6 +64,8 @@ _log = logging.getLogger(__name__)
 def mutating_tool(
     mcp: FastMCP,
     name: str,
+    *,
+    destructive: bool = False,
 ) -> Callable[
     [Callable[_P, Coroutine[None, None, _R]]],
     Callable[_P, Coroutine[None, None, _R]],
@@ -75,6 +77,11 @@ def mutating_tool(
     name is written exactly once.  Without this helper the name was duplicated
     in the decorator and in the ``assert_writes_allowed("…")`` call (M21).
 
+    When *destructive* is ``True``, an additional
+    :func:`~fabric_dw.mcp._guards.assert_destructive_allowed` call is injected
+    after the write guard, eliminating the second duplicate for permanently-destructive
+    tools (drop, delete, clear, restore-in-place, etc.).
+
     Usage::
 
         @mutating_tool(mcp, "create_view")
@@ -82,9 +89,17 @@ def mutating_tool(
             # assert_writes_allowed is called automatically with "create_view"
             ...
 
+        @mutating_tool(mcp, "drop_view", destructive=True)
+        async def drop_view(workspace: str, ...) -> dict[str, Any]:
+            # assert_writes_allowed + assert_destructive_allowed both called automatically
+            ...
+
     Args:
         mcp: The :class:`~mcp.server.fastmcp.FastMCP` server instance.
         name: The tool name string, used for both registration and the write guard.
+        destructive: When ``True``, also call
+            :func:`~fabric_dw.mcp._guards.assert_destructive_allowed` before the
+            wrapped function.  Defaults to ``False``.
 
     Returns:
         A decorator that wraps the tool function and registers it with *mcp*.
@@ -95,7 +110,9 @@ def mutating_tool(
     ) -> Callable[_P, Coroutine[None, None, _R]]:
         @wraps(fn)
         async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
-            _assert_writes_allowed(name)
+            _guards.assert_writes_allowed(name)
+            if destructive:
+                _guards.assert_destructive_allowed()
             return await fn(*args, **kwargs)
 
         # Register the wrapper (which includes the guard) under the given name.

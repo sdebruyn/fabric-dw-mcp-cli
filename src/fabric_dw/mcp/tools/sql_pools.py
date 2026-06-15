@@ -12,9 +12,7 @@ from pydantic import Field, ValidationError
 from fabric_dw.exceptions import AlreadyExistsError, FabricError, NotFoundError
 from fabric_dw.mcp._context import get_context
 from fabric_dw.mcp._guards import (
-    assert_destructive_allowed,
     assert_workspace_allowed,
-    assert_writes_allowed,
 )
 from fabric_dw.mcp._helpers import (
     fabric_err,
@@ -158,7 +156,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         ctx.resolver.clear_negative_cache()
         return created.model_dump(by_alias=True, mode="json")
 
-    @mcp.tool(name="update_sql_pool")
+    @mutating_tool(mcp, "update_sql_pool")
     async def update_sql_pool(  # noqa: PLR0913
         workspace: str,
         name: str,
@@ -181,7 +179,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
 
         Requires workspace admin role.  This tool targets a **beta / preview** API.
         """
-        assert_writes_allowed("update_sql_pool")
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
@@ -210,7 +207,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             )
         return updated.model_dump(by_alias=True, mode="json")
 
-    @mcp.tool(name="delete_sql_pool")
+    @mutating_tool(mcp, "delete_sql_pool", destructive=True)
     async def delete_sql_pool(workspace: str, pool_name: str) -> dict[str, Any]:
         """Delete an SQL pool from a workspace.
 
@@ -220,8 +217,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
 
         Requires workspace admin role.  This tool targets a **beta / preview** API.
         """
-        assert_writes_allowed("delete_sql_pool")
-        assert_destructive_allowed()
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
@@ -235,13 +230,12 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             raise fabric_err(exc) from exc
         return {"deleted": True, "pool_name": pool_name}
 
-    @mcp.tool(name="enable_sql_pools")
+    @mutating_tool(mcp, "enable_sql_pools")
     async def enable_sql_pools(workspace: str) -> dict[str, Any]:
         """Enable custom SQL Pools for a workspace without modifying pool definitions.
 
         Requires workspace admin role.  This tool targets a **beta / preview** API.
         """
-        assert_writes_allowed("enable_sql_pools")
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
@@ -253,7 +247,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             raise fabric_err(exc) from exc
         return result.model_dump(by_alias=True, mode="json")
 
-    @mcp.tool(name="disable_sql_pools")
+    @mutating_tool(mcp, "disable_sql_pools")
     async def disable_sql_pools(workspace: str) -> dict[str, Any]:
         """Disable custom SQL Pools for a workspace, preserving pool configuration.
 
@@ -261,7 +255,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
 
         Requires workspace admin role.  This tool targets a **beta / preview** API.
         """
-        assert_writes_allowed("disable_sql_pools")
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:

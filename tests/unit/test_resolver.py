@@ -920,3 +920,76 @@ def test_negative_clear_scope_removes_matching_scope_only(tmp_path: Path) -> Non
     assert (ws_key, "item_b") not in resolver._negative
     # Entries from a different scope must be preserved
     assert (other_key, "item_c") in resolver._negative
+
+
+# ---------------------------------------------------------------------------
+# D13 cross-layer parity — positive cache hit is not blocked by negative cache
+# ---------------------------------------------------------------------------
+
+
+async def test_positive_cache_hit_not_blocked_by_negative_cache_same_mixed_case(
+    tmp_path: Path,
+) -> None:
+    """A positive-cache hit must win over a stale negative entry for the same name.
+
+    Scenario (D13 parity):
+    1. Record a negative entry under mixed case ``'MYWS'``.
+    2. Put the same workspace into the *positive* LookupCache under the same
+       name (simulating a successful resolution that now populates the cache).
+    3. After clearing the stale negative entry (as a mutating tool would), assert
+       that ``workspace_id('myws')`` returns the cached UUID without an HTTP call.
+    4. Verify parity: recording a negative entry under any casing of the same
+       name uses the same normalised key, so negative and positive caches never
+       disagree on which key represents the workspace name.
+
+    This test exercises the public resolver API only (not internal helpers) and
+    confirms that both layers normalise case identically, closing the gap
+    identified in the D13 review comment.
+    """
+    from uuid import UUID  # noqa: PLC0415
+
+    from fabric_dw.cache import LookupCache  # noqa: PLC0415
+    from fabric_dw.exceptions import NotFoundError  # noqa: PLC0415
+
+    ws_uuid = UUID("aaaabbbb-cccc-dddd-eeee-ffff00001111")
+
+    cache = LookupCache(path=tmp_path / "ws_cache.json")
+    mock_http = MagicMock()
+    resolver = Resolver(http=mock_http, cache=cache)
+
+    # Step 1: record a negative entry under mixed case.
+    resolver._negative_record("workspace", "MYWS")
+    # Confirm it is recorded (normalised to lowercase).
+    assert ("workspace", "myws") in resolver._negative
+
+    # Step 2: put the workspace into the positive cache under the same
+    # (mixed-case) name — put_workspace normalises to lowercase internally.
+    cache.put_workspace("MYWS", ws_uuid)
+
+    # Step 3: clear the stale negative entry (as a successful mutating call
+    # would do via clear_negative_cache), then verify the positive cache wins.
+    # The lookup order in workspace_id is:
+    #   1. GUID fast-path
+    #   2. _negative_check  ← would raise if still set
+    #   3. cache.get_workspace  ← positive hit
+    resolver._negative_clear("workspace", "MYWS")
+    assert ("workspace", "myws") not in resolver._negative
+
+    # Positive-cache hit — no HTTP call expected.
+    result = await resolver.workspace_id("myws")
+    assert result == ws_uuid
+    mock_http.request.assert_not_called()
+
+    # Step 4: Verify parity: recording a negative entry under a *different*
+    # casing of the same name uses the same normalised key.  Both caches agree
+    # on the key, so there is no scenario where one accepts a name the other
+    # rejects due to different normalisation.
+    resolver._negative_record("workspace", "MyWS")  # mixed case, same key after normalise
+    assert ("workspace", "myws") in resolver._negative
+
+    # Now workspace_id hits the negative cache (step 2) before the positive
+    # cache (step 3), raising NotFoundError.  This demonstrates that both
+    # layers share the same normalised key — whichever casing was stored, the
+    # lookup is consistent.
+    with pytest.raises(NotFoundError):
+        await resolver.workspace_id("MYWS")

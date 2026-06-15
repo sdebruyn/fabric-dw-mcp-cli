@@ -107,7 +107,16 @@ async def rename_cmd(
     workspace: str | None,
     description: str | None,
 ) -> None:
-    """Rename SNAPSHOT to NEW_NAME in WORKSPACE (workspace and snapshot accept name or GUID)."""
+    """Rename SNAPSHOT to NEW_NAME in WORKSPACE (workspace and snapshot accept name or GUID).
+
+    Argument order note (L08): WORKSPACE appears after SNAPSHOT and NEW_NAME here
+    and in the ``delete`` sub-command because these operations target a snapshot
+    GUID directly, making the snapshot the primary positional argument.  The
+    ``list``, ``create``, and ``roll`` sub-commands lead with WORKSPACE because
+    they need to scope the operation to a warehouse first.  The asymmetry is
+    intentional; WORKSPACE is optional in all cases and falls back to the
+    ``FABRIC_WORKSPACE`` environment variable.
+    """
     ws = resolve_workspace_arg(ctx, workspace)
     try:
         async with build_http_client(ctx) as http:
@@ -132,7 +141,11 @@ async def rename_cmd(
 @click.pass_obj
 @coro
 async def delete_cmd(ctx: CliContext, snapshot: str, workspace: str | None) -> None:
-    """Delete SNAPSHOT from WORKSPACE (both accept name or GUID)."""
+    """Delete SNAPSHOT from WORKSPACE (both accept name or GUID).
+
+    Argument order note (L08): see ``rename`` — WORKSPACE is intentionally last
+    because this operation targets a snapshot GUID directly.
+    """
     ws = resolve_workspace_arg(ctx, workspace)
     try:
         async with build_http_client(ctx) as http:
