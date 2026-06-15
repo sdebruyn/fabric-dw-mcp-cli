@@ -32,7 +32,11 @@ from fabric_dw.identifiers import parse_qualified_name, quote_identifier, valida
 from fabric_dw.models import Function, FunctionDetails, FunctionKind, FunctionParameter
 from fabric_dw.sql import SqlTarget, run_query
 
+# Valid values for the ``kind`` parameter of :func:`list_functions`.
+VALID_KINDS: frozenset[str] = frozenset({"scalar", "inline-tvf", "all"})
+
 __all__ = [
+    "VALID_KINDS",
     "create_function",
     "drop_function",
     "get_function",
@@ -40,6 +44,7 @@ __all__ = [
     "rename_function",
     "update_function",
     "validate_identifier",
+    "validate_kind",
 ]
 
 # ---------------------------------------------------------------------------
@@ -166,16 +171,29 @@ def _row_to_function_details(
     )
 
 
+def _as_int(value: object) -> int:
+    """Coerce a DB-driver value (int, Decimal, or str) to a Python ``int``.
+
+    The TDS driver returns numeric columns as ``int`` or ``Decimal`` depending
+    on the column type and driver version.  Both satisfy ``int(x)`` at runtime;
+    this helper makes the conversion explicit so the type-checker sees a
+    narrowed ``int`` result rather than an opaque ``object``.
+    """
+    if isinstance(value, int):
+        return value
+    return int(str(value))
+
+
 def _row_to_param(cols: list[str], row: tuple[object, ...]) -> FunctionParameter:
     """Build a :class:`FunctionParameter` from a column-name list and a result row tuple."""
     data = dict(zip(cols, row, strict=True))
     raw_is_output = data.get("is_output")
     is_output = bool(raw_is_output) if raw_is_output is not None else False
     return FunctionParameter(
-        parameter_id=int(data["parameter_id"]),  # ty: ignore[invalid-argument-type]
+        parameter_id=_as_int(data["parameter_id"]),
         name=str(data["name"]),
         data_type=str(data["data_type"]),
-        max_length=int(data["max_length"]),  # ty: ignore[invalid-argument-type]
+        max_length=_as_int(data["max_length"]),
         is_output=is_output,
     )
 
@@ -183,6 +201,25 @@ def _row_to_param(cols: list[str], row: tuple[object, ...]) -> FunctionParameter
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
+
+def validate_kind(kind: str) -> Literal["scalar", "inline-tvf", "all"]:
+    """Validate *kind* and return it narrowed to the expected Literal type.
+
+    Args:
+        kind: The raw kind string from a CLI or MCP caller.
+
+    Returns:
+        The same string narrowed to ``Literal["scalar", "inline-tvf", "all"]``.
+
+    Raises:
+        ValueError: If *kind* is not one of the recognised values.
+    """
+    if kind not in VALID_KINDS:
+        msg = f"Invalid kind {kind!r}. Must be one of: {', '.join(sorted(VALID_KINDS))}"
+        raise ValueError(msg)
+    # The membership check above narrows the type — cast is safe.
+    return cast(Literal["scalar", "inline-tvf", "all"], kind)
 
 
 async def list_functions(
@@ -203,14 +240,15 @@ async def list_functions(
         schema: When provided, only functions in this schema are returned.
             Must pass :func:`validate_identifier`.
         kind: Filter by function kind — ``"scalar"`` (FN), ``"inline-tvf"`` (IF),
-            or ``"all"`` (FN + IF + TF).  Defaults to ``"all"``.
+            or ``"all"`` (FN + IF + TF).  Defaults to ``"all"``.  Validated by
+            :func:`validate_kind`.
         mode: The credential mode for Entra authentication.
 
     Returns:
         A (possibly empty) list of :class:`~fabric_dw.models.Function` instances.
 
     Raises:
-        ValueError: If *schema* fails identifier validation.
+        ValueError: If *schema* fails identifier validation or *kind* is invalid.
         PermissionDeniedError: If the driver reports a permission error.
         AuthError: If the driver reports an authentication failure.
     """

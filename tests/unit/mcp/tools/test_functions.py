@@ -503,3 +503,69 @@ async def test_rename_function_invalid_qualified_name_raises(ctx_patch) -> None:
                 "new_name": "fn_new",
             },
         )
+
+
+# ---------------------------------------------------------------------------
+# list_functions — invalid kind rejected before reaching service
+# ---------------------------------------------------------------------------
+
+
+async def test_list_functions_invalid_kind_raises_tool_error(mock_ctx, ctx_patch) -> None:
+    """list_functions raises a ToolError when kind is not a valid value.
+
+    The validation happens inside the tool (via validate_kind) before the
+    service is called — so no mock of list_functions is needed.
+    """
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "list_functions",
+            {"workspace": WS_NAME, "item": WH_NAME, "kind": "multistatement-tvf"},
+        )
+
+
+@pytest.mark.parametrize("bad_kind", ["", "SCALAR", "Scalar", "fn", "tvf", "unknown"])
+async def test_list_functions_various_invalid_kinds_raise(
+    bad_kind: str, mock_ctx, ctx_patch
+) -> None:
+    """list_functions rejects all non-canonical kind values."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "list_functions",
+            {"workspace": WS_NAME, "item": WH_NAME, "kind": bad_kind},
+        )
+
+
+@pytest.mark.parametrize("valid_kind", ["scalar", "inline-tvf", "all"])
+async def test_list_functions_valid_kinds_accepted(valid_kind: str, mock_ctx, ctx_patch) -> None:
+    """list_functions accepts all three valid kind values without error."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.functions.list_functions", new=AsyncMock(return_value=[])),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "list_functions",
+            {"workspace": WS_NAME, "item": WH_NAME, "kind": valid_kind},
+        )
+
+    assert result == []

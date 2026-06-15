@@ -22,6 +22,7 @@ from fabric_dw.cli.commands._utils import (
 )
 from fabric_dw.exceptions import FabricError
 from fabric_dw.services import functions as _fns_svc
+from fabric_dw.services.functions import validate_kind
 
 
 @click.group("functions")
@@ -62,7 +63,7 @@ async def list_cmd(
             items = await _fns_svc.list_functions(
                 target,
                 schema=schema,
-                kind=kind,  # ty: ignore[invalid-argument-type]
+                kind=validate_kind(kind),
                 mode=ctx.auth,  # type: ignore[arg-type]
             )
             render(

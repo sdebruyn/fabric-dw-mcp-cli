@@ -25,6 +25,7 @@ from fabric_dw.mcp._helpers import (
     tool_err,
 )
 from fabric_dw.services import functions as functions_svc
+from fabric_dw.services.functions import validate_kind
 
 __all__ = ["register"]
 
@@ -70,7 +71,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             result = await functions_svc.list_functions(
                 target,
                 schema=schema,
-                kind=kind,  # ty: ignore[invalid-argument-type]
+                kind=validate_kind(kind),
                 mode=ctx.auth_mode,  # type: ignore[arg-type]
             )
         except (ValueError, FabricError) as exc:

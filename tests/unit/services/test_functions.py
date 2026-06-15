@@ -10,7 +10,7 @@ import pytest
 from fabric_dw.exceptions import AuthError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import Function, FunctionDetails, FunctionKind, FunctionParameter
 from fabric_dw.services import functions
-from fabric_dw.services.functions import validate_identifier
+from fabric_dw.services.functions import validate_identifier, validate_kind
 from tests.unit.services._helpers import _make_conn, _make_conn_for_ddl, _make_target
 
 # ---------------------------------------------------------------------------
@@ -747,3 +747,35 @@ class TestRenameFunction:
             await functions.rename_function(target, "dbo.fn_clean", "fn_sanitize")
 
         ddl_conn.commit.assert_called_once()
+
+
+# ===========================================================================
+# validate_kind
+# ===========================================================================
+
+
+class TestValidateKind:
+    @pytest.mark.parametrize("kind", ["scalar", "inline-tvf", "all"])
+    def test_valid_kinds_returned_unchanged(self, kind: str) -> None:
+        assert validate_kind(kind) == kind
+
+    @pytest.mark.parametrize(
+        "bad_kind",
+        ["", "SCALAR", "Scalar", "fn", "tvf", "all-types", "multistatement-tvf", "unknown"],
+    )
+    def test_invalid_kind_raises_value_error(self, bad_kind: str) -> None:
+        with pytest.raises(ValueError, match="Invalid kind"):
+            validate_kind(bad_kind)
+
+    def test_error_message_lists_valid_choices(self) -> None:
+        with pytest.raises(ValueError, match="scalar"):
+            validate_kind("nope")
+
+    @pytest.mark.parametrize("kind", ["scalar", "inline-tvf", "all"])
+    async def test_list_functions_accepts_valid_kind(self, kind: str) -> None:
+        """list_functions does not raise for any of the three valid kinds."""
+        target = _make_target()
+        conn = _make_conn([], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await functions.list_functions(target, kind=validate_kind(kind))
+        assert isinstance(result, list)
