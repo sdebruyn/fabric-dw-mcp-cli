@@ -20,13 +20,13 @@ from fabric_dw.sql import SqlTarget, is_transient_connection_error, run_query
 logger = logging.getLogger(__name__)
 
 # Maximum time to wait for a SQL analytics endpoint to provision on a new lakehouse.
-_SQL_ENDPOINT_PROVISION_TIMEOUT_S = 300
+_SQL_ENDPOINT_PROVISION_TIMEOUT_S = 600  # 10 min — Fabric preview provisioning can be slow
 # Polling interval between provisioning status checks.
 _SQL_ENDPOINT_POLL_INTERVAL_S = 5
 
 # Maximum time (seconds) to wait for a fresh warehouse/endpoint SQL database
 # to become connectable after creation.
-_SQL_READINESS_TIMEOUT_S = 240
+_SQL_READINESS_TIMEOUT_S = 600  # 10 min — warm-up window for Fabric preview SQL engine
 # Starting backoff delay (seconds) between readiness probe attempts.
 _SQL_READINESS_BACKOFF_INITIAL_S = 2.0
 # Maximum backoff delay cap (seconds).
@@ -35,7 +35,7 @@ _SQL_READINESS_BACKOFF_MAX_S = 5.0
 # Maximum time (seconds) to wait for a freshly-created snapshot to appear in
 # sys.databases on the parent warehouse's SQL connection and report a non-null
 # TIMESTAMP property (i.e. be ready for ALTER DATABASE … SET TIMESTAMP = …).
-_SNAP_SQL_READINESS_TIMEOUT_S = 300.0
+_SNAP_SQL_READINESS_TIMEOUT_S = 600.0  # 10 min — Fabric preview snapshot SQL-layer provisioning
 # Polling interval (seconds) between snapshot readiness probes.
 _SNAP_SQL_READINESS_POLL_S = 5.0
 
@@ -86,7 +86,7 @@ async def _wait_for_sql_readiness(
             # "database was not found" flavour (AuthError from map_driver_error).
             # We do NOT swallow all "login failed" messages — that is too broad
             # and would hide genuine permanent auth misconfiguration (wrong tenant,
-            # expired service principal, etc.) for the full 240 s timeout.
+            # expired service principal, etc.) for the full 600 s timeout.
             # "database was not found" uniquely identifies the provisioning-transient
             # variant of login-failed (error 18456), so it is the right signal here.
             is_warmup = "database was not found" in msg_lower
