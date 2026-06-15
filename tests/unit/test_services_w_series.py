@@ -284,3 +284,45 @@ class TestSnapshotsCreateLocationGuard:
                 UUID("bbbbbbbb-0000-0000-0000-000000000000"),
                 "my-snapshot",
             )
+
+    @pytest.mark.asyncio
+    async def test_naive_snapshot_dt_raises(self) -> None:
+        """A naive snapshot_dt must raise ValueError before any HTTP call (W01)."""
+        http = MagicMock()
+        http.request = AsyncMock()
+
+        with pytest.raises(ValueError, match="timezone-aware"):
+            await _snap_create(
+                http,
+                UUID("aaaaaaaa-0000-0000-0000-000000000000"),
+                UUID("bbbbbbbb-0000-0000-0000-000000000000"),
+                "snap",
+                snapshot_dt=datetime(2024, 1, 1, 12, 0, 0),  # naive  # noqa: DTZ001
+            )
+
+        http.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_aware_snapshot_dt_converted_to_utc(self) -> None:
+        """An aware snapshot_dt is converted to UTC and does not raise before the HTTP call."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 202
+        mock_resp.headers = {}
+
+        http = MagicMock()
+        http.request = AsyncMock(return_value=mock_resp)
+
+        tz_plus2 = timezone(timedelta(hours=2))
+        aware_dt = datetime(2024, 6, 1, 14, 30, 0, tzinfo=tz_plus2)
+
+        with pytest.raises(ValueError, match="Location header is missing"):
+            await _snap_create(
+                http,
+                UUID("aaaaaaaa-0000-0000-0000-000000000000"),
+                UUID("bbbbbbbb-0000-0000-0000-000000000000"),
+                "snap",
+                snapshot_dt=aware_dt,
+            )
+
+        # The HTTP call must have been made (tz check passed)
+        http.request.assert_called_once()

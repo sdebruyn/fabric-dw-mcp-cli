@@ -70,7 +70,7 @@ async def list_all_workspaces(http: FabricHttpClient) -> list[Warehouse]:
     workspaces = await _list_all_workspaces(http)
     return await scan_all_workspaces(
         workspaces,
-        lambda ws: list_endpoints(http, ws.id),  # type: ignore[union-attr]
+        lambda ws: list_endpoints(http, ws.id),  # type: ignore[union-attr]  # mypy false-positive: Sequence[_HasNameAndId] exposes id: UUID but mypy loses the concrete type through the Protocol abstraction
         logger=_logger,
         skip_errors=(PermissionDeniedError, NotFoundError),
     )

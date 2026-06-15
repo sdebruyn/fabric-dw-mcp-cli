@@ -153,6 +153,8 @@ async def create_point(
     points = await list_points(http, workspace_id, warehouse_id)
     user_points = [p for p in points if p.creation_mode == CreationModeType.USER_DEFINED]
     if user_points:
+        # Non-digit IDs are treated as 0; if all points have non-digit IDs the
+        # selection is arbitrary (but the API guarantees epoch-ms decimal strings).
         return max(user_points, key=lambda p: int(p.id) if p.id.isdigit() else 0)
 
     msg = (

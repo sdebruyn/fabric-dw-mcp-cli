@@ -44,7 +44,7 @@ async def _post_create_with_retry(
         if backoff is not None:
             _logger.warning(
                 "create warehouse: 2xx response had no Location header and no usable body "
-                "(attempt %d/3) — waiting %ss before retry (see issue #204)",
+                "(retry %d/3) — waiting %ss before retry (see issue #204)",
                 attempt,
                 backoff,
             )
@@ -154,7 +154,7 @@ async def list_all_workspaces(http: FabricHttpClient) -> list[Warehouse]:
     workspaces = await _list_all_workspaces(http)
     return await scan_all_workspaces(
         workspaces,
-        lambda ws: list_warehouses(http, ws.id),  # type: ignore[union-attr]
+        lambda ws: list_warehouses(http, ws.id),  # type: ignore[union-attr]  # mypy false-positive: Sequence[_HasNameAndId] exposes id: UUID but mypy loses the concrete type through the Protocol abstraction
         logger=_logger,
         skip_errors=(PermissionDeniedError, NotFoundError),
     )
