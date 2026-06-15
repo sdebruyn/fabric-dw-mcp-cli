@@ -5,6 +5,14 @@ callables imported directly by each service test module.  This avoids
 duplicate definitions while preserving the calling convention used by
 every test (``client = await _make_client()`` followed by
 ``async with client:``).
+
+ODBC helpers
+------------
+``_make_target``, ``_make_conn``, and ``_make_conn_for_ddl`` are the
+single canonical ODBC mock factories shared across *all* SQL-service test
+modules (T08 fix).  Previously each module had its own near-identical copy;
+centralising here ensures that improvements to the mock contract (e.g. adding
+``nextset()`` return value or ``rowcount`` defaults) propagate everywhere.
 """
 
 from __future__ import annotations
@@ -38,3 +46,45 @@ async def _make_client(rps: int = 100) -> FabricHttpClient:
     behaviour explicitly.
     """
     return FabricHttpClient(credential=_make_credential(), rps=rps)
+
+
+# ---------------------------------------------------------------------------
+# ODBC / SQL mock helpers (T08: single canonical copy for all SQL service tests)
+# ---------------------------------------------------------------------------
+
+
+def _make_target() -> MagicMock:
+    """Return a mock :class:`fabric_dw.sql.SqlTarget`."""
+    return MagicMock()
+
+
+def _make_conn(rows: list[tuple[object, ...]], columns: list[str]) -> MagicMock:
+    """Return a mock DB-API connection whose cursor returns *rows* / *columns*.
+
+    The cursor's ``nextset()`` returns ``False`` by default (single result set).
+    The ``rowcount`` is ``-1`` (driver does not know the row count) so that
+    tests which check rowcount fall back to ``len(rows)``.
+    """
+    cursor = MagicMock()
+    cursor.description = [(c, None) for c in columns] if columns else None
+    cursor.fetchall.return_value = rows
+    cursor.rowcount = -1
+    cursor.nextset.return_value = False
+    conn = MagicMock()
+    conn.cursor.return_value = cursor
+    return conn
+
+
+def _make_conn_for_ddl() -> MagicMock:
+    """Return a mock DB-API connection for DDL statements (no result set).
+
+    ``cursor.description`` is ``None`` and ``fetchall`` returns ``[]``.
+    """
+    cursor = MagicMock()
+    cursor.description = None
+    cursor.fetchall.return_value = []
+    cursor.rowcount = 0
+    cursor.nextset.return_value = False
+    conn = MagicMock()
+    conn.cursor.return_value = cursor
+    return conn

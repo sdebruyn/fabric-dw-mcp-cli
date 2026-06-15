@@ -11,36 +11,7 @@ from fabric_dw.exceptions import AuthError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import View
 from fabric_dw.services import views
 from fabric_dw.services.views import read_view, validate_identifier
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_target() -> MagicMock:
-    """Return a mock SqlTarget."""
-    return MagicMock()
-
-
-def _make_conn(rows: list[tuple[object, ...]], columns: list[str]) -> MagicMock:
-    """Return a mock connection whose cursor returns the given rows."""
-    cursor = MagicMock()
-    cursor.description = [(c, None) for c in columns]
-    cursor.fetchall.return_value = rows
-    conn = MagicMock()
-    conn.cursor.return_value = cursor
-    return conn
-
-
-def _make_conn_for_ddl() -> MagicMock:
-    """Return a mock connection suitable for DDL statements (no rows returned)."""
-    cursor = MagicMock()
-    cursor.description = None
-    cursor.fetchall.return_value = []
-    conn = MagicMock()
-    conn.cursor.return_value = cursor
-    return conn
-
+from tests.unit.services._helpers import _make_conn, _make_conn_for_ddl, _make_target
 
 # ---------------------------------------------------------------------------
 # Fixture data
@@ -297,7 +268,8 @@ class TestReadView:
         cursor = conn.cursor.return_value
         call_sql: str = cursor.execute.call_args[0][0].upper()
         assert "SELECT TOP" in call_sql
-        assert "5" in call_sql
+        # Assert the full TOP clause to avoid accidental matches on other numbers.
+        assert "TOP (5)" in call_sql
 
     async def test_sql_uses_bracket_quoting(self) -> None:
         target = _make_target()
@@ -387,8 +359,9 @@ class TestReadView:
         with patch("fabric_dw.sql.open_connection", return_value=conn):
             await read_view(target, "dbo", "vw_sales")
         cursor = conn.cursor.return_value
-        call_sql: str = cursor.execute.call_args[0][0]
-        assert "10" in call_sql
+        call_sql: str = cursor.execute.call_args[0][0].upper()
+        # Assert the full TOP clause to avoid accidental matches on other numbers.
+        assert "TOP (10)" in call_sql
 
 
 # ===========================================================================

@@ -10,26 +10,7 @@ import pytest
 from fabric_dw.exceptions import AuthError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import Connection, RunningQuery
 from fabric_dw.services import queries
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_target() -> MagicMock:
-    """Return a mock SqlTarget."""
-    return MagicMock()
-
-
-def _make_conn(rows: list[tuple[object, ...]], columns: list[str]) -> MagicMock:
-    """Return a mock connection whose cursor returns the given rows."""
-    cursor = MagicMock()
-    cursor.description = [(c, None) for c in columns]
-    cursor.fetchall.return_value = rows
-    conn = MagicMock()
-    conn.cursor.return_value = cursor
-    return conn
-
+from tests.unit.services._helpers import _make_conn, _make_target
 
 # ---------------------------------------------------------------------------
 # Fixture rows matching the DMV query output columns
@@ -244,8 +225,8 @@ async def test_kill_issues_kill_statement() -> None:
         await queries.kill(target, 42)
 
     call_sql: str = cursor.execute.call_args[0][0]
-    assert "KILL" in call_sql
-    assert "42" in call_sql
+    # Assert the full KILL statement — bare "42" could match in GUIDs, comments, etc.
+    assert call_sql.strip() == "KILL 42"
 
 
 async def test_kill_commits_after_execute() -> None:
@@ -682,10 +663,8 @@ async def test_kill_sql_session_id_is_integer_not_string() -> None:
         await queries.kill(target, 7)
 
     call_sql: str = cursor.execute.call_args[0][0]
-    # Must not contain quotes around the number
-    assert "'7'" not in call_sql
-    assert '"7"' not in call_sql
-    assert "7" in call_sql
+    # Assert exact statement — bare "7" could match in other literal values.
+    assert call_sql.strip() == "KILL 7"
 
 
 async def test_kill_sql_no_params_bound() -> None:

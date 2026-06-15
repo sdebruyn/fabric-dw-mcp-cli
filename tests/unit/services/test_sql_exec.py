@@ -513,3 +513,120 @@ async def test_ddl_no_result_set_returns_empty_stateful() -> None:
 
     assert result.columns == []
     assert result.rows == []
+
+
+# ---------------------------------------------------------------------------
+# T01: row_limit / truncation path
+# ---------------------------------------------------------------------------
+
+
+async def test_execute_row_limit_calls_fetchmany_plus_one() -> None:
+    """When row_limit=N, fetchmany(N+1) must be called (not fetchall)."""
+    target = _make_target()
+    rows: list[tuple[object, ...]] = [(i,) for i in range(10)]
+    cursor = _make_stateful_cursor([(["n"], rows)])
+    conn = MagicMock()
+    conn.cursor.return_value = cursor
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await sql_exec.execute(target, "SELECT n FROM t", row_limit=5)
+
+    cursor.fetchmany.assert_called_once_with(6)  # row_limit + 1
+    cursor.fetchall.assert_not_called()
+
+
+async def test_execute_row_limit_zero_calls_fetchmany_one() -> None:
+    """row_limit=0 → fetchmany(1) — the +1 sentinel still applies."""
+    target = _make_target()
+    cursor = _make_stateful_cursor([(["n"], [(1,)])])
+    conn = MagicMock()
+    conn.cursor.return_value = cursor
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await sql_exec.execute(target, "SELECT n FROM t", row_limit=0)
+
+    cursor.fetchmany.assert_called_once_with(1)
+
+
+async def test_execute_row_limit_one_calls_fetchmany_two() -> None:
+    """row_limit=1 → fetchmany(2) so caller can detect if there is a second row."""
+    target = _make_target()
+    cursor = _make_stateful_cursor([(["n"], [(1,), (2,)])])
+    conn = MagicMock()
+    conn.cursor.return_value = cursor
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await sql_exec.execute(target, "SELECT n FROM t", row_limit=1)
+
+    cursor.fetchmany.assert_called_once_with(2)
+
+
+async def test_execute_row_limit_none_uses_fetchall() -> None:
+    """Default row_limit=None must use fetchall, not fetchmany."""
+    target = _make_target()
+    cursor = _make_stateful_cursor([(["n"], [(1,), (2,), (3,)])])
+    conn = MagicMock()
+    conn.cursor.return_value = cursor
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await sql_exec.execute(target, "SELECT n FROM t")
+
+    cursor.fetchall.assert_called_once()
+    cursor.fetchmany.assert_not_called()
+
+
+async def test_execute_row_limit_does_not_truncate_rows() -> None:
+    """execute does NOT truncate the rows; it returns all rows the driver returned.
+
+    The caller (e.g. the MCP tool) is responsible for truncation: it can detect
+    overflow by checking len(rows) > row_limit.
+    """
+    target = _make_target()
+    rows: list[tuple[object, ...]] = [(i,) for i in range(6)]  # 6 rows returned by driver
+    cursor = _make_stateful_cursor([(["n"], rows)])
+    conn = MagicMock()
+    conn.cursor.return_value = cursor
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await sql_exec.execute(target, "SELECT n FROM t", row_limit=5)
+
+    # execute returns all 6 rows intact; it's the caller's job to slice at 5
+    assert len(result.rows) == 6
+
+
+# ---------------------------------------------------------------------------
+# T02: pool-discard on error
+# ---------------------------------------------------------------------------
+
+
+async def test_execute_does_not_mark_discard_on_error() -> None:
+    """sql_exec.execute does NOT call mark_discard() after a cursor failure.
+
+    This is a known gap: unlike run_query (which marks connections tainted on
+    failure so they are not returned to the pool), sql_exec.execute uses
+    closing() which only calls .close() without marking _discard=True.
+    This test documents the current behaviour so that a future fix that adds
+    mark_discard() to sql_exec.execute would be visible here.
+    """
+    from fabric_dw.sql import _PooledConnection  # noqa: PLC0415
+
+    target = _make_target()
+    underlying = MagicMock()
+    key = ("ws-id-sentinel", "test-db", "default")
+    pooled = _PooledConnection(underlying, key)
+
+    cursor = MagicMock()
+    cursor.execute.side_effect = Exception("boom")
+    underlying.cursor.return_value = cursor
+
+    with (
+        patch("fabric_dw.sql.open_connection", return_value=pooled),
+        pytest.raises(Exception, match="boom"),
+    ):
+        await sql_exec.execute(target, "SELECT 1")
+
+    # The connection was closed via closing() but _discard was NOT set by execute.
+    # This means if pool is enabled the connection would be returned to the pool.
+    # Document: _discard must remain False (current behaviour).
+    assert pooled._closed is True  # closing() did call close()
+    assert pooled._discard is False  # execute does NOT mark tainted (known gap)

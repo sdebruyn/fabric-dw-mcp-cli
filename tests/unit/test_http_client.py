@@ -613,6 +613,109 @@ async def test_concurrent_requests_fetch_token_once() -> None:
 
 
 # ---------------------------------------------------------------------------
+# T20: Token refresh on expiry (per-scope cache)
+# ---------------------------------------------------------------------------
+
+
+async def test_get_token_refreshes_when_within_buffer() -> None:
+    """_get_token must call get_token again when the cached token is within the buffer window.
+
+    The buffer (default 300 s) means that a token expiring in < 300 s must be
+    refreshed even if it has not yet expired.  Failing to do so would cause 401s
+    in production when the token's remaining lifetime is shorter than the buffer.
+    """
+    now = int(time.time())
+    # Token expires in 100 s — within the default 300 s refresh buffer.
+    expiring_soon = AccessToken(token="old-tok", expires_on=now + 100)  # noqa: S106
+    fresh_token = AccessToken(token="new-tok", expires_on=now + 3600)  # noqa: S106
+
+    cred = MagicMock(spec=AsyncTokenCredential)
+    # First call returns the near-expiry token; second call returns a fresh one.
+    cred.get_token = AsyncMock(side_effect=[expiring_soon, fresh_token])
+
+    client = FabricHttpClient(credential=cred, rps=10)
+    async with client:
+        tok1 = await client._get_token()  # type: ignore[attr-defined]
+        tok2 = await client._get_token()  # type: ignore[attr-defined]
+
+    # First call: no cached token → fetches expiring_soon.
+    assert tok1 == "old-tok"
+    # Second call: cached token is within the buffer window → must refresh.
+    assert tok2 == "new-tok"
+    assert cred.get_token.call_count == 2, (
+        f"Expected 2 get_token calls (initial + refresh); got {cred.get_token.call_count}"
+    )
+
+
+async def test_get_token_reuses_when_well_outside_buffer() -> None:
+    """_get_token must NOT re-fetch when the cached token expires far in the future.
+
+    With the default 300 s buffer, a token expiring in 3600 s has plenty of
+    headroom — the second call must use the cache and not call get_token again.
+    """
+    now = int(time.time())
+    long_lived = AccessToken(token="long-tok", expires_on=now + 3600)  # noqa: S106
+
+    cred = MagicMock(spec=AsyncTokenCredential)
+    cred.get_token = AsyncMock(return_value=long_lived)
+
+    client = FabricHttpClient(credential=cred, rps=10)
+    async with client:
+        tok1 = await client._get_token()  # type: ignore[attr-defined]
+        tok2 = await client._get_token()  # type: ignore[attr-defined]
+
+    assert tok1 == "long-tok"
+    assert tok2 == "long-tok"
+    # Cache hit: must NOT trigger a second credential fetch.
+    assert cred.get_token.call_count == 1, (
+        f"Expected 1 get_token call (cache reuse); got {cred.get_token.call_count}"
+    )
+
+
+async def test_get_token_refreshes_per_scope_independently() -> None:
+    """Expiry-based refresh applies independently per scope.
+
+    A near-expiry FABRIC_SCOPE token must be refreshed even if the SQL_SCOPE
+    token is still fresh, and vice versa.  Per-scope cache isolation ensures the
+    two scopes do not interfere.
+    """
+    now = int(time.time())
+    fabric_expiring = AccessToken(token="fabric-old", expires_on=now + 50)  # noqa: S106
+    fabric_fresh = AccessToken(token="fabric-new", expires_on=now + 3600)  # noqa: S106
+    sql_fresh = AccessToken(token="sql-tok", expires_on=now + 3600)  # noqa: S106
+
+    call_log: list[str] = []
+
+    async def _get_token(scope: str, *_: object, **__: object) -> AccessToken:
+        call_log.append(scope)
+        if scope == FABRIC_SCOPE:
+            # Return expiring token first, fresh token on subsequent call.
+            return fabric_expiring if call_log.count(FABRIC_SCOPE) == 1 else fabric_fresh
+        return sql_fresh
+
+    cred = MagicMock(spec=AsyncTokenCredential)
+    cred.get_token = AsyncMock(side_effect=_get_token)
+
+    client = FabricHttpClient(credential=cred, rps=10)
+    async with client:
+        # Fetch FABRIC_SCOPE — gets expiring token.
+        tok_f1 = await client._get_token(FABRIC_SCOPE)  # type: ignore[attr-defined]
+        # Fetch SQL_SCOPE — fresh, no refresh needed.
+        tok_s = await client._get_token(SQL_SCOPE)  # type: ignore[attr-defined]
+        # Fetch FABRIC_SCOPE again — within buffer, must refresh.
+        tok_f2 = await client._get_token(FABRIC_SCOPE)  # type: ignore[attr-defined]
+        # Fetch SQL_SCOPE again — still fresh, must use cache.
+        tok_s2 = await client._get_token(SQL_SCOPE)  # type: ignore[attr-defined]
+
+    assert tok_f1 == "fabric-old"
+    assert tok_s == "sql-tok"
+    assert tok_f2 == "fabric-new"  # refreshed because within buffer
+    assert tok_s2 == "sql-tok"  # reused from cache
+    assert call_log.count(FABRIC_SCOPE) == 2  # initial + refresh
+    assert call_log.count(SQL_SCOPE) == 1  # cache hit on second call
+
+
+# ---------------------------------------------------------------------------
 # Debug-level logging
 # ---------------------------------------------------------------------------
 

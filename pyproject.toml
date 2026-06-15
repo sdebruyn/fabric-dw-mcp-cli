@@ -150,7 +150,22 @@ markers = [
 ]
 addopts = "-ra --strict-markers -m 'not integration and not slow'"
 asyncio_mode = "auto"
-filterwarnings = ["error::RuntimeWarning"]
+filterwarnings = [
+    "error::RuntimeWarning",
+    "error::DeprecationWarning",
+    "error::ResourceWarning",
+    # Third-party libraries emit deprecation/pending-deprecation warnings that we
+    # do not own.  Ignore them so upstream changes don't break our suite unilaterally.
+    "ignore::DeprecationWarning:filelock",
+    "ignore::DeprecationWarning:pkg_resources",
+    "ignore::DeprecationWarning:google",
+    "ignore::DeprecationWarning:azure",
+    "ignore::DeprecationWarning:mcp",
+    "ignore::DeprecationWarning:pydantic",
+    "ignore::DeprecationWarning:httpx",
+    "ignore::DeprecationWarning:anyio",
+    "ignore::DeprecationWarning:pyarrow",
+]
 
 [tool.coverage.run]
 source_pkgs = ["fabric_dw"]

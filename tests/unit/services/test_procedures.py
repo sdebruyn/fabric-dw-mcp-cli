@@ -11,36 +11,7 @@ from fabric_dw.exceptions import AuthError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import StoredProcedure
 from fabric_dw.services import procedures
 from fabric_dw.services.procedures import validate_identifier
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_target() -> MagicMock:
-    """Return a mock SqlTarget."""
-    return MagicMock()
-
-
-def _make_conn(rows: list[tuple[object, ...]], columns: list[str]) -> MagicMock:
-    """Return a mock connection whose cursor returns the given rows."""
-    cursor = MagicMock()
-    cursor.description = [(c, None) for c in columns]
-    cursor.fetchall.return_value = rows
-    conn = MagicMock()
-    conn.cursor.return_value = cursor
-    return conn
-
-
-def _make_conn_for_ddl() -> MagicMock:
-    """Return a mock connection suitable for DDL statements (no rows returned)."""
-    cursor = MagicMock()
-    cursor.description = None
-    cursor.fetchall.return_value = []
-    conn = MagicMock()
-    conn.cursor.return_value = cursor
-    return conn
-
+from tests.unit.services._helpers import _make_conn, _make_conn_for_ddl, _make_target
 
 # ---------------------------------------------------------------------------
 # Fixture data

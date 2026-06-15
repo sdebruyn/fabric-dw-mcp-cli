@@ -224,7 +224,6 @@ async def workspace_id() -> UUID:
     if not raw:
         pytest.skip(
             "set FABRIC_TEST_WORKSPACE_ID to run integration tests",
-            allow_module_level=True,
         )
     return UUID(raw)
 

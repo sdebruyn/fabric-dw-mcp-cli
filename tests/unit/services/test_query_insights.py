@@ -23,6 +23,7 @@ from fabric_dw.services.query_insights import (
     LONG_RUNNING_QUERIES_COLUMNS,
     SQL_POOL_INSIGHTS_COLUMNS,
 )
+from tests.unit.services._helpers import _make_conn, _make_target
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -30,19 +31,6 @@ from fabric_dw.services.query_insights import (
 
 _NOW = datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC)
 _CONN_STR = "myhost.datawarehouse.fabric.microsoft.com"
-
-
-def _make_target() -> MagicMock:
-    return MagicMock()
-
-
-def _make_conn(rows: list[tuple[object, ...]], columns: list[str]) -> MagicMock:
-    cursor = MagicMock()
-    cursor.description = [(c, None) for c in columns]
-    cursor.fetchall.return_value = rows
-    conn = MagicMock()
-    conn.cursor.return_value = cursor
-    return conn
 
 
 # ---------------------------------------------------------------------------
