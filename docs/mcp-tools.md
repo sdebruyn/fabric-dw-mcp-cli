@@ -1229,6 +1229,126 @@ Return SQL pool insight events from `queryinsights.sql_pool_insights`.
 
 ---
 
+## Statistics
+
+Manage user-defined statistics on Fabric Data Warehouses and inspect them on SQL Analytics Endpoints.
+
+> **Note:** Only **single-column, histogram-based** statistics can be created or updated (Fabric limitation). Multi-column statistics are not supported.
+> Write tools (`create_statistics`, `update_statistics`, `delete_statistics`) are rejected on SQL Analytics Endpoints. Read tools (`list_statistics`, `show_statistics`) work on both item kinds.
+
+### list_statistics
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+**Guards:** `assert_workspace_allowed`
+
+List statistics on a warehouse or SQL Analytics Endpoint.
+
+**Parameters:**
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `workspace` | `str` | Workspace name or GUID. |
+| `item` | `str` | Warehouse or SQL endpoint name or GUID. |
+| `schema` | `str \| None` | Filter by schema name. |
+| `table` | `str \| None` | Filter by table name (unqualified). |
+| `user_only` | `bool` | Only return user-created statistics. |
+| `auto_only` | `bool` | Only return auto-created statistics. |
+
+**Returns:** `list[dict]` — array of `Statistic` objects.
+
+---
+
+### show_statistics
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+**Guards:** `assert_workspace_allowed`
+
+Show details of a statistic using `DBCC SHOW_STATISTICS`. Returns the stat header, density vector, and histogram steps.
+
+**Parameters:**
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `workspace` | `str` | Workspace name or GUID. |
+| `item` | `str` | Warehouse or SQL endpoint name or GUID. |
+| `qualified_table` | `str` | Qualified table name, e.g. `dbo.sales`. |
+| `stat_name` | `str` | Name of the statistic to show. |
+| `histogram_only` | `bool` | When `true`, return only the histogram steps. |
+
+**Returns:** `StatisticDetails` — `{ stat_header, density_vector, histogram }`.
+
+---
+
+### create_statistics
+
+**Targets:** Data Warehouse only
+
+**Guards:** `assert_writes_allowed`, `assert_workspace_allowed`
+
+Create a single-column statistic on a table. Only single-column statistics are supported (Fabric limitation). SQL Analytics Endpoints are rejected.
+
+**Parameters:**
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `workspace` | `str` | Workspace name or GUID. |
+| `item` | `str` | Warehouse name or GUID. |
+| `qualified_table` | `str` | Qualified table name, e.g. `dbo.sales`. |
+| `column` | `str` | Column name. |
+| `stat_name` | `str` | Name for the new statistic. |
+| `fullscan` | `bool` | Use `WITH FULLSCAN` (default `true`). |
+| `sample_percent` | `int \| None` | Sample percentage (1–100). Overrides `fullscan`. |
+
+**Returns:** `Statistic` — the newly-created statistic.
+
+---
+
+### update_statistics
+
+**Targets:** Data Warehouse only
+
+**Guards:** `assert_writes_allowed`, `assert_workspace_allowed`
+
+Update an existing statistic via `UPDATE STATISTICS`. SQL Analytics Endpoints are rejected.
+
+**Parameters:**
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `workspace` | `str` | Workspace name or GUID. |
+| `item` | `str` | Warehouse name or GUID. |
+| `qualified_table` | `str` | Qualified table name, e.g. `dbo.sales`. |
+| `stat_name` | `str` | Name of the statistic to update. |
+| `fullscan` | `bool` | Use `WITH FULLSCAN` (default `true`). |
+| `sample_percent` | `int \| None` | Sample percentage (1–100). Overrides `fullscan`. |
+
+**Returns:** `{ "updated": true }` — confirmation.
+
+---
+
+### delete_statistics
+
+**Targets:** Data Warehouse only
+
+**Guards:** `assert_writes_allowed`, `assert_destructive_allowed`, `assert_workspace_allowed`
+
+Drop a statistic via `DROP STATISTICS`. **Destructive and irreversible.** Requires `FABRIC_MCP_ALLOW_DESTRUCTIVE=1`. SQL Analytics Endpoints are rejected.
+
+**Parameters:**
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `workspace` | `str` | Workspace name or GUID. |
+| `item` | `str` | Warehouse name or GUID. |
+| `qualified_table` | `str` | Qualified table name, e.g. `dbo.sales`. |
+| `stat_name` | `str` | Name of the statistic to drop. |
+
+**Returns:** `{ "dropped": true }` — confirmation.
+
+---
+
 ## Cache
 
 ### clear_cache

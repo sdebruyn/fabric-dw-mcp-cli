@@ -19,6 +19,7 @@ Domains
 - :mod:`.schemas` — SQL schema listing and DDL
 - :mod:`.tables` — SQL table listing, reading, DDL
 - :mod:`.sql_pools` — SQL Pools beta API, pool insights DMV
+- :mod:`.statistics` — DW statistics listing, inspection, and DDL
 - :mod:`.cache` — cache management (clear_cache)
 """
 
@@ -37,6 +38,7 @@ from fabric_dw.mcp.tools import (
     sql_endpoints,
     sql_exec,
     sql_pools,
+    statistics,
     tables,
     views,
     warehouses,
@@ -58,6 +60,7 @@ _DOMAINS = [
     procedures,
     schemas,
     tables,
+    statistics,
     sql_pools,
     cache,
 ]

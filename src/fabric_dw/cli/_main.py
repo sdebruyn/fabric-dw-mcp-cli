@@ -20,6 +20,7 @@ from fabric_dw.cli.commands.snapshots import snapshots_group
 from fabric_dw.cli.commands.sql import sql_group
 from fabric_dw.cli.commands.sql_endpoints import sql_endpoints_group
 from fabric_dw.cli.commands.sql_pools import sql_pools_group
+from fabric_dw.cli.commands.statistics import statistics_group
 from fabric_dw.cli.commands.tables import tables_group
 from fabric_dw.cli.commands.views import views_group
 from fabric_dw.cli.commands.warehouses import warehouses_group
@@ -93,3 +94,4 @@ cli.add_command(schemas_group)
 cli.add_command(tables_group)
 cli.add_command(views_group)
 cli.add_command(procedures_group)
+cli.add_command(statistics_group)
