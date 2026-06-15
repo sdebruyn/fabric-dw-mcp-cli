@@ -29,17 +29,6 @@ WS_UUID = UUID(WS_GUID)
 WH_UUID = UUID(WH_GUID)
 
 
-@pytest.fixture
-def runner() -> CliRunner:
-    return CliRunner()
-
-
-@pytest.fixture
-def cache_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
-    return tmp_path
-
-
 def _make_cm(http: object, _sql: object = None) -> object:
     @asynccontextmanager
     async def _cm(_ctx: object) -> AsyncIterator[object]:
@@ -95,8 +84,13 @@ class TestWarehousesList:
         ):
             result = runner.invoke(cli, ["warehouses", "list", WS_GUID])
         assert result.exit_code == 0
-        # Table renders without error — heading or empty-state text visible
-        assert result.output is not None
+        # iter_paginated must have been called with a URL containing the resolved workspace UUID,
+        # proving workspace resolution happened and the list call reached the service layer.
+        # This assert would fail if workspace_id were wrong or the call were never made.
+        calls = mock_http.iter_paginated.call_args_list
+        assert len(calls) >= 1
+        called_path = calls[0].args[1] if calls[0].args else str(calls[0])
+        assert str(WS_UUID) in called_path
 
     def test_list_json_output(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env

@@ -27,17 +27,6 @@ WH_UUID = UUID(WH_GUID)
 SNAP_UUID = UUID(SNAP_GUID)
 
 
-@pytest.fixture
-def runner() -> CliRunner:
-    return CliRunner()
-
-
-@pytest.fixture
-def cache_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
-    return tmp_path
-
-
 def _make_http_cm(http: object) -> object:
     """Build an asynccontextmanager that yields just the http client."""
 
@@ -256,9 +245,18 @@ class TestSnapshotsRename:
                 ["--json", "snapshots", "rename", WS_GUID, SNAP_GUID, "NewSnapshotName"],
             )
         assert result.exit_code == 0
+        # Verify that the PATCH request body contained the NEW display name, not the old one.
+        # This would fail if new_name were ignored (regression detection).
+        patch_call = next(
+            call
+            for call in mock_http.request.call_args_list
+            if call.args and call.args[0] == "PATCH"
+        )
+        patch_json = patch_call.kwargs.get("json", {})
+        assert patch_json.get("displayName") == "NewSnapshotName"
+        # Also verify the rendered output returned the snapshot id
         data = json.loads(result.output)
         assert data["id"] == SNAP_GUID
-        assert "displayName" in data
 
 
 class TestSnapshotsDelete:
@@ -282,7 +280,9 @@ class TestSnapshotsDelete:
             result = runner.invoke(cli, ["--yes", "snapshots", "delete", SNAP_GUID, WS_GUID])
         assert result.exit_code == 0
         mock_http.request.assert_awaited_once()
-        assert "deleted" in result.output or "SalesWarehouse_Snapshot_20240315" in result.output
+        # Assert only the real success signal — the snapshot name is always in the fixture
+        # so the second disjunct would never catch a regression.
+        assert "deleted" in result.output
 
     def test_delete_declined_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         """Declining delete is a clean no-op (exit 0, policy: decline != error)."""
@@ -338,7 +338,9 @@ class TestSnapshotsRoll:
             )
         assert result.exit_code == 0
         mock_roll.assert_awaited_once()
-        assert "rolled" in result.output or "SalesWarehouse_Snapshot_20240315" in result.output
+        # Assert only the real success signal — the snapshot name is always in the fixture
+        # so the second disjunct would never catch a regression.
+        assert "rolled" in result.output
 
     def test_roll_with_at_flag_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -373,9 +375,11 @@ class TestSnapshotsRoll:
             )
         assert result.exit_code == 0
         mock_roll.assert_awaited_once()
-        # The --at datetime must have been parsed and forwarded to the service.
+        # The --at datetime must have been parsed to the exact UTC datetime and forwarded.
+        # This assert would fail if parse_iso_datetime were skipped or the wrong value passed.
         _args, _kwargs = mock_roll.call_args
-        assert _args[2] is not None  # new_dt positional arg
+        expected_dt = datetime(2024, 3, 15, 12, 0, 0, tzinfo=UTC)
+        assert _args[2] == expected_dt, f"Expected {expected_dt!r}, got {_args[2]!r}"
 
     def test_roll_declined_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         """Declining roll is a clean no-op (exit 0, policy: decline != error)."""

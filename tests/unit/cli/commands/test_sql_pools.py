@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
-import pytest
 from click.testing import CliRunner
 
 from fabric_dw.cli._main import cli
@@ -78,17 +78,6 @@ _CONFIG = SqlPoolsConfiguration.model_validate(POOLS_PAYLOAD)
 _CONFIG_DISABLED = SqlPoolsConfiguration.model_validate(POOLS_DISABLED_PAYLOAD)
 _CONFIG_EMPTY = SqlPoolsConfiguration.model_validate(POOLS_EMPTY_PAYLOAD)
 _CONFIG_MULTI = SqlPoolsConfiguration.model_validate(MULTI_POOL_PAYLOAD)
-
-
-@pytest.fixture
-def runner() -> CliRunner:
-    return CliRunner()
-
-
-@pytest.fixture
-def cache_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
-    return tmp_path
 
 
 def _make_http_cm(http: object) -> object:
@@ -1094,11 +1083,19 @@ class TestSqlPoolsInsights:
                 ],
             )
         assert result.exit_code == 0
-        # since/until must have been parsed and forwarded to the service
+        # since/until must have been parsed to the exact datetime values and forwarded.
+        # These asserts would fail if parse_iso_datetime were skipped or wrong values passed.
         mock_insights.assert_awaited_once()
         _, kwargs = mock_insights.call_args
-        assert kwargs.get("since") is not None
-        assert kwargs.get("until") is not None
+        # The CLI uses parse_iso_optional(assume_utc=False), so naive input stays naive.
+        expected_since = datetime(2024, 1, 1, 0, 0, 0)  # noqa: DTZ001 — testing naive CLI output
+        expected_until = datetime(2024, 12, 31, 23, 59, 59)  # noqa: DTZ001
+        assert kwargs.get("since") == expected_since, (
+            f"Expected since={expected_since!r}, got {kwargs.get('since')!r}"
+        )
+        assert kwargs.get("until") == expected_until, (
+            f"Expected until={expected_until!r}, got {kwargs.get('until')!r}"
+        )
 
     def test_insights_fabric_error_exits_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
