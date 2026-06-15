@@ -275,7 +275,13 @@ class TestShowStatistics:
             assert "DBCC" in call_sql
             assert "SHOW_STATISTICS" in call_sql
 
-    async def test_sql_bracket_quotes_table_identifier(self) -> None:
+    async def test_sql_uses_string_literal_for_table(self) -> None:
+        """show_statistics must pass the table as a string literal 'schema.table'.
+
+        Fabric DW DBCC SHOW_STATISTICS does not accept bracket-quoted identifiers
+        ([schema].[table]) in the first argument — that causes 'Incorrect syntax
+        near '.''.  The table must be a single-quoted string literal.
+        """
         target = _make_target()
         header_conn = _make_conn([_HEADER_ROW], _HEADER_COLS)
         density_conn = _make_conn([_DENSITY_ROW], _DENSITY_COLS)
@@ -286,8 +292,10 @@ class TestShowStatistics:
         ):
             await statistics.show_statistics(target, "dbo.sales", "stat_sales_id")
         call_sql: str = header_conn.cursor.return_value.execute.call_args[0][0]
-        assert "[dbo]" in call_sql
-        assert "[sales]" in call_sql
+        # Table must be a string literal, not bracket-quoted identifiers.
+        assert "'dbo.sales'" in call_sql
+        # Regression: must NOT have stray dot outside the string (the original bug).
+        assert "[dbo].[sales]" not in call_sql
 
     async def test_sql_bracket_quotes_stat_identifier(self) -> None:
         target = _make_target()
@@ -354,6 +362,23 @@ class TestShowStatistics:
                 "x]; DROP DATABASE master--.sales",
                 "stat",
             )
+
+    async def test_single_quote_in_schema_rejected(self) -> None:
+        """Single-quote in schema must be rejected before it can reach the string literal.
+
+        DBCC SHOW_STATISTICS embeds the table as 'schema.table'. validate_identifier
+        must block any name containing a quote so that the literal is safe without
+        explicit escaping.
+        """
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await statistics.show_statistics(target, "dbo'.sales", "stat")
+
+    async def test_single_quote_in_table_rejected(self) -> None:
+        """Single-quote in table name must be rejected before it can reach the string literal."""
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await statistics.show_statistics(target, "dbo.sales'", "stat")
 
 
 # ===========================================================================
@@ -844,3 +869,119 @@ class TestBracketInjection:
         target = _make_target()
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await statistics.drop_statistics(target, "dbo.sales", "my]stat")
+
+
+# ===========================================================================
+# Regression: issue-371 — exact SQL for roundtrip identifiers
+# ===========================================================================
+#
+# The integration test uses schema='pytest_d1e50944', table='pytest_stat_roundtrip',
+# stat='pytest_stat_on_id'.  These tests pin the exact SQL each operation
+# produces so that any future regression (stray '.', wrong quoting) is caught
+# without a Fabric round-trip.
+# ===========================================================================
+
+
+class TestExactSqlRoundtripRegression:
+    """Pin the exact SQL for the integration roundtrip identifiers (issue-371)."""
+
+    _SCHEMA = "pytest_d1e50944"
+    _TABLE = "pytest_stat_roundtrip"
+    _COL = "id"
+    _STAT = "pytest_stat_on_id"
+    _QUALIFIED = f"{_SCHEMA}.{_TABLE}"
+
+    async def test_show_statistics_exact_sql_no_stray_dot(self) -> None:
+        """DBCC SHOW_STATISTICS must use string literal for table, not [schema].[table].
+
+        Regression: passing [schema].[table] caused 'Incorrect syntax near .' on
+        real Fabric DW.  The first argument must be 'schema.table' (string literal).
+        All three DBCC templates (STAT_HEADER, DENSITY_VECTOR, HISTOGRAM) are pinned.
+        """
+        target = _make_target()
+        header_conn = _make_conn([_HEADER_ROW], _HEADER_COLS)
+        density_conn = _make_conn([_DENSITY_ROW], _DENSITY_COLS)
+        hist_conn = _make_conn([_HISTOGRAM_ROW], _HISTOGRAM_COLS)
+        with patch(
+            "fabric_dw.sql.open_connection",
+            side_effect=[header_conn, density_conn, hist_conn],
+        ):
+            await statistics.show_statistics(target, self._QUALIFIED, self._STAT)
+
+        table_literal = f"'{self._SCHEMA}.{self._TABLE}'"
+        stat_q = f"[{self._STAT}]"
+
+        # --- STAT_HEADER ---
+        header_sql: str = header_conn.cursor.return_value.execute.call_args[0][0]
+        expected_header = f"DBCC SHOW_STATISTICS ({table_literal}, {stat_q}) WITH STAT_HEADER;"
+        assert header_sql == expected_header, (
+            f"STAT_HEADER SQL mismatch.\nGot:      {header_sql!r}\nExpected: {expected_header!r}"
+        )
+        assert ".." not in header_sql
+        assert f"[{self._SCHEMA}].[{self._TABLE}]" not in header_sql
+
+        # --- DENSITY_VECTOR ---
+        density_sql: str = density_conn.cursor.return_value.execute.call_args[0][0]
+        expected_density = f"DBCC SHOW_STATISTICS ({table_literal}, {stat_q}) WITH DENSITY_VECTOR;"
+        assert density_sql == expected_density, (
+            f"DENSITY_VECTOR SQL mismatch.\n"
+            f"Got:      {density_sql!r}\nExpected: {expected_density!r}"
+        )
+        assert ".." not in density_sql
+        assert f"[{self._SCHEMA}].[{self._TABLE}]" not in density_sql
+
+        # --- HISTOGRAM ---
+        histogram_sql: str = hist_conn.cursor.return_value.execute.call_args[0][0]
+        expected_histogram = f"DBCC SHOW_STATISTICS ({table_literal}, {stat_q}) WITH HISTOGRAM;"
+        assert histogram_sql == expected_histogram, (
+            f"HISTOGRAM SQL mismatch.\n"
+            f"Got:      {histogram_sql!r}\nExpected: {expected_histogram!r}"
+        )
+        assert ".." not in histogram_sql
+        assert f"[{self._SCHEMA}].[{self._TABLE}]" not in histogram_sql
+
+    async def test_create_statistics_exact_sql(self) -> None:
+        """CREATE STATISTICS SQL must be bracket-quoted with no stray dots."""
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_STAT_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await statistics.create_statistics(
+                target,
+                self._QUALIFIED,
+                self._COL,
+                name=self._STAT,
+                fullscan=True,
+            )
+        call_sql: str = ddl_conn.cursor.return_value.execute.call_args[0][0]
+        expected = (
+            f"CREATE STATISTICS [{self._STAT}]"
+            f" ON [{self._SCHEMA}].[{self._TABLE}]"
+            f" ([{self._COL}]) WITH FULLSCAN;"
+        )
+        assert call_sql == expected, f"Got: {call_sql!r}\nExpected: {expected!r}"
+        assert ".." not in call_sql
+
+    async def test_update_statistics_exact_sql(self) -> None:
+        """UPDATE STATISTICS SQL must be bracket-quoted with no stray dots."""
+        target = _make_target()
+        conn = _make_conn_for_ddl()
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await statistics.update_statistics(target, self._QUALIFIED, self._STAT, fullscan=True)
+        call_sql: str = conn.cursor.return_value.execute.call_args[0][0]
+        expected = (
+            f"UPDATE STATISTICS [{self._SCHEMA}].[{self._TABLE}] ([{self._STAT}]) WITH FULLSCAN;"
+        )
+        assert call_sql == expected, f"Got: {call_sql!r}\nExpected: {expected!r}"
+        assert ".." not in call_sql
+
+    async def test_drop_statistics_exact_sql(self) -> None:
+        """DROP STATISTICS SQL must use three-part bracket-quoted name with no stray dots."""
+        target = _make_target()
+        conn = _make_conn_for_ddl()
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await statistics.drop_statistics(target, self._QUALIFIED, self._STAT)
+        call_sql: str = conn.cursor.return_value.execute.call_args[0][0]
+        expected = f"DROP STATISTICS [{self._SCHEMA}].[{self._TABLE}].[{self._STAT}];"
+        assert call_sql == expected, f"Got: {call_sql!r}\nExpected: {expected!r}"
+        assert ".." not in call_sql
