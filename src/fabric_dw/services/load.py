@@ -30,6 +30,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+import urllib.parse
 import uuid
 from pathlib import Path
 from typing import Literal
@@ -38,7 +40,7 @@ import httpx
 from azure.core.credentials_async import AsyncTokenCredential
 
 from fabric_dw.auth import STORAGE_SCOPE
-from fabric_dw.exceptions import FabricServerError, ItemKindError
+from fabric_dw.exceptions import FabricError, FabricServerError, ItemKindError
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.identifiers import quote_identifier, validate_identifier
 from fabric_dw.models import CopyIntoResult, WarehouseKind
@@ -50,6 +52,7 @@ __all__ = [
     "copy_into_from_url",
     "create_staging_lakehouse",
     "delete_lakehouse",
+    "infer_file_format",
     "load_local_file",
     "onelake_upload_file",
 ]
@@ -69,8 +72,27 @@ _VALID_FILE_TYPES: frozenset[str] = frozenset({"CSV", "PARQUET"})
 #: Upload chunk size for DFS append (4 MiB).
 _UPLOAD_CHUNK_SIZE: int = 4 * 1024 * 1024
 
+#: Maximum local file size before staging upload is rejected (2 GiB).
+_MAX_STAGING_FILE_BYTES: int = 2 * 1024 * 1024 * 1024
+
 # SQL Endpoint rejection message.
 _SQL_ENDPOINT_READONLY_MSG = "SQL Endpoints are read-only; COPY INTO not supported"
+
+# ---------------------------------------------------------------------------
+# SSRF-prevention: blocked URL patterns for --url / rejected_row_location
+# ---------------------------------------------------------------------------
+
+#: Prefixes that are blocked to prevent SSRF to instance metadata / link-local endpoints.
+_BLOCKED_URL_PREFIXES: tuple[str, ...] = (
+    "http://169.254.",  # IMDS / link-local
+    "http://fd00:",  # IPv6 link-local (rare but possible)
+)
+
+#: Regex to detect link-local / IMDS hosts (IPv4 169.254.x.x and hostnames resolving to them).
+_METADATA_HOST_RE = re.compile(r"^(?:169\.254\.\d+\.\d+|metadata\.azure\.internal)$", re.IGNORECASE)
+
+#: Staging lakehouse name: same alphabet as SQL identifier but allow hyphens.
+_STAGING_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_\-]{0,127}$")
 
 # ---------------------------------------------------------------------------
 # Types
@@ -113,6 +135,83 @@ class CopyIntoCsvOptions:
 def _assert_not_sql_endpoint(kind: WarehouseKind) -> None:
     if kind == WarehouseKind.SQL_ENDPOINT:
         raise ItemKindError(_SQL_ENDPOINT_READONLY_MSG)
+
+
+def _validate_https_url(url: str, param_name: str = "url") -> None:
+    """Reject non-HTTPS URLs and known SSRF-prone endpoints.
+
+    Args:
+        url: The URL to validate.
+        param_name: The parameter name for use in error messages.
+
+    Raises:
+        ValueError: If the URL scheme is not ``https`` or the host is a
+            link-local / IMDS address that could enable SSRF.
+    """
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme.lower() != "https":
+        msg = (
+            f"Invalid {param_name} scheme {parsed.scheme!r}: only HTTPS URLs are accepted. "
+            "Use https:// for all source and rejected-row URLs."
+        )
+        raise ValueError(msg)
+    host = parsed.hostname or ""
+    if _METADATA_HOST_RE.match(host):
+        msg = (
+            f"Invalid {param_name} host {host!r}: link-local and instance-metadata "
+            "endpoints are not permitted."
+        )
+        raise ValueError(msg)
+
+
+def _validate_staging_name(name: str) -> str:
+    """Validate a staging Lakehouse display name.
+
+    Accepts letters, digits, underscores, and hyphens (max 128 chars).
+    Rejects newlines, null bytes, and other control characters to prevent
+    log injection.
+
+    Args:
+        name: The raw staging Lakehouse name supplied by the caller.
+
+    Returns:
+        *name* unchanged if valid.
+
+    Raises:
+        ValueError: If *name* contains forbidden characters or is empty.
+    """
+    if not name:
+        msg = "staging_lakehouse_name must not be empty"
+        raise ValueError(msg)
+    if any(c in name for c in ("\n", "\r", "\0", "\t")):
+        msg = f"staging_lakehouse_name {name!r}: control characters (newlines etc.) are not allowed"
+        raise ValueError(msg)
+    if not _STAGING_NAME_RE.match(name):
+        msg = (
+            f"staging_lakehouse_name {name!r}: must start with a letter or underscore "
+            "and contain only letters, digits, underscores, or hyphens (max 128 chars)"
+        )
+        raise ValueError(msg)
+    return name
+
+
+def _safe_dest_filename(local_path: Path) -> str:
+    """Return a safe DFS destination filename from *local_path*.
+
+    Percent-decodes the filename (handles URL-encoded slashes / path separators)
+    and then strips any directory component to guarantee only a bare filename is
+    embedded in the DFS path and the SQL statement.
+
+    Args:
+        local_path: The original local file path.
+
+    Returns:
+        A bare filename with no path separators and percent-encoding decoded.
+    """
+    raw_name = local_path.name
+    decoded = urllib.parse.unquote(raw_name)
+    # Strip any directory separators that might have been encoded as %2F / %5C.
+    return Path(decoded).name or raw_name
 
 
 # ---------------------------------------------------------------------------
@@ -504,6 +603,9 @@ async def copy_into_from_url(
     _assert_not_sql_endpoint(kind)
     validate_identifier(schema)
     validate_identifier(table)
+    _validate_https_url(url, "url")
+    if rejected_row_location is not None:
+        _validate_https_url(rejected_row_location, "rejected_row_location")
 
     sql = _build_copy_into_sql(
         schema,
@@ -524,7 +626,29 @@ async def copy_into_from_url(
         # COPY INTO returns a result set with (rows_loaded, rows_rejected, …)
 
         _mode = mode if isinstance(mode, CredentialMode) else CredentialMode.DEFAULT
-        cols, rows = run_query(target, sql, mode=_mode, commit=True)
+        try:
+            cols, rows = run_query(target, sql, mode=_mode, commit=True)
+        except FabricError:
+            # Already a mapped high-level error — re-raise as-is; it does not
+            # contain the raw SQL statement text.
+            raise
+        except Exception as exc:
+            # Raw driver errors (e.g. pyodbc.Error) can include the full SQL
+            # statement text in str(exc), which may contain embedded secrets.
+            # Wrap in a FabricError with a safe message that never reveals the
+            # statement or any credential values.
+            _logger.debug(
+                "copy_into_from_url: driver error executing COPY INTO (schema=%s table=%s): %s",
+                schema,
+                table,
+                type(exc).__name__,
+                # Intentionally NOT logging str(exc) — may contain SQL with secrets.
+            )
+            safe_msg = (
+                f"COPY INTO [{schema}].[{table}] failed: "
+                f"{type(exc).__name__} (details suppressed to protect credentials)"
+            )
+            raise FabricError(safe_msg) from exc
         if rows:
             row = rows[0]
             # The result set columns vary slightly by Fabric version.
@@ -553,7 +677,7 @@ async def copy_into_from_url(
 # ---------------------------------------------------------------------------
 
 
-async def load_local_file(
+async def load_local_file(  # noqa: PLR0912, PLR0915
     http: FabricHttpClient,
     credential: AsyncTokenCredential,
     workspace_id: uuid.UUID,
@@ -615,14 +739,34 @@ async def load_local_file(
     validate_identifier(schema)
     validate_identifier(table)
 
+    # A3: validate staging_lakehouse_name if explicitly provided.
+    if staging_lakehouse_name is not None:
+        _validate_staging_name(staging_lakehouse_name)
+
+    # A5: validate rejected_row_location URL scheme (no SSRF via rejected-row output).
+    if rejected_row_location is not None:
+        _validate_https_url(rejected_row_location, "rejected_row_location")
+
     if not local_path.exists():
         msg = f"Local file not found: {local_path}"
         raise FileNotFoundError(msg)
+
+    # A2: enforce file size limit before attempting to stage.
+    file_size = local_path.stat().st_size
+    if file_size > _MAX_STAGING_FILE_BYTES:
+        msg = (
+            f"Local file {local_path.name!r} is too large to stage "
+            f"({file_size:,} bytes > {_MAX_STAGING_FILE_BYTES:,} byte limit). "
+            "Split the file or upload directly to OneLake and use --url instead."
+        )
+        raise ValueError(msg)
 
     # Step 1: determine format.
     fmt = file_format or infer_file_format(local_path)
 
     # Step 2: JSON → Parquet conversion.
+    # B2 FIX: register converted_path for cleanup BEFORE any API call so that
+    # a failure in create_staging_lakehouse cannot leave the temp file behind.
     converted_path: Path | None = None
     upload_path = local_path
     file_type: str
@@ -631,65 +775,84 @@ async def load_local_file(
         converted_path = await asyncio.to_thread(_json_to_parquet, local_path)
         upload_path = converted_path
         file_type = "PARQUET"
-        dest_filename = upload_path.name
     elif fmt == "parquet":
         file_type = "PARQUET"
-        dest_filename = local_path.name
     else:
         file_type = "CSV"
-        dest_filename = local_path.name
 
-    # Step 3: create staging Lakehouse.
-    lh_name = staging_lakehouse_name or f"staging_{uuid.uuid4().hex[:12]}"
-    _logger.info(
-        "load_local_file: creating staging Lakehouse %r in workspace %s",
-        lh_name,
-        workspace_id,
-    )
-    lakehouse_id = await create_staging_lakehouse(http, workspace_id, lh_name)
+    # A1: normalise the destination filename — decode percent-encoded characters
+    # (e.g. %2F / %5C that could be interpreted as path separators) and strip
+    # any directory component so only a bare filename is embedded in the DFS URL.
+    dest_filename = _safe_dest_filename(upload_path)
 
+    # B2 FIX: wrap everything from conversion onward in a try/finally so that
+    # the temp Parquet file is always cleaned up, even if create_staging_lakehouse
+    # or any subsequent step fails before we reach the original finally block.
     try:
-        # Step 4: upload file.
+        # Step 3: create staging Lakehouse.
+        lh_name = staging_lakehouse_name or f"staging_{uuid.uuid4().hex[:12]}"
         _logger.info(
-            "load_local_file: uploading %s to OneLake Lakehouse %s", upload_path, lakehouse_id
-        )
-        await onelake_upload_file(
-            credential,
+            "load_local_file: creating staging Lakehouse %r in workspace %s",
+            lh_name,
             workspace_id,
-            lakehouse_id,
-            dest_filename,
-            upload_path,
         )
+        lakehouse_id = await create_staging_lakehouse(http, workspace_id, lh_name)
 
-        # Step 5: COPY INTO from the OneLake URL.
-        # Same-tenant OneLake → caller's Entra identity; no CREDENTIAL needed.
-        onelake_url = (
-            f"https://onelake.dfs.fabric.microsoft.com"
-            f"/{workspace_id}/{lakehouse_id}.Lakehouse/Files/{dest_filename}"
-        )
-        result = await copy_into_from_url(
-            target,
-            schema,
-            table,
-            onelake_url,
-            file_type=file_type,
-            credential_type="none",
-            csv_options=csv_options if file_type == "CSV" else None,
-            max_errors=max_errors,
-            rejected_row_location=rejected_row_location,
-            kind=kind,
-            mode=mode,
-        )
-        _logger.info(
-            "load_local_file: loaded %d rows into %s.%s (rejected=%d)",
-            result.rows_loaded,
-            schema,
-            table,
-            result.rows_rejected,
-        )
-        return result
+        try:
+            # Step 4: upload file.
+            _logger.info(
+                "load_local_file: uploading %s to OneLake Lakehouse %s",
+                upload_path,
+                lakehouse_id,
+            )
+            await onelake_upload_file(
+                credential,
+                workspace_id,
+                lakehouse_id,
+                dest_filename,
+                upload_path,
+            )
+
+            # Step 5: COPY INTO from the OneLake URL.
+            # Same-tenant OneLake → caller's Entra identity; no CREDENTIAL needed.
+            onelake_url = (
+                f"https://onelake.dfs.fabric.microsoft.com"
+                f"/{workspace_id}/{lakehouse_id}.Lakehouse/Files/{dest_filename}"
+            )
+            result = await copy_into_from_url(
+                target,
+                schema,
+                table,
+                onelake_url,
+                file_type=file_type,
+                credential_type="none",
+                csv_options=csv_options if file_type == "CSV" else None,
+                max_errors=max_errors,
+                rejected_row_location=rejected_row_location,
+                kind=kind,
+                mode=mode,
+            )
+            _logger.info(
+                "load_local_file: loaded %d rows into %s.%s (rejected=%d)",
+                result.rows_loaded,
+                schema,
+                table,
+                result.rows_rejected,
+            )
+            return result
+        finally:
+            # Step 6: cleanup — always drop the staging Lakehouse unless asked to keep it.
+            if not keep_staging:
+                _logger.info("load_local_file: deleting staging Lakehouse %s", lakehouse_id)
+                await delete_lakehouse(http, workspace_id, lakehouse_id)
+            else:
+                _logger.info(
+                    "load_local_file: --keep-staging set; leaving Lakehouse %s (%s) in place",
+                    lh_name,
+                    lakehouse_id,
+                )
     finally:
-        # Step 6: cleanup — always drop the staging Lakehouse unless asked to keep it.
+        # Always clean up the converted temp file (B2 fix: covers create_staging_lakehouse failure).
         if converted_path is not None:
             try:
                 converted_path.unlink(missing_ok=True)
@@ -699,13 +862,3 @@ async def load_local_file(
                     converted_path,
                     exc,
                 )
-
-        if not keep_staging:
-            _logger.info("load_local_file: deleting staging Lakehouse %s", lakehouse_id)
-            await delete_lakehouse(http, workspace_id, lakehouse_id)
-        else:
-            _logger.info(
-                "load_local_file: --keep-staging set; leaving Lakehouse %s (%s) in place",
-                lh_name,
-                lakehouse_id,
-            )

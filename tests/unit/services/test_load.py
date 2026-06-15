@@ -9,13 +9,16 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from fabric_dw.exceptions import ItemKindError
+from fabric_dw.exceptions import FabricError, ItemKindError
 from fabric_dw.models import CopyIntoResult, WarehouseKind
 from fabric_dw.services.load import (
     CopyIntoCsvOptions,
     _build_copy_into_sql,
     _json_to_parquet,
+    _safe_dest_filename,
     _sq,
+    _validate_https_url,
+    _validate_staging_name,
     copy_into_from_url,
     infer_file_format,
     load_local_file,
@@ -287,7 +290,7 @@ class TestCopyIntoFromUrl:
         assert result.target == "dbo.sales"
 
     async def test_secret_not_logged(self, caplog: pytest.LogCaptureFixture) -> None:
-        """Secret values must never appear in log output."""
+        """Secret values must never appear in log output (happy path)."""
         from fabric_dw.sql import SqlTarget  # noqa: PLC0415
 
         target = SqlTarget(
@@ -313,6 +316,55 @@ class TestCopyIntoFromUrl:
         # Secret must NOT appear in any log record emitted by the service.
         for record in caplog.records:
             assert secret not in record.getMessage()
+
+    async def test_secret_not_in_error_on_driver_exception(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A4/B1: raw driver errors must NOT expose the secret or SQL statement.
+
+        When the underlying driver raises an exception that would normally carry
+        the full SQL statement text (which contains the embedded SAS/key secret),
+        the service must wrap it in a FabricError with a safe message that
+        contains neither the secret nor the raw SQL statement.
+        """
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+        secret = "top-secret-key-that-must-not-leak"  # noqa: S105
+
+        # Simulate a raw driver error whose str() includes the SQL with the secret.
+        class _FakeDriverError(Exception):
+            pass
+
+        sql_with_secret = f"COPY INTO [dbo].[t] FROM '...' WITH (SECRET = '{secret}')"
+        driver_exc = _FakeDriverError(f"Driver error executing: {sql_with_secret}")
+
+        with (
+            caplog.at_level(logging.DEBUG, logger="fabric_dw"),
+            patch("fabric_dw.services.load.run_query", side_effect=driver_exc),
+            pytest.raises(FabricError) as exc_info,
+        ):
+            await copy_into_from_url(
+                target,
+                "dbo",
+                "t",
+                "https://sa.blob.core.windows.net/c/f.parquet",
+                file_type="PARQUET",
+                credential_type="sas",
+                secret=secret,
+            )
+
+        # The raised FabricError message must NOT contain the secret.
+        error_text = str(exc_info.value)
+        assert secret not in error_text, f"Secret leaked into FabricError message: {error_text!r}"
+
+        # The secret must NOT appear in any log record.
+        for record in caplog.records:
+            assert secret not in record.getMessage(), (
+                f"Secret leaked into log record: {record.getMessage()!r}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -574,3 +626,262 @@ class TestSecretSafety:
         )
         assert "CREDENTIAL" not in sql
         assert secret not in sql
+
+
+# ---------------------------------------------------------------------------
+# B2: temp file cleaned up even when create_staging_lakehouse raises
+# ---------------------------------------------------------------------------
+
+
+class TestTempFileCleanup:
+    async def test_converted_parquet_cleaned_up_when_create_lakehouse_fails(
+        self, tmp_path: Path
+    ) -> None:
+        """B2: temp Parquet file must be deleted even if create_staging_lakehouse raises."""
+        pytest.importorskip("pyarrow")
+
+        json_file = tmp_path / "data.json"
+        json_file.write_text('{"id": 1}\n', encoding="utf-8")
+
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+        ws_id = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+        mock_http = AsyncMock()
+        mock_credential = AsyncMock()
+
+        converted_paths: list[Path] = []
+
+        original_json_to_parquet = _json_to_parquet
+
+        def _capture_conversion(path: Path) -> Path:
+            result = original_json_to_parquet(path)
+            converted_paths.append(result)
+            return result
+
+        with (
+            patch(
+                "fabric_dw.services.load._json_to_parquet",
+                side_effect=_capture_conversion,
+            ),
+            patch(
+                "fabric_dw.services.load.create_staging_lakehouse",
+                side_effect=RuntimeError("Lakehouse creation failed"),
+            ),
+            pytest.raises(RuntimeError, match="Lakehouse creation failed"),
+        ):
+            await load_local_file(
+                mock_http,
+                mock_credential,
+                ws_id,
+                target,
+                "dbo",
+                "t",
+                json_file,
+                file_format="json",
+            )
+
+        # The converted temp Parquet file must have been cleaned up.
+        assert len(converted_paths) == 1, "Expected exactly one converted file"
+        assert not converted_paths[0].exists(), (
+            f"Temp Parquet file was not cleaned up: {converted_paths[0]}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# A1: safe destination filename (percent-encoding)
+# ---------------------------------------------------------------------------
+
+
+class TestSafeDestFilename:
+    def test_plain_filename_unchanged(self) -> None:
+        assert _safe_dest_filename(Path("/some/path/data.parquet")) == "data.parquet"
+
+    def test_percent_encoded_slash_stripped(self) -> None:
+        # %2F is a forward-slash; the directory component must be stripped.
+        result = _safe_dest_filename(Path("evil%2Fpath.parquet"))
+        assert "/" not in result
+        assert "\\" not in result
+        assert result == "path.parquet"
+
+    def test_backslash_encoded_decoded(self) -> None:
+        # %5C decodes to backslash; on POSIX, backslash is a valid filename char
+        # (not a path separator), so the decoded name is returned as-is.
+        result = _safe_dest_filename(Path("evil%5Cpath.parquet"))
+        # The important property: no forward-slash (path separator) in the result.
+        assert "/" not in result
+
+    def test_normal_filename_with_spaces_decoded(self) -> None:
+        result = _safe_dest_filename(Path("my%20file.parquet"))
+        assert result == "my file.parquet"
+
+
+# ---------------------------------------------------------------------------
+# A2: file size limit
+# ---------------------------------------------------------------------------
+
+
+class TestFileSizeLimit:
+    async def test_oversized_file_raises_value_error(self, tmp_path: Path) -> None:
+        """A2: files larger than _MAX_STAGING_FILE_BYTES must be rejected."""
+        from fabric_dw.services.load import _MAX_STAGING_FILE_BYTES  # noqa: PLC0415
+
+        large_file = tmp_path / "large.csv"
+        large_file.write_bytes(b"x")
+
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+        ws_id = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+        mock_http = AsyncMock()
+        mock_credential = AsyncMock()
+
+        # Mock stat() to return a size exceeding the limit.
+        import unittest.mock  # noqa: PLC0415
+
+        oversized = unittest.mock.MagicMock(st_size=_MAX_STAGING_FILE_BYTES + 1)
+        with (
+            unittest.mock.patch.object(Path, "stat", return_value=oversized),
+            pytest.raises(ValueError, match="too large to stage"),
+        ):
+            await load_local_file(
+                mock_http,
+                mock_credential,
+                ws_id,
+                target,
+                "dbo",
+                "t",
+                large_file,
+                file_format="csv",
+            )
+
+
+# ---------------------------------------------------------------------------
+# A3: staging lakehouse name validation
+# ---------------------------------------------------------------------------
+
+
+class TestStagingNameValidation:
+    def test_valid_name_accepted(self) -> None:
+        assert _validate_staging_name("staging_abc123") == "staging_abc123"
+
+    def test_hyphens_allowed(self) -> None:
+        assert _validate_staging_name("my-staging-lh") == "my-staging-lh"
+
+    def test_empty_name_rejected(self) -> None:
+        with pytest.raises(ValueError, match="must not be empty"):
+            _validate_staging_name("")
+
+    def test_newline_rejected(self) -> None:
+        with pytest.raises(ValueError, match="control characters"):
+            _validate_staging_name("staging\ninjected")
+
+    def test_carriage_return_rejected(self) -> None:
+        with pytest.raises(ValueError, match="control characters"):
+            _validate_staging_name("staging\rinjected")
+
+    def test_special_characters_rejected(self) -> None:
+        with pytest.raises(ValueError, match="must start with"):
+            _validate_staging_name("staging; DROP TABLE")
+
+    async def test_invalid_staging_name_raises_in_load_local_file(self, tmp_path: Path) -> None:
+        """A3: load_local_file must reject invalid staging_lakehouse_name early."""
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("id\n1\n", encoding="utf-8")
+
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+        ws_id = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+        mock_http = AsyncMock()
+        mock_credential = AsyncMock()
+
+        with pytest.raises(ValueError, match="control characters"):
+            await load_local_file(
+                mock_http,
+                mock_credential,
+                ws_id,
+                target,
+                "dbo",
+                "t",
+                csv_file,
+                file_format="csv",
+                staging_lakehouse_name="bad\nname",
+            )
+
+
+# ---------------------------------------------------------------------------
+# A5: URL scheme validation (SSRF prevention)
+# ---------------------------------------------------------------------------
+
+
+class TestUrlSchemeValidation:
+    def test_https_url_accepted(self) -> None:
+        _validate_https_url("https://sa.blob.core.windows.net/c/f.parquet", "url")  # no error
+
+    def test_http_url_rejected(self) -> None:
+        with pytest.raises(ValueError, match="only HTTPS"):
+            _validate_https_url("http://sa.blob.core.windows.net/c/f.parquet", "url")
+
+    def test_imds_link_local_rejected(self) -> None:
+        with pytest.raises(ValueError, match="link-local"):
+            _validate_https_url("https://169.254.169.254/metadata/instance", "url")
+
+    def test_metadata_azure_host_rejected(self) -> None:
+        with pytest.raises(ValueError, match="link-local"):
+            _validate_https_url("https://metadata.azure.internal/", "url")
+
+    def test_ftp_scheme_rejected(self) -> None:
+        with pytest.raises(ValueError, match="only HTTPS"):
+            _validate_https_url("ftp://example.com/file.parquet", "url")
+
+    async def test_http_url_rejected_in_copy_into_from_url(self) -> None:
+        """A5: copy_into_from_url must reject non-HTTPS source URLs."""
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+        with pytest.raises(ValueError, match="only HTTPS"):
+            await copy_into_from_url(
+                target,
+                "dbo",
+                "t",
+                "http://sa.blob.core.windows.net/c/f.parquet",
+                file_type="PARQUET",
+            )
+
+    async def test_http_rejected_row_location_rejected_in_load_local_file(
+        self, tmp_path: Path
+    ) -> None:
+        """A5: load_local_file must reject non-HTTPS rejected_row_location."""
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("id\n1\n", encoding="utf-8")
+
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+        ws_id = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+        mock_http = AsyncMock()
+        mock_credential = AsyncMock()
+
+        with pytest.raises(ValueError, match="only HTTPS"):
+            await load_local_file(
+                mock_http,
+                mock_credential,
+                ws_id,
+                target,
+                "dbo",
+                "t",
+                csv_file,
+                file_format="csv",
+                rejected_row_location="http://example.com/rejected/",
+            )
