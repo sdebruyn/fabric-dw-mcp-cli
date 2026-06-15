@@ -22,15 +22,19 @@ falls back to TDS via ``sys.tables JOIN sys.schemas``, mirroring the
 from __future__ import annotations
 
 import asyncio
-import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import cast
 
 from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import ItemKindError, NotFoundError
 from fabric_dw.identifiers import parse_qualified_name, quote_identifier, validate_identifier
 from fabric_dw.models import Table, WarehouseKind
+from fabric_dw.services._helpers import reject_non_select
 from fabric_dw.sql import SqlTarget, run_query
+
+# Re-exported as a private alias so that existing tests referencing
+# ``tables._reject_non_select`` continue to work.
+_reject_non_select = reject_non_select
 
 __all__ = [
     "clear_table",
@@ -98,72 +102,6 @@ _SP_RENAME_SQL = "EXEC sp_rename ?, ?, 'OBJECT'"
 # Helpers
 # ---------------------------------------------------------------------------
 
-# Pre-compiled patterns used by _reject_non_select — each anchored at the
-# current scan position (used with re.match, not re.search).
-#
-# Block-comment pattern uses the "unrolled loop" technique to stay linear:
-#   /\*          — opening delimiter
-#   [^*]*        — any non-star characters (fast, no backtracking with *)
-#   (?:\*+[^*/][^*]*)* — one-or-more stars NOT followed by /: consume the star
-#                        run plus the next non-star character and repeat
-#   \*+/         — the closing *+/
-# This is equivalent to /\*.*?\*/ with re.DOTALL but avoids catastrophic
-# backtracking on inputs like "/*" + "*//*" * N.
-_BLOCK_COMMENT_RE = re.compile(r"/\*[^*]*(?:\*+[^*/][^*]*)*\*+/")
-_LINE_COMMENT_RE = re.compile(r"--[^\n]*")
-_WHITESPACE_RE = re.compile(r"\s+")
-_SELECT_OR_WITH_RE = re.compile(r"(?:WITH|SELECT)\b", re.IGNORECASE)
-
-
-def _reject_non_select(body: str) -> None:
-    """Raise ValueError if *body* does not start with SELECT or WITH (after comments).
-
-    Only the first non-comment keyword is checked.  Single-line (``--``) and
-    block (``/* … */``) comments are stripped before the check.
-
-    ``WITH`` is allowed to support Common Table Expressions (CTEs) of the form
-    ``WITH cte AS (...) SELECT ...``.  A ``WITH … UPDATE`` body is *not* caught
-    here — the Fabric CTAS API will reject non-SELECT bodies at the server side.
-    This validator is an inexpensive first-line filter only.
-
-    Implementation note: the check is done procedurally — consuming leading
-    whitespace and comments token-by-token — rather than with a single nested
-    quantifier regex.  The old ``(?:\\s*(?:/\\*.*?\\*/|--[^\\n]*\\n))*``
-    pattern caused catastrophic (exponential) backtracking on adversarial
-    inputs such as ``"/*" + "*//*" * N`` (CodeQL py/redos, high severity).
-    Each sub-pattern used here is linear and unambiguous.
-
-    Args:
-        body: The raw SQL supplied as the CTAS body.
-
-    Raises:
-        ValueError: If the first keyword is not SELECT or WITH (CTE).
-    """
-    pos = 0
-    length = len(body)
-    while pos < length:
-        # Consume leading whitespace.
-        m = _WHITESPACE_RE.match(body, pos)
-        if m:
-            pos = m.end()
-            continue
-        # Consume a block comment /* ... */.
-        m = _BLOCK_COMMENT_RE.match(body, pos)
-        if m:
-            pos = m.end()
-            continue
-        # Consume a line comment -- ...\n (or -- ... at end of string).
-        m = _LINE_COMMENT_RE.match(body, pos)
-        if m:
-            pos = m.end()
-            continue
-        # Nothing consumed — we are at the first real token.
-        break
-
-    if not _SELECT_OR_WITH_RE.match(body, pos):
-        msg = "CTAS body must begin with SELECT or WITH (CTE) (leading comments are allowed)"
-        raise ValueError(msg)
-
 
 def _row_to_table(cols: list[str], row: tuple[object, ...]) -> Table:
     """Build a :class:`Table` from a column-name list and a result row tuple."""
@@ -211,8 +149,7 @@ async def list_tables(
     """
     if schema is not None:
         validate_identifier(schema)
-
-    if schema is not None:
+        # Schema name is bound as a ? parameter — never interpolated into SQL.
         schema_filter = "s.name = ?"
         filter_params: list[object] = [schema]
     else:
@@ -392,7 +329,17 @@ async def clone_table(
         # The AT clause does not support bound parameters in T-SQL DDL, so we
         # embed a fixed-format literal derived from the already-validated datetime
         # object — never an arbitrary user string.
-        at_literal = at.strftime("%Y-%m-%dT%H:%M:%S.") + f"{at.microsecond // 1000:03d}"
+        #
+        # Round to the nearest millisecond (half-to-even via Python round())
+        # rather than truncating, so that e.g. 123_750 µs → 124 ms instead
+        # of silently shifting the point-in-time 0.75 ms earlier.
+        # round() can return 1000 for microsecond values ≥ 999_500 µs;
+        # use timedelta to roll the carry into the seconds field correctly.
+        at_rounded = at.replace(microsecond=0) + timedelta(
+            milliseconds=round(at.microsecond / 1000)
+        )
+        ms_part = f"{at_rounded.microsecond // 1000:03d}"
+        at_literal = at_rounded.strftime("%Y-%m-%dT%H:%M:%S.") + ms_part
         ddl = f"{ddl} AT '{at_literal}'"
 
     def _run_ddl() -> None:

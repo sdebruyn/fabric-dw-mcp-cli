@@ -783,6 +783,45 @@ class TestCloneTable:
         assert "AT '2024-05-20T14:00:00.123'" in call_sql
         assert mock_open.call_args_list[0].kwargs.get("autocommit") is True
 
+    async def test_at_clause_rounds_sub_millisecond_up(self) -> None:
+        """V17: sub-millisecond precision is rounded, not truncated.
+
+        750 µs is >= 500 µs so it rounds to 1 ms.  The old truncation
+        (// 1000) would have produced .000, silently shifting the
+        point-in-time 0.75 ms earlier.
+        """
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        # 750 µs → rounds to 1 ms (not truncated to 0 ms)
+        at_dt = datetime(2024, 5, 20, 14, 0, 0, 750, tzinfo=UTC)
+        mock_oc = patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn])
+        with mock_oc as mock_open:
+            await tables.clone_table(target, "dbo.source_tbl", "dbo.sales", at=at_dt)
+        cursor = ddl_conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert "AT '2024-05-20T14:00:00.001'" in call_sql
+        assert mock_open.call_args_list[0].kwargs.get("autocommit") is True
+
+    async def test_at_clause_rounds_carry_into_seconds(self) -> None:
+        """V17: when rounding rolls microseconds to 1000 ms the carry propagates.
+
+        999_750 µs rounds to 1000 ms = 1 s, so the second in the literal
+        must increment and the millisecond part reset to .000.
+        """
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        # 999_750 µs → rounds to 1000 ms → 1 s carry → 14:00:01.000
+        at_dt = datetime(2024, 5, 20, 14, 0, 0, 999_750, tzinfo=UTC)
+        mock_oc = patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn])
+        with mock_oc as mock_open:
+            await tables.clone_table(target, "dbo.source_tbl", "dbo.sales", at=at_dt)
+        cursor = ddl_conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert "AT '2024-05-20T14:00:01.000'" in call_sql
+        assert mock_open.call_args_list[0].kwargs.get("autocommit") is True
+
     async def test_returns_table_object(self) -> None:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()

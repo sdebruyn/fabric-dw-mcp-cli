@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
+from typing import TYPE_CHECKING, TypeVar
 
 from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import PermissionDeniedError
@@ -29,6 +30,9 @@ from fabric_dw.models import (
     SqlPoolInsight,
 )
 from fabric_dw.sql import SqlTarget, run_query
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
 
 __all__ = [
     "EXEC_REQUESTS_HISTORY_COLUMNS",
@@ -233,41 +237,133 @@ def _execute_sql(
     return [dict(zip(cols, r, strict=True)) for r in rows]
 
 
+_M = TypeVar("_M", bound="BaseModel")
+
+
+def _build_sql(
+    view: str,
+    columns: tuple[str, ...],
+    order_by: str,
+    limit: int,
+    where: str,
+) -> str:
+    """Build the SELECT TOP … FROM queryinsights.<view> SQL string.
+
+    All arguments are trusted constants (not user input) — the generated SQL
+    is safe to format directly.
+
+    Args:
+        view: The unqualified view name under the ``queryinsights`` schema.
+        columns: Ordered column names to project.
+        order_by: Column name for the ORDER BY clause.
+        limit: Clamped row limit (already validated via :func:`_clamp_limit`).
+        where: Optional WHERE clause string (from :func:`_build_where`).
+
+    Returns:
+        A complete SELECT statement ready to execute.
+    """
+    col_list = ",\n    ".join(columns)
+    return (
+        f"SELECT TOP ({limit})\n    {col_list}\n"
+        f"FROM queryinsights.{view}{where}\n"
+        f"ORDER BY {order_by} DESC;\n"
+    )
+
+
+async def _list_insights(
+    target: SqlTarget,
+    *,
+    view: str,
+    columns: tuple[str, ...],
+    order_by: str,
+    filter_col: str,
+    model: type[_M],
+    limit: int,
+    since: datetime | None,
+    until: datetime | None,
+    mode: CredentialMode,
+) -> list[_M]:
+    """Generic implementation shared by all five ``list_*`` functions.
+
+    Clamps *limit*, builds the time-window WHERE clause (binding datetime
+    values as ``?`` params — never interpolating them), formats the SELECT,
+    executes via :func:`_execute_sql`, and validates each row into *model*.
+
+    Args:
+        target: The warehouse or SQL analytics endpoint to query.
+        view: Unqualified view name under the ``queryinsights`` schema.
+        columns: Canonical column tuple for the SELECT list.
+        order_by: Column name for the ORDER BY clause.
+        filter_col: Column name for the WHERE time-window filter.
+        model: Pydantic model class to validate each row dict into.
+        limit: Raw (un-clamped) row limit from the caller.
+        since: Optional inclusive lower bound on *filter_col*.
+        until: Optional inclusive upper bound on *filter_col*.
+        mode: Credential mode for Entra authentication.
+
+    Returns:
+        A list of *model* instances.
+
+    Raises:
+        PermissionDeniedError: If the caller lacks Contributor or above permission.
+    """
+    clamped = _clamp_limit(limit)
+    where_clause, where_params = _build_where(since=since, until=until, column=filter_col)
+    sql_text = _build_sql(view, columns, order_by, clamped, where_clause)
+    rows = await asyncio.to_thread(_execute_sql, target, sql_text, mode, where_params)
+    return [model.model_validate(r) for r in rows]
+
+
 # ---------------------------------------------------------------------------
-# exec_requests_history
+# SQL template constants — kept for backward-compat with existing tests that
+# inspect the module-level _*_SQL_TEMPLATE names.  Each is generated from the
+# canonical *_COLUMNS tuple so column lists have a single source of truth.
 # ---------------------------------------------------------------------------
 
-_REQUEST_HISTORY_SQL_TEMPLATE = """\
-SELECT TOP ({limit})
-    distributed_statement_id,
-    database_name,
-    submit_time,
-    start_time,
-    end_time,
-    is_distributed,
-    statement_type,
-    total_elapsed_time_ms,
-    login_name,
-    row_count,
-    status,
-    session_id,
-    connection_id,
-    program_name,
-    batch_id,
-    root_batch_id,
-    query_hash,
-    label,
-    result_cache_hit,
-    sql_pool_name,
-    allocated_cpu_time_ms,
-    data_scanned_remote_storage_mb,
-    data_scanned_memory_mb,
-    data_scanned_disk_mb,
-    command,
-    error_code
-FROM queryinsights.exec_requests_history{where}
-ORDER BY submit_time DESC;
-"""
+_REQUEST_HISTORY_SQL_TEMPLATE: str = _build_sql(
+    "exec_requests_history",
+    EXEC_REQUESTS_HISTORY_COLUMNS,
+    "submit_time",
+    100,
+    "{where}",
+).replace("TOP (100)", "TOP ({limit})")
+
+_SESSION_HISTORY_SQL_TEMPLATE: str = _build_sql(
+    "exec_sessions_history",
+    EXEC_SESSIONS_HISTORY_COLUMNS,
+    "session_start_time",
+    100,
+    "{where}",
+).replace("TOP (100)", "TOP ({limit})")
+
+_FREQUENT_QUERIES_SQL_TEMPLATE: str = _build_sql(
+    "frequently_run_queries",
+    FREQUENTLY_RUN_QUERIES_COLUMNS,
+    "number_of_runs",
+    100,
+    "{where}",
+).replace("TOP (100)", "TOP ({limit})")
+
+_LONG_RUNNING_SQL_TEMPLATE: str = _build_sql(
+    "long_running_queries",
+    LONG_RUNNING_QUERIES_COLUMNS,
+    "median_total_elapsed_time_ms",
+    100,
+    "{where}",
+).replace("TOP (100)", "TOP ({limit})")
+
+_SQL_POOL_INSIGHTS_SQL_TEMPLATE: str = _build_sql(
+    "sql_pool_insights",
+    SQL_POOL_INSIGHTS_COLUMNS,
+    "timestamp",
+    100,
+    "{where}",
+).replace("TOP (100)", "TOP ({limit})")
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 
 async def list_request_history(
@@ -294,56 +390,18 @@ async def list_request_history(
     Raises:
         PermissionDeniedError: If the caller lacks Contributor or above permission.
     """
-    clamped = _clamp_limit(limit)
-    where_clause, where_params = _build_where(since=since, until=until, column="submit_time")
-    sql_text = _REQUEST_HISTORY_SQL_TEMPLATE.format(limit=clamped, where=where_clause)
-    rows = await asyncio.to_thread(_execute_sql, target, sql_text, mode, where_params)
-    return [ExecRequestHistory.model_validate(r) for r in rows]
-
-
-# ---------------------------------------------------------------------------
-# exec_sessions_history
-# ---------------------------------------------------------------------------
-
-_SESSION_HISTORY_SQL_TEMPLATE = """\
-SELECT TOP ({limit})
-    session_id,
-    connection_id,
-    session_start_time,
-    session_end_time,
-    program_name,
-    login_name,
-    status,
-    context_info,
-    total_query_elapsed_time_ms,
-    last_request_start_time,
-    last_request_end_time,
-    is_user_process,
-    prev_error,
-    group_id,
-    database_id,
-    authenticating_database_id,
-    open_transaction_count,
-    text_size,
-    language,
-    date_format,
-    date_first,
-    quoted_identifier,
-    arithabort,
-    ansi_null_dflt_on,
-    ansi_defaults,
-    ansi_warnings,
-    ansi_padding,
-    ansi_nulls,
-    concat_null_yields_null,
-    transaction_isolation_level,
-    lock_timeout,
-    deadlock_priority,
-    original_security_id,
-    database_name
-FROM queryinsights.exec_sessions_history{where}
-ORDER BY session_start_time DESC;
-"""
+    return await _list_insights(
+        target,
+        view="exec_requests_history",
+        columns=EXEC_REQUESTS_HISTORY_COLUMNS,
+        order_by="submit_time",
+        filter_col="submit_time",
+        model=ExecRequestHistory,
+        limit=limit,
+        since=since,
+        until=until,
+        mode=mode,
+    )
 
 
 async def list_session_history(
@@ -370,34 +428,18 @@ async def list_session_history(
     Raises:
         PermissionDeniedError: If the caller lacks Contributor or above permission.
     """
-    clamped = _clamp_limit(limit)
-    where_clause, where_params = _build_where(since=since, until=until, column="session_start_time")
-    sql_text = _SESSION_HISTORY_SQL_TEMPLATE.format(limit=clamped, where=where_clause)
-    rows = await asyncio.to_thread(_execute_sql, target, sql_text, mode, where_params)
-    return [ExecSessionHistory.model_validate(r) for r in rows]
-
-
-# ---------------------------------------------------------------------------
-# frequently_run_queries
-# ---------------------------------------------------------------------------
-
-_FREQUENT_QUERIES_SQL_TEMPLATE = """\
-SELECT TOP ({limit})
-    last_run_start_time,
-    last_run_command,
-    number_of_runs,
-    avg_total_elapsed_time_ms,
-    last_run_total_elapsed_time_ms,
-    last_dist_statement_id,
-    min_run_total_elapsed_time_ms,
-    max_run_total_elapsed_time_ms,
-    number_of_successful_runs,
-    number_of_failed_runs,
-    number_of_canceled_runs,
-    query_hash
-FROM queryinsights.frequently_run_queries{where}
-ORDER BY number_of_runs DESC;
-"""
+    return await _list_insights(
+        target,
+        view="exec_sessions_history",
+        columns=EXEC_SESSIONS_HISTORY_COLUMNS,
+        order_by="session_start_time",
+        filter_col="session_start_time",
+        model=ExecSessionHistory,
+        limit=limit,
+        since=since,
+        until=until,
+        mode=mode,
+    )
 
 
 async def list_frequent_queries(
@@ -424,31 +466,18 @@ async def list_frequent_queries(
     Raises:
         PermissionDeniedError: If the caller lacks Contributor or above permission.
     """
-    clamped = _clamp_limit(limit)
-    where_clause, where_params = _build_where(
-        since=since, until=until, column="last_run_start_time"
+    return await _list_insights(
+        target,
+        view="frequently_run_queries",
+        columns=FREQUENTLY_RUN_QUERIES_COLUMNS,
+        order_by="number_of_runs",
+        filter_col="last_run_start_time",
+        model=FrequentlyRunQuery,
+        limit=limit,
+        since=since,
+        until=until,
+        mode=mode,
     )
-    sql_text = _FREQUENT_QUERIES_SQL_TEMPLATE.format(limit=clamped, where=where_clause)
-    rows = await asyncio.to_thread(_execute_sql, target, sql_text, mode, where_params)
-    return [FrequentlyRunQuery.model_validate(r) for r in rows]
-
-
-# ---------------------------------------------------------------------------
-# long_running_queries
-# ---------------------------------------------------------------------------
-
-_LONG_RUNNING_SQL_TEMPLATE = """\
-SELECT TOP ({limit})
-    last_run_start_time,
-    last_run_command,
-    median_total_elapsed_time_ms,
-    number_of_runs,
-    last_run_total_elapsed_time_ms,
-    last_dist_statement_id,
-    query_hash
-FROM queryinsights.long_running_queries{where}
-ORDER BY median_total_elapsed_time_ms DESC;
-"""
 
 
 async def list_long_running_queries(
@@ -475,30 +504,18 @@ async def list_long_running_queries(
     Raises:
         PermissionDeniedError: If the caller lacks Contributor or above permission.
     """
-    clamped = _clamp_limit(limit)
-    where_clause, where_params = _build_where(
-        since=since, until=until, column="last_run_start_time"
+    return await _list_insights(
+        target,
+        view="long_running_queries",
+        columns=LONG_RUNNING_QUERIES_COLUMNS,
+        order_by="median_total_elapsed_time_ms",
+        filter_col="last_run_start_time",
+        model=LongRunningQuery,
+        limit=limit,
+        since=since,
+        until=until,
+        mode=mode,
     )
-    sql_text = _LONG_RUNNING_SQL_TEMPLATE.format(limit=clamped, where=where_clause)
-    rows = await asyncio.to_thread(_execute_sql, target, sql_text, mode, where_params)
-    return [LongRunningQuery.model_validate(r) for r in rows]
-
-
-# ---------------------------------------------------------------------------
-# sql_pool_insights
-# ---------------------------------------------------------------------------
-
-_SQL_POOL_INSIGHTS_SQL_TEMPLATE = """\
-SELECT TOP ({limit})
-    sql_pool_name,
-    timestamp,
-    max_resource_percentage,
-    is_optimized_for_reads,
-    current_workspace_capacity,
-    is_pool_under_pressure
-FROM queryinsights.sql_pool_insights{where}
-ORDER BY timestamp DESC;
-"""
 
 
 async def list_sql_pool_insights(
@@ -525,8 +542,15 @@ async def list_sql_pool_insights(
     Raises:
         PermissionDeniedError: If the caller lacks Contributor or above permission.
     """
-    clamped = _clamp_limit(limit)
-    where_clause, where_params = _build_where(since=since, until=until, column="timestamp")
-    sql_text = _SQL_POOL_INSIGHTS_SQL_TEMPLATE.format(limit=clamped, where=where_clause)
-    rows = await asyncio.to_thread(_execute_sql, target, sql_text, mode, where_params)
-    return [SqlPoolInsight.model_validate(r) for r in rows]
+    return await _list_insights(
+        target,
+        view="sql_pool_insights",
+        columns=SQL_POOL_INSIGHTS_COLUMNS,
+        order_by="timestamp",
+        filter_col="timestamp",
+        model=SqlPoolInsight,
+        limit=limit,
+        since=since,
+        until=until,
+        mode=mode,
+    )
