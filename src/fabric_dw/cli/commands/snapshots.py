@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime
 
 import click
@@ -10,20 +9,18 @@ import click
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import render
 from fabric_dw.cli.commands._utils import (
-    _coro,
-    _resolve_item,
-    _resolve_item_with_cache,
     build_http_client,
     build_sql_target,
     confirm_destructive,
+    coro,
     parse_iso_datetime,
+    resolve_item,
+    resolve_item_with_cache,
     resolve_warehouse_arg,
     resolve_workspace_arg,
 )
 from fabric_dw.exceptions import FabricError
 from fabric_dw.services import snapshots as _snapshots_svc
-
-_log = logging.getLogger(__name__)
 
 
 @click.group("snapshots")
@@ -35,14 +32,14 @@ def snapshots_group() -> None:
 @click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.pass_obj
-@_coro
+@coro
 async def list_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> None:
     """List all snapshots for ITEM (warehouse) in WORKSPACE."""
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
-            ws_id, entry = await _resolve_item(http, ws, wh)
+            ws_id, entry = await resolve_item(http, ws, wh)
             items = await _snapshots_svc.list_snapshots(http, ws_id, entry.id)
             render(
                 [s.model_dump(by_alias=True, mode="json") for s in items],
@@ -64,7 +61,7 @@ async def list_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> 
     help="Optional snapshot datetime (ISO 8601, UTC).",
 )
 @click.pass_obj
-@_coro
+@coro
 async def create_cmd(
     ctx: CliContext,
     workspace: str | None,
@@ -82,7 +79,7 @@ async def create_cmd(
 
     try:
         async with build_http_client(ctx) as http:
-            ws_id, entry = await _resolve_item(http, ws, wh)
+            ws_id, entry = await resolve_item(http, ws, wh)
             obj = await _snapshots_svc.create(
                 http,
                 ws_id,
@@ -102,7 +99,7 @@ async def create_cmd(
 @click.argument("new_name")
 @click.option("--description", default=None, help="Optional new description.")
 @click.pass_obj
-@_coro
+@coro
 async def rename_cmd(
     ctx: CliContext,
     workspace: str,
@@ -113,7 +110,7 @@ async def rename_cmd(
     """Rename SNAPSHOT in WORKSPACE to NEW_NAME (workspace and snapshot accept name or GUID)."""
     try:
         async with build_http_client(ctx) as http:
-            ws_id, entry, cache = await _resolve_item_with_cache(http, workspace, snapshot)
+            ws_id, entry, cache = await resolve_item_with_cache(http, workspace, snapshot)
             obj = await _snapshots_svc.rename(
                 http,
                 ws_id,
@@ -132,12 +129,12 @@ async def rename_cmd(
 @click.argument("workspace")
 @click.argument("snapshot")
 @click.pass_obj
-@_coro
+@coro
 async def delete_cmd(ctx: CliContext, workspace: str, snapshot: str) -> None:
     """Delete SNAPSHOT from WORKSPACE (both accept name or GUID)."""
     try:
         async with build_http_client(ctx) as http:
-            ws_id, entry, cache = await _resolve_item_with_cache(http, workspace, snapshot)
+            ws_id, entry, cache = await resolve_item_with_cache(http, workspace, snapshot)
             if not confirm_destructive(
                 f"Delete snapshot {entry.display_name!r} ({entry.id})?",
                 yes=ctx.yes,
@@ -173,7 +170,7 @@ async def delete_cmd(ctx: CliContext, workspace: str, snapshot: str) -> None:
     help="Target datetime (ISO 8601, UTC). Defaults to CURRENT_TIMESTAMP.",
 )
 @click.pass_obj
-@_coro
+@coro
 async def roll_cmd(
     ctx: CliContext,
     workspace: str | None,

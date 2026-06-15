@@ -74,7 +74,6 @@ def cli(
         json_output=json_output,
         yes=yes,
         auth=CredentialMode(auth_mode),
-        verbose=verbose,
     )
 
 

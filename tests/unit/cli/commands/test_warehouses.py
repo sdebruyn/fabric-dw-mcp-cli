@@ -129,7 +129,7 @@ class TestWarehousesGet:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.warehouses._resolve_item",
+                "fabric_dw.cli.commands.warehouses.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
         ):
@@ -145,7 +145,7 @@ class TestWarehousesGet:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.warehouses._resolve_item",
+                "fabric_dw.cli.commands.warehouses.resolve_item",
                 new=AsyncMock(side_effect=NotFoundError("not found")),
             ),
         ):
@@ -198,7 +198,7 @@ class TestWarehousesRename:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.warehouses._resolve_item_with_cache",
+                "fabric_dw.cli.commands.warehouses.resolve_item_with_cache",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry(), _cache)),
             ),
         ):
@@ -219,7 +219,7 @@ class TestWarehousesRename:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.warehouses._resolve_item_with_cache",
+                "fabric_dw.cli.commands.warehouses.resolve_item_with_cache",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry(), _cache)),
             ),
         ):
@@ -246,7 +246,7 @@ class TestWarehousesDelete:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.warehouses._resolve_item_with_cache",
+                "fabric_dw.cli.commands.warehouses.resolve_item_with_cache",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry(), _cache)),
             ),
         ):
@@ -264,7 +264,7 @@ class TestWarehousesDelete:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.warehouses._resolve_item_with_cache",
+                "fabric_dw.cli.commands.warehouses.resolve_item_with_cache",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry(), _cache)),
             ),
         ):
@@ -284,7 +284,7 @@ class TestWarehousesDelete:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.warehouses._resolve_item_with_cache",
+                "fabric_dw.cli.commands.warehouses.resolve_item_with_cache",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry(), _cache)),
             ),
         ):
@@ -356,7 +356,7 @@ class TestWarehousesTakeover:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.warehouses._resolve_item",
+                "fabric_dw.cli.commands.warehouses.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry(WarehouseKind.WAREHOUSE))),
             ),
         ):
@@ -372,7 +372,7 @@ class TestWarehousesTakeover:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.warehouses._resolve_item",
+                "fabric_dw.cli.commands.warehouses.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry(WarehouseKind.SQL_ENDPOINT))),
             ),
         ):
@@ -503,7 +503,7 @@ class TestWarehousesRenameError:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.warehouses._resolve_item_with_cache",
+                "fabric_dw.cli.commands.warehouses.resolve_item_with_cache",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry(), _cache)),
             ),
             patch(
@@ -531,7 +531,7 @@ class TestWarehousesDeleteError:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.warehouses._resolve_item_with_cache",
+                "fabric_dw.cli.commands.warehouses.resolve_item_with_cache",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry(), _cache)),
             ),
             patch(
@@ -558,7 +558,7 @@ class TestWarehousesTakeoverErrors:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.warehouses._resolve_item",
+                "fabric_dw.cli.commands.warehouses.resolve_item",
                 new=AsyncMock(side_effect=FabricError("resolve error")),
             ),
         ):
@@ -575,7 +575,7 @@ class TestWarehousesTakeoverErrors:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.warehouses._resolve_item",
+                "fabric_dw.cli.commands.warehouses.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry(WarehouseKind.WAREHOUSE))),
             ),
         ):
@@ -599,7 +599,7 @@ class TestWarehousesTakeoverErrors:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.warehouses._resolve_item",
+                "fabric_dw.cli.commands.warehouses.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry(WarehouseKind.WAREHOUSE))),
             ),
             patch(
@@ -647,7 +647,7 @@ class TestWarehousesPermissions:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.warehouses._resolve_item",
+                "fabric_dw.cli.commands.warehouses.resolve_item",
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
             patch(
@@ -669,7 +669,7 @@ class TestWarehousesPermissions:
                 new=_make_cm(mock_http, None),
             ),
             patch(
-                "fabric_dw.cli.commands.warehouses._resolve_item",
+                "fabric_dw.cli.commands.warehouses.resolve_item",
                 new=AsyncMock(side_effect=FabricError("server error")),
             ),
         ):

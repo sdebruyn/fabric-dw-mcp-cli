@@ -58,10 +58,6 @@ def coro(f: Callable[_P, Coroutine[None, None, _R]]) -> Callable[_P, _R]:
     return wrapper
 
 
-# Private alias kept for backward compatibility with existing imports.
-_coro = coro
-
-
 # ---------------------------------------------------------------------------
 # HTTP client context manager
 # ---------------------------------------------------------------------------
@@ -134,11 +130,6 @@ async def resolve_workspace_id(http: FabricHttpClient, workspace: str) -> UUID:
     return await resolver.workspace_id(workspace)
 
 
-# Private aliases kept for backward compatibility with existing imports.
-_resolve_item = resolve_item
-_resolve_item_with_cache = resolve_item_with_cache
-
-
 # ---------------------------------------------------------------------------
 # SqlTarget builder
 # ---------------------------------------------------------------------------
@@ -189,22 +180,34 @@ def parse_qualified_name(qualified_name: str, *, kind: str = "object") -> tuple[
         raise click.UsageError(f"Expected <schema>.{kind}, got {qualified_name!r}") from None
 
 
-def load_select_body(select: str | None, from_file: str | None) -> str:
-    """Return the SELECT body from the inline option or file option.
+def load_sql_body(
+    inline: str | None,
+    from_file: str | None,
+    *,
+    inline_opt: str = "--select",
+    file_opt: str = "--from-file",
+) -> str:
+    """Return the SQL body from the inline option or file option.
+
+    Args:
+        inline: The inline SQL text (e.g. from ``--select`` or ``--body``).
+        from_file: Path to a ``.sql`` file.
+        inline_opt: Name of the inline option used in error messages.
+        file_opt: Name of the file option used in error messages.
 
     Raises:
         click.UsageError: If neither or both are provided, or file is missing.
     """
-    if select and from_file:
-        raise click.UsageError("Provide either --select or --from-file, not both.")
+    if inline and from_file:
+        raise click.UsageError(f"Provide either {inline_opt} or {file_opt}, not both.")
     if from_file:
         path = Path(from_file)
         if not path.is_file():
             raise click.UsageError(f"File not found: {from_file}")
         return path.read_text(encoding="utf-8-sig").strip()
-    if select:
-        return select
-    raise click.UsageError("Provide --select or --from-file.")
+    if inline:
+        return inline
+    raise click.UsageError(f"Provide {inline_opt} or {file_opt}.")
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +244,46 @@ def parse_iso_datetime(value: str, param_name: str, *, assume_utc: bool = True) 
             "(2000-2100). Check the timestamp."
         )
     return dt
+
+
+def parse_iso_optional(value: str | None, param_name: str) -> datetime | None:
+    """Parse an optional ISO-8601 string; return *None* when *value* is *None*.
+
+    Convenience wrapper used by ``queries`` and ``sql-pools insights`` commands
+    for ``--since``/``--until`` options.
+
+    Raises:
+        click.UsageError: If *value* is set but is not a valid ISO-8601 string.
+    """
+    if value is None:
+        return None
+    return parse_iso_datetime(value, param_name, assume_utc=False)
+
+
+#: Shared Click option for ``--limit`` used by query-insights commands.
+LIMIT_OPTION = click.option(
+    "--limit",
+    default=100,
+    show_default=True,
+    type=click.IntRange(1, 10_000),
+    help="Maximum number of rows to return (1-10 000).",
+)
+
+#: Shared Click option for ``--since`` used by query-insights commands.
+SINCE_OPTION = click.option(
+    "--since",
+    default=None,
+    metavar="ISO8601",
+    help="Return rows with timestamp >= this value (ISO-8601).",
+)
+
+#: Shared Click option for ``--until`` used by query-insights commands.
+UNTIL_OPTION = click.option(
+    "--until",
+    default=None,
+    metavar="ISO8601",
+    help="Return rows with timestamp <= this value (ISO-8601).",
+)
 
 
 # ---------------------------------------------------------------------------

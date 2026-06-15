@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
 import click
@@ -10,11 +9,11 @@ import click
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import render
 from fabric_dw.cli.commands._utils import (
-    _coro,
     build_http_client,
     build_sql_target,
     confirm_destructive,
-    load_select_body,
+    coro,
+    load_sql_body,
     parse_iso_datetime,
     parse_qualified_name,
     resolve_warehouse_arg,
@@ -23,8 +22,6 @@ from fabric_dw.cli.commands._utils import (
 from fabric_dw.exceptions import FabricError
 from fabric_dw.services import tables as _tables_svc
 from fabric_dw.sql_io import OutputFormat, columns_rows_to_arrow, write_arrow
-
-_log = logging.getLogger(__name__)
 
 
 @click.group("tables")
@@ -37,7 +34,7 @@ def tables_group() -> None:
 @click.argument("item", required=False, default=None)
 @click.option("--schema", default=None, help="Filter by schema name.")
 @click.pass_obj
-@_coro
+@coro
 async def list_cmd(
     ctx: CliContext, workspace: str | None, item: str | None, schema: str | None
 ) -> None:
@@ -72,7 +69,7 @@ async def list_cmd(
 )
 @click.option("--output", default=None, help="Write to this file instead of stdout.")
 @click.pass_obj
-@_coro
+@coro
 async def read_cmd(
     ctx: CliContext,
     workspace: str | None,
@@ -115,7 +112,7 @@ async def read_cmd(
 @click.option("--select", "select_body", default=None, help="Inline SELECT statement for CTAS.")
 @click.option("--from-file", default=None, help="Path to a .sql file containing the SELECT body.")
 @click.pass_obj
-@_coro
+@coro
 async def create_cmd(
     ctx: CliContext,
     workspace: str | None,
@@ -128,7 +125,7 @@ async def create_cmd(
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, item)
     schema, table_name = parse_qualified_name(qualified_name, kind="table")
-    body = load_select_body(select_body, from_file)
+    body = load_sql_body(select_body, from_file)
     try:
         async with build_http_client(ctx) as http:
             target, entry = await build_sql_target(http, ws, wh)
@@ -145,7 +142,7 @@ async def create_cmd(
 @click.argument("item", required=False, default=None)
 @click.argument("qualified_name")
 @click.pass_obj
-@_coro
+@coro
 async def delete_cmd(
     ctx: CliContext,
     workspace: str | None,
@@ -184,7 +181,7 @@ async def delete_cmd(
 @click.argument("item", required=False, default=None)
 @click.argument("qualified_name")
 @click.pass_obj
-@_coro
+@coro
 async def clear_cmd(
     ctx: CliContext,
     workspace: str | None,
@@ -235,7 +232,7 @@ async def clear_cmd(
     ),
 )
 @click.pass_obj
-@_coro
+@coro
 async def clone_cmd(
     ctx: CliContext,
     workspace: str | None,
@@ -278,7 +275,7 @@ async def clone_cmd(
 @click.argument("qualified_name")
 @click.option("--new-name", required=True, help="New (unqualified) table name.")
 @click.pass_obj
-@_coro
+@coro
 async def rename_cmd(
     ctx: CliContext,
     workspace: str | None,

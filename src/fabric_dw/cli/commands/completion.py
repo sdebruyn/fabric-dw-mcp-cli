@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import click
@@ -28,6 +29,12 @@ _SHELL_INSTALL_MAP: dict[str, tuple[str, str]] = {
     "zsh": (".zshrc", "append"),
     "fish": (".config/fish/completions/fabric-dw.fish", "write"),
 }
+
+# Stable sentinel markers used to bracket the managed completion block inside
+# rc-files (e.g. ~/.bashrc).  The block is replaced (not duplicated) on
+# re-install even when the completion script changes between versions.
+_SENTINEL_START = "# >>> fabric-dw completion >>>"
+_SENTINEL_END = "# <<< fabric-dw completion <<<"
 
 
 def _completion_script(shell: str) -> str:
@@ -84,7 +91,6 @@ def install(shell: str, print_only: bool) -> None:
 
     if mode == "append":
         _append_idempotent(target, script)
-        click.echo(f"Completion script appended to {target}. Reload with: source {target}")
     else:  # "write"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(script)
@@ -92,11 +98,34 @@ def install(shell: str, print_only: bool) -> None:
 
 
 def _append_idempotent(path: Path, script: str) -> None:
-    """Append *script* to *path* only if the script is not already present."""
+    """Append *script* to *path*, replacing any previous fabric-dw block.
+
+    Uses ``# >>> fabric-dw completion >>>`` / ``# <<< fabric-dw completion <<<``
+    sentinel markers so the block is replaced rather than duplicated when the
+    completion script changes (e.g. after a version upgrade).
+
+    **Lone-end-marker edge case:** if the rc-file contains ``_SENTINEL_END``
+    but *not* ``_SENTINEL_START`` (e.g. the file was manually edited and the
+    start marker was deleted), the ``_SENTINEL_START in existing`` guard is
+    ``False``, so the new block is appended normally.  The result is a file
+    with an orphaned end marker above the newly-written sentinel-wrapped block.
+    This is functionally safe — the next ``install`` run will find the new
+    ``_SENTINEL_START`` and replace the block correctly.
+    """
+    block = f"\n{_SENTINEL_START}\n{script.strip()}\n{_SENTINEL_END}\n"
     existing = path.read_text() if path.exists() else ""
-    marker = script.strip()
-    if marker and marker in existing:
-        click.echo(f"Completion script already present in {path}. Nothing to do.")
-        return
-    with path.open("a") as fh:
-        fh.write("\n" + script)
+
+    if _SENTINEL_START in existing:
+        # Replace the existing managed block in-place.
+        new_content = re.sub(
+            rf"{re.escape(_SENTINEL_START)}.*?{re.escape(_SENTINEL_END)}",
+            block.strip(),
+            existing,
+            flags=re.DOTALL,
+        )
+        path.write_text(new_content)
+        click.echo(f"Completion script updated in {path}. Reload with: source {path}")
+    else:
+        with path.open("a") as fh:
+            fh.write(block)
+        click.echo(f"Completion script appended to {path}. Reload with: source {path}")

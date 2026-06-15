@@ -9,7 +9,12 @@ import pytest
 from click.testing import CliRunner
 
 from fabric_dw.cli._main import cli
-from fabric_dw.cli.commands.completion import _append_idempotent, _completion_script
+from fabric_dw.cli.commands.completion import (
+    _SENTINEL_END,
+    _SENTINEL_START,
+    _append_idempotent,
+    _completion_script,
+)
 
 
 @pytest.fixture
@@ -89,22 +94,32 @@ class TestCompletionInstallAppendShells:
     def test_bash_install_idempotent_when_script_already_present(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
-        """Re-running install when the script is already in ~/.bashrc does nothing."""
+        """Re-running install when the sentinel block is in ~/.bashrc updates it in-place."""
         mock_script = "# bash completion script\n_FABRIC_DW_COMPLETE=bash_source fabric-dw\n"
         rc_file = tmp_path / ".bashrc"
-        rc_file.write_text("# existing rc\n" + mock_script)
+        # Pre-populate with the sentinel-wrapped block (simulates a previous install).
+        rc_file.write_text(
+            f"# existing rc\n{_SENTINEL_START}\n{mock_script.strip()}\n{_SENTINEL_END}\n"
+        )
+
+        new_script = "# updated bash completion\n_FABRIC_DW_COMPLETE=bash_source fabric-dw\n"
 
         with (
             patch("fabric_dw.cli.commands.completion.Path.home", return_value=tmp_path),
             patch(
                 "fabric_dw.cli.commands.completion._completion_script",
-                return_value=mock_script,
+                return_value=new_script,
             ),
         ):
             result = runner.invoke(cli, ["completion", "install", "bash"])
 
         assert result.exit_code == 0
-        assert "already present" in result.output.lower()
+        # "updated" is the message for in-place replacement.
+        assert "updated" in result.output.lower() or "Reload" in result.output
+        content = rc_file.read_text()
+        # Old script replaced; no duplicate sentinels.
+        assert content.count(_SENTINEL_START) == 1
+        assert new_script.strip() in content
 
 
 class TestCompletionInstallWriteShell:
@@ -161,14 +176,26 @@ class TestAppendIdempotent:
         assert "# existing" in content
         assert "# newscript" in content
 
-    def test_does_not_append_when_already_present(self, tmp_path: Path) -> None:
-        script = "# completion\n_COMPLETE=bash_source prog\n"
+    def test_wraps_script_in_sentinel_markers(self, tmp_path: Path) -> None:
         target = tmp_path / ".bashrc"
-        target.write_text("# existing\n" + script)
-        _append_idempotent(target, script)
+        _append_idempotent(target, "# script\n")
         content = target.read_text()
-        # Script should appear only once
-        assert content.count(script.strip()) == 1
+        assert _SENTINEL_START in content
+        assert _SENTINEL_END in content
+
+    def test_replaces_block_when_sentinel_already_present(self, tmp_path: Path) -> None:
+        """Re-install replaces the existing managed block instead of duplicating it."""
+        old_script = "# old completion\n"
+        new_script = "# new completion\n"
+        target = tmp_path / ".bashrc"
+        # Simulate a previous install by writing the sentinel-wrapped block.
+        target.write_text(f"# existing\n{_SENTINEL_START}\n{old_script.strip()}\n{_SENTINEL_END}\n")
+        _append_idempotent(target, new_script)
+        content = target.read_text()
+        # Exactly one block, containing the new script.
+        assert content.count(_SENTINEL_START) == 1
+        assert "# new completion" in content
+        assert "# old completion" not in content
 
 
 class TestCompletionScript:

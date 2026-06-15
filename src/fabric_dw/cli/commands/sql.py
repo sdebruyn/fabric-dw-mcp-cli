@@ -7,27 +7,20 @@ Commands
 
 from __future__ import annotations
 
-import logging
-from pathlib import Path
-from typing import TYPE_CHECKING
-
 import click
 
+from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import render
 from fabric_dw.cli.commands._utils import (
-    _coro,
     build_http_client,
     build_sql_target,
+    coro,
+    load_sql_body,
     resolve_warehouse_arg,
     resolve_workspace_arg,
 )
 from fabric_dw.exceptions import FabricError
 from fabric_dw.services import sql_exec as _sql_exec_svc
-
-if TYPE_CHECKING:
-    from fabric_dw.cli._context import CliContext
-
-_log = logging.getLogger(__name__)
 
 
 @click.group("sql")
@@ -54,7 +47,7 @@ def sql_group() -> None:
     help="Path to a .sql file to execute.",
 )
 @click.pass_obj
-@_coro
+@coro
 async def exec_cmd(
     ctx: CliContext,
     workspace: str | None,
@@ -71,22 +64,14 @@ async def exec_cmd(
     Output defaults to a Rich table (rows/columns).  Pass --json on the root command
     for machine-readable JSON ({columns: [...], rows: [...], rowcount: N}).
     """
-    if query_text is not None and query_file is not None:
-        raise click.UsageError("Use -q/--query OR -f/--file, not both.")
-    if query_text is None and query_file is None:
-        raise click.UsageError("Provide a query via -q/--query or -f/--file.")
-
-    if query_file is not None:
-        query_text = Path(query_file).read_text(encoding="utf-8-sig")
-
-    assert query_text is not None  # noqa: S101 — satisfied by guards above
+    query = load_sql_body(query_text, query_file, inline_opt="-q/--query", file_opt="-f/--file")
 
     ws = resolve_workspace_arg(ctx, workspace)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
             target, _entry = await build_sql_target(http, ws, wh)
-            result = await _sql_exec_svc.execute(target, query_text, mode=ctx.auth)
+            result = await _sql_exec_svc.execute(target, query, mode=ctx.auth)
 
             if ctx.json_output:
                 render(

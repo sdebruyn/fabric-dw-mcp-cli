@@ -2,24 +2,20 @@
 
 from __future__ import annotations
 
-import logging
-
 import click
 
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import render
 from fabric_dw.cli.commands._utils import (
-    _coro,
     build_http_client,
     build_sql_target,
     confirm_destructive,
+    coro,
     resolve_warehouse_arg,
     resolve_workspace_arg,
 )
 from fabric_dw.exceptions import FabricError
 from fabric_dw.services import schemas as _schemas_svc
-
-_log = logging.getLogger(__name__)
 
 
 @click.group("schemas")
@@ -31,7 +27,7 @@ def schemas_group() -> None:
 @click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.pass_obj
-@_coro
+@coro
 async def list_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> None:
     """List user-defined schemas on ITEM (warehouse) in WORKSPACE."""
     ws = resolve_workspace_arg(ctx, workspace)
@@ -54,7 +50,7 @@ async def list_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> 
 @click.argument("item", required=False, default=None)
 @click.argument("name")
 @click.pass_obj
-@_coro
+@coro
 async def create_cmd(
     ctx: CliContext,
     workspace: str | None,
@@ -87,7 +83,7 @@ async def create_cmd(
     ),
 )
 @click.pass_obj
-@_coro
+@coro
 async def delete_cmd(
     ctx: CliContext,
     workspace: str | None,
