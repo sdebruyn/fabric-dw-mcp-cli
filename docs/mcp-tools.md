@@ -863,6 +863,43 @@ Create a new SQL table via CTAS (`CREATE TABLE … AS SELECT`).
 
 ---
 
+### create_empty_table
+
+**Targets:** Data Warehouse only
+
+Create an empty SQL table from an explicit column specification (DDL only — no data is ever read or inserted). This scaffolds the table structure so that data can be loaded separately.
+
+Server-side file access is unreliable in MCP deployments, so CSV/Parquet schema inference is not available via this tool. Use `fabric-dw tables create --from-parquet` or `--from-csv` (CLI) for file-based schema inference.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse name or GUID. SQL Analytics Endpoints are rejected.
+- `qualified_name` (`str`) — dot-separated table name, e.g. `dbo.sales`.
+- `columns` (`list[object]`) — non-empty list of column definitions, each an object with:
+  - `name` (`str`) — column identifier (must be a valid SQL identifier).
+  - `sql_type` (`str`) — Fabric-DW-supported T-SQL type, e.g. `"INT"`, `"VARCHAR(255)"`, `"DECIMAL(18,2)"`.
+  - `nullable` (`bool`, optional, default `true`) — whether the column allows `NULL`.
+
+**Returns:** `Table` — the newly-created table record.
+
+**Example call:**
+
+```json
+{
+  "workspace": "MyWorkspace",
+  "item": "SalesWarehouse",
+  "qualified_name": "dbo.events",
+  "columns": [
+    {"name": "event_id", "sql_type": "BIGINT", "nullable": false},
+    {"name": "event_type", "sql_type": "VARCHAR(100)", "nullable": true},
+    {"name": "occurred_at", "sql_type": "DATETIME2(7)", "nullable": false}
+  ]
+}
+```
+
+---
+
 ### delete_table
 
 **Targets:** Data Warehouse only

@@ -481,3 +481,90 @@ async def test_clone_table_bad_at_timestamp_raises_tool_error(ctx_patch) -> None
         )
 
     assert "ISO-8601" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# create_empty_table — MCP tool
+# ---------------------------------------------------------------------------
+
+
+async def test_create_empty_table_happy_path(mock_ctx, ctx_patch) -> None:
+    """create_empty_table resolves workspace + item, builds target, calls service."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    table = _make_table()
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+    mock_create = AsyncMock(return_value=table)
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.tables.create_empty_table", new=mock_create),
+        patch.dict(os.environ, {"FABRIC_MCP_WRITES": "true"}),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "create_empty_table",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "qualified_name": "dbo.sales",
+                "columns": [
+                    {"name": "id", "sql_type": "INT", "nullable": False},
+                    {"name": "label", "sql_type": "VARCHAR(100)"},
+                ],
+            },
+        )
+
+    mock_create.assert_called_once()
+    assert result["name"] == "sales"
+    assert result["schema_name"] == "dbo"
+
+
+async def test_create_empty_table_bad_column_raises_tool_error(mock_ctx, ctx_patch) -> None:
+    """create_empty_table raises ToolError when a column dict is missing required keys."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_WRITES": "true"}),
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "create_empty_table",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "qualified_name": "dbo.sales",
+                "columns": [{"name": "id"}],  # missing sql_type
+            },
+        )
+
+
+async def test_create_empty_table_sql_endpoint_raises_tool_error(mock_ctx, ctx_patch) -> None:
+    """create_empty_table raises ToolError for SQL Analytics Endpoints."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+    from tests.unit.mcp.conftest import make_sql_endpoint_entry  # noqa: PLC0415
+
+    endpoint_entry = make_sql_endpoint_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=endpoint_entry)
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_WRITES": "true"}),
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "create_empty_table",
+            {
+                "workspace": WS_NAME,
+                "item": "MySqlEndpoint",
+                "qualified_name": "dbo.sales",
+                "columns": [{"name": "id", "sql_type": "INT"}],
+            },
+        )
