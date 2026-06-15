@@ -145,12 +145,15 @@ async def create_point(
 
     # Path C — last resort: list all restore points and return the newest
     # UserDefined one.  Creation is serialised (the API enforces a single
-    # in-flight create), so the highest ID (lexicographic max of timestamp
-    # strings) among UserDefined points is the one just created.
+    # in-flight create), so the highest numeric ID (timestamp-based integer)
+    # among UserDefined points is the one just created.
+    # NOTE: IDs are decimal digit strings (epoch-millisecond timestamps).
+    # Comparing numerically (int(p.id)) avoids the lexicographic ordering bug
+    # that would arise when IDs have different string lengths.
     points = await list_points(http, workspace_id, warehouse_id)
     user_points = [p for p in points if p.creation_mode == CreationModeType.USER_DEFINED]
     if user_points:
-        return max(user_points, key=lambda p: p.id)
+        return max(user_points, key=lambda p: int(p.id) if p.id.isdigit() else 0)
 
     msg = (
         "Restore point create succeeded but the created point could not be located: "

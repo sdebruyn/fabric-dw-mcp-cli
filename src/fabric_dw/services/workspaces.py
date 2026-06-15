@@ -101,5 +101,3 @@ async def set_collation(
         # The v1 API may not expose defaultDataWarehouseCollation on all tenants yet.
         # Surface a portal link so the user knows the manual fallback path.
         raise FabricError(portal_msg) from exc
-    except FabricError:
-        raise

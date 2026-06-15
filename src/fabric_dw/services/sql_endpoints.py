@@ -4,16 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
 from uuid import UUID
 
 from fabric_dw.exceptions import FabricServerError, NotFoundError, PermissionDeniedError
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import TableSyncStatus, Warehouse, WarehouseKind
-from fabric_dw.services._concurrency import bounded_gather
+from fabric_dw.services._helpers import scan_all_workspaces
 from fabric_dw.services.workspaces import list_all as _list_all_workspaces
 
-_log = logging.getLogger("fabric_dw.sql_endpoints")
+_logger = logging.getLogger("fabric_dw.sql_endpoints")
 
 # Bounded polling for eventual-consistency fields (e.g. connection_string).
 _CONN_STRING_POLL_INTERVAL: float = 5.0
@@ -69,28 +68,12 @@ async def list_all_workspaces(http: FabricHttpClient) -> list[Warehouse]:
         ``kind == SQL_ENDPOINT``) from all accessible workspaces.
     """
     workspaces = await _list_all_workspaces(http)
-    total = len(workspaces)
-
-    raw = await bounded_gather(
-        [lambda ws=ws: list_endpoints(http, ws.id) for ws in workspaces],
-        return_exceptions=True,
+    return await scan_all_workspaces(
+        workspaces,
+        lambda ws: list_endpoints(http, ws.id),  # type: ignore[union-attr]
+        logger=_logger,
+        skip_errors=(PermissionDeniedError, NotFoundError),
     )
-
-    out: list[Warehouse] = []
-    skipped = 0
-    for ws, result in zip(workspaces, raw, strict=True):
-        if isinstance(result, (PermissionDeniedError, NotFoundError)):
-            _log.warning("skipping workspace %s: %s", ws.name, result)
-            skipped += 1
-        elif isinstance(result, BaseException):
-            raise result
-        else:
-            out.extend(result)
-
-    if skipped:
-        _log.warning("skipped %d of %d workspaces due to access errors", skipped, total)
-
-    return out
 
 
 async def get_endpoint(http: FabricHttpClient, workspace_id: UUID, endpoint_id: UUID) -> Warehouse:
@@ -164,7 +147,7 @@ async def get_endpoint_connection_string(
             )
 
         wait = min(poll_interval, remaining)
-        _log.debug(
+        _logger.debug(
             "connection_string not yet populated for endpoint %s; retrying in %.1fs",
             endpoint_id,
             wait,
@@ -211,7 +194,7 @@ async def refresh_metadata(
             only).
         NotFoundError: If the endpoint does not exist (404).
     """
-    json_body: dict[str, Any] | None = {"recreateTables": True} if recreate_tables else None
+    json_body: dict[str, object] | None = {"recreateTables": True} if recreate_tables else None
 
     resp = await http.request(
         "POST",
@@ -227,15 +210,15 @@ async def refresh_metadata(
 
     if location:
         lro_body = await http.poll_operation(location)
-        raw_value: Any = lro_body.get("value", []) if isinstance(lro_body, dict) else []
+        raw_value: object = lro_body.get("value", []) if isinstance(lro_body, dict) else []
     else:
         # Synchronous completion: parse the table sync statuses from the body directly.
-        _log.debug(
+        _logger.debug(
             "refresh_metadata for endpoint %s completed synchronously (no LRO header)",
             endpoint_id,
         )
-        body: Any = resp.json() if resp.content else {}
-        raw_value = body.get("value", []) if isinstance(body, dict) else []
+        body: object = resp.json() if resp.content else {}
+        raw_value = body.get("value", []) if isinstance(body, dict) else []  # type: ignore[union-attr]
 
-    raw_items: list[Any] = raw_value if isinstance(raw_value, list) else []
+    raw_items = raw_value if isinstance(raw_value, list) else []
     return [TableSyncStatus.model_validate(item) for item in raw_items]

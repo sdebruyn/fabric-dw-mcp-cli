@@ -49,6 +49,28 @@ def _config_path(workspace_id: UUID) -> str:
     return f"/workspaces/{workspace_id}/warehouses/sqlPoolsConfiguration"
 
 
+def _rebuild_config(*, enabled: bool, pools: list[SqlPool]) -> SqlPoolsConfiguration:
+    """Build a :class:`SqlPoolsConfiguration` from *enabled* flag and *pools* list.
+
+    Centralises the repeated ``model_validate`` pattern used across all
+    read-modify-write operations to ensure ``by_alias`` / ``mode="json"``
+    serialisation details are applied consistently.
+
+    Args:
+        enabled: Value for ``customSQLPoolsEnabled``.
+        pools: The full list of :class:`SqlPool` instances to include.
+
+    Returns:
+        A validated :class:`SqlPoolsConfiguration` ready for :func:`update_configuration`.
+    """
+    return SqlPoolsConfiguration.model_validate(
+        {
+            "customSQLPoolsEnabled": enabled,
+            "customSQLPools": [p.model_dump(by_alias=True, mode="json") for p in pools],
+        }
+    )
+
+
 async def get_configuration(
     http: FabricHttpClient,
     workspace_id: UUID,
@@ -149,12 +171,7 @@ async def enable(
     if current.custom_sql_pools_enabled:
         return current
 
-    enabled_config = SqlPoolsConfiguration.model_validate(
-        {
-            "customSQLPoolsEnabled": True,
-            "customSQLPools": current.model_dump(by_alias=True, mode="json")["customSQLPools"],
-        }
-    )
+    enabled_config = _rebuild_config(enabled=True, pools=current.custom_sql_pools)
     return await update_configuration(http, workspace_id, enabled_config)
 
 
@@ -190,12 +207,7 @@ async def disable(
     if not current.custom_sql_pools_enabled:
         return current
 
-    disabled_config = SqlPoolsConfiguration.model_validate(
-        {
-            "customSQLPoolsEnabled": False,
-            "customSQLPools": current.model_dump(by_alias=True, mode="json")["customSQLPools"],
-        }
-    )
+    disabled_config = _rebuild_config(enabled=False, pools=current.custom_sql_pools)
     return await update_configuration(http, workspace_id, disabled_config)
 
 
@@ -233,12 +245,7 @@ async def create_pool(
         msg = f"pool {pool.name!r} already exists; use update to modify it"
         raise AlreadyExistsError(msg)
     new_pools = [*current.custom_sql_pools, pool]
-    new_config = SqlPoolsConfiguration.model_validate(
-        {
-            "customSQLPoolsEnabled": current.custom_sql_pools_enabled,
-            "customSQLPools": [p.model_dump(by_alias=True, mode="json") for p in new_pools],
-        }
-    )
+    new_config = _rebuild_config(enabled=current.custom_sql_pools_enabled, pools=new_pools)
     return await update_configuration(http, workspace_id, new_config)
 
 
@@ -323,12 +330,7 @@ async def update_pool(
 
     new_pool = SqlPool.model_validate(raw)
     new_pools = [new_pool if p.name == name else p for p in current.custom_sql_pools]
-    new_config = SqlPoolsConfiguration.model_validate(
-        {
-            "customSQLPoolsEnabled": current.custom_sql_pools_enabled,
-            "customSQLPools": [p.model_dump(by_alias=True, mode="json") for p in new_pools],
-        }
-    )
+    new_config = _rebuild_config(enabled=current.custom_sql_pools_enabled, pools=new_pools)
     return await update_configuration(http, workspace_id, new_config)
 
 
@@ -366,10 +368,5 @@ async def delete_pool(
         msg = f"pool {name!r} not found"
         raise NotFoundError(msg)
     new_pools = [p for p in current.custom_sql_pools if p.name != name]
-    new_config = SqlPoolsConfiguration.model_validate(
-        {
-            "customSQLPoolsEnabled": current.custom_sql_pools_enabled,
-            "customSQLPools": [p.model_dump(by_alias=True, mode="json") for p in new_pools],
-        }
-    )
+    new_config = _rebuild_config(enabled=current.custom_sql_pools_enabled, pools=new_pools)
     return await update_configuration(http, workspace_id, new_config)
