@@ -218,7 +218,7 @@ def cli(
     yes: bool,
     verbose: bool,
 ) -> None:
-    """Microsoft Fabric Data Warehouse CLI."""
+    """Microsoft Fabric Data Warehouse CLI & MCP Server."""
     setup_logging(logging.DEBUG if verbose else logging.INFO)
 
     ctx.obj = CliContext(
