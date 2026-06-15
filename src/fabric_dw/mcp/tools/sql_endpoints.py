@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -15,6 +14,7 @@ from fabric_dw.mcp._guards import (
     assert_destructive_allowed,
     assert_workspace_allowed,
     assert_writes_allowed,
+    workspace_allowlist_active,
 )
 from fabric_dw.mcp._helpers import fabric_err, resolve_item
 from fabric_dw.services import permissions as _permissions_svc
@@ -38,8 +38,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         When *all_workspaces* is ``True``, ignore *workspace* and aggregate results
         across every workspace the caller can see.
         """
-        _workspaces_allowlist = os.environ.get("FABRIC_MCP_WORKSPACES", "").strip()
-        if all_workspaces and _workspaces_allowlist:
+        if all_workspaces and workspace_allowlist_active():
             raise ToolError(
                 "all_workspaces=True is not permitted when FABRIC_MCP_WORKSPACES is configured; "
                 "specify an individual workspace instead"

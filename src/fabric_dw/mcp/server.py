@@ -18,12 +18,12 @@ is closed by its ``__aexit__`` (no standalone ``aclose()`` call needed).
 
 Context access
 --------------
-All 73 tool functions call :func:`~fabric_dw.mcp._context.get_context` to
+Every tool function calls :func:`~fabric_dw.mcp._context.get_context` to
 obtain the shared :class:`~fabric_dw.mcp._context.ServerContext`.  The sentinel
 pattern (module-level ``ServerContext | None``) was chosen over injecting a
 ``Context`` parameter into every tool because FastMCP's lifespan context is
 not ergonomically accessible from tool functions without either adding a
-``Context`` import to all 73 tools or using fragile ``request_context``
+``Context`` import to every tool or using fragile ``request_context``
 internals.  The sentinel is safe for streamable-HTTP concurrency because it is
 **read-only** after startup — tools only call ``get_context()``; they never
 re-assign the global.
@@ -62,7 +62,7 @@ from mcp.server.fastmcp import FastMCP
 
 from fabric_dw.logging import setup_logging
 from fabric_dw.mcp._context import fabric_lifespan
-from fabric_dw.mcp._guards import _env_flag as _guards_env_flag
+from fabric_dw.mcp._guards import env_flag as _guards_env_flag
 from fabric_dw.mcp.tools import register_all
 
 __all__ = ["mcp", "run"]

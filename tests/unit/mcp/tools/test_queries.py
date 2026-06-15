@@ -167,7 +167,7 @@ async def test_list_running_queries_happy_path(mock_ctx, ctx_patch) -> None:
     ):
         result = await mcp._tool_manager.call_tool(
             "list_running_queries",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME},
+            {"workspace": _WS_NAME, "item": _WH_NAME},
         )
 
     assert isinstance(result, list)
@@ -196,7 +196,7 @@ async def test_list_running_queries_fabric_error(mock_ctx, ctx_patch) -> None:
     ):
         await mcp._tool_manager.call_tool(
             "list_running_queries",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME},
+            {"workspace": _WS_NAME, "item": _WH_NAME},
         )
 
 
@@ -213,7 +213,7 @@ async def test_list_running_queries_workspace_not_allowed(ctx_patch) -> None:
     ):
         await mcp._tool_manager.call_tool(
             "list_running_queries",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME},
+            {"workspace": _WS_NAME, "item": _WH_NAME},
         )
 
 
@@ -234,7 +234,7 @@ async def test_list_running_queries_empty(mock_ctx, ctx_patch) -> None:
     ):
         result = await mcp._tool_manager.call_tool(
             "list_running_queries",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME},
+            {"workspace": _WS_NAME, "item": _WH_NAME},
         )
 
     assert result == []
@@ -263,7 +263,7 @@ async def test_list_connections_happy_path(mock_ctx, ctx_patch) -> None:
     ):
         result = await mcp._tool_manager.call_tool(
             "list_connections",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME},
+            {"workspace": _WS_NAME, "item": _WH_NAME},
         )
 
     assert isinstance(result, list)
@@ -292,7 +292,7 @@ async def test_list_connections_fabric_error(mock_ctx, ctx_patch) -> None:
     ):
         await mcp._tool_manager.call_tool(
             "list_connections",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME},
+            {"workspace": _WS_NAME, "item": _WH_NAME},
         )
 
 
@@ -309,7 +309,7 @@ async def test_list_connections_workspace_not_allowed(ctx_patch) -> None:
     ):
         await mcp._tool_manager.call_tool(
             "list_connections",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME},
+            {"workspace": _WS_NAME, "item": _WH_NAME},
         )
 
 
@@ -335,7 +335,7 @@ async def test_kill_session_happy_path(mock_ctx, ctx_patch) -> None:
     ):
         result = await mcp._tool_manager.call_tool(
             "kill_session",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME, "session_id": 42},
+            {"workspace": _WS_NAME, "item": _WH_NAME, "session_id": 42},
         )
 
     assert result == {"killed": True, "session_id": 42}
@@ -361,7 +361,7 @@ async def test_kill_session_fabric_error(mock_ctx, ctx_patch) -> None:
     ):
         await mcp._tool_manager.call_tool(
             "kill_session",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME, "session_id": 42},
+            {"workspace": _WS_NAME, "item": _WH_NAME, "session_id": 42},
         )
 
 
@@ -385,7 +385,7 @@ async def test_kill_session_value_error(mock_ctx, ctx_patch) -> None:
     ):
         await mcp._tool_manager.call_tool(
             "kill_session",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME, "session_id": 99},
+            {"workspace": _WS_NAME, "item": _WH_NAME, "session_id": 99},
         )
 
     assert "invalid session" in str(exc_info.value)
@@ -404,7 +404,7 @@ async def test_kill_session_readonly_blocked(ctx_patch) -> None:
     ):
         await mcp._tool_manager.call_tool(
             "kill_session",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME, "session_id": 5},
+            {"workspace": _WS_NAME, "item": _WH_NAME, "session_id": 5},
         )
 
     assert "read-only" in str(exc_info.value).lower()
@@ -423,7 +423,7 @@ async def test_kill_session_workspace_not_allowed(ctx_patch) -> None:
     ):
         await mcp._tool_manager.call_tool(
             "kill_session",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME, "session_id": 5},
+            {"workspace": _WS_NAME, "item": _WH_NAME, "session_id": 5},
         )
 
 
@@ -450,7 +450,7 @@ async def test_list_request_history_happy_path(mock_ctx, ctx_patch) -> None:
     ):
         result = await mcp._tool_manager.call_tool(
             "list_request_history",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME},
+            {"workspace": _WS_NAME, "item": _WH_NAME},
         )
 
     assert isinstance(result, list)
@@ -476,7 +476,7 @@ async def test_list_request_history_with_since_until(mock_ctx, ctx_patch) -> Non
             "list_request_history",
             {
                 "workspace": _WS_NAME,
-                "warehouse": _WH_NAME,
+                "item": _WH_NAME,
                 "since": "2026-01-01T00:00:00",
                 "until": "2026-12-31T23:59:59",
                 "limit": 200,
@@ -502,7 +502,7 @@ async def test_list_request_history_bad_since(ctx_patch) -> None:
     ):
         await mcp._tool_manager.call_tool(
             "list_request_history",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME, "since": "not-a-date"},
+            {"workspace": _WS_NAME, "item": _WH_NAME, "since": "not-a-date"},
         )
 
     assert "ISO-8601" in str(exc_info.value)
@@ -520,7 +520,7 @@ async def test_list_request_history_bad_until(ctx_patch) -> None:
     ):
         await mcp._tool_manager.call_tool(
             "list_request_history",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME, "until": "bad-ts"},
+            {"workspace": _WS_NAME, "item": _WH_NAME, "until": "bad-ts"},
         )
 
     assert "ISO-8601" in str(exc_info.value)
@@ -546,7 +546,7 @@ async def test_list_request_history_fabric_error(mock_ctx, ctx_patch) -> None:
     ):
         await mcp._tool_manager.call_tool(
             "list_request_history",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME},
+            {"workspace": _WS_NAME, "item": _WH_NAME},
         )
 
 
@@ -563,7 +563,7 @@ async def test_list_request_history_workspace_not_allowed(ctx_patch) -> None:
     ):
         await mcp._tool_manager.call_tool(
             "list_request_history",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME},
+            {"workspace": _WS_NAME, "item": _WH_NAME},
         )
 
 
@@ -590,7 +590,7 @@ async def test_list_session_history_happy_path(mock_ctx, ctx_patch) -> None:
     ):
         result = await mcp._tool_manager.call_tool(
             "list_session_history",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME},
+            {"workspace": _WS_NAME, "item": _WH_NAME},
         )
 
     assert isinstance(result, list)
@@ -616,7 +616,7 @@ async def test_list_session_history_with_since_until(mock_ctx, ctx_patch) -> Non
             "list_session_history",
             {
                 "workspace": _WS_NAME,
-                "warehouse": _WH_NAME,
+                "item": _WH_NAME,
                 "since": "2026-01-01T00:00:00",
                 "until": "2026-06-01T00:00:00",
             },
@@ -640,7 +640,7 @@ async def test_list_session_history_bad_since(ctx_patch) -> None:
     ):
         await mcp._tool_manager.call_tool(
             "list_session_history",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME, "since": "bad-ts"},
+            {"workspace": _WS_NAME, "item": _WH_NAME, "since": "bad-ts"},
         )
 
     assert "ISO-8601" in str(exc_info.value)
@@ -658,7 +658,7 @@ async def test_list_session_history_bad_until(ctx_patch) -> None:
     ):
         await mcp._tool_manager.call_tool(
             "list_session_history",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME, "until": "bad-ts"},
+            {"workspace": _WS_NAME, "item": _WH_NAME, "until": "bad-ts"},
         )
 
     assert "ISO-8601" in str(exc_info.value)
@@ -684,7 +684,7 @@ async def test_list_session_history_fabric_error(mock_ctx, ctx_patch) -> None:
     ):
         await mcp._tool_manager.call_tool(
             "list_session_history",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME},
+            {"workspace": _WS_NAME, "item": _WH_NAME},
         )
 
 
@@ -701,7 +701,7 @@ async def test_list_session_history_workspace_not_allowed(ctx_patch) -> None:
     ):
         await mcp._tool_manager.call_tool(
             "list_session_history",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME},
+            {"workspace": _WS_NAME, "item": _WH_NAME},
         )
 
 
@@ -728,7 +728,7 @@ async def test_list_frequent_queries_happy_path(mock_ctx, ctx_patch) -> None:
     ):
         result = await mcp._tool_manager.call_tool(
             "list_frequent_queries",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME},
+            {"workspace": _WS_NAME, "item": _WH_NAME},
         )
 
     assert isinstance(result, list)
@@ -754,7 +754,7 @@ async def test_list_frequent_queries_with_since_until(mock_ctx, ctx_patch) -> No
             "list_frequent_queries",
             {
                 "workspace": _WS_NAME,
-                "warehouse": _WH_NAME,
+                "item": _WH_NAME,
                 "since": "2026-01-01T00:00:00",
                 "until": "2026-06-01T00:00:00",
                 "limit": 500,
@@ -779,7 +779,7 @@ async def test_list_frequent_queries_bad_since(ctx_patch) -> None:
     ):
         await mcp._tool_manager.call_tool(
             "list_frequent_queries",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME, "since": "bad"},
+            {"workspace": _WS_NAME, "item": _WH_NAME, "since": "bad"},
         )
 
     assert "ISO-8601" in str(exc_info.value)
@@ -797,7 +797,7 @@ async def test_list_frequent_queries_bad_until(ctx_patch) -> None:
     ):
         await mcp._tool_manager.call_tool(
             "list_frequent_queries",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME, "until": "bad"},
+            {"workspace": _WS_NAME, "item": _WH_NAME, "until": "bad"},
         )
 
     assert "ISO-8601" in str(exc_info.value)
@@ -823,7 +823,7 @@ async def test_list_frequent_queries_fabric_error(mock_ctx, ctx_patch) -> None:
     ):
         await mcp._tool_manager.call_tool(
             "list_frequent_queries",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME},
+            {"workspace": _WS_NAME, "item": _WH_NAME},
         )
 
 
@@ -840,7 +840,7 @@ async def test_list_frequent_queries_workspace_not_allowed(ctx_patch) -> None:
     ):
         await mcp._tool_manager.call_tool(
             "list_frequent_queries",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME},
+            {"workspace": _WS_NAME, "item": _WH_NAME},
         )
 
 
@@ -867,7 +867,7 @@ async def test_list_long_running_queries_happy_path(mock_ctx, ctx_patch) -> None
     ):
         result = await mcp._tool_manager.call_tool(
             "list_long_running_queries",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME},
+            {"workspace": _WS_NAME, "item": _WH_NAME},
         )
 
     assert isinstance(result, list)
@@ -893,7 +893,7 @@ async def test_list_long_running_queries_with_since_until(mock_ctx, ctx_patch) -
             "list_long_running_queries",
             {
                 "workspace": _WS_NAME,
-                "warehouse": _WH_NAME,
+                "item": _WH_NAME,
                 "since": "2026-01-01T00:00:00",
                 "until": "2026-06-01T00:00:00",
                 "limit": 250,
@@ -918,7 +918,7 @@ async def test_list_long_running_queries_bad_since(ctx_patch) -> None:
     ):
         await mcp._tool_manager.call_tool(
             "list_long_running_queries",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME, "since": "bad"},
+            {"workspace": _WS_NAME, "item": _WH_NAME, "since": "bad"},
         )
 
     assert "ISO-8601" in str(exc_info.value)
@@ -936,7 +936,7 @@ async def test_list_long_running_queries_bad_until(ctx_patch) -> None:
     ):
         await mcp._tool_manager.call_tool(
             "list_long_running_queries",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME, "until": "bad"},
+            {"workspace": _WS_NAME, "item": _WH_NAME, "until": "bad"},
         )
 
     assert "ISO-8601" in str(exc_info.value)
@@ -962,7 +962,7 @@ async def test_list_long_running_queries_fabric_error(mock_ctx, ctx_patch) -> No
     ):
         await mcp._tool_manager.call_tool(
             "list_long_running_queries",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME},
+            {"workspace": _WS_NAME, "item": _WH_NAME},
         )
 
 
@@ -979,5 +979,5 @@ async def test_list_long_running_queries_workspace_not_allowed(ctx_patch) -> Non
     ):
         await mcp._tool_manager.call_tool(
             "list_long_running_queries",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME},
+            {"workspace": _WS_NAME, "item": _WH_NAME},
         )

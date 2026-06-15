@@ -18,6 +18,7 @@ from fabric_dw.mcp._guards import (
 )
 from fabric_dw.mcp._helpers import (
     make_sql_target,
+    parse_iso8601,
     parse_qualified_name,
     resolve_item,
     safe_rows,
@@ -217,17 +218,16 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         assert_writes_allowed("clone_table")
         assert_workspace_allowed(workspace)
 
-        at_dt: datetime | None = None
-        if at is not None:
-            try:
-                at_dt = datetime.fromisoformat(at)
-            except ValueError as exc:
-                from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
-
-                raise ToolError(
-                    f"invalid at timestamp {at!r}: expected ISO-8601 (e.g. 2024-01-01T00:00:00)"
-                ) from exc
-            at_dt = at_dt.replace(tzinfo=UTC) if at_dt.tzinfo is None else at_dt.astimezone(UTC)
+        at_dt_raw = parse_iso8601(at, "at")
+        at_dt: datetime | None = (
+            None
+            if at_dt_raw is None
+            else (
+                at_dt_raw.replace(tzinfo=UTC)
+                if at_dt_raw.tzinfo is None
+                else at_dt_raw.astimezone(UTC)
+            )
+        )
 
         ctx = get_context()
         try:

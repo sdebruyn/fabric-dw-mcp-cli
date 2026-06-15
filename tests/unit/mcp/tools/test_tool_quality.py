@@ -353,7 +353,7 @@ async def test_list_request_history_limit_bound_rejection() -> None:
             "list_request_history",
             {
                 "workspace": _WS_NAME,
-                "warehouse": _WH_NAME,
+                "item": _WH_NAME,
                 "limit": 99999,
             },
         )
@@ -645,5 +645,5 @@ async def test_list_running_queries_raises_tool_error_on_no_connection() -> None
     ):
         await mcp._tool_manager.call_tool(
             "list_running_queries",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME},
+            {"workspace": _WS_NAME, "item": _WH_NAME},
         )

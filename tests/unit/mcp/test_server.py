@@ -541,7 +541,7 @@ async def test_list_running_queries_happy_path(mock_ctx, ctx_patch) -> None:
     ):
         result = await mcp._tool_manager.call_tool(
             "list_running_queries",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME},
+            {"workspace": _WS_NAME, "item": _WH_NAME},
         )
 
     assert isinstance(result, list)

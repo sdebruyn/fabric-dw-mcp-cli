@@ -10,13 +10,7 @@ from pydantic import Field
 
 from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
-from fabric_dw.mcp._guards import (
-    _env_flag as _guards_env_flag,
-)
-from fabric_dw.mcp._guards import (
-    assert_readonly_sql,
-    assert_workspace_allowed,
-)
+from fabric_dw.mcp._guards import assert_readonly_sql, assert_workspace_allowed, env_flag
 from fabric_dw.mcp._helpers import fabric_err, make_sql_target, resolve_item
 from fabric_dw.services import sql_exec as _sql_exec_svc
 
@@ -69,7 +63,7 @@ def register(mcp: FastMCP) -> None:
             ``rowcount`` (int; ``-1`` when the driver does not report a count),
             ``row_count_returned`` (int), and ``truncated`` (bool).
         """
-        if _guards_env_flag("FABRIC_MCP_READONLY"):
+        if env_flag("FABRIC_MCP_READONLY"):
             assert_readonly_sql(query)
         assert_workspace_allowed(workspace)
         ctx = get_context()

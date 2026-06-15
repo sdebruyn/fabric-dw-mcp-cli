@@ -6,6 +6,8 @@ This module provides utilities imported by every domain tool module:
   to a :class:`~mcp.server.fastmcp.exceptions.ToolError` with structured data.
 - :func:`tool_err` — uniform error funnel mapping FabricError / ValueError /
   Exception to ToolError without inline ternaries.
+- :func:`parse_iso8601` — parse an ISO-8601 string to :class:`~datetime.datetime`,
+  raising :class:`~mcp.server.fastmcp.exceptions.ToolError` on bad input.
 - :func:`parse_qualified_name` — split ``"schema.object"`` strings, raising
   :class:`~mcp.server.fastmcp.exceptions.ToolError` on bad input.
 - :func:`make_sql_target` — build a :class:`~fabric_dw.sql.SqlTarget` from a
@@ -19,6 +21,7 @@ This module provides utilities imported by every domain tool module:
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -33,6 +36,7 @@ from fabric_dw.sql_io import json_safe as _json_safe
 __all__ = [
     "fabric_err",
     "make_sql_target",
+    "parse_iso8601",
     "parse_qualified_name",
     "resolve_item",
     "safe_rows",
@@ -46,7 +50,7 @@ _log = logging.getLogger(__name__)
 # No DDL guard is needed for these operations; only table DML/DDL is blocked.
 
 
-def fabric_err(exc: FabricError | Exception) -> ToolError:
+def fabric_err(exc: Exception) -> ToolError:
     """Convert a :class:`~fabric_dw.exceptions.FabricError` to a :class:`ToolError`.
 
     For :class:`FabricError` instances the message is enriched with structured
@@ -56,8 +60,8 @@ def fabric_err(exc: FabricError | Exception) -> ToolError:
     clean first line.
 
     Args:
-        exc: The exception to convert.  When *exc* is a plain
-            :class:`Exception` (not a :class:`FabricError`), only the message
+        exc: The exception to convert.  When *exc* is not a
+            :class:`~fabric_dw.exceptions.FabricError`, only the message
             is included.
 
     Returns:
@@ -84,7 +88,7 @@ def fabric_err(exc: FabricError | Exception) -> ToolError:
     return ToolError(msg)
 
 
-def tool_err(exc: FabricError | Exception) -> ToolError:
+def tool_err(exc: Exception) -> ToolError:
     """Uniform error funnel: FabricError → structured ToolError, other → ToolError(str).
 
     Use this in ``except (ValueError, FabricError)`` blocks to replace the
@@ -101,6 +105,35 @@ def tool_err(exc: FabricError | Exception) -> ToolError:
     if isinstance(exc, FabricError):
         return fabric_err(exc)
     return ToolError(str(exc))
+
+
+def parse_iso8601(value: str | None, param: str) -> datetime | None:
+    """Parse an ISO-8601 string to :class:`~datetime.datetime`.
+
+    Returns ``None`` when *value* is ``None`` (optional timestamp parameters
+    default to server-side semantics such as ``CURRENT_TIMESTAMP``).
+
+    This is the single shared ISO-8601 parser for all MCP tools.  Previously
+    this logic was duplicated in ``queries.py``, ``sql_pools.py``,
+    ``snapshots.py`` (twice), and ``tables.py``.
+
+    Args:
+        value: An ISO-8601 datetime string, or ``None``.
+        param: The parameter name used in the error message.
+
+    Returns:
+        A :class:`~datetime.datetime` parsed from *value*, or ``None`` when
+        *value* is ``None``.
+
+    Raises:
+        ToolError: When *value* is not a valid ISO-8601 string.
+    """
+    if value is None:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ToolError(f"invalid {param} {value!r}: expected ISO-8601") from exc
 
 
 def parse_qualified_name(qualified_name: str, kind: str = "object") -> tuple[str, str]:
