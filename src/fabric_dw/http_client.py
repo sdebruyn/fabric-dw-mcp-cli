@@ -28,10 +28,15 @@ a 409 Conflict.  LRO status polling (GET) is covered by the safe retry path.
 
 Credential ownership
 ~~~~~~~~~~~~~~~~~~~~
-``FabricHttpClient`` does **not** close the credential passed to its constructor.
-The credential may be shared across multiple client instances or with other code,
-so its lifecycle is the caller's responsibility.  If you create a credential
-solely for one client, close it after the ``async with`` block completes.
+``FabricHttpClient`` calls ``credential.close()`` on ``__aexit__`` whenever the
+credential exposes a callable ``close`` attribute.  If ``close()`` returns a
+coroutine (as ``azure.identity.aio`` credentials do — they hold an internal
+``aiohttp.ClientSession``), the result is awaited; bare sync ``close()`` methods
+are called without awaiting.  The close is guarded against teardown failures
+(errors are suppressed so a broken credential teardown never aborts the CLI
+command).  Credentials that do not expose a ``close`` attribute at all (e.g. plain
+``AsyncTokenCredential`` protocol implementations) are left unclosed — callers are
+responsible for their lifecycle in that case.
 """
 
 from __future__ import annotations
@@ -221,9 +226,13 @@ class FabricHttpClient:
 
     Credential ownership
     ~~~~~~~~~~~~~~~~~~~~
-    This client does **not** close the credential.  The credential may be
-    shared with other clients or code, so its lifecycle is the caller's
-    responsibility.
+    ``FabricHttpClient`` calls ``credential.close()`` in ``__aexit__`` whenever the
+    credential exposes a callable ``close`` attribute.  If the return value is a
+    coroutine (as ``azure.identity.aio`` credentials return — they hold an internal
+    ``aiohttp.ClientSession``), it is awaited; bare sync ``close()`` methods are
+    called without awaiting.  A missing ``close`` attribute is silently ignored, and
+    any exception raised by ``close()`` is suppressed so teardown never aborts the
+    command.
 
     Retry arithmetic
     ~~~~~~~~~~~~~~~~
@@ -286,6 +295,21 @@ class FabricHttpClient:
         if self._http is not None:
             await self._http.aclose()
             self._http = None
+        # Close the credential when it exposes an async close() method.
+        # azure.identity.aio credentials (DefaultAzureCredential, ClientSecretCredential,
+        # etc.) hold an aiohttp.ClientSession internally; calling close() releases it and
+        # prevents the "Unclosed client session" ResourceWarning on process exit.
+        # The guard handles credentials that do not expose close() at all (e.g. plain
+        # AsyncTokenCredential protocol stubs).  Errors are suppressed so that a
+        # credential teardown failure never aborts the CLI command.
+        _close = getattr(self._credential, "close", None)
+        if callable(_close):
+            try:
+                result = _close()
+                if asyncio.iscoroutine(result):
+                    await result
+            except Exception:
+                _logger.debug("Suppressed error closing credential", exc_info=True)
 
     # ------------------------------------------------------------------
     # Token management
