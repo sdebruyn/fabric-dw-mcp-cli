@@ -145,6 +145,19 @@ class TestYesFlag:
 class TestVerboseFlag:
     """--verbose / -v can appear before or after the subcommand."""
 
+    @pytest.fixture(autouse=True)
+    def _restore_log_level(self) -> object:
+        """Capture and restore the fabric_dw logger level after each test.
+
+        setup_logging(DEBUG) mutates the global logger for the process
+        lifetime.  This fixture ensures that verbose tests are hermetically
+        isolated regardless of execution order.
+        """
+        pkg_logger = logging.getLogger("fabric_dw")
+        original = pkg_logger.level
+        yield
+        pkg_logger.setLevel(original)
+
     @pytest.fixture
     def patched_list(self) -> object:
         mock_ws = MagicMock()
