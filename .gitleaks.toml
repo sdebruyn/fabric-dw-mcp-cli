@@ -26,3 +26,10 @@ id = "generic-api-key"
     paths = ['''tests/''']
     regexTarget = "secret"
     regexes = ['''^eyJ0b2tlbiI6InRlc3QifQ$''']
+
+    [[rules.allowlists]]
+    description = "Azure Monitor write-only telemetry ingestion key in telemetry.py — safe to embed per Microsoft docs (write-only, no read/management access)"
+    condition = "AND"
+    paths = ['''src/fabric_dw/telemetry\.py''']
+    regexTarget = "line"
+    regexes = ['''_DEFAULT_CONNECTION_STRING''']

@@ -4,8 +4,32 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Generator
+from unittest.mock import patch
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _suppress_telemetry_notice(request: pytest.FixtureRequest) -> Generator[None, None, None]:
+    """Suppress the first-run telemetry notice in all unit tests.
+
+    Tests in test_telemetry.py test the notice behaviour directly and opt out
+    by being in that module; all other unit tests are shielded so the notice
+    does not appear in captured output and break JSON-parsing assertions.
+
+    We patch the real binding on the telemetry module (A4) and also the
+    imported references in each call site so all invocation paths are covered.
+    """
+    if "test_telemetry" in str(request.path):
+        yield
+        return
+
+    with (
+        patch("fabric_dw.telemetry.maybe_print_first_run_notice"),
+        patch("fabric_dw.cli._main.maybe_print_first_run_notice"),
+        patch("fabric_dw.mcp.server.maybe_print_first_run_notice"),
+    ):
+        yield
 
 
 @pytest.fixture(autouse=True)
