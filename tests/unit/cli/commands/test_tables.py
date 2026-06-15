@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import click
@@ -16,11 +16,13 @@ import pyarrow.parquet as pq
 import pytest
 from click.testing import CliRunner
 
+from fabric_dw.auth import CredentialMode
 from fabric_dw.cache import ItemEntry
+from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._main import cli
-from fabric_dw.cli.commands.tables import _parse_column_spec, _parse_schema_file
+from fabric_dw.cli.commands.tables import _load_cmd_local, _parse_column_spec, _parse_schema_file
 from fabric_dw.exceptions import ItemKindError, NotFoundError, PermissionDeniedError
-from fabric_dw.models import Table, WarehouseKind
+from fabric_dw.models import CopyIntoResult, Table, WarehouseKind
 from fabric_dw.sql import SqlTarget
 
 SE_GUID = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"
@@ -1855,3 +1857,113 @@ class TestLoadCreateAndLoad:
             catch_exceptions=False,
         )
         assert result.exit_code != 0
+
+
+# ===========================================================================
+# _load_cmd_local — storage credential lifecycle
+# ===========================================================================
+
+
+class TestLoadCmdLocalStorageCredential:
+    """Verify that _load_cmd_local closes the storage-scope credential."""
+
+    def _make_ctx(self) -> CliContext:
+        return CliContext(auth=CredentialMode.DEFAULT)
+
+    @pytest.mark.asyncio
+    async def test_storage_credential_is_closed_on_success(self, tmp_path: Path) -> None:
+        """The storage-scope credential returned by get_credential must be closed
+        after load_local_file returns successfully.
+
+        A second independent credential is created inside _load_cmd_local for the
+        OneLake upload.  Without an explicit close() call its internal
+        aiohttp.ClientSession leaks — the same ResourceWarning this PR fixes on the
+        primary FabricHttpClient credential.
+        """
+        local = tmp_path / "data.parquet"
+        local.write_bytes(b"PAR1")  # minimal non-empty file
+
+        fake_result = CopyIntoResult(rows_loaded=1, rows_rejected=0, target="dbo.t")
+        close_spy = AsyncMock()
+        mock_cred = MagicMock()
+        mock_cred.close = close_spy
+
+        with (
+            patch(
+                "fabric_dw.auth.get_credential",
+                return_value=mock_cred,
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.load_local_file",
+                new=AsyncMock(return_value=fake_result),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.infer_file_format",
+                return_value="parquet",
+            ),
+        ):
+            result = await _load_cmd_local(
+                ctx=self._make_ctx(),
+                http=MagicMock(),
+                ws_id=WS_UUID,
+                sql_target=_make_sql_target(),
+                entry=_make_item_entry(),
+                schema="dbo",
+                table_name="t",
+                file_path=str(local),
+                fmt=None,
+                csv_kw={},
+                staging_lakehouse_name=None,
+                keep_staging=False,
+                max_errors=None,
+                rejected_row_location=None,
+            )
+
+        assert result == fake_result
+        close_spy.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_storage_credential_is_closed_even_when_load_raises(self, tmp_path: Path) -> None:
+        """The storage-scope credential must be closed even when load_local_file
+        raises, so the aiohttp session is never leaked on the error path.
+        """
+        local = tmp_path / "data.parquet"
+        local.write_bytes(b"PAR1")
+
+        close_spy = AsyncMock()
+        mock_cred = MagicMock()
+        mock_cred.close = close_spy
+
+        with (
+            patch(
+                "fabric_dw.auth.get_credential",
+                return_value=mock_cred,
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.load_local_file",
+                new=AsyncMock(side_effect=RuntimeError("upload failed")),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.infer_file_format",
+                return_value="parquet",
+            ),
+            pytest.raises(RuntimeError, match="upload failed"),
+        ):
+            await _load_cmd_local(
+                ctx=self._make_ctx(),
+                http=MagicMock(),
+                ws_id=WS_UUID,
+                sql_target=_make_sql_target(),
+                entry=_make_item_entry(),
+                schema="dbo",
+                table_name="t",
+                file_path=str(local),
+                fmt=None,
+                csv_kw={},
+                staging_lakehouse_name=None,
+                keep_staging=False,
+                max_errors=None,
+                rejected_row_location=None,
+            )
+
+        close_spy.assert_awaited_once()
