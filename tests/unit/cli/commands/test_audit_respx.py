@@ -115,6 +115,12 @@ class TestAuditEnableRespx:
         assert len(captured_bodies) == 1, f"Expected 1 PATCH body, got {len(captured_bodies)}"
         body = captured_bodies[0]
         assert body.get("state") == "Enabled", f"Expected state=Enabled in body: {body}"
+        # Production always sends retentionDays; omitting it would silently regress.
+        # Default (no --retention-days / no --unlimited) maps to 0 (unlimited retention).
+        assert "retentionDays" in body, f"Expected retentionDays in PATCH body: {body}"
+        assert body["retentionDays"] == 0, (
+            f"Expected retentionDays=0 (unlimited) when no flag supplied: {body}"
+        )
 
     def test_enable_with_retention_days_sends_correct_body(
         self, runner: CliRunner, cache_env: Path
@@ -245,11 +251,7 @@ class TestAuditSetRetentionRespx:
 
         # set_retention does a pre-flight GET to verify audit is enabled,
         # then PATCH, then a second GET to re-fetch settings.
-        audit_get_count = 0
-
         def _get_audit(_request: httpx.Request) -> httpx.Response:
-            nonlocal audit_get_count
-            audit_get_count += 1
             return httpx.Response(200, json=_AUDIT_SETTINGS_ENABLED)
 
         with respx.mock(assert_all_called=False) as mock_router:

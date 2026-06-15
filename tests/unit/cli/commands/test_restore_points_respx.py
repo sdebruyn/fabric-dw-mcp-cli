@@ -56,7 +56,6 @@ _WH_WAREHOUSE_URL = f"{_BASE}/workspaces/{WS_GUID}/warehouses/{WH_GUID}"
 _RP_BASE_URL = f"{_BASE}/workspaces/{WS_GUID}/warehouses/{WH_GUID}/restorePoints"
 _RP_ITEM_URL = f"{_RP_BASE_URL}/{RP_ID}"
 _LRO_POLL_URL = f"{_BASE}/operations/{LRO_OP_ID}"
-_LRO_RESULT_URL = f"{_BASE}/operations/{LRO_OP_ID}/result"
 _LOCATION_HEADER = f"{_BASE}/operations/{LRO_OP_ID}"
 
 # Resolver stub responses
