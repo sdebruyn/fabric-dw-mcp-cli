@@ -17,6 +17,7 @@ from fabric_dw.models import CopyIntoResult, WarehouseKind
 from fabric_dw.services.load import (
     _DFS_API_VERSION,
     _DFS_CREATE_MAX_RETRIES,
+    _DFS_CREATE_RETRY_DELAY,
     _ONELAKE_DFS_BASE,
     CopyIntoCsvOptions,
     _build_copy_into_sql,
@@ -1244,37 +1245,37 @@ class TestOneLakeUploadFile:
                 f"x-ms-version={_DFS_API_VERSION!r}; got {version!r}"
             )
 
-    @respx.mock
-    async def test_token_not_in_x_ms_version_header(self, tmp_path: Path) -> None:
-        """The auth token must never appear in the x-ms-version header value."""
-        data_file = tmp_path / "data.parquet"
-        data_file.write_bytes(b"PAYLOAD")
+    def test_log_dfs_error_does_not_read_request_headers(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """_log_dfs_error must never read resp.request.headers (which contains Authorization).
 
-        captured: list[httpx.Request] = []
+        The token-leak guarantee is that _log_dfs_error only reads *response* data.
+        This test attaches a request with a secret token to the response and asserts
+        that the secret does not appear in any log record, proving that the function
+        does not forward request headers to the logger.
+        """
+        secret_token = "super-secret-bearer-XYZ"  # noqa: S105
 
-        def _capture(request: httpx.Request) -> httpx.Response:
-            captured.append(request)
-            action = request.url.params.get("action", "")
-            if request.method == "PUT":
-                return httpx.Response(201)
-            return httpx.Response(202 if action == "append" else 200)
-
-        respx.put(self._DFS_BASE).mock(side_effect=_capture)
-        respx.patch(self._DFS_BASE).mock(side_effect=_capture)
-
-        await onelake_upload_file(
-            self._make_credential(),
-            self._WS_ID,
-            self._LH_ID,
-            "data.parquet",
-            data_file,
+        # Build a response that has a fabricated request object carrying Authorization.
+        request = httpx.Request(
+            "PUT",
+            "https://onelake.dfs.fabric.microsoft.com/ws/lh/Files/f.parquet",
+            headers={"Authorization": f"Bearer {secret_token}"},
+        )
+        resp = httpx.Response(
+            400,
+            json={"error": {"code": "UnsupportedRestVersion", "message": "bad version"}},
+            headers={"x-ms-error-code": "UnsupportedRestVersion", "x-ms-request-id": "req-xyz"},
+            request=request,
         )
 
-        fake_token = "fake-bearer-token"  # noqa: S105 — matches _make_credential stub
-        for req in captured:
-            version_val = req.headers.get("x-ms-version", "")
-            assert fake_token not in version_val, (
-                f"Auth token must not appear in x-ms-version: {version_val!r}"
+        with caplog.at_level(logging.DEBUG, logger="fabric_dw"):
+            _log_dfs_error(resp, "DFS create")
+
+        for record in caplog.records:
+            assert secret_token not in record.getMessage(), (
+                f"Auth token leaked into log record: {record.getMessage()!r}"
             )
 
     # -----------------------------------------------------------------------
@@ -1415,7 +1416,7 @@ class TestOneLakeUploadFile:
         respx.put(self._DFS_BASE).mock(side_effect=_flaky_put)
         respx.patch(self._DFS_BASE).mock(return_value=httpx.Response(202))
 
-        with patch("fabric_dw.services.load.asyncio.sleep"):
+        with patch("fabric_dw.services.load.asyncio.sleep") as mock_sleep:
             await onelake_upload_file(
                 self._make_credential(),
                 self._WS_ID,
@@ -1425,6 +1426,11 @@ class TestOneLakeUploadFile:
             )
 
         assert call_count == 2, f"Expected 2 PUT attempts (1 fail + 1 success); got {call_count}"
+        # Verify that the backoff delay was applied: attempt 0 → sleep(_DFS_CREATE_RETRY_DELAY * 1)
+        sleep_calls = [c.args[0] for c in mock_sleep.call_args_list]
+        assert sleep_calls == [_DFS_CREATE_RETRY_DELAY * 1], (
+            f"Expected backoff delays {[_DFS_CREATE_RETRY_DELAY * 1]!r}; got {sleep_calls!r}"
+        )
 
     @respx.mock
     async def test_create_exhausts_retries_then_raises(self, tmp_path: Path) -> None:
@@ -1442,7 +1448,7 @@ class TestOneLakeUploadFile:
         respx.put(self._DFS_BASE).mock(side_effect=_always_400)
 
         with (
-            patch("fabric_dw.services.load.asyncio.sleep"),
+            patch("fabric_dw.services.load.asyncio.sleep") as mock_sleep,
             pytest.raises(httpx.HTTPStatusError),
         ):
             await onelake_upload_file(
@@ -1456,6 +1462,81 @@ class TestOneLakeUploadFile:
         assert call_count == _DFS_CREATE_MAX_RETRIES, (
             f"Expected exactly {_DFS_CREATE_MAX_RETRIES} PUT attempts; got {call_count}"
         )
+        # Verify the arithmetic backoff ramp: sleep is called between each retry pair
+        # (not after the final attempt), so for MAX_RETRIES=3: delays are 2 s, 4 s.
+        expected_delays = [
+            _DFS_CREATE_RETRY_DELAY * (i + 1) for i in range(_DFS_CREATE_MAX_RETRIES - 1)
+        ]
+        sleep_calls = [c.args[0] for c in mock_sleep.call_args_list]
+        assert sleep_calls == expected_delays, (
+            f"Expected backoff delays {expected_delays!r}; got {sleep_calls!r}"
+        )
+
+    @respx.mock
+    async def test_create_409_not_retried(self, tmp_path: Path) -> None:
+        """A 409 Conflict on the create PUT must NOT be retried.
+
+        409 means the file already exists (from a prior partial attempt).  Retrying
+        the same PUT would be incorrect; the error must surface immediately so the
+        caller can handle it (e.g. delete and re-try at a higher level).
+        """
+        data_file = tmp_path / "data.parquet"
+        data_file.write_bytes(b"PAYLOAD")
+
+        call_count = 0
+
+        def _always_409(_request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            return httpx.Response(409)
+
+        respx.put(self._DFS_BASE).mock(side_effect=_always_409)
+
+        with (
+            patch("fabric_dw.services.load.asyncio.sleep") as mock_sleep,
+            pytest.raises(httpx.HTTPStatusError),
+        ):
+            await onelake_upload_file(
+                self._make_credential(),
+                self._WS_ID,
+                self._LH_ID,
+                "data.parquet",
+                data_file,
+            )
+
+        assert call_count == 1, f"409 must not be retried; got {call_count} PUT attempts"
+        assert not mock_sleep.called, "No sleep should occur when 409 surfaces immediately"
+
+    @pytest.mark.parametrize("status", [401, 403, 404])
+    @respx.mock
+    async def test_create_hard_failure_not_retried(self, tmp_path: Path, status: int) -> None:
+        """Hard failure statuses (401/403/404) on the create PUT must NOT be retried."""
+        data_file = tmp_path / "data.parquet"
+        data_file.write_bytes(b"PAYLOAD")
+
+        call_count = 0
+
+        def _hard_fail(_request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            return httpx.Response(status)
+
+        respx.put(self._DFS_BASE).mock(side_effect=_hard_fail)
+
+        with (
+            patch("fabric_dw.services.load.asyncio.sleep") as mock_sleep,
+            pytest.raises(httpx.HTTPStatusError),
+        ):
+            await onelake_upload_file(
+                self._make_credential(),
+                self._WS_ID,
+                self._LH_ID,
+                "data.parquet",
+                data_file,
+            )
+
+        assert call_count == 1, f"HTTP {status} must not be retried; got {call_count} PUT attempts"
+        assert not mock_sleep.called, f"No sleep should occur on non-retryable HTTP {status}"
 
     @respx.mock
     async def test_flush_400_logs_error_body(

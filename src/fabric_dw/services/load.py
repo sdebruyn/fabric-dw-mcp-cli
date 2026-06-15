@@ -83,20 +83,32 @@ _MAX_STAGING_FILE_BYTES: int = 2 * 1024 * 1024 * 1024
 
 #: ADLS Gen2 / OneLake DFS API version sent on every request.
 #:
-#: The OneLake documentation (https://learn.microsoft.com/fabric/onelake/onelake-access-api)
-#: shows ``x-ms-version: 2021-06-08`` in the sample response, which is the earliest version
-#: confirmed to work with OneLake.  Sending a version header makes the server's behaviour
-#: deterministic and avoids the ``UnsupportedRestVersion`` 400 that can occur when the
-#: service falls back to a very old default.
+#: The OneLake / ADLS Gen2 DFS Path API documentation shows this value in sample responses.
+#: Sending an explicit version header pins the server to a known, supported protocol version
+#: and avoids the ``UnsupportedRestVersion`` 400 that can occur when the service falls back
+#: to a very old default.  This value was chosen because it appears in the OneLake
+#: documentation examples and is consistent with the ADLS Gen2 service version that supports
+#: the create/append/flush workflow used here.
 _DFS_API_VERSION = "2021-06-08"
 
-#: Maximum number of retries for the DFS create-file PUT on transient 400 / 503 responses.
+#: Maximum number of retries for the DFS create-file PUT on transient failures.
 #: A newly-provisioned Lakehouse may briefly return 400 before its OneLake storage backend
 #: is fully ready, even after the Fabric LRO has completed.
 _DFS_CREATE_MAX_RETRIES: int = 3
 
-#: Base delay (seconds) between DFS create-file retries.
+#: Base delay (seconds) between DFS create-file retries.  Each subsequent attempt waits
+#: an additional ``_DFS_CREATE_RETRY_DELAY`` seconds (i.e. 2 s, 4 s, 6 s …) — an
+#: arithmetic ramp, not a flat delay.
 _DFS_CREATE_RETRY_DELAY: float = 2.0
+
+#: HTTP status codes that are considered transient and safe to retry on the create PUT.
+#: Only these statuses trigger a retry; all others (including 401/403/404/409) surface
+#: immediately so the caller gets actionable feedback rather than silent retries.
+#: - 400: may indicate a provisioning-lag ``InvalidUri`` / ``UnsupportedRestVersion``.
+#: - 408: Request Timeout.
+#: - 429: Too Many Requests (throttling).
+#: - 5xx: server-side errors (502/503/504 are common transient gateway failures).
+_DFS_CREATE_RETRYABLE_STATUSES: frozenset[int] = frozenset({400, 408, 429, 500, 502, 503, 504})
 
 # SQL Endpoint rejection message.
 _SQL_ENDPOINT_READONLY_MSG = "SQL Endpoints are read-only; COPY INTO not supported"
@@ -421,7 +433,8 @@ def _log_dfs_error(resp: httpx.Response, context: str) -> None:
     request_id = resp.headers.get("x-ms-request-id", "<none>")
     try:
         body_text = resp.text
-    except Exception:
+    except Exception as exc:
+        _logger.warning("_log_dfs_error: could not read response body: %s", exc)
         body_text = "<unreadable>"
 
     _logger.error(
@@ -610,6 +623,11 @@ async def onelake_upload_file(
                 break
             attempt_label = f"attempt {attempt + 1}/{_DFS_CREATE_MAX_RETRIES}"
             _log_dfs_error(create_resp, f"DFS create ({attempt_label})")
+            # Only retry on transient statuses.  Hard failures (401/403/404) and
+            # 409 Conflict (file already exists from a prior partial attempt) must
+            # surface immediately so the caller gets actionable feedback.
+            if create_resp.status_code not in _DFS_CREATE_RETRYABLE_STATUSES:
+                break
             if attempt < _DFS_CREATE_MAX_RETRIES - 1:
                 await asyncio.sleep(_DFS_CREATE_RETRY_DELAY * (attempt + 1))
         if create_resp is None:  # pragma: no cover — loop always sets this
