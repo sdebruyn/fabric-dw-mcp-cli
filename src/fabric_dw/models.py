@@ -432,6 +432,57 @@ class StoredProcedure(_FabricBase):
     modified: datetime
 
 
+class FunctionKind(StrEnum):
+    """Discriminates T-SQL user-defined function kinds.
+
+    ``SCALAR`` and ``INLINE_TVF`` are supported on both Fabric Data Warehouses and
+    SQL Analytics Endpoints (preview as of mid-2026).  ``MSTVF`` (multi-statement
+    TVFs) is not supported for creation on Fabric but may appear in catalog listings
+    on migrated warehouses.
+    """
+
+    SCALAR = "scalar"  # sys.objects.type = 'FN'
+    INLINE_TVF = "inline-tvf"  # sys.objects.type = 'IF'
+    MSTVF = "mstvf"  # sys.objects.type = 'TF' (not creatable, listed only)
+
+
+class FunctionParameter(_FabricBase):
+    """A parameter (or return value) of a T-SQL user-defined function.
+
+    ``parameter_id = 0`` is the return value pseudo-parameter; ``parameter_id > 0``
+    are regular input parameters.
+    """
+
+    parameter_id: int
+    name: str
+    data_type: str
+    max_length: int
+    is_output: bool
+
+
+class Function(_FabricBase):
+    """Summary row for a T-SQL user-defined function (list operations)."""
+
+    schema_name: str
+    name: str
+    qualified_name: str
+    kind: FunctionKind
+    is_inlineable: bool | None = None
+    created: datetime
+    modified: datetime
+
+
+class FunctionDetails(Function):
+    """Full details for a T-SQL user-defined function (get operations).
+
+    Extends :class:`Function` with ``definition`` (from ``sys.sql_modules``) and
+    ``parameters`` (from ``sys.parameters``).
+    """
+
+    definition: str | None = None
+    parameters: list[FunctionParameter] = Field(default_factory=list)
+
+
 class Schema(_FabricBase):
     """A SQL schema on a Fabric Data Warehouse."""
 

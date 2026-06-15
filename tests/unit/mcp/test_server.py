@@ -116,6 +116,13 @@ EXPECTED_TOOL_NAMES: frozenset[str] = frozenset(
         "create_procedure",
         "update_procedure",
         "drop_procedure",
+        # Functions
+        "list_functions",
+        "get_function",
+        "create_function",
+        "update_function",
+        "drop_function",
+        "rename_function",
         # Tables
         "list_tables",
         "read_table",
