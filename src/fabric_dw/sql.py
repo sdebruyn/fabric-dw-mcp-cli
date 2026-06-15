@@ -632,6 +632,10 @@ def open_connection(
         raw_conn: Any = _get_mssql().connect(
             cs, autocommit=True, attrs_before=attrs, timeout=SQL_LOGIN_TIMEOUT_S
         )
+        # Sets query timeout on all *future* cursors (Connection.timeout.setter stores
+        # the value; each cursor.__init__ reads it via _set_timeout()).  Safe here
+        # because every cursor in this codebase is acquired after open_connection()
+        # returns — no caller holds a cursor across connection open.
         raw_conn.timeout = SQL_QUERY_TIMEOUT_S
         # Wrap in _PooledConnection with a sentinel key; mark_discard() ensures
         # .close() physically closes the connection rather than pooling it.
@@ -659,6 +663,10 @@ def open_connection(
     cs = build_connection_string(target, mode=mode, use_access_token=use_token)
     attrs = {SQL_COPT_SS_ACCESS_TOKEN: token_struct} if use_token else None
     raw_conn = _get_mssql().connect(cs, attrs_before=attrs, timeout=SQL_LOGIN_TIMEOUT_S)
+    # Sets query timeout on all *future* cursors (Connection.timeout.setter stores
+    # the value; each cursor.__init__ reads it via _set_timeout()).  Safe here
+    # because every cursor in this codebase is acquired after open_connection()
+    # returns — no caller holds a cursor across connection open.
     raw_conn.timeout = SQL_QUERY_TIMEOUT_S
     return _PooledConnection(raw_conn, key)
 
