@@ -1687,24 +1687,11 @@ class TestD23PoolRollbackOnReturn:
 
 
 class TestConnectionStringTimeouts:
-    """build_connection_string must embed explicit login and command timeouts."""
-
-    def test_login_timeout_in_connection_string(self) -> None:
-        """Connection string must contain Connection Timeout=<SQL_LOGIN_TIMEOUT_S>."""
-        import fabric_dw.sql as sql_mod  # noqa: PLC0415
-
-        result = build_connection_string(_make_target())
-        assert f"Connection Timeout={sql_mod.SQL_LOGIN_TIMEOUT_S}" in result
-
-    def test_query_timeout_in_connection_string(self) -> None:
-        """Connection string must contain Command Timeout=<SQL_QUERY_TIMEOUT_S>."""
-        import fabric_dw.sql as sql_mod  # noqa: PLC0415
-
-        result = build_connection_string(_make_target())
-        assert f"Command Timeout={sql_mod.SQL_QUERY_TIMEOUT_S}" in result
+    """Timeout constants must have correct values; timeouts must NOT appear in the
+    connection string (they are injected via the driver API, not keyword syntax)."""
 
     def test_login_timeout_constant_value(self) -> None:
-        """SQL_LOGIN_TIMEOUT_S must be 60 (generous vs ~15s driver default)."""
+        """SQL_LOGIN_TIMEOUT_S must be 60 (generous vs ~0s driver default)."""
         import fabric_dw.sql as sql_mod  # noqa: PLC0415
 
         assert sql_mod.SQL_LOGIN_TIMEOUT_S == 60
@@ -1715,25 +1702,133 @@ class TestConnectionStringTimeouts:
 
         assert sql_mod.SQL_QUERY_TIMEOUT_S == 300
 
-    def test_timeout_keys_not_duplicated_on_idempotent_call(self) -> None:
-        """Calling build_connection_string twice on the same augmented string must not
-        duplicate the timeout keys."""
-        target = _make_target()
-        first = build_connection_string(target)
-        target2 = SqlTarget(
-            workspace_id=target.workspace_id,
-            database=target.database,
-            connection_string=first,
-        )
-        second = build_connection_string(target2)
-        assert first == second
-        assert second.count("Connection Timeout=") == 1
-        assert second.count("Command Timeout=") == 1
+    def test_connection_timeout_absent_from_connection_string(self) -> None:
+        """'Connection Timeout' must NOT appear in the connection string.
 
-    def test_no_double_semicolons_with_timeouts(self) -> None:
-        """Adding timeouts must not introduce double semicolons."""
+        mssql-python 1.8.0 rejects 'Connection Timeout' as an unknown keyword.
+        The login timeout is passed via connect(timeout=...) instead.
+        """
         result = build_connection_string(_make_target())
-        assert ";;" not in result
+        assert "Connection Timeout" not in result
+
+    def test_command_timeout_absent_from_connection_string(self) -> None:
+        """'Command Timeout' must NOT appear in the connection string.
+
+        mssql-python 1.8.0 rejects 'Command Timeout' as an unknown keyword.
+        The query timeout is set via connection.timeout = ... instead.
+        """
+        result = build_connection_string(_make_target())
+        assert "Command Timeout" not in result
+
+    def test_no_timeout_keywords_leak_into_connection_string(self) -> None:
+        """No *Timeout* keyword of any form must appear in the connection string."""
+        result = build_connection_string(_make_target())
+        assert "Timeout" not in result
+
+    def test_connection_string_valid_per_real_driver_parser_without_token(self) -> None:
+        """build_connection_string output must be accepted by the real mssql-python
+        connection-string parser (validate_keywords=True) — regression guard for #415.
+
+        Uses the non-token path (Authentication= key present).
+        Skipped when the mssql_python native binary is not available (e.g. CI unit
+        runner without ODBC driver or incompatible platform).
+        """
+        parser_mod = pytest.importorskip(
+            "mssql_python.connection_string_parser",
+            reason="mssql_python native binary unavailable — skipping parser regression guard",
+            exc_type=ImportError,
+        )
+        connection_string_parser_cls = parser_mod._ConnectionStringParser  # type: ignore[attr-defined]
+        cs = build_connection_string(_make_target(), use_access_token=False)
+        # Must NOT raise ConnectionStringParseError.
+        connection_string_parser_cls(validate_keywords=True)._parse(cs)
+
+    def test_connection_string_valid_per_real_driver_parser_with_token(self) -> None:
+        """build_connection_string output (use_access_token=True) must be accepted
+        by the real mssql-python parser — regression guard for #415.
+
+        Uses the token path (Authentication= key absent).
+        Skipped when the mssql_python native binary is not available.
+        """
+        parser_mod = pytest.importorskip(
+            "mssql_python.connection_string_parser",
+            reason="mssql_python native binary unavailable — skipping parser regression guard",
+            exc_type=ImportError,
+        )
+        connection_string_parser_cls = parser_mod._ConnectionStringParser  # type: ignore[attr-defined]
+        cs = build_connection_string(_make_target(), use_access_token=True)
+        # Must NOT raise ConnectionStringParseError.
+        connection_string_parser_cls(validate_keywords=True)._parse(cs)
+
+
+class TestOpenConnectionTimeoutAPI:
+    """open_connection must pass login timeout via connect(timeout=) and set
+    query timeout via connection.timeout — NOT via connection-string keywords."""
+
+    def test_fresh_normal_connect_passes_login_timeout_kwarg(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Non-autocommit fresh open must pass timeout=SQL_LOGIN_TIMEOUT_S to connect()."""
+        import fabric_dw.sql as sql_mod  # noqa: PLC0415
+
+        mock_mssql, _, _ = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        from fabric_dw.sql import open_connection  # noqa: PLC0415
+
+        open_connection(_make_target())
+
+        kwargs = mock_mssql.connect.call_args.kwargs
+        assert kwargs.get("timeout") == sql_mod.SQL_LOGIN_TIMEOUT_S
+
+    def test_fresh_normal_connect_sets_query_timeout_property(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Non-autocommit fresh open must set raw_conn.timeout = SQL_QUERY_TIMEOUT_S."""
+        import fabric_dw.sql as sql_mod  # noqa: PLC0415
+
+        mock_mssql, mock_conn, _ = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        from fabric_dw.sql import open_connection  # noqa: PLC0415
+
+        open_connection(_make_target())
+
+        assert mock_conn.timeout == sql_mod.SQL_QUERY_TIMEOUT_S
+
+    def test_autocommit_connect_passes_login_timeout_kwarg(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Autocommit fresh open must pass timeout=SQL_LOGIN_TIMEOUT_S to connect()."""
+        import fabric_dw.sql as sql_mod  # noqa: PLC0415
+
+        mock_mssql, _, _ = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+        # No OIDC token — straightforward path.
+        monkeypatch.setattr(_sql_module, "get_sql_token_struct", lambda *_a, **_kw: None)
+
+        from fabric_dw.sql import open_connection  # noqa: PLC0415
+
+        open_connection(_make_target(), autocommit=True)
+
+        kwargs = mock_mssql.connect.call_args.kwargs
+        assert kwargs.get("timeout") == sql_mod.SQL_LOGIN_TIMEOUT_S
+
+    def test_autocommit_connect_sets_query_timeout_property(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Autocommit fresh open must set raw_conn.timeout = SQL_QUERY_TIMEOUT_S."""
+        import fabric_dw.sql as sql_mod  # noqa: PLC0415
+
+        mock_mssql, mock_conn, _ = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+        monkeypatch.setattr(_sql_module, "get_sql_token_struct", lambda *_a, **_kw: None)
+
+        from fabric_dw.sql import open_connection  # noqa: PLC0415
+
+        open_connection(_make_target(), autocommit=True)
+
+        assert mock_conn.timeout == sql_mod.SQL_QUERY_TIMEOUT_S
 
 
 class TestAuthFailedConnectRetry:
