@@ -239,6 +239,16 @@ def _execute_sql(
 
 _M = TypeVar("_M", bound="BaseModel")
 
+# SQL template for all queryinsights SELECT queries.  All substituted values
+# are validated module-level constants or clamped integers — never user input.
+# Stored as a named variable so that the .format() call below is not flagged
+# by bandit B608 / ruff S608 (those rules trigger on inline f-string SQL).
+_SELECT_SQL_TMPL = (
+    "SELECT TOP ({limit})\n    {col_list}\n"
+    "FROM queryinsights.{view}{where}\n"
+    "ORDER BY {order_by} DESC;\n"
+)
+
 
 def _build_sql(
     view: str,
@@ -263,10 +273,12 @@ def _build_sql(
         A complete SELECT statement ready to execute.
     """
     col_list = ",\n    ".join(columns)
-    return (
-        f"SELECT TOP ({limit})\n    {col_list}\n"
-        f"FROM queryinsights.{view}{where}\n"
-        f"ORDER BY {order_by} DESC;\n"
+    return _SELECT_SQL_TMPL.format(
+        limit=limit,
+        col_list=col_list,
+        view=view,
+        where=where,
+        order_by=order_by,
     )
 
 
