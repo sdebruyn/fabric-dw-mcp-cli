@@ -11,8 +11,7 @@ from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.exceptions import FabricServerError, NotFoundError, PermissionDeniedError
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import Warehouse, WarehouseKind
-from fabric_dw.services._concurrency import bounded_gather
-from fabric_dw.services._helpers import compact
+from fabric_dw.services._helpers import compact, scan_all_workspaces
 from fabric_dw.services.workspaces import SUPPORTED_COLLATIONS
 from fabric_dw.services.workspaces import list_all as _list_all_workspaces
 
@@ -20,6 +19,80 @@ _logger = logging.getLogger("fabric_dw.warehouses")
 
 # Backoff schedule for transient empty-2xx responses (seconds).
 _EMPTY_2XX_BACKOFF = (2, 6, 18)
+
+
+async def _post_create_with_retry(
+    http: FabricHttpClient,
+    workspace_id: UUID,
+    body: dict[str, object],
+) -> tuple[str | None, dict[str, object] | None]:
+    """POST the create-warehouse request, retrying on transient empty-2xx responses.
+
+    Returns either the ``Location`` header string (LRO path) or the warehouse
+    body dict (synchronous 201 path), or raises :class:`FabricServerError` if
+    all retries are exhausted.
+
+    Returns:
+        ``(location, None)`` when a ``Location`` header is present, or
+        ``(None, body_dict)`` when a 201 with a usable body is returned.
+
+    Raises:
+        FabricServerError: If all attempts return 2xx with no Location and no
+            usable body (transient data-plane not ready, issue #204).
+    """
+    for attempt, backoff in enumerate([None, *_EMPTY_2XX_BACKOFF], start=0):
+        if backoff is not None:
+            _logger.warning(
+                "create warehouse: 2xx response had no Location header and no usable body "
+                "(retry %d/3) — waiting %ss before retry (see issue #204)",
+                attempt,
+                backoff,
+            )
+            await asyncio.sleep(backoff)
+
+        resp = await http.request(
+            "POST", HttpBase.FABRIC, f"/workspaces/{workspace_id}/warehouses", json=body
+        )
+
+        location = resp.headers.get("Location")
+        if location is not None:
+            return location, None
+
+        # Fabric occasionally returns 201 with the new warehouse directly in the body.
+        resp_body = resp.json()
+        resp_id = resp_body.get("id")
+        resp_name = resp_body.get("displayName") or resp_body.get("name")
+        if resp_id and resp_name:
+            return None, resp_body
+
+        # 2xx + no Location + no usable body: transient Fabric data-plane not ready.
+
+    msg = (
+        "create warehouse: Fabric returned 2xx with no Location header and no usable body "
+        "after 4 attempts. The capacity data plane may not be ready yet. "
+        "See issue #204 for tracking frequency."
+    )
+    raise FabricServerError(msg)
+
+
+def _resolve_warehouse_id_from_lro(lro_result: dict[str, object]) -> UUID:
+    """Extract the new warehouse UUID from a completed LRO status body.
+
+    Args:
+        lro_result: The dict returned by :meth:`FabricHttpClient.poll_operation`.
+
+    Returns:
+        The UUID of the newly created warehouse.
+
+    Raises:
+        FabricServerError: If ``resourceLocation`` is absent or empty.
+    """
+    resource_location = lro_result.get("resourceLocation")
+    if isinstance(resource_location, str) and resource_location:
+        return UUID(resource_location.rsplit("/", 1)[-1])
+    msg = f"create warehouse LRO completed but no resourceLocation returned: {lro_result}"
+    raise FabricServerError(msg)
+
 
 __all__ = [
     "create",
@@ -79,28 +152,12 @@ async def list_all_workspaces(http: FabricHttpClient) -> list[Warehouse]:
         accessible workspaces.
     """
     workspaces = await _list_all_workspaces(http)
-    total = len(workspaces)
-
-    raw = await bounded_gather(
-        [lambda ws=ws: list_warehouses(http, ws.id) for ws in workspaces],
-        return_exceptions=True,
+    return await scan_all_workspaces(
+        workspaces,
+        lambda ws: list_warehouses(http, ws.id),  # type: ignore[union-attr]  # mypy false-positive: Sequence[_HasNameAndId] exposes id: UUID but mypy loses the concrete type through the Protocol abstraction
+        logger=_logger,
+        skip_errors=(PermissionDeniedError, NotFoundError),
     )
-
-    out: list[Warehouse] = []
-    skipped = 0
-    for ws, result in zip(workspaces, raw, strict=True):
-        if isinstance(result, (PermissionDeniedError, NotFoundError)):
-            _logger.warning("skipping workspace %s: %s", ws.name, result)
-            skipped += 1
-        elif isinstance(result, BaseException):
-            raise result
-        else:
-            out.extend(result)
-
-    if skipped:
-        _logger.warning("skipped %d of %d workspaces due to access errors", skipped, total)
-
-    return out
 
 
 async def get_warehouse(
@@ -168,66 +225,23 @@ async def create(
     if collation is not None:
         body["creationPayload"] = {"collationType": collation}
 
-    for attempt, backoff in enumerate(
-        [None, *_EMPTY_2XX_BACKOFF], start=0
-    ):  # attempt 0 = initial; attempts 1-3 = retries
-        if backoff is not None:
-            _logger.warning(
-                "create warehouse: 2xx response had no Location header and no usable body "
-                "(attempt %d/3) — waiting %ss before retry (see issue #204)",
-                attempt,
-                backoff,
-            )
-            await asyncio.sleep(backoff)
+    # Use the type-specific endpoint (POST /workspaces/{id}/warehouses).
+    # Any 4xx is raised by the HTTP client as BadRequestError before reaching here,
+    # so the only non-202/201 responses that arrive are genuine 2xx with missing data.
+    location, resp_body = await _post_create_with_retry(http, workspace_id, body)
 
-        # Use the type-specific endpoint (POST /workspaces/{id}/warehouses).
-        # Any 4xx is raised by the HTTP client as BadRequestError before reaching here,
-        # so the only non-202/201 responses that arrive are genuine 2xx with missing data.
-        resp = await http.request(
-            "POST", HttpBase.FABRIC, f"/workspaces/{workspace_id}/warehouses", json=body
-        )
+    if resp_body is not None:
+        # 201 synchronous path: body contains the new warehouse (without connectionString).
+        # Follow up with a GET to return a fully-populated Warehouse.
+        new_id = UUID(str(resp_body["id"]))
+        return await get_warehouse(http, workspace_id, new_id)
 
-        location = resp.headers.get("Location")
-
-        if location is None:
-            # Fabric occasionally returns 201 with the new warehouse directly in the body
-            # (no LRO / no Location header). The body does NOT include properties.connectionString,
-            # so we must do a follow-up GET to return a fully-populated Warehouse.
-            resp_body = resp.json()
-            resp_id = resp_body.get("id")
-            resp_name = resp_body.get("displayName") or resp_body.get("name")
-            if resp_id and resp_name:
-                new_id = UUID(str(resp_id))
-                return await get_warehouse(http, workspace_id, new_id)
-
-            # 2xx + no Location + no usable body: transient Fabric data-plane not ready.
-            # Continue the retry loop (will raise below if exhausted).
-            continue
-
-        # Location header present → poll the LRO then fetch the new warehouse.
-        break
-
-    else:
-        # Exhausted all attempts (initial + 3 retries) without a usable response.
-        msg = (
-            "create warehouse: Fabric returned 2xx with no Location header and no usable body "
-            "after 4 attempts. The capacity data plane may not be ready yet. "
-            "See issue #204 for tracking frequency."
-        )
-        raise FabricServerError(msg)
-
-    # 202 = LRO initiated; poll the operation then fetch the new warehouse
+    # 202 LRO path: poll then resolve the warehouse ID from resourceLocation.
+    # location is non-None here because _post_create_with_retry only returns (None, body)
+    # for the synchronous 201 path (handled above) or (location_str, None) for LRO.
+    assert location is not None  # noqa: S101
     lro_result = await http.poll_operation(location)
-
-    # Extract the new warehouse ID from resourceLocation.
-    # str(None) == "None" (truthy) so we must use isinstance instead of truthiness.
-    resource_location = lro_result.get("resourceLocation")
-    if isinstance(resource_location, str) and resource_location:
-        new_id = UUID(resource_location.rsplit("/", 1)[-1])
-    else:
-        msg = f"create warehouse LRO completed but no resourceLocation returned: {lro_result}"
-        raise FabricServerError(msg)
-
+    new_id = _resolve_warehouse_id_from_lro(lro_result)
     return await get_warehouse(http, workspace_id, new_id)
 
 

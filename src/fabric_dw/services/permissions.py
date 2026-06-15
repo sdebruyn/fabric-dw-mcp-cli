@@ -64,4 +64,12 @@ async def list_item_access(
             async for raw in http.iter_paginated(HttpBase.FABRIC, path, key=_ACCESS_DETAILS_KEY)
         ]
     except PermissionDeniedError as exc:
-        raise PermissionDeniedError(_ADMIN_HINT) from exc
+        # Preserve the original HTTP context (status/request_id/body) and surface
+        # the remediation text as a hint rather than replacing the message.
+        raise PermissionDeniedError(
+            str(exc.args[0]) if exc.args else "Permission denied",
+            status=exc.status,
+            request_id=exc.request_id,
+            body=exc.body,
+            hint=_ADMIN_HINT,
+        ) from exc

@@ -137,7 +137,12 @@ async def create(
         "parentWarehouseId": str(parent_warehouse_id),
     }
     if snapshot_dt is not None:
-        creation_payload["snapshotDateTime"] = snapshot_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        # Always emit UTC; convert aware datetimes, reject naive ones.
+        if snapshot_dt.tzinfo is None or snapshot_dt.tzinfo.utcoffset(snapshot_dt) is None:
+            msg = "snapshot_dt must be a timezone-aware datetime"
+            raise ValueError(msg)
+        snapshot_dt_utc = snapshot_dt.astimezone(UTC)
+        creation_payload["snapshotDateTime"] = snapshot_dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     body: dict[str, object] = {
         **compact({"description": description}),
@@ -154,6 +159,9 @@ async def create(
     )
 
     location: str = resp.headers.get("Location", "")
+    if not location:
+        msg = "Fabric returned a response for snapshot create but the Location header is missing"
+        raise ValueError(msg)
     operation_result = await http.poll_operation(location)
 
     # Extract the new item's ID using the shared LRO helper.
@@ -240,13 +248,19 @@ async def rename(
     current_resp = await http.request("GET", HttpBase.FABRIC, _typed_path)
     current: dict[str, object] = current_resp.json()
     parent_wh_id = WarehouseSnapshotApiPayload.props_from_item(current).parent_warehouse_id
+    if parent_wh_id is None:
+        msg = (
+            f"Cannot rename snapshot {snapshot_id}: parentWarehouseId is not yet "
+            "populated (propagation lag). Retry after a short wait."
+        )
+        raise ValueError(msg)
 
     patch_body: dict[str, object] = {
         **compact({"description": description}),
         "type": "WarehouseSnapshot",
         "displayName": new_name,
         "creationPayload": {
-            "parentWarehouseId": parent_wh_id,
+            "parentWarehouseId": str(parent_wh_id),
         },
     }
 
@@ -349,7 +363,12 @@ async def roll_timestamp(
     if new_dt is None:
         alter_sql = f"ALTER DATABASE [{snapshot_name}] SET TIMESTAMP = CURRENT_TIMESTAMP;"
     else:
-        formatted = new_dt.strftime("%Y-%m-%dT%H:%M:%S.00")
+        # Enforce UTC-aware datetimes; reject naive datetimes to avoid silent tz errors.
+        if new_dt.tzinfo is None or new_dt.tzinfo.utcoffset(new_dt) is None:
+            msg = "new_dt must be a timezone-aware datetime (e.g. datetime(..., tzinfo=UTC))"
+            raise ValueError(msg)
+        new_dt_utc = new_dt.astimezone(UTC)
+        formatted = new_dt_utc.strftime("%Y-%m-%dT%H:%M:%S.00")
         alter_sql = f"ALTER DATABASE [{snapshot_name}] SET TIMESTAMP = '{formatted}';"
 
     # ``ALTER DATABASE … SET TIMESTAMP`` is rejected inside any explicit

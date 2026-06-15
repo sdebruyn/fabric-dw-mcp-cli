@@ -10,8 +10,9 @@ from __future__ import annotations
 import asyncio
 import base64
 from contextlib import closing
-from datetime import datetime
+from datetime import date, datetime, time
 from decimal import Decimal
+from uuid import UUID
 
 from fabric_dw import sql
 from fabric_dw.auth import CredentialMode
@@ -28,17 +29,25 @@ _BINARY_SUFFIX = "__base64"
 def _serialize_value(value: object) -> object:
     """Convert a raw driver value to a JSON-serialisable scalar.
 
-    - ``datetime`` → ISO-8601 string.
+    - ``datetime`` → ISO-8601 string (checked before ``date``/``time`` because
+      ``datetime`` is a subclass of ``date``).
+    - ``date`` → ISO-8601 date string (``YYYY-MM-DD``).
+    - ``time`` → ISO-8601 time string (``HH:MM:SS[.ffffff]``).
     - ``Decimal`` → string representation.
-    - ``bytes`` → base64-encoded string (column name will also be tagged).
+    - ``bytes`` / ``bytearray`` → base64-encoded string (column name also tagged).
+    - ``UUID`` → canonical hyphenated string representation.
     - Everything else is returned unchanged (driver already returns str/int/float/bool/None).
     """
-    if isinstance(value, datetime):
+    if isinstance(value, datetime):  # Must precede date — datetime subclasses date.
+        return value.isoformat()
+    if isinstance(value, (date, time)):
         return value.isoformat()
     if isinstance(value, Decimal):
         return str(value)
     if isinstance(value, (bytes, bytearray)):
         return base64.b64encode(value).decode("ascii")
+    if isinstance(value, UUID):
+        return str(value)
     return value
 
 
@@ -64,22 +73,30 @@ def _detect_binary_indices(
     Returns:
         A set of column indices that contain binary data.
     """
-    # Strategy 1: type code from cursor.description
+    # Strategy 1: type code from cursor.description.
+    # When the driver populates type_code for every column, the description is
+    # authoritative — if no binary columns are found, there are none.  We only
+    # fall through to Strategy 2 if the driver leaves type_code as None for ALL
+    # columns (i.e. the description carries no useful type information at all).
     if description:
         binary_indices: set[int] = set()
+        has_any_type_code = False
         for i, col_desc in enumerate(description):
             # DB-API 2.0: col_desc[1] is the type_code.
             # mssql_python exposes a Binary type object; we check for it by
             # comparing against both the canonical name and a bytes-based sentinel.
             type_code = col_desc[1] if len(col_desc) > 1 else None
             if type_code is not None:
+                has_any_type_code = True
                 type_name = getattr(type_code, "__name__", None) or str(type_code)
                 if "binary" in type_name.lower() or "bytes" in type_name.lower():
                     binary_indices.add(i)
-        if binary_indices:
+        if has_any_type_code:
+            # Description was populated — trust it even if no binary columns found.
             return binary_indices
 
-    # Strategy 2: all-row scan fallback
+    # Strategy 2: all-row scan fallback (only reached when description is absent
+    # or every type_code is None, i.e. the driver provides no type information).
     all_row_binary: set[int] = set()
     for row in rows:
         for i, val in enumerate(row):
