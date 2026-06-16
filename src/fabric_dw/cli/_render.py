@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json as _json
+import re
 from collections.abc import Sequence
 
 import click
@@ -18,6 +19,44 @@ __all__ = [
     "render_permissions_table",
     "render_refresh_table",
 ]
+
+# ---------------------------------------------------------------------------
+# GUID detection
+# ---------------------------------------------------------------------------
+
+#: Compiled regex that matches a canonical UUID/GUID string (bare, 36 chars).
+_GUID_RE: re.Pattern[str] = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+#: Fixed width for GUID columns — a GUID is exactly 36 characters.
+_GUID_WIDTH = 36
+
+
+def _is_guid_column(col: str, norm_rows: list[dict[str, object] | object]) -> bool:
+    """Return *True* when *col* is a GUID column.
+
+    A column is considered a GUID column when:
+
+    * It has at least one non-``None`` value in a dict row, **and**
+    * Every non-``None`` cell value (converted to ``str``) matches the
+      canonical GUID regex ``_GUID_RE``.
+
+    Non-dict rows are ignored entirely.  An all-``None`` column returns
+    ``False`` (no evidence that the column contains GUIDs).
+    """
+    found_non_null = False
+    for row in norm_rows:
+        if not isinstance(row, dict):
+            continue
+        val = row.get(col)
+        if val is None:
+            continue
+        found_non_null = True
+        if not _GUID_RE.match(str(val)):
+            return False
+    return found_non_null
+
 
 # ---------------------------------------------------------------------------
 # Presentation constants (kept here so re-skinning touches one file)
@@ -134,7 +173,10 @@ def _render_table(rows: Sequence[object], *, console: Console, title: str | None
     visible_columns = [col for col in columns if col not in all_null]
 
     for col in visible_columns:
-        table.add_column(col)
+        if _is_guid_column(col, norm_rows):
+            table.add_column(col, no_wrap=True, min_width=_GUID_WIDTH)
+        else:
+            table.add_column(col)
 
     for row in norm_rows:
         if isinstance(row, dict):
