@@ -644,6 +644,16 @@ class TestIsGuidColumn:
         rows: list[dict[str, object] | object] = [{"id": mixed}]
         assert _is_guid_column("id", rows) is True
 
+    def test_guid_with_trailing_newline_returns_false(self) -> None:
+        """A GUID followed by a trailing newline must NOT be detected as a GUID.
+
+        Python's ``$`` anchor matches just before ``\\n``, so ``re.match`` with
+        ``^...$`` would falsely accept ``"<guid>\\n"``.  Using ``fullmatch``
+        without anchors rejects such strings correctly.
+        """
+        rows: list[dict[str, object] | object] = [{"id": f"{_SAMPLE_GUID}\n"}]
+        assert _is_guid_column("id", rows) is False
+
 
 # ---------------------------------------------------------------------------
 # Narrow-console rendering: GUID columns survive truncation, text columns don't
@@ -675,9 +685,10 @@ class TestGuidColumnWidthInNarrowConsole:
         assert _SAMPLE_GUID in output
 
     def test_long_text_is_truncated_in_narrow_console(self) -> None:
-        """The long text value should NOT appear in full in a 50-char-wide console."""
+        """GUID survives narrow output while the long text column is truncated."""
         data: list[dict[str, object]] = [{"id": _SAMPLE_GUID, "displayName": _LONG_NAME}]
         output = self._render_narrow(data, width=50)
+        assert _SAMPLE_GUID in output
         assert _LONG_NAME not in output
 
     def test_two_guid_columns_both_survive(self) -> None:

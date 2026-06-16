@@ -25,8 +25,10 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 #: Compiled regex that matches a canonical UUID/GUID string (bare, 36 chars).
+#: No ``^``/``$`` anchors — use ``fullmatch()`` so a trailing newline (which
+#: Python ``$`` would accept) is correctly rejected.
 _GUID_RE: re.Pattern[str] = re.compile(
-    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 )
 
 #: Fixed width for GUID columns — a GUID is exactly 36 characters.
@@ -53,7 +55,7 @@ def _is_guid_column(col: str, norm_rows: list[dict[str, object] | object]) -> bo
         if val is None:
             continue
         found_non_null = True
-        if not _GUID_RE.match(str(val)):
+        if not _GUID_RE.fullmatch(str(val)):
             return False
     return found_non_null
 
@@ -174,6 +176,9 @@ def _render_table(rows: Sequence[object], *, console: Console, title: str | None
 
     for col in visible_columns:
         if _is_guid_column(col, norm_rows):
+            # Best-effort: GUID columns are prioritised, but a very narrow console
+            # with multiple GUID columns may still overflow — Rich cannot fit all
+            # of them without truncation in that extreme case.
             table.add_column(col, no_wrap=True, min_width=_GUID_WIDTH)
         else:
             table.add_column(col)
