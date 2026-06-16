@@ -45,6 +45,7 @@ reject SQL Analytics Endpoint items client-side with a clear
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import UTC, datetime
 from typing import cast
 
@@ -79,6 +80,17 @@ _SQL_ENDPOINT_READONLY_MSG = (
 
 _SAMPLE_PERCENT_MIN = 1
 _SAMPLE_PERCENT_MAX = 100
+
+# Bounded retry for Fabric DW eventual-consistency: DBCC SHOW_STATISTICS may
+# return "Could not locate statistics" for a short window after CREATE STATISTICS
+# even though sys.stats already reflects the new statistic.  Poll until the
+# statistic becomes visible to DBCC, up to _DBCC_STAT_TIMEOUT seconds total.
+_DBCC_STAT_POLL_INTERVAL: float = 3.0
+_DBCC_STAT_TIMEOUT: float = 60.0
+
+# Substring matched (case-insensitive) against the exception message to
+# distinguish Fabric's eventual-consistency transient error from other errors.
+_DBCC_NOT_FOUND_MSG = "could not locate statistics"
 
 
 def _assert_not_sql_endpoint(kind: WarehouseKind) -> None:
@@ -431,7 +443,8 @@ async def show_statistics(
     density_sql = _DBCC_DENSITY_SQL.format(table_s=table_s, stat_literal=stat_literal)
     histogram_sql = _DBCC_HISTOGRAM_SQL.format(table_s=table_s, stat_literal=stat_literal)
 
-    def _run() -> StatisticDetails:
+    def _run_once() -> StatisticDetails:
+        """Execute DBCC SHOW_STATISTICS queries once (no retry)."""
         if histogram_only:
             h_cols, h_rows = run_query(target, histogram_sql, mode=mode)
             return StatisticDetails(
@@ -455,7 +468,26 @@ async def show_statistics(
             histogram=[_row_to_histogram(h_cols, r) for r in h_rows],
         )
 
-    return await asyncio.to_thread(_run)
+    # Fabric DW eventual-consistency retry: DBCC SHOW_STATISTICS may raise
+    # "Could not locate statistics" for a short window after CREATE STATISTICS
+    # (the statistic is visible in sys.stats but not yet to DBCC).  Retry
+    # until visible or until the timeout expires, then raise NotFoundError.
+    deadline = time.monotonic() + _DBCC_STAT_TIMEOUT
+    while True:
+        try:
+            return await asyncio.to_thread(_run_once)
+        except NotFoundError:
+            # NotFoundError from empty rows — not retriable (stat does not exist).
+            raise
+        except Exception as exc:
+            if _DBCC_NOT_FOUND_MSG not in str(exc).lower():
+                # Unrelated driver error — propagate immediately.
+                raise
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                msg = f"Statistic [{stat_name}] on [{schema}].[{table}] not found"
+                raise NotFoundError(msg) from exc
+            await asyncio.sleep(min(_DBCC_STAT_POLL_INTERVAL, remaining))
 
 
 async def create_statistics(
