@@ -142,13 +142,15 @@ async def _resolve_lakehouse_connection_string(
         The non-empty connection string from the matching lakehouse, or ``None``
         if no lakehouse in the workspace has a paired endpoint with this ID.
     """
-    endpoint_id_str = str(endpoint_id)
+    # str(UUID) is always lowercase; lowercase the API value too so the match is
+    # robust against Fabric returning an uppercase/mixed-case UUID string.
+    endpoint_id_str = str(endpoint_id).lower()
     async for lh in http.iter_paginated(HttpBase.FABRIC, f"/workspaces/{workspace_id}/lakehouses"):
         props = lh.get("properties")
         props_dict = cast("dict[str, Any]", props) if isinstance(props, dict) else {}
         sql_ep = props_dict.get("sqlEndpointProperties")
         sql_ep_dict = cast("dict[str, Any]", sql_ep) if isinstance(sql_ep, dict) else {}
-        if str(sql_ep_dict.get("id", "")) == endpoint_id_str:
+        if str(sql_ep_dict.get("id", "")).lower() == endpoint_id_str:
             conn = str(sql_ep_dict.get("connectionString", ""))
             return conn or None
     return None
@@ -200,16 +202,9 @@ async def get_endpoint(http: FabricHttpClient, workspace_id: UUID, endpoint_id: 
     )
     lh_conn = await _resolve_lakehouse_connection_string(http, workspace_id, endpoint_id)
     if lh_conn:
-        # Return a new Warehouse with the connection string resolved from the lakehouse.
-        return Warehouse.model_validate(
-            {
-                "id": str(wh.id),
-                "displayName": wh.name,
-                "workspaceId": str(wh.workspace_id),
-                "kind": WarehouseKind.SQL_ENDPOINT,
-                "connectionString": lh_conn,
-            }
-        )
+        # Return a copy with the connection string resolved from the lakehouse,
+        # preserving every other field (description, collation, created_date, …).
+        return wh.model_copy(update={"connection_string": lh_conn})
 
     return wh
 

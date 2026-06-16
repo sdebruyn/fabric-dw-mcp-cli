@@ -759,6 +759,52 @@ async def test_get_endpoint_uses_lakehouse_fallback_when_conn_string_empty() -> 
     assert result.id == _ENDPOINT_ID
     assert result.kind == WarehouseKind.SQL_ENDPOINT
     assert result.connection_string == _LAKEHOUSE_CONN_STRING
+    # The fallback must preserve every other field from the endpoint resource —
+    # only connection_string is replaced (model_copy, not a hand-rolled dict).
+    assert result.name == "SalesLakehouse"
+    assert result.description == "SQL endpoint for sales lakehouse"
+    assert result.workspace_id == _WORKSPACE_ID
+
+
+async def test_get_endpoint_lakehouse_fallback_matches_uppercase_id() -> None:
+    """get_endpoint must match the lakehouse even if the API returns an uppercase UUID.
+
+    str(UUID) is always lowercase; Fabric could in principle return an
+    uppercase/mixed-case sqlEndpointProperties.id.  The match must be
+    case-insensitive so the connection string still resolves.
+    """
+    from fabric_dw.services.sql_endpoints import get_endpoint  # noqa: PLC0415
+
+    uppercase_payload: dict[str, Any] = {
+        "value": [
+            {
+                "id": "11111111-0000-0000-0000-000000000001",
+                "displayName": "SalesLakehouse",
+                "workspaceId": str(_WORKSPACE_ID),
+                "properties": {
+                    "sqlEndpointProperties": {
+                        "id": str(_ENDPOINT_ID).upper(),
+                        "connectionString": _LAKEHOUSE_CONN_STRING,
+                        "provisioningStatus": "Success",
+                    }
+                },
+            }
+        ]
+    }
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(_ENDPOINT_URL).mock(
+            return_value=httpx.Response(200, json=_ENDPOINT_GET_EMPTY_CONN_STRING)
+        )
+        mock_router.get(_LAKEHOUSES_URL).mock(
+            return_value=httpx.Response(200, json=uppercase_payload)
+        )
+
+        client = await _make_client()
+        async with client:
+            result = await get_endpoint(client, _WORKSPACE_ID, _ENDPOINT_ID)
+
+    assert result.connection_string == _LAKEHOUSE_CONN_STRING
 
 
 async def test_get_endpoint_no_lakehouse_call_when_conn_string_present() -> None:
@@ -817,3 +863,36 @@ async def test_get_endpoint_lakehouse_fallback_no_match_returns_empty_conn_strin
     assert result.id == _ENDPOINT_ID
     # No matching lakehouse → connection_string stays empty/None
     assert not result.connection_string
+
+
+async def test_get_endpoint_connection_string_resolves_via_lakehouse_no_sleep() -> None:
+    """get_endpoint_connection_string returns the lakehouse value on the first poll.
+
+    This is the primary real-world scenario the PR fixes: the endpoint resource
+    has an empty connectionString, but the lakehouse scan resolves it on the very
+    first iteration, so the poller exits early without sleeping.
+    """
+    from fabric_dw.services.sql_endpoints import get_endpoint_connection_string  # noqa: PLC0415
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(_ENDPOINT_URL).mock(
+            return_value=httpx.Response(200, json=_ENDPOINT_GET_EMPTY_CONN_STRING)
+        )
+        mock_router.get(_LAKEHOUSES_URL).mock(
+            return_value=httpx.Response(200, json=_LAKEHOUSES_WITH_MATCH_PAYLOAD)
+        )
+
+        client = await _make_client()
+        async with client:
+            with patch(
+                "fabric_dw.services.sql_endpoints.asyncio.sleep",
+                new=AsyncMock(),
+            ) as mock_sleep:
+                result = await get_endpoint_connection_string(
+                    client,
+                    _WORKSPACE_ID,
+                    _ENDPOINT_ID,
+                )
+
+    assert result == _LAKEHOUSE_CONN_STRING
+    mock_sleep.assert_not_called()
