@@ -472,16 +472,21 @@ async def show_statistics(
     # "Could not locate statistics" for a short window after CREATE STATISTICS
     # (the statistic is visible in sys.stats but not yet to DBCC).  Retry
     # until visible or until the timeout expires, then raise NotFoundError.
+    # NOTE: the effective timeout can exceed _DBCC_STAT_TIMEOUT by up to one
+    # TDS round-trip (the time asyncio.to_thread(_run_once) takes to return).
     deadline = time.monotonic() + _DBCC_STAT_TIMEOUT
     while True:
         try:
             return await asyncio.to_thread(_run_once)
-        except NotFoundError:
-            # NotFoundError from empty rows — not retriable (stat does not exist).
-            raise
         except Exception as exc:
+            # map_driver_error() inside run_query may promote the raw DBCC
+            # driver error to NotFoundError before it reaches us.  Check the
+            # message on ANY exception so that promoted NotFoundErrors are
+            # still retried.  The empty-rows NotFoundError has the message
+            # "Statistic [..] on [..] not found" (no "could not locate
+            # statistics"), so it correctly falls through to the re-raise below.
             if _DBCC_NOT_FOUND_MSG not in str(exc).lower():
-                # Unrelated driver error — propagate immediately.
+                # Not the transient DBCC error — propagate immediately.
                 raise
             remaining = deadline - time.monotonic()
             if remaining <= 0:
