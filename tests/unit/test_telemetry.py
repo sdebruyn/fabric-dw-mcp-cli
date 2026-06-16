@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import os
 import sys
 import types
 import uuid
@@ -886,16 +887,16 @@ def test_get_tracer_passes_instrumentation_options_to_configure(
 
     mod._get_tracer()
 
-    # Reset SDK state so the module is clean for any subsequent tests.
-    mod._sdk_initialised = False
-    mod._tracer = None
-
     raw_options: Any = captured_kwargs.get("instrumentation_options", {})
     assert isinstance(raw_options, dict), "instrumentation_options must be a dict"
     for lib in ("requests", "urllib", "urllib3", "azure_sdk"):
         assert lib in raw_options, f"instrumentation_options must disable '{lib}'"
         lib_opts: Any = raw_options[lib]
         assert lib_opts.get("enabled") is False, f"'{lib}' must have enabled=False"
+
+    # Reset SDK state so the module is clean for any subsequent tests.
+    mod._sdk_initialised = False
+    mod._tracer = None
 
 
 # ---------------------------------------------------------------------------
@@ -945,13 +946,14 @@ def test_get_tracer_passes_enable_performance_counters_false(
 
     mod._get_tracer()
 
-    mod._sdk_initialised = False
-    mod._tracer = None
-
     assert captured_kwargs.get("enable_performance_counters") is False, (
         "configure_azure_monitor must receive enable_performance_counters=False "
         "to suppress PerformanceCounters ZeroDivisionError on short-lived processes (#399)"
     )
+
+    # Reset SDK state so the module is clean for any subsequent tests.
+    mod._sdk_initialised = False
+    mod._tracer = None
 
 
 # ---------------------------------------------------------------------------
@@ -1754,3 +1756,130 @@ def test_harden_azure_sdk_logging_is_idempotent(
         assert null_count == 1, (
             f"Logger {name!r} has {null_count} NullHandlers after two calls — expected exactly 1"
         )
+
+
+# ---------------------------------------------------------------------------
+# A4: #418 — statsbeat IMDS socket-leak fix
+# ---------------------------------------------------------------------------
+
+
+def _clear_statsbeat_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remove the statsbeat disable env var so tests start from a clean slate."""
+    monkeypatch.delenv("APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL", raising=False)
+
+
+def _enable_telemetry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Remove all opt-out signals so telemetry_enabled() returns True."""
+    for var in (
+        "FABRIC_TELEMETRY",
+        "FABRIC_DISABLE_TELEMETRY",
+        "DO_NOT_TRACK",
+        "CI",
+        "GITHUB_ACTIONS",
+        "JENKINS_URL",
+        "TRAVIS",
+        "CIRCLECI",
+        "GITLAB_CI",
+        "TF_BUILD",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+
+def test_statsbeat_disabled_env_set_before_configure_azure_monitor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL must be 'true' after _get_tracer runs.
+
+    This prevents the statsbeat IMDS (169.254.169.254) socket probe from opening a
+    socket that is left unclosed, which the GC would emit as 'Exception ignored in:
+    <socket ...>' ResourceWarning at interpreter shutdown (#418).
+    """
+    _clear_statsbeat_env(monkeypatch)
+    _enable_telemetry(monkeypatch, tmp_path)
+
+    mod = _reload_telemetry()
+
+    captured_env_at_configure: dict[str, str | None] = {}
+
+    def fake_configure(**_kwargs: object) -> None:
+        # Capture the env var value at the moment configure_azure_monitor is called.
+        captured_env_at_configure["value"] = os.environ.get(
+            "APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL"
+        )
+
+    fake_tracer = object()
+
+    class _FakeTrace(types.ModuleType):
+        def get_tracer(self, *_args: object, **_kw: object) -> object:
+            return fake_tracer
+
+    fake_azure_mod: Any = types.ModuleType("azure.monitor.opentelemetry")
+    fake_azure_mod.configure_azure_monitor = fake_configure
+
+    fake_trace_mod = _FakeTrace("opentelemetry.trace")
+
+    mod._sdk_initialised = False
+    mod._tracer = None
+
+    monkeypatch.setitem(sys.modules, "azure.monitor.opentelemetry", fake_azure_mod)
+    monkeypatch.setitem(sys.modules, "opentelemetry.trace", fake_trace_mod)
+
+    mod._get_tracer()
+
+    mod._sdk_initialised = False
+    mod._tracer = None
+
+    # The env var must be set to "true" at the point configure_azure_monitor is called,
+    # proving it is set BEFORE the exporter initialises (which is when statsbeat starts).
+    assert captured_env_at_configure.get("value") == "true", (
+        "APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL must be 'true' before "
+        "configure_azure_monitor is called so statsbeat never opens the IMDS socket (#418)"
+    )
+
+
+def test_statsbeat_env_not_overridden_when_already_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """setdefault semantics: a pre-existing value must not be overwritten by _get_tracer.
+
+    An operator can set APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL=false before
+    launching the CLI to force statsbeat on.  _get_tracer uses os.environ.setdefault,
+    so an existing value takes precedence.
+    """
+    _enable_telemetry(monkeypatch, tmp_path)
+    # Pre-set a non-default value the operator chose explicitly.
+    monkeypatch.setenv("APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL", "false")
+
+    mod = _reload_telemetry()
+
+    def fake_configure(**_kwargs: object) -> None:
+        pass
+
+    fake_tracer = object()
+
+    class _FakeTrace(types.ModuleType):
+        def get_tracer(self, *_args: object, **_kw: object) -> object:
+            return fake_tracer
+
+    fake_azure_mod: Any = types.ModuleType("azure.monitor.opentelemetry")
+    fake_azure_mod.configure_azure_monitor = fake_configure
+
+    fake_trace_mod = _FakeTrace("opentelemetry.trace")
+
+    mod._sdk_initialised = False
+    mod._tracer = None
+
+    monkeypatch.setitem(sys.modules, "azure.monitor.opentelemetry", fake_azure_mod)
+    monkeypatch.setitem(sys.modules, "opentelemetry.trace", fake_trace_mod)
+
+    mod._get_tracer()
+
+    mod._sdk_initialised = False
+    mod._tracer = None
+
+    # The pre-existing "false" value must not have been overwritten.
+    assert os.environ.get("APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL") == "false", (
+        "os.environ.setdefault must not override a pre-existing value — "
+        "an explicit operator setting must be respected (#418)"
+    )

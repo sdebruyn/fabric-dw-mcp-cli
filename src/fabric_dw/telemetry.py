@@ -428,6 +428,22 @@ def _get_tracer() -> object | None:
         # A2/A3: silence Azure SDK logger trees before any network attempt (#411).
         _harden_azure_sdk_logging()
 
+        # A4: disable statsbeat (Azure Monitor internal telemetry-about-telemetry).
+        # Statsbeat creates two sources of unclosed-socket ResourceWarnings on
+        # short-lived CLI processes (#418):
+        #   1. An urllib3 connection pool is allocated immediately in the statsbeat
+        #      exporter __init__ (during StatsbeatManager initialisation).  On
+        #      processes that exit in under ~15 s the pool is destroyed by the GC
+        #      rather than closed cleanly, producing "Exception ignored in: ..." at
+        #      interpreter shutdown.
+        #   2. After a ~15 s warmup timer the statsbeat exporter probes the Azure
+        #      IMDS endpoint (169.254.169.254:80) to detect whether the process runs
+        #      on an Azure VM.  That probe socket is also left unclosed on exit.
+        # Disabling statsbeat prevents both.  Use setdefault so an explicit operator
+        # override (e.g. APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL=false) is still
+        # respected.
+        os.environ.setdefault("APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL", "true")
+
         configure_azure_monitor(
             connection_string=_get_connection_string(),
             logger_name="fabric_dw.telemetry",
