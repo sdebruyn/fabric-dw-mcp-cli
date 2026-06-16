@@ -977,20 +977,33 @@ def run_query(  # noqa: PLR0913
             cur.execute(statement, params)
         else:
             cur.execute(statement)
-        if commit and not autocommit:
-            c.commit()
 
         if fetch == "none":
+            # No result set to read; commit now (if requested) and return.
+            if commit and not autocommit:
+                c.commit()
             return [], []
 
+        # Fetch the result set BEFORE committing.  Committing first invalidates
+        # the cursor's prepared statement on mssql-python, which causes
+        # "Associated statement is not prepared" on the subsequent fetchall/
+        # fetchone call.  COPY INTO is the primary path that sets both
+        # commit=True and fetch != "none".
         cols = [col[0] for col in (cur.description or [])]
 
         if fetch == "one":
             row = cur.fetchone()
-            return cols, ([row] if row is not None else [])
+            result: tuple[list[str], list[tuple[Any, ...]]] = (
+                cols,
+                ([row] if row is not None else []),
+            )
+        else:
+            rows: list[tuple[Any, ...]] = cur.fetchall()
+            result = cols, rows
 
-        rows: list[tuple[Any, ...]] = cur.fetchall()
-        return cols, rows
+        if commit and not autocommit:
+            c.commit()
+        return result
 
     conn, attempt, max_attempts, _ = _with_connect_retry(target, mode, autocommit)
     try:
