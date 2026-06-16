@@ -62,7 +62,7 @@ class TestBuildCopyIntoSql:
         sql = _build_copy_into_sql(
             "dbo",
             "sales",
-            "https://onelake.dfs.fabric.microsoft.com/ws/lh.Lakehouse/Files/f.parquet",
+            "https://onelake.dfs.fabric.microsoft.com/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/ffffffff-0000-1111-2222-333333333333/Files/f.parquet",
             "PARQUET",
         )
         assert "COPY INTO [dbo].[sales]" in sql
@@ -549,6 +549,60 @@ class TestLoadLocalFile:
         # The call to copy_into_from_url should use PARQUET file_type.
         _, kwargs = mock_copy.call_args
         assert kwargs.get("file_type") == "PARQUET" or mock_copy.call_args[0][4] == "PARQUET"
+
+    async def test_copy_into_url_is_pure_guid_no_lakehouse_suffix(self, tmp_path: Path) -> None:
+        """The onelake_url passed to copy_into_from_url must be pure-GUID with no .Lakehouse suffix.
+
+        load_local_file builds the COPY INTO source URL from the staging Lakehouse IDs.
+        This test asserts that the URL argument (positional arg index 3) does not
+        contain '.Lakehouse' and starts with the expected pure-GUID prefix, matching
+        the DFS upload path and Microsoft's documented OPENROWSET/COPY INTO source form.
+        """
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("id,name\n1,Alice\n", encoding="utf-8")
+
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+        ws_id = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+        lh_id = "c0ffeeee-dead-beef-cafe-123456789abc"
+
+        mock_http = AsyncMock()
+        mock_credential = AsyncMock()
+
+        with (
+            patch("fabric_dw.services.load.create_staging_lakehouse", return_value=lh_id),
+            patch("fabric_dw.services.load.onelake_upload_file", return_value=None),
+            patch(
+                "fabric_dw.services.load.copy_into_from_url",
+                return_value=CopyIntoResult(rows_loaded=1, rows_rejected=0, target="dbo.t"),
+            ) as mock_copy,
+            patch("fabric_dw.services.load.delete_lakehouse"),
+        ):
+            await load_local_file(
+                mock_http,
+                mock_credential,
+                ws_id,
+                target,
+                "dbo",
+                "t",
+                csv_file,
+                file_format="csv",
+            )
+
+        mock_copy.assert_called_once()
+        # The URL is the 4th positional argument (index 3): target, schema, table, url
+        call_args = mock_copy.call_args
+        url_arg: str = call_args[0][3]
+        expected_prefix = f"https://onelake.dfs.fabric.microsoft.com/{ws_id}/{lh_id}/Files/"
+        assert ".Lakehouse" not in url_arg, (
+            f"COPY INTO URL must NOT contain '.Lakehouse' suffix; got: {url_arg!r}"
+        )
+        assert url_arg.startswith(expected_prefix), (
+            f"COPY INTO URL must start with pure-GUID prefix {expected_prefix!r}; got: {url_arg!r}"
+        )
 
     async def test_file_not_found_raises(self, tmp_path: Path) -> None:
         from fabric_dw.sql import SqlTarget  # noqa: PLC0415
