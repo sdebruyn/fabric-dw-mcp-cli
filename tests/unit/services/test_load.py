@@ -62,7 +62,7 @@ class TestBuildCopyIntoSql:
         sql = _build_copy_into_sql(
             "dbo",
             "sales",
-            "https://onelake.dfs.fabric.microsoft.com/ws/lh.Lakehouse/Files/f.parquet",
+            "https://onelake.dfs.fabric.microsoft.com/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/ffffffff-0000-1111-2222-333333333333/Files/f.parquet",
             "PARQUET",
         )
         assert "COPY INTO [dbo].[sales]" in sql
@@ -550,6 +550,60 @@ class TestLoadLocalFile:
         _, kwargs = mock_copy.call_args
         assert kwargs.get("file_type") == "PARQUET" or mock_copy.call_args[0][4] == "PARQUET"
 
+    async def test_copy_into_url_is_pure_guid_no_lakehouse_suffix(self, tmp_path: Path) -> None:
+        """The onelake_url passed to copy_into_from_url must be pure-GUID with no .Lakehouse suffix.
+
+        load_local_file builds the COPY INTO source URL from the staging Lakehouse IDs.
+        This test asserts that the URL argument (positional arg index 3) does not
+        contain '.Lakehouse' and starts with the expected pure-GUID prefix, matching
+        the DFS upload path and Microsoft's documented OPENROWSET/COPY INTO source form.
+        """
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("id,name\n1,Alice\n", encoding="utf-8")
+
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+        ws_id = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+        lh_id = "c0ffeeee-dead-beef-cafe-123456789abc"
+
+        mock_http = AsyncMock()
+        mock_credential = AsyncMock()
+
+        with (
+            patch("fabric_dw.services.load.create_staging_lakehouse", return_value=lh_id),
+            patch("fabric_dw.services.load.onelake_upload_file", return_value=None),
+            patch(
+                "fabric_dw.services.load.copy_into_from_url",
+                return_value=CopyIntoResult(rows_loaded=1, rows_rejected=0, target="dbo.t"),
+            ) as mock_copy,
+            patch("fabric_dw.services.load.delete_lakehouse"),
+        ):
+            await load_local_file(
+                mock_http,
+                mock_credential,
+                ws_id,
+                target,
+                "dbo",
+                "t",
+                csv_file,
+                file_format="csv",
+            )
+
+        mock_copy.assert_called_once()
+        # The URL is the 4th positional argument (index 3): target, schema, table, url
+        call_args = mock_copy.call_args
+        url_arg: str = call_args[0][3]
+        expected_prefix = f"https://onelake.dfs.fabric.microsoft.com/{ws_id}/{lh_id}/Files/"
+        assert ".Lakehouse" not in url_arg, (
+            f"COPY INTO URL must NOT contain '.Lakehouse' suffix; got: {url_arg!r}"
+        )
+        assert url_arg.startswith(expected_prefix), (
+            f"COPY INTO URL must start with pure-GUID prefix {expected_prefix!r}; got: {url_arg!r}"
+        )
+
     async def test_file_not_found_raises(self, tmp_path: Path) -> None:
         from fabric_dw.sql import SqlTarget  # noqa: PLC0415
 
@@ -927,7 +981,9 @@ class TestOneLakeUploadFile:
 
     _WS_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
     _LH_ID = "ffffffff-0000-1111-2222-333333333333"
-    _DFS_BASE = f"{_ONELAKE_DFS_BASE}/{_WS_ID}/{_LH_ID}.Lakehouse/Files/data.parquet"
+    # Pure-GUID DFS path — NO .Lakehouse suffix.  The friendly-name form is
+    # rejected with 400 FriendlyNameSupportDisabled on some tenants (#402).
+    _DFS_BASE = f"{_ONELAKE_DFS_BASE}/{_WS_ID}/{_LH_ID}/Files/data.parquet"
 
     def _make_credential(self) -> AsyncTokenCredential:
         """Return a minimal async credential stub that returns a fake token."""
@@ -938,6 +994,55 @@ class TestOneLakeUploadFile:
         cred = AsyncMock(spec=AsyncTokenCredential)
         cred.get_token.return_value = token
         return cred  # type: ignore[return-value]
+
+    # -----------------------------------------------------------------------
+    # Pure-GUID DFS path — no .Lakehouse suffix (#402)
+    # -----------------------------------------------------------------------
+
+    @respx.mock
+    async def test_dfs_url_is_pure_guid_no_type_suffix(self, tmp_path: Path) -> None:
+        """All DFS requests must use the pure-GUID path without a .Lakehouse type suffix.
+
+        Tenants with FriendlyNameSupportDisabled reject paths of the form
+        ``{workspace}/{item}.Lakehouse/Files/…`` with 400.  The correct form is
+        ``{workspace_guid}/{item_guid}/Files/…`` which works on all tenants.
+        """
+        data_file = tmp_path / "data.parquet"
+        data_file.write_bytes(b"PARQUET")
+
+        all_urls: list[str] = []
+
+        def _capture_put(request: httpx.Request) -> httpx.Response:
+            all_urls.append(str(request.url))
+            return httpx.Response(201)
+
+        def _capture_patch(request: httpx.Request) -> httpx.Response:
+            all_urls.append(str(request.url))
+            action = request.url.params.get("action", "")
+            return httpx.Response(202 if action == "append" else 200)
+
+        expected_path_prefix = f"{_ONELAKE_DFS_BASE}/{self._WS_ID}/{self._LH_ID}/Files/"
+        # Register routes for the pure-GUID URL (no .Lakehouse suffix).
+        respx.put(self._DFS_BASE).mock(side_effect=_capture_put)
+        respx.patch(self._DFS_BASE).mock(side_effect=_capture_patch)
+
+        await onelake_upload_file(
+            self._make_credential(),
+            self._WS_ID,
+            self._LH_ID,
+            "data.parquet",
+            data_file,
+        )
+
+        assert all_urls, "Expected at least one DFS request"
+        for url in all_urls:
+            assert ".Lakehouse" not in url, (
+                f"DFS URL must NOT contain '.Lakehouse' type suffix (FriendlyNameSupportDisabled); "
+                f"got: {url!r}"
+            )
+            assert url.startswith(expected_path_prefix), (
+                f"DFS URL must use pure-GUID form '{expected_path_prefix}…'; got: {url!r}"
+            )
 
     @respx.mock
     async def test_create_has_content_length_zero(self, tmp_path: Path) -> None:
