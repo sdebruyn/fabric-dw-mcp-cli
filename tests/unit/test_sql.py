@@ -2026,3 +2026,145 @@ class TestAuthFailedConnectRetry:
         # Exactly one sleep before the retry.
         assert fake_time.sleep.call_count == 1  # ty: ignore[unresolved-attribute]
         assert fake_time.sleep.call_args.args[0] == 10.0  # ty: ignore[unresolved-attribute]
+
+
+# ---------------------------------------------------------------------------
+# D12 — fetch-before-commit ordering (COPY INTO fix)
+# ---------------------------------------------------------------------------
+
+
+class _CommitInvalidatingCursor:
+    """Fake cursor that mimics mssql-python's "Associated statement is not prepared" error.
+
+    After ``commit()`` is called on the owning connection, any access to
+    ``fetchall()``, ``fetchone()``, or ``description`` raises ``_ProgrammingError``
+    with that message — exactly what mssql-python does when a committed cursor is
+    subsequently read.
+    """
+
+    _PREPARED_ERROR = "Associated statement is not prepared"
+
+    def __init__(
+        self,
+        description: list[tuple[str, None]],
+        rows: list[tuple[object, ...]],
+        committed_flag: list[bool],
+    ) -> None:
+        self._description = description
+        self._rows = rows
+        self._committed = committed_flag
+
+    def execute(self, _sql: str, _params: object = None) -> None:
+        pass
+
+    @property
+    def description(self) -> list[tuple[str, None]]:
+        if self._committed[0]:
+            raise _ProgrammingError(self._PREPARED_ERROR)
+        return self._description
+
+    def fetchall(self) -> list[tuple[object, ...]]:
+        if self._committed[0]:
+            raise _ProgrammingError(self._PREPARED_ERROR)
+        return self._rows
+
+    def fetchone(self) -> tuple[object, ...] | None:
+        if self._committed[0]:
+            raise _ProgrammingError(self._PREPARED_ERROR)
+        return self._rows[0] if self._rows else None
+
+
+class _CommitInvalidatingConnection:
+    """Fake _Connection whose ``commit()`` invalidates the cursor."""
+
+    def __init__(
+        self,
+        description: list[tuple[str, None]],
+        rows: list[tuple[object, ...]],
+    ) -> None:
+        self._committed: list[bool] = [False]
+        self._cursor = _CommitInvalidatingCursor(description, rows, self._committed)
+
+    def cursor(self) -> _CommitInvalidatingCursor:
+        return self._cursor
+
+    def commit(self) -> None:
+        self._committed[0] = True
+
+    def close(self) -> None:
+        pass
+
+
+class _ProgrammingError(Exception):
+    """Minimal stand-in for mssql_python.exceptions.ProgrammingError."""
+
+
+class TestFetchBeforeCommitOrdering:
+    """D12: result set must be fetched BEFORE commit() is called.
+
+    These tests use a fake cursor/connection that raises once ``commit()`` has
+    been called, mirroring the mssql-python "Associated statement is not
+    prepared" behaviour that broke COPY INTO.
+    """
+
+    def _patch_with_invalidating_conn(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        description: list[tuple[str, None]],
+        rows: list[tuple[object, ...]],
+    ) -> _CommitInvalidatingConnection:
+        fake_conn = _CommitInvalidatingConnection(description, rows)
+        mock_mssql = MagicMock()
+        mock_mssql.connect.return_value = fake_conn
+        monkeypatch.setattr(_sql_module, "_mssql", mock_mssql)
+        return fake_conn
+
+    def test_fetch_all_commit_true_returns_rows(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """fetch='all' + commit=True must return rows even if commit invalidates cursor."""
+        description = [("rows_loaded", None), ("rows_rejected", None)]
+        rows: list[tuple[object, ...]] = [(1000, 0)]
+        self._patch_with_invalidating_conn(monkeypatch, description, rows)
+
+        cols, result_rows = run_query(
+            _make_target(),
+            "COPY INTO [dbo].[t] FROM '...' WITH (FILE_TYPE='PARQUET')",
+            commit=True,
+            fetch="all",
+        )
+
+        assert cols == ["rows_loaded", "rows_rejected"]
+        assert result_rows == [(1000, 0)]
+
+    def test_fetch_one_commit_true_returns_row(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """fetch='one' + commit=True must return the single row before the commit fires."""
+        description = [("rows_loaded", None), ("rows_rejected", None)]
+        rows: list[tuple[object, ...]] = [(500, 2)]
+        self._patch_with_invalidating_conn(monkeypatch, description, rows)
+
+        cols, result_rows = run_query(
+            _make_target(),
+            "COPY INTO [dbo].[t] FROM '...' WITH (FILE_TYPE='PARQUET')",
+            commit=True,
+            fetch="one",
+        )
+
+        assert cols == ["rows_loaded", "rows_rejected"]
+        assert result_rows == [(500, 2)]
+
+    def test_fetch_none_commit_true_still_commits(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """fetch='none' + commit=True (DDL/DML path) must still call commit()."""
+        description: list[tuple[str, None]] = []
+        rows: list[tuple[object, ...]] = []
+        fake_conn = self._patch_with_invalidating_conn(monkeypatch, description, rows)
+
+        cols, result_rows = run_query(
+            _make_target(),
+            "INSERT INTO [dbo].[t] VALUES (1)",
+            commit=True,
+            fetch="none",
+        )
+
+        assert cols == []
+        assert result_rows == []
+        # Verify commit was actually called.
+        assert fake_conn._committed[0] is True
