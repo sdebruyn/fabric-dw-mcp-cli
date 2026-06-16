@@ -10,6 +10,7 @@ from uuid import UUID
 import anyio
 import click
 import pytest
+from click.testing import CliRunner
 
 from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.cli._context import CliContext
@@ -507,3 +508,48 @@ class TestGetCtx:
         result = get_ctx(mock_ctx)
 
         assert result is sentinel
+
+
+# ---------------------------------------------------------------------------
+# resolve_workspace_arg / resolve_warehouse_arg — missing-default error messages
+# ---------------------------------------------------------------------------
+
+
+class TestResolveWorkspaceArgErrorMessage:
+    """resolve_workspace_arg raises UsageError with actionable guidance when no default is set."""
+
+    def test_missing_workspace_error_suggests_config_default(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Error message must mention the config-set command and the word 'default'."""
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.delenv("FABRIC_DW_DEFAULT_WORKSPACE", raising=False)
+        # warehouses list requires WORKSPACE (or --all-workspaces); invoke with neither.
+        result = runner.invoke(cli, ["warehouses", "list"])
+        assert result.exit_code != 0
+        output = result.output
+        assert "no workspace specified" in output
+        assert "config set workspace" in output
+        assert "default" in output
+
+
+class TestResolveWarehouseArgErrorMessage:
+    """resolve_warehouse_arg raises UsageError with actionable guidance when no default is set."""
+
+    def test_missing_warehouse_error_suggests_config_default(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Error message must mention the config-set command, 'default', and SQL Analytics Endpoint."""  # noqa: E501
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.delenv("FABRIC_DW_DEFAULT_WORKSPACE", raising=False)
+        monkeypatch.delenv("FABRIC_DW_DEFAULT_WAREHOUSE", raising=False)
+        # warehouses get requires WORKSPACE and WAREHOUSE; supply workspace but omit warehouse.
+        result = runner.invoke(cli, ["warehouses", "get", WS_GUID])
+        assert result.exit_code != 0
+        output = result.output
+        assert "no warehouse specified" in output
+        assert "config set warehouse" in output
+        assert "default" in output
+        assert "SQL Analytics Endpoint" in output
