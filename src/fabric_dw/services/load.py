@@ -595,7 +595,12 @@ async def onelake_upload_file(
         "x-ms-version": _DFS_API_VERSION,
     }
 
-    dfs_url = f"{_ONELAKE_DFS_BASE}/{workspace_id}/{lakehouse_id}.Lakehouse/Files/{dest_path}"
+    # Pure-GUID OneLake DFS path: workspace GUID + item GUID, NO `.Lakehouse`
+    # type suffix.  The friendly-name form (`<guid>.Lakehouse`) is rejected with
+    # 400 FriendlyNameSupportDisabled on tenants where that feature is disabled.
+    # The pure-GUID form works regardless of whether friendly-name support is
+    # enabled, so it is unconditionally safer.
+    dfs_url = f"{_ONELAKE_DFS_BASE}/{workspace_id}/{lakehouse_id}/Files/{dest_path}"
 
     file_size = local_path.stat().st_size
     _logger.debug(
@@ -949,9 +954,11 @@ async def load_local_file(  # noqa: PLR0912, PLR0915
 
             # Step 5: COPY INTO from the OneLake URL.
             # Same-tenant OneLake → caller's Entra identity; no CREDENTIAL needed.
+            # Pure-GUID path (no .Lakehouse suffix) — required for tenants with
+            # FriendlyNameSupportDisabled; works universally regardless of tenant config.
             onelake_url = (
                 f"https://onelake.dfs.fabric.microsoft.com"
-                f"/{workspace_id}/{lakehouse_id}.Lakehouse/Files/{dest_filename}"
+                f"/{workspace_id}/{lakehouse_id}/Files/{dest_filename}"
             )
             result = await copy_into_from_url(
                 target,

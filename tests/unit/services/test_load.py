@@ -927,7 +927,9 @@ class TestOneLakeUploadFile:
 
     _WS_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
     _LH_ID = "ffffffff-0000-1111-2222-333333333333"
-    _DFS_BASE = f"{_ONELAKE_DFS_BASE}/{_WS_ID}/{_LH_ID}.Lakehouse/Files/data.parquet"
+    # Pure-GUID DFS path — NO .Lakehouse suffix.  The friendly-name form is
+    # rejected with 400 FriendlyNameSupportDisabled on some tenants (#402).
+    _DFS_BASE = f"{_ONELAKE_DFS_BASE}/{_WS_ID}/{_LH_ID}/Files/data.parquet"
 
     def _make_credential(self) -> AsyncTokenCredential:
         """Return a minimal async credential stub that returns a fake token."""
@@ -938,6 +940,55 @@ class TestOneLakeUploadFile:
         cred = AsyncMock(spec=AsyncTokenCredential)
         cred.get_token.return_value = token
         return cred  # type: ignore[return-value]
+
+    # -----------------------------------------------------------------------
+    # Pure-GUID DFS path — no .Lakehouse suffix (#402)
+    # -----------------------------------------------------------------------
+
+    @respx.mock
+    async def test_dfs_url_is_pure_guid_no_type_suffix(self, tmp_path: Path) -> None:
+        """All DFS requests must use the pure-GUID path without a .Lakehouse type suffix.
+
+        Tenants with FriendlyNameSupportDisabled reject paths of the form
+        ``{workspace}/{item}.Lakehouse/Files/…`` with 400.  The correct form is
+        ``{workspace_guid}/{item_guid}/Files/…`` which works on all tenants.
+        """
+        data_file = tmp_path / "data.parquet"
+        data_file.write_bytes(b"PARQUET")
+
+        all_urls: list[str] = []
+
+        def _capture_put(request: httpx.Request) -> httpx.Response:
+            all_urls.append(str(request.url))
+            return httpx.Response(201)
+
+        def _capture_patch(request: httpx.Request) -> httpx.Response:
+            all_urls.append(str(request.url))
+            action = request.url.params.get("action", "")
+            return httpx.Response(202 if action == "append" else 200)
+
+        expected_path_prefix = f"{_ONELAKE_DFS_BASE}/{self._WS_ID}/{self._LH_ID}/Files/"
+        # Register routes for the pure-GUID URL (no .Lakehouse suffix).
+        respx.put(self._DFS_BASE).mock(side_effect=_capture_put)
+        respx.patch(self._DFS_BASE).mock(side_effect=_capture_patch)
+
+        await onelake_upload_file(
+            self._make_credential(),
+            self._WS_ID,
+            self._LH_ID,
+            "data.parquet",
+            data_file,
+        )
+
+        assert all_urls, "Expected at least one DFS request"
+        for url in all_urls:
+            assert ".Lakehouse" not in url, (
+                f"DFS URL must NOT contain '.Lakehouse' type suffix (FriendlyNameSupportDisabled); "
+                f"got: {url!r}"
+            )
+            assert url.startswith(expected_path_prefix), (
+                f"DFS URL must use pure-GUID form '{expected_path_prefix}…'; got: {url!r}"
+            )
 
     @respx.mock
     async def test_create_has_content_length_zero(self, tmp_path: Path) -> None:
