@@ -351,7 +351,8 @@ def resolve_workspace_arg(ctx: CliContext, value: str | None) -> str:
     if cfg_val is not None:
         return cfg_val
     raise click.UsageError(
-        "no workspace specified; pass as argument or run 'fabric-dw config set workspace ...'"
+        "no workspace specified; pass one as an argument, or set a persistent default"
+        " with 'fabric-dw config set workspace <name|id>'"
     )
 
 
@@ -372,7 +373,9 @@ def resolve_warehouse_arg(ctx: CliContext, value: str | None) -> str:
     if cfg_val is not None:
         return cfg_val
     raise click.UsageError(
-        "no warehouse specified; pass as argument or run 'fabric-dw config set warehouse ...'"
+        "no warehouse specified; pass one as an argument, or set a persistent default"
+        " with 'fabric-dw config set warehouse <name|id>'"
+        " (accepts a warehouse or SQL Analytics Endpoint)"
     )
 
 
