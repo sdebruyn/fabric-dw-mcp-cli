@@ -26,13 +26,14 @@ from fabric_dw.sql import (
 logger = logging.getLogger(__name__)
 
 # Maximum time to wait for a SQL analytics endpoint to provision on a new lakehouse.
-_SQL_ENDPOINT_PROVISION_TIMEOUT_S = 600  # 10 min — Fabric preview provisioning can be slow
+# Live probes show provisioning completes in ~18s; 120s gives a generous margin.
+_SQL_ENDPOINT_PROVISION_TIMEOUT_S = 120  # 2 min — provisioning observed at ~18s
 # Polling interval between provisioning status checks.
 _SQL_ENDPOINT_POLL_INTERVAL_S = 5
 
 # Maximum time (seconds) to wait for a fresh warehouse/endpoint SQL database
 # to become connectable after creation.
-_SQL_READINESS_TIMEOUT_S = 600  # 10 min — warm-up window for Fabric preview SQL engine
+_SQL_READINESS_TIMEOUT_S = 180  # 3 min — warm-up window for Fabric preview SQL engine
 # Starting backoff delay (seconds) between readiness probe attempts.
 _SQL_READINESS_BACKOFF_INITIAL_S = 2.0
 # Maximum backoff delay cap (seconds).
@@ -665,27 +666,30 @@ async def ephemeral_sql_endpoint(
                     f"for lakehouse {lh_id}: {ep_id_raw!r}"
                 )
 
-            # Even after provisioningStatus=Success, the connectionString on the
-            # SQL endpoint resource itself can be empty due to eventual consistency.
-            # Poll GET /sqlEndpoints/{id} until connection_string is non-empty so
-            # that tests fetching the endpoint directly get a populated value.
-            from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
-                get_endpoint_connection_string,
-            )
+            # The Lakehouse body already has connectionString at
+            # properties.sqlEndpointProperties.connectionString when
+            # provisioningStatus=Success.  Use it directly — it is available
+            # immediately at that point.  Only fall back to polling via
+            # get_endpoint_connection_string if the value happens to be absent
+            # (defensive guard; should not occur in practice).
+            if not ep_conn:
+                from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
+                    get_endpoint_connection_string,
+                )
 
-            try:
-                ep_conn = await get_endpoint_connection_string(
-                    http,
-                    workspace_id,
-                    ep_uuid,
-                    poll_interval=_SQL_ENDPOINT_POLL_INTERVAL_S,
-                    timeout=max(1.0, deadline - time.monotonic()),
-                )
-            except Exception as exc:
-                pytest.skip(
-                    f"SQL endpoint {ep_uuid} connection_string did not populate "
-                    f"within timeout: {exc}"
-                )
+                try:
+                    ep_conn = await get_endpoint_connection_string(
+                        http,
+                        workspace_id,
+                        ep_uuid,
+                        poll_interval=_SQL_ENDPOINT_POLL_INTERVAL_S,
+                        timeout=max(1.0, deadline - time.monotonic()),
+                    )
+                except Exception as exc:
+                    pytest.skip(
+                        f"SQL endpoint {ep_uuid} connection_string did not populate "
+                        f"within timeout: {exc}"
+                    )
 
             wh = Warehouse.model_validate(
                 {
