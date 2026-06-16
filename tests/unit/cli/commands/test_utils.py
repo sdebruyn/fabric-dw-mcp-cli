@@ -525,6 +525,7 @@ class TestResolveWorkspaceArgErrorMessage:
         monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
         monkeypatch.delenv("FABRIC_DW_DEFAULT_WORKSPACE", raising=False)
+        monkeypatch.delenv("FABRIC_DW_DEFAULT_WAREHOUSE", raising=False)
         # warehouses list requires WORKSPACE (or --all-workspaces); invoke with neither.
         result = runner.invoke(cli, ["warehouses", "list"])
         assert result.exit_code != 0
