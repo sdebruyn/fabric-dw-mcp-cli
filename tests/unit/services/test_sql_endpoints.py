@@ -34,6 +34,7 @@ _SQL_ENDPOINTS_URL = f"{_BASE}/workspaces/{_WORKSPACE_ID}/sqlEndpoints"
 _ENDPOINT_URL = f"{_SQL_ENDPOINTS_URL}/{_ENDPOINT_ID}"
 _REFRESH_URL = f"{_ENDPOINT_URL}/refreshMetadata"
 _OPERATION_URL = f"{_BASE}/operations/op-refresh-123"
+_LAKEHOUSES_URL = f"{_BASE}/workspaces/{_WORKSPACE_ID}/lakehouses"
 
 
 # Single SQL endpoint GET payload
@@ -591,22 +592,30 @@ _ENDPOINT_GET_EMPTY_CONN_STRING: dict[str, Any] = {
 
 
 async def test_get_endpoint_connection_string_polls_until_populated() -> None:
-    """get_endpoint_connection_string must poll until connection_string is non-empty."""
+    """get_endpoint_connection_string must poll until connection_string is non-empty.
+
+    The endpoint resource returns empty connectionString on calls 1 and 2 —
+    which triggers the lakehouse fallback (returning no match), so
+    connection_string stays empty and the poller retries.  On call 3 the
+    endpoint resource returns a populated connectionString directly.
+    """
     from fabric_dw.services.sql_endpoints import get_endpoint_connection_string  # noqa: PLC0415
 
-    call_count = 0
+    ep_call_count = 0
 
-    def side_effect(_request: httpx.Request) -> httpx.Response:
-        nonlocal call_count
-        call_count += 1
-        if call_count < 3:
-            # First two calls return empty connection_string
+    def ep_side_effect(_request: httpx.Request) -> httpx.Response:
+        nonlocal ep_call_count
+        ep_call_count += 1
+        if ep_call_count < 3:
+            # First two calls return empty connection_string → lakehouse fallback triggered
             return httpx.Response(200, json=_ENDPOINT_GET_EMPTY_CONN_STRING)
-        # Third call returns populated connection_string
+        # Third call returns populated connection_string — fast path, no lakehouse call
         return httpx.Response(200, json=_ENDPOINT_GET_PAYLOAD)
 
     with respx.mock(assert_all_called=False) as mock_router:
-        mock_router.get(_ENDPOINT_URL).mock(side_effect=side_effect)
+        mock_router.get(_ENDPOINT_URL).mock(side_effect=ep_side_effect)
+        # Lakehouse scan returns no results — fallback finds no match for calls 1 & 2
+        mock_router.get(_LAKEHOUSES_URL).mock(return_value=httpx.Response(200, json={"value": []}))
 
         client = await _make_client()
         async with client:
@@ -623,7 +632,7 @@ async def test_get_endpoint_connection_string_polls_until_populated() -> None:
                 )
 
     assert result == "lakehouse-sql-ep.datawarehouse.fabric.microsoft.com"
-    assert call_count == 3
+    assert ep_call_count == 3
     # sleep must have been called between polls (twice: after call 1 and call 2)
     assert mock_sleep.call_count == 2
 
@@ -655,7 +664,8 @@ async def test_get_endpoint_connection_string_timeout_raises_fabric_server_error
     """get_endpoint_connection_string must raise FabricServerError after timeout.
 
     Passes timeout=0.0 so the deadline is already expired after the first GET
-    that returns an empty connection_string — no need to mock time.
+    that returns an empty connection_string — no need to mock time.  The
+    lakehouse fallback is also mocked to return no matching lakehouse.
     """
     from fabric_dw.services.sql_endpoints import get_endpoint_connection_string  # noqa: PLC0415
 
@@ -663,6 +673,8 @@ async def test_get_endpoint_connection_string_timeout_raises_fabric_server_error
         mock_router.get(_ENDPOINT_URL).mock(
             return_value=httpx.Response(200, json=_ENDPOINT_GET_EMPTY_CONN_STRING)
         )
+        # Lakehouse scan returns no matching lakehouse → fallback yields no connection string
+        mock_router.get(_LAKEHOUSES_URL).mock(return_value=httpx.Response(200, json={"value": []}))
 
         client = await _make_client()
         async with client:
@@ -674,3 +686,134 @@ async def test_get_endpoint_connection_string_timeout_raises_fabric_server_error
                     poll_interval=0.0,
                     timeout=0.0,
                 )
+
+
+# ---------------------------------------------------------------------------
+# get_endpoint — lakehouse connection-string fallback
+# ---------------------------------------------------------------------------
+
+# The UUID that the paired lakehouse uses for its sqlEndpointProperties.id field.
+# This matches _ENDPOINT_ID so the fallback can find the right lakehouse.
+_LAKEHOUSE_CONN_STRING = "lh-derived.datawarehouse.fabric.microsoft.com"
+
+# Lakehouse payload whose sqlEndpointProperties.id matches _ENDPOINT_ID.
+_LAKEHOUSES_WITH_MATCH_PAYLOAD: dict[str, Any] = {
+    "value": [
+        {
+            "id": "11111111-0000-0000-0000-000000000001",
+            "displayName": "SalesLakehouse",
+            "workspaceId": str(_WORKSPACE_ID),
+            "properties": {
+                "sqlEndpointProperties": {
+                    "id": str(_ENDPOINT_ID),
+                    "connectionString": _LAKEHOUSE_CONN_STRING,
+                    "provisioningStatus": "Success",
+                }
+            },
+        }
+    ]
+}
+
+# Lakehouse payload whose sqlEndpointProperties.id does NOT match _ENDPOINT_ID.
+_LAKEHOUSES_NO_MATCH_PAYLOAD: dict[str, Any] = {
+    "value": [
+        {
+            "id": "22222222-0000-0000-0000-000000000002",
+            "displayName": "OtherLakehouse",
+            "workspaceId": str(_WORKSPACE_ID),
+            "properties": {
+                "sqlEndpointProperties": {
+                    "id": "99999999-ffff-ffff-ffff-000000000099",
+                    "connectionString": "other.datawarehouse.fabric.microsoft.com",
+                    "provisioningStatus": "Success",
+                }
+            },
+        }
+    ]
+}
+
+
+async def test_get_endpoint_uses_lakehouse_fallback_when_conn_string_empty() -> None:
+    """get_endpoint falls back to the parent Lakehouse when connectionString is empty.
+
+    The /sqlEndpoints/{id} resource permanently returns an empty connectionString
+    for lakehouse-derived endpoints.  get_endpoint must scan /lakehouses, find
+    the lakehouse whose sqlEndpointProperties.id matches the endpoint ID, and
+    return the connection string from there.
+    """
+    from fabric_dw.services.sql_endpoints import get_endpoint  # noqa: PLC0415
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(_ENDPOINT_URL).mock(
+            return_value=httpx.Response(200, json=_ENDPOINT_GET_EMPTY_CONN_STRING)
+        )
+        mock_router.get(_LAKEHOUSES_URL).mock(
+            return_value=httpx.Response(200, json=_LAKEHOUSES_WITH_MATCH_PAYLOAD)
+        )
+
+        client = await _make_client()
+        async with client:
+            result = await get_endpoint(client, _WORKSPACE_ID, _ENDPOINT_ID)
+
+    assert isinstance(result, Warehouse)
+    assert result.id == _ENDPOINT_ID
+    assert result.kind == WarehouseKind.SQL_ENDPOINT
+    assert result.connection_string == _LAKEHOUSE_CONN_STRING
+
+
+async def test_get_endpoint_no_lakehouse_call_when_conn_string_present() -> None:
+    """get_endpoint must NOT call /lakehouses when endpoint already has a connectionString.
+
+    The fast path must avoid the extra lakehouse scan so that warehouse-native
+    endpoints (which always carry a connectionString) incur no overhead.
+    """
+    from fabric_dw.services.sql_endpoints import get_endpoint  # noqa: PLC0415
+
+    lakehouses_called = False
+
+    def lh_side_effect(_request: httpx.Request) -> httpx.Response:
+        nonlocal lakehouses_called
+        lakehouses_called = True
+        return httpx.Response(200, json={"value": []})
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(_ENDPOINT_URL).mock(
+            return_value=httpx.Response(200, json=_ENDPOINT_GET_PAYLOAD)
+        )
+        mock_router.get(_LAKEHOUSES_URL).mock(side_effect=lh_side_effect)
+
+        client = await _make_client()
+        async with client:
+            result = await get_endpoint(client, _WORKSPACE_ID, _ENDPOINT_ID)
+
+    assert result.connection_string == "lakehouse-sql-ep.datawarehouse.fabric.microsoft.com"
+    assert not lakehouses_called, (
+        "lakehouse scan must not be triggered when connectionString is already present"
+    )
+
+
+async def test_get_endpoint_lakehouse_fallback_no_match_returns_empty_conn_string() -> None:
+    """get_endpoint returns a Warehouse with empty connection_string when no lakehouse matches.
+
+    Covers the case where the endpoint is not lakehouse-derived but the
+    /sqlEndpoints/{id} resource still returned an empty connectionString — which
+    should not happen in practice, but the code must handle it gracefully.
+    """
+    from fabric_dw.services.sql_endpoints import get_endpoint  # noqa: PLC0415
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(_ENDPOINT_URL).mock(
+            return_value=httpx.Response(200, json=_ENDPOINT_GET_EMPTY_CONN_STRING)
+        )
+        mock_router.get(_LAKEHOUSES_URL).mock(
+            return_value=httpx.Response(200, json=_LAKEHOUSES_NO_MATCH_PAYLOAD)
+        )
+
+        client = await _make_client()
+        async with client:
+            result = await get_endpoint(client, _WORKSPACE_ID, _ENDPOINT_ID)
+
+    assert isinstance(result, Warehouse)
+    assert result.id == _ENDPOINT_ID
+    # No matching lakehouse → connection_string stays empty/None
+    assert not result.connection_string
