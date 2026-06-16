@@ -12,6 +12,7 @@ from rich.console import Console
 
 from fabric_dw.cli._render import (
     _cell,
+    _is_guid_column,
     confirm,
     render,
     render_permissions_table,
@@ -575,3 +576,155 @@ class TestRenderRefreshTable:
         s = _make_table_sync_status()
         output = self._render_to_string([s])
         assert "Metadata Refresh Results" in output
+
+
+# ---------------------------------------------------------------------------
+# GUID column detection (_is_guid_column) unit tests
+# ---------------------------------------------------------------------------
+
+#: A canonical GUID string used across GUID tests.
+_SAMPLE_GUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+#: A second GUID (uppercase) to verify case-insensitive matching.
+_SAMPLE_GUID_UPPER = "A1B2C3D4-E5F6-7890-ABCD-EF1234567890"
+
+
+class TestIsGuidColumn:
+    """_is_guid_column returns True iff every non-None cell is a bare GUID."""
+
+    def test_all_guid_values_returns_true(self) -> None:
+        rows: list[dict[str, object] | object] = [
+            {"id": _SAMPLE_GUID},
+            {"id": _SAMPLE_GUID_UPPER},
+        ]
+        assert _is_guid_column("id", rows) is True
+
+    def test_non_guid_string_returns_false(self) -> None:
+        rows: list[dict[str, object] | object] = [{"name": "my-workspace"}]
+        assert _is_guid_column("name", rows) is False
+
+    def test_all_none_column_returns_false(self) -> None:
+        rows: list[dict[str, object] | object] = [{"id": None}, {"id": None}]
+        assert _is_guid_column("id", rows) is False
+
+    def test_mixed_none_and_guid_returns_true(self) -> None:
+        """None cells are ignored; as long as all non-None values are GUIDs → True."""
+        rows: list[dict[str, object] | object] = [
+            {"id": None},
+            {"id": _SAMPLE_GUID},
+        ]
+        assert _is_guid_column("id", rows) is True
+
+    def test_one_non_guid_among_guids_returns_false(self) -> None:
+        rows: list[dict[str, object] | object] = [
+            {"id": _SAMPLE_GUID},
+            {"id": "not-a-guid"},
+        ]
+        assert _is_guid_column("id", rows) is False
+
+    def test_arm_resource_path_returns_false(self) -> None:
+        """A full ARM resource path containing a GUID is NOT a bare GUID column."""
+        arm_path = (
+            f"/subscriptions/{_SAMPLE_GUID}"
+            "/resourceGroups/rg/providers/Microsoft.Fabric/capacities/cap1"
+        )
+        rows: list[dict[str, object] | object] = [{"capacityId": arm_path}]
+        assert _is_guid_column("capacityId", rows) is False
+
+    def test_non_dict_rows_are_ignored(self) -> None:
+        """Scalar rows never contribute; only dict rows matter."""
+        rows: list[dict[str, object] | object] = ["scalar-value"]
+        # No dict rows → no evidence of GUID → False
+        assert _is_guid_column("id", rows) is False
+
+    def test_empty_rows_returns_false(self) -> None:
+        assert _is_guid_column("id", []) is False
+
+    def test_mixed_case_guid_returns_true(self) -> None:
+        mixed = "A1b2C3d4-E5f6-7890-AbCd-EF1234567890"
+        rows: list[dict[str, object] | object] = [{"id": mixed}]
+        assert _is_guid_column("id", rows) is True
+
+    def test_guid_with_trailing_newline_returns_false(self) -> None:
+        """A GUID followed by a trailing newline must NOT be detected as a GUID.
+
+        Python's ``$`` anchor matches just before ``\\n``, so ``re.match`` with
+        ``^...$`` would falsely accept ``"<guid>\\n"``.  Using ``fullmatch``
+        without anchors rejects such strings correctly.
+        """
+        rows: list[dict[str, object] | object] = [{"id": f"{_SAMPLE_GUID}\n"}]
+        assert _is_guid_column("id", rows) is False
+
+
+# ---------------------------------------------------------------------------
+# Narrow-console rendering: GUID columns survive truncation, text columns don't
+# ---------------------------------------------------------------------------
+
+#: Long display name that will definitely be cropped in a narrow console.
+_LONG_NAME = "This is a very long workspace display name that exceeds sixty characters easily"
+
+
+class TestGuidColumnWidthInNarrowConsole:
+    """GUID columns get no_wrap/min_width=36 so they survive narrow terminals."""
+
+    def _render_narrow(
+        self,
+        data: list[dict[str, object]],
+        *,
+        width: int = 50,
+        table_title: str | None = None,
+    ) -> str:
+        sio = StringIO()
+        console = Console(file=sio, width=width, highlight=False, no_color=True)
+        render(data, json_output=False, console=console, table_title=table_title)
+        return sio.getvalue()
+
+    def test_guid_survives_narrow_console(self) -> None:
+        """The full GUID string must be present verbatim in the narrow output."""
+        data: list[dict[str, object]] = [{"id": _SAMPLE_GUID, "displayName": _LONG_NAME}]
+        output = self._render_narrow(data, width=50)
+        assert _SAMPLE_GUID in output
+
+    def test_long_text_is_truncated_in_narrow_console(self) -> None:
+        """GUID survives narrow output while the long text column is truncated."""
+        data: list[dict[str, object]] = [{"id": _SAMPLE_GUID, "displayName": _LONG_NAME}]
+        output = self._render_narrow(data, width=50)
+        assert _SAMPLE_GUID in output
+        assert _LONG_NAME not in output
+
+    def test_two_guid_columns_both_survive(self) -> None:
+        """Multiple GUID columns each get their own min_width=36 reservation.
+
+        Two GUIDs need ~80 chars (36 + 36 + borders); use width=90 which is
+        still narrower than a typical free-text column would require but wide
+        enough for both GUIDs.
+        """
+        guid2 = "ffffffff-eeee-dddd-cccc-bbbbbbbbbbbb"
+        data: list[dict[str, object]] = [{"workspaceId": _SAMPLE_GUID, "warehouseId": guid2}]
+        output = self._render_narrow(data, width=90)
+        assert _SAMPLE_GUID in output
+        assert guid2 in output
+
+    def test_non_guid_column_not_given_min_width(self) -> None:
+        """A non-GUID id-like string column does not get special treatment."""
+        data: list[dict[str, object]] = [{"id": "short-non-guid", "displayName": _LONG_NAME}]
+        output = self._render_narrow(data, width=50)
+        # The short non-GUID id should still appear (it fits), but the long name
+        # is truncated — the point is we don't crash and the output is produced.
+        assert "short-non-guid" in output
+
+    def test_all_none_guid_col_stays_normal(self) -> None:
+        """A column that is all-None is dropped entirely (existing behaviour)."""
+        data: list[dict[str, object]] = [{"id": None, "displayName": "Alice"}]
+        output = self._render_narrow(data, width=50)
+        # Column "id" is all-null → dropped; "displayName" remains
+        assert "Alice" in output
+        assert "id" not in output
+
+    def test_guid_column_with_some_nulls_survives(self) -> None:
+        """A partially-null GUID column still gets full width."""
+        data: list[dict[str, object]] = [
+            {"id": _SAMPLE_GUID, "displayName": "Alice"},
+            {"id": None, "displayName": "Bob"},
+        ]
+        output = self._render_narrow(data, width=50)
+        assert _SAMPLE_GUID in output
