@@ -33,7 +33,9 @@ _SQL_ENDPOINT_POLL_INTERVAL_S = 5
 
 # Maximum time (seconds) to wait for a fresh warehouse/endpoint SQL database
 # to become connectable after creation.
-_SQL_READINESS_TIMEOUT_S = 180  # 3 min — warm-up window for Fabric preview SQL engine
+# 10 min — warm-up window for Fabric preview SQL engine
+# (DB provisioning + SP permission propagation)
+_SQL_READINESS_TIMEOUT_S = 600
 # Starting backoff delay (seconds) between readiness probe attempts.
 _SQL_READINESS_BACKOFF_INITIAL_S = 2.0
 # Maximum backoff delay cap (seconds).
