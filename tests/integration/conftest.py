@@ -26,10 +26,16 @@ from fabric_dw.sql import (
 logger = logging.getLogger(__name__)
 
 # Maximum time to wait for a SQL analytics endpoint to provision on a new lakehouse.
-# Live probes show provisioning completes in ~18s; 120s gives a generous margin.
-_SQL_ENDPOINT_PROVISION_TIMEOUT_S = 120  # 2 min — provisioning observed at ~18s
+# Provisioning is variable (observed as low as ~18s but can run longer); 240s gives
+# a generous margin while staying well under the old 600s ceiling.
+_SQL_ENDPOINT_PROVISION_TIMEOUT_S = 240  # 4 min — provisioning observed at ~18s, variable
 # Polling interval between provisioning status checks.
 _SQL_ENDPOINT_POLL_INTERVAL_S = 5
+# Maximum time (seconds) to wait for a freshly-provisioned SQL analytics endpoint
+# item to become visible via GET /workspaces/{ws}/sqlEndpoints/{id}.  Even after
+# provisioningStatus=Success the item API can return 404 EntityNotFound for a short
+# eventual-consistency window; this poll absorbs that window before yielding.
+_SQL_ENDPOINT_ITEM_VISIBLE_TIMEOUT_S = 120  # 2 min — item-API visibility lag
 
 # Maximum time (seconds) to wait for a fresh warehouse/endpoint SQL database
 # to become connectable after creation.
@@ -711,6 +717,36 @@ async def ephemeral_sql_endpoint(
                 connection_string=ep_conn,
             )
             await _wait_for_sql_readiness(sql_target)
+
+            # Wait for the SQL-endpoint ITEM to become visible via the product API.
+            # Even after provisioningStatus=Success (and TDS is reachable), the
+            # GET /workspaces/{ws}/sqlEndpoints/{id} call can return 404
+            # EntityNotFound for a short eventual-consistency window.  Tests that
+            # call get_endpoint() immediately (e.g. test_get_endpoint_by_id) would
+            # otherwise hit that window and fail spuriously.
+            from fabric_dw.services.sql_endpoints import get_endpoint  # noqa: PLC0415
+
+            item_visible_deadline = time.monotonic() + _SQL_ENDPOINT_ITEM_VISIBLE_TIMEOUT_S
+            while True:
+                try:
+                    await get_endpoint(http, workspace_id, ep_uuid)
+                    break  # item is visible — proceed to yield
+                except NotFoundError:
+                    if time.monotonic() >= item_visible_deadline:
+                        pytest.skip(
+                            f"SQL endpoint item {ep_uuid} was not visible via the product API "
+                            f"within {_SQL_ENDPOINT_ITEM_VISIBLE_TIMEOUT_S}s after provisioning "
+                            "— Fabric eventual-consistency window exceeded CI budget; "
+                            "get_endpoint logic is unit-tested"
+                        )
+                    logger.debug(
+                        "SQL endpoint item %s not yet visible (404 EntityNotFound); "
+                        "waiting %ds before retry …",
+                        ep_uuid,
+                        _SQL_ENDPOINT_POLL_INTERVAL_S,
+                    )
+                    await asyncio.sleep(_SQL_ENDPOINT_POLL_INTERVAL_S)
+
             yield wh
             return
 
