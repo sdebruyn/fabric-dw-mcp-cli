@@ -999,13 +999,28 @@ class TestIsTransientConnectionError:
 # ---------------------------------------------------------------------------
 
 
-def _make_fake_time_module() -> MagicMock:
-    """Return a fake ``time`` module whose ``sleep`` is a no-op."""
+def _make_fake_time_module(*, monotonic_values: list[float] | None = None) -> MagicMock:
+    """Return a fake ``time`` module whose ``sleep`` is a no-op.
+
+    Args:
+        monotonic_values: If given, ``time.monotonic`` returns successive values
+            from this list (then wraps around).  When ``None`` (default), the
+            real ``time.monotonic`` is used — suitable for tests that only care
+            about sleep call counts, not deadline behaviour.
+    """
     import time as _time  # noqa: PLC0415
 
     fake = MagicMock()
     fake.sleep = MagicMock()  # no-op
-    fake.monotonic = MagicMock(side_effect=_time.monotonic)
+    if monotonic_values is not None:
+        values_iter = iter(monotonic_values)
+
+        def _next_mono() -> float:
+            return next(values_iter)
+
+        fake.monotonic = MagicMock(side_effect=_next_mono)
+    else:
+        fake.monotonic = MagicMock(side_effect=_time.monotonic)
     return fake
 
 
@@ -1090,10 +1105,21 @@ class TestTransientRetry:
         finally:
             _sql_module.SQL_TRANSIENT_MAX_RETRIES = original_retries
 
-    def test_run_query_does_not_retry_when_retries_disabled(
+    def test_sql_transient_max_retries_zero_does_not_affect_execute_retry(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """SQL_TRANSIENT_MAX_RETRIES=0 disables retry entirely."""
+        """SQL_TRANSIENT_MAX_RETRIES=0 no longer controls the execute-phase retry.
+
+        Since PR #448 the connect-phase retry is time-based and SQL_TRANSIENT_MAX_RETRIES
+        only affects the execute-phase guard.  However, run_query always allows
+        exactly one execute-phase retry for read-only (SELECT) queries — regardless
+        of SQL_TRANSIENT_MAX_RETRIES — so setting it to 0 no longer suppresses that
+        retry.  The constant is retained for backward compatibility (it is exported
+        in __all__), but it no longer gates the execute-phase path.
+
+        This test documents the NEW behaviour: 2 connect calls even with
+        SQL_TRANSIENT_MAX_RETRIES=0 (one initial + one execute-phase retry).
+        """
         original_retries = _sql_module.SQL_TRANSIENT_MAX_RETRIES
         _sql_module.SQL_TRANSIENT_MAX_RETRIES = 0
         try:
@@ -1108,7 +1134,8 @@ class TestTransientRetry:
             with pytest.raises(Exception, match="communication link failure"):
                 run_query(_make_target(), "SELECT 1")
 
-            assert mock_mssql.connect.call_count == 1
+            # The execute-phase retry still fires once (D10 boundary): 2 connect calls.
+            assert mock_mssql.connect.call_count == 2
         finally:
             _sql_module.SQL_TRANSIENT_MAX_RETRIES = original_retries
 
@@ -1832,12 +1859,31 @@ class TestOpenConnectionTimeoutAPI:
 
 
 class TestAuthFailedConnectRetry:
-    """_with_connect_retry must retry auth-failed / 18456 errors on the connect path."""
+    """_with_connect_retry must retry auth-failed / 18456 errors on the connect path.
 
-    @pytest.fixture(autouse=True)
-    def _disable_sleep(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Patch time.sleep to a no-op and capture calls."""
-        monkeypatch.setattr(_sql_module, "time", _make_fake_time_module())
+    The connect-phase retry is time-bounded (``_CONNECT_RETRY_TIMEOUT_S``, ~120 s)
+    rather than attempt-count-bounded.  Tests inject a fake monotonic clock so
+    that deadlines are exercised deterministically without any real wall-clock
+    delay.
+
+    Fake-clock convention
+    ---------------------
+    ``time.monotonic()`` is called once at the *start* of ``_with_connect_retry``
+    to compute the deadline, and once *after each failed attempt* to check whether
+    the deadline has passed.  For N connect failures the call sequence is:
+
+      monotonic() → deadline base        (call index 0)
+      connect → fail
+      sleep(d)
+      monotonic() → check deadline       (call index 1)
+      connect → fail
+      sleep(d)
+      monotonic() → check deadline       (call index 2)
+      …
+
+    A ``monotonic_values`` list passed to :func:`_make_fake_time_module` must
+    supply at least 1 + N values to cover the whole sequence.
+    """
 
     # ------------------------------------------------------------------ #
     # Helper: fake driver exception with ddbc_error containing 18456      #
@@ -1858,14 +1904,44 @@ class TestAuthFailedConnectRetry:
 
         return _AuthDriverError()
 
+    @staticmethod
+    def _fake_time_within_deadline(n_failures: int) -> MagicMock:
+        """Return a fake time module where all deadline checks are within budget.
+
+        The deadline is set to ``t0 + _CONNECT_RETRY_TIMEOUT_S``.  We use t0=0
+        and all post-failure monotonic() calls return 1.0 (well within budget).
+        This simulates the warehouse recovering before the deadline.
+        """
+        # call 0: deadline base (t0=0)
+        # calls 1..n_failures: each post-failure check returns 1.0 < deadline
+        mono_values = [0.0] + [1.0] * n_failures
+        return _make_fake_time_module(monotonic_values=mono_values)
+
+    @staticmethod
+    def _fake_time_past_deadline() -> MagicMock:
+        """Return a fake time module where the first post-failure check exceeds budget.
+
+        This simulates a genuinely-wrong credential / warehouse that never recovers
+        within the ~120 s window.  After the single failure the monotonic clock
+        jumps past the deadline so the loop raises immediately.
+        """
+        timeout = _sql_module._CONNECT_RETRY_TIMEOUT_S
+        # call 0: t0=0  →  deadline = 0 + timeout
+        # call 1: t0 + timeout + 1.0  →  past deadline
+        mono_values = [0.0, timeout + 1.0]
+        return _make_fake_time_module(monotonic_values=mono_values)
+
     def test_auth_failed_connect_retried_twice_then_succeeds(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """An 18456 error on attempts 1 and 2 is retried; attempt 3 succeeds.
 
-        time.sleep must be called twice (once before each retry) with the
-        configured 10s delay.
+        time.sleep must be called twice (once before each retry) using the
+        bounded backoff delays (5 s then 10 s).
         """
+        fake_time = self._fake_time_within_deadline(n_failures=2)
+        monkeypatch.setattr(_sql_module, "time", fake_time)
+
         mock_mssql, good_conn, good_cursor = _make_mock_mssql()
         good_cursor.description = [("n",)]
         good_cursor.fetchall.return_value = [(1,)]
@@ -1881,16 +1957,26 @@ class TestAuthFailedConnectRetry:
         assert mock_mssql.connect.call_count == 3
 
         # time.sleep must have been called twice (before attempt 2 and 3).
-        fake_time = _sql_module.time  # type: ignore[attr-defined]
-        assert fake_time.sleep.call_count == 2  # ty: ignore[unresolved-attribute]
-        # Each delay must be 10s (the fixed retry interval).
-        for call in fake_time.sleep.call_args_list:  # ty: ignore[unresolved-attribute]
-            assert call.args[0] == 10.0
+        assert fake_time.sleep.call_count == 2
+        # Delays follow the bounded backoff schedule: 5 s, then 10 s.
+        delays = [call.args[0] for call in fake_time.sleep.call_args_list]
+        assert delays == [
+            _sql_module._CONNECT_RETRY_DELAYS[0],
+            _sql_module._CONNECT_RETRY_DELAYS[1],
+        ]
 
-    def test_auth_failed_connect_persistent_raises_after_retries(
+    def test_auth_failed_connect_persistent_raises_after_deadline(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """When all 3 attempts raise 18456 the exception is propagated after 2 retries."""
+        """When the deadline expires while auth-failed errors persist, the exception surfaces.
+
+        The fake clock is arranged so that the first post-failure monotonic()
+        check already exceeds the deadline, causing the loop to raise after the
+        very first attempt — i.e. exactly 1 connect call and 1 sleep call.
+        """
+        fake_time = self._fake_time_past_deadline()
+        monkeypatch.setattr(_sql_module, "time", fake_time)
+
         mock_mssql, _, _ = _make_mock_mssql()
         auth_exc = self._make_auth_exc()
         mock_mssql.connect.side_effect = auth_exc
@@ -1899,11 +1985,17 @@ class TestAuthFailedConnectRetry:
         with pytest.raises(Exception, match="authentication failed"):
             run_query(_make_target(), "SELECT 1")
 
-        # 3 total attempts (1 initial + 2 retries).
-        assert mock_mssql.connect.call_count == 3
+        # The deadline check fires after the first failure → re-raise immediately.
+        # sleep was called once (before the deadline check), then raise fires.
+        assert mock_mssql.connect.call_count == 1
+        # No sleep happens because we raise before sleeping when deadline is exceeded.
+        assert fake_time.sleep.call_count == 0
 
     def test_auth_failed_fragment_only_also_retried(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Auth-failed detected via message fragment only (no ddbc_error) is also retried."""
+        fake_time = self._fake_time_within_deadline(n_failures=1)
+        monkeypatch.setattr(_sql_module, "time", fake_time)
+
         mock_mssql, good_conn, good_cursor = _make_mock_mssql()
         good_cursor.description = [("n",)]
         good_cursor.fetchall.return_value = [(1,)]
@@ -1920,6 +2012,9 @@ class TestAuthFailedConnectRetry:
 
     def test_could_not_login_fragment_also_retried(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """'could not login' fragment (without ddbc_error) is retried via _AUTH_FAILED_FRAGMENTS."""
+        fake_time = self._fake_time_within_deadline(n_failures=1)
+        monkeypatch.setattr(_sql_module, "time", fake_time)
+
         mock_mssql, good_conn, good_cursor = _make_mock_mssql()
         good_cursor.description = [("n",)]
         good_cursor.fetchall.return_value = [(1,)]
@@ -1934,10 +2029,13 @@ class TestAuthFailedConnectRetry:
         assert rows == [(1,)]
         assert mock_mssql.connect.call_count == 2
 
-    def test_transient_connect_still_retried_with_10s_delay(
+    def test_transient_connect_retried_with_bounded_backoff_first_delay(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Standard transient connect errors still use the 10s delay after the policy change."""
+        """Standard transient connect errors use the first backoff delay (5 s) on retry 1."""
+        fake_time = self._fake_time_within_deadline(n_failures=1)
+        monkeypatch.setattr(_sql_module, "time", fake_time)
+
         mock_mssql, good_conn, good_cursor = _make_mock_mssql()
         good_cursor.description = [("n",)]
         good_cursor.fetchall.return_value = [(1,)]
@@ -1949,9 +2047,9 @@ class TestAuthFailedConnectRetry:
         _cols, rows = run_query(_make_target(), "SELECT 1")
 
         assert rows == [(1,)]
-        fake_time = _sql_module.time  # type: ignore[attr-defined]
-        assert fake_time.sleep.call_count == 1  # ty: ignore[unresolved-attribute]
-        assert fake_time.sleep.call_args.args[0] == 10.0  # ty: ignore[unresolved-attribute]
+        assert fake_time.sleep.call_count == 1
+        # First backoff interval is _CONNECT_RETRY_DELAYS[0] = 5 s.
+        assert fake_time.sleep.call_args.args[0] == _sql_module._CONNECT_RETRY_DELAYS[0]
 
     def test_auth_failed_on_execute_phase_not_retried(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1961,6 +2059,8 @@ class TestAuthFailedConnectRetry:
         The execute-phase retry only covers transient transport errors for
         read-only queries; mapped AuthError is raised immediately.
         """
+        monkeypatch.setattr(_sql_module, "time", _make_fake_time_module())
+
         mock_mssql, _, mock_cursor = _make_mock_mssql()
 
         class _AuthDriverError(Exception):
@@ -1979,7 +2079,10 @@ class TestAuthFailedConnectRetry:
         assert mock_mssql.connect.call_count == 1
 
     def test_retry_policy_constants(self) -> None:
-        """SQL_TRANSIENT_MAX_RETRIES=2 and delays are both 10s (flat, not exponential)."""
+        """Connect-phase uses a ~120 s deadline; execute-phase constants unchanged."""
+        assert _sql_module._CONNECT_RETRY_TIMEOUT_S == 120.0
+        assert _sql_module._CONNECT_RETRY_DELAYS == (5.0, 10.0, 15.0)
+        # Execute-phase constants remain as before.
         assert _sql_module.SQL_TRANSIENT_MAX_RETRIES == 2
         assert _sql_module._TRANSIENT_RETRY_DELAYS == (10.0, 10.0)
 
@@ -1989,6 +2092,8 @@ class TestAuthFailedConnectRetry:
         This test re-validates the idempotency boundary is unaffected by the
         auth-failed-on-connect change.
         """
+        monkeypatch.setattr(_sql_module, "time", _make_fake_time_module())
+
         mock_mssql, _, _ = _make_mock_mssql()
         bad_cursor = MagicMock()
         bad_cursor.execute.side_effect = Exception("communication link failure")
@@ -2012,6 +2117,9 @@ class TestAuthFailedConnectRetry:
         login with error 18456 until provisioning completes.  _with_connect_retry
         is shared by both run_query and run_statements, so both must retry.
         """
+        fake_time = self._fake_time_within_deadline(n_failures=1)
+        monkeypatch.setattr(_sql_module, "time", fake_time)
+
         mock_mssql, good_conn, _ = _make_mock_mssql()
 
         auth_exc = self._make_auth_exc()
@@ -2022,10 +2130,50 @@ class TestAuthFailedConnectRetry:
         run_statements(_make_target(), ["SELECT 1"])
 
         assert mock_mssql.connect.call_count == 2
-        fake_time = _sql_module.time  # type: ignore[attr-defined]
-        # Exactly one sleep before the retry.
-        assert fake_time.sleep.call_count == 1  # ty: ignore[unresolved-attribute]
-        assert fake_time.sleep.call_args.args[0] == 10.0  # ty: ignore[unresolved-attribute]
+        # Exactly one sleep before the retry, using the first backoff interval (5 s).
+        assert fake_time.sleep.call_count == 1
+        assert fake_time.sleep.call_args.args[0] == _sql_module._CONNECT_RETRY_DELAYS[0]
+
+    def test_happy_path_no_sleep_no_deadline_exceeded(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When the first connect attempt succeeds, sleep is never called.
+
+        This guarantees that happy-path execution has zero overhead from the
+        retry loop.
+        """
+        fake_time = self._fake_time_within_deadline(n_failures=0)
+        monkeypatch.setattr(_sql_module, "time", fake_time)
+
+        mock_mssql, good_conn, good_cursor = _make_mock_mssql()
+        good_cursor.description = [("n",)]
+        good_cursor.fetchall.return_value = [(1,)]
+        mock_mssql.connect.return_value = good_conn
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        _cols, rows = run_query(_make_target(), "SELECT 1")
+
+        assert rows == [(1,)]
+        assert mock_mssql.connect.call_count == 1
+        assert fake_time.sleep.call_count == 0
+
+    def test_non_retryable_error_raises_immediately_no_sleep(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A non-retryable connect error is raised immediately without sleep or deadline check."""
+        fake_time = self._fake_time_within_deadline(n_failures=0)
+        monkeypatch.setattr(_sql_module, "time", fake_time)
+
+        mock_mssql, _, _ = _make_mock_mssql()
+        non_retryable = Exception("Incorrect syntax near 'SELCT'")
+        mock_mssql.connect.side_effect = non_retryable
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with pytest.raises(Exception, match="Incorrect syntax"):
+            run_query(_make_target(), "SELECT 1")
+
+        assert mock_mssql.connect.call_count == 1
+        assert fake_time.sleep.call_count == 0
 
 
 # ---------------------------------------------------------------------------
