@@ -617,24 +617,45 @@ async def test_execute_does_not_mark_discard_on_error() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_fake_time() -> MagicMock:
-    """Return a fake ``time`` module whose sleep is a no-op MagicMock."""
+def _make_fake_time(*, monotonic_values: list[float] | None = None) -> MagicMock:
+    """Return a fake ``time`` module whose sleep is a no-op MagicMock.
+
+    Args:
+        monotonic_values: When provided, ``time.monotonic`` returns successive
+            values from this list (enabling deterministic deadline testing).
+            When ``None``, the real ``time.monotonic`` is used.
+    """
     import time as _real_time  # noqa: PLC0415
 
     fake = MagicMock()
     fake.sleep = MagicMock()
-    fake.monotonic = MagicMock(side_effect=_real_time.monotonic)
+    if monotonic_values is not None:
+        values_iter = iter(monotonic_values)
+        fake.monotonic = MagicMock(side_effect=lambda: next(values_iter))
+    else:
+        fake.monotonic = MagicMock(side_effect=_real_time.monotonic)
     return fake
 
 
 class TestExecuteLoginRetry:
-    """sql_exec.execute retries transient 18456 auth-failed on the connect path."""
+    """sql_exec.execute retries transient 18456 auth-failed on the connect path.
+
+    The connect-phase retry is time-bounded (``_CONNECT_RETRY_TIMEOUT_S``, ~120 s).
+    Tests that exercise the deadline use a fake monotonic clock so that the
+    deadline check is exercised without real wall-clock delay.
+
+    Fake-clock convention: ``time.monotonic()`` is called once at the start of
+    ``_with_connect_retry`` to set the deadline, then once after each failed
+    attempt to check whether the deadline has passed.  Supply
+    ``1 + N`` values for ``N`` connect failures.
+    """
 
     @pytest.fixture(autouse=True)
     def _setup(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Disable pooling and replace time.sleep so retries are instant."""
         monkeypatch.setenv("FABRIC_SQL_POOL", "0")
         _sql_module.reset_pool()
+        # Default: real monotonic clock (deadline never fires in fast tests).
         monkeypatch.setattr(_sql_module, "time", _make_fake_time())
 
     @staticmethod
@@ -668,8 +689,13 @@ class TestExecuteLoginRetry:
 
         The first two connect attempts raise an auth-failed error; the third
         succeeds.  execute must return the result set without leaking any error
-        to the caller (no exception, no stderr noise).
+        to the caller (no exception, no stderr noise).  Two sleeps occur (one
+        before each retry), both within the deadline.
         """
+        # Provide a fake clock: t0=0 for deadline, then t=1.0 for each post-failure
+        # check (both well within the 120 s budget).
+        monkeypatch.setattr(_sql_module, "time", _make_fake_time(monotonic_values=[0.0, 1.0, 1.0]))
+
         auth_exc = self._make_auth_exc()
         good_conn = self._make_good_conn()
 
@@ -687,16 +713,25 @@ class TestExecuteLoginRetry:
         fake_time = _sql_module.time  # type: ignore[attr-defined]
         assert fake_time.sleep.call_count == 2  # ty: ignore[unresolved-attribute]
 
-    async def test_auth_failed_persistent_propagates_after_retries(
+    async def test_auth_failed_persistent_propagates_after_deadline(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A genuinely wrong credential propagates after all retry attempts.
+        """A genuinely wrong credential propagates once the ~120 s deadline expires.
 
-        All connect attempts raise 18456; after exhausting retries the last
-        exception must escape (downstream, map_driver_error would wrap it in
-        AuthError — this test verifies the raw exception propagates from
-        _with_connect_retry).
+        The fake clock jumps past the deadline immediately after the first
+        failure, so the loop raises after exactly 1 connect attempt (no sleep).
+        The last retryable exception escapes from _with_connect_retry — downstream
+        code (map_driver_error) would wrap it in AuthError.
         """
+        timeout = _sql_module._CONNECT_RETRY_TIMEOUT_S
+        # call 0: t0=0 → deadline = 0 + timeout
+        # call 1: past deadline → raise
+        monkeypatch.setattr(
+            _sql_module,
+            "time",
+            _make_fake_time(monotonic_values=[0.0, timeout + 1.0]),
+        )
+
         auth_exc = self._make_auth_exc()
 
         mock_mssql = MagicMock()
@@ -706,8 +741,11 @@ class TestExecuteLoginRetry:
         with pytest.raises(Exception, match="authentication failed"):
             await sql_exec.execute(_REAL_TARGET, "SELECT 1")
 
-        # 1 initial + SQL_TRANSIENT_MAX_RETRIES retries.
-        assert mock_mssql.connect.call_count == 1 + _sql_module.SQL_TRANSIENT_MAX_RETRIES
+        # Deadline fires after the first attempt — only 1 connect call.
+        assert mock_mssql.connect.call_count == 1
+        fake_time = _sql_module.time  # type: ignore[attr-defined]
+        # No sleep: the loop raises before sleeping when deadline is already exceeded.
+        assert fake_time.sleep.call_count == 0  # ty: ignore[unresolved-attribute]
 
     async def test_non_auth_error_on_connect_propagates_immediately(
         self, monkeypatch: pytest.MonkeyPatch

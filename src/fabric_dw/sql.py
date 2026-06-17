@@ -79,14 +79,40 @@ __all__ = [
 
 # Maximum number of retry attempts for transient TDS connection drops.
 # Set to 0 to disable retries entirely.  Unit tests can monkeypatch this.
+# NOTE: this constant is only used by the *execute-phase* retry logic inside
+# run_query.  The *connect-phase* helper (_with_connect_retry) uses a
+# wall-clock deadline (_CONNECT_RETRY_TIMEOUT_S) instead of a fixed attempt
+# count so that slow warehouse warm-ups are fully covered.
 SQL_TRANSIENT_MAX_RETRIES: int = 2
 
-# Fixed delays (seconds) between retry attempts.  Index 0 = delay before
-# attempt 2, index 1 = delay before attempt 3, etc.  Extend if needed.
-# A flat 10s gap is used so that a warming-up warehouse (which typically
-# takes several seconds to become ready after the first auth failure) has
-# enough time to finish provisioning before the next attempt.
+# Fixed delays (seconds) between retry attempts for the *execute phase*.
+# Index 0 = delay before attempt 2, index 1 = delay before attempt 3, etc.
 _TRANSIENT_RETRY_DELAYS: tuple[float, ...] = (10.0, 10.0)
+
+# ---------------------------------------------------------------------------
+# Connect-phase retry configuration
+# ---------------------------------------------------------------------------
+
+# Total wall-clock budget (seconds) for the connect-phase retry loop inside
+# _with_connect_retry.  The loop keeps retrying while _is_connect_retryable
+# returns True and the elapsed time is less than this budget.
+#
+# 120 s covers the observed Fabric warehouse warm-up window (~60-90 s) with
+# comfortable margin.
+#
+# **Trade-off**: a genuinely-wrong credential will now hang up to ~120 s
+# before the AuthError is surfaced to the caller — because the retry loop
+# cannot distinguish "wrong credential" from "warehouse still warming up".
+# This latency is accepted: the warm-up case is far more common in production.
+_CONNECT_RETRY_TIMEOUT_S: float = 120.0
+
+# Backoff delays for the connect-phase retry loop.  The delay before attempt
+# N+1 is _CONNECT_RETRY_DELAYS[min(N, len-1)], so the sequence is:
+#   attempt 1 → fails → sleep 5 s → attempt 2
+#   attempt 2 → fails → sleep 10 s → attempt 3
+#   attempt 3 → fails → sleep 15 s → attempt 4
+#   attempt 4+ → fails → sleep 15 s → attempt 5 … (capped at 15 s)
+_CONNECT_RETRY_DELAYS: tuple[float, ...] = (5.0, 10.0, 15.0)
 
 # ---------------------------------------------------------------------------
 # Timeout configuration
@@ -806,9 +832,16 @@ def _is_connect_retryable(exc: BaseException) -> bool:
     login with "authentication failed" / "could not login" until the TDS
     endpoint finishes provisioning — even when the credentials are correct.
 
-    **Trade-off**: a genuinely-wrong credential will now be retried 2x (~20s)
-    before the AuthError is surfaced to the caller.  This is intentional and
-    accepted because the warm-up case is far more common in production usage.
+    **Warm-up window**: :func:`_with_connect_retry` retries retryable errors
+    for up to ``_CONNECT_RETRY_TIMEOUT_S`` seconds (~120 s by default), which
+    is enough margin to cover observed Fabric warehouse warm-up durations
+    (~60-90 s).
+
+    **Trade-off**: a genuinely-wrong credential will now hang up to ~120 s
+    before the AuthError is surfaced to the caller, because the retry loop
+    cannot distinguish "wrong credential" from "warehouse still warming up".
+    This is intentional and accepted: the warm-up case is far more common in
+    production usage.
 
     Scope: this helper is ONLY used by :func:`_with_connect_retry`.  It is NOT
     used in the execute-phase retry logic — auth errors there are still mapped
@@ -836,8 +869,8 @@ def _with_connect_retry(
     """Attempt to open a connection, retrying on transient connect failures.
 
     This is a shared helper for :func:`run_query` and :func:`run_statements`
-    (D08 - DRY extraction).  It encapsulates the bounded transient-retry loop
-    for the **connect phase only** — the execute phase is NOT covered here.
+    (D08 - DRY extraction).  It encapsulates the time-bounded transient-retry
+    loop for the **connect phase only** — the execute phase is NOT covered here.
 
     Retry boundary (D10)
     --------------------
@@ -847,12 +880,21 @@ def _with_connect_retry(
     server already received and applied the statement — retrying such errors
     for non-idempotent DML would risk duplicate execution.
 
-    Auth-failed retries
-    -------------------
+    Auth-failed retries / warm-up window
+    -------------------------------------
     Authentication failures (error 18456) are retried here because a
     warming-up Fabric warehouse may reject the login until provisioning
-    completes — even with correct credentials.  See :func:`_is_connect_retryable`
-    for the trade-off note.
+    completes — even with correct credentials.  The retry window is governed
+    by ``_CONNECT_RETRY_TIMEOUT_S`` (~120 s by default) so that the full
+    warehouse warm-up duration is covered.
+
+    **Trade-off**: a genuinely-wrong credential will now hang for up to ~120 s
+    before the AuthError is surfaced to the caller.  See
+    :func:`_is_connect_retryable` for a fuller discussion.
+
+    Clock / sleep are referenced through the ``time`` module object so that
+    unit tests can substitute a fake clock without real delays:
+    ``monkeypatch.setattr(_sql_module, "time", fake_time_module)``.
 
     Args:
         target: The :class:`SqlTarget` to connect to.
@@ -862,37 +904,48 @@ def _with_connect_retry(
     Returns:
         A tuple ``(conn, attempt, max_attempts, last_exc)`` where:
         - ``conn`` is the open connection (ready to use).
-        - ``attempt`` is the zero-based attempt index that succeeded.
-        - ``max_attempts`` is the total allowed attempts.
+        - ``attempt`` is the zero-based attempt index that succeeded (0 on the
+          first attempt, 1 on the first retry, etc.).
+        - ``max_attempts`` is always ``attempt + 2``.  This sentinel ensures that
+          the execute-phase retry gate in :func:`run_query`
+          (``attempt < max_attempts - 1``) evaluates to ``True``, preserving the
+          "at most one execute-phase retry" behaviour regardless of how many
+          connect-phase retries occurred.
         - ``last_exc`` is the last transient exception seen before success
           (``None`` on first-attempt success).
 
     Raises:
         Any non-retryable exception from ``open_connection`` immediately.
-        The last retryable exception if all attempts are exhausted.
+        The last retryable exception when the wall-clock deadline passes.
     """
-    max_attempts = 1 + max(0, SQL_TRANSIENT_MAX_RETRIES)
+    deadline = time.monotonic() + _CONNECT_RETRY_TIMEOUT_S
     last_exc: BaseException | None = None
-    for attempt in range(max_attempts):
-        if attempt > 0:
-            # Back off before the next attempt.  _TRANSIENT_RETRY_DELAYS is
-            # indexed from 0 (= delay before attempt 2); clamp to last value.
-            delay = _TRANSIENT_RETRY_DELAYS[min(attempt - 1, len(_TRANSIENT_RETRY_DELAYS) - 1)]
-            time.sleep(delay)
+    attempt = 0
 
+    while True:
         try:
             conn = open_connection(target, mode=mode, autocommit=autocommit)
         except Exception as exc:
-            if _is_connect_retryable(exc) and attempt < max_attempts - 1:
-                last_exc = exc
-                continue
-            raise
+            if not _is_connect_retryable(exc):
+                # Non-retryable error — raise immediately without any delay.
+                raise
+            last_exc = exc
+            if time.monotonic() >= deadline:
+                # Budget exhausted — surface the last retryable error.
+                raise
+            # Back off before the next attempt.  _CONNECT_RETRY_DELAYS is
+            # indexed from 0 (= delay before attempt 2); clamp to last value.
+            delay = _CONNECT_RETRY_DELAYS[min(attempt, len(_CONNECT_RETRY_DELAYS) - 1)]
+            time.sleep(delay)
+            attempt += 1
+            continue
         else:
-            return conn, attempt, max_attempts, last_exc
-
-    # Exhausted all attempts — re-raise the last retryable error.
-    assert last_exc is not None  # noqa: S101  # guaranteed: loop ran ≥1 time
-    raise last_exc  # pragma: no cover
+            # Connection succeeded.
+            # Return a max_attempts value that is always > attempt + 1 so that
+            # the execute-phase retry gate in run_query (``attempt < max_attempts - 1``)
+            # continues to fire correctly: the execute phase is allowed at most
+            # one retry regardless of how many connect retries occurred.
+            return conn, attempt, attempt + 2, last_exc
 
 
 def run_query(  # noqa: PLR0913
