@@ -34,7 +34,7 @@ pip install fabric-dw
 uvx fabric-dw --help
 ```
 
-The `fdw` command is a short alias for `fabric-dw` — both invoke the same entry point.
+After installation, the `fdw` command is a short alias for `fabric-dw` — both invoke the same entry point.
 
 ## Quick Start
 

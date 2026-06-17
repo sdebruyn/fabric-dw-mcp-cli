@@ -18,23 +18,23 @@ _EXPECTED_SCRIPTS: dict[str, str] = {
     "fabric-dw-mcp": "fabric_dw.mcp.server:run",
 }
 
+_SCRIPTS: dict[str, str] = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"][
+    "scripts"
+]
+
 
 def test_console_scripts_declared() -> None:
     """All expected console scripts are present and target the correct entry point."""
-    data = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
-    scripts: dict[str, str] = data["project"]["scripts"]
     for name, target in _EXPECTED_SCRIPTS.items():
-        assert name in scripts, f"console script {name!r} not found in [project.scripts]"
-        assert scripts[name] == target, (
-            f"console script {name!r} targets {scripts[name]!r}, expected {target!r}"
+        assert name in _SCRIPTS, f"console script {name!r} not found in [project.scripts]"
+        assert _SCRIPTS[name] == target, (
+            f"console script {name!r} targets {_SCRIPTS[name]!r}, expected {target!r}"
         )
 
 
 def test_fdw_and_fabric_dw_same_target() -> None:
     """`fdw` and `fabric-dw` must point to the identical entry point."""
-    data = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
-    scripts: dict[str, str] = data["project"]["scripts"]
-    assert scripts["fdw"] == scripts["fabric-dw"], (
-        f"'fdw' ({scripts['fdw']!r}) and 'fabric-dw' ({scripts['fabric-dw']!r}) "
+    assert _SCRIPTS["fdw"] == _SCRIPTS["fabric-dw"], (
+        f"'fdw' ({_SCRIPTS['fdw']!r}) and 'fabric-dw' ({_SCRIPTS['fabric-dw']!r}) "
         "must share the same target"
     )
