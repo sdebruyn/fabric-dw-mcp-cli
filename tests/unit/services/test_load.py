@@ -274,6 +274,12 @@ class TestCopyIntoFromUrlGuard:
 
 class TestCopyIntoFromUrl:
     async def test_returns_copy_into_result(self) -> None:
+        """copy_into_from_url must return rows_loaded from cursor.rowcount (fetch='rowcount').
+
+        mssql-python ≥ 1.9.0: COPY INTO returns no result set; run_query with
+        fetch='rowcount' returns ([], [(N,)]) where N is cursor.rowcount.
+        rows_rejected is always 0 (not exposed via ODBC rowcount).
+        """
         from fabric_dw.sql import SqlTarget  # noqa: PLC0415
 
         target = SqlTarget(
@@ -281,10 +287,8 @@ class TestCopyIntoFromUrl:
         )
 
         with patch("fabric_dw.services.load.run_query") as mock_run:
-            mock_run.return_value = (
-                ["rows_loaded", "rows_rejected"],
-                [(100, 2)],
-            )
+            # Simulate fetch="rowcount" return: ([], [(N,)])
+            mock_run.return_value = ([], [(100,)])
             result = await copy_into_from_url(
                 target,
                 "dbo",
@@ -295,8 +299,76 @@ class TestCopyIntoFromUrl:
 
         assert isinstance(result, CopyIntoResult)
         assert result.rows_loaded == 100
-        assert result.rows_rejected == 2
+        assert result.rows_rejected == 0  # not available via rowcount
         assert result.target == "dbo.sales"
+        # Verify fetch="rowcount" was requested
+        _call_kwargs = mock_run.call_args.kwargs
+        assert _call_kwargs.get("fetch") == "rowcount"
+        assert _call_kwargs.get("commit") is True
+
+    async def test_rowcount_negative_treated_as_zero(self) -> None:
+        """ODBC rowcount=-1 (unknown) must be treated as 0 rows loaded."""
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+
+        with patch("fabric_dw.services.load.run_query") as mock_run:
+            # Simulate ODBC rowcount=-1 (driver cannot determine count)
+            mock_run.return_value = ([], [(-1,)])
+            result = await copy_into_from_url(
+                target,
+                "dbo",
+                "t",
+                "https://example.com/f.parquet",
+                file_type="PARQUET",
+            )
+
+        assert result.rows_loaded == 0
+        assert result.rows_rejected == 0
+
+    async def test_rowcount_none_treated_as_zero(self) -> None:
+        """rowcount=None in result rows must be treated as 0 rows loaded."""
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+
+        with patch("fabric_dw.services.load.run_query") as mock_run:
+            mock_run.return_value = ([], [(None,)])
+            result = await copy_into_from_url(
+                target,
+                "dbo",
+                "t",
+                "https://example.com/f.parquet",
+                file_type="PARQUET",
+            )
+
+        assert result.rows_loaded == 0
+        assert result.rows_rejected == 0
+
+    async def test_empty_rows_treated_as_zero(self) -> None:
+        """Empty rows list from run_query must yield rows_loaded=0."""
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+
+        with patch("fabric_dw.services.load.run_query") as mock_run:
+            mock_run.return_value = ([], [])
+            result = await copy_into_from_url(
+                target,
+                "dbo",
+                "t",
+                "https://example.com/f.parquet",
+                file_type="PARQUET",
+            )
+
+        assert result.rows_loaded == 0
+        assert result.rows_rejected == 0
 
     async def test_secret_not_logged(self, caplog: pytest.LogCaptureFixture) -> None:
         """Secret values must never appear in log output (happy path)."""
@@ -311,7 +383,7 @@ class TestCopyIntoFromUrl:
             caplog.at_level(logging.DEBUG, logger="fabric_dw"),
             patch("fabric_dw.services.load.run_query") as mock_run,
         ):
-            mock_run.return_value = (["rows_loaded"], [(5,)])
+            mock_run.return_value = ([], [(5,)])
             await copy_into_from_url(
                 target,
                 "dbo",

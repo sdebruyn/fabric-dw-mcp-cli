@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -413,6 +413,226 @@ class TestShowStatistics:
         target = _make_target()
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await statistics.show_statistics(target, "dbo.sales", "stat'name")
+
+    # --- Eventual-consistency retry (Fabric DW: DBCC SHOW_STATISTICS transient error) ---
+
+    async def test_retries_on_could_not_locate_statistics_then_succeeds(self) -> None:
+        """show_statistics must retry when DBCC raises 'Could not locate statistics'.
+
+        Simulate 2 transient "Could not locate statistics" errors followed by a
+        successful DBCC result.  The function must retry and ultimately return a
+        populated StatisticDetails.
+        """
+        target = _make_target()
+        transient_exc = Exception("Could not locate statistics 'pytest_stat_on_id'.")
+        header_conn_ok = _make_conn([_HEADER_ROW], _HEADER_COLS)
+        density_conn_ok = _make_conn([_DENSITY_ROW], _DENSITY_COLS)
+        hist_conn_ok = _make_conn([_HISTOGRAM_ROW], _HISTOGRAM_COLS)
+
+        call_count = 0
+
+        def _open_connection_side_effect(*_args: object, **_kwargs: object) -> object:
+            nonlocal call_count
+            call_count += 1
+            # First two attempts: the header connection raises the transient error.
+            # We do this by returning a connection whose cursor.execute raises.
+            if call_count in (1, 2):
+                bad_conn = MagicMock()
+                bad_cursor = MagicMock()
+                bad_cursor.execute.side_effect = transient_exc
+                bad_conn.cursor.return_value = bad_cursor
+                return bad_conn
+            # 3rd, 4th, 5th calls: the three successful DBCC queries.
+            if call_count == 3:
+                return header_conn_ok
+            if call_count == 4:
+                return density_conn_ok
+            return hist_conn_ok
+
+        with (
+            patch("fabric_dw.sql.open_connection", side_effect=_open_connection_side_effect),
+            patch("asyncio.sleep"),  # suppress real sleep in tests
+        ):
+            result = await statistics.show_statistics(
+                target,
+                "dbo.sales",
+                "stat_sales_id",
+                # Use a generous timeout so the test never races against the wall clock.
+            )
+
+        assert isinstance(result, StatisticDetails)
+        assert result.stat_header is not None
+        assert result.stat_header.name == "stat_sales_id"
+
+    async def test_retries_histogram_only_on_could_not_locate_statistics(self) -> None:
+        """show_statistics must retry the histogram_only path on the transient DBCC error.
+
+        The retry loop wraps the entire _run_once, including the histogram_only
+        early-return branch.  Verify that a transient "Could not locate statistics"
+        error on the histogram query is retried and ultimately returns a result.
+        """
+        target = _make_target()
+        transient_exc = Exception("Could not locate statistics 'stat_sales_id'.")
+        hist_conn_ok = _make_conn([_HISTOGRAM_ROW], _HISTOGRAM_COLS)
+
+        call_count = 0
+
+        def _open_connection_side_effect(*_args: object, **_kwargs: object) -> object:
+            nonlocal call_count
+            call_count += 1
+            # First attempt: histogram query raises the transient error.
+            if call_count == 1:
+                bad_conn = MagicMock()
+                bad_cursor = MagicMock()
+                bad_cursor.execute.side_effect = transient_exc
+                bad_conn.cursor.return_value = bad_cursor
+                return bad_conn
+            # Second attempt: successful histogram query.
+            return hist_conn_ok
+
+        with (
+            patch("fabric_dw.sql.open_connection", side_effect=_open_connection_side_effect),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            result = await statistics.show_statistics(
+                target,
+                "dbo.sales",
+                "stat_sales_id",
+                histogram_only=True,
+            )
+
+        assert isinstance(result, StatisticDetails)
+        assert result.stat_header is None
+        assert result.density_vector == []
+        assert len(result.histogram) == 1
+
+    async def test_retries_promoted_not_found_error_on_could_not_locate_statistics(self) -> None:
+        """show_statistics must retry even when the driver error is promoted to NotFoundError.
+
+        map_driver_error() inside run_query can promote a raw driver exception to
+        NotFoundError before it reaches show_statistics.  The retry predicate checks
+        the message on ANY exception type, so a NotFoundError whose message contains
+        "could not locate statistics" must still be retried.
+        """
+        target = _make_target()
+        # Simulate map_driver_error promoting the transient DBCC error to NotFoundError.
+        promoted_exc = NotFoundError("Could not locate statistics 'stat_sales_id'.")
+        hist_conn_ok = _make_conn([_HISTOGRAM_ROW], _HISTOGRAM_COLS)
+        header_conn_ok = _make_conn([_HEADER_ROW], _HEADER_COLS)
+        density_conn_ok = _make_conn([_DENSITY_ROW], _DENSITY_COLS)
+
+        call_count = 0
+
+        def _open_connection_side_effect(*_args: object, **_kwargs: object) -> object:
+            nonlocal call_count
+            call_count += 1
+            # First call: raises promoted NotFoundError with the transient message.
+            if call_count == 1:
+                bad_conn = MagicMock()
+                bad_cursor = MagicMock()
+                bad_cursor.execute.side_effect = promoted_exc
+                bad_conn.cursor.return_value = bad_cursor
+                return bad_conn
+            # Subsequent calls: successful queries.
+            if call_count == 2:
+                return header_conn_ok
+            if call_count == 3:
+                return density_conn_ok
+            return hist_conn_ok
+
+        with (
+            patch("fabric_dw.sql.open_connection", side_effect=_open_connection_side_effect),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            result = await statistics.show_statistics(target, "dbo.sales", "stat_sales_id")
+
+        assert isinstance(result, StatisticDetails)
+        assert result.stat_header is not None
+
+    async def test_does_not_retry_on_unrelated_error(self) -> None:
+        """show_statistics must NOT retry on errors unrelated to eventual consistency."""
+        target = _make_target()
+        unrelated_exc = Exception("Some other database error")
+        bad_conn = MagicMock()
+        bad_cursor = MagicMock()
+        bad_cursor.execute.side_effect = unrelated_exc
+        bad_conn.cursor.return_value = bad_cursor
+
+        sleep_calls: list[float] = []
+
+        async def _fake_sleep(secs: float) -> None:
+            sleep_calls.append(secs)
+
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=bad_conn),
+            patch("asyncio.sleep", side_effect=_fake_sleep),
+            pytest.raises(Exception, match="Some other database error"),
+        ):
+            await statistics.show_statistics(target, "dbo.sales", "stat_sales_id")
+
+        # No sleep should have been called — we propagated immediately.
+        assert sleep_calls == []
+
+    async def test_raises_not_found_after_timeout(self) -> None:
+        """show_statistics must raise NotFoundError once the retry deadline is exhausted."""
+        target = _make_target()
+        transient_exc = Exception("Could not locate statistics 'stat'.")
+        bad_conn = MagicMock()
+        bad_cursor = MagicMock()
+        bad_cursor.execute.side_effect = transient_exc
+        bad_conn.cursor.return_value = bad_cursor
+
+        # Monkeypatch time.monotonic to advance past the deadline on the first retry.
+        _start = 1_000_000.0  # arbitrary fixed start
+        _call = 0
+
+        def _fake_monotonic() -> float:
+            nonlocal _call
+            _call += 1
+            # First call (deadline = start + timeout): return _start.
+            # Every subsequent call: return _start + timeout + 1 (past deadline).
+            if _call == 1:
+                return _start
+            return _start + statistics._DBCC_STAT_TIMEOUT + 1
+
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=bad_conn),
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+            patch("fabric_dw.services.statistics.time") as mock_time,
+        ):
+            mock_time.monotonic.side_effect = _fake_monotonic
+            with pytest.raises(NotFoundError):
+                await statistics.show_statistics(target, "dbo.sales", "stat")
+
+        # Deadline was already exhausted after the first attempt — sleep must not
+        # have been called (we raise NotFoundError, not sleep-and-retry).
+        mock_sleep.assert_not_called()
+
+    async def test_not_found_from_empty_rows_is_not_retried(self) -> None:
+        """Empty DBCC result (stat simply does not exist) must raise NotFoundError immediately.
+
+        This is distinct from the 'Could not locate statistics' driver error —
+        an empty result set means the stat definitively does not exist and must
+        not trigger the eventual-consistency retry loop.
+        """
+        target = _make_target()
+        # Cursor returns no rows for the header query (stat absent from DBCC output).
+        header_conn = _make_conn([], _HEADER_COLS)
+
+        sleep_calls: list[float] = []
+
+        async def _fake_sleep(secs: float) -> None:
+            sleep_calls.append(secs)
+
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=header_conn),
+            patch("asyncio.sleep", side_effect=_fake_sleep),
+            pytest.raises(NotFoundError),
+        ):
+            await statistics.show_statistics(target, "dbo.sales", "nonexistent_stat")
+
+        # No sleep — NotFoundError from empty rows is not retriable.
+        assert sleep_calls == []
 
 
 # ===========================================================================
