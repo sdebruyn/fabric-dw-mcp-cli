@@ -762,11 +762,16 @@ async def copy_into_from_url(
     _logger.debug("copy_into_from_url: schema=%s table=%s file_type=%s", schema, table, file_type)
 
     def _run() -> tuple[int, int]:
-        # COPY INTO returns a result set with (rows_loaded, rows_rejected, …)
+        # mssql-python ≥ 1.9.0: COPY INTO produces NO result set.
+        # cursor.description is None and fetchall() raises
+        # ProgrammingError: Invalid cursor state.
+        # cursor.rowcount correctly equals the number of rows loaded.
+        # rows_rejected is not exposed via the ODBC rowcount API; it is
+        # always reported as 0 here (known limitation).
 
         _mode = mode if isinstance(mode, CredentialMode) else CredentialMode.DEFAULT
         try:
-            cols, rows = run_query(target, sql, mode=_mode, commit=True)
+            _cols, rows = run_query(target, sql, mode=_mode, commit=True, fetch="rowcount")
         except FabricError:
             # Already a mapped high-level error — re-raise as-is; it does not
             # contain the raw SQL statement text.
@@ -788,20 +793,16 @@ async def copy_into_from_url(
                 f"{type(exc).__name__} (details suppressed to protect credentials)"
             )
             raise FabricError(safe_msg) from exc
-        if rows:
-            row = rows[0]
-            # The result set columns vary slightly by Fabric version.
-            # Columns: rows_loaded, rows_rejected [, rejected_file_location]
-            try:
-                col_map = {c.lower(): i for i, c in enumerate(cols)}
-                loaded = int(row[col_map.get("rows_loaded", 0)] or 0)
-                rejected_idx = col_map.get("rows_rejected")
-                rejected = int(row[rejected_idx] or 0) if rejected_idx is not None else 0
-            except (IndexError, TypeError, ValueError):
-                loaded = int(row[0] or 0) if row else 0
-                rejected = 0
-            return loaded, rejected
-        return 0, 0
+        # rows[0][0] is cursor.rowcount from run_query fetch="rowcount".
+        # ODBC rowcount is -1 when the driver cannot determine the count;
+        # treat any negative value as 0.
+        rows_loaded = (
+            int(rows[0][0])
+            if rows and rows[0] and rows[0][0] is not None and rows[0][0] >= 0
+            else 0
+        )
+        rows_rejected = 0
+        return rows_loaded, rows_rejected
 
     rows_loaded, rows_rejected = await asyncio.to_thread(_run)
     return CopyIntoResult(

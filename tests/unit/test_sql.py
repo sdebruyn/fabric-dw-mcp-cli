@@ -2168,3 +2168,224 @@ class TestFetchBeforeCommitOrdering:
         assert result_rows == []
         # Verify commit was actually called.
         assert fake_conn._committed[0] is True
+
+
+# ---------------------------------------------------------------------------
+# D13 — fetch="rowcount" mode (COPY INTO cursor.rowcount, no result set)
+# ---------------------------------------------------------------------------
+
+
+class _RowcountCursor:
+    """Fake cursor that mimics COPY INTO on mssql-python ≥ 1.9.0.
+
+    - description is None (no result set returned).
+    - fetchall() raises ProgrammingError (Invalid cursor state).
+    - rowcount == N (the number of rows loaded).
+    """
+
+    def __init__(self, rowcount: int) -> None:
+        self.description: None = None
+        self.rowcount: int = rowcount
+        self._committed: list[bool]  # set by owning connection after construction
+
+    def execute(self, _sql: str, _params: object = None) -> None:
+        pass
+
+    def fetchall(self) -> list[tuple[object, ...]]:
+        raise _ProgrammingError("Invalid cursor state")
+
+    def fetchone(self) -> tuple[object, ...] | None:
+        raise _ProgrammingError("Invalid cursor state")
+
+    def nextset(self) -> bool | None:
+        return False
+
+    def close(self) -> None:
+        pass
+
+
+class _RowcountConnection:
+    """Fake _Connection for rowcount-based cursor."""
+
+    def __init__(self, rowcount: int) -> None:
+        self._committed: list[bool] = [False]
+        self._cursor = _RowcountCursor(rowcount)
+        self._cursor._committed = self._committed
+
+    def cursor(self) -> _RowcountCursor:
+        return self._cursor
+
+    def commit(self) -> None:
+        self._committed[0] = True
+
+    def rollback(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+class TestFetchRowcountMode:
+    """D13: fetch='rowcount' reads cursor.rowcount instead of fetching a result set.
+
+    This covers the COPY INTO case on mssql-python ≥ 1.9.0 where:
+    - cursor.description is None
+    - fetchall() raises ProgrammingError
+    - cursor.rowcount == rows loaded
+    """
+
+    def _patch_with_rowcount_conn(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        rowcount: int,
+    ) -> _RowcountConnection:
+        fake_conn = _RowcountConnection(rowcount)
+        mock_mssql = MagicMock()
+        mock_mssql.connect.return_value = fake_conn
+        monkeypatch.setattr(_sql_module, "_mssql", mock_mssql)
+        return fake_conn
+
+    def test_rowcount_returns_count_tuple(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """fetch='rowcount' must return ([], [(N,)]) for rowcount=N."""
+        fake_conn = self._patch_with_rowcount_conn(monkeypatch, 3)
+
+        cols, rows = run_query(
+            _make_target(),
+            "COPY INTO [dbo].[t] FROM '...' WITH (FILE_TYPE='PARQUET');",
+            commit=True,
+            fetch="rowcount",
+        )
+
+        assert cols == []
+        assert rows == [(3,)]
+        # commit must have been called
+        assert fake_conn._committed[0] is True
+
+    def test_rowcount_commit_false_does_not_commit(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """fetch='rowcount' + commit=False must NOT call commit()."""
+        fake_conn = self._patch_with_rowcount_conn(monkeypatch, 5)
+
+        _cols, rows = run_query(
+            _make_target(),
+            "COPY INTO [dbo].[t] FROM '...' WITH (FILE_TYPE='PARQUET');",
+            commit=False,
+            fetch="rowcount",
+        )
+
+        assert rows == [(5,)]
+        assert fake_conn._committed[0] is False
+
+    def test_rowcount_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """fetch='rowcount' must return ([], [(0,)]) when rowcount=0."""
+        self._patch_with_rowcount_conn(monkeypatch, 0)
+
+        _cols, rows = run_query(
+            _make_target(),
+            "COPY INTO [dbo].[t] FROM '...' WITH (FILE_TYPE='PARQUET');",
+            fetch="rowcount",
+        )
+
+        assert rows == [(0,)]
+
+    def test_rowcount_does_not_call_fetchall(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """fetch='rowcount' must NOT call fetchall() (which would raise Invalid cursor state)."""
+        fake_conn = self._patch_with_rowcount_conn(monkeypatch, 7)
+        # Verify that the cursor's fetchall would indeed raise
+        with pytest.raises(_ProgrammingError, match="Invalid cursor state"):
+            fake_conn._cursor.fetchall()
+
+        # But run_query with fetch='rowcount' must NOT raise despite that
+        _cols, rows = run_query(
+            _make_target(),
+            "COPY INTO [dbo].[t] FROM '...' WITH (FILE_TYPE='PARQUET');",
+            fetch="rowcount",
+        )
+        assert rows == [(7,)]
+
+
+# ---------------------------------------------------------------------------
+# D14 — defensive guard: fetch="all"/"one" with description=None returns ([], [])
+# ---------------------------------------------------------------------------
+
+
+class _NoResultSetCursor:
+    """Fake cursor that returns description=None and raises on fetch (no result set)."""
+
+    def __init__(self) -> None:
+        self.description: None = None
+        self.rowcount: int = -1
+
+    def execute(self, _sql: str, _params: object = None) -> None:
+        pass
+
+    def fetchall(self) -> list[tuple[object, ...]]:
+        raise _ProgrammingError("Invalid cursor state")
+
+    def fetchone(self) -> tuple[object, ...] | None:
+        raise _ProgrammingError("Invalid cursor state")
+
+    def close(self) -> None:
+        pass
+
+
+class _NoResultSetConnection:
+    def __init__(self) -> None:
+        self._committed: list[bool] = [False]
+        self._cursor = _NoResultSetCursor()
+
+    def cursor(self) -> _NoResultSetCursor:
+        return self._cursor
+
+    def commit(self) -> None:
+        self._committed[0] = True
+
+    def rollback(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+class TestFetchAllDescriptionNoneGuard:
+    """D14: fetch='all'/'one' with description=None must return ([], []) without raising."""
+
+    def _patch(self, monkeypatch: pytest.MonkeyPatch) -> _NoResultSetConnection:
+        fake_conn = _NoResultSetConnection()
+        mock_mssql = MagicMock()
+        mock_mssql.connect.return_value = fake_conn
+        monkeypatch.setattr(_sql_module, "_mssql", mock_mssql)
+        return fake_conn
+
+    def test_fetch_all_description_none_returns_empty(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """fetch='all' with description=None must return ([], []) and NOT raise."""
+        fake_conn = self._patch(monkeypatch)
+
+        cols, rows = run_query(
+            _make_target(),
+            "COPY INTO [dbo].[t] FROM '...' WITH (FILE_TYPE='PARQUET');",
+            commit=True,
+            fetch="all",
+        )
+
+        assert cols == []
+        assert rows == []
+        assert fake_conn._committed[0] is True
+
+    def test_fetch_one_description_none_returns_empty(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """fetch='one' with description=None must return ([], []) and NOT raise."""
+        fake_conn = self._patch(monkeypatch)
+
+        cols, rows = run_query(
+            _make_target(),
+            "COPY INTO [dbo].[t] FROM '...' WITH (FILE_TYPE='PARQUET');",
+            commit=True,
+            fetch="one",
+        )
+
+        assert cols == []
+        assert rows == []
+        assert fake_conn._committed[0] is True

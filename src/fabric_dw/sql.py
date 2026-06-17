@@ -902,7 +902,7 @@ def run_query(  # noqa: PLR0913
     params: Sequence[object] | None = None,
     mode: CredentialMode = CredentialMode.DEFAULT,
     commit: bool = False,
-    fetch: Literal["all", "none", "one"] = "all",
+    fetch: Literal["all", "none", "one", "rowcount"] = "all",
     autocommit: bool = False,
 ) -> tuple[list[str], list[tuple[Any, ...]]]:
     """Open a connection, execute *statement*, fetch rows, close, and map errors.
@@ -945,9 +945,21 @@ def run_query(  # noqa: PLR0913
         fetch: One of:
             - ``"all"`` (default) — call ``fetchall()`` and return
               ``(columns, rows)``; columns are derived from ``cursor.description``.
+              If ``cursor.description`` is ``None`` (no result set), returns
+              ``([], [])`` without calling ``fetchall()`` (defensive guard against
+              ``ProgrammingError: Invalid cursor state``).
             - ``"one"`` — call ``fetchone()``; returns ``(columns, [row])``
-              or ``(columns, [])`` when no row is found.
+              or ``(columns, [])`` when no row is found.  Same ``description``
+              guard applies.
             - ``"none"`` — do not fetch; returns ``([], [])``.
+            - ``"rowcount"`` — read ``cursor.rowcount`` instead of fetching a
+              result set.  Returns ``([], [(rowcount,)])`` so callers read
+              ``rows[0][0]``.  Commits (when requested) AFTER reading rowcount.
+              Use for statements that produce no result set but report an affected-
+              row count via the ODBC ``SQLRowCount`` API (e.g. ``COPY INTO`` on
+              mssql-python ≥ 1.9.0 — ``cursor.description`` is ``None`` and
+              ``fetchall()`` raises ``ProgrammingError: Invalid cursor state``,
+              but ``cursor.rowcount`` correctly equals the rows loaded).
 
         autocommit: When ``True``, open the connection with ODBC-level autocommit
             so the driver does not wrap the statement in an explicit transaction.
@@ -984,12 +996,31 @@ def run_query(  # noqa: PLR0913
                 c.commit()
             return [], []
 
+        if fetch == "rowcount":
+            # Read cursor.rowcount immediately — COPY INTO (and similar
+            # statements) produce no result set on mssql-python ≥ 1.9.0:
+            # cursor.description is None and fetchall() raises
+            # ProgrammingError: Invalid cursor state.
+            # cursor.rowcount is correctly set to the number of affected rows.
+            rc = cur.rowcount
+            if commit and not autocommit:
+                c.commit()
+            return [], [(rc,)]
+
+        # Defensive guard: if the driver returns no result set (description is
+        # None) for an "all" or "one" fetch, commit (when requested) and return
+        # empty results instead of calling fetchall()/fetchone() which would
+        # raise "ProgrammingError: Invalid cursor state".
+        if cur.description is None:
+            if commit and not autocommit:
+                c.commit()
+            return [], []
+
         # Fetch the result set BEFORE committing.  Committing first invalidates
         # the cursor's prepared statement on mssql-python, which causes
         # "Associated statement is not prepared" on the subsequent fetchall/
-        # fetchone call.  COPY INTO is the primary path that sets both
-        # commit=True and fetch != "none".
-        cols = [col[0] for col in (cur.description or [])]
+        # fetchone call.
+        cols = [col[0] for col in cur.description]
 
         if fetch == "one":
             row = cur.fetchone()
