@@ -3,16 +3,41 @@
 from __future__ import annotations
 
 import base64
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+import fabric_dw.sql as _sql_module
 from fabric_dw.exceptions import AuthError, PermissionDeniedError
 from fabric_dw.models import SqlResult
 from fabric_dw.services import sql_exec
+from fabric_dw.sql import SqlTarget
 from tests.unit.services._helpers import _make_conn, _make_no_result_conn, _make_target
+
+# A real SqlTarget for tests that exercise the physical connect path.
+_REAL_TARGET = SqlTarget(
+    workspace_id="ws-test",
+    database="db-test",
+    connection_string="Server=myserver.database.fabric.microsoft.com",
+)
+
+
+# ---------------------------------------------------------------------------
+# Patch helper: wrap a single connection mock as a _with_connect_retry return.
+# sql_exec.execute now calls sql._with_connect_retry (returns a 4-tuple).
+# ---------------------------------------------------------------------------
+
+
+@contextmanager
+def _patch_connect(conn: MagicMock) -> Iterator[None]:
+    """Patch ``sql._with_connect_retry`` to return *conn* on the first attempt."""
+    with patch("fabric_dw.sql._with_connect_retry", return_value=(conn, 0, 1, None)):
+        yield
+
 
 # ---------------------------------------------------------------------------
 # SELECT — basic result set
@@ -23,7 +48,7 @@ async def test_execute_select_returns_sql_result() -> None:
     target = _make_target()
     conn = _make_conn([(1, "hello"), (2, "world")], ["id", "name"])
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
+    with _patch_connect(conn):
         result = await sql_exec.execute(target, "SELECT id, name FROM t")
 
     assert isinstance(result, SqlResult)
@@ -33,7 +58,7 @@ async def test_execute_select_columns_and_rows() -> None:
     target = _make_target()
     conn = _make_conn([(42, "foo")], ["col_a", "col_b"])
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
+    with _patch_connect(conn):
         result = await sql_exec.execute(target, "SELECT col_a, col_b FROM t")
 
     assert result.columns == ["col_a", "col_b"]
@@ -44,7 +69,7 @@ async def test_execute_select_empty_rows() -> None:
     target = _make_target()
     conn = _make_conn([], ["col_a", "col_b"])
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
+    with _patch_connect(conn):
         result = await sql_exec.execute(target, "SELECT col_a FROM t WHERE 1=0")
 
     assert result.columns == ["col_a", "col_b"]
@@ -56,7 +81,7 @@ async def test_execute_select_rowcount_falls_back_to_len_rows() -> None:
     target = _make_target()
     conn = _make_conn([(1,), (2,), (3,)], ["id"], rowcount=-1)
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
+    with _patch_connect(conn):
         result = await sql_exec.execute(target, "SELECT id FROM t")
 
     assert result.rowcount == 3
@@ -67,7 +92,7 @@ async def test_execute_select_rowcount_from_driver_when_positive() -> None:
     target = _make_target()
     conn = _make_conn([(1,)], ["id"], rowcount=10)
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
+    with _patch_connect(conn):
         result = await sql_exec.execute(target, "SELECT id FROM t")
 
     assert result.rowcount == 10
@@ -82,7 +107,7 @@ async def test_execute_insert_no_rows_returns_empty() -> None:
     target = _make_target()
     conn = _make_no_result_conn(rowcount=3)
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
+    with _patch_connect(conn):
         result = await sql_exec.execute(target, "INSERT INTO t VALUES (1)")
 
     assert result.columns == []
@@ -94,7 +119,7 @@ async def test_execute_dml_closes_connection() -> None:
     target = _make_target()
     conn = _make_no_result_conn()
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
+    with _patch_connect(conn):
         await sql_exec.execute(target, "DELETE FROM t")
 
     conn.close.assert_called_once()
@@ -109,7 +134,7 @@ async def test_execute_alter_no_rows_returns_empty() -> None:
     target = _make_target()
     conn = _make_no_result_conn(rowcount=0)
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
+    with _patch_connect(conn):
         result = await sql_exec.execute(target, "ALTER TABLE t ADD col INT")
 
     assert result.columns == []
@@ -126,7 +151,7 @@ async def test_execute_datetime_column_serialised_to_iso() -> None:
     target = _make_target()
     conn = _make_conn([(dt,)], ["ts"])
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
+    with _patch_connect(conn):
         result = await sql_exec.execute(target, "SELECT ts FROM t")
 
     assert result.rows[0][0] == dt.isoformat()
@@ -136,7 +161,7 @@ async def test_execute_decimal_column_serialised_to_string() -> None:
     target = _make_target()
     conn = _make_conn([(Decimal("3.14"),)], ["price"])
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
+    with _patch_connect(conn):
         result = await sql_exec.execute(target, "SELECT price FROM t")
 
     assert result.rows[0][0] == "3.14"
@@ -147,7 +172,7 @@ async def test_execute_bytes_column_base64_encoded() -> None:
     target = _make_target()
     conn = _make_conn([(raw,)], ["data"])
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
+    with _patch_connect(conn):
         result = await sql_exec.execute(target, "SELECT data FROM t")
 
     expected_b64 = base64.b64encode(raw).decode("ascii")
@@ -158,7 +183,7 @@ async def test_execute_bytes_column_name_gets_base64_suffix() -> None:
     target = _make_target()
     conn = _make_conn([(b"\xff",)], ["hash_val"])
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
+    with _patch_connect(conn):
         result = await sql_exec.execute(target, "SELECT hash_val FROM t")
 
     assert result.columns == ["hash_val__base64"]
@@ -168,7 +193,7 @@ async def test_execute_non_binary_column_name_unchanged() -> None:
     target = _make_target()
     conn = _make_conn([(42,)], ["score"])
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
+    with _patch_connect(conn):
         result = await sql_exec.execute(target, "SELECT score FROM t")
 
     assert result.columns == ["score"]
@@ -187,10 +212,7 @@ async def test_execute_syntax_error_propagates() -> None:
     cursor.execute.side_effect = Exception("Incorrect syntax near 'SLECT'")
     conn.cursor.return_value = cursor
 
-    with (
-        patch("fabric_dw.sql.open_connection", return_value=conn),
-        pytest.raises(Exception, match="Incorrect syntax"),
-    ):
+    with _patch_connect(conn), pytest.raises(Exception, match="Incorrect syntax"):
         await sql_exec.execute(target, "SLECT 1")
 
 
@@ -201,10 +223,7 @@ async def test_execute_permission_denied_raises_permission_denied() -> None:
     cursor.execute.side_effect = Exception("permission was denied on object SensitiveTable")
     conn.cursor.return_value = cursor
 
-    with (
-        patch("fabric_dw.sql.open_connection", return_value=conn),
-        pytest.raises(PermissionDeniedError),
-    ):
+    with _patch_connect(conn), pytest.raises(PermissionDeniedError):
         await sql_exec.execute(target, "SELECT * FROM SensitiveTable")
 
 
@@ -216,10 +235,7 @@ async def test_execute_permission_denied_message_contains_hint() -> None:
     cursor.execute.side_effect = Exception("permission was denied on object X")
     conn.cursor.return_value = cursor
 
-    with (
-        patch("fabric_dw.sql.open_connection", return_value=conn),
-        pytest.raises(PermissionDeniedError, match="Hint"),
-    ):
+    with _patch_connect(conn), pytest.raises(PermissionDeniedError, match="Hint"):
         await sql_exec.execute(target, "SELECT * FROM X")
 
 
@@ -231,10 +247,7 @@ async def test_execute_auth_error_raises_auth_error() -> None:
     cursor.execute.side_effect = Exception("Authentication failed for user ''")
     conn.cursor.return_value = cursor
 
-    with (
-        patch("fabric_dw.sql.open_connection", return_value=conn),
-        pytest.raises(AuthError),
-    ):
+    with _patch_connect(conn), pytest.raises(AuthError):
         await sql_exec.execute(target, "SELECT 1")
 
 
@@ -246,10 +259,7 @@ async def test_execute_perm_denied_driver_raises_permission_denied() -> None:
     cursor.execute.side_effect = Exception("permission was denied on object SensitiveTable")
     conn.cursor.return_value = cursor
 
-    with (
-        patch("fabric_dw.sql.open_connection", return_value=conn),
-        pytest.raises(PermissionDeniedError),
-    ):
+    with _patch_connect(conn), pytest.raises(PermissionDeniedError):
         await sql_exec.execute(target, "SELECT * FROM SensitiveTable")
 
 
@@ -282,7 +292,7 @@ async def test_execute_multi_statement_returns_last_result_set() -> None:
     conn = MagicMock()
     conn.cursor.return_value = cursor
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
+    with _patch_connect(conn):
         result = await sql_exec.execute(target, "SELECT 1; SELECT 'last_value' AS last_col")
 
     # Must be the LAST result set, not the first.
@@ -299,7 +309,7 @@ async def test_execute_closes_connection_after_success() -> None:
     target = _make_target()
     conn = _make_conn([(1,)], ["n"])
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
+    with _patch_connect(conn):
         await sql_exec.execute(target, "SELECT 1 AS n")
 
     conn.close.assert_called_once()
@@ -313,10 +323,7 @@ async def test_execute_closes_connection_on_error() -> None:
     cursor.execute.side_effect = Exception("boom")
     conn.cursor.return_value = cursor
 
-    with (
-        patch("fabric_dw.sql.open_connection", return_value=conn),
-        pytest.raises(Exception, match="boom"),
-    ):
+    with _patch_connect(conn), pytest.raises(Exception, match="boom"):
         await sql_exec.execute(target, "SELECT 1")
 
     conn.close.assert_called_once()
@@ -335,7 +342,7 @@ async def test_binary_null_first_row_detected_via_later_rows() -> None:
     # Column 0 is NULL in row 0 but bytes in row 1.
     conn = _make_conn([(None,), (b"\x01\x02",)], ["blob"])
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
+    with _patch_connect(conn):
         result = await sql_exec.execute(target, "SELECT blob FROM t")
 
     assert result.columns == ["blob__base64"]
@@ -346,7 +353,7 @@ async def test_binary_all_null_rows_not_tagged() -> None:
     target = _make_target()
     conn = _make_conn([(None,), (None,)], ["blob"])
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
+    with _patch_connect(conn):
         result = await sql_exec.execute(target, "SELECT blob FROM t")
 
     assert result.columns == ["blob"]
@@ -371,7 +378,7 @@ async def test_binary_type_code_in_description_tags_column() -> None:
     conn = MagicMock()
     conn.cursor.return_value = cursor
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
+    with _patch_connect(conn):
         result = await sql_exec.execute(target, "SELECT data FROM t")
 
     assert result.columns == ["data__base64"]
@@ -434,7 +441,7 @@ async def test_single_select_returns_columns_and_rows_regression() -> None:
     conn = MagicMock()
     conn.cursor.return_value = cursor
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
+    with _patch_connect(conn):
         result = await sql_exec.execute(target, "SELECT 1 AS hello")
 
     assert result.columns == ["hello"]
@@ -453,7 +460,7 @@ async def test_multi_result_set_returns_last_set_stateful() -> None:
     conn = MagicMock()
     conn.cursor.return_value = cursor
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
+    with _patch_connect(conn):
         result = await sql_exec.execute(
             target,
             "SELECT 'first_value' AS first_col; SELECT 'last_value' AS last_col",
@@ -472,7 +479,7 @@ async def test_ddl_no_result_set_returns_empty_stateful() -> None:
     conn = MagicMock()
     conn.cursor.return_value = cursor
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
+    with _patch_connect(conn):
         result = await sql_exec.execute(target, "CREATE TABLE t (id INT)")
 
     assert result.columns == []
@@ -492,7 +499,7 @@ async def test_execute_row_limit_calls_fetchmany_plus_one() -> None:
     conn = MagicMock()
     conn.cursor.return_value = cursor
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
+    with _patch_connect(conn):
         await sql_exec.execute(target, "SELECT n FROM t", row_limit=5)
 
     cursor.fetchmany.assert_called_once_with(6)  # row_limit + 1
@@ -506,7 +513,7 @@ async def test_execute_row_limit_zero_calls_fetchmany_one() -> None:
     conn = MagicMock()
     conn.cursor.return_value = cursor
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
+    with _patch_connect(conn):
         await sql_exec.execute(target, "SELECT n FROM t", row_limit=0)
 
     cursor.fetchmany.assert_called_once_with(1)
@@ -519,7 +526,7 @@ async def test_execute_row_limit_one_calls_fetchmany_two() -> None:
     conn = MagicMock()
     conn.cursor.return_value = cursor
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
+    with _patch_connect(conn):
         await sql_exec.execute(target, "SELECT n FROM t", row_limit=1)
 
     cursor.fetchmany.assert_called_once_with(2)
@@ -532,7 +539,7 @@ async def test_execute_row_limit_none_uses_fetchall() -> None:
     conn = MagicMock()
     conn.cursor.return_value = cursor
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
+    with _patch_connect(conn):
         await sql_exec.execute(target, "SELECT n FROM t")
 
     cursor.fetchall.assert_called_once()
@@ -551,7 +558,7 @@ async def test_execute_row_limit_does_not_truncate_rows() -> None:
     conn = MagicMock()
     conn.cursor.return_value = cursor
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
+    with _patch_connect(conn):
         result = await sql_exec.execute(target, "SELECT n FROM t", row_limit=5)
 
     # execute returns all 6 rows intact; it's the caller's job to slice at 5
@@ -584,7 +591,7 @@ async def test_execute_does_not_mark_discard_on_error() -> None:
     underlying.cursor.return_value = cursor
 
     with (
-        patch("fabric_dw.sql.open_connection", return_value=pooled),
+        patch("fabric_dw.sql._with_connect_retry", return_value=(pooled, 0, 1, None)),
         pytest.raises(Exception, match="boom"),
     ):
         await sql_exec.execute(target, "SELECT 1")
@@ -599,3 +606,146 @@ async def test_execute_does_not_mark_discard_on_error() -> None:
     #       fix that adds mark_discard() will break this line, which is the signal
     #       that the gap has been closed and this test should be updated.
     assert pooled._discard is False  # execute does NOT mark tainted (known gap)
+
+
+# ---------------------------------------------------------------------------
+# T03: transient login-failed (18456) retry on connect via _with_connect_retry
+#
+# sql_exec.execute now delegates to sql._with_connect_retry so that transient
+# auth-failed errors (SQL 18456 / "Could not login") on the connect/login path
+# are retried silently, making the CLI survive Fabric warehouse warm-up.
+# ---------------------------------------------------------------------------
+
+
+def _make_fake_time() -> MagicMock:
+    """Return a fake ``time`` module whose sleep is a no-op MagicMock."""
+    import time as _real_time  # noqa: PLC0415
+
+    fake = MagicMock()
+    fake.sleep = MagicMock()
+    fake.monotonic = MagicMock(side_effect=_real_time.monotonic)
+    return fake
+
+
+class TestExecuteLoginRetry:
+    """sql_exec.execute retries transient 18456 auth-failed on the connect path."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Disable pooling and replace time.sleep so retries are instant."""
+        monkeypatch.setenv("FABRIC_SQL_POOL", "0")
+        _sql_module.reset_pool()
+        monkeypatch.setattr(_sql_module, "time", _make_fake_time())
+
+    @staticmethod
+    def _make_auth_exc() -> Exception:
+        """Return a simulated 18456 driver exception."""
+
+        class _AuthDriverError(Exception):
+            ddbc_error: str = "[SQL Server]Login failed. Error: 18456"
+
+            def __str__(self) -> str:
+                return "Could not login because the authentication failed."
+
+        return _AuthDriverError()
+
+    @staticmethod
+    def _make_good_conn() -> MagicMock:
+        """Return a mock connection that executes SELECT 1 successfully."""
+        cursor = MagicMock()
+        cursor.description = [("n", None)]
+        cursor.fetchall.return_value = [(1,)]
+        cursor.rowcount = 1
+        cursor.nextset.return_value = False
+        conn = MagicMock()
+        conn.cursor.return_value = cursor
+        return conn
+
+    async def test_auth_failed_on_connect_retried_then_succeeds(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """execute retries an 18456 on the connect path and returns the result.
+
+        The first two connect attempts raise an auth-failed error; the third
+        succeeds.  execute must return the result set without leaking any error
+        to the caller (no exception, no stderr noise).
+        """
+        auth_exc = self._make_auth_exc()
+        good_conn = self._make_good_conn()
+
+        mock_mssql = MagicMock()
+        mock_mssql.connect.side_effect = [auth_exc, auth_exc, good_conn]
+        monkeypatch.setattr(_sql_module, "_mssql", mock_mssql)
+
+        result = await sql_exec.execute(_REAL_TARGET, "SELECT 1 AS n")
+
+        assert result.columns == ["n"]
+        assert result.rows == [[1]]
+        # Three physical connect attempts: 2 failures + 1 success.
+        assert mock_mssql.connect.call_count == 3
+        # time.sleep called twice (before attempt 2 and 3).
+        fake_time = _sql_module.time  # type: ignore[attr-defined]
+        assert fake_time.sleep.call_count == 2  # ty: ignore[unresolved-attribute]
+
+    async def test_auth_failed_persistent_propagates_after_retries(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A genuinely wrong credential propagates after all retry attempts.
+
+        All connect attempts raise 18456; after exhausting retries the last
+        exception must escape (downstream, map_driver_error would wrap it in
+        AuthError — this test verifies the raw exception propagates from
+        _with_connect_retry).
+        """
+        auth_exc = self._make_auth_exc()
+
+        mock_mssql = MagicMock()
+        mock_mssql.connect.side_effect = auth_exc
+        monkeypatch.setattr(_sql_module, "_mssql", mock_mssql)
+
+        with pytest.raises(Exception, match="authentication failed"):
+            await sql_exec.execute(_REAL_TARGET, "SELECT 1")
+
+        # 1 initial + SQL_TRANSIENT_MAX_RETRIES retries.
+        assert mock_mssql.connect.call_count == 1 + _sql_module.SQL_TRANSIENT_MAX_RETRIES
+
+    async def test_non_auth_error_on_connect_propagates_immediately(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A non-auth, non-transient connect error is NOT retried.
+
+        Syntax errors or other non-retryable failures on the connect phase
+        must propagate immediately without any sleep or retry.
+        """
+        non_retryable = Exception("Some unexpected driver initialisation error")
+
+        mock_mssql = MagicMock()
+        mock_mssql.connect.side_effect = non_retryable
+        monkeypatch.setattr(_sql_module, "_mssql", mock_mssql)
+
+        with pytest.raises(Exception, match="unexpected driver"):
+            await sql_exec.execute(_REAL_TARGET, "SELECT 1")
+
+        # Exactly one connect attempt — no retry.
+        assert mock_mssql.connect.call_count == 1
+        fake_time = _sql_module.time  # type: ignore[attr-defined]
+        # No sleep between attempts.
+        assert fake_time.sleep.call_count == 0  # ty: ignore[unresolved-attribute]
+
+    async def test_sleep_not_called_on_first_attempt_success(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When the first connect attempt succeeds, time.sleep is never called.
+
+        This guarantees that happy-path execution has zero delay overhead.
+        """
+        good_conn = self._make_good_conn()
+
+        mock_mssql = MagicMock()
+        mock_mssql.connect.return_value = good_conn
+        monkeypatch.setattr(_sql_module, "_mssql", mock_mssql)
+
+        await sql_exec.execute(_REAL_TARGET, "SELECT 1 AS n")
+
+        fake_time = _sql_module.time  # type: ignore[attr-defined]
+        fake_time.sleep.assert_not_called()  # ty: ignore[unresolved-attribute]
