@@ -39,6 +39,9 @@ fabric-dw --help
 
 You should see the top-level help output listing available commands.
 
+!!! tip "Short alias"
+    `fdw` is an equivalent short alias for `fabric-dw` — both commands invoke the same entry point.
+
 ---
 
 See also the [Authentication](authentication.md) page for the full credential chain and the [Troubleshooting](troubleshooting.md) page for common failure modes such as expired tokens and 403 permission errors.
