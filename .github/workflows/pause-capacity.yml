@@ -9,10 +9,15 @@ permissions:
   id-token: write
   contents: read
 
+concurrency:
+  group: pause-ci-fabric-capacity
+  cancel-in-progress: true
+
 jobs:
   suspend:
     runs-on: ubuntu-latest
     environment: integration
+    timeout-minutes: 20
     steps:
       - uses: azure/login@v3
         with:
