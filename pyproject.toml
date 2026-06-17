@@ -75,6 +75,7 @@ Issues = "https://github.com/sdebruyn/fabric-dw-mcp-cli/issues"
 [project.scripts]
 fabric-dw = "fabric_dw.cli:main"
 fabric-dw-mcp = "fabric_dw.mcp.server:run"
+fdw = "fabric_dw.cli:main"
 
 [dependency-groups]
 dev = [
