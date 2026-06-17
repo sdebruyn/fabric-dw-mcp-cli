@@ -1,0 +1,57 @@
+name: Pause CI Fabric capacity
+
+on:
+  schedule:
+    - cron: '0 0 * * 1'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  suspend:
+    runs-on: ubuntu-latest
+    environment: integration
+    steps:
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Suspend Fabric capacity
+        run: |
+          set -e
+          CAPACITY_ID="${{ vars.FABRIC_TEST_CAPACITY_ID }}"
+
+          # Wait for the capacity to leave any transitional state, up to 5 min
+          for i in {1..30}; do
+            STATE=$(az resource show --ids "$CAPACITY_ID" --query 'properties.state' -o tsv 2>/dev/null || echo "Unknown")
+            echo "Pre-suspend state: $STATE"
+            case "$STATE" in
+              Paused)  echo "Already Paused, skipping suspend"; exit 0 ;;
+              Active)  break ;;
+              *)       sleep 10 ;;
+            esac
+          done
+
+          # Issue suspend, but tolerate transient BadRequest
+          for attempt in {1..6}; do
+            if az resource invoke-action --ids "$CAPACITY_ID" --action suspend; then
+              break
+            fi
+            echo "Suspend attempt $attempt failed (likely transient), waiting 15s..."
+            sleep 15
+          done
+
+          # Poll until Paused, max 5 min
+          for i in {1..30}; do
+            STATE=$(az resource show --ids "$CAPACITY_ID" --query 'properties.state' -o tsv)
+            echo "Post-suspend state: $STATE"
+            [[ "$STATE" == "Paused" ]] && exit 0
+            sleep 10
+          done
+
+          echo "Capacity did not reach Paused state within 5 minutes" >&2
+          exit 1
