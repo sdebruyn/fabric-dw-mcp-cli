@@ -52,6 +52,7 @@ __all__ = [
     "record_mcp_server_started",
     "set_tenant_id",
     "shutdown_telemetry",
+    "suppress_telemetry",
     "telemetry_enabled",
 ]
 
@@ -97,6 +98,32 @@ def _is_ci() -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Process-level suppression (used for --help/-h invocations)
+# ---------------------------------------------------------------------------
+
+_SUPPRESSED: bool = False
+
+
+def suppress_telemetry(value: bool = True) -> None:  # noqa: FBT001, FBT002
+    """Suppress (or un-suppress) telemetry for this process.
+
+    When *value* is ``True`` (the default), :func:`telemetry_enabled` returns
+    ``False`` for the remainder of the process lifetime, causing all telemetry
+    functions to become no-ops.  This is checked **before** any env-var or
+    config-file logic, so it is always authoritative.
+
+    Pass ``value=False`` to restore the normal enable/disable evaluation.
+    This is primarily useful in tests to reset state between test runs.
+
+    Args:
+        value: ``True`` to suppress telemetry (default), ``False`` to lift the
+            suppression and let normal env/config checks apply.
+    """
+    global _SUPPRESSED  # noqa: PLW0603
+    _SUPPRESSED = value
+
+
+# ---------------------------------------------------------------------------
 # Opt-out helpers
 # ---------------------------------------------------------------------------
 
@@ -134,12 +161,19 @@ def telemetry_enabled() -> bool:
 
     Telemetry is ON by default.  Any of the following disables it:
 
+    - :func:`suppress_telemetry` has been called (process-level suppression,
+      checked first — used by ``--help``/``-h`` invocations to skip all
+      telemetry init and network I/O)
     - ``FABRIC_TELEMETRY`` in ``{"0", "false", "no", "off"}``
     - ``FABRIC_DISABLE_TELEMETRY`` is truthy
     - ``DO_NOT_TRACK`` is truthy
     - A CI environment is detected (``CI``, ``GITHUB_ACTIONS``, etc.)
     - The config file has ``[telemetry] disabled = true``
     """
+    # Process-level suppression (e.g. --help/-h) — checked first, always wins.
+    if _SUPPRESSED:
+        return False
+
     # Explicit opt-out via FABRIC_TELEMETRY=<falsy>
     fabric_tel = os.environ.get("FABRIC_TELEMETRY", "").strip().lower()
     if fabric_tel in _FALSY_VALUES:

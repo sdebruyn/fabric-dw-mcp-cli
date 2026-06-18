@@ -1883,3 +1883,201 @@ def test_statsbeat_env_not_overridden_when_already_set(
         "os.environ.setdefault must not override a pre-existing value — "
         "an explicit operator setting must be respected (#418)"
     )
+
+
+# ---------------------------------------------------------------------------
+# suppress_telemetry — process-level help-flag suppression
+# ---------------------------------------------------------------------------
+
+
+def test_suppress_telemetry_makes_telemetry_enabled_return_false(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """suppress_telemetry() must cause telemetry_enabled() to return False."""
+    # Start with telemetry ON (all opt-out signals absent).
+    for var in [
+        "FABRIC_TELEMETRY",
+        "FABRIC_DISABLE_TELEMETRY",
+        "DO_NOT_TRACK",
+        "CI",
+        "GITHUB_ACTIONS",
+        "JENKINS_URL",
+        "TRAVIS",
+        "CIRCLECI",
+        "GITLAB_CI",
+        "TF_BUILD",
+    ]:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    mod = _reload_telemetry()
+    assert mod.telemetry_enabled() is True, "Precondition: telemetry should be enabled"
+
+    mod.suppress_telemetry()
+    assert mod.telemetry_enabled() is False, (
+        "After suppress_telemetry(), telemetry_enabled() must return False"
+    )
+
+
+def test_suppress_telemetry_is_resettable(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """suppress_telemetry(False) must restore normal enable/disable evaluation."""
+    for var in [
+        "FABRIC_TELEMETRY",
+        "FABRIC_DISABLE_TELEMETRY",
+        "DO_NOT_TRACK",
+        "CI",
+        "GITHUB_ACTIONS",
+        "JENKINS_URL",
+        "TRAVIS",
+        "CIRCLECI",
+        "GITLAB_CI",
+        "TF_BUILD",
+    ]:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    mod = _reload_telemetry()
+    mod.suppress_telemetry(value=True)
+    assert mod.telemetry_enabled() is False, "After suppress_telemetry(True), should be False"
+
+    mod.suppress_telemetry(value=False)
+    assert mod.telemetry_enabled() is True, "After suppress_telemetry(False), should be True again"
+
+
+def test_suppress_telemetry_prevents_get_tracer_call(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """When suppressed, emit_event must not call _get_tracer (no SDK init)."""
+    for var in [
+        "FABRIC_TELEMETRY",
+        "FABRIC_DISABLE_TELEMETRY",
+        "DO_NOT_TRACK",
+        "CI",
+        "GITHUB_ACTIONS",
+        "JENKINS_URL",
+        "TRAVIS",
+        "CIRCLECI",
+        "GITLAB_CI",
+        "TF_BUILD",
+    ]:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    mod = _reload_telemetry()
+    mod.suppress_telemetry()
+
+    tracer_calls: list[str] = []
+    with patch.object(mod, "_get_tracer", side_effect=lambda: tracer_calls.append("called")):  # type: ignore[attr-defined]
+        mod.emit_event("test_event", {"foo": "bar"})
+
+    assert tracer_calls == [], "_get_tracer must not be called when telemetry is suppressed"
+
+
+def test_suppress_telemetry_prevents_configure_azure_monitor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """When suppressed, _get_tracer must not call configure_azure_monitor."""
+    for var in [
+        "FABRIC_TELEMETRY",
+        "FABRIC_DISABLE_TELEMETRY",
+        "DO_NOT_TRACK",
+        "CI",
+        "GITHUB_ACTIONS",
+        "JENKINS_URL",
+        "TRAVIS",
+        "CIRCLECI",
+        "GITLAB_CI",
+        "TF_BUILD",
+    ]:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    mod = _reload_telemetry()
+    mod.suppress_telemetry()
+
+    configure_calls: list[str] = []
+
+    def fake_configure(**_kwargs: object) -> None:
+        configure_calls.append("called")
+
+    fake_tracer = object()
+
+    class _FakeTrace(types.ModuleType):
+        def get_tracer(self, *_args: object, **_kw: object) -> object:
+            return fake_tracer
+
+    fake_azure_mod: Any = types.ModuleType("azure.monitor.opentelemetry")
+    fake_azure_mod.configure_azure_monitor = fake_configure
+    fake_trace_mod = _FakeTrace("opentelemetry.trace")
+
+    monkeypatch.setitem(sys.modules, "azure.monitor.opentelemetry", fake_azure_mod)
+    monkeypatch.setitem(sys.modules, "opentelemetry.trace", fake_trace_mod)
+
+    # Trigger emit path — should be suppressed before _get_tracer is reached.
+    mod.record_app_started("cli")
+
+    assert configure_calls == [], (
+        "configure_azure_monitor must not be called when telemetry is suppressed"
+    )
+
+
+def test_suppress_telemetry_prevents_first_run_notice(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """maybe_print_first_run_notice must be a no-op when telemetry is suppressed."""
+    for var in [
+        "FABRIC_TELEMETRY",
+        "FABRIC_DISABLE_TELEMETRY",
+        "DO_NOT_TRACK",
+        "CI",
+        "GITHUB_ACTIONS",
+        "JENKINS_URL",
+        "TRAVIS",
+        "CIRCLECI",
+        "GITLAB_CI",
+        "TF_BUILD",
+    ]:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    mod = _reload_telemetry()
+    mod.suppress_telemetry()
+
+    mod.maybe_print_first_run_notice()
+
+    captured = capsys.readouterr()
+    assert captured.err == "", (
+        "maybe_print_first_run_notice must print nothing when telemetry is suppressed"
+    )
+
+
+def test_suppress_telemetry_shutdown_is_noop(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """shutdown_telemetry must be a no-op when suppressed (SDK was never initialised)."""
+    for var in [
+        "FABRIC_TELEMETRY",
+        "FABRIC_DISABLE_TELEMETRY",
+        "DO_NOT_TRACK",
+        "CI",
+        "GITHUB_ACTIONS",
+        "JENKINS_URL",
+        "TRAVIS",
+        "CIRCLECI",
+        "GITLAB_CI",
+        "TF_BUILD",
+    ]:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    mod = _reload_telemetry()
+    mod.suppress_telemetry()
+
+    # SDK must never have been initialised if suppressed from the start.
+    assert mod._sdk_initialised is False  # type: ignore[attr-defined]
+
+    # Must complete instantly (no network I/O) and not raise.
+    mod.shutdown_telemetry()
+
+    # SDK must remain un-initialised.
+    assert mod._sdk_initialised is False  # type: ignore[attr-defined]
