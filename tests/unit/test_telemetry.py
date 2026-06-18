@@ -866,24 +866,25 @@ def test_get_tracer_passes_instrumentation_options_to_configure(
     def fake_configure(**kwargs: object) -> None:
         captured_kwargs.update(kwargs)
 
-    fake_tracer = object()
-
-    class _FakeTrace(types.ModuleType):
-        def get_tracer(self, *_args: object, **_kw: object) -> object:
-            return fake_tracer
+    fake_otel_logger = object()
 
     fake_azure_mod: Any = types.ModuleType("azure.monitor.opentelemetry")
     fake_azure_mod.configure_azure_monitor = fake_configure
 
-    fake_trace_mod = _FakeTrace("opentelemetry.trace")
+    # _get_tracer now uses `from opentelemetry._logs import get_logger` (not trace).
+    fake_logs_mod: Any = types.ModuleType("opentelemetry._logs")
+    fake_logs_mod.get_logger = lambda *_a, **_kw: fake_otel_logger
+    fake_logs_mod.LogRecord = object
+    fake_logs_mod.SeverityNumber = object
 
     # Reset the SDK state so _get_tracer will actually run configure_azure_monitor.
     mod._sdk_initialised = False
     mod._tracer = None
+    mod._otel_logger = None
 
     # Use monkeypatch.dict to safely restore sys.modules after the test.
     monkeypatch.setitem(sys.modules, "azure.monitor.opentelemetry", fake_azure_mod)
-    monkeypatch.setitem(sys.modules, "opentelemetry.trace", fake_trace_mod)
+    monkeypatch.setitem(sys.modules, "opentelemetry._logs", fake_logs_mod)
 
     mod._get_tracer()
 
@@ -897,6 +898,7 @@ def test_get_tracer_passes_instrumentation_options_to_configure(
     # Reset SDK state so the module is clean for any subsequent tests.
     mod._sdk_initialised = False
     mod._tracer = None
+    mod._otel_logger = None
 
 
 # ---------------------------------------------------------------------------
@@ -927,22 +929,22 @@ def test_get_tracer_passes_enable_performance_counters_false(
     def fake_configure(**kwargs: object) -> None:
         captured_kwargs.update(kwargs)
 
-    fake_tracer = object()
-
-    class _FakeTrace(types.ModuleType):
-        def get_tracer(self, *_args: object, **_kw: object) -> object:
-            return fake_tracer
+    fake_otel_logger = object()
 
     fake_azure_mod: Any = types.ModuleType("azure.monitor.opentelemetry")
     fake_azure_mod.configure_azure_monitor = fake_configure
 
-    fake_trace_mod = _FakeTrace("opentelemetry.trace")
+    fake_logs_mod: Any = types.ModuleType("opentelemetry._logs")
+    fake_logs_mod.get_logger = lambda *_a, **_kw: fake_otel_logger
+    fake_logs_mod.LogRecord = object
+    fake_logs_mod.SeverityNumber = object
 
     mod._sdk_initialised = False
     mod._tracer = None
+    mod._otel_logger = None
 
     monkeypatch.setitem(sys.modules, "azure.monitor.opentelemetry", fake_azure_mod)
-    monkeypatch.setitem(sys.modules, "opentelemetry.trace", fake_trace_mod)
+    monkeypatch.setitem(sys.modules, "opentelemetry._logs", fake_logs_mod)
 
     mod._get_tracer()
 
@@ -954,6 +956,7 @@ def test_get_tracer_passes_enable_performance_counters_false(
     # Reset SDK state so the module is clean for any subsequent tests.
     mod._sdk_initialised = False
     mod._tracer = None
+    mod._otel_logger = None
 
 
 # ---------------------------------------------------------------------------
@@ -987,10 +990,12 @@ def test_flush_telemetry_no_hang_when_exporter_slow(
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     mod = _reload_telemetry()
 
-    # Simulate a tracer object being set (SDK "initialised") so flush_telemetry
-    # attempts the flush path, but the provider.force_flush blocks for 5 s.
+    # Simulate the SDK as initialised so flush_telemetry attempts the flush path,
+    # but the provider.force_flush blocks for 5 s.
     mod._sdk_initialised = True
-    mod._tracer = object()
+    fake_logger = object()
+    mod._tracer = fake_logger
+    mod._otel_logger = fake_logger
 
     fake_provider = types.SimpleNamespace(force_flush=lambda **_kw: __import__("time").sleep(5))
 
@@ -1568,8 +1573,10 @@ def test_shutdown_telemetry_calls_provider_shutdown(
     mod = _reload_telemetry()
 
     # Mark SDK as initialised so shutdown_telemetry proceeds past the guard.
+    _fake_logger = object()
     mod._sdk_initialised = True  # type: ignore[attr-defined]
-    mod._tracer = object()  # type: ignore[attr-defined]
+    mod._tracer = _fake_logger  # type: ignore[attr-defined]
+    mod._otel_logger = _fake_logger  # type: ignore[attr-defined]
     mod._sdk_shutdown = False  # type: ignore[attr-defined]
 
     shutdown_called: list[bool] = []
@@ -1584,14 +1591,16 @@ def test_shutdown_telemetry_calls_provider_shutdown(
 def test_shutdown_telemetry_is_bounded_when_shutdown_is_slow(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """shutdown_telemetry must not block longer than ~2 s even with a slow provider."""
+    """shutdown_telemetry must not block longer than timeout_ms even with a slow provider."""
     import time  # noqa: PLC0415
 
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     mod = _reload_telemetry()
 
+    _fake_logger = object()
     mod._sdk_initialised = True  # type: ignore[attr-defined]
-    mod._tracer = object()  # type: ignore[attr-defined]
+    mod._tracer = _fake_logger  # type: ignore[attr-defined]
+    mod._otel_logger = _fake_logger  # type: ignore[attr-defined]
     mod._sdk_shutdown = False  # type: ignore[attr-defined]
 
     fake_provider = types.SimpleNamespace(shutdown=lambda: __import__("time").sleep(10))
@@ -1621,8 +1630,10 @@ def test_shutdown_telemetry_is_idempotent(monkeypatch: pytest.MonkeyPatch, tmp_p
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     mod = _reload_telemetry()
 
+    _fake_logger = object()
     mod._sdk_initialised = True  # type: ignore[attr-defined]
-    mod._tracer = object()  # type: ignore[attr-defined]
+    mod._tracer = _fake_logger  # type: ignore[attr-defined]
+    mod._otel_logger = _fake_logger  # type: ignore[attr-defined]
     mod._sdk_shutdown = False  # type: ignore[attr-defined]
 
     shutdown_call_count: list[int] = []
@@ -1645,8 +1656,10 @@ def test_shutdown_telemetry_never_raises_on_provider_exception(
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     mod = _reload_telemetry()
 
+    _fake_logger = object()
     mod._sdk_initialised = True  # type: ignore[attr-defined]
-    mod._tracer = object()  # type: ignore[attr-defined]
+    mod._tracer = _fake_logger  # type: ignore[attr-defined]
+    mod._otel_logger = _fake_logger  # type: ignore[attr-defined]
     mod._sdk_shutdown = False  # type: ignore[attr-defined]
 
     def _boom() -> None:
@@ -1658,6 +1671,85 @@ def test_shutdown_telemetry_never_raises_on_provider_exception(
 
     # Must not raise
     mod.shutdown_telemetry()  # type: ignore[attr-defined]
+
+
+def test_shutdown_telemetry_force_flushes_log_provider_before_shutdown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """shutdown_telemetry must call force_flush on the log provider BEFORE shutdown.
+
+    This is the key ordering requirement that ensures events emitted just before
+    shutdown (command_invoked, app_exited) are exported before the provider is
+    torn down.  If force_flush is not called first — or is called after shutdown —
+    the BatchLogRecordProcessor worker may not have exported the queued records
+    before the daemon thread is killed.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    mod = _reload_telemetry()
+
+    _fake_logger = object()
+    mod._sdk_initialised = True  # type: ignore[attr-defined]
+    mod._tracer = _fake_logger  # type: ignore[attr-defined]
+    mod._otel_logger = _fake_logger  # type: ignore[attr-defined]
+    mod._sdk_shutdown = False  # type: ignore[attr-defined]
+
+    call_order: list[str] = []
+
+    fake_log_provider = types.SimpleNamespace(
+        force_flush=lambda **_kw: call_order.append("force_flush"),
+        shutdown=lambda: call_order.append("shutdown"),
+    )
+
+    # Patch opentelemetry._logs so get_logger_provider() returns our fake.
+    fake_logs_mod: Any = types.ModuleType("opentelemetry._logs_fake")
+    fake_logs_mod.get_logger_provider = lambda: fake_log_provider
+
+    import opentelemetry._logs as _real_logs_mod  # noqa: PLC0415
+
+    monkeypatch.setattr(_real_logs_mod, "get_logger_provider", lambda: fake_log_provider)
+
+    mod.shutdown_telemetry()  # type: ignore[attr-defined]
+
+    assert "force_flush" in call_order, "force_flush must be called on the log provider"
+    assert "shutdown" in call_order, "shutdown must be called on the log provider"
+    # force_flush must precede shutdown so queued records are exported first.
+    assert call_order.index("force_flush") < call_order.index("shutdown"), (
+        f"force_flush must be called BEFORE shutdown, got order: {call_order}"
+    )
+
+
+def test_shutdown_telemetry_force_flush_is_bounded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """shutdown_telemetry must not hang even when force_flush blocks indefinitely."""
+    import time  # noqa: PLC0415
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    mod = _reload_telemetry()
+
+    _fake_logger = object()
+    mod._sdk_initialised = True  # type: ignore[attr-defined]
+    mod._tracer = _fake_logger  # type: ignore[attr-defined]
+    mod._otel_logger = _fake_logger  # type: ignore[attr-defined]
+    mod._sdk_shutdown = False  # type: ignore[attr-defined]
+
+    # Simulate a force_flush that hangs for 30 s — must not propagate to caller.
+    fake_log_provider = types.SimpleNamespace(
+        force_flush=lambda **_kw: __import__("time").sleep(30),
+        shutdown=lambda: None,
+    )
+
+    import opentelemetry._logs as _real_logs_mod  # noqa: PLC0415
+
+    monkeypatch.setattr(_real_logs_mod, "get_logger_provider", lambda: fake_log_provider)
+
+    start = time.monotonic()
+    mod.shutdown_telemetry(timeout_ms=300)  # type: ignore[attr-defined]
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 3.0, (
+        f"shutdown_telemetry blocked for {elapsed:.1f} s — force_flush timeout not respected"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1808,27 +1900,29 @@ def test_statsbeat_disabled_env_set_before_configure_azure_monitor(
             "APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL"
         )
 
-    fake_tracer = object()
-
-    class _FakeTrace(types.ModuleType):
-        def get_tracer(self, *_args: object, **_kw: object) -> object:
-            return fake_tracer
+    fake_otel_logger = object()
 
     fake_azure_mod: Any = types.ModuleType("azure.monitor.opentelemetry")
     fake_azure_mod.configure_azure_monitor = fake_configure
 
-    fake_trace_mod = _FakeTrace("opentelemetry.trace")
+    # _get_tracer now uses `from opentelemetry._logs import get_logger` (not trace).
+    fake_logs_mod: Any = types.ModuleType("opentelemetry._logs")
+    fake_logs_mod.get_logger = lambda *_a, **_kw: fake_otel_logger
+    fake_logs_mod.LogRecord = object
+    fake_logs_mod.SeverityNumber = object
 
     mod._sdk_initialised = False
     mod._tracer = None
+    mod._otel_logger = None
 
     monkeypatch.setitem(sys.modules, "azure.monitor.opentelemetry", fake_azure_mod)
-    monkeypatch.setitem(sys.modules, "opentelemetry.trace", fake_trace_mod)
+    monkeypatch.setitem(sys.modules, "opentelemetry._logs", fake_logs_mod)
 
     mod._get_tracer()
 
     mod._sdk_initialised = False
     mod._tracer = None
+    mod._otel_logger = None
 
     # The env var must be set to "true" at the point configure_azure_monitor is called,
     # proving it is set BEFORE the exporter initialises (which is when statsbeat starts).
@@ -1856,27 +1950,29 @@ def test_statsbeat_env_not_overridden_when_already_set(
     def fake_configure(**_kwargs: object) -> None:
         pass
 
-    fake_tracer = object()
-
-    class _FakeTrace(types.ModuleType):
-        def get_tracer(self, *_args: object, **_kw: object) -> object:
-            return fake_tracer
+    fake_otel_logger = object()
 
     fake_azure_mod: Any = types.ModuleType("azure.monitor.opentelemetry")
     fake_azure_mod.configure_azure_monitor = fake_configure
 
-    fake_trace_mod = _FakeTrace("opentelemetry.trace")
+    # _get_tracer now uses `from opentelemetry._logs import get_logger` (not trace).
+    fake_logs_mod: Any = types.ModuleType("opentelemetry._logs")
+    fake_logs_mod.get_logger = lambda *_a, **_kw: fake_otel_logger
+    fake_logs_mod.LogRecord = object
+    fake_logs_mod.SeverityNumber = object
 
     mod._sdk_initialised = False
     mod._tracer = None
+    mod._otel_logger = None
 
     monkeypatch.setitem(sys.modules, "azure.monitor.opentelemetry", fake_azure_mod)
-    monkeypatch.setitem(sys.modules, "opentelemetry.trace", fake_trace_mod)
+    monkeypatch.setitem(sys.modules, "opentelemetry._logs", fake_logs_mod)
 
     mod._get_tracer()
 
     mod._sdk_initialised = False
     mod._tracer = None
+    mod._otel_logger = None
 
     # The pre-existing "false" value must not have been overwritten.
     assert os.environ.get("APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL") == "false", (
@@ -2081,3 +2177,119 @@ def test_suppress_telemetry_shutdown_is_noop(
 
     # SDK must remain un-initialised.
     assert mod._sdk_initialised is False  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# Native customEvents: envelope verification via real exporter
+# ---------------------------------------------------------------------------
+
+
+def test_emit_event_noop_when_telemetry_disabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """emit_event is a no-op when telemetry is disabled — _get_tracer is never called."""
+    monkeypatch.setenv("FABRIC_DISABLE_TELEMETRY", "1")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    mod = _reload_telemetry()
+    called: list[str] = []
+
+    with patch.object(mod, "_get_tracer", side_effect=lambda: called.append("x")):  # type: ignore[attr-defined]
+        mod.emit_event("noop_event", {"key": "value"})  # type: ignore[attr-defined]
+
+    assert called == [], "_get_tracer must not be called when telemetry is disabled"
+
+
+def test_emit_event_produces_eventdata_envelope(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """emit_event must produce a customEvent log record that converts to EventData.
+
+    Runs the emitted log record through the REAL Azure Monitor log exporter
+    conversion function (``_convert_log_to_envelope``) and asserts:
+    - ``envelope.data.base_type == "EventData"``  (lands in customEvents table)
+    - ``envelope.tags["ai.user.id"] == <install_id>``  (Users blade)
+    - event name present in envelope
+    - ``session_id`` in custom properties (customDimensions fallback for Sessions)
+
+    This test does NOT require a real network connection — it only exercises the
+    local envelope-construction logic, not the HTTP transport.
+    """
+    # Lazy imports: the Azure Monitor SDK is not required at collection time.
+    from azure.monitor.opentelemetry.exporter.export.logs._exporter import _convert_log_to_envelope  # noqa: I001, PLC0415
+    from opentelemetry.sdk._logs._internal import InstrumentationScope  # noqa: PLC0415
+    from opentelemetry.sdk._logs._internal import LogRecord as SDKLogRecord  # noqa: PLC0415
+    from opentelemetry.sdk._logs._internal import ReadableLogRecord  # noqa: PLC0415
+    from opentelemetry.sdk.resources import Resource  # noqa: PLC0415
+
+    # Force telemetry on with a deterministic install ID.
+    for var in (
+        "FABRIC_TELEMETRY",
+        "FABRIC_DISABLE_TELEMETRY",
+        "DO_NOT_TRACK",
+        "CI",
+        "GITHUB_ACTIONS",
+        "JENKINS_URL",
+        "TRAVIS",
+        "CIRCLECI",
+        "GITLAB_CI",
+        "TF_BUILD",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    # Write a known install ID so the test is deterministic.
+    known_install_id = "ccccdddd-dead-beef-1234-aaaaaaaaaaaa"
+    config_dir = tmp_path / "fabric-dw"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "install_id").write_text(known_install_id, encoding="utf-8")
+
+    mod = _reload_telemetry()
+
+    # Construct the attributes exactly as emit_event would build them.
+    event_name = "test_custom_event"
+    envelope_attrs = mod._build_envelope("cli")  # type: ignore[attr-defined]
+    merged: dict[str, object] = {**envelope_attrs}
+    merged["microsoft.custom_event.name"] = event_name
+    merged["enduser.pseudo.id"] = mod._get_install_id()  # type: ignore[attr-defined]
+    merged["extra_dimension"] = "extra_value"
+
+    # Build a real SDK log record (what the OTel Logger.emit() path would create).
+    sdk_record = SDKLogRecord(attributes=merged)  # type: ignore[arg-type]  # ty: ignore[no-matching-overload]
+    resource = Resource.create({"service.name": "fabric_dw.telemetry"})
+    scope = InstrumentationScope("fabric_dw.telemetry")
+    readable = ReadableLogRecord(
+        log_record=sdk_record, resource=resource, instrumentation_scope=scope
+    )
+
+    # Run it through the real exporter conversion (no network call).
+    envelope = _convert_log_to_envelope(readable)
+
+    # --- Assertions ---
+    # The Azure Monitor SDK types have Optional fields; assert non-None before
+    # accessing nested attributes so the assertions are self-documenting.
+    assert envelope.data is not None, "envelope.data must not be None"
+    assert envelope.tags is not None, "envelope.tags must not be None"
+    assert envelope.data.base_type == "EventData", (
+        f"Expected base_type='EventData' (customEvents), got {envelope.data.base_type!r}.  "
+        "This means the log record would land in 'traces', not 'customEvents'."
+    )
+
+    ai_user_id = envelope.tags.get("ai.user.id")
+    assert ai_user_id == known_install_id, (
+        f"Expected ai.user.id={known_install_id!r}, got {ai_user_id!r}.  "
+        "enduser.pseudo.id must map to ai.user.id for the Users blade."
+    )
+
+    assert envelope.data.base_data is not None, "envelope.data.base_data must not be None"
+    event_data_name = envelope.data.base_data.name  # ty: ignore[unresolved-attribute]
+    assert event_data_name == event_name, (
+        f"Expected event name {event_name!r} in EventData, got {event_data_name!r}."
+    )
+
+    custom_props = envelope.data.base_data.properties or {}  # ty: ignore[unresolved-attribute]
+    assert "session_id" in custom_props, (
+        "session_id must appear in customDimensions (custom properties).  "
+        "ai.session.id has no attribute mapping in azure-monitor-opentelemetry-exporter "
+        "1.0.0b53, so session_id is kept as a custom dimension for Logs blade queries."
+    )
