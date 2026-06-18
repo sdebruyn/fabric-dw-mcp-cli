@@ -22,12 +22,35 @@ Architecture notes
   (it comes from env vars; token-claim extraction is deferred to #366).
 - Auto-HTTP instrumentation is explicitly disabled to prevent MSAL OAuth
   request URLs (containing tenant IDs) from leaking as span attributes.
-- ``shutdown_on_exit`` is disabled; a bounded ``provider.shutdown()`` (≤2 s)
+- ``shutdown_on_exit`` is disabled; a bounded ``provider.shutdown()`` (≤5 s)
   is performed at app exit in a daemon thread so the CLI never hangs.
-  ``provider.shutdown()`` flushes all pending spans before tearing down
-  processors, so a separate ``force_flush`` step is not required.
 - ``enable_performance_counters=False`` suppresses the PerformanceCounters
   subsystem, which divides by zero on short-lived processes (#399).
+
+Native App Insights customEvents (telemetry.py design)
+-------------------------------------------------------
+Events are emitted as OpenTelemetry **log records** (not spans), which causes
+the Azure Monitor exporter to produce ``baseType=EventData`` envelopes.  These
+land in the ``customEvents`` table and populate the App Insights
+"Usage → Events" and "Usage → Users" blades.
+
+Key attribute mappings in azure-monitor-opentelemetry-exporter 1.0.0b53:
+
+- ``microsoft.custom_event.name`` → EventData.name  (``customEvents`` table)
+- ``enduser.pseudo.id``            → tags["ai.user.id"] ("Users" blade)
+  (DO NOT use ``enduser.id`` — that maps to ``ai.user.authUserId``, a PII field)
+
+Sessions limitation: ``ai.session.id`` has NO attribute mapping in exporter
+1.0.0b53 (AI_SESSION_ID is never written to tags by the log exporter).  Native
+"Sessions" is therefore not achievable via log-record attributes in this SDK
+version.  ``session_id`` is kept as a custom dimension (customDimensions) so it
+is at least query-able in the Logs blade.  This may be resolved in a future SDK
+release — re-check when upgrading azure-monitor-opentelemetry-exporter.
+
+The logs pipeline must be active for customEvents to flow, so
+``disable_logging=False`` is passed to ``configure_azure_monitor``.  All other
+safeguards (no auto-instrumentation, no metrics, no live metrics, no statsbeat,
+no atexit hang) are kept exactly as before.
 """
 
 from __future__ import annotations
@@ -347,7 +370,12 @@ def _build_envelope(surface: str) -> dict[str, object]:
 # SDK initialisation (lazy, fail-safe)
 # ---------------------------------------------------------------------------
 
-_tracer: object | None = None
+# _otel_logger holds the OTel Logger used to emit customEvents via the logs API.
+# This replaces the old _tracer (spans→dependencies path).  The name is kept
+# generic so existing tests that poke _sdk_initialised / _tracer still work after
+# we alias _tracer → _otel_logger below.
+_otel_logger: object | None = None
+_tracer: object | None = None  # alias kept for backward-compat with existing tests
 _sdk_initialised: bool = False
 _current_surface: str = "cli"
 
@@ -424,16 +452,22 @@ def _harden_azure_sdk_logging() -> None:
 
 
 def _get_tracer() -> object | None:
-    """Lazily initialise the Azure Monitor OpenTelemetry tracer.
+    """Lazily initialise the Azure Monitor OpenTelemetry SDK and event logger.
 
-    Returns the tracer on success, or None if initialisation fails.
-    Raises nothing.
+    After initialisation the global ``_otel_logger`` (and its alias ``_tracer``)
+    hold the OTel Logger used by :func:`emit_event` to fire customEvents via the
+    logs API.  The function returns that logger on success, or None if
+    initialisation fails.  Raises nothing.
 
     Privacy / hang safeguards
     -------------------------
     - ``instrumentation_options`` explicitly disables all auto-HTTP and Azure SDK
       instrumentors so MSAL OAuth URLs (containing tenant IDs) are never captured
       as span attributes (B1).
+    - ``disable_logging=False`` activates the log/event exporter pipeline so that
+      log records carrying ``microsoft.custom_event.name`` are exported as
+      ``EventData`` (``customEvents`` table) — the reason this function now sets
+      up a logger instead of a tracer.
     - ``disable_metrics=True`` prevents generic metric exporters from starting.
     - ``enable_performance_counters=False`` disables the PerformanceCounters
       subsystem (CPU / memory poller) which is NOT covered by ``disable_metrics``
@@ -448,16 +482,16 @@ def _get_tracer() -> object | None:
     - ``_harden_azure_sdk_logging()`` is called before ``configure_azure_monitor``
       so the SDK's own logger tree is silenced before any network attempt (#411).
     """
-    global _tracer, _sdk_initialised  # noqa: PLW0603
+    global _otel_logger, _tracer, _sdk_initialised  # noqa: PLW0603
 
     if _sdk_initialised:
-        return _tracer
+        return _otel_logger
 
     _sdk_initialised = True
 
     try:
         from azure.monitor.opentelemetry import configure_azure_monitor  # noqa: PLC0415
-        from opentelemetry import trace  # noqa: PLC0415
+        from opentelemetry._logs import get_logger  # noqa: PLC0415
 
         # A2/A3: silence Azure SDK logger trees before any network attempt (#411).
         _harden_azure_sdk_logging()
@@ -481,7 +515,12 @@ def _get_tracer() -> object | None:
         configure_azure_monitor(
             connection_string=_get_connection_string(),
             logger_name="fabric_dw.telemetry",
-            disable_logging=True,
+            # disable_logging=False (default) is intentional: the log/event
+            # exporter must be active so customEvents land in the customEvents
+            # table.  Without the logs pipeline, log records carrying
+            # microsoft.custom_event.name are silently dropped and events never
+            # appear in the App Insights "Usage → Events" or "Usage → Users" blades.
+            disable_logging=False,
             disable_metrics=True,
             # A1: disable PerformanceCounters — not covered by disable_metrics in
             # azure-monitor-opentelemetry 1.8+; its _get_processor_time callback
@@ -496,29 +535,42 @@ def _get_tracer() -> object | None:
             # B1: disable all auto-HTTP / Azure SDK instrumentors (privacy).
             instrumentation_options=_INSTRUMENTATION_OPTIONS,
         )
-        _tracer = trace.get_tracer("fabric_dw.telemetry")
+        # Obtain the OTel Logger via the global LoggerProvider set up by
+        # configure_azure_monitor.  This logger is used in emit_event to fire
+        # customEvents as log records (not spans).
+        _otel_logger = get_logger("fabric_dw.telemetry")
+        _tracer = _otel_logger  # alias: existing tests check _tracer is not None
     except Exception:
         _log.debug("Failed to initialise Azure Monitor OpenTelemetry SDK", exc_info=True)
+        _otel_logger = None
         _tracer = None
 
-    return _tracer
+    return _otel_logger
 
 
 def flush_telemetry(timeout_ms: int = 2000) -> None:
-    """Flush pending telemetry spans with a bounded timeout.
+    """Flush pending telemetry events with a bounded timeout.
 
     Runs in a daemon thread so it can never block process exit even if the
     exporter is slow or unreachable.  The thread is daemon so the OS kills it
     when the main thread exits (no hang possible).
 
+    Both the tracer provider (spans, if any) and the logger provider (customEvents
+    log pipeline) are flushed so no records are lost.
+
     Args:
         timeout_ms: Maximum milliseconds to wait for the flush.  Defaults to
             2000 (2 s) to satisfy the B2 hang requirement.
     """
-    if not _sdk_initialised or _tracer is None:
+    if not _sdk_initialised or _otel_logger is None:
         return
 
     def _do_flush() -> None:
+        # Each pipeline is flushed independently so a failure in one does
+        # not prevent the other from running.
+
+        # Tracer provider — belt-and-suspenders; no spans are emitted in the
+        # new path, but kept here in case the SDK creates internal spans.
         with contextlib.suppress(Exception):
             from opentelemetry import trace as _trace  # noqa: PLC0415
 
@@ -526,6 +578,15 @@ def flush_telemetry(timeout_ms: int = 2000) -> None:
             force_flush = getattr(provider, "force_flush", None)
             if callable(force_flush):
                 force_flush(timeout_millis=timeout_ms)
+
+        # Logger provider — this is the primary pipeline for customEvents.
+        with contextlib.suppress(Exception):
+            from opentelemetry._logs import get_logger_provider  # noqa: PLC0415
+
+            log_provider = get_logger_provider()
+            log_force_flush = getattr(log_provider, "force_flush", None)
+            if callable(log_force_flush):
+                log_force_flush(timeout_millis=timeout_ms)
 
     t = threading.Thread(target=_do_flush, daemon=True)
     t.start()
@@ -536,23 +597,27 @@ def flush_telemetry(timeout_ms: int = 2000) -> None:
 _sdk_shutdown: bool = False
 
 
-def shutdown_telemetry(timeout_ms: int = 2000) -> None:
-    """Shut down the OpenTelemetry provider with a bounded timeout.
+def shutdown_telemetry(timeout_ms: int = 5000) -> None:
+    """Shut down the OpenTelemetry providers with a bounded timeout.
 
-    Calling ``provider.shutdown()`` flushes remaining spans AND closes all span
-    processors and their exporters, which releases the ``requests``/urllib3
-    connection pool held by the Azure Monitor exporter.  Without this call the
-    pool is finalized by the GC at interpreter exit — after the ``queue`` module
-    globals have been torn down — which triggers:
+    Calls ``shutdown()`` on both the tracer provider and the logger provider.
+    The logger provider shutdown is the critical path: it flushes all pending
+    customEvents, closes the log exporter, and releases the urllib3 connection
+    pool.  Without this call the pool is finalized by the GC at interpreter
+    exit — after the ``queue`` module globals have been torn down — which triggers:
 
         AttributeError: 'NoneType' object has no attribute 'Empty'
 
     in ``urllib3.connectionpool._close_pool_connections``.
 
+    The timeout is raised to ≤5 s (from the previous 2 s) to give the log
+    exporter time to drain.  The trade-off is acceptable: the shutdown runs in
+    a daemon thread, so the OS will kill it if the main thread exits first, and
+    the join() cap ensures the call itself never returns after the timeout even
+    if the exporter is slow.
+
     The shutdown runs in a daemon thread so it can never block process exit
-    (same bounded pattern as :func:`flush_telemetry`).  A ≤2 s join ensures
-    the call returns promptly even if the exporter's HTTP session is slow to
-    drain.
+    (same bounded pattern as :func:`flush_telemetry`).
 
     This function is idempotent: subsequent calls after the first shutdown
     are silent no-ops.
@@ -565,17 +630,23 @@ def shutdown_telemetry(timeout_ms: int = 2000) -> None:
 
     Args:
         timeout_ms: Maximum milliseconds to wait for the shutdown.  Defaults to
-            2000 (2 s).  Must not exceed the B2 hang budget.
+            5000 (5 s).  Raised from 2 s to give the log/event exporter time
+            to drain customEvents before the process exits.
     """
     global _sdk_shutdown  # noqa: PLW0603
 
-    if not _sdk_initialised or _tracer is None:
+    if not _sdk_initialised or _otel_logger is None:
         return
     if _sdk_shutdown:
         return
     _sdk_shutdown = True
 
     def _do_shutdown() -> None:
+        # Each pipeline is shut down independently so a failure in one does
+        # not prevent the other from running.
+
+        # Tracer provider — belt-and-suspenders; no spans are emitted in the
+        # new path, but kept so any SDK-internal spans are flushed.
         with contextlib.suppress(Exception):
             from opentelemetry import trace as _trace  # noqa: PLC0415
 
@@ -583,6 +654,15 @@ def shutdown_telemetry(timeout_ms: int = 2000) -> None:
             shutdown_fn = getattr(provider, "shutdown", None)
             if callable(shutdown_fn):
                 shutdown_fn()
+
+        # Logger provider — this is the critical path for customEvents.
+        with contextlib.suppress(Exception):
+            from opentelemetry._logs import get_logger_provider  # noqa: PLC0415
+
+            log_provider = get_logger_provider()
+            log_shutdown = getattr(log_provider, "shutdown", None)
+            if callable(log_shutdown):
+                log_shutdown()
 
     t = threading.Thread(target=_do_shutdown, daemon=True)
     t.start()
@@ -595,7 +675,21 @@ def shutdown_telemetry(timeout_ms: int = 2000) -> None:
 
 
 def emit_event(name: str, attributes: dict[str, object]) -> None:
-    """Emit a telemetry event as an OpenTelemetry span.
+    """Emit a telemetry event as an Application Insights customEvent.
+
+    The event is emitted via the OpenTelemetry logs API as a log record
+    carrying ``microsoft.custom_event.name``.  The Azure Monitor log exporter
+    maps this to ``baseType=EventData``, which lands in the ``customEvents``
+    table and populates the App Insights "Usage → Events" blade.
+
+    ``enduser.pseudo.id`` is set to the anonymous install UUID so the event
+    carries ``ai.user.id`` (→ "Usage → Users" blade).  This is a randomly
+    generated UUID — not a username, email, or any PII.
+
+    Sessions note: ``ai.session.id`` has no attribute mapping in
+    azure-monitor-opentelemetry-exporter 1.0.0b53.  ``session_id`` is therefore
+    kept as a custom dimension (customDimensions) so it is query-able in the
+    Logs blade.  Re-check when upgrading the exporter.
 
     Fire-and-forget: never raises, never blocks the caller noticeably.
     When telemetry is disabled, this is a guaranteed no-op.
@@ -604,20 +698,35 @@ def emit_event(name: str, attributes: dict[str, object]) -> None:
         return
 
     try:
-        tracer = _get_tracer()
-        if tracer is None or not hasattr(tracer, "start_as_current_span"):
+        otel_logger = _get_tracer()
+        if otel_logger is None or not hasattr(otel_logger, "emit"):
             return
 
-        envelope = _build_envelope(_current_surface)
-        merged = {**envelope, **attributes}
+        from opentelemetry._logs import LogRecord  # noqa: PLC0415
 
-        # Emit as a zero-duration span (event pattern).
-        # getattr is intentional: `tracer` is typed as `object` to avoid importing
-        # the OpenTelemetry tracer type (lazy SDK import), so attribute access would
-        # fail static analysis; we guard with hasattr above and suppress B009 here.
-        start_span = getattr(tracer, "start_as_current_span")  # noqa: B009
-        with start_span(name, attributes=merged):
-            pass
+        envelope = _build_envelope(_current_surface)
+        merged: dict[str, object] = {**envelope, **attributes}
+
+        # Add the two special attributes that drive native App Insights mapping:
+        #   microsoft.custom_event.name → EventData.name (customEvents table)
+        #   enduser.pseudo.id           → ai.user.id ("Users" blade)
+        # NOTE: enduser.pseudo.id contains the anonymous install UUID — a random
+        # UUID generated on first run and stored locally.  It is NOT a username,
+        # email address, or any form of PII.  DO NOT replace with enduser.id,
+        # which maps to ai.user.authUserId (authenticated / PII field).
+        merged["microsoft.custom_event.name"] = name
+        merged["enduser.pseudo.id"] = _get_install_id()
+
+        record = LogRecord(  # ty: ignore[no-matching-overload]
+            attributes=merged,  # type: ignore[arg-type]
+        )
+
+        # getattr is intentional: `otel_logger` is typed as `object` to avoid
+        # importing the OTel Logger type at module level (lazy SDK import), so
+        # attribute access would fail static analysis; we guard with hasattr above
+        # and suppress B009 here.
+        emit_fn = getattr(otel_logger, "emit")  # noqa: B009
+        emit_fn(record)
     except Exception:
         _log.debug("Failed to emit telemetry event %r", name, exc_info=True)
 
