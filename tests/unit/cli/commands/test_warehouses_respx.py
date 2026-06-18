@@ -122,7 +122,7 @@ class TestWarehousesGetRespx:
                 "fabric_dw.cli.commands.warehouses.build_http_client",
                 new=_real_http_client_cm,
             ):
-                result = runner.invoke(cli, ["--json", "warehouses", "get", WS_GUID, WH_GUID])
+                result = runner.invoke(cli, ["--json", "-w", WS_GUID, "warehouses", "get", WH_GUID])
 
         assert result.exit_code == 0, result.output
         # Verify the exact URLs were called (wire validation)
@@ -151,7 +151,7 @@ class TestWarehousesGetRespx:
                 "fabric_dw.cli.commands.warehouses.build_http_client",
                 new=_real_http_client_cm,
             ):
-                result = runner.invoke(cli, ["warehouses", "get", WS_GUID, WH_GUID])
+                result = runner.invoke(cli, ["-w", WS_GUID, "warehouses", "get", WH_GUID])
 
         assert result.exit_code == 0, result.output
         # Every captured request must have an Authorization header
@@ -191,7 +191,7 @@ class TestWarehousesDeleteRespx:
             ):
                 result = runner.invoke(
                     cli,
-                    ["--yes", "warehouses", "delete", WS_GUID, WH_GUID],
+                    ["--yes", "-w", WS_GUID, "warehouses", "delete", WH_GUID],
                 )
 
         assert result.exit_code == 0, result.output
@@ -240,9 +240,10 @@ class TestWarehousesRenameRespx:
                     [
                         "--json",
                         "--yes",
+                        "-w",
+                        WS_GUID,
                         "warehouses",
                         "rename",
-                        WS_GUID,
                         WH_GUID,
                         "RenamedWarehouse",
                     ],

@@ -82,7 +82,7 @@ class TestWarehousesList:
                 new=AsyncMock(return_value=WS_UUID),
             ),
         ):
-            result = runner.invoke(cli, ["warehouses", "list", WS_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "warehouses", "list"])
         assert result.exit_code == 0
         # iter_paginated must have been called with a URL containing the resolved workspace UUID,
         # proving workspace resolution happened and the list call reached the service layer.
@@ -118,7 +118,7 @@ class TestWarehousesList:
                 new=AsyncMock(return_value=WS_UUID),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "warehouses", "list", WS_GUID])
+            result = runner.invoke(cli, ["--json", "-w", WS_GUID, "warehouses", "list"])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert isinstance(parsed, list)
@@ -158,7 +158,7 @@ class TestWarehousesListHideWorkspaceId:
                 new=AsyncMock(return_value=WS_UUID),
             ),
         ):
-            result = runner.invoke(cli, ["warehouses", "list", WS_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "warehouses", "list"])
         assert result.exit_code == 0, result.output
         # The warehouse id (GUID column, full width) is shown, but the
         # redundant workspace GUID column is dropped.  Asserting on the GUIDs is
@@ -188,7 +188,7 @@ class TestWarehousesListHideWorkspaceId:
                 new=AsyncMock(return_value=WS_UUID),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "warehouses", "list", WS_GUID])
+            result = runner.invoke(cli, ["--json", "-w", WS_GUID, "warehouses", "list"])
         assert result.exit_code == 0, result.output
         parsed = json.loads(result.output)
         assert parsed[0]["workspaceId"] == WS_GUID
@@ -253,7 +253,7 @@ class TestWarehousesListWarehousesOnly:
             ),
         ):
             result = runner.invoke(
-                cli, ["--json", "warehouses", "list", WS_GUID, "--warehouses-only"]
+                cli, ["--json", "-w", WS_GUID, "warehouses", "list", "--warehouses-only"]
             )
         assert result.exit_code == 0, result.output
         # Only the /warehouses endpoint may be paged — never /sqlEndpoints.
@@ -278,7 +278,7 @@ class TestWarehousesListWarehousesOnly:
                 new=AsyncMock(return_value=WS_UUID),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "warehouses", "list", WS_GUID])
+            result = runner.invoke(cli, ["--json", "-w", WS_GUID, "warehouses", "list"])
         assert result.exit_code == 0, result.output
         called_paths = [c.args[1] for c in mock_http.iter_paginated.call_args_list if c.args]
         assert any("sqlEndpoints" in p for p in called_paths)
@@ -330,7 +330,7 @@ class TestWarehousesGet:
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "warehouses", "get", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["--json", "-w", WS_GUID, "warehouses", "get", WH_GUID])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert parsed["displayName"] == "SalesWarehouse"
@@ -349,7 +349,7 @@ class TestWarehousesGet:
                 new=AsyncMock(side_effect=NotFoundError("not found")),
             ),
         ):
-            result = runner.invoke(cli, ["warehouses", "get", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "warehouses", "get", WH_GUID])
         assert result.exit_code != 0
 
 
@@ -397,7 +397,7 @@ class TestWarehousesGetCollationDefault:
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
         ):
-            args = ["warehouses", "get", WS_GUID, WH_GUID]
+            args = ["-w", WS_GUID, "warehouses", "get", WH_GUID]
             if json_flag:
                 args = ["--json", *args]
             result = runner.invoke(cli, args)
@@ -464,7 +464,7 @@ class TestWarehousesCreate:
                 new=AsyncMock(return_value=WS_UUID),
             ),
         ):
-            result = runner.invoke(cli, ["warehouses", "create", WS_GUID, "NewWarehouse"])
+            result = runner.invoke(cli, ["-w", WS_GUID, "warehouses", "create", "NewWarehouse"])
         assert result.exit_code == 0
 
 
@@ -490,7 +490,7 @@ class TestWarehousesRename:
         ):
             result = runner.invoke(
                 cli,
-                ["--json", "--yes", "warehouses", "rename", WS_GUID, WH_GUID, "NewName"],
+                ["--json", "--yes", "-w", WS_GUID, "warehouses", "rename", WH_GUID, "NewName"],
             )
         assert result.exit_code == 0
         mock_rename.assert_awaited_once()
@@ -514,7 +514,7 @@ class TestWarehousesRename:
         ):
             result = runner.invoke(
                 cli,
-                ["warehouses", "rename", WS_GUID, WH_GUID, "NewName"],
+                ["-w", WS_GUID, "warehouses", "rename", WH_GUID, "NewName"],
                 input="n\n",
             )
         assert result.exit_code == 0
@@ -541,7 +541,7 @@ class TestWarehousesDelete:
             ),
             patch("fabric_dw.services.warehouses.delete", new=mock_delete),
         ):
-            result = runner.invoke(cli, ["--yes", "warehouses", "delete", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["--yes", "-w", WS_GUID, "warehouses", "delete", WH_GUID])
         assert result.exit_code == 0
         mock_delete.assert_awaited_once()
 
@@ -560,7 +560,9 @@ class TestWarehousesDelete:
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry(), _cache)),
             ),
         ):
-            result = runner.invoke(cli, ["warehouses", "delete", WS_GUID, WH_GUID], input="n\n")
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "warehouses", "delete", WH_GUID], input="n\n"
+            )
         assert result.exit_code == 0
         assert "Aborted." in result.output
 
@@ -581,7 +583,7 @@ class TestWarehousesDelete:
             ),
         ):
             result = runner.invoke(
-                cli, ["--yes", "--json", "warehouses", "delete", WS_GUID, WH_GUID]
+                cli, ["--yes", "--json", "-w", WS_GUID, "warehouses", "delete", WH_GUID]
             )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -631,7 +633,7 @@ class TestWarehousesListAllWorkspaces:
             "fabric_dw.cli.commands.warehouses.build_http_client",
             new=_make_cm(mock_http, None),
         ):
-            result = runner.invoke(cli, ["warehouses", "list", WS_GUID, "-A"])
+            result = runner.invoke(cli, ["-w", WS_GUID, "warehouses", "list", "-A"])
         assert result.exit_code != 0
 
 
@@ -654,7 +656,7 @@ class TestWarehousesTakeover:
             ),
             patch("fabric_dw.services.ownership.takeover", new=mock_takeover),
         ):
-            result = runner.invoke(cli, ["--yes", "warehouses", "takeover", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["--yes", "-w", WS_GUID, "warehouses", "takeover", WH_GUID])
         assert result.exit_code == 0
         mock_takeover.assert_awaited_once()
 
@@ -671,7 +673,7 @@ class TestWarehousesTakeover:
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry(WarehouseKind.SQL_ENDPOINT))),
             ),
         ):
-            result = runner.invoke(cli, ["--yes", "warehouses", "takeover", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["--yes", "-w", WS_GUID, "warehouses", "takeover", WH_GUID])
         assert result.exit_code != 0
         assert "SQL Analytics Endpoint" in result.output
 
@@ -703,7 +705,7 @@ class TestWarehousesDefaultFallback:
                 new=AsyncMock(return_value=WS_UUID),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "warehouses", "list", WS_GUID])
+            result = runner.invoke(cli, ["--json", "-w", WS_GUID, "warehouses", "list"])
         assert result.exit_code == 0
         # Empty list renders as valid JSON array when no warehouses exist
         parsed = json.loads(result.output)
@@ -765,7 +767,7 @@ class TestWarehousesListFabricError:
                 new=AsyncMock(side_effect=FabricError("server error")),
             ),
         ):
-            result = runner.invoke(cli, ["warehouses", "list", WS_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "warehouses", "list"])
         assert result.exit_code != 0
 
 
@@ -789,7 +791,7 @@ class TestWarehousesCreateError:
                 new=AsyncMock(side_effect=FabricError("server error")),
             ),
         ):
-            result = runner.invoke(cli, ["warehouses", "create", WS_GUID, "NewWarehouse"])
+            result = runner.invoke(cli, ["-w", WS_GUID, "warehouses", "create", "NewWarehouse"])
         assert result.exit_code != 0
 
 
@@ -816,7 +818,7 @@ class TestWarehousesRenameError:
         ):
             result = runner.invoke(
                 cli,
-                ["--yes", "warehouses", "rename", WS_GUID, WH_GUID, "NewName"],
+                ["--yes", "-w", WS_GUID, "warehouses", "rename", WH_GUID, "NewName"],
             )
         assert result.exit_code != 0
 
@@ -842,7 +844,7 @@ class TestWarehousesDeleteError:
                 new=AsyncMock(side_effect=FabricError("server error")),
             ),
         ):
-            result = runner.invoke(cli, ["--yes", "warehouses", "delete", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["--yes", "-w", WS_GUID, "warehouses", "delete", WH_GUID])
         assert result.exit_code != 0
 
 
@@ -865,7 +867,7 @@ class TestWarehousesTakeoverErrors:
                 new=AsyncMock(side_effect=FabricError("resolve error")),
             ),
         ):
-            result = runner.invoke(cli, ["--yes", "warehouses", "takeover", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["--yes", "-w", WS_GUID, "warehouses", "takeover", WH_GUID])
         assert result.exit_code != 0
 
     def test_takeover_declined_prints_aborted(self, runner: CliRunner, cache_env: Path) -> None:
@@ -884,7 +886,7 @@ class TestWarehousesTakeoverErrors:
         ):
             result = runner.invoke(
                 cli,
-                ["warehouses", "takeover", WS_GUID, WH_GUID],
+                ["-w", WS_GUID, "warehouses", "takeover", WH_GUID],
                 input="n\n",
             )
         assert result.exit_code == 0
@@ -910,7 +912,7 @@ class TestWarehousesTakeoverErrors:
                 new=AsyncMock(side_effect=FabricError("takeover failed")),
             ),
         ):
-            result = runner.invoke(cli, ["--yes", "warehouses", "takeover", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["--yes", "-w", WS_GUID, "warehouses", "takeover", WH_GUID])
         assert result.exit_code != 0
 
 
@@ -958,7 +960,9 @@ class TestWarehousesPermissions:
                 new=AsyncMock(return_value=[access]),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "warehouses", "permissions", WS_GUID, WH_GUID])
+            result = runner.invoke(
+                cli, ["--json", "-w", WS_GUID, "warehouses", "permissions", WH_GUID]
+            )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert isinstance(parsed, list)
@@ -980,7 +984,7 @@ class TestWarehousesPermissions:
                 new=AsyncMock(side_effect=FabricError("server error")),
             ),
         ):
-            result = runner.invoke(cli, ["warehouses", "permissions", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "warehouses", "permissions", WH_GUID])
         assert result.exit_code != 0
 
 
@@ -1042,7 +1046,7 @@ class TestTakeoverSingleHttpOpen:
                 new=AsyncMock(return_value=None),
             ),
         ):
-            result = runner.invoke(cli, ["--yes", "warehouses", "takeover", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["--yes", "-w", WS_GUID, "warehouses", "takeover", WH_GUID])
 
         assert result.exit_code == 0, result.output
         assert open_count == 1, f"build_http_client opened {open_count} times, expected 1"

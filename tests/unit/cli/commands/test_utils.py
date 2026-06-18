@@ -549,8 +549,9 @@ class TestResolveWarehouseArgErrorMessage:
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
         monkeypatch.delenv("FABRIC_DW_DEFAULT_WORKSPACE", raising=False)
         monkeypatch.delenv("FABRIC_DW_DEFAULT_WAREHOUSE", raising=False)
-        # warehouses get requires WORKSPACE and WAREHOUSE; supply workspace but omit warehouse.
-        result = runner.invoke(cli, ["warehouses", "get", WS_GUID])
+        # warehouses get needs a workspace (-w) and a WAREHOUSE; supply the
+        # workspace via -w but omit the warehouse positional.
+        result = runner.invoke(cli, ["-w", WS_GUID, "warehouses", "get"])
         assert result.exit_code != 0
         output = result.output
         assert "no warehouse specified" in output

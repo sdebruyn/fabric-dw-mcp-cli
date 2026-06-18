@@ -19,8 +19,8 @@ from fabric_dw.cli.commands._utils import (
     make_resolver,
     resolve_item,
     resolve_warehouse_arg,
-    resolve_workspace_arg,
-    validate_workspace_or_all_workspaces,
+    resolve_workspace,
+    validate_workspace_option_or_all_workspaces,
 )
 from fabric_dw.exceptions import FabricError, NotFoundError
 from fabric_dw.services import permissions as _permissions_svc
@@ -80,8 +80,8 @@ async def _resolve_endpoint_or_hint(
         raise click.ClickException(
             f"SQL endpoint {endpoint!r} (the configured default) was not found in "
             f"workspace {ws!r}. The default endpoint likely belongs to a different "
-            "workspace. Pass the endpoint explicitly as the second argument "
-            "('fabric-dw sql-endpoints <command> <workspace> <endpoint>'), or set a "
+            "workspace. Pass the endpoint explicitly as the ENDPOINT argument "
+            "('fabric-dw -w <workspace> sql-endpoints <command> <endpoint>'), or set a "
             "default that belongs to this workspace with "
             "'fabric-dw config set warehouse <name|id>' (accepts a warehouse or "
             "SQL Analytics Endpoint)."
@@ -94,7 +94,6 @@ def sql_endpoints_group() -> None:
 
 
 @sql_endpoints_group.command("list")
-@click.argument("workspace", required=False, default=None)
 @click.option(
     "-A",
     "--all-workspaces",
@@ -105,27 +104,24 @@ def sql_endpoints_group() -> None:
 )
 @click.pass_obj
 @coro
-async def list_cmd(ctx: CliContext, workspace: str | None, all_workspaces: bool) -> None:
-    """List all SQL analytics endpoints in WORKSPACE (name or GUID).
+async def list_cmd(ctx: CliContext, all_workspaces: bool) -> None:
+    """List all SQL analytics endpoints in the target workspace.
+
+    The workspace comes from -w/--workspace (or the configured default).
 
     Pass -A / --all-workspaces to scan every visible workspace instead.
-    WORKSPACE and --all-workspaces are mutually exclusive; exactly one is required.
+    -w/--workspace and --all-workspaces are mutually exclusive.
     """
-    # Resolve the workspace default before the XOR validation so that a
-    # configured default-workspace (env / config file) is honoured when no
-    # positional arg is passed but --all-workspaces is also absent.
-    resolved_workspace = None if all_workspaces else resolve_workspace_arg(ctx, workspace)
-    validate_workspace_or_all_workspaces(resolved_workspace, all_workspaces)
+    # An explicit -w clashes with -A; a configured default does not (so -A
+    # always wins over a default and only the explicit flag is a conflict).
+    validate_workspace_option_or_all_workspaces(ctx.workspace, all_workspaces)
     try:
         async with build_http_client(ctx) as http:
             if all_workspaces:
                 items = await _sql_endpoints_svc.list_all_workspaces(http)
             else:
-                # resolved_workspace is guaranteed non-None by validate_workspace_or_all_workspaces
-                if resolved_workspace is None:  # pragma: no cover — defensive
-                    raise click.UsageError("Provide WORKSPACE or pass --all-workspaces / -A.")
                 resolver, _ = make_resolver(http)
-                ws_id = await resolver.workspace_id(resolved_workspace)
+                ws_id = await resolver.workspace_id(resolve_workspace(ctx))
                 items = await _sql_endpoints_svc.list_endpoints(http, ws_id)
             rows = [ep.model_dump(by_alias=True, mode="json") for ep in items]
             # The --json path stays COMPLETE; only the human/table path drops the
@@ -144,13 +140,12 @@ async def list_cmd(ctx: CliContext, workspace: str | None, all_workspaces: bool)
 
 
 @sql_endpoints_group.command("get")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.pass_obj
 @coro
-async def get_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> None:
-    """Get details for ITEM (SQL analytics endpoint) in WORKSPACE (both accept name or GUID)."""
-    ws = resolve_workspace_arg(ctx, workspace)
+async def get_cmd(ctx: CliContext, item: str | None) -> None:
+    """Get details for ITEM (SQL analytics endpoint, name or GUID) in the target workspace."""
+    ws = resolve_workspace(ctx)
     endpoint_explicit = item is not None
     ep = resolve_warehouse_arg(ctx, item)
     try:
@@ -170,7 +165,6 @@ async def get_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> N
 
 
 @sql_endpoints_group.command("refresh")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.option(
     "--recreate-tables",
@@ -185,10 +179,8 @@ async def get_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> N
 )
 @click.pass_obj
 @coro
-async def refresh_cmd(
-    ctx: CliContext, workspace: str | None, item: str | None, recreate_tables: bool
-) -> None:
-    """Refresh metadata for ITEM (SQL endpoint) in WORKSPACE (both accept name or GUID).
+async def refresh_cmd(ctx: CliContext, item: str | None, recreate_tables: bool) -> None:
+    """Refresh metadata for ITEM (SQL endpoint, name or GUID) in the target workspace.
 
     Triggers a metadata sync from the underlying Lakehouse delta tables.
     This is a long-running operation (LRO) that is polled to completion.
@@ -196,7 +188,7 @@ async def refresh_cmd(
     By default, results are shown as a Rich table.  Pass --json (on the root
     command) to emit raw JSON instead.
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     endpoint_explicit = item is not None
     ep = resolve_warehouse_arg(ctx, item)
     try:
@@ -219,17 +211,16 @@ async def refresh_cmd(
 
 
 @sql_endpoints_group.command("permissions")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.pass_obj
 @coro
-async def permissions_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> None:
-    """List principals with access to ITEM (SQL endpoint) in WORKSPACE (both accept name or GUID).
+async def permissions_cmd(ctx: CliContext, item: str | None) -> None:
+    """List principals with access to ITEM (SQL endpoint, name or GUID) in the target workspace.
 
     Requires Fabric Administrator role.
     See https://learn.microsoft.com/en-us/fabric/admin/microsoft-fabric-admin for details.
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     endpoint_explicit = item is not None
     ep = resolve_warehouse_arg(ctx, item)
     try:

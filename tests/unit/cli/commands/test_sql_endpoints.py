@@ -107,7 +107,7 @@ class TestEndpointsList:
                 new=AsyncMock(return_value=WS_UUID),
             ),
         ):
-            result = runner.invoke(cli, ["sql-endpoints", "list", WS_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-endpoints", "list"])
         assert result.exit_code == 0
 
     def test_list_json_output(self, runner: CliRunner, cache_env: Path) -> None:
@@ -138,7 +138,7 @@ class TestEndpointsList:
                 new=AsyncMock(return_value=WS_UUID),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "sql-endpoints", "list", WS_GUID])
+            result = runner.invoke(cli, ["--json", "-w", WS_GUID, "sql-endpoints", "list"])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert isinstance(parsed, list)
@@ -181,7 +181,9 @@ class TestEndpointsListColumns:
             ),
         ):
             # Force a wide console so Rich does not truncate the header text.
-            result = runner.invoke(cli, ["sql-endpoints", "list", WS_GUID], env={"COLUMNS": "200"})
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "sql-endpoints", "list"], env={"COLUMNS": "200"}
+            )
         assert result.exit_code == 0
         out = result.output
         assert "kind" not in out
@@ -241,7 +243,7 @@ class TestEndpointsListColumns:
                 new=AsyncMock(return_value=WS_UUID),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "sql-endpoints", "list", WS_GUID])
+            result = runner.invoke(cli, ["--json", "-w", WS_GUID, "sql-endpoints", "list"])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert isinstance(parsed, list)
@@ -293,7 +295,7 @@ class TestEndpointsListAllWorkspaces:
             "fabric_dw.cli.commands.sql_endpoints.build_http_client",
             new=_make_cm(mock_http, None),
         ):
-            result = runner.invoke(cli, ["sql-endpoints", "list", WS_GUID, "-A"])
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-endpoints", "list", "-A"])
         assert result.exit_code != 0
 
     def test_list_uses_config_default_workspace(
@@ -339,7 +341,7 @@ class TestEndpointsGet:
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
         ):
-            result = runner.invoke(cli, ["sql-endpoints", "get", WS_GUID, EP_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-endpoints", "get", EP_GUID])
         assert result.exit_code == 0
 
     def test_get_not_found_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
@@ -355,7 +357,7 @@ class TestEndpointsGet:
                 new=AsyncMock(side_effect=NotFoundError("endpoint not found")),
             ),
         ):
-            result = runner.invoke(cli, ["sql-endpoints", "get", WS_GUID, EP_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-endpoints", "get", EP_GUID])
         assert result.exit_code != 0
 
     def test_get_human_output_shows_default_collation(
@@ -375,7 +377,7 @@ class TestEndpointsGet:
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
         ):
-            result = runner.invoke(cli, ["sql-endpoints", "get", WS_GUID, EP_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-endpoints", "get", EP_GUID])
         assert result.exit_code == 0, result.output
         assert FABRIC_DEFAULT_COLLATION in result.output
         assert "(default)" in result.output
@@ -397,7 +399,7 @@ class TestEndpointsGet:
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "sql-endpoints", "get", WS_GUID, EP_GUID])
+            result = runner.invoke(cli, ["--json", "-w", WS_GUID, "sql-endpoints", "get", EP_GUID])
         assert result.exit_code == 0, result.output
         parsed = json.loads(result.output)
         assert parsed["defaultCollation"] is None
@@ -421,7 +423,7 @@ class TestEndpointsGet:
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
         ):
-            result = runner.invoke(cli, ["sql-endpoints", "get", WS_GUID, EP_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-endpoints", "get", EP_GUID])
         assert result.exit_code == 0, result.output
         assert "Latin1_General_100_CI_AS_KS_WS_SC_UTF8" in result.output
         assert "(default)" not in result.output
@@ -472,7 +474,7 @@ class TestEndpointsRefresh:
                 new=AsyncMock(return_value=_make_table_sync_statuses()),
             ),
         ):
-            result = runner.invoke(cli, ["sql-endpoints", "refresh", WS_GUID, EP_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-endpoints", "refresh", EP_GUID])
         assert result.exit_code == 0
 
     def test_refresh_default_renders_rich_table(self, runner: CliRunner, cache_env: Path) -> None:
@@ -494,7 +496,7 @@ class TestEndpointsRefresh:
                 new=AsyncMock(return_value=_make_table_sync_statuses()),
             ),
         ):
-            result = runner.invoke(cli, ["sql-endpoints", "refresh", WS_GUID, EP_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-endpoints", "refresh", EP_GUID])
         assert result.exit_code == 0
         # Rich table output must not be valid JSON
         try:
@@ -523,7 +525,9 @@ class TestEndpointsRefresh:
                 new=AsyncMock(return_value=_make_table_sync_statuses()),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "sql-endpoints", "refresh", WS_GUID, EP_GUID])
+            result = runner.invoke(
+                cli, ["--json", "-w", WS_GUID, "sql-endpoints", "refresh", EP_GUID]
+            )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert isinstance(parsed, list)
@@ -555,7 +559,7 @@ class TestEndpointsRefresh:
         ):
             result = runner.invoke(
                 cli,
-                ["sql-endpoints", "refresh", "--recreate-tables", WS_GUID, EP_GUID],
+                ["-w", WS_GUID, "sql-endpoints", "refresh", "--recreate-tables", EP_GUID],
             )
         assert result.exit_code == 0
         mock_refresh.assert_called_once()
@@ -584,7 +588,7 @@ class TestEndpointsRefresh:
                 new=mock_refresh,
             ),
         ):
-            result = runner.invoke(cli, ["sql-endpoints", "refresh", WS_GUID, EP_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-endpoints", "refresh", EP_GUID])
         assert result.exit_code == 0
         mock_refresh.assert_called_once()
         _, kwargs = mock_refresh.call_args
@@ -603,7 +607,7 @@ class TestEndpointsRefresh:
                 new=AsyncMock(side_effect=NotFoundError("endpoint not found")),
             ),
         ):
-            result = runner.invoke(cli, ["sql-endpoints", "refresh", WS_GUID, EP_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-endpoints", "refresh", EP_GUID])
         assert result.exit_code != 0
 
 
@@ -627,7 +631,7 @@ class TestEndpointsPermissions:
                 new=AsyncMock(return_value=[]),
             ),
         ):
-            result = runner.invoke(cli, ["sql-endpoints", "permissions", WS_GUID, EP_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-endpoints", "permissions", EP_GUID])
         assert result.exit_code == 0
 
 
@@ -658,7 +662,7 @@ class TestEndpointsStaleDefaultHint:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """One positional arg + stale default → actionable message, not a raw 404."""
+        """No ENDPOINT positional + stale default → actionable message, not a raw 404."""
         _configure_default_warehouse(runner, monkeypatch, tmp_path)
         mock_http = AsyncMock()
         with (
@@ -676,15 +680,15 @@ class TestEndpointsStaleDefaultHint:
                 ),
             ),
         ):
-            # Only ONE positional arg — the endpoint comes from the stale default.
-            result = runner.invoke(cli, ["sql-endpoints", command, WS_GUID])
+            # No ENDPOINT positional — the endpoint comes from the stale default.
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-endpoints", command])
         assert result.exit_code != 0
         out = result.output
         assert "configured default" in out
         assert "different" in out
         assert WS_GUID in out
         assert _STALE_DEFAULT_GUID in out
-        assert "second argument" in out
+        assert "ENDPOINT argument" in out
         # The cryptic raw 404 body must NOT leak through.
         assert "EntityNotFound" not in out
 
@@ -704,7 +708,7 @@ class TestEndpointsStaleDefaultHint:
                 new=AsyncMock(side_effect=NotFoundError("endpoint not found")),
             ),
         ):
-            result = runner.invoke(cli, ["sql-endpoints", "permissions", WS_GUID, EP_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-endpoints", "permissions", EP_GUID])
         assert result.exit_code != 0
         # The friendly stale-default wording must NOT appear for an explicit arg.
         assert "configured default" not in result.output
