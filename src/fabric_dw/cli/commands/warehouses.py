@@ -41,13 +41,32 @@ def warehouses_group() -> None:
     default=False,
     help="Scan all visible workspaces and aggregate results.",
 )
+@click.option(
+    "--warehouses-only",
+    "warehouses_only",
+    is_flag=True,
+    default=False,
+    help="List only Warehouses; exclude SQL Analytics Endpoints (skips an API call).",
+)
 @click.pass_obj
 @coro
-async def list_cmd(ctx: CliContext, workspace: str | None, all_workspaces: bool) -> None:
+async def list_cmd(
+    ctx: CliContext,
+    workspace: str | None,
+    all_workspaces: bool,
+    warehouses_only: bool,
+) -> None:
     """List all warehouses in WORKSPACE (name or GUID).
+
+    Lists both Warehouses and SQL Analytics Endpoints by default; pass
+    --warehouses-only to exclude SQL Analytics Endpoints.
 
     Pass -A / --all-workspaces to scan every visible workspace instead.
     WORKSPACE and --all-workspaces are mutually exclusive; exactly one is required.
+
+    The human-readable table omits the redundant Workspace ID column when a
+    single workspace is targeted (every row shares it); -A keeps it because
+    rows then span workspaces.  --json output always includes workspace_id.
     """
     # Resolve the workspace default before the XOR validation so that a
     # configured default-workspace (env / config file) is honoured when no
@@ -57,18 +76,28 @@ async def list_cmd(ctx: CliContext, workspace: str | None, all_workspaces: bool)
     try:
         async with build_http_client(ctx) as http:
             if all_workspaces:
-                items = await _warehouses_svc.list_all_workspaces(http)
+                items = await _warehouses_svc.list_all_workspaces(
+                    http, warehouses_only=warehouses_only
+                )
             else:
                 # resolved_workspace is guaranteed non-None by validate_workspace_or_all_workspaces
                 if resolved_workspace is None:  # pragma: no cover — defensive
                     raise click.UsageError("Provide WORKSPACE or pass --all-workspaces / -A.")
                 resolver, _ = make_resolver(http)
                 ws_id = await resolver.workspace_id(resolved_workspace)
-                items = await _warehouses_svc.list_warehouses(http, ws_id)
+                items = await _warehouses_svc.list_warehouses(
+                    http, ws_id, warehouses_only=warehouses_only
+                )
+            # Single-workspace listings share one workspace per row, so the
+            # Workspace ID column is redundant noise in the human table — drop
+            # it (table only).  -A spans workspaces, so the column is kept.
+            # --json is never pruned (render ignores drop_columns for JSON).
+            drop_columns = None if all_workspaces else ("workspaceId",)
             render(
                 [w.model_dump(by_alias=True, mode="json") for w in items],
                 json_output=ctx.json_output,
                 table_title="Warehouses",
+                drop_columns=drop_columns,
             )
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc

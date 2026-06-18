@@ -83,6 +83,7 @@ def render(
     json_output: bool,
     console: Console | None = None,
     table_title: str | None = None,
+    drop_columns: tuple[str, ...] | list[str] | None = None,
 ) -> None:
     """Print *data* to stdout using JSON or Rich formatting.
 
@@ -97,6 +98,12 @@ def render(
             default console (stdout) is used. Ignored when *json_output=True*.
         table_title: Optional title shown above the Rich Table.
             Ignored when *json_output=True* or when *data* is not a list.
+        drop_columns: Optional column names to omit from the **human-readable
+            table only**.  Must be a ``tuple[str, ...]`` or ``list[str]`` (not
+            a bare ``str``).  Useful for hiding redundant columns (e.g. a
+            workspace-id column when every row shares the same workspace).
+            Ignored when *json_output=True* (machine-readable output is never
+            pruned) and when *data* is not a list.
     """
     if json_output:
         click.echo(_json.dumps(data, indent=2, default=str))
@@ -105,7 +112,7 @@ def render(
     con = console if console is not None else _DEFAULT_CONSOLE
 
     if isinstance(data, list):
-        _render_table(data, console=con, title=table_title)
+        _render_table(data, console=con, title=table_title, drop_columns=drop_columns)
     elif isinstance(data, dict):
         _render_panel({str(k): v for k, v in data.items()}, console=con, title=table_title)
     else:
@@ -138,14 +145,29 @@ def _column_is_all_null(col: str, norm_rows: list[dict[str, object] | object]) -
     return True
 
 
-def _render_table(rows: Sequence[object], *, console: Console, title: str | None) -> None:
+def _render_table(
+    rows: Sequence[object],
+    *,
+    console: Console,
+    title: str | None,
+    drop_columns: tuple[str, ...] | list[str] | None = None,
+) -> None:
     """Render a list of dicts as a Rich Table.
 
     Columns whose value is ``None`` in **every** row are omitted from the
     output — they only clutter list views (e.g. ``definition`` for
     ``procedures list``).  A column that is non-null in at least one row is
     kept, and any null cells in that column still render as ``[dim]NULL[/dim]``.
+
+    Args:
+        rows: The list of rows (dicts or scalars) to render.
+        console: The Rich console to print to.
+        title: Optional table title.
+        drop_columns: Optional column names to explicitly omit, in addition to
+            the automatic all-null pruning.  Used by callers to hide a column
+            that is redundant in a given context (e.g. a shared workspace id).
     """
+    dropped: frozenset[str] = frozenset(drop_columns or ())
     table = Table(title=title, show_header=True, header_style="bold")
 
     if not rows:
@@ -172,7 +194,7 @@ def _render_table(rows: Sequence[object], *, console: Console, title: str | None
     # Non-dict rows (scalars) are never counted as "having" any column value, so
     # a column is only kept if at least one dict-row provides a non-None value.
     all_null = {col for col in columns if _column_is_all_null(col, norm_rows)}
-    visible_columns = [col for col in columns if col not in all_null]
+    visible_columns = [col for col in columns if col not in all_null and col not in dropped]
 
     for col in visible_columns:
         if _is_guid_column(col, norm_rows):

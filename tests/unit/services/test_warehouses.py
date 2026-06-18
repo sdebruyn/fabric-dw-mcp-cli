@@ -157,6 +157,29 @@ async def test_list_all_items_are_warehouse_instances() -> None:
     assert all(isinstance(item, Warehouse) for item in result)
 
 
+async def test_list_warehouses_only_skips_sql_endpoints_request() -> None:
+    """warehouses_only=True must NOT issue any /sqlEndpoints request."""
+    wh_payload = json.loads(WAREHOUSE_LIST_PAYLOAD)
+    wh_payload.pop("continuationUri", None)
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        wh_route = mock_router.get(_WAREHOUSES_URL).mock(
+            return_value=httpx.Response(200, json=wh_payload)
+        )
+        ep_route = mock_router.get(_SQL_ENDPOINTS_URL).mock(
+            return_value=httpx.Response(200, json={"value": []})
+        )
+
+        client = await _make_client()
+        async with client:
+            result = await warehouses.list_warehouses(client, _WORKSPACE_ID, warehouses_only=True)
+
+    assert wh_route.called
+    assert not ep_route.called, "sqlEndpoints must not be requested when warehouses_only=True"
+    assert result
+    assert all(item.kind == WarehouseKind.WAREHOUSE for item in result)
+
+
 # ---------------------------------------------------------------------------
 # get
 # ---------------------------------------------------------------------------

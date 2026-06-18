@@ -107,8 +107,10 @@ __all__ = [
 ]
 
 
-async def list_warehouses(http: FabricHttpClient, workspace_id: UUID) -> list[Warehouse]:
-    """Return all warehouses and SQL analytics endpoints in a workspace.
+async def list_warehouses(
+    http: FabricHttpClient, workspace_id: UUID, *, warehouses_only: bool = False
+) -> list[Warehouse]:
+    """Return warehouses (and, by default, SQL analytics endpoints) in a workspace.
 
     Combines results from ``GET /workspaces/{ws}/warehouses`` and
     ``GET /workspaces/{ws}/sqlEndpoints``, both followed through pagination.
@@ -117,6 +119,10 @@ async def list_warehouses(http: FabricHttpClient, workspace_id: UUID) -> list[Wa
     Args:
         http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
         workspace_id: The UUID of the workspace to query.
+        warehouses_only: When ``True``, list only Warehouses
+            (kind=WAREHOUSE) and skip the ``GET /workspaces/{ws}/sqlEndpoints``
+            call entirely (saving an API request).  Defaults to ``False``,
+            which lists both Warehouses and SQL Analytics Endpoints.
 
     Returns:
         A list of :class:`~fabric_dw.models.Warehouse` instances with their
@@ -128,6 +134,8 @@ async def list_warehouses(http: FabricHttpClient, workspace_id: UUID) -> list[Wa
             HttpBase.FABRIC, f"/workspaces/{workspace_id}/warehouses"
         )
     ]
+    if warehouses_only:
+        return result
     result += [
         Warehouse.from_api(item, kind=WarehouseKind.SQL_ENDPOINT)
         async for item in http.iter_paginated(
@@ -137,7 +145,9 @@ async def list_warehouses(http: FabricHttpClient, workspace_id: UUID) -> list[Wa
     return result
 
 
-async def list_all_workspaces(http: FabricHttpClient) -> list[Warehouse]:
+async def list_all_workspaces(
+    http: FabricHttpClient, *, warehouses_only: bool = False
+) -> list[Warehouse]:
     """Scan every visible workspace and collect its warehouses.
 
     Iterates all workspaces returned by :func:`~fabric_dw.services.workspaces.list_all`
@@ -157,6 +167,9 @@ async def list_all_workspaces(http: FabricHttpClient) -> list[Warehouse]:
 
     Args:
         http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
+        warehouses_only: When ``True``, list only Warehouses (kind=WAREHOUSE)
+            per workspace and skip the SQL-endpoints fetch entirely.  Defaults
+            to ``False`` (both Warehouses and SQL Analytics Endpoints).
 
     Returns:
         A flat list of :class:`~fabric_dw.models.Warehouse` instances from all
@@ -186,7 +199,7 @@ async def list_all_workspaces(http: FabricHttpClient) -> list[Warehouse]:
     )
     return await scan_all_workspaces(
         workspaces,
-        lambda ws: list_warehouses(http, ws.id),  # type: ignore[union-attr]  # mypy false-positive: Sequence[_HasNameIdAndCapacity] exposes id: UUID but mypy loses the concrete type through the Protocol abstraction
+        lambda ws: list_warehouses(http, ws.id, warehouses_only=warehouses_only),  # type: ignore[union-attr]  # mypy false-positive: Sequence[_HasNameIdAndCapacity] exposes id: UUID but mypy loses the concrete type through the Protocol abstraction
         logger=_logger,
         skip_errors=(PermissionDeniedError, NotFoundError),
         capacity_states=capacity_states,

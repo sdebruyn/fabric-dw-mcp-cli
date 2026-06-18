@@ -42,6 +42,33 @@ async def list_endpoints(http: FabricHttpClient, workspace_id: UUID) -> list[War
     parsed as a :class:`~fabric_dw.models.Warehouse` with
     ``kind=SQL_ENDPOINT``.
 
+    Note (incomplete metadata vs. Warehouses):
+        Unlike Warehouses, SQL-endpoint list rows carry **no**
+        ``connection_string`` and **no** ``created_date``.  This is an API
+        limitation, not a bug here.  The Fabric ``SQLEndpoint`` resource schema
+        (used by both ``GET /sqlEndpoints`` and ``GET /sqlEndpoints/{id}``)
+        exposes only ``id``, ``displayName``, ``description``, ``type``,
+        ``workspaceId``, ``folderId``, ``sensitivityLabel``, ``tags`` and
+        ``defaultIdentity`` — neither ``createdDate`` nor ``connectionString``
+        is present (contrast Get Warehouse, which returns connection string +
+        created date + collation).  See
+        https://learn.microsoft.com/rest/api/fabric/sqlendpoint/items/list-sql-endpoints
+        and the type-specific-properties table at
+        https://learn.microsoft.com/rest/api/fabric/articles/onelakecatalog/overview#get-type-specific-item-properties
+        (SQLEndpoint is absent from it).
+
+        * ``connection_string`` — only resolvable per-endpoint, either via the
+          dedicated ``Items - Get Connection String`` API or via the parent
+          Lakehouse's ``properties.sqlEndpointProperties.connectionString``
+          (see :func:`_resolve_lakehouse_connection_string` / #347).  Both are
+          N+1; the list endpoint deliberately does NOT enrich it.
+        * ``created_date`` — not returned by the endpoint resource at all (list
+          or item), so it cannot be surfaced from a single list request.
+
+        Per the "one request → fix it, per-item request → leave it" rule, both
+        are left out of the list.  A future opt-in ``--enrich`` flag could fill
+        them per endpoint if the extra calls are acceptable.
+
     Args:
         http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
         workspace_id: The UUID of the workspace to query.

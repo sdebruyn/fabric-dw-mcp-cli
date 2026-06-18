@@ -111,7 +111,10 @@ async def test_proactive_skip_inactive_capacity_no_warehouses_call(
 
     fetch_call_ids: list[UUID] = []
 
-    async def _fetch_spy(_http: object, ws_id: UUID) -> list[Warehouse]:
+    async def _fetch_spy(
+        _http: object, ws_id: UUID, *, warehouses_only: bool = False
+    ) -> list[Warehouse]:
+        _ = warehouses_only
         fetch_call_ids.append(ws_id)
         return [wh_active] if ws_id == _WS_ACTIVE else []
 
@@ -191,7 +194,10 @@ async def test_proactive_skip_null_capacity_id(
 
     fetch_call_ids: list[UUID] = []
 
-    async def _fetch_spy(_http: object, ws_id: UUID) -> list[Warehouse]:
+    async def _fetch_spy(
+        _http: object, ws_id: UUID, *, warehouses_only: bool = False
+    ) -> list[Warehouse]:
+        _ = warehouses_only
         fetch_call_ids.append(ws_id)
         return [wh_active]
 
@@ -639,7 +645,10 @@ async def test_sql_endpoints_proactive_skip_inactive_capacity(
 
     fetch_call_ids: list[UUID] = []
 
-    async def _fetch_spy(_http: object, ws_id: UUID) -> list[Warehouse]:
+    async def _fetch_spy(
+        _http: object, ws_id: UUID, *, warehouses_only: bool = False
+    ) -> list[Warehouse]:
+        _ = warehouses_only
         fetch_call_ids.append(ws_id)
         return [ep_active]
 
