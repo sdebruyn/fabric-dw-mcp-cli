@@ -550,7 +550,7 @@ class TestSnapshotsRenameDefaultWorkspace:
                 new=AsyncMock(return_value=(WS_UUID, _make_snap_entry(), _cache)),
             ),
         ):
-            # Omit workspace positional arg — should fall back to env var
+            # No -w given — should fall back to FABRIC_DW_DEFAULT_WORKSPACE
             result = runner.invoke(
                 cli,
                 ["snapshots", "rename", SNAP_GUID, "NewSnapshotName"],
@@ -579,7 +579,7 @@ class TestSnapshotsDeleteDefaultWorkspace:
                 new=AsyncMock(return_value=(WS_UUID, _make_snap_entry(), _cache)),
             ),
         ):
-            # Omit workspace positional arg — should fall back to env var
+            # No -w given — should fall back to FABRIC_DW_DEFAULT_WORKSPACE
             result = runner.invoke(
                 cli,
                 ["--yes", "snapshots", "delete", SNAP_GUID],
