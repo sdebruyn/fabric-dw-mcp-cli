@@ -346,7 +346,7 @@ def duration_bucket(duration_ms: float) -> str:
 def emit_command_invoked(
     *,
     name: str,
-    surface: str,
+    surface: str,  # noqa: ARG001
     status: str,
     duration_ms: float,
     destructive: bool = False,
@@ -359,7 +359,10 @@ def emit_command_invoked(
     Args:
         name: The command name — for CLI: ``"<group>.<subcommand>"``,
               for MCP: the tool name.
-        surface: ``"cli"`` or ``"mcp"``.
+        surface: ``"cli"`` or ``"mcp"``.  Kept as a parameter for call-site
+              compatibility but no longer emitted as a custom dimension — it is
+              now shipped natively as ``cloud_RoleName`` via the OTel Resource
+              (``service.name`` = surface, set in ``record_app_started``).
         status: One of ``"success"``, ``"user_error"``, ``"api_error"``.
         duration_ms: Wall-clock duration in milliseconds.
         destructive: Whether this is a permanently-destructive operation.
@@ -372,11 +375,15 @@ def emit_command_invoked(
 
         domain = resolve_domain(name.split(".", maxsplit=1)[0] if "." in name else name)
         attrs: dict[str, object] = {
+            # ``name`` is kept as a custom dimension for convenience (queryable),
+            # even though it is also set as ``ai.operation.name`` (native field).
             "name": name,
             "domain": domain,
-            "surface": surface,
             "status": status,
             "duration_ms_bucket": duration_bucket(duration_ms),
+            # ai.operation.name → native operation_Name / AppRoleInstance portal column.
+            # Set to the command/tool name so it appears in the portal instead of blank.
+            "ai.operation.name": name,
         }
         if destructive:
             attrs["destructive_op"] = True
