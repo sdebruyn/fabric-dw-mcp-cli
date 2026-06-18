@@ -212,13 +212,13 @@ class _InstrumentedGroup(click.Group):
     Shutdown ordering
     -----------------
     ``shutdown_telemetry()`` must run AFTER ``emit_command_invoked`` so that the
-    ``command_invoked`` span is enqueued before the provider is shut down.
-    ``provider.shutdown()`` flushes all pending spans internally, so no separate
-    ``flush_telemetry()`` call is needed.  Click's ``call_on_close`` callbacks
-    run INSIDE ``super().invoke()``, completing before this ``finally`` block
-    executes.  For this reason the ``_on_close`` callback does NOT call
-    ``shutdown_telemetry()`` — the teardown is performed here, after emission,
-    by the root group only.
+    ``command_invoked`` event is enqueued in the ``BatchLogRecordProcessor`` queue
+    before shutdown starts.  ``shutdown_telemetry()`` calls ``force_flush`` on the
+    log provider first (to export queued records) then ``shutdown()`` (to release
+    the connection pool).  Click's ``call_on_close`` callbacks run INSIDE
+    ``super().invoke()``, completing before this ``finally`` block executes.  For
+    this reason the ``_on_close`` callback does NOT call ``shutdown_telemetry()`` —
+    the teardown is performed here, after emission, by the root group only.
     """
 
     def add_command(self, cmd: click.Command, name: str | None = None) -> None:
@@ -248,17 +248,14 @@ class _InstrumentedGroup(click.Group):
                     status=status,
                     duration_ms=duration,
                 )
-            # Shut down the provider AFTER emission so the command_invoked span
-            # is enqueued before teardown begins.  provider.shutdown() flushes
-            # all pending spans internally before closing processors/exporters,
-            # so a separate force_flush step is not needed (and would add up to
-            # an extra 2 s to the total hang budget).  Releasing the exporter's
-            # requests/urllib3 connection pool via shutdown() prevents the pool
-            # from being finalized by the GC after the queue module globals are
-            # torn down — which would trigger:
-            #   AttributeError: 'NoneType' object has no attribute 'Empty'
-            # shutdown_telemetry runs in a daemon thread with a single ≤2 s join
-            # so it cannot hang the process (B2).
+            # Shut down the provider AFTER emission so the command_invoked event
+            # is enqueued before teardown begins.  shutdown_telemetry() calls
+            # force_flush on the log provider first (ensuring command_invoked and
+            # app_exited records are exported to App Insights) then shuts down the
+            # provider (releases the urllib3 connection pool, preventing the GC
+            # finaliser from triggering "AttributeError: 'NoneType' object has no
+            # attribute 'Empty'" at interpreter exit).  Runs in a daemon thread
+            # with a ≤8 s join so it cannot hang the process indefinitely (B2).
             shutdown_telemetry()
 
 

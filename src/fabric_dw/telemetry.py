@@ -22,8 +22,11 @@ Architecture notes
   (it comes from env vars; token-claim extraction is deferred to #366).
 - Auto-HTTP instrumentation is explicitly disabled to prevent MSAL OAuth
   request URLs (containing tenant IDs) from leaking as span attributes.
-- ``shutdown_on_exit`` is disabled; a bounded ``provider.shutdown()`` (≤5 s)
-  is performed at app exit in a daemon thread so the CLI never hangs.
+- ``shutdown_on_exit`` is disabled; a bounded ``force_flush`` + ``provider.shutdown()``
+  (≤8 s total) is performed at app exit in a daemon thread so the CLI never hangs.
+  The explicit ``force_flush`` call before ``shutdown()`` is required to reliably
+  deliver events emitted near process exit (``command_invoked``, ``app_exited``) —
+  see ``shutdown_telemetry()`` docstring for the full analysis.
 - ``enable_performance_counters=False`` suppresses the PerformanceCounters
   subsystem, which divides by zero on short-lived processes (#399).
 
@@ -597,24 +600,37 @@ def flush_telemetry(timeout_ms: int = 2000) -> None:
 _sdk_shutdown: bool = False
 
 
-def shutdown_telemetry(timeout_ms: int = 5000) -> None:
+def shutdown_telemetry(timeout_ms: int = 8000) -> None:
     """Shut down the OpenTelemetry providers with a bounded timeout.
 
-    Calls ``shutdown()`` on both the tracer provider and the logger provider.
-    The logger provider shutdown is the critical path: it flushes all pending
-    customEvents, closes the log exporter, and releases the urllib3 connection
-    pool.  Without this call the pool is finalized by the GC at interpreter
-    exit — after the ``queue`` module globals have been torn down — which triggers:
+    Calls ``force_flush`` then ``shutdown()`` on both the tracer provider and
+    the logger provider.  The logger provider path is critical: it must export
+    all pending customEvents (``command_invoked``, ``app_exited``) that were
+    enqueued just before shutdown is called.
 
-        AttributeError: 'NoneType' object has no attribute 'Empty'
+    Why force_flush before shutdown?
+    ---------------------------------
+    The ``BatchLogRecordProcessor`` uses a background worker thread that sleeps
+    for ``OTEL_BLRP_SCHEDULE_DELAY`` (default 5 000 ms) between export cycles.
+    Events emitted immediately before ``shutdown()`` sit in the queue waiting for
+    the next worker wake-up.  ``provider.shutdown()`` wakes the worker and waits
+    for a final ``EXPORT_ALL`` pass, but *also* calls ``self._shutdown = True``
+    which prevents any further ``emit()`` calls.  If the outer join timeout is
+    shorter than the HTTP round-trip to the App Insights ingestion endpoint
+    (typically 2-4 s), the daemon thread is killed before the POST completes.
 
-    in ``urllib3.connectionpool._close_pool_connections``.
+    Calling ``force_flush(timeout_ms - 2000)`` **before** ``shutdown()`` ensures
+    all queued records are exported with a generous bound.  The remaining 2 s is
+    then used for the provider ``shutdown()`` which cleans up the connection pool
+    (preventing the ``AttributeError: 'NoneType' object has no attribute 'Empty'``
+    at interpreter exit when urllib3 pool is finalised after queue module teardown).
 
-    The timeout is raised to ≤5 s (from the previous 2 s) to give the log
-    exporter time to drain.  The trade-off is acceptable: the shutdown runs in
-    a daemon thread, so the OS will kill it if the main thread exits first, and
-    the join() cap ensures the call itself never returns after the timeout even
-    if the exporter is slow.
+    Exit-latency trade-off
+    ----------------------
+    With ``timeout_ms=8000`` the CLI may add up to 8 s at exit on a fully-loaded
+    or slow network.  In practice the HTTP POST completes in 2-4 s so the typical
+    added latency is 3-5 s.  All logic runs in a daemon thread; the join caps the
+    wait — the OS will kill the daemon thread if the main thread exits first.
 
     The shutdown runs in a daemon thread so it can never block process exit
     (same bounded pattern as :func:`flush_telemetry`).
@@ -629,9 +645,9 @@ def shutdown_telemetry(timeout_ms: int = 5000) -> None:
     exit would be unsafe and is not needed — the process is terminating.
 
     Args:
-        timeout_ms: Maximum milliseconds to wait for the shutdown.  Defaults to
-            5000 (5 s).  Raised from 2 s to give the log/event exporter time
-            to drain customEvents before the process exits.
+        timeout_ms: Maximum milliseconds to wait for the full flush+shutdown
+            sequence.  Defaults to 8000 (8 s): ~6 s for force_flush (HTTP POST
+            round-trip) + ~2 s for provider cleanup.
     """
     global _sdk_shutdown  # noqa: PLW0603
 
@@ -641,9 +657,34 @@ def shutdown_telemetry(timeout_ms: int = 5000) -> None:
         return
     _sdk_shutdown = True
 
+    # Reserve ~2 s for shutdown cleanup; the rest goes to force_flush.
+    flush_timeout_ms = max(timeout_ms - 2000, 2000)
+
     def _do_shutdown() -> None:
-        # Each pipeline is shut down independently so a failure in one does
-        # not prevent the other from running.
+        # Each pipeline is flushed then shut down independently so a failure in
+        # one does not prevent the other from running.
+
+        # Logger provider — CRITICAL PATH for customEvents.
+        # force_flush first: ensures command_invoked / app_exited records that
+        # were enqueued microseconds before this call are exported before shutdown
+        # closes the exporter.  Without the explicit force_flush, those records
+        # depend on the BatchLogRecordProcessor worker waking up inside shutdown()
+        # which races with our outer join timeout.
+        with contextlib.suppress(Exception):
+            from opentelemetry._logs import get_logger_provider  # noqa: PLC0415
+
+            log_provider = get_logger_provider()
+            log_force_flush = getattr(log_provider, "force_flush", None)
+            if callable(log_force_flush):
+                log_force_flush(timeout_millis=flush_timeout_ms)
+
+        with contextlib.suppress(Exception):
+            from opentelemetry._logs import get_logger_provider  # noqa: PLC0415
+
+            log_provider = get_logger_provider()
+            log_shutdown = getattr(log_provider, "shutdown", None)
+            if callable(log_shutdown):
+                log_shutdown()
 
         # Tracer provider — belt-and-suspenders; no spans are emitted in the
         # new path, but kept so any SDK-internal spans are flushed.
@@ -655,18 +696,9 @@ def shutdown_telemetry(timeout_ms: int = 5000) -> None:
             if callable(shutdown_fn):
                 shutdown_fn()
 
-        # Logger provider — this is the critical path for customEvents.
-        with contextlib.suppress(Exception):
-            from opentelemetry._logs import get_logger_provider  # noqa: PLC0415
-
-            log_provider = get_logger_provider()
-            log_shutdown = getattr(log_provider, "shutdown", None)
-            if callable(log_shutdown):
-                log_shutdown()
-
     t = threading.Thread(target=_do_shutdown, daemon=True)
     t.start()
-    t.join(timeout=timeout_ms / 1000 + 0.1)  # join with a slightly larger wall-clock timeout
+    t.join(timeout=timeout_ms / 1000 + 0.5)  # extra 0.5 s wall-clock buffer
 
 
 # ---------------------------------------------------------------------------

@@ -1591,7 +1591,7 @@ def test_shutdown_telemetry_calls_provider_shutdown(
 def test_shutdown_telemetry_is_bounded_when_shutdown_is_slow(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """shutdown_telemetry must not block longer than ~2 s even with a slow provider."""
+    """shutdown_telemetry must not block longer than timeout_ms even with a slow provider."""
     import time  # noqa: PLC0415
 
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
@@ -1671,6 +1671,85 @@ def test_shutdown_telemetry_never_raises_on_provider_exception(
 
     # Must not raise
     mod.shutdown_telemetry()  # type: ignore[attr-defined]
+
+
+def test_shutdown_telemetry_force_flushes_log_provider_before_shutdown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """shutdown_telemetry must call force_flush on the log provider BEFORE shutdown.
+
+    This is the key ordering requirement that ensures events emitted just before
+    shutdown (command_invoked, app_exited) are exported before the provider is
+    torn down.  If force_flush is not called first — or is called after shutdown —
+    the BatchLogRecordProcessor worker may not have exported the queued records
+    before the daemon thread is killed.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    mod = _reload_telemetry()
+
+    _fake_logger = object()
+    mod._sdk_initialised = True  # type: ignore[attr-defined]
+    mod._tracer = _fake_logger  # type: ignore[attr-defined]
+    mod._otel_logger = _fake_logger  # type: ignore[attr-defined]
+    mod._sdk_shutdown = False  # type: ignore[attr-defined]
+
+    call_order: list[str] = []
+
+    fake_log_provider = types.SimpleNamespace(
+        force_flush=lambda **_kw: call_order.append("force_flush"),
+        shutdown=lambda: call_order.append("shutdown"),
+    )
+
+    # Patch opentelemetry._logs so get_logger_provider() returns our fake.
+    fake_logs_mod: Any = types.ModuleType("opentelemetry._logs_fake")
+    fake_logs_mod.get_logger_provider = lambda: fake_log_provider
+
+    import opentelemetry._logs as _real_logs_mod  # noqa: PLC0415
+
+    monkeypatch.setattr(_real_logs_mod, "get_logger_provider", lambda: fake_log_provider)
+
+    mod.shutdown_telemetry()  # type: ignore[attr-defined]
+
+    assert "force_flush" in call_order, "force_flush must be called on the log provider"
+    assert "shutdown" in call_order, "shutdown must be called on the log provider"
+    # force_flush must precede shutdown so queued records are exported first.
+    assert call_order.index("force_flush") < call_order.index("shutdown"), (
+        f"force_flush must be called BEFORE shutdown, got order: {call_order}"
+    )
+
+
+def test_shutdown_telemetry_force_flush_is_bounded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """shutdown_telemetry must not hang even when force_flush blocks indefinitely."""
+    import time  # noqa: PLC0415
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    mod = _reload_telemetry()
+
+    _fake_logger = object()
+    mod._sdk_initialised = True  # type: ignore[attr-defined]
+    mod._tracer = _fake_logger  # type: ignore[attr-defined]
+    mod._otel_logger = _fake_logger  # type: ignore[attr-defined]
+    mod._sdk_shutdown = False  # type: ignore[attr-defined]
+
+    # Simulate a force_flush that hangs for 30 s — must not propagate to caller.
+    fake_log_provider = types.SimpleNamespace(
+        force_flush=lambda **_kw: __import__("time").sleep(30),
+        shutdown=lambda: None,
+    )
+
+    import opentelemetry._logs as _real_logs_mod  # noqa: PLC0415
+
+    monkeypatch.setattr(_real_logs_mod, "get_logger_provider", lambda: fake_log_provider)
+
+    start = time.monotonic()
+    mod.shutdown_telemetry(timeout_ms=300)  # type: ignore[attr-defined]
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 3.0, (
+        f"shutdown_telemetry blocked for {elapsed:.1f} s — force_flush timeout not respected"
+    )
 
 
 # ---------------------------------------------------------------------------
