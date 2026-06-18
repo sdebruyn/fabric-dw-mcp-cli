@@ -369,6 +369,27 @@ class Resolver:
             payload = generic_payload
 
         conn = _connection_string_from_detail(payload, kind)
+
+        # Lakehouse-derived SQL endpoints permanently return an empty
+        # connectionString from the /sqlEndpoints/{id} resource.  When the
+        # connection string is absent, fall back to scanning /lakehouses for
+        # the parent Lakehouse whose sqlEndpointProperties.id matches this
+        # endpoint's ID (see issue #347 / #471).
+        #
+        # Import is local to avoid a circular-import layering violation:
+        # resolver.py is low-level; services/sql_endpoints.py sits above it
+        # and must not be imported at module level here (that would create a
+        # cycle because sql_endpoints.py transitively imports from services/).
+        # A lazy import at the call-site is the cleanest option — it runs only
+        # for lakehouse-derived endpoints and incurs no overhead for Warehouses.
+        if kind == WarehouseKind.SQL_ENDPOINT and not conn:
+            from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
+                _resolve_lakehouse_connection_string,
+            )
+
+            lh_conn = await _resolve_lakehouse_connection_string(self._http, workspace_id, item_id)
+            conn = lh_conn or None  # keep None when no matching lakehouse is found
+
         display_name = str(generic_payload.get("displayName", str(item_id)))
         entry = ItemEntry(
             id=item_id,
