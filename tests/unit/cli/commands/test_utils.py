@@ -25,9 +25,12 @@ from fabric_dw.cli.commands._utils import (
     parse_iso_datetime,
     parse_qualified_name,
     resolve_item,
+    resolve_workspace,
     resolve_workspace_id,
+    validate_workspace_option_or_all_workspaces,
     validate_workspace_or_all_workspaces,
 )
+from fabric_dw.config import Defaults, UserConfig
 from fabric_dw.exceptions import ConfigError
 from fabric_dw.models import WarehouseKind
 from fabric_dw.resolver import Resolver
@@ -554,3 +557,73 @@ class TestResolveWarehouseArgErrorMessage:
         assert "config set warehouse" in output
         assert "default" in output
         assert "SQL Analytics Endpoint" in output
+
+
+# ---------------------------------------------------------------------------
+# resolve_workspace — precedence for the global -w/--workspace option
+# ---------------------------------------------------------------------------
+
+
+def _ctx_with(*, workspace: str | None = None, config_workspace: str | None = None) -> CliContext:
+    """Build a CliContext with an explicit -w value and/or a configured default."""
+    ctx = CliContext(workspace=workspace)
+    # Inject a pre-loaded config so .config does not touch disk.
+    ctx._config = UserConfig(defaults=Defaults(workspace=config_workspace))
+    return ctx
+
+
+class TestResolveWorkspace:
+    """resolve_workspace precedence: -w > env > config > UsageError."""
+
+    def test_explicit_workspace_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("FABRIC_DW_DEFAULT_WORKSPACE", "env-ws")
+        ctx = _ctx_with(workspace="flag-ws", config_workspace="cfg-ws")
+        assert resolve_workspace(ctx) == "flag-ws"
+
+    def test_env_var_used_when_no_flag(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("FABRIC_DW_DEFAULT_WORKSPACE", "env-ws")
+        ctx = _ctx_with(workspace=None, config_workspace="cfg-ws")
+        assert resolve_workspace(ctx) == "env-ws"
+
+    def test_config_used_when_no_flag_or_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("FABRIC_DW_DEFAULT_WORKSPACE", raising=False)
+        ctx = _ctx_with(workspace=None, config_workspace="cfg-ws")
+        assert resolve_workspace(ctx) == "cfg-ws"
+
+    def test_missing_everywhere_raises_with_flag_first(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("FABRIC_DW_DEFAULT_WORKSPACE", raising=False)
+        ctx = _ctx_with(workspace=None, config_workspace=None)
+        with pytest.raises(click.UsageError) as excinfo:
+            resolve_workspace(ctx)
+        msg = str(excinfo.value)
+        assert "no workspace specified" in msg
+        assert "-w/--workspace" in msg
+        assert "config set workspace" in msg
+        # -w must be mentioned before the config-set fallback.
+        assert msg.index("-w/--workspace") < msg.index("config set workspace")
+
+
+# ---------------------------------------------------------------------------
+# validate_workspace_option_or_all_workspaces — -w vs -A mutual exclusion
+# ---------------------------------------------------------------------------
+
+
+class TestValidateWorkspaceOptionOrAllWorkspaces:
+    """The -w/--workspace vs -A/--all-workspaces mutual-exclusion guard."""
+
+    def test_explicit_workspace_only_passes(self) -> None:
+        validate_workspace_option_or_all_workspaces("my-ws", all_workspaces=False)
+
+    def test_all_workspaces_only_passes(self) -> None:
+        validate_workspace_option_or_all_workspaces(None, all_workspaces=True)
+
+    def test_neither_passes(self) -> None:
+        # A configured default may still supply the workspace later, so neither
+        # explicit -w nor -A is valid (unlike the positional WORKSPACE guard).
+        validate_workspace_option_or_all_workspaces(None, all_workspaces=False)
+
+    def test_both_raises_usage_error(self) -> None:
+        with pytest.raises(click.UsageError, match="mutually exclusive"):
+            validate_workspace_option_or_all_workspaces("my-ws", all_workspaces=True)
