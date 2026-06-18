@@ -12,16 +12,20 @@ Resolution order:
 
 from __future__ import annotations
 
+import logging
 import re
 import time
 from datetime import UTC, datetime
 from typing import Any, NamedTuple
 from uuid import UUID
 
+from fabric_dw._fabric_api import resolve_lakehouse_connection_string
 from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.exceptions import FabricError, NotFoundError
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import WarehouseKind
+
+_logger = logging.getLogger("fabric_dw.resolver")
 
 __all__ = [
     "GUID_RE",
@@ -372,23 +376,19 @@ class Resolver:
 
         # Lakehouse-derived SQL endpoints permanently return an empty
         # connectionString from the /sqlEndpoints/{id} resource.  When the
-        # connection string is absent, fall back to scanning /lakehouses for
-        # the parent Lakehouse whose sqlEndpointProperties.id matches this
-        # endpoint's ID (see issue #347 / #471).
-        #
-        # Import is local to avoid a circular-import layering violation:
-        # resolver.py is low-level; services/sql_endpoints.py sits above it
-        # and must not be imported at module level here (that would create a
-        # cycle because sql_endpoints.py transitively imports from services/).
-        # A lazy import at the call-site is the cleanest option — it runs only
-        # for lakehouse-derived endpoints and incurs no overhead for Warehouses.
+        # connection string is absent, fall back to scanning /lakehouses for the
+        # parent Lakehouse whose sqlEndpointProperties.id matches this endpoint's
+        # ID (see issue #347 / #471).  The shared helper lives in the low-level
+        # fabric_dw._fabric_api module so it can be imported here without an
+        # upward-layering dependency on the service package.
         if kind == WarehouseKind.SQL_ENDPOINT and not conn:
-            from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
-                _resolve_lakehouse_connection_string,
+            _logger.debug(
+                "SQL endpoint %s has empty connectionString on /sqlEndpoints resource; "
+                "falling back to lakehouse scan for workspace %s",
+                item_id,
+                workspace_id,
             )
-
-            lh_conn = await _resolve_lakehouse_connection_string(self._http, workspace_id, item_id)
-            conn = lh_conn or None  # keep None when no matching lakehouse is found
+            conn = await resolve_lakehouse_connection_string(self._http, workspace_id, item_id)
 
         display_name = str(generic_payload.get("displayName", str(item_id)))
         entry = ItemEntry(
@@ -398,16 +398,29 @@ class Resolver:
             fetched_at=datetime.now(tz=UTC),
             display_name=display_name,
         )
-        # Store under display name and GUID string in a single lock+read+write cycle
-        self._cache.put_items(
-            workspace_id,
-            [
-                (display_name, entry),
-                (str(item_id), entry),
-            ],
-        )
-        # Clear-on-put: drop all negative entries for this workspace scope so
-        # that a freshly created item becomes immediately resolvable even within
-        # the _NEGATIVE_TTL window (defence-in-depth against create→resolve race).
-        self._negative_clear_scope(str(workspace_id))
+
+        # Persist to the 24-hour cache unless this is a SQL endpoint whose
+        # connection string is still unresolved.  Lakehouse-derived endpoints
+        # expose their connectionString only once provisioning completes; caching
+        # an interim None would serve that stale value for the full TTL and lock
+        # the caller out of SQL-over-endpoint commands with "has no connection
+        # string" for up to a day (issue #471).  Skipping the write means the next
+        # lookup re-fetches and picks up the connection string once it appears.
+        # Warehouses and snapshots are always cached — a Warehouse with no
+        # connection string is a genuine (cacheable) state, and snapshots never
+        # carry one.
+        should_cache = not (kind == WarehouseKind.SQL_ENDPOINT and conn is None)
+        if should_cache:
+            # Store under display name and GUID string in a single lock+read+write cycle
+            self._cache.put_items(
+                workspace_id,
+                [
+                    (display_name, entry),
+                    (str(item_id), entry),
+                ],
+            )
+            # Clear-on-put: drop all negative entries for this workspace scope so
+            # that a freshly created item becomes immediately resolvable even within
+            # the _NEGATIVE_TTL window (defence-in-depth against create→resolve race).
+            self._negative_clear_scope(str(workspace_id))
         return entry

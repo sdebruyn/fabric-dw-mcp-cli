@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, cast
 from uuid import UUID
 
+from fabric_dw._fabric_api import resolve_lakehouse_connection_string
 from fabric_dw.exceptions import FabricServerError, NotFoundError, PermissionDeniedError
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import TableSyncStatus, Warehouse, WarehouseKind
@@ -60,7 +60,8 @@ async def list_endpoints(http: FabricHttpClient, workspace_id: UUID) -> list[War
         * ``connection_string`` — only resolvable per-endpoint, either via the
           dedicated ``Items - Get Connection String`` API or via the parent
           Lakehouse's ``properties.sqlEndpointProperties.connectionString``
-          (see :func:`_resolve_lakehouse_connection_string` / #347).  Both are
+          (see :func:`fabric_dw._fabric_api.resolve_lakehouse_connection_string`
+          / #347).  Both are
           N+1; the list endpoint deliberately does NOT enrich it.
         * ``created_date`` — not returned by the endpoint resource at all (list
           or item), so it cannot be surfaced from a single list request.
@@ -141,48 +142,6 @@ async def list_all_workspaces(http: FabricHttpClient) -> list[Warehouse]:
     )
 
 
-async def _resolve_lakehouse_connection_string(
-    http: FabricHttpClient,
-    workspace_id: UUID,
-    endpoint_id: UUID,
-) -> str | None:
-    """Find the connection string for a lakehouse-derived SQL endpoint via the parent Lakehouse.
-
-    For lakehouse-derived SQL analytics endpoints, ``GET /sqlEndpoints/{id}``
-    permanently returns an empty ``connectionString`` — the value lives only on
-    the parent Lakehouse at
-    ``properties.sqlEndpointProperties.connectionString``.
-
-    This helper pages ``GET /workspaces/{ws}/lakehouses``, locates the lakehouse
-    whose ``properties.sqlEndpointProperties.id`` matches *endpoint_id*, and
-    returns that lakehouse's ``connectionString``.  Returns ``None`` when no
-    matching lakehouse is found (e.g. the endpoint belongs to a Warehouse, not a
-    Lakehouse).
-
-    Args:
-        http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
-        workspace_id: The UUID of the workspace to search.
-        endpoint_id: The UUID of the SQL analytics endpoint whose connection
-            string we need.
-
-    Returns:
-        The non-empty connection string from the matching lakehouse, or ``None``
-        if no lakehouse in the workspace has a paired endpoint with this ID.
-    """
-    # str(UUID) is always lowercase; lowercase the API value too so the match is
-    # robust against Fabric returning an uppercase/mixed-case UUID string.
-    endpoint_id_str = str(endpoint_id).lower()
-    async for lh in http.iter_paginated(HttpBase.FABRIC, f"/workspaces/{workspace_id}/lakehouses"):
-        props = lh.get("properties")
-        props_dict = cast("dict[str, Any]", props) if isinstance(props, dict) else {}
-        sql_ep = props_dict.get("sqlEndpointProperties")
-        sql_ep_dict = cast("dict[str, Any]", sql_ep) if isinstance(sql_ep, dict) else {}
-        if str(sql_ep_dict.get("id", "")).lower() == endpoint_id_str:
-            conn = str(sql_ep_dict.get("connectionString", ""))
-            return conn or None
-    return None
-
-
 async def get_endpoint(http: FabricHttpClient, workspace_id: UUID, endpoint_id: UUID) -> Warehouse:
     """Fetch a single SQL analytics endpoint by ID.
 
@@ -227,7 +186,7 @@ async def get_endpoint(http: FabricHttpClient, workspace_id: UUID, endpoint_id: 
         endpoint_id,
         workspace_id,
     )
-    lh_conn = await _resolve_lakehouse_connection_string(http, workspace_id, endpoint_id)
+    lh_conn = await resolve_lakehouse_connection_string(http, workspace_id, endpoint_id)
     if lh_conn:
         # Return a copy with the connection string resolved from the lakehouse,
         # preserving every other field (description, collation, created_date, …).

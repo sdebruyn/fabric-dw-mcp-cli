@@ -1058,6 +1058,84 @@ async def test_item_sql_endpoint_no_matching_lakehouse_returns_none_conn_string(
     assert result.connection_string is None
 
 
+async def test_item_sql_endpoint_matching_lakehouse_empty_conn_returns_none(
+    tmp_path: Path,
+) -> None:
+    """Provisioning race: a matching Lakehouse exists but its connectionString is still empty.
+
+    The endpoint is paired with a Lakehouse (sqlEndpointProperties.id matches) but the
+    Lakehouse has not yet exposed a connectionString.  The resolver must return
+    connection_string=None rather than an empty string (regression sentinel for the
+    ``return conn or None`` guard in resolve_lakehouse_connection_string).
+    """
+    resolver, client, _ = _make_resolver(tmp_path)
+    generic_payload = _sql_endpoint_empty_conn_payload(ITEM_GUID, WS_GUID, "LakehouseEP")
+    specific_payload = _sql_endpoint_empty_conn_payload(ITEM_GUID, WS_GUID, "LakehouseEP")
+    # Matching lakehouse, but its connectionString is empty (still provisioning).
+    matching_empty_lh = _lakehouses_payload_with_match(_LH_EP_INNER_ID, "")
+    with respx.mock:
+        respx.get(_FABRIC_ITEM_URL).mock(return_value=httpx.Response(200, json=generic_payload))
+        respx.get(
+            f"https://api.fabric.microsoft.com/v1/workspaces/{WS_GUID}/sqlEndpoints/{ITEM_GUID}"
+        ).mock(return_value=httpx.Response(200, json=specific_payload))
+        respx.get(_LAKEHOUSES_URL_471).mock(
+            return_value=httpx.Response(200, json=matching_empty_lh)
+        )
+        async with client:
+            result = await resolver.item(WS_GUID, ITEM_GUID)
+    assert result.kind == WarehouseKind.SQL_ENDPOINT
+    assert result.connection_string is None
+
+
+async def test_item_sql_endpoint_unresolved_conn_not_cached_and_retries(
+    tmp_path: Path,
+) -> None:
+    """An unresolved SQL-endpoint connection string must NOT be cached (issue #471).
+
+    Caching an interim None would serve that stale value for the full 24h TTL, locking
+    the caller out of SQL-over-endpoint commands.  The first call (still provisioning,
+    empty connectionString everywhere) must return None WITHOUT writing to the cache, and
+    the second call must re-fetch and pick up the now-populated connection string.
+    """
+    resolver, client, cache = _make_resolver(tmp_path)
+    generic_payload = _sql_endpoint_empty_conn_payload(ITEM_GUID, WS_GUID, "LakehouseEP")
+    empty_specific = _sql_endpoint_empty_conn_payload(ITEM_GUID, WS_GUID, "LakehouseEP")
+    populated_specific = _sql_endpoint_detail_payload(ITEM_GUID, WS_GUID, "LakehouseEP")
+    no_match_lh: dict[str, object] = {"value": [], "continuationUri": None}
+
+    sql_ep_calls = {"n": 0}
+
+    def sql_ep_side_effect(_request: httpx.Request) -> httpx.Response:
+        # First call: still provisioning (empty); second call: populated.
+        sql_ep_calls["n"] += 1
+        if sql_ep_calls["n"] == 1:
+            return httpx.Response(200, json=empty_specific)
+        return httpx.Response(200, json=populated_specific)
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(_FABRIC_ITEM_URL).mock(
+            return_value=httpx.Response(200, json=generic_payload)
+        )
+        mock_router.get(
+            f"https://api.fabric.microsoft.com/v1/workspaces/{WS_GUID}/sqlEndpoints/{ITEM_GUID}"
+        ).mock(side_effect=sql_ep_side_effect)
+        mock_router.get(_LAKEHOUSES_URL_471).mock(
+            return_value=httpx.Response(200, json=no_match_lh)
+        )
+        async with client:
+            first = await resolver.item(WS_GUID, ITEM_GUID)
+            # The unresolved entry must not have been persisted.
+            assert cache.get_item(WS_UUID, ITEM_GUID) is None
+            assert cache.get_item(WS_UUID, "LakehouseEP") is None
+            # Second call re-fetches (cache miss) and now picks up the connection string.
+            second = await resolver.item(WS_GUID, ITEM_GUID)
+
+    assert first.connection_string is None
+    assert second.connection_string == "mysqlep.datawarehouse.fabric.microsoft.com"
+    # The /sqlEndpoints resource was fetched twice — no stale cache short-circuit.
+    assert sql_ep_calls["n"] == 2
+
+
 # ---------------------------------------------------------------------------
 # D13 cross-layer parity — positive cache hit is not blocked by negative cache
 # ---------------------------------------------------------------------------
