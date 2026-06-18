@@ -318,6 +318,60 @@ class TestOmitAllNullColumns:
         assert "definition" not in output
 
 
+class TestDropColumns:
+    """render(..., drop_columns=...) omits the named columns from the table only."""
+
+    def _render_to_string(
+        self,
+        data: object,
+        *,
+        drop_columns: tuple[str, ...] | None = None,
+    ) -> str:
+        sio = StringIO()
+        console = Console(file=sio, width=200, highlight=False, no_color=True)
+        render(data, json_output=False, console=console, drop_columns=drop_columns)
+        return sio.getvalue()
+
+    def test_dropped_column_absent_from_table(self) -> None:
+        data = [
+            {"id": "1", "name": "foo", "workspaceId": "ws-1"},
+            {"id": "2", "name": "bar", "workspaceId": "ws-1"},
+        ]
+        output = self._render_to_string(data, drop_columns=("workspaceId",))
+        assert "name" in output
+        assert "workspaceId" not in output
+        # The dropped column's values must also be absent.
+        assert "ws-1" not in output
+
+    def test_other_columns_preserved_when_one_dropped(self) -> None:
+        data = [{"id": "1", "name": "foo", "workspaceId": "ws-1"}]
+        output = self._render_to_string(data, drop_columns=("workspaceId",))
+        assert "id" in output
+        assert "name" in output
+        assert "foo" in output
+
+    def test_none_drop_columns_keeps_all(self) -> None:
+        data = [{"id": "1", "workspaceId": "ws-1"}]
+        output = self._render_to_string(data, drop_columns=None)
+        assert "workspaceId" in output
+        assert "ws-1" in output
+
+    def test_drop_columns_ignored_for_json(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """drop_columns must NOT affect JSON output (machine-readable, never pruned)."""
+        data = [{"id": "1", "workspaceId": "ws-1"}]
+        render(data, json_output=True, drop_columns=("workspaceId",))
+        captured = capsys.readouterr()
+        parsed = json.loads(captured.out)
+        assert parsed[0]["workspaceId"] == "ws-1"
+
+    def test_drop_unknown_column_is_noop(self) -> None:
+        """Dropping a column that does not exist leaves the table unchanged."""
+        data = [{"id": "1", "name": "foo"}]
+        output = self._render_to_string(data, drop_columns=("nonexistent",))
+        assert "id" in output
+        assert "name" in output
+
+
 class TestNonDictListRows:
     """_render_table handles list rows that are not dicts (lines 113, 135)."""
 

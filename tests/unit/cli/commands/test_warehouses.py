@@ -124,6 +124,195 @@ class TestWarehousesList:
         assert isinstance(parsed, list)
 
 
+class TestWarehousesListHideWorkspaceId:
+    """(a) Single-workspace table hides Workspace ID; -A keeps it; --json unchanged."""
+
+    @staticmethod
+    def _wh_item(name: str = "SalesWarehouse") -> dict[str, object]:
+        return {
+            "id": WH_GUID,
+            "displayName": name,
+            "type": "Warehouse",
+            "workspaceId": WS_GUID,
+            "properties": {"connectionString": "srv.datawarehouse.fabric.microsoft.com"},
+        }
+
+    def test_single_workspace_table_hides_workspace_id(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """Human table for a single workspace must NOT contain the workspace GUID."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_http.iter_paginated = MagicMock(
+            side_effect=lambda _base, path: (
+                _async_iter([self._wh_item()]) if "warehouses" in path else _async_iter([])
+            )
+        )
+        with (
+            patch(
+                "fabric_dw.cli.commands.warehouses.build_http_client",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.resolver.Resolver.workspace_id",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+        ):
+            result = runner.invoke(cli, ["warehouses", "list", WS_GUID])
+        assert result.exit_code == 0, result.output
+        # The warehouse id (GUID column, full width) is shown, but the
+        # redundant workspace GUID column is dropped.  Asserting on the GUIDs is
+        # robust to the narrow CliRunner terminal width (text columns truncate,
+        # GUID columns do not).  WS_GUID and WH_GUID are distinct values.
+        assert WH_GUID in result.output
+        assert WS_GUID not in result.output
+
+    def test_single_workspace_json_keeps_workspace_id(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """--json for a single workspace must STILL include workspace_id (machine-readable)."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_http.iter_paginated = MagicMock(
+            side_effect=lambda _base, path: (
+                _async_iter([self._wh_item()]) if "warehouses" in path else _async_iter([])
+            )
+        )
+        with (
+            patch(
+                "fabric_dw.cli.commands.warehouses.build_http_client",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.resolver.Resolver.workspace_id",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+        ):
+            result = runner.invoke(cli, ["--json", "warehouses", "list", WS_GUID])
+        assert result.exit_code == 0, result.output
+        parsed = json.loads(result.output)
+        assert parsed[0]["workspaceId"] == WS_GUID
+
+    def test_all_workspaces_table_keeps_workspace_id(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """-A table must KEEP the Workspace ID column (rows span workspaces)."""
+        _ = cache_env
+        wh = Warehouse.model_validate(
+            {
+                "id": WH_GUID,
+                "displayName": "SalesWarehouse",
+                "workspaceId": WS_GUID,
+                "kind": WarehouseKind.WAREHOUSE,
+            }
+        )
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.warehouses.build_http_client",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.services.warehouses.list_all_workspaces",
+                new=AsyncMock(return_value=[wh]),
+            ),
+        ):
+            result = runner.invoke(cli, ["warehouses", "list", "-A"])
+        assert result.exit_code == 0, result.output
+        assert WS_GUID in result.output
+
+
+class TestWarehousesListWarehousesOnly:
+    """(b) --warehouses-only excludes SQL endpoints and skips the sqlEndpoints fetch."""
+
+    def test_warehouses_only_skips_sql_endpoints_fetch(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """With --warehouses-only the service must NOT page /sqlEndpoints."""
+        _ = cache_env
+        wh_item = {
+            "id": WH_GUID,
+            "displayName": "SalesWarehouse",
+            "type": "Warehouse",
+            "workspaceId": WS_GUID,
+        }
+        mock_http = AsyncMock()
+        mock_http.iter_paginated = MagicMock(
+            side_effect=lambda _base, path: (
+                _async_iter([wh_item]) if "warehouses" in path else _async_iter([])
+            )
+        )
+        with (
+            patch(
+                "fabric_dw.cli.commands.warehouses.build_http_client",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.resolver.Resolver.workspace_id",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+        ):
+            result = runner.invoke(
+                cli, ["--json", "warehouses", "list", WS_GUID, "--warehouses-only"]
+            )
+        assert result.exit_code == 0, result.output
+        # Only the /warehouses endpoint may be paged — never /sqlEndpoints.
+        called_paths = [c.args[1] for c in mock_http.iter_paginated.call_args_list if c.args]
+        assert any("warehouses" in p for p in called_paths)
+        assert all("sqlEndpoints" not in p for p in called_paths)
+        parsed = json.loads(result.output)
+        assert all(row["kind"] == WarehouseKind.WAREHOUSE for row in parsed)
+
+    def test_default_includes_sql_endpoints_fetch(self, runner: CliRunner, cache_env: Path) -> None:
+        """Without the flag, the default behaviour still pages /sqlEndpoints."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_http.iter_paginated = MagicMock(return_value=_async_iter([]))
+        with (
+            patch(
+                "fabric_dw.cli.commands.warehouses.build_http_client",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.resolver.Resolver.workspace_id",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+        ):
+            result = runner.invoke(cli, ["--json", "warehouses", "list", WS_GUID])
+        assert result.exit_code == 0, result.output
+        called_paths = [c.args[1] for c in mock_http.iter_paginated.call_args_list if c.args]
+        assert any("sqlEndpoints" in p for p in called_paths)
+
+    def test_warehouses_only_all_workspaces(self, runner: CliRunner, cache_env: Path) -> None:
+        """--warehouses-only is threaded through the -A path to the service layer."""
+        _ = cache_env
+        wh = Warehouse.model_validate(
+            {
+                "id": WH_GUID,
+                "displayName": "SalesWarehouse",
+                "workspaceId": WS_GUID,
+                "kind": WarehouseKind.WAREHOUSE,
+            }
+        )
+        mock_http = AsyncMock()
+        mock_list_all = AsyncMock(return_value=[wh])
+        with (
+            patch(
+                "fabric_dw.cli.commands.warehouses.build_http_client",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.services.warehouses.list_all_workspaces",
+                new=mock_list_all,
+            ),
+        ):
+            result = runner.invoke(cli, ["--json", "warehouses", "list", "-A", "--warehouses-only"])
+        assert result.exit_code == 0, result.output
+        # The service must have been called with warehouses_only=True.
+        assert mock_list_all.await_args is not None
+        assert mock_list_all.await_args.kwargs.get("warehouses_only") is True
+
+
 class TestWarehousesGet:
     """warehouses get — happy path and 404."""
 
