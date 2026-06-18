@@ -35,9 +35,15 @@ async def test_roll_timestamp_updates_snapshot(
     ephemeral_sql_target: SqlTarget,
 ) -> None:
     """roll_timestamp advances the snapshot's timestamp to the requested datetime."""
-    # Choose a target datetime a short distance in the past so it falls within the
-    # parent warehouse's retention window and is safely distinct from the original.
-    new_dt = datetime.now(tz=UTC).replace(microsecond=0) - timedelta(minutes=5)
+    # Pick a roll target that satisfies both constraints:
+    #   1. AFTER source DB creation: the source warehouse was already SQL-ready
+    #      before this line runs, thanks to the readiness-polling fixtures — so it
+    #      is provably tens of seconds old, well above the 30 s buffer.
+    #   2. SAFELY IN THE PAST: using exactly "now" risks clock-skew rejection
+    #      (Fabric's server clock may be a few seconds ahead of the test client).
+    #      Subtracting 30 s ensures the target is comfortably in the past from
+    #      the server's perspective while still landing after DB creation.
+    new_dt = datetime.now(tz=UTC).replace(microsecond=0) - timedelta(seconds=30)
 
     await snapshots.roll_timestamp(
         ephemeral_sql_target,
