@@ -131,6 +131,112 @@ class TestEndpointsList:
         assert isinstance(parsed, list)
 
 
+_LIST_EP_ITEM = {
+    "id": EP_GUID,
+    "displayName": "SalesLakehouse",
+    "description": "SQL endpoint",
+    "type": "SQLEndpoint",
+    "workspaceId": WS_GUID,
+    "properties": {
+        "sqlEndpointProperties": {
+            "connectionString": "lakehouse-sql-ep.datawarehouse.fabric.microsoft.com",
+            "id": "f6a7b8c9-d0e1-2345-f012-34567890abcd",
+            "provisioningStatus": "Success",
+        }
+    },
+}
+
+
+class TestEndpointsListColumns:
+    """endpoints list — redundant-column stripping in the human (table) path."""
+
+    def test_single_workspace_table_omits_kind_and_workspace_id(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """Single-workspace table must drop both the kind and workspaceId columns."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_http.iter_paginated = MagicMock(return_value=_async_iter([_LIST_EP_ITEM]))
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_endpoints.build_http_client",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.resolver.Resolver.workspace_id",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+        ):
+            # Force a wide console so Rich does not truncate the header text.
+            result = runner.invoke(cli, ["sql-endpoints", "list", WS_GUID], env={"COLUMNS": "200"})
+        assert result.exit_code == 0
+        out = result.output
+        assert "kind" not in out
+        assert "workspaceId" not in out
+        # A genuinely useful column is still present.
+        assert "connectionString" in out
+        # The endpoint itself is shown.
+        assert "SalesLakehouse" in out
+
+    def test_all_workspaces_table_omits_kind_but_keeps_workspace_id(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """With -A the table keeps workspaceId (rows span workspaces) but still drops kind."""
+        _ = cache_env
+        from fabric_dw.models import Warehouse, WarehouseKind  # noqa: PLC0415
+
+        ep = Warehouse.model_validate(
+            {
+                "id": EP_GUID,
+                "displayName": "SalesLakehouse",
+                "workspaceId": WS_GUID,
+                "kind": WarehouseKind.SQL_ENDPOINT,
+                "connectionString": "lakehouse-sql-ep.datawarehouse.fabric.microsoft.com",
+            }
+        )
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_endpoints.build_http_client",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.services.sql_endpoints.list_all_workspaces",
+                new=AsyncMock(return_value=[ep]),
+            ),
+        ):
+            result = runner.invoke(cli, ["sql-endpoints", "list", "-A"], env={"COLUMNS": "200"})
+        assert result.exit_code == 0
+        out = result.output
+        assert "kind" not in out
+        assert "workspaceId" in out
+
+    def test_json_output_includes_kind_and_workspace_id(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """--json must keep the COMPLETE payload (both kind and workspaceId)."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_http.iter_paginated = MagicMock(return_value=_async_iter([_LIST_EP_ITEM]))
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_endpoints.build_http_client",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.resolver.Resolver.workspace_id",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+        ):
+            result = runner.invoke(cli, ["--json", "sql-endpoints", "list", WS_GUID])
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert isinstance(parsed, list)
+        assert len(parsed) == 1
+        assert parsed[0]["kind"] == WarehouseKind.SQL_ENDPOINT
+        assert parsed[0]["workspaceId"] == WS_GUID
+
+
 class TestEndpointsListAllWorkspaces:
     """endpoints list --all-workspaces / -A."""
 
@@ -418,6 +524,110 @@ class TestEndpointsRefresh:
         ):
             result = runner.invoke(cli, ["sql-endpoints", "refresh", WS_GUID, EP_GUID])
         assert result.exit_code != 0
+
+
+class TestEndpointsPermissions:
+    """endpoints permissions — happy path and the stale-default cross-workspace 404 UX."""
+
+    def test_permissions_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_endpoints.build_http_client",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_endpoints.resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.permissions.list_item_access",
+                new=AsyncMock(return_value=[]),
+            ),
+        ):
+            result = runner.invoke(cli, ["sql-endpoints", "permissions", WS_GUID, EP_GUID])
+        assert result.exit_code == 0
+
+
+# GUID of a default endpoint that belongs to a *different* workspace than the
+# one passed positionally — reproduces the stale cross-workspace default case.
+_STALE_DEFAULT_GUID = "54094bde-0000-0000-0000-000000000000"
+
+
+def _configure_default_warehouse(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Persist a default warehouse/endpoint and isolate config + cache dirs."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv("FABRIC_DW_DEFAULT_WAREHOUSE", raising=False)
+    setup = runner.invoke(cli, ["config", "set", "warehouse", _STALE_DEFAULT_GUID])
+    assert setup.exit_code == 0
+
+
+class TestEndpointsStaleDefaultHint:
+    """A defaulted endpoint missing from the target workspace yields a friendly error."""
+
+    @pytest.mark.parametrize("command", ["permissions", "get", "refresh"])
+    def test_missing_default_endpoint_raises_clear_error(
+        self,
+        command: str,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """One positional arg + stale default → actionable message, not a raw 404."""
+        _configure_default_warehouse(runner, monkeypatch, tmp_path)
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_endpoints.build_http_client",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_endpoints.resolve_item",
+                new=AsyncMock(
+                    side_effect=NotFoundError(
+                        f"HTTP 404 for .../workspaces/{WS_GUID}/items/"
+                        f"{_STALE_DEFAULT_GUID}: EntityNotFound"
+                    )
+                ),
+            ),
+        ):
+            # Only ONE positional arg — the endpoint comes from the stale default.
+            result = runner.invoke(cli, ["sql-endpoints", command, WS_GUID])
+        assert result.exit_code != 0
+        out = result.output
+        assert "configured default" in out
+        assert "different" in out
+        assert WS_GUID in out
+        assert _STALE_DEFAULT_GUID in out
+        assert "second argument" in out
+        # The cryptic raw 404 body must NOT leak through.
+        assert "EntityNotFound" not in out
+
+    def test_explicit_missing_endpoint_keeps_original_error(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """When the endpoint is passed explicitly, the original NotFound surfaces unchanged."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_endpoints.build_http_client",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_endpoints.resolve_item",
+                new=AsyncMock(side_effect=NotFoundError("endpoint not found")),
+            ),
+        ):
+            result = runner.invoke(cli, ["sql-endpoints", "permissions", WS_GUID, EP_GUID])
+        assert result.exit_code != 0
+        # The friendly stale-default wording must NOT appear for an explicit arg.
+        assert "configured default" not in result.output
+        assert "endpoint not found" in result.output
 
 
 class TestRenderRefreshTable:
