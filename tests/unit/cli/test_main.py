@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import logging
+import sys
+from collections.abc import Generator
 from unittest.mock import patch
 
+import pytest
 from click.testing import CliRunner
 
+import fabric_dw.cli as _cli_pkg
+import fabric_dw.telemetry as _tel
 from fabric_dw.cli._main import cli
 
 
@@ -83,3 +88,80 @@ class TestCliVerboseFlag:
             result = runner.invoke(cli, ["cache", "--help"])
             assert result.exit_code == 0
             mock_setup.assert_called_once_with(logging.INFO)
+
+
+class TestHelpTelemetrySuppression:
+    """Help invocations must suppress all telemetry (no SDK init, no network flush)."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_suppress_flag(self) -> Generator[None, None, None]:
+        """Reset the suppress_telemetry flag after every test to avoid state leakage."""
+        _tel.suppress_telemetry(value=False)
+        yield
+        _tel.suppress_telemetry(value=False)
+
+    @pytest.mark.parametrize("help_flag", ["-h", "--help"])
+    def test_main_suppresses_telemetry_when_help_flag_in_argv(
+        self, help_flag: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """main() must suppress telemetry when a help flag appears in sys.argv.
+
+        We verify by checking that _SUPPRESSED is True after main() detects
+        the help flag, without needing to let the real cli() execute.
+        """
+        monkeypatch.setattr(sys, "argv", ["fdw", "config", help_flag])
+
+        # Start unsuppressed.
+        _tel.suppress_telemetry(value=False)
+
+        # Patch cli() in the __init__ module so main() doesn't actually run Click.
+        with patch.object(_cli_pkg, "cli", autospec=False):
+            _cli_pkg.main()
+
+        # After main(), the suppress flag must be set.
+        assert _tel._SUPPRESSED is True, (  # type: ignore[attr-defined]
+            f"_SUPPRESSED must be True after main() when {help_flag!r} is in argv"
+        )
+
+    def test_main_does_not_suppress_telemetry_for_normal_command(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """main() must NOT suppress telemetry for a normal (non-help) invocation."""
+        monkeypatch.setattr(sys, "argv", ["fdw", "config", "get"])
+
+        _tel.suppress_telemetry(value=False)  # start unsuppressed
+
+        with patch.object(_cli_pkg, "cli", autospec=False):
+            _cli_pkg.main()
+
+        assert _tel._SUPPRESSED is False, (  # type: ignore[attr-defined]
+            "_SUPPRESSED must remain False when no help flag is present"
+        )
+
+    def test_get_tracer_not_called_on_subcommand_help(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When a subcommand is invoked with --help, _get_tracer must not be called."""
+        monkeypatch.setattr(sys, "argv", ["fdw", "config", "--help"])
+
+        # Suppress from the start (as main() would do).
+        _tel.suppress_telemetry()
+
+        tracer_calls: list[str] = []
+        with patch.object(_tel, "_get_tracer", side_effect=lambda: tracer_calls.append("called")):  # type: ignore[attr-defined]
+            runner = CliRunner()
+            result = runner.invoke(cli, ["config", "--help"])
+
+        assert result.exit_code == 0
+        assert tracer_calls == [], "_get_tracer must not be called when telemetry is suppressed"
+
+    def test_subcommand_help_exits_without_telemetry_enabled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """After suppress_telemetry(), telemetry_enabled() must return False."""
+        monkeypatch.setattr(sys, "argv", ["fdw", "config", "-h"])
+        _tel.suppress_telemetry()
+
+        assert _tel.telemetry_enabled() is False, (
+            "telemetry_enabled() must return False when suppress_telemetry() has been called"
+        )
