@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from unittest.mock import patch
 
 import pytest
 
+from fabric_dw.exceptions import FabricError
 from fabric_dw.models import WarehouseSettings
 from fabric_dw.services import settings
 from tests.unit.services._helpers import _make_conn, _make_conn_for_ddl, _make_target
@@ -42,6 +43,13 @@ _SETTINGS_ROW_NO_CUTOFF: tuple[object, ...] = (
     "SalesWarehouse",
     True,
     30,
+    None,
+)
+
+_SETTINGS_ROW_NULL_DAYS: tuple[object, ...] = (
+    "SalesWarehouse",
+    True,
+    None,  # NULL time_travel_retention_period_days (SQL Analytics Endpoint)
     None,
 )
 
@@ -95,6 +103,34 @@ class TestGetSettings:
         assert result.time_travel_retention_cutoff_date is not None
         assert result.time_travel_retention_cutoff_date.tzinfo == UTC
 
+    async def test_null_days_returns_none(self) -> None:
+        """NULL time_travel_retention_period_days (SQL Analytics Endpoint) must not raise."""
+        target = _make_target()
+        conn = _make_conn([_SETTINGS_ROW_NULL_DAYS], _SETTINGS_COLS)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await settings.get_settings(target)
+        assert result.time_travel_retention_days is None
+
+    async def test_empty_rows_raises_fabric_error(self) -> None:
+        """If sys.databases returns no rows, a FabricError must be raised."""
+        target = _make_target()
+        conn = _make_conn([], _SETTINGS_COLS)
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(FabricError, match=r"sys\.databases returned no rows"),
+        ):
+            await settings.get_settings(target)
+
+    async def test_bare_date_cutoff_promoted_to_midnight_utc(self) -> None:
+        """A bare datetime.date returned by the driver must be promoted to midnight UTC."""
+        bare = date(2024, 6, 1)
+        row: tuple[object, ...] = ("SalesWarehouse", True, 7, bare)
+        target = _make_target()
+        conn = _make_conn([row], _SETTINGS_COLS)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await settings.get_settings(target)
+        assert result.time_travel_retention_cutoff_date == datetime(2024, 6, 1, tzinfo=UTC)
+
 
 # ===========================================================================
 # set_result_set_caching
@@ -116,17 +152,8 @@ class TestSetResultSetCaching:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
         read_conn = _make_conn([_SETTINGS_ROW], _SETTINGS_COLS)
-        call_count = 0
 
-        def _open(_t: object, **_kw: object) -> object:
-            nonlocal call_count
-            call_count += 1
-            # First call is ALTER DATABASE (autocommit=True), second is SELECT
-            if call_count == 1:
-                return ddl_conn
-            return read_conn
-
-        with patch("fabric_dw.sql.open_connection", side_effect=_open):
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, read_conn]):
             result = await settings.set_result_set_caching(target, enabled=True)
         assert isinstance(result, WarehouseSettings)
         assert result.result_set_caching is True
@@ -135,16 +162,8 @@ class TestSetResultSetCaching:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
         read_conn = _make_conn([_SETTINGS_ROW_CACHING_OFF], _SETTINGS_COLS)
-        call_count = 0
 
-        def _open(_t: object, **_kw: object) -> object:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return ddl_conn
-            return read_conn
-
-        with patch("fabric_dw.sql.open_connection", side_effect=_open):
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, read_conn]):
             result = await settings.set_result_set_caching(target, enabled=False)
         assert result.result_set_caching is False
 
@@ -153,16 +172,11 @@ class TestSetResultSetCaching:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
         read_conn = _make_conn([_SETTINGS_ROW], _SETTINGS_COLS)
-        call_count = 0
         autocommit_values: list[bool] = []
 
         def _open(_t: object, **_kw: object) -> object:
-            nonlocal call_count
-            call_count += 1
             autocommit_values.append(bool(_kw.get("autocommit", False)))
-            if call_count == 1:
-                return ddl_conn
-            return read_conn
+            return ddl_conn if not autocommit_values[:-1] else read_conn
 
         with patch("fabric_dw.sql.open_connection", side_effect=_open):
             await settings.set_result_set_caching(target, enabled=True)
@@ -181,16 +195,8 @@ class TestSetTimeTravelRetention:
         ddl_conn = _make_conn_for_ddl()
         row: tuple[object, ...] = ("SalesWarehouse", True, 30, None)
         read_conn = _make_conn([row], _SETTINGS_COLS)
-        call_count = 0
 
-        def _open(_t: object, **_kw: object) -> object:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return ddl_conn
-            return read_conn
-
-        with patch("fabric_dw.sql.open_connection", side_effect=_open):
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, read_conn]):
             result = await settings.set_time_travel_retention(target, days=30)
         assert isinstance(result, WarehouseSettings)
         assert result.time_travel_retention_days == 30
@@ -206,16 +212,8 @@ class TestSetTimeTravelRetention:
         ddl_conn = _make_conn_for_ddl()
         row: tuple[object, ...] = ("SalesWarehouse", True, 1, None)
         read_conn = _make_conn([row], _SETTINGS_COLS)
-        call_count = 0
 
-        def _open(_t: object, **_kw: object) -> object:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return ddl_conn
-            return read_conn
-
-        with patch("fabric_dw.sql.open_connection", side_effect=_open):
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, read_conn]):
             result = await settings.set_time_travel_retention(target, days=1)
         assert result.time_travel_retention_days == 1
 
@@ -224,16 +222,8 @@ class TestSetTimeTravelRetention:
         ddl_conn = _make_conn_for_ddl()
         row: tuple[object, ...] = ("SalesWarehouse", True, 120, None)
         read_conn = _make_conn([row], _SETTINGS_COLS)
-        call_count = 0
 
-        def _open(_t: object, **_kw: object) -> object:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return ddl_conn
-            return read_conn
-
-        with patch("fabric_dw.sql.open_connection", side_effect=_open):
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, read_conn]):
             result = await settings.set_time_travel_retention(target, days=120)
         assert result.time_travel_retention_days == 120
 
@@ -250,17 +240,31 @@ class TestSetTimeTravelRetention:
         ddl_conn = _make_conn_for_ddl()
         row: tuple[object, ...] = ("SalesWarehouse", True, 7, None)
         read_conn = _make_conn([row], _SETTINGS_COLS)
-        call_count = 0
         autocommit_values: list[bool] = []
 
         def _open(_t: object, **_kw: object) -> object:
-            nonlocal call_count
-            call_count += 1
             autocommit_values.append(bool(_kw.get("autocommit", False)))
-            if call_count == 1:
-                return ddl_conn
-            return read_conn
+            return ddl_conn if not autocommit_values[:-1] else read_conn
 
         with patch("fabric_dw.sql.open_connection", side_effect=_open):
             await settings.set_time_travel_retention(target, days=7)
         assert autocommit_values[0] is True
+
+
+# ===========================================================================
+# Public constants
+# ===========================================================================
+
+
+class TestPublicConstants:
+    def test_retention_min_is_public(self) -> None:
+        """RETENTION_MIN must be accessible without underscore prefix."""
+        assert settings.RETENTION_MIN == 1
+
+    def test_retention_max_is_public(self) -> None:
+        """RETENTION_MAX must be accessible without underscore prefix."""
+        assert settings.RETENTION_MAX == 120
+
+    def test_retention_constants_in_all(self) -> None:
+        assert "RETENTION_MIN" in settings.__all__
+        assert "RETENTION_MAX" in settings.__all__

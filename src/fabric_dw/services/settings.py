@@ -39,13 +39,17 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from datetime import date as _date
 from typing import cast
 
 from fabric_dw.auth import CredentialMode
+from fabric_dw.exceptions import FabricError
 from fabric_dw.models import WarehouseSettings
 from fabric_dw.sql import SqlTarget, run_query
 
 __all__ = [
+    "RETENTION_MAX",
+    "RETENTION_MIN",
     "get_settings",
     "set_result_set_caching",
     "set_time_travel_retention",
@@ -55,8 +59,14 @@ __all__ = [
 # Constants
 # ---------------------------------------------------------------------------
 
-_RETENTION_MIN = 1
-_RETENTION_MAX = 120
+#: Minimum allowed time-travel retention period in days.
+RETENTION_MIN = 1
+#: Maximum allowed time-travel retention period in days.
+RETENTION_MAX = 120
+
+# Backward-compatible aliases (private — kept for internal use only).
+_RETENTION_MIN = RETENTION_MIN
+_RETENTION_MAX = RETENTION_MAX
 
 # ---------------------------------------------------------------------------
 # SQL templates
@@ -92,16 +102,20 @@ def _normalize_ts(ts: object) -> datetime | None:
         return None
     if isinstance(ts, datetime):
         return ts.replace(tzinfo=UTC) if ts.tzinfo is None else ts.astimezone(UTC)
+    if isinstance(ts, _date):
+        # Bare date (not datetime) — promote to midnight UTC.
+        return datetime(ts.year, ts.month, ts.day, tzinfo=UTC)
     return None
 
 
 def _row_to_settings(cols: list[str], row: tuple[object, ...]) -> WarehouseSettings:
     """Build a :class:`~fabric_dw.models.WarehouseSettings` from a column-name list and a row."""
     data = dict(zip(cols, row, strict=True))
+    raw_days = data["time_travel_retention_period_days"]
     return WarehouseSettings(
         database=str(data["name"]),
         result_set_caching=bool(data["is_result_set_caching_on"]),
-        time_travel_retention_days=int(cast("int", data["time_travel_retention_period_days"])),
+        time_travel_retention_days=int(cast("int", raw_days)) if raw_days is not None else None,
         time_travel_retention_cutoff_date=_normalize_ts(
             data.get("time_travel_retention_cutoff_date")
         ),
@@ -140,7 +154,9 @@ async def get_settings(
 
     def _run() -> WarehouseSettings:
         cols, rows = run_query(target, _GET_SETTINGS_SQL, mode=mode)
-        # DB_ID() always matches exactly one row.
+        if not rows:
+            msg = "Could not read warehouse settings: sys.databases returned no rows"
+            raise FabricError(msg)
         return _row_to_settings(cols, rows[0])
 
     return await asyncio.to_thread(_run)

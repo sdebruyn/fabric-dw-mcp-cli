@@ -90,7 +90,7 @@ async def result_set_caching_cmd(
     """
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
-    enabled = state.lower() == "on"
+    enabled = state == "on"
     try:
         async with build_http_client(ctx) as http:
             target, _entry = await build_sql_target(http, ws, wh)
@@ -113,10 +113,10 @@ async def result_set_caching_cmd(
 @click.option(
     "--days",
     required=True,
-    type=click.IntRange(_settings_svc._RETENTION_MIN, _settings_svc._RETENTION_MAX),
+    type=click.IntRange(_settings_svc.RETENTION_MIN, _settings_svc.RETENTION_MAX),
     help=(
         f"Retention period in days "
-        f"({_settings_svc._RETENTION_MIN}-{_settings_svc._RETENTION_MAX}).  "
+        f"({_settings_svc.RETENTION_MIN}-{_settings_svc.RETENTION_MAX}).  "
         "Time-travel data older than this many days is no longer retained. "
         "Primarily a Data Warehouse concept; may be a no-op on a SQL Analytics Endpoint."
     ),

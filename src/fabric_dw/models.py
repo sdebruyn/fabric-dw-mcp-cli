@@ -599,7 +599,7 @@ class WarehouseSettings(_FabricBase):
 
     database: str
     result_set_caching: bool
-    time_travel_retention_days: int
+    time_travel_retention_days: int | None
     time_travel_retention_cutoff_date: datetime | None
 
 
