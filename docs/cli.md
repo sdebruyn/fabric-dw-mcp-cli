@@ -2449,9 +2449,9 @@ Manage **server-side** database settings on a Fabric Data Warehouse or SQL Analy
 
 > **Note:** `settings` manages server-side warehouse/database configuration. For client-side CLI defaults (workspace, warehouse) use [`fabric-dw config`](#defaults-fabric-dw-config) instead.
 
-`show` works on both Data Warehouses and SQL Analytics Endpoints. The write commands (`result-set-caching`, `retention`) run `ALTER DATABASE CURRENT SET …` — this is supported on Data Warehouses. The behaviour on a SQL Analytics Endpoint is not guaranteed; `retention` in particular is primarily a Warehouse concept and may be a no-op there.
+`show` and `result-set-caching` work on both Data Warehouses and SQL Analytics Endpoints. The `retention` command sets the time-travel retention period, which is primarily a Warehouse concept and may be a no-op on a SQL Analytics Endpoint.
 
-`WORKSPACE` and `ITEM` may be display names or GUIDs.
+The workspace is resolved from the global `-w/--workspace` option, the `FABRIC_DW_DEFAULT_WORKSPACE` environment variable, or the client-side config default. `ITEM` may be a display name or GUID.
 
 ### settings show
 
@@ -2460,14 +2460,14 @@ Manage **server-side** database settings on a Fabric Data Warehouse or SQL Analy
 Display all server-side database settings for an item in a single table.
 
 ```shell
-fabric-dw settings show [WORKSPACE] [ITEM]
+fabric-dw -w <workspace> settings show [ITEM]
 ```
 
 **Example:**
 
 ```shell
-fabric-dw settings show MyWorkspace MyWarehouse
-fabric-dw --json settings show MyWorkspace MyWarehouse
+fabric-dw -w MyWorkspace settings show MyWarehouse
+fabric-dw -w MyWorkspace --json settings show MyWarehouse
 ```
 
 ### settings result-set-caching
@@ -2479,7 +2479,7 @@ Enable or disable result-set caching.
 Executes `ALTER DATABASE CURRENT SET RESULT_SET_CACHING { ON | OFF }` on the target.
 
 ```shell
-fabric-dw settings result-set-caching [WORKSPACE] [ITEM] (on|off)
+fabric-dw -w <workspace> settings result-set-caching [ITEM] (on|off)
 ```
 
 `STATE` is case-insensitive (`on`, `off`, `ON`, `OFF`).
@@ -2487,9 +2487,9 @@ fabric-dw settings result-set-caching [WORKSPACE] [ITEM] (on|off)
 **Example:**
 
 ```shell
-fabric-dw settings result-set-caching MyWorkspace MyWarehouse on
-fabric-dw settings result-set-caching MyWorkspace MyWarehouse off
-fabric-dw --json settings result-set-caching MyWorkspace MyWarehouse on
+fabric-dw -w MyWorkspace settings result-set-caching MyWarehouse on
+fabric-dw -w MyWorkspace settings result-set-caching MyWarehouse off
+fabric-dw -w MyWorkspace --json settings result-set-caching MyWarehouse on
 ```
 
 ### settings retention
@@ -2501,7 +2501,7 @@ Set the time-travel retention period in days.
 Executes `ALTER DATABASE CURRENT SET TIME_TRAVEL_RETENTION_PERIOD = <DAYS> DAYS` on the target.
 
 ```shell
-fabric-dw settings retention [WORKSPACE] [ITEM] --days DAYS
+fabric-dw -w <workspace> settings retention [ITEM] --days DAYS
 ```
 
 | Option | Description | Default |
@@ -2511,8 +2511,8 @@ fabric-dw settings retention [WORKSPACE] [ITEM] --days DAYS
 **Example:**
 
 ```shell
-fabric-dw settings retention MyWorkspace MyWarehouse --days 30
-fabric-dw --json settings retention MyWorkspace MyWarehouse --days 7
+fabric-dw -w MyWorkspace settings retention MyWarehouse --days 30
+fabric-dw -w MyWorkspace --json settings retention MyWarehouse --days 7
 ```
 
 ---

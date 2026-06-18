@@ -92,7 +92,7 @@ class TestSettingsShow:
                 new=AsyncMock(return_value=_make_settings()),
             ),
         ):
-            result = runner.invoke(cli, ["settings", "show", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "settings", "show", WH_GUID])
         assert result.exit_code == 0
 
     def test_show_json_output(self, runner: CliRunner) -> None:
@@ -111,7 +111,7 @@ class TestSettingsShow:
                 new=AsyncMock(return_value=_make_settings()),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "settings", "show", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "--json", "settings", "show", WH_GUID])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert parsed["database"] == "SalesWarehouse"
@@ -130,7 +130,7 @@ class TestSettingsShow:
                 new=AsyncMock(side_effect=FabricError("connection error")),
             ),
         ):
-            result = runner.invoke(cli, ["settings", "show", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "settings", "show", WH_GUID])
         assert result.exit_code != 0
 
 
@@ -156,7 +156,9 @@ class TestResultSetCaching:
                 new=AsyncMock(return_value=_make_settings(result_set_caching=True)),
             ),
         ):
-            result = runner.invoke(cli, ["settings", "result-set-caching", WS_GUID, WH_GUID, "on"])
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "settings", "result-set-caching", WH_GUID, "on"]
+            )
         assert result.exit_code == 0
         assert "enabled" in result.output
 
@@ -176,7 +178,9 @@ class TestResultSetCaching:
                 new=AsyncMock(return_value=_make_settings(result_set_caching=False)),
             ),
         ):
-            result = runner.invoke(cli, ["settings", "result-set-caching", WS_GUID, WH_GUID, "off"])
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "settings", "result-set-caching", WH_GUID, "off"]
+            )
         assert result.exit_code == 0
         assert "disabled" in result.output
 
@@ -195,7 +199,9 @@ class TestResultSetCaching:
             ),
             patch("fabric_dw.services.settings.set_result_set_caching", new=mock_svc),
         ):
-            result = runner.invoke(cli, ["settings", "result-set-caching", WS_GUID, WH_GUID, "ON"])
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "settings", "result-set-caching", WH_GUID, "ON"]
+            )
         assert result.exit_code == 0
         _, kwargs = mock_svc.call_args
         assert kwargs.get("enabled") is True
@@ -217,14 +223,17 @@ class TestResultSetCaching:
             ),
         ):
             result = runner.invoke(
-                cli, ["--json", "settings", "result-set-caching", WS_GUID, WH_GUID, "on"]
+                cli,
+                ["-w", WS_GUID, "--json", "settings", "result-set-caching", WH_GUID, "on"],
             )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert parsed["result_set_caching"] is True
 
     def test_invalid_state_returns_nonzero(self, runner: CliRunner) -> None:
-        result = runner.invoke(cli, ["settings", "result-set-caching", WS_GUID, WH_GUID, "maybe"])
+        result = runner.invoke(
+            cli, ["-w", WS_GUID, "settings", "result-set-caching", WH_GUID, "maybe"]
+        )
         assert result.exit_code != 0
 
     def test_fabric_error_returns_nonzero(self, runner: CliRunner) -> None:
@@ -239,7 +248,9 @@ class TestResultSetCaching:
                 new=AsyncMock(side_effect=FabricError("permission denied")),
             ),
         ):
-            result = runner.invoke(cli, ["settings", "result-set-caching", WS_GUID, WH_GUID, "on"])
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "settings", "result-set-caching", WH_GUID, "on"]
+            )
         assert result.exit_code != 0
 
 
@@ -265,7 +276,9 @@ class TestRetention:
                 new=AsyncMock(return_value=_make_settings(days=30)),
             ),
         ):
-            result = runner.invoke(cli, ["settings", "retention", WS_GUID, WH_GUID, "--days", "30"])
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "settings", "retention", WH_GUID, "--days", "30"]
+            )
         assert result.exit_code == 0
         assert "30" in result.output
 
@@ -286,20 +299,21 @@ class TestRetention:
             ),
         ):
             result = runner.invoke(
-                cli, ["--json", "settings", "retention", WS_GUID, WH_GUID, "--days", "14"]
+                cli,
+                ["-w", WS_GUID, "--json", "settings", "retention", WH_GUID, "--days", "14"],
             )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert parsed["time_travel_retention_days"] == 14
 
     def test_days_required(self, runner: CliRunner) -> None:
-        result = runner.invoke(cli, ["settings", "retention", WS_GUID, WH_GUID])
+        result = runner.invoke(cli, ["-w", WS_GUID, "settings", "retention", WH_GUID])
         assert result.exit_code != 0
 
     @pytest.mark.parametrize("days", [0, 121])
     def test_out_of_range_days_returns_nonzero(self, runner: CliRunner, days: int) -> None:
         result = runner.invoke(
-            cli, ["settings", "retention", WS_GUID, WH_GUID, "--days", str(days)]
+            cli, ["-w", WS_GUID, "settings", "retention", WH_GUID, "--days", str(days)]
         )
         assert result.exit_code != 0
 
@@ -319,7 +333,9 @@ class TestRetention:
                 new=AsyncMock(return_value=_make_settings(days=1)),
             ),
         ):
-            result = runner.invoke(cli, ["settings", "retention", WS_GUID, WH_GUID, "--days", "1"])
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "settings", "retention", WH_GUID, "--days", "1"]
+            )
         assert result.exit_code == 0
 
     def test_boundary_120_accepted(self, runner: CliRunner) -> None:
@@ -339,7 +355,7 @@ class TestRetention:
             ),
         ):
             result = runner.invoke(
-                cli, ["settings", "retention", WS_GUID, WH_GUID, "--days", "120"]
+                cli, ["-w", WS_GUID, "settings", "retention", WH_GUID, "--days", "120"]
             )
         assert result.exit_code == 0
 
@@ -355,5 +371,7 @@ class TestRetention:
                 new=AsyncMock(side_effect=FabricError("permission denied")),
             ),
         ):
-            result = runner.invoke(cli, ["settings", "retention", WS_GUID, WH_GUID, "--days", "7"])
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "settings", "retention", WH_GUID, "--days", "7"]
+            )
         assert result.exit_code != 0

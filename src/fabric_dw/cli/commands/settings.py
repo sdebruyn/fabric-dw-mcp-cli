@@ -16,7 +16,7 @@ from fabric_dw.cli.commands._utils import (
     build_sql_target,
     coro,
     resolve_warehouse_arg,
-    resolve_workspace_arg,
+    resolve_workspace,
 )
 from fabric_dw.exceptions import FabricError
 from fabric_dw.services import settings as _settings_svc
@@ -30,28 +30,28 @@ def settings_group() -> None:
     (result-set caching, time-travel retention).  For client-side CLI
     defaults (workspace, warehouse) use the ``config`` group instead.
 
-    Both Data Warehouses and SQL Analytics Endpoints support ``show``.
-    The write commands (``result-set-caching``, ``retention``) target
-    Data Warehouses; the behaviour on a SQL Analytics Endpoint is not
-    guaranteed.
+    Both Data Warehouses and SQL Analytics Endpoints support ``show``
+    and ``result-set-caching``.  The ``retention`` command sets the
+    time-travel retention period, which is primarily a Warehouse concept
+    and may be a no-op on a SQL Analytics Endpoint.
     """
 
 
 @settings_group.command("show")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.pass_obj
 @coro
 async def show_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
 ) -> None:
-    """Show all server-side settings for ITEM in WORKSPACE.
+    """Show all server-side settings for ITEM.
 
-    WORKSPACE and ITEM may be display names or GUIDs.
+    ITEM may be a display name or GUID.  The workspace is resolved from
+    the global ``-w`` option, ``FABRIC_DW_DEFAULT_WORKSPACE`` env var, or
+    the client-side config default.
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
@@ -67,27 +67,28 @@ async def show_cmd(
 
 
 @settings_group.command("result-set-caching")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.argument("state", type=click.Choice(["on", "off"], case_sensitive=False))
 @click.pass_obj
 @coro
 async def result_set_caching_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     state: str,
 ) -> None:
-    """Enable or disable result-set caching on ITEM in WORKSPACE.
+    """Enable or disable result-set caching on ITEM.
 
     STATE must be ``on`` or ``off`` (case-insensitive).
 
     Executes ``ALTER DATABASE CURRENT SET RESULT_SET_CACHING { ON | OFF }``
-    on the target warehouse.
+    on the target.  Supported on both Data Warehouses and SQL Analytics
+    Endpoints.
 
-    WORKSPACE and ITEM may be display names or GUIDs.
+    ITEM may be a display name or GUID.  The workspace is resolved from
+    the global ``-w`` option, ``FABRIC_DW_DEFAULT_WORKSPACE`` env var, or
+    the client-side config default.
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     enabled = state.lower() == "on"
     try:
@@ -108,7 +109,6 @@ async def result_set_caching_cmd(
 
 
 @settings_group.command("retention")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.option(
     "--days",
@@ -125,18 +125,20 @@ async def result_set_caching_cmd(
 @coro
 async def retention_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     days: int,
 ) -> None:
-    """Set the time-travel retention period on ITEM in WORKSPACE.
+    """Set the time-travel retention period on ITEM.
 
     Executes ``ALTER DATABASE CURRENT SET TIME_TRAVEL_RETENTION_PERIOD = <DAYS> DAYS``
-    on the target warehouse.
+    on the target warehouse.  Primarily a Data Warehouse concept; may be a
+    no-op on a SQL Analytics Endpoint.
 
-    WORKSPACE and ITEM may be display names or GUIDs.
+    ITEM may be a display name or GUID.  The workspace is resolved from
+    the global ``-w`` option, ``FABRIC_DW_DEFAULT_WORKSPACE`` env var, or
+    the client-side config default.
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
