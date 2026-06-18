@@ -18,8 +18,8 @@ from fabric_dw.cli.commands._utils import (
     resolve_item,
     resolve_item_with_cache,
     resolve_warehouse_arg,
-    resolve_workspace_arg,
-    validate_workspace_or_all_workspaces,
+    resolve_workspace,
+    validate_workspace_option_or_all_workspaces,
 )
 from fabric_dw.exceptions import FabricError
 from fabric_dw.models import WarehouseKind
@@ -36,7 +36,6 @@ def warehouses_group() -> None:
 
 
 @warehouses_group.command("list")
-@click.argument("workspace", required=False, default=None)
 @click.option(
     "-A",
     "--all-workspaces",
@@ -56,27 +55,26 @@ def warehouses_group() -> None:
 @coro
 async def list_cmd(
     ctx: CliContext,
-    workspace: str | None,
     all_workspaces: bool,
     warehouses_only: bool,
 ) -> None:
-    """List all warehouses in WORKSPACE (name or GUID).
+    """List all warehouses in the target workspace.
+
+    The workspace comes from -w/--workspace (or the configured default).
 
     Lists both Warehouses and SQL Analytics Endpoints by default; pass
     --warehouses-only to exclude SQL Analytics Endpoints.
 
     Pass -A / --all-workspaces to scan every visible workspace instead.
-    WORKSPACE and --all-workspaces are mutually exclusive; exactly one is required.
+    -w/--workspace and --all-workspaces are mutually exclusive.
 
     The human-readable table omits the redundant Workspace ID column when a
     single workspace is targeted (every row shares it); -A keeps it because
     rows then span workspaces.  --json output always includes workspace_id.
     """
-    # Resolve the workspace default before the XOR validation so that a
-    # configured default-workspace (env / config file) is honoured when no
-    # positional arg is passed but --all-workspaces is also absent.
-    resolved_workspace = None if all_workspaces else resolve_workspace_arg(ctx, workspace)
-    validate_workspace_or_all_workspaces(resolved_workspace, all_workspaces)
+    # An explicit -w clashes with -A; a configured default does not (so -A
+    # always wins over a default and only the explicit flag is a conflict).
+    validate_workspace_option_or_all_workspaces(ctx.workspace, all_workspaces)
     try:
         async with build_http_client(ctx) as http:
             if all_workspaces:
@@ -84,11 +82,8 @@ async def list_cmd(
                     http, warehouses_only=warehouses_only
                 )
             else:
-                # resolved_workspace is guaranteed non-None by validate_workspace_or_all_workspaces
-                if resolved_workspace is None:  # pragma: no cover — defensive
-                    raise click.UsageError("Provide WORKSPACE or pass --all-workspaces / -A.")
                 resolver, _ = make_resolver(http)
-                ws_id = await resolver.workspace_id(resolved_workspace)
+                ws_id = await resolver.workspace_id(resolve_workspace(ctx))
                 items = await _warehouses_svc.list_warehouses(
                     http, ws_id, warehouses_only=warehouses_only
                 )
@@ -111,13 +106,12 @@ async def list_cmd(
 
 
 @warehouses_group.command("get")
-@click.argument("workspace", required=False, default=None)
 @click.argument("warehouse", required=False, default=None)
 @click.pass_obj
 @coro
-async def get_cmd(ctx: CliContext, workspace: str | None, warehouse: str | None) -> None:
-    """Get details for WAREHOUSE in WORKSPACE (both accept name or GUID)."""
-    ws = resolve_workspace_arg(ctx, workspace)
+async def get_cmd(ctx: CliContext, warehouse: str | None) -> None:
+    """Get details for WAREHOUSE (name or GUID) in the target workspace."""
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, warehouse)
     try:
         async with build_http_client(ctx) as http:
@@ -134,7 +128,6 @@ async def get_cmd(ctx: CliContext, workspace: str | None, warehouse: str | None)
 
 
 @warehouses_group.command("create")
-@click.argument("workspace", required=False, default=None)
 @click.argument("name")
 @click.option("--collation", default=None, help="Default collation for the warehouse.")
 @click.option("--description", default=None, help="Description for the warehouse.")
@@ -142,13 +135,12 @@ async def get_cmd(ctx: CliContext, workspace: str | None, warehouse: str | None)
 @coro
 async def create_cmd(
     ctx: CliContext,
-    workspace: str | None,
     name: str,
     collation: str | None,
     description: str | None,
 ) -> None:
-    """Create a new warehouse named NAME in WORKSPACE (name or GUID)."""
-    ws = resolve_workspace_arg(ctx, workspace)
+    """Create a new warehouse named NAME in the target workspace."""
+    ws = resolve_workspace(ctx)
     try:
         async with build_http_client(ctx) as http:
             resolver, _ = make_resolver(http)
@@ -169,7 +161,6 @@ async def create_cmd(
 
 
 @warehouses_group.command("rename")
-@click.argument("workspace", required=False, default=None)
 @click.argument("warehouse", required=False, default=None)
 @click.argument("new_name")
 @click.option("--description", default=None, help="Optional new description.")
@@ -177,13 +168,12 @@ async def create_cmd(
 @coro
 async def rename_cmd(
     ctx: CliContext,
-    workspace: str | None,
     warehouse: str | None,
     new_name: str,
     description: str | None,
 ) -> None:
-    """Rename WAREHOUSE in WORKSPACE to NEW_NAME (workspace and warehouse accept name or GUID)."""
-    ws = resolve_workspace_arg(ctx, workspace)
+    """Rename WAREHOUSE (name or GUID) to NEW_NAME in the target workspace."""
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, warehouse)
     try:
         async with build_http_client(ctx) as http:
@@ -212,13 +202,12 @@ async def rename_cmd(
 
 
 @warehouses_group.command("delete")
-@click.argument("workspace", required=False, default=None)
 @click.argument("warehouse", required=False, default=None)
 @click.pass_obj
 @coro
-async def delete_cmd(ctx: CliContext, workspace: str | None, warehouse: str | None) -> None:
-    """Delete WAREHOUSE from WORKSPACE (both accept name or GUID)."""
-    ws = resolve_workspace_arg(ctx, workspace)
+async def delete_cmd(ctx: CliContext, warehouse: str | None) -> None:
+    """Delete WAREHOUSE (name or GUID) from the target workspace."""
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, warehouse)
     try:
         async with build_http_client(ctx) as http:
@@ -248,16 +237,15 @@ async def delete_cmd(ctx: CliContext, workspace: str | None, warehouse: str | No
 
 
 @warehouses_group.command("takeover")
-@click.argument("workspace", required=False, default=None)
 @click.argument("warehouse", required=False, default=None)
 @click.pass_obj
 @coro
-async def takeover_cmd(ctx: CliContext, workspace: str | None, warehouse: str | None) -> None:
-    """Take ownership of WAREHOUSE in WORKSPACE (both accept name or GUID).
+async def takeover_cmd(ctx: CliContext, warehouse: str | None) -> None:
+    """Take ownership of WAREHOUSE (name or GUID) in the target workspace.
 
     Not supported for SQL Analytics Endpoints.
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, warehouse)
     try:
         async with build_http_client(ctx) as http:
@@ -277,17 +265,16 @@ async def takeover_cmd(ctx: CliContext, workspace: str | None, warehouse: str | 
 
 
 @warehouses_group.command("permissions")
-@click.argument("workspace", required=False, default=None)
 @click.argument("warehouse", required=False, default=None)
 @click.pass_obj
 @coro
-async def permissions_cmd(ctx: CliContext, workspace: str | None, warehouse: str | None) -> None:
-    """List principals with access to WAREHOUSE in WORKSPACE (both accept name or GUID).
+async def permissions_cmd(ctx: CliContext, warehouse: str | None) -> None:
+    """List principals with access to WAREHOUSE (name or GUID) in the target workspace.
 
     Requires Fabric Administrator role.
     See https://learn.microsoft.com/en-us/fabric/admin/microsoft-fabric-admin for details.
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, warehouse)
     try:
         async with build_http_client(ctx) as http:
