@@ -7,10 +7,12 @@ title: CLI reference
 `fabric-dw` is a command-line interface for administering Microsoft Fabric Data Warehouses and SQL Analytics Endpoints. The general invocation pattern is:
 
 ```
-fabric-dw [GLOBAL OPTIONS] <noun> <verb> [ARGS] [OPTIONS]
+fabric-dw [-w WORKSPACE] [GLOBAL OPTIONS] <noun> <verb> [ARGS] [OPTIONS]
 ```
 
-**Name-or-GUID arguments** — wherever a synopsis shows `WORKSPACE`, `WAREHOUSE`, `ENDPOINT`, or `SNAPSHOT`, the value can be either the display name or the item's GUID. The CLI resolves names to GUIDs automatically and caches the mapping locally (see [`fabric-dw cache`](#fabric-dw-cache)).
+The short alias `fdw` is identical to `fabric-dw` in every respect.
+
+**Name-or-GUID arguments** — wherever a synopsis shows `WAREHOUSE`, `ENDPOINT`, `SNAPSHOT`, or `WORKSPACE` (positional in the `workspaces` group only), the value can be either the display name or the item's GUID. The CLI resolves names to GUIDs automatically and caches the mapping locally (see [`fabric-dw cache`](#fabric-dw-cache)).
 
 **Positional arguments with defaults** — positional arguments shown in `[brackets]` may be omitted when a default has been set with [`fabric-dw config set`](#defaults-fabric-dw-config). See [Defaults — fabric-dw config](#defaults-fabric-dw-config) for details.
 
@@ -34,16 +36,32 @@ Each command below is labelled with one of:
 
 ## Global options
 
-These options can be placed immediately after `fabric-dw`, before the noun.
+These options are placed immediately after `fabric-dw` (or `fdw`), before the command group.
 
 | Flag | Description | Default |
 | --- | --- | --- |
+| `-w` / `--workspace TEXT` | Target workspace (name or GUID). Overrides the `FABRIC_DW_DEFAULT_WORKSPACE` environment variable and the configured default. See [Selecting a workspace](#selecting-a-workspace). | — |
 | `--json` | Emit machine-readable JSON instead of Rich tables. | off |
 | `--auth {default\|sp\|interactive}` | Override `FABRIC_AUTH` for this invocation. | `default` |
 | `-y` / `--yes` | Skip confirmation prompts on destructive commands. | off |
 | `-v` / `--verbose` | Enable DEBUG-level logging. | INFO |
 
 The `--auth` flag and the `FABRIC_AUTH` environment variable accept the same three values. See [Authentication](install.md#authentication) for the full credential chain.
+
+---
+
+## Selecting a workspace
+
+Every command that operates on a workspace (everything except `workspaces list` and `cache clear`) resolves the target workspace from the following sources, in priority order:
+
+1. **`-w` / `--workspace` flag** — explicit value passed on the root command, e.g. `fabric-dw -w MyWorkspace warehouses list`.
+2. **`FABRIC_DW_DEFAULT_WORKSPACE` environment variable** — if the flag is absent, the CLI reads this variable.
+3. **Configured default** — set with `fabric-dw config set workspace VALUE`; used when neither the flag nor the environment variable is present.
+4. **Error** — if none of the above is set, the CLI prints a helpful message suggesting you set one of the above.
+
+The `workspaces` command group is an exception: `workspaces get` and `workspaces set-collation` take the workspace as an explicit positional argument (not via `-w`), and `workspaces list` takes no workspace at all.
+
+> **`-A` / `--all-workspaces` interaction:** passing `-A` on the two list commands that support it (`warehouses list`, `sql-endpoints list`) explicitly scans every visible workspace. This flag is mutually exclusive with `-w` (an explicit `-w` conflicts with scanning all workspaces), but it does **not** conflict with a configured default workspace or `FABRIC_DW_DEFAULT_WORKSPACE` — the configured default is silently ignored when `-A` is used.
 
 ---
 
@@ -56,17 +74,15 @@ fabric-dw config set workspace MyWorkspace
 fabric-dw config set warehouse MyWarehouse
 ```
 
-Once set, any positional `WORKSPACE` or `WAREHOUSE` argument shown in `[brackets]` in the synopsis below can be omitted. The stored value is resolved in the same way as an explicit argument (name or GUID).
+Once set, the stored workspace is used whenever `-w` / `--workspace` is not passed and `FABRIC_DW_DEFAULT_WORKSPACE` is not set. The stored warehouse value fills in optional `[WAREHOUSE]` / `[ITEM]` positionals shown in `[brackets]` in the synopsis below. All stored values are resolved in the same way as explicit arguments (name or GUID).
 
-`--all-workspaces` (where available) and a configured default workspace are **mutually exclusive** — passing `-A` always ignores the stored default.
+Resolution order for the workspace (see also [Selecting a workspace](#selecting-a-workspace)):
 
-Resolution order for the workspace:
-
-1. Explicit positional argument on the command line.
+1. `-w` / `--workspace` flag on the root command.
 2. `FABRIC_DW_DEFAULT_WORKSPACE` environment variable.
 3. Value stored by `fabric-dw config set workspace`.
 
-The warehouse follows the same order using `FABRIC_DW_DEFAULT_WAREHOUSE`.
+The warehouse follows the same order using the optional `[WAREHOUSE]` / `[ITEM]` positional or `FABRIC_DW_DEFAULT_WAREHOUSE`.
 
 For authentication configuration, see [Authentication](install.md#authentication).
 
@@ -129,10 +145,12 @@ fabric-dw workspaces list
 
 Get details for a workspace, including its default Data Warehouse collation.
 
+> **Note:** The `workspaces` group is exempt from the global `-w/--workspace` option. Pass the workspace name or GUID as a positional argument instead.
+
 **Synopsis**
 
 ```
-fabric-dw workspaces get [WORKSPACE]
+fabric-dw workspaces get <WORKSPACE>
 ```
 
 **Example**
@@ -156,10 +174,12 @@ defaultDataWarehouseCollation     Latin1_General_100_CI_AS_KS_WS_SC_UTF8
 
 Set the default Data Warehouse collation for a workspace. `COLLATION` must be one of the supported Fabric collations.
 
+> **Note:** The `workspaces` group is exempt from the global `-w/--workspace` option. Pass the workspace name or GUID as a positional argument instead.
+
 **Synopsis**
 
 ```
-fabric-dw workspaces set-collation [WORKSPACE] COLLATION
+fabric-dw workspaces set-collation <WORKSPACE> COLLATION
 ```
 
 **Example**
@@ -178,21 +198,28 @@ Manage Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
-List all Data Warehouses and SQL Analytics Endpoints in a workspace. Pass `-A` / `--all-workspaces` to aggregate across every visible workspace. `WORKSPACE` and `--all-workspaces` are mutually exclusive.
+List all Data Warehouses and SQL Analytics Endpoints in a workspace. Pass `-A` / `--all-workspaces` to aggregate across every visible workspace. `-w` / `--workspace` and `--all-workspaces` are mutually exclusive.
 
 **Synopsis**
 
 ```
-fabric-dw warehouses list [-A] [WORKSPACE]
+fabric-dw [-w WORKSPACE] warehouses list [-A]
 ```
 
 | Option | Description |
 | --- | --- |
-| `-A` / `--all-workspaces` | Scan all visible workspaces and aggregate results. |
+| `-A` / `--all-workspaces` | Scan all visible workspaces and aggregate results. Mutually exclusive with `-w`. |
 
 **Example**
 
 ```shell
+# List warehouses in the default (or configured) workspace
+fabric-dw warehouses list
+
+# List warehouses in a specific workspace
+fabric-dw -w MyWorkspace warehouses list
+
+# Aggregate across all visible workspaces
 fabric-dw warehouses list --all-workspaces
 ```
 
@@ -214,13 +241,13 @@ Get details for a specific Data Warehouse. Uses the warehouse-scoped REST path (
 **Synopsis**
 
 ```
-fabric-dw warehouses get [WORKSPACE] [WAREHOUSE]
+fabric-dw [-w WORKSPACE] warehouses get [WAREHOUSE]
 ```
 
 **Example**
 
 ```shell
-fabric-dw warehouses get MyWorkspace SalesWH
+fabric-dw -w MyWorkspace warehouses get SalesWH
 ```
 
 ```
@@ -240,7 +267,7 @@ Create a new warehouse in a workspace.
 **Synopsis**
 
 ```
-fabric-dw warehouses create [OPTIONS] [WORKSPACE] NAME
+fabric-dw [-w WORKSPACE] warehouses create [OPTIONS] NAME
 ```
 
 | Option | Description |
@@ -251,7 +278,7 @@ fabric-dw warehouses create [OPTIONS] [WORKSPACE] NAME
 **Example**
 
 ```shell
-fabric-dw warehouses create MyWorkspace NewWH --description "Staging warehouse"
+fabric-dw -w MyWorkspace warehouses create NewWH --description "Staging warehouse"
 ```
 
 ---
@@ -265,7 +292,7 @@ Rename a warehouse and optionally update its description.
 **Synopsis**
 
 ```
-fabric-dw warehouses rename [OPTIONS] [WORKSPACE] [WAREHOUSE] NEW_NAME
+fabric-dw [-w WORKSPACE] warehouses rename [OPTIONS] [WAREHOUSE] NEW_NAME
 ```
 
 | Option | Description |
@@ -275,7 +302,7 @@ fabric-dw warehouses rename [OPTIONS] [WORKSPACE] [WAREHOUSE] NEW_NAME
 **Example**
 
 ```shell
-fabric-dw warehouses rename MyWorkspace SalesWH SalesWH_v2 --description "Renamed"
+fabric-dw -w MyWorkspace warehouses rename SalesWH SalesWH_v2 --description "Renamed"
 ```
 
 ---
@@ -289,13 +316,13 @@ Delete a warehouse. You will be asked to confirm unless `--yes` is passed.
 **Synopsis**
 
 ```
-fabric-dw warehouses delete [WORKSPACE] [WAREHOUSE]
+fabric-dw [-w WORKSPACE] warehouses delete [WAREHOUSE]
 ```
 
 **Example**
 
 ```shell
-fabric-dw --yes warehouses delete MyWorkspace OldWH
+fabric-dw -w MyWorkspace --yes warehouses delete OldWH
 ```
 
 ---
@@ -309,13 +336,13 @@ Take ownership of a warehouse. Not supported for SQL Analytics Endpoints.
 **Synopsis**
 
 ```
-fabric-dw warehouses takeover [WORKSPACE] [WAREHOUSE]
+fabric-dw [-w WORKSPACE] warehouses takeover [WAREHOUSE]
 ```
 
 **Example**
 
 ```shell
-fabric-dw warehouses takeover MyWorkspace SalesWH
+fabric-dw -w MyWorkspace warehouses takeover SalesWH
 ```
 
 ---
@@ -329,7 +356,7 @@ List all principals (users, groups, service principals) with access to a warehou
 **Synopsis**
 
 ```
-fabric-dw [--json] warehouses permissions [WORKSPACE] [WAREHOUSE]
+fabric-dw [-w WORKSPACE] [--json] warehouses permissions [WAREHOUSE]
 ```
 
 | Option | Description |
@@ -340,10 +367,10 @@ fabric-dw [--json] warehouses permissions [WORKSPACE] [WAREHOUSE]
 
 ```shell
 # Tabular output
-fabric-dw warehouses permissions MyWorkspace SalesWH
+fabric-dw -w MyWorkspace warehouses permissions SalesWH
 
 # Raw JSON
-fabric-dw --json warehouses permissions MyWorkspace SalesWH
+fabric-dw -w MyWorkspace --json warehouses permissions SalesWH
 ```
 
 ```
@@ -363,22 +390,29 @@ Manage Microsoft Fabric SQL Analytics Endpoints.
 
 **Targets:** SQL Analytics Endpoint
 
-List all SQL Analytics Endpoints in a workspace. Supports `-A` / `--all-workspaces` to scan every visible workspace.
+List all SQL Analytics Endpoints in a workspace. Supports `-A` / `--all-workspaces` to scan every visible workspace. `-w` / `--workspace` and `--all-workspaces` are mutually exclusive.
 
 **Synopsis**
 
 ```
-fabric-dw sql-endpoints list [-A] [WORKSPACE]
+fabric-dw [-w WORKSPACE] sql-endpoints list [-A]
 ```
 
 | Option | Description |
 | --- | --- |
-| `-A` / `--all-workspaces` | Scan all visible workspaces and aggregate results. |
+| `-A` / `--all-workspaces` | Scan all visible workspaces and aggregate results. Mutually exclusive with `-w`. |
 
 **Example**
 
 ```shell
-fabric-dw sql-endpoints list MyWorkspace
+# List endpoints in the default (or configured) workspace
+fabric-dw sql-endpoints list
+
+# List endpoints in a specific workspace
+fabric-dw -w MyWorkspace sql-endpoints list
+
+# Aggregate across all visible workspaces
+fabric-dw sql-endpoints list --all-workspaces
 ```
 
 ```
@@ -398,13 +432,13 @@ Get details for a specific SQL Analytics Endpoint.
 **Synopsis**
 
 ```
-fabric-dw sql-endpoints get WORKSPACE ENDPOINT
+fabric-dw [-w WORKSPACE] sql-endpoints get ENDPOINT
 ```
 
 **Example**
 
 ```shell
-fabric-dw sql-endpoints get MyWorkspace MyLakehouseEP
+fabric-dw -w MyWorkspace sql-endpoints get MyLakehouseEP
 ```
 
 ---
@@ -420,7 +454,7 @@ Results are shown as a Rich table (Table, Status, End Time, Error). Pass `--json
 **Synopsis**
 
 ```
-fabric-dw sql-endpoints refresh [--recreate-tables] WORKSPACE ENDPOINT
+fabric-dw [-w WORKSPACE] sql-endpoints refresh [--recreate-tables] ENDPOINT
 ```
 
 **Options**
@@ -433,13 +467,13 @@ fabric-dw sql-endpoints refresh [--recreate-tables] WORKSPACE ENDPOINT
 
 ```shell
 # Standard refresh — shows a per-table Rich table
-fabric-dw sql-endpoints refresh MyWorkspace MyLakehouseEP
+fabric-dw -w MyWorkspace sql-endpoints refresh MyLakehouseEP
 
 # Force a full table recreate
-fabric-dw sql-endpoints refresh --recreate-tables MyWorkspace MyLakehouseEP
+fabric-dw -w MyWorkspace sql-endpoints refresh --recreate-tables MyLakehouseEP
 
 # Emit raw JSON
-fabric-dw --json sql-endpoints refresh MyWorkspace MyLakehouseEP
+fabric-dw -w MyWorkspace --json sql-endpoints refresh MyLakehouseEP
 ```
 
 ---
@@ -453,7 +487,7 @@ List all principals (users, groups, service principals) with access to a SQL Ana
 **Synopsis**
 
 ```
-fabric-dw [--json] sql-endpoints permissions [WORKSPACE] ENDPOINT
+fabric-dw [-w WORKSPACE] [--json] sql-endpoints permissions ENDPOINT
 ```
 
 | Option | Description |
@@ -464,10 +498,10 @@ fabric-dw [--json] sql-endpoints permissions [WORKSPACE] ENDPOINT
 
 ```shell
 # Tabular output
-fabric-dw sql-endpoints permissions MyWorkspace MyLakehouseEP
+fabric-dw -w MyWorkspace sql-endpoints permissions MyLakehouseEP
 
 # Raw JSON
-fabric-dw --json sql-endpoints permissions MyWorkspace MyLakehouseEP
+fabric-dw -w MyWorkspace --json sql-endpoints permissions MyLakehouseEP
 ```
 
 ```
@@ -495,7 +529,7 @@ Execute a SQL statement or file against a warehouse or SQL Analytics Endpoint. P
 **Synopsis**
 
 ```
-fabric-dw sql [OPTIONS] [WORKSPACE] [ITEM]
+fabric-dw [-w WORKSPACE] sql [OPTIONS] [ITEM]
 ```
 
 | Option | Description |
@@ -509,10 +543,10 @@ Output defaults to a Rich table (rows/columns). Pass `--json` on the root comman
 
 ```shell
 # Inline query, Rich table output (default)
-fabric-dw sql MyWorkspace SalesWH -q "SELECT TOP 5 * FROM dbo.Sales"
+fabric-dw -w MyWorkspace sql SalesWH -q "SELECT TOP 5 * FROM dbo.Sales"
 
 # File input, JSON output
-fabric-dw --json sql MyWorkspace SalesWH -f ./queries/report.sql
+fabric-dw -w MyWorkspace --json sql SalesWH -f ./queries/report.sql
 ```
 
 ```json
@@ -534,13 +568,13 @@ Get the current audit settings for a warehouse.
 **Synopsis**
 
 ```
-fabric-dw audit get [WORKSPACE] [WAREHOUSE]
+fabric-dw [-w WORKSPACE] audit get [WAREHOUSE]
 ```
 
 **Example**
 
 ```shell
-fabric-dw audit get MyWorkspace SalesWH
+fabric-dw -w MyWorkspace audit get SalesWH
 ```
 
 ```
@@ -560,7 +594,7 @@ Enable SQL auditing on a warehouse.
 **Synopsis**
 
 ```
-fabric-dw audit enable [OPTIONS] [WORKSPACE] [WAREHOUSE]
+fabric-dw [-w WORKSPACE] audit enable [OPTIONS] [WAREHOUSE]
 ```
 
 | Option | Description | Default |
@@ -574,10 +608,10 @@ Omitting both `--retention-days` and `--unlimited` defaults to unlimited retenti
 
 ```shell
 # Retain logs for 90 days
-fabric-dw audit enable --retention-days 90 MyWorkspace SalesWH
+fabric-dw -w MyWorkspace audit enable --retention-days 90 SalesWH
 
 # Unlimited retention
-fabric-dw audit enable --unlimited MyWorkspace SalesWH
+fabric-dw -w MyWorkspace audit enable --unlimited SalesWH
 ```
 
 ---
@@ -591,13 +625,13 @@ Disable SQL auditing on a warehouse.
 **Synopsis**
 
 ```
-fabric-dw audit disable [WORKSPACE] [WAREHOUSE]
+fabric-dw [-w WORKSPACE] audit disable [WAREHOUSE]
 ```
 
 **Example**
 
 ```shell
-fabric-dw audit disable MyWorkspace SalesWH
+fabric-dw -w MyWorkspace audit disable SalesWH
 ```
 
 ---
@@ -611,7 +645,7 @@ Update the audit log retention period without changing the audit enabled/disable
 **Synopsis**
 
 ```
-fabric-dw audit set-retention --days INTEGER [WORKSPACE] [WAREHOUSE]
+fabric-dw [-w WORKSPACE] audit set-retention --days INTEGER [WAREHOUSE]
 ```
 
 | Option | Description |
@@ -621,7 +655,7 @@ fabric-dw audit set-retention --days INTEGER [WORKSPACE] [WAREHOUSE]
 **Example**
 
 ```shell
-fabric-dw audit set-retention --days 90 MyWorkspace SalesWH
+fabric-dw -w MyWorkspace audit set-retention --days 90 SalesWH
 ```
 
 ---
@@ -635,7 +669,7 @@ Set the audit action groups for a warehouse. Pass `--group` / `-g` once per acti
 **Synopsis**
 
 ```
-fabric-dw audit set-groups -g GROUP [-g GROUP ...] [WORKSPACE] [WAREHOUSE]
+fabric-dw [-w WORKSPACE] audit set-groups -g GROUP [-g GROUP ...] [WAREHOUSE]
 ```
 
 | Option | Description |
@@ -645,10 +679,10 @@ fabric-dw audit set-groups -g GROUP [-g GROUP ...] [WORKSPACE] [WAREHOUSE]
 **Example**
 
 ```shell
-fabric-dw audit set-groups \
+fabric-dw -w MyWorkspace audit set-groups \
   -g BATCH_COMPLETED_GROUP \
   -g SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP \
-  MyWorkspace SalesWH
+  SalesWH
 ```
 
 ---
@@ -662,13 +696,13 @@ Add a single audit action group without overwriting the others. Idempotent — i
 **Synopsis**
 
 ```
-fabric-dw audit add-group [WORKSPACE] [WAREHOUSE] GROUP
+fabric-dw [-w WORKSPACE] audit add-group [WAREHOUSE] GROUP
 ```
 
 **Example**
 
 ```shell
-fabric-dw audit add-group MyWorkspace SalesWH BATCH_COMPLETED_GROUP
+fabric-dw -w MyWorkspace audit add-group SalesWH BATCH_COMPLETED_GROUP
 ```
 
 ---
@@ -682,13 +716,13 @@ Remove a single audit action group without overwriting the others. Idempotent �
 **Synopsis**
 
 ```
-fabric-dw audit remove-group [WORKSPACE] [WAREHOUSE] GROUP
+fabric-dw [-w WORKSPACE] audit remove-group [WAREHOUSE] GROUP
 ```
 
 **Example**
 
 ```shell
-fabric-dw audit remove-group MyWorkspace SalesWH BATCH_COMPLETED_GROUP
+fabric-dw -w MyWorkspace audit remove-group SalesWH BATCH_COMPLETED_GROUP
 ```
 
 ---
@@ -706,13 +740,13 @@ List all currently running queries on a warehouse or SQL Analytics Endpoint.
 **Synopsis**
 
 ```
-fabric-dw queries list [WORKSPACE] [WAREHOUSE]
+fabric-dw [-w WORKSPACE] queries list [WAREHOUSE]
 ```
 
 **Example**
 
 ```shell
-fabric-dw queries list MyWorkspace SalesWH
+fabric-dw -w MyWorkspace queries list SalesWH
 ```
 
 ```
@@ -732,13 +766,13 @@ List all active SQL connections on a warehouse or SQL Analytics Endpoint. This q
 **Synopsis**
 
 ```
-fabric-dw queries list-connections [WORKSPACE] [WAREHOUSE]
+fabric-dw [-w WORKSPACE] queries list-connections [WAREHOUSE]
 ```
 
 **Example**
 
 ```shell
-fabric-dw queries list-connections MyWorkspace SalesWH
+fabric-dw -w MyWorkspace queries list-connections SalesWH
 ```
 
 ```
@@ -759,13 +793,13 @@ Kill a specific session on a warehouse or SQL Analytics Endpoint. You will be as
 **Synopsis**
 
 ```
-fabric-dw queries kill [WORKSPACE] [WAREHOUSE] SESSION_ID
+fabric-dw [-w WORKSPACE] queries kill [WAREHOUSE] SESSION_ID
 ```
 
 **Example**
 
 ```shell
-fabric-dw --yes queries kill MyWorkspace SalesWH 42
+fabric-dw -w MyWorkspace --yes queries kill SalesWH 42
 ```
 
 ---
@@ -779,7 +813,7 @@ List completed SQL requests from `queryinsights.exec_requests_history`. Supports
 **Synopsis**
 
 ```
-fabric-dw queries request-history [OPTIONS] [WORKSPACE] [WAREHOUSE]
+fabric-dw [-w WORKSPACE] queries request-history [OPTIONS] [WAREHOUSE]
 ```
 
 | Option | Description | Default |
@@ -791,7 +825,7 @@ fabric-dw queries request-history [OPTIONS] [WORKSPACE] [WAREHOUSE]
 **Example**
 
 ```shell
-fabric-dw queries request-history MyWorkspace SalesWH --limit 50 --since 2026-06-01T00:00:00
+fabric-dw -w MyWorkspace queries request-history SalesWH --limit 50 --since 2026-06-01T00:00:00
 ```
 
 ---
@@ -805,7 +839,7 @@ List completed sessions from `queryinsights.exec_sessions_history`.
 **Synopsis**
 
 ```
-fabric-dw queries session-history [OPTIONS] [WORKSPACE] [WAREHOUSE]
+fabric-dw [-w WORKSPACE] queries session-history [OPTIONS] [WAREHOUSE]
 ```
 
 | Option | Description | Default |
@@ -817,7 +851,7 @@ fabric-dw queries session-history [OPTIONS] [WORKSPACE] [WAREHOUSE]
 **Example**
 
 ```shell
-fabric-dw queries session-history MyWorkspace SalesWH
+fabric-dw -w MyWorkspace queries session-history SalesWH
 ```
 
 ---
@@ -831,7 +865,7 @@ List frequently-run queries from `queryinsights.frequently_run_queries`.
 **Synopsis**
 
 ```
-fabric-dw queries frequent [OPTIONS] [WORKSPACE] [WAREHOUSE]
+fabric-dw [-w WORKSPACE] queries frequent [OPTIONS] [WAREHOUSE]
 ```
 
 | Option | Description | Default |
@@ -843,7 +877,7 @@ fabric-dw queries frequent [OPTIONS] [WORKSPACE] [WAREHOUSE]
 **Example**
 
 ```shell
-fabric-dw queries frequent MyWorkspace SalesWH --limit 20
+fabric-dw -w MyWorkspace queries frequent SalesWH --limit 20
 ```
 
 ---
@@ -857,7 +891,7 @@ List long-running queries from `queryinsights.long_running_queries`.
 **Synopsis**
 
 ```
-fabric-dw queries long-running [OPTIONS] [WORKSPACE] [WAREHOUSE]
+fabric-dw [-w WORKSPACE] queries long-running [OPTIONS] [WAREHOUSE]
 ```
 
 | Option | Description | Default |
@@ -869,7 +903,7 @@ fabric-dw queries long-running [OPTIONS] [WORKSPACE] [WAREHOUSE]
 **Example**
 
 ```shell
-fabric-dw queries long-running MyWorkspace SalesWH
+fabric-dw -w MyWorkspace queries long-running SalesWH
 ```
 
 ---
@@ -889,13 +923,13 @@ List all restore points for a warehouse.
 **Synopsis**
 
 ```
-fabric-dw restore-points list [WORKSPACE] [WAREHOUSE]
+fabric-dw [-w WORKSPACE] restore-points list [WAREHOUSE]
 ```
 
 **Example**
 
 ```shell
-fabric-dw restore-points list MyWorkspace SalesWH
+fabric-dw -w MyWorkspace restore-points list SalesWH
 ```
 
 ```
@@ -915,13 +949,13 @@ Get details for a single restore point by ID.
 **Synopsis**
 
 ```
-fabric-dw restore-points get WORKSPACE WAREHOUSE RESTORE_POINT_ID
+fabric-dw [-w WORKSPACE] restore-points get WAREHOUSE RESTORE_POINT_ID
 ```
 
 **Example**
 
 ```shell
-fabric-dw restore-points get MyWorkspace SalesWH 1726617378000
+fabric-dw -w MyWorkspace restore-points get SalesWH 1726617378000
 ```
 
 ---
@@ -935,7 +969,7 @@ Create a new restore point for a warehouse at the current timestamp.
 **Synopsis**
 
 ```
-fabric-dw restore-points create [OPTIONS] [WORKSPACE] [WAREHOUSE]
+fabric-dw [-w WORKSPACE] restore-points create [OPTIONS] [WAREHOUSE]
 ```
 
 | Option | Description |
@@ -946,7 +980,7 @@ fabric-dw restore-points create [OPTIONS] [WORKSPACE] [WAREHOUSE]
 **Example**
 
 ```shell
-fabric-dw restore-points create MyWorkspace SalesWH \
+fabric-dw -w MyWorkspace restore-points create SalesWH \
   --name "Before migration" \
   --description "Pre-migration checkpoint"
 ```
@@ -962,7 +996,7 @@ Rename a restore point and optionally update its description.
 **Synopsis**
 
 ```
-fabric-dw restore-points rename [OPTIONS] WORKSPACE WAREHOUSE RESTORE_POINT_ID NEW_NAME
+fabric-dw [-w WORKSPACE] restore-points rename [OPTIONS] WAREHOUSE RESTORE_POINT_ID NEW_NAME
 ```
 
 | Option | Description |
@@ -972,7 +1006,7 @@ fabric-dw restore-points rename [OPTIONS] WORKSPACE WAREHOUSE RESTORE_POINT_ID N
 **Example**
 
 ```shell
-fabric-dw restore-points rename MyWorkspace SalesWH 1726617378000 "Post-migration backup"
+fabric-dw -w MyWorkspace restore-points rename SalesWH 1726617378000 "Post-migration backup"
 ```
 
 ---
@@ -986,13 +1020,13 @@ Delete a user-defined restore point. System-created restore points cannot be del
 **Synopsis**
 
 ```
-fabric-dw restore-points delete WORKSPACE WAREHOUSE RESTORE_POINT_ID
+fabric-dw [-w WORKSPACE] restore-points delete WAREHOUSE RESTORE_POINT_ID
 ```
 
 **Example**
 
 ```shell
-fabric-dw --yes restore-points delete MyWorkspace SalesWH 1726617378000
+fabric-dw -w MyWorkspace --yes restore-points delete SalesWH 1726617378000
 ```
 
 ---
@@ -1006,13 +1040,13 @@ Restore a warehouse in-place to a restore point. **This is a destructive operati
 **Synopsis**
 
 ```
-fabric-dw restore-points restore WORKSPACE WAREHOUSE RESTORE_POINT_ID
+fabric-dw [-w WORKSPACE] restore-points restore WAREHOUSE RESTORE_POINT_ID
 ```
 
 **Example**
 
 ```shell
-fabric-dw --yes restore-points restore MyWorkspace SalesWH 1726617378000
+fabric-dw -w MyWorkspace --yes restore-points restore SalesWH 1726617378000
 ```
 
 ---
@@ -1030,7 +1064,7 @@ List all views on a warehouse or SQL Analytics Endpoint. Pass `--schema` to filt
 **Synopsis**
 
 ```
-fabric-dw views list [OPTIONS] [WORKSPACE] [WAREHOUSE]
+fabric-dw [-w WORKSPACE] views list [OPTIONS] [WAREHOUSE]
 ```
 
 | Option | Description |
@@ -1040,7 +1074,7 @@ fabric-dw views list [OPTIONS] [WORKSPACE] [WAREHOUSE]
 **Example**
 
 ```shell
-fabric-dw views list MyWorkspace SalesWH --schema dbo
+fabric-dw -w MyWorkspace views list SalesWH --schema dbo
 ```
 
 ```
@@ -1061,7 +1095,7 @@ Get the full definition of a single view.
 **Synopsis**
 
 ```
-fabric-dw views get [WORKSPACE] [WAREHOUSE] QUALIFIED_NAME
+fabric-dw [-w WORKSPACE] views get [WAREHOUSE] QUALIFIED_NAME
 ```
 
 `QUALIFIED_NAME` must be a dot-separated `schema.view_name` string, e.g. `dbo.vw_sales`.
@@ -1069,7 +1103,7 @@ fabric-dw views get [WORKSPACE] [WAREHOUSE] QUALIFIED_NAME
 **Example**
 
 ```shell
-fabric-dw views get MyWorkspace SalesWH dbo.vw_sales
+fabric-dw -w MyWorkspace views get SalesWH dbo.vw_sales
 ```
 
 ```
@@ -1092,7 +1126,7 @@ Create a new SQL view.
 **Synopsis**
 
 ```
-fabric-dw views create [OPTIONS] [WORKSPACE] [WAREHOUSE]
+fabric-dw [-w WORKSPACE] views create [OPTIONS] [WAREHOUSE]
 ```
 
 | Option | Description |
@@ -1106,7 +1140,7 @@ Exactly one of `--select` or `--from-file` must be provided.
 **Example**
 
 ```shell
-fabric-dw views create MyWorkspace SalesWH \
+fabric-dw -w MyWorkspace views create SalesWH \
   --name dbo.vw_recent \
   --select "SELECT id, amount FROM dbo.sales WHERE sale_date >= '2026-01-01'"
 ```
@@ -1122,7 +1156,7 @@ Redefine an existing view using `CREATE OR ALTER VIEW`.
 **Synopsis**
 
 ```
-fabric-dw views update [OPTIONS] [WORKSPACE] [WAREHOUSE] QUALIFIED_NAME
+fabric-dw [-w WORKSPACE] views update [OPTIONS] [WAREHOUSE] QUALIFIED_NAME
 ```
 
 `QUALIFIED_NAME` is the dot-separated `schema.view_name` to update.
@@ -1137,7 +1171,7 @@ Exactly one of `--select` or `--from-file` must be provided.
 **Example**
 
 ```shell
-fabric-dw views update MyWorkspace SalesWH dbo.vw_recent \
+fabric-dw -w MyWorkspace views update SalesWH dbo.vw_recent \
   --select "SELECT id, amount, region FROM dbo.sales WHERE sale_date >= '2026-01-01'"
 ```
 
@@ -1152,13 +1186,13 @@ Drop a SQL view. You will be asked to confirm unless `--yes` is passed.
 **Synopsis**
 
 ```
-fabric-dw views drop [WORKSPACE] [WAREHOUSE] QUALIFIED_NAME
+fabric-dw [-w WORKSPACE] views drop [WAREHOUSE] QUALIFIED_NAME
 ```
 
 **Example**
 
 ```shell
-fabric-dw --yes views drop MyWorkspace SalesWH dbo.vw_recent
+fabric-dw -w MyWorkspace --yes views drop SalesWH dbo.vw_recent
 ```
 
 ---
@@ -1172,7 +1206,7 @@ Rename a SQL view via `sp_rename`. The new name must be an unqualified (bare) id
 **Synopsis**
 
 ```
-fabric-dw views rename [OPTIONS] [WORKSPACE] [WAREHOUSE] QUALIFIED_NAME
+fabric-dw [-w WORKSPACE] views rename [OPTIONS] [WAREHOUSE] QUALIFIED_NAME
 ```
 
 `QUALIFIED_NAME` is the current dot-separated `schema.view_name`.
@@ -1184,7 +1218,7 @@ fabric-dw views rename [OPTIONS] [WORKSPACE] [WAREHOUSE] QUALIFIED_NAME
 **Example**
 
 ```shell
-fabric-dw views rename MyWorkspace SalesWH dbo.vw_recent --new-name vw_revenue
+fabric-dw -w MyWorkspace views rename SalesWH dbo.vw_recent --new-name vw_revenue
 ```
 
 ---
@@ -1200,7 +1234,7 @@ CSV and Parquet formats require `--output`. JSON is emitted to stdout by default
 **Synopsis**
 
 ```
-fabric-dw views read [OPTIONS] [WORKSPACE] [WAREHOUSE] QUALIFIED_NAME
+fabric-dw [-w WORKSPACE] views read [OPTIONS] [WAREHOUSE] QUALIFIED_NAME
 ```
 
 | Option | Description | Default |
@@ -1212,7 +1246,7 @@ fabric-dw views read [OPTIONS] [WORKSPACE] [WAREHOUSE] QUALIFIED_NAME
 **Example**
 
 ```shell
-fabric-dw views read MyWorkspace SalesWH dbo.vw_sales --count 5
+fabric-dw -w MyWorkspace views read SalesWH dbo.vw_sales --count 5
 ```
 
 ```json
@@ -1237,7 +1271,7 @@ List stored procedures on a warehouse or SQL Analytics Endpoint. Pass `--schema`
 **Synopsis**
 
 ```
-fabric-dw procedures list [OPTIONS] [WORKSPACE] [ITEM]
+fabric-dw [-w WORKSPACE] procedures list [OPTIONS] [ITEM]
 ```
 
 | Option | Description |
@@ -1247,7 +1281,7 @@ fabric-dw procedures list [OPTIONS] [WORKSPACE] [ITEM]
 **Example**
 
 ```shell
-fabric-dw procedures list MyWorkspace SalesWH --schema dbo
+fabric-dw -w MyWorkspace procedures list SalesWH --schema dbo
 ```
 
 ```
@@ -1267,7 +1301,7 @@ Get the full definition of a single stored procedure.
 **Synopsis**
 
 ```
-fabric-dw procedures get [WORKSPACE] [ITEM] QUALIFIED_NAME
+fabric-dw [-w WORKSPACE] procedures get [ITEM] QUALIFIED_NAME
 ```
 
 `QUALIFIED_NAME` must be a dot-separated `schema.proc_name` string, e.g. `dbo.usp_load_sales`.
@@ -1275,7 +1309,7 @@ fabric-dw procedures get [WORKSPACE] [ITEM] QUALIFIED_NAME
 **Example**
 
 ```shell
-fabric-dw procedures get MyWorkspace SalesWH dbo.usp_load_sales
+fabric-dw -w MyWorkspace procedures get SalesWH dbo.usp_load_sales
 ```
 
 ---
@@ -1289,7 +1323,7 @@ Create a new stored procedure.
 **Synopsis**
 
 ```
-fabric-dw procedures create [OPTIONS] [WORKSPACE] [ITEM]
+fabric-dw [-w WORKSPACE] procedures create [OPTIONS] [ITEM]
 ```
 
 | Option | Description |
@@ -1303,7 +1337,7 @@ Exactly one of `--body` or `--from-file` must be provided.
 **Example**
 
 ```shell
-fabric-dw procedures create MyWorkspace SalesWH \
+fabric-dw -w MyWorkspace procedures create SalesWH \
   --name dbo.usp_archive_orders \
   --body "BEGIN INSERT INTO dbo.archive SELECT * FROM dbo.orders; END"
 ```
@@ -1319,7 +1353,7 @@ Redefine an existing stored procedure via `CREATE OR ALTER PROCEDURE`.
 **Synopsis**
 
 ```
-fabric-dw procedures update [OPTIONS] [WORKSPACE] [ITEM] QUALIFIED_NAME
+fabric-dw [-w WORKSPACE] procedures update [OPTIONS] [ITEM] QUALIFIED_NAME
 ```
 
 `QUALIFIED_NAME` is the dot-separated `schema.proc_name` to update.
@@ -1334,7 +1368,7 @@ Exactly one of `--body` or `--from-file` must be provided. You will be asked to 
 **Example**
 
 ```shell
-fabric-dw procedures update MyWorkspace SalesWH dbo.usp_archive_orders \
+fabric-dw -w MyWorkspace procedures update SalesWH dbo.usp_archive_orders \
   --from-file ./procs/usp_archive_orders_v2.sql
 ```
 
@@ -1349,13 +1383,13 @@ Drop a stored procedure. You will be asked to confirm unless `--yes` is passed.
 **Synopsis**
 
 ```
-fabric-dw procedures drop [WORKSPACE] [ITEM] QUALIFIED_NAME
+fabric-dw [-w WORKSPACE] procedures drop [ITEM] QUALIFIED_NAME
 ```
 
 **Example**
 
 ```shell
-fabric-dw --yes procedures drop MyWorkspace SalesWH dbo.usp_archive_orders
+fabric-dw -w MyWorkspace --yes procedures drop SalesWH dbo.usp_archive_orders
 ```
 
 ---
@@ -1375,7 +1409,7 @@ List T-SQL user-defined functions on a warehouse or SQL Analytics Endpoint. Pass
 **Synopsis**
 
 ```
-fabric-dw functions list [OPTIONS] [WORKSPACE] [ITEM]
+fabric-dw [-w WORKSPACE] functions list [OPTIONS] [ITEM]
 ```
 
 | Option | Description |
@@ -1386,7 +1420,7 @@ fabric-dw functions list [OPTIONS] [WORKSPACE] [ITEM]
 **Example**
 
 ```shell
-fabric-dw functions list MyWorkspace SalesWH --schema dbo --kind scalar
+fabric-dw -w MyWorkspace functions list SalesWH --schema dbo --kind scalar
 ```
 
 ```
@@ -1406,7 +1440,7 @@ Get the full definition of a single T-SQL user-defined function, including its p
 **Synopsis**
 
 ```
-fabric-dw functions get [WORKSPACE] [ITEM] QUALIFIED_NAME
+fabric-dw [-w WORKSPACE] functions get [ITEM] QUALIFIED_NAME
 ```
 
 `QUALIFIED_NAME` must be a dot-separated `schema.fn_name` string, e.g. `dbo.fn_clean_input`.
@@ -1414,7 +1448,7 @@ fabric-dw functions get [WORKSPACE] [ITEM] QUALIFIED_NAME
 **Example**
 
 ```shell
-fabric-dw functions get MyWorkspace SalesWH dbo.fn_clean_input
+fabric-dw -w MyWorkspace functions get SalesWH dbo.fn_clean_input
 ```
 
 ---
@@ -1428,7 +1462,7 @@ Create a new T-SQL user-defined function. Scalar UDFs and inline TVFs are previe
 **Synopsis**
 
 ```
-fabric-dw functions create [OPTIONS] [WORKSPACE] [ITEM]
+fabric-dw [-w WORKSPACE] functions create [OPTIONS] [ITEM]
 ```
 
 | Option | Description |
@@ -1442,7 +1476,7 @@ Exactly one of `--body` or `--from-file` must be provided.
 **Example**
 
 ```shell
-fabric-dw functions create MyWorkspace SalesWH \
+fabric-dw -w MyWorkspace functions create SalesWH \
   --name dbo.fn_clean_input \
   --body "(@input NVARCHAR(100)) RETURNS NVARCHAR(100) AS BEGIN RETURN LTRIM(RTRIM(@input)) END"
 ```
@@ -1460,7 +1494,7 @@ Redefine an existing T-SQL user-defined function via `CREATE OR ALTER FUNCTION`.
 **Synopsis**
 
 ```
-fabric-dw functions update [OPTIONS] [WORKSPACE] [ITEM] QUALIFIED_NAME
+fabric-dw [-w WORKSPACE] functions update [OPTIONS] [ITEM] QUALIFIED_NAME
 ```
 
 `QUALIFIED_NAME` is the dot-separated `schema.fn_name` to update.
@@ -1475,7 +1509,7 @@ Exactly one of `--body` or `--from-file` must be provided. You will be asked to 
 **Example**
 
 ```shell
-fabric-dw functions update MyWorkspace SalesWH dbo.fn_clean_input \
+fabric-dw -w MyWorkspace functions update SalesWH dbo.fn_clean_input \
   --from-file ./fns/fn_clean_input_v2.sql
 ```
 
@@ -1490,7 +1524,7 @@ Drop a T-SQL user-defined function. You will be asked to confirm unless `--yes` 
 **Synopsis**
 
 ```
-fabric-dw functions drop [OPTIONS] [WORKSPACE] [ITEM] QUALIFIED_NAME
+fabric-dw [-w WORKSPACE] functions drop [OPTIONS] [ITEM] QUALIFIED_NAME
 ```
 
 | Option | Description |
@@ -1500,7 +1534,7 @@ fabric-dw functions drop [OPTIONS] [WORKSPACE] [ITEM] QUALIFIED_NAME
 **Example**
 
 ```shell
-fabric-dw --yes functions drop MyWorkspace SalesWH dbo.fn_clean_input
+fabric-dw -w MyWorkspace --yes functions drop SalesWH dbo.fn_clean_input
 ```
 
 ---
@@ -1514,7 +1548,7 @@ Rename a T-SQL user-defined function via `EXEC sp_rename`. The new name must be 
 **Synopsis**
 
 ```
-fabric-dw functions rename [OPTIONS] [WORKSPACE] [ITEM] QUALIFIED_NAME
+fabric-dw [-w WORKSPACE] functions rename [OPTIONS] [ITEM] QUALIFIED_NAME
 ```
 
 | Option | Description |
@@ -1524,7 +1558,7 @@ fabric-dw functions rename [OPTIONS] [WORKSPACE] [ITEM] QUALIFIED_NAME
 **Example**
 
 ```shell
-fabric-dw --yes functions rename MyWorkspace SalesWH dbo.fn_clean_input \
+fabric-dw -w MyWorkspace --yes functions rename SalesWH dbo.fn_clean_input \
   --new-name fn_sanitize_input
 ```
 
@@ -1545,7 +1579,7 @@ List all tables on a warehouse or SQL Analytics Endpoint. Pass `--schema` to fil
 **Synopsis**
 
 ```
-fabric-dw tables list [OPTIONS] [WORKSPACE] [WAREHOUSE]
+fabric-dw [-w WORKSPACE] tables list [OPTIONS] [WAREHOUSE]
 ```
 
 | Option | Description |
@@ -1555,7 +1589,7 @@ fabric-dw tables list [OPTIONS] [WORKSPACE] [WAREHOUSE]
 **Example**
 
 ```shell
-fabric-dw tables list MyWorkspace SalesWH --schema dbo
+fabric-dw -w MyWorkspace tables list SalesWH --schema dbo
 ```
 
 ```
@@ -1578,7 +1612,7 @@ CSV and Parquet formats require `--output`. JSON is emitted to stdout by default
 **Synopsis**
 
 ```
-fabric-dw tables read [OPTIONS] [WORKSPACE] [WAREHOUSE] QUALIFIED_NAME
+fabric-dw [-w WORKSPACE] tables read [OPTIONS] [WAREHOUSE] QUALIFIED_NAME
 ```
 
 | Option | Description | Default |
@@ -1590,7 +1624,7 @@ fabric-dw tables read [OPTIONS] [WORKSPACE] [WAREHOUSE] QUALIFIED_NAME
 **Example**
 
 ```shell
-fabric-dw tables read MyWorkspace SalesWH dbo.orders --count 5
+fabric-dw -w MyWorkspace tables read SalesWH dbo.orders --count 5
 ```
 
 ```json
@@ -1614,7 +1648,7 @@ Create a new table on a Fabric Data Warehouse. Two modes are available:
 **Synopsis**
 
 ```
-fabric-dw tables create [OPTIONS] [WORKSPACE] [WAREHOUSE]
+fabric-dw [-w WORKSPACE] tables create [OPTIONS] [WAREHOUSE]
 ```
 
 #### CTAS options
@@ -1666,29 +1700,29 @@ Exactly one of `--select` or `--from-file` must be provided for the CTAS path. C
 
 ```shell
 # CTAS
-fabric-dw tables create MyWorkspace SalesWH \
+fabric-dw -w MyWorkspace tables create SalesWH \
   --name dbo.orders_2026 \
   --select "SELECT * FROM dbo.orders WHERE YEAR(sale_date) = 2026"
 
 # Empty table from Parquet schema
-fabric-dw tables create MyWorkspace SalesWH \
+fabric-dw -w MyWorkspace tables create SalesWH \
   --name dbo.sales_empty \
   --from-parquet ./exports/sales.parquet
 
 # Empty table from CSV header (type inference)
-fabric-dw tables create MyWorkspace SalesWH \
+fabric-dw -w MyWorkspace tables create SalesWH \
   --name staging.raw_products \
   --from-csv ./data/products.csv --varchar-length 500
 
 # Empty table with explicit inline columns
-fabric-dw tables create MyWorkspace SalesWH \
+fabric-dw -w MyWorkspace tables create SalesWH \
   --name dbo.events \
   --column "event_id:BIGINT:notnull" \
   --column "event_type:VARCHAR(100)" \
   --column "occurred_at:DATETIME2(7)"
 
 # Explicit schema from JSON file + extra columns
-fabric-dw tables create MyWorkspace SalesWH \
+fabric-dw -w MyWorkspace tables create SalesWH \
   --name dbo.audit_log \
   --from-schema ./schemas/audit_log.json \
   --column "inserted_at:DATETIME2(7):notnull"
@@ -1705,13 +1739,13 @@ Drop a table. You will be asked to confirm unless `--yes` is passed.
 **Synopsis**
 
 ```
-fabric-dw tables delete [OPTIONS] [WORKSPACE] [WAREHOUSE] QUALIFIED_NAME
+fabric-dw [-w WORKSPACE] tables delete [OPTIONS] [WAREHOUSE] QUALIFIED_NAME
 ```
 
 **Example**
 
 ```shell
-fabric-dw --yes tables delete MyWorkspace SalesWH dbo.orders_2026
+fabric-dw -w MyWorkspace --yes tables delete SalesWH dbo.orders_2026
 ```
 
 ---
@@ -1725,13 +1759,13 @@ Truncate a table (delete all rows, keep structure). You will be asked to confirm
 **Synopsis**
 
 ```
-fabric-dw tables clear [OPTIONS] [WORKSPACE] [WAREHOUSE] QUALIFIED_NAME
+fabric-dw [-w WORKSPACE] tables clear [OPTIONS] [WAREHOUSE] QUALIFIED_NAME
 ```
 
 **Example**
 
 ```shell
-fabric-dw --yes tables clear MyWorkspace SalesWH dbo.staging_load
+fabric-dw -w MyWorkspace --yes tables clear SalesWH dbo.staging_load
 ```
 
 ---
@@ -1745,7 +1779,7 @@ Create a zero-copy clone of a table using `CREATE TABLE … AS CLONE OF`. Pass `
 **Synopsis**
 
 ```
-fabric-dw tables clone [OPTIONS] [WORKSPACE] [ITEM]
+fabric-dw [-w WORKSPACE] tables clone [OPTIONS] [ITEM]
 ```
 
 | Option | Description |
@@ -1758,12 +1792,12 @@ fabric-dw tables clone [OPTIONS] [WORKSPACE] [ITEM]
 
 ```shell
 # Clone to the current state
-fabric-dw tables clone MyWorkspace SalesWH \
+fabric-dw -w MyWorkspace tables clone SalesWH \
   --source dbo.orders \
   --name dbo.orders_backup
 
 # Point-in-time clone
-fabric-dw tables clone MyWorkspace SalesWH \
+fabric-dw -w MyWorkspace tables clone SalesWH \
   --source dbo.orders \
   --name dbo.orders_may_snapshot \
   --at 2024-05-20T14:00:00
@@ -1780,7 +1814,7 @@ Rename a table via `sp_rename`. The new name must be an unqualified (bare) ident
 **Synopsis**
 
 ```
-fabric-dw tables rename [OPTIONS] [WORKSPACE] [ITEM] QUALIFIED_NAME
+fabric-dw [-w WORKSPACE] tables rename [OPTIONS] [ITEM] QUALIFIED_NAME
 ```
 
 `QUALIFIED_NAME` is the current dot-separated `schema.table_name`.
@@ -1792,7 +1826,7 @@ fabric-dw tables rename [OPTIONS] [WORKSPACE] [ITEM] QUALIFIED_NAME
 **Example**
 
 ```shell
-fabric-dw tables rename MyWorkspace SalesWH dbo.orders_2025 --new-name orders_archive_2025
+fabric-dw -w MyWorkspace tables rename SalesWH dbo.orders_2025 --new-name orders_archive_2025
 ```
 
 ---
@@ -1831,7 +1865,7 @@ Use `--cleanup-on-failure` to drop the table if WE created it in this call and t
 **Synopsis**
 
 ```
-fabric-dw tables load [OPTIONS] [WORKSPACE] [ITEM] QUALIFIED_NAME
+fabric-dw [-w WORKSPACE] tables load [OPTIONS] [ITEM] QUALIFIED_NAME
 ```
 
 `QUALIFIED_NAME` is the dot-separated `schema.table_name` of the destination table.
@@ -1864,35 +1898,35 @@ fabric-dw tables load [OPTIONS] [WORKSPACE] [ITEM] QUALIFIED_NAME
 
 ```shell
 # Load a local CSV into an existing table (header row present)
-fabric-dw tables load MyWorkspace SalesWH dbo.sales --file data.csv
+fabric-dw -w MyWorkspace tables load SalesWH dbo.sales --file data.csv
 
 # Load a local Parquet file into an existing table
-fabric-dw tables load MyWorkspace SalesWH dbo.events --file events.parquet
+fabric-dw -w MyWorkspace tables load SalesWH dbo.events --file events.parquet
 
 # Load a local JSON file (converts to Parquet internally; requires pyarrow)
-fabric-dw tables load MyWorkspace SalesWH dbo.products --file products.json
+fabric-dw -w MyWorkspace tables load SalesWH dbo.products --file products.json
 
 # Auto-create the table from a Parquet schema, then load
-fabric-dw tables load MyWorkspace SalesWH dbo.sales --file data.parquet --create
+fabric-dw -w MyWorkspace tables load SalesWH dbo.sales --file data.parquet --create
 
 # Auto-create from CSV, force all columns to VARCHAR
-fabric-dw tables load MyWorkspace SalesWH dbo.raw --file raw.csv --create --all-varchar
+fabric-dw -w MyWorkspace tables load SalesWH dbo.raw --file raw.csv --create --all-varchar
 
 # Replace the existing table (drop + recreate schema + load), skip confirmation
-fabric-dw tables load MyWorkspace SalesWH dbo.sales --file data.parquet --create \
+fabric-dw -w MyWorkspace tables load SalesWH dbo.sales --file data.parquet --create \
     --if-exists replace -y
 
 # Auto-create; drop the table if the load fails (cleanup_on_failure)
-fabric-dw tables load MyWorkspace SalesWH dbo.sales --file data.parquet --create \
+fabric-dw -w MyWorkspace tables load SalesWH dbo.sales --file data.parquet --create \
     --cleanup-on-failure
 
 # Load from a remote OneLake URL (no credential needed)
-fabric-dw tables load MyWorkspace SalesWH dbo.orders \
+fabric-dw -w MyWorkspace tables load SalesWH dbo.orders \
     --url "https://onelake.dfs.fabric.microsoft.com/ws/lh.Lakehouse/Files/orders.parquet" \
     --format parquet
 
 # Load from Azure Blob with SAS token
-fabric-dw tables load MyWorkspace SalesWH dbo.events \
+fabric-dw -w MyWorkspace tables load SalesWH dbo.events \
     --url "https://myaccount.blob.core.windows.net/data/events.csv" \
     --format csv --credential-type sas --secret "?sv=2021&..."
 ```
@@ -1916,13 +1950,13 @@ List all user-defined schemas on a warehouse or SQL Analytics Endpoint. System s
 **Usage**
 
 ```shell
-fabric-dw schemas list [OPTIONS] [WORKSPACE] [WAREHOUSE]
+fabric-dw [-w WORKSPACE] schemas list [OPTIONS] [WAREHOUSE]
 ```
 
 **Example**
 
 ```shell
-fabric-dw schemas list MyWorkspace SalesWH
+fabric-dw -w MyWorkspace schemas list SalesWH
 ```
 
 ```
@@ -1942,13 +1976,13 @@ Create a new SQL schema on a warehouse.
 **Usage**
 
 ```shell
-fabric-dw schemas create [OPTIONS] [WORKSPACE] [WAREHOUSE] NAME
+fabric-dw [-w WORKSPACE] schemas create [OPTIONS] [WAREHOUSE] NAME
 ```
 
 **Example**
 
 ```shell
-fabric-dw schemas create MyWorkspace SalesWH reporting
+fabric-dw -w MyWorkspace schemas create SalesWH reporting
 ```
 
 ### schemas delete
@@ -1962,7 +1996,7 @@ Pass `--cascade` to also drop all tables and views inside the schema before drop
 **Usage**
 
 ```shell
-fabric-dw schemas delete [OPTIONS] [WORKSPACE] [WAREHOUSE] NAME
+fabric-dw [-w WORKSPACE] schemas delete [OPTIONS] [WAREHOUSE] NAME
 ```
 
 | Option | Description |
@@ -1973,10 +2007,10 @@ fabric-dw schemas delete [OPTIONS] [WORKSPACE] [WAREHOUSE] NAME
 
 ```shell
 # Drop an empty schema
-fabric-dw --yes schemas delete MyWorkspace SalesWH staging
+fabric-dw -w MyWorkspace --yes schemas delete SalesWH staging
 
 # Drop a schema and all its tables/views
-fabric-dw --yes schemas delete MyWorkspace SalesWH staging --cascade
+fabric-dw -w MyWorkspace --yes schemas delete SalesWH staging --cascade
 ```
 
 ---
@@ -1994,13 +2028,13 @@ List all snapshots for a warehouse.
 **Synopsis**
 
 ```
-fabric-dw snapshots list [WORKSPACE] [WAREHOUSE]
+fabric-dw [-w WORKSPACE] snapshots list [WAREHOUSE]
 ```
 
 **Example**
 
 ```shell
-fabric-dw snapshots list MyWorkspace SalesWH
+fabric-dw -w MyWorkspace snapshots list SalesWH
 ```
 
 ```
@@ -2020,7 +2054,7 @@ Create a new snapshot for a warehouse. Optionally pin it to a specific point in 
 **Synopsis**
 
 ```
-fabric-dw snapshots create [OPTIONS] [WORKSPACE] [WAREHOUSE] NAME
+fabric-dw [-w WORKSPACE] snapshots create [OPTIONS] [WAREHOUSE] NAME
 ```
 
 | Option | Description |
@@ -2031,7 +2065,7 @@ fabric-dw snapshots create [OPTIONS] [WORKSPACE] [WAREHOUSE] NAME
 **Example**
 
 ```shell
-fabric-dw snapshots create MyWorkspace SalesWH snap-2026-06-08 \
+fabric-dw -w MyWorkspace snapshots create SalesWH snap-2026-06-08 \
   --snapshot-dt 2026-06-08T00:00:00Z
 ```
 
@@ -2046,7 +2080,7 @@ Rename a snapshot and optionally update its description.
 **Synopsis**
 
 ```
-fabric-dw snapshots rename [OPTIONS] WORKSPACE SNAPSHOT NEW_NAME
+fabric-dw [-w WORKSPACE] snapshots rename [OPTIONS] SNAPSHOT NEW_NAME
 ```
 
 | Option | Description |
@@ -2056,7 +2090,7 @@ fabric-dw snapshots rename [OPTIONS] WORKSPACE SNAPSHOT NEW_NAME
 **Example**
 
 ```shell
-fabric-dw snapshots rename MyWorkspace snap-2026-06-01 snap-june-2026
+fabric-dw -w MyWorkspace snapshots rename snap-2026-06-01 snap-june-2026
 ```
 
 ---
@@ -2070,13 +2104,13 @@ Delete a snapshot. You will be asked to confirm unless `--yes` is passed.
 **Synopsis**
 
 ```
-fabric-dw snapshots delete WORKSPACE SNAPSHOT
+fabric-dw [-w WORKSPACE] snapshots delete SNAPSHOT
 ```
 
 **Example**
 
 ```shell
-fabric-dw --yes snapshots delete MyWorkspace snap-old
+fabric-dw -w MyWorkspace --yes snapshots delete snap-old
 ```
 
 ---
@@ -2085,12 +2119,12 @@ fabric-dw --yes snapshots delete MyWorkspace snap-old
 
 **Targets:** Data Warehouse only
 
-Roll a snapshot on a warehouse to a new timestamp. `SNAPSHOT_NAME` must be the display name of the snapshot database. `WORKSPACE` and `WAREHOUSE` accept name or GUID.
+Roll a snapshot on a warehouse to a new timestamp. `SNAPSHOT_NAME` must be the display name of the snapshot database. The warehouse and workspace are resolved via the usual precedence rules.
 
 **Synopsis**
 
 ```
-fabric-dw snapshots roll [OPTIONS] [WORKSPACE] [WAREHOUSE] SNAPSHOT_NAME
+fabric-dw [-w WORKSPACE] snapshots roll [OPTIONS] [WAREHOUSE] SNAPSHOT_NAME
 ```
 
 | Option | Description |
@@ -2100,7 +2134,7 @@ fabric-dw snapshots roll [OPTIONS] [WORKSPACE] [WAREHOUSE] SNAPSHOT_NAME
 **Example**
 
 ```shell
-fabric-dw snapshots roll MyWorkspace SalesWH snap-june-2026 \
+fabric-dw -w MyWorkspace snapshots roll SalesWH snap-june-2026 \
   --at 2026-06-08T12:00:00Z
 ```
 
@@ -2122,13 +2156,13 @@ Fetch the full SQL Pools configuration (enabled flag + pool list) for a workspac
 **Synopsis**
 
 ```
-fabric-dw sql-pools get [WORKSPACE]
+fabric-dw [-w WORKSPACE] sql-pools get
 ```
 
 **Example**
 
 ```shell
-fabric-dw sql-pools get MyWorkspace
+fabric-dw -w MyWorkspace sql-pools get
 ```
 
 ---
@@ -2151,13 +2185,13 @@ and [Custom SQL pools](https://learn.microsoft.com/fabric/data-warehouse/custom-
 **Synopsis**
 
 ```
-fabric-dw sql-pools list [WORKSPACE]
+fabric-dw [-w WORKSPACE] sql-pools list
 ```
 
 **Example**
 
 ```shell
-fabric-dw sql-pools list MyWorkspace
+fabric-dw -w MyWorkspace sql-pools list
 ```
 
 **Output**
@@ -2188,7 +2222,7 @@ Show details for a single SQL pool.
 **Synopsis**
 
 ```
-fabric-dw sql-pools show [WORKSPACE] --name POOL
+fabric-dw [-w WORKSPACE] sql-pools show --name POOL
 ```
 
 | Option | Description |
@@ -2198,7 +2232,7 @@ fabric-dw sql-pools show [WORKSPACE] --name POOL
 **Example**
 
 ```shell
-fabric-dw sql-pools show MyWorkspace --name ETL
+fabric-dw -w MyWorkspace sql-pools show --name ETL
 ```
 
 ---
@@ -2212,7 +2246,7 @@ Add a new SQL pool to a workspace.
 **Synopsis**
 
 ```
-fabric-dw sql-pools create [OPTIONS] [WORKSPACE]
+fabric-dw [-w WORKSPACE] sql-pools create [OPTIONS]
 ```
 
 | Option | Description |
@@ -2227,7 +2261,7 @@ fabric-dw sql-pools create [OPTIONS] [WORKSPACE]
 **Example**
 
 ```shell
-fabric-dw sql-pools create MyWorkspace \
+fabric-dw -w MyWorkspace sql-pools create \
   --name ETL \
   --max-percent 30 \
   --no-optimize-for-reads \
@@ -2247,7 +2281,7 @@ Update an existing SQL pool. Only the flags you provide are changed; all other f
 **Synopsis**
 
 ```
-fabric-dw sql-pools update [OPTIONS] [WORKSPACE]
+fabric-dw [-w WORKSPACE] sql-pools update [OPTIONS]
 ```
 
 | Option | Description |
@@ -2262,7 +2296,7 @@ fabric-dw sql-pools update [OPTIONS] [WORKSPACE]
 **Example**
 
 ```shell
-fabric-dw sql-pools update MyWorkspace --name ETL --max-percent 40
+fabric-dw -w MyWorkspace sql-pools update --name ETL --max-percent 40
 ```
 
 ---
@@ -2276,7 +2310,7 @@ Remove a SQL pool from a workspace. You will be asked to confirm unless `--yes` 
 **Synopsis**
 
 ```
-fabric-dw sql-pools delete [OPTIONS] [WORKSPACE]
+fabric-dw [-w WORKSPACE] sql-pools delete [OPTIONS]
 ```
 
 | Option | Description |
@@ -2287,7 +2321,7 @@ fabric-dw sql-pools delete [OPTIONS] [WORKSPACE]
 **Example**
 
 ```shell
-fabric-dw --yes sql-pools delete MyWorkspace --name ETL
+fabric-dw -w MyWorkspace --yes sql-pools delete --name ETL
 ```
 
 ---
@@ -2301,13 +2335,13 @@ Enable custom SQL Pools for a workspace. Preserves the existing pool configurati
 **Synopsis**
 
 ```
-fabric-dw sql-pools enable [WORKSPACE]
+fabric-dw [-w WORKSPACE] sql-pools enable
 ```
 
 **Example**
 
 ```shell
-fabric-dw sql-pools enable MyWorkspace
+fabric-dw -w MyWorkspace sql-pools enable
 ```
 
 ---
@@ -2321,13 +2355,13 @@ Disable custom SQL Pools for a workspace without deleting pool definitions. Re-e
 **Synopsis**
 
 ```
-fabric-dw sql-pools disable [WORKSPACE]
+fabric-dw [-w WORKSPACE] sql-pools disable
 ```
 
 **Example**
 
 ```shell
-fabric-dw sql-pools disable MyWorkspace
+fabric-dw -w MyWorkspace sql-pools disable
 ```
 
 ---
@@ -2341,7 +2375,7 @@ List SQL pool insight events from `queryinsights.sql_pool_insights`. Supports op
 **Synopsis**
 
 ```
-fabric-dw sql-pools insights [OPTIONS] [WORKSPACE] [WAREHOUSE]
+fabric-dw [-w WORKSPACE] sql-pools insights [OPTIONS] [WAREHOUSE]
 ```
 
 | Option | Description | Default |
@@ -2353,7 +2387,7 @@ fabric-dw sql-pools insights [OPTIONS] [WORKSPACE] [WAREHOUSE]
 **Example**
 
 ```shell
-fabric-dw sql-pools insights MyWorkspace SalesWH
+fabric-dw -w MyWorkspace sql-pools insights SalesWH
 ```
 
 ---
@@ -2372,7 +2406,7 @@ Manage user-defined statistics on Fabric Data Warehouses and read their details 
 List statistics on an item.
 
 ```
-fabric-dw statistics list [WORKSPACE] [ITEM] [OPTIONS]
+fabric-dw [-w WORKSPACE] statistics list [ITEM] [OPTIONS]
 ```
 
 | Option | Description | Default |
@@ -2389,7 +2423,7 @@ fabric-dw statistics list [WORKSPACE] [ITEM] [OPTIONS]
 Show details of a named statistic using `DBCC SHOW_STATISTICS`. Returns the stat header, density vector, and histogram steps.
 
 ```
-fabric-dw statistics show [WORKSPACE] [ITEM] QUALIFIED_TABLE STAT_NAME [OPTIONS]
+fabric-dw [-w WORKSPACE] statistics show [ITEM] QUALIFIED_TABLE STAT_NAME [OPTIONS]
 ```
 
 `QUALIFIED_TABLE` must be a dot-separated qualified name, e.g. `dbo.sales`.
@@ -2405,7 +2439,7 @@ fabric-dw statistics show [WORKSPACE] [ITEM] QUALIFIED_TABLE STAT_NAME [OPTIONS]
 Create a new single-column statistic.
 
 ```
-fabric-dw statistics create [WORKSPACE] [ITEM] --table schema.table --column COL --name NAME [OPTIONS]
+fabric-dw [-w WORKSPACE] statistics create [ITEM] --table schema.table --column COL --name NAME [OPTIONS]
 ```
 
 | Option | Description | Default |
@@ -2423,7 +2457,7 @@ fabric-dw statistics create [WORKSPACE] [ITEM] --table schema.table --column COL
 Update an existing statistic via `UPDATE STATISTICS`.
 
 ```
-fabric-dw statistics update [WORKSPACE] [ITEM] QUALIFIED_TABLE STAT_NAME [OPTIONS]
+fabric-dw [-w WORKSPACE] statistics update [ITEM] QUALIFIED_TABLE STAT_NAME [OPTIONS]
 ```
 
 | Option | Description | Default |
@@ -2438,7 +2472,7 @@ fabric-dw statistics update [WORKSPACE] [ITEM] QUALIFIED_TABLE STAT_NAME [OPTION
 Drop a statistic via `DROP STATISTICS`. Prompts for confirmation unless `--yes` is passed.
 
 ```
-fabric-dw statistics delete [WORKSPACE] [ITEM] QUALIFIED_TABLE STAT_NAME
+fabric-dw [-w WORKSPACE] statistics delete [ITEM] QUALIFIED_TABLE STAT_NAME
 ```
 
 ---
@@ -2488,14 +2522,13 @@ Scaffold a new dbt project directory connected to a Fabric Data Warehouse. The c
 **Usage**
 
 ```shell
-fabric-dw dbt init [OPTIONS] [WORKSPACE] [ITEM] FOLDER
+fabric-dw [-w WORKSPACE] dbt init [OPTIONS] [ITEM] FOLDER
 ```
 
 **Arguments**
 
 | Argument | Description |
 | --- | --- |
-| `WORKSPACE` | Name or ID of the Fabric workspace (optional if set via `fabric-dw config set workspace`). |
 | `ITEM` | Name or ID of the Fabric Data Warehouse item (optional if set via `fabric-dw config set warehouse`). |
 | `FOLDER` | Path to the folder to create. Must not exist (unless `--force` is passed). |
 
@@ -2516,18 +2549,21 @@ fabric-dw dbt init [OPTIONS] [WORKSPACE] [ITEM] FOLDER
 **Examples**
 
 ```shell
-# Minimal — uses configured defaults
-fabric-dw dbt init MyWorkspace SalesWH ./my_dbt_project
+# Minimal — uses configured default workspace and warehouse
+fabric-dw dbt init SalesWH ./my_dbt_project
+
+# Explicit workspace via -w
+fabric-dw -w MyWorkspace dbt init SalesWH ./my_dbt_project
 
 # Service Principal auth; write profiles.yml to ~/.dbt/
-fabric-dw dbt init MyWorkspace SalesWH ./sales_dbt \
+fabric-dw -w MyWorkspace dbt init SalesWH ./sales_dbt \
   --auth sp --profiles-dir home
 
 # Scaffold with live source introspection (auto-generates _sources.yml)
-fabric-dw dbt init MyWorkspace SalesWH ./sales_dbt --with-sources
+fabric-dw -w MyWorkspace dbt init SalesWH ./sales_dbt --with-sources
 
 # Force-overwrite an existing folder
-fabric-dw dbt init MyWorkspace SalesWH ./sales_dbt --force
+fabric-dw -w MyWorkspace dbt init SalesWH ./sales_dbt --force
 ```
 
 **Scaffolded layout**

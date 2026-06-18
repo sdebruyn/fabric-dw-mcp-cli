@@ -40,18 +40,28 @@ After installation, the `fdw` command is a short alias for `fabric-dw` — both 
 
 ### CLI
 
+The workspace is now a **global root option** `-w` / `--workspace` placed before the command group. Set a default once with `fabric-dw config set workspace <NAME>` and omit `-w` on every subsequent call.
+
+Workspace resolution order: (1) `-w` flag, (2) `FABRIC_DW_DEFAULT_WORKSPACE` env var, (3) configured default.
+
 ```bash
 # List all workspaces you have access to
 uvx fabric-dw workspaces list
 
-# List warehouses and SQL Analytics Endpoints in a workspace
-uvx fabric-dw warehouses list <workspace-name-or-id>
+# Set a default workspace so you don't have to repeat -w every time
+uvx fabric-dw config set workspace MyWorkspace
 
-# Execute a SQL query against a warehouse
-uvx fabric-dw sql <workspace-name-or-id> <warehouse-name-or-id> -q "SELECT TOP 10 * FROM dbo.my_table"
+# List warehouses and SQL Analytics Endpoints in the default workspace
+uvx fabric-dw warehouses list
+
+# Or pass -w explicitly for a one-off override
+uvx fabric-dw -w MyWorkspace warehouses list
+
+# Execute a SQL query against a warehouse in the configured default workspace
+uvx fabric-dw sql SalesWH -q "SELECT TOP 10 * FROM dbo.my_table"
 
 # List restore points for a warehouse
-uvx fabric-dw restore-points list <workspace-name-or-id> <warehouse-name-or-id>
+uvx fabric-dw -w MyWorkspace restore-points list SalesWH
 ```
 
 ### MCP Server
