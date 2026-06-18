@@ -159,7 +159,7 @@ The client automatically retries on each 429 and waits exactly as long as the se
 
 ## Restore points not appearing
 
-**Symptom:** `fabric-dw snapshot list` returns an empty list, or user-defined restore points that you created are not visible.
+**Symptom:** `fabric-dw snapshots list` returns an empty list, or user-defined restore points that you created are not visible.
 
 **What happened:** Warehouse restore points are tied to capacity state:
 
