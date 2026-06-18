@@ -1636,9 +1636,6 @@ class TestTablesCreateEmpty:
 class TestLoadCreateAndLoad:
     """Tests for 'tables load --create' (auto-create + load)."""
 
-    def _invoke(self, runner: CliRunner, args: list[str]) -> object:
-        return runner.invoke(cli, ["tables", "load", *args], catch_exceptions=False)
-
     def test_create_with_url_raises_usage_error(self, runner: CliRunner) -> None:
         """--create is not supported with --url."""
         result = runner.invoke(
