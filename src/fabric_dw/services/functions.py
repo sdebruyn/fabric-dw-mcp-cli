@@ -426,7 +426,7 @@ async def create_function(
         schema: The schema name.  Must pass :func:`validate_identifier`.
         function_name: The function name.  Must pass :func:`validate_identifier`.
         body: The free-form function body (parameter list, RETURNS clause, and body).
-            Not validated — the caller owns the SQL (same trust model as ``sql exec``).
+            Not validated — the caller owns the SQL (same trust model as ``sql``).
         mode: The credential mode for Entra authentication.
 
     Returns:
