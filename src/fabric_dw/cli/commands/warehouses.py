@@ -97,8 +97,11 @@ async def list_cmd(
             # it (table only).  -A spans workspaces, so the column is kept.
             # --json is never pruned (render ignores drop_columns for JSON).
             drop_columns = None if all_workspaces else ("workspaceId",)
+            rows = [w.model_dump(by_alias=True, mode="json") for w in items]
+            if not ctx.json_output:
+                rows = [with_default_collation_for_display(r) for r in rows]
             render(
-                [w.model_dump(by_alias=True, mode="json") for w in items],
+                rows,
                 json_output=ctx.json_output,
                 table_title="Warehouses",
                 drop_columns=drop_columns,
@@ -157,7 +160,10 @@ async def create_cmd(
                 collation=collation,
                 description=description,
             )
-            render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
+            dump = obj.model_dump(by_alias=True, mode="json")
+            if not ctx.json_output:
+                dump = with_default_collation_for_display(dump)
+            render(dump, json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -197,7 +203,10 @@ async def rename_cmd(
                 cache=cache,
                 old_name=entry.display_name or None,
             )
-            render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
+            dump = obj.model_dump(by_alias=True, mode="json")
+            if not ctx.json_output:
+                dump = with_default_collation_for_display(dump)
+            render(dump, json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 

@@ -16,7 +16,7 @@ from click.testing import CliRunner
 from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.cli._main import cli
 from fabric_dw.exceptions import FabricError, NotFoundError
-from fabric_dw.models import Warehouse, WarehouseKind
+from fabric_dw.models import FABRIC_DEFAULT_COLLATION, Warehouse, WarehouseKind
 from tests.fixtures.api_payloads import (
     WAREHOUSE_CREATE_202_PAYLOAD,
     WAREHOUSE_GET_PAYLOAD,
@@ -409,8 +409,6 @@ class TestWarehousesGetCollationDefault:
     ) -> None:
         """Human output substitutes Fabric's default collation, marked '(default)'."""
         _ = cache_env
-        from fabric_dw.models import FABRIC_DEFAULT_COLLATION  # noqa: PLC0415
-
         output = self._invoke(runner, self._NULL_COLLATION_PAYLOAD, json_flag=False)
         assert FABRIC_DEFAULT_COLLATION in output
         assert f"{FABRIC_DEFAULT_COLLATION} (default)" in output

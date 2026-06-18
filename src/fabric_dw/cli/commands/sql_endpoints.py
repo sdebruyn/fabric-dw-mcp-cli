@@ -129,9 +129,11 @@ async def list_cmd(ctx: CliContext, workspace: str | None, all_workspaces: bool)
                 items = await _sql_endpoints_svc.list_endpoints(http, ws_id)
             rows = [ep.model_dump(by_alias=True, mode="json") for ep in items]
             # The --json path stays COMPLETE; only the human/table path drops the
-            # always-redundant columns (kind, and workspaceId when single-workspace).
+            # always-redundant columns (kind, and workspaceId when single-workspace)
+            # and substitutes Fabric's effective default collation for null values.
             if not ctx.json_output:
                 rows = _strip_table_keys(rows, all_workspaces=all_workspaces)
+                rows = [with_default_collation_for_display(r) for r in rows]
             render(
                 rows,
                 json_output=ctx.json_output,

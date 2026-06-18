@@ -19,7 +19,7 @@ from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._main import cli
 from fabric_dw.cli._render import render_refresh_table as _render_refresh_table
 from fabric_dw.exceptions import NotFoundError
-from fabric_dw.models import TableSyncStatus, WarehouseKind
+from fabric_dw.models import FABRIC_DEFAULT_COLLATION, TableSyncStatus, WarehouseKind
 
 WS_GUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 EP_GUID = "e5f6a7b8-c9d0-1234-ef01-234567890abc"
@@ -72,6 +72,19 @@ _ENDPOINT_JSON = json.dumps(
         "kind": "SQLEndpoint",
         "connectionString": "lakehouse-sql-ep.datawarehouse.fabric.microsoft.com",
         "defaultCollation": None,
+        "createdDate": None,
+    }
+)
+
+_ENDPOINT_JSON_EXPLICIT_COLLATION = json.dumps(
+    {
+        "id": EP_GUID,
+        "displayName": "SalesLakehouse",
+        "description": "SQL endpoint for sales lakehouse",
+        "workspaceId": WS_GUID,
+        "kind": "SQLEndpoint",
+        "connectionString": "lakehouse-sql-ep.datawarehouse.fabric.microsoft.com",
+        "defaultCollation": "Latin1_General_100_CI_AS_KS_WS_SC_UTF8",
         "createdDate": None,
     }
 )
@@ -350,8 +363,6 @@ class TestEndpointsGet:
     ) -> None:
         """SQL endpoints share the warehouse model: null collation → default '(default)'."""
         _ = cache_env
-        from fabric_dw.models import FABRIC_DEFAULT_COLLATION  # noqa: PLC0415
-
         mock_http = AsyncMock()
         mock_http.request = AsyncMock(return_value=_make_response(200, _ENDPOINT_JSON))
         with (
@@ -390,6 +401,30 @@ class TestEndpointsGet:
         assert result.exit_code == 0, result.output
         parsed = json.loads(result.output)
         assert parsed["defaultCollation"] is None
+
+    def test_get_human_output_shows_explicit_collation_unchanged(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """An explicit collation is shown verbatim, with no '(default)' suffix."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_http.request = AsyncMock(
+            return_value=_make_response(200, _ENDPOINT_JSON_EXPLICIT_COLLATION)
+        )
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_endpoints.build_http_client",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_endpoints.resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+        ):
+            result = runner.invoke(cli, ["sql-endpoints", "get", WS_GUID, EP_GUID])
+        assert result.exit_code == 0, result.output
+        assert "Latin1_General_100_CI_AS_KS_WS_SC_UTF8" in result.output
+        assert "(default)" not in result.output
 
 
 def _make_table_sync_statuses() -> list[TableSyncStatus]:
