@@ -29,13 +29,55 @@ from fabric_dw.exceptions import (
     NotFoundError,
     PermissionDeniedError,
 )
-from fabric_dw.models import SqlPool, SqlPoolClassifier
+from fabric_dw.models import (
+    DEFAULT_NON_SELECT_POOL_NAME,
+    DEFAULT_POOL_MAX_RESOURCE_PERCENTAGE,
+    DEFAULT_SELECT_POOL_NAME,
+    SqlPool,
+    SqlPoolClassifier,
+)
 from fabric_dw.services import query_insights as _qi_svc
 from fabric_dw.services import sql_pools as _svc
 
 
 def _permission_hint(exc: PermissionDeniedError) -> click.ClickException:
     return click.ClickException(f"{exc}  (Hint: the caller must have the workspace admin role.)")
+
+
+def _default_pool_rows() -> list[dict[str, object]]:
+    """Return descriptor rows for the default (autonomous) workload-management pools.
+
+    Used when a workspace has no custom SQL pools.  See the module-level
+    constants in :mod:`fabric_dw.models` for the documented values and the
+    Microsoft Learn source URLs.
+    """
+    return [
+        {
+            "name": DEFAULT_SELECT_POOL_NAME,
+            "maxResourcePercentage": DEFAULT_POOL_MAX_RESOURCE_PERCENTAGE,
+            "isDefault": True,
+            "description": "Handles SELECT (read/analytics) queries.",
+        },
+        {
+            "name": DEFAULT_NON_SELECT_POOL_NAME,
+            "maxResourcePercentage": DEFAULT_POOL_MAX_RESOURCE_PERCENTAGE,
+            "isDefault": True,
+            "description": "Handles non-SELECT (DML/DDL/ETL/ingestion) statements.",
+        },
+    ]
+
+
+def _print_default_workload_note() -> None:
+    """Print the human-readable note shown when no custom SQL pools exist."""
+    click.echo(
+        "No custom SQL pools are defined for this workspace. "
+        "Fabric Data Warehouse is using the default (autonomous) workload "
+        "management, which splits compute 50/50 into two isolated pools:"
+    )
+    for row in _default_pool_rows():
+        click.echo(
+            f"  - {row['name']} ({row['maxResourcePercentage']}%) (default) - {row['description']}"
+        )
 
 
 @click.group("sql-pools")
@@ -79,18 +121,42 @@ async def get_cmd(ctx: CliContext, workspace: str | None) -> None:
 @click.pass_obj
 @coro
 async def list_cmd(ctx: CliContext, workspace: str | None) -> None:
-    """List all SQL pools in WORKSPACE."""
+    """List all SQL pools in WORKSPACE.
+
+    When no custom SQL pools are defined, Fabric Data Warehouse uses the default
+    (autonomous) workload management: compute is split 50/50 into a ``SELECT``
+    pool and a ``NON-SELECT`` pool.  This command reports those default pools
+    instead of showing an empty list.
+    """
     ws = resolve_workspace_arg(ctx, workspace)
     try:
         async with build_http_client(ctx) as http:
             ws_id = await resolve_workspace_id(http, ws)
             config = await _svc.get_configuration(http, ws_id)
-            pools = [p.model_dump(by_alias=True, mode="json") for p in config.custom_sql_pools]
-            render(pools, json_output=ctx.json_output)
     except PermissionDeniedError as exc:
         raise _permission_hint(exc) from exc
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc
+
+    pools = [p.model_dump(by_alias=True, mode="json") for p in config.custom_sql_pools]
+    # No custom pools => the default (autonomous) workload management is active.
+    if not pools:
+        if ctx.json_output:
+            # Stay honest: do not fabricate custom pools. Report the real (empty)
+            # custom_sql_pools alongside explicit default-workload indicators.
+            render(
+                {
+                    "customSQLPools": pools,
+                    "default_workload_active": True,
+                    "default_pools": _default_pool_rows(),
+                },
+                json_output=True,
+            )
+        else:
+            _print_default_workload_note()
+        return
+
+    render(pools, json_output=ctx.json_output)
 
 
 # ---------------------------------------------------------------------------

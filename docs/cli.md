@@ -2138,6 +2138,15 @@ fabric-dw sql-pools get MyWorkspace
 
 List all SQL pools in a workspace.
 
+When no custom SQL pools are defined, Fabric Data Warehouse uses the default
+(autonomous) workload management instead: the SQL analytics endpoint compute is
+split evenly (50/50) into two isolated pools, `SELECT` (read/analytics queries)
+and `NON-SELECT` (DML/DDL/ETL/ingestion statements). In that case this command
+reports the default pools rather than printing an empty list. The default split
+is documented in
+[Workload management](https://learn.microsoft.com/fabric/data-warehouse/workload-management#compute-pool-isolation)
+and [Custom SQL pools](https://learn.microsoft.com/fabric/data-warehouse/custom-sql-pools).
+
 **Synopsis**
 
 ```
@@ -2148,6 +2157,23 @@ fabric-dw sql-pools list [WORKSPACE]
 
 ```shell
 fabric-dw sql-pools list MyWorkspace
+```
+
+**Output**
+
+When custom pools exist, `--json` returns the array of custom pool objects (as
+before). When none are defined, `--json` returns an object that stays honest
+about there being no custom pools:
+
+```json
+{
+  "customSQLPools": [],
+  "default_workload_active": true,
+  "default_pools": [
+    {"name": "SELECT", "maxResourcePercentage": 50, "isDefault": true, "description": "Handles SELECT (read/analytics) queries."},
+    {"name": "NON-SELECT", "maxResourcePercentage": 50, "isDefault": true, "description": "Handles non-SELECT (DML/DDL/ETL/ingestion) statements."}
+  ]
+}
 ```
 
 ---

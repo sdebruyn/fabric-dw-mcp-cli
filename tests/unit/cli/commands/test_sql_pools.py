@@ -204,6 +204,93 @@ class TestSqlPoolsList:
         assert "ETL" in names
         assert "Reporting" in names
 
+    def test_list_empty_human_shows_default_pools_note(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """No custom pools => human output explains the default SELECT/NON-SELECT pools."""
+        _ = cache_env
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_pools.build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools.resolve_workspace_id",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._svc.get_configuration",
+                new=AsyncMock(return_value=_CONFIG_EMPTY),
+            ),
+        ):
+            result = runner.invoke(cli, ["sql-pools", "list", WS_GUID])
+        assert result.exit_code == 0
+        out = result.output
+        assert "No custom SQL pools" in out
+        assert "default" in out.lower()
+        assert "SELECT" in out
+        assert "NON-SELECT" in out
+        assert "50%" in out
+
+    def test_list_empty_disabled_shows_default_pools_note(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """customSQLPoolsEnabled=False with no pools also shows the default note."""
+        _ = cache_env
+        disabled_empty = SqlPoolsConfiguration.model_validate(
+            {"customSQLPoolsEnabled": False, "customSQLPools": []}
+        )
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_pools.build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools.resolve_workspace_id",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._svc.get_configuration",
+                new=AsyncMock(return_value=disabled_empty),
+            ),
+        ):
+            result = runner.invoke(cli, ["sql-pools", "list", WS_GUID])
+        assert result.exit_code == 0
+        assert "NON-SELECT" in result.output
+
+    def test_list_empty_json_default_workload_shape(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """No custom pools => JSON is honest: empty customSQLPools + default indicators."""
+        _ = cache_env
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_pools.build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools.resolve_workspace_id",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._svc.get_configuration",
+                new=AsyncMock(return_value=_CONFIG_EMPTY),
+            ),
+        ):
+            result = runner.invoke(cli, ["--json", "sql-pools", "list", WS_GUID])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert isinstance(data, dict)
+        # Honest: no fabricated custom pools.
+        assert data["customSQLPools"] == []
+        assert data["default_workload_active"] is True
+        default_pools = data["default_pools"]
+        assert isinstance(default_pools, list)
+        names = [p["name"] for p in default_pools]
+        assert names == ["SELECT", "NON-SELECT"]
+        assert all(p["maxResourcePercentage"] == 50 for p in default_pools)
+        assert all(p["isDefault"] is True for p in default_pools)
+
 
 class TestSqlPoolsShow:
     def test_show_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
