@@ -20,7 +20,7 @@ from fabric_dw.cli.commands._utils import (
     coro,
     parse_iso_optional,
     resolve_warehouse_arg,
-    resolve_workspace_arg,
+    resolve_workspace,
     resolve_workspace_id,
 )
 from fabric_dw.exceptions import (
@@ -91,12 +91,11 @@ def sql_pools_group() -> None:
 
 
 @sql_pools_group.command("get")
-@click.argument("workspace", required=False, default=None)
 @click.pass_obj
 @coro
-async def get_cmd(ctx: CliContext, workspace: str | None) -> None:
-    """Fetch the SQL Pools configuration for WORKSPACE."""
-    ws = resolve_workspace_arg(ctx, workspace)
+async def get_cmd(ctx: CliContext) -> None:
+    """Fetch the SQL Pools configuration for the workspace."""
+    ws = resolve_workspace(ctx)
     try:
         async with build_http_client(ctx) as http:
             ws_id = await resolve_workspace_id(http, ws)
@@ -117,18 +116,17 @@ async def get_cmd(ctx: CliContext, workspace: str | None) -> None:
 
 
 @sql_pools_group.command("list")
-@click.argument("workspace", required=False, default=None)
 @click.pass_obj
 @coro
-async def list_cmd(ctx: CliContext, workspace: str | None) -> None:
-    """List all SQL pools in WORKSPACE.
+async def list_cmd(ctx: CliContext) -> None:
+    """List all SQL pools in the workspace.
 
     When no custom SQL pools are defined, Fabric Data Warehouse uses the default
     (autonomous) workload management: compute is split 50/50 into a ``SELECT``
     pool and a ``NON-SELECT`` pool.  This command reports those default pools
     instead of showing an empty list.
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     try:
         async with build_http_client(ctx) as http:
             ws_id = await resolve_workspace_id(http, ws)
@@ -165,13 +163,12 @@ async def list_cmd(ctx: CliContext, workspace: str | None) -> None:
 
 
 @sql_pools_group.command("show")
-@click.argument("workspace", required=False, default=None)
 @click.option("--name", required=True, help="Name of the pool to show.")
 @click.pass_obj
 @coro
-async def show_cmd(ctx: CliContext, workspace: str | None, name: str) -> None:
-    """Show details for a single SQL pool in WORKSPACE."""
-    ws = resolve_workspace_arg(ctx, workspace)
+async def show_cmd(ctx: CliContext, name: str) -> None:
+    """Show details for a single SQL pool in the workspace."""
+    ws = resolve_workspace(ctx)
     try:
         async with build_http_client(ctx) as http:
             ws_id = await resolve_workspace_id(http, ws)
@@ -192,7 +189,6 @@ async def show_cmd(ctx: CliContext, workspace: str | None, name: str) -> None:
 
 
 @sql_pools_group.command("create")
-@click.argument("workspace", required=False, default=None)
 @click.option("--name", required=True, help="Pool name.")
 @click.option(
     "--max-percent",
@@ -231,7 +227,6 @@ async def show_cmd(ctx: CliContext, workspace: str | None, name: str) -> None:
 @coro
 async def create_cmd(
     ctx: CliContext,
-    workspace: str | None,
     name: str,
     max_percent: int,
     is_default: bool,
@@ -239,8 +234,8 @@ async def create_cmd(
     classifier_type: str | None,
     classifier_values: tuple[str, ...],
 ) -> None:
-    """Add a new SQL pool to WORKSPACE."""
-    ws = resolve_workspace_arg(ctx, workspace)
+    """Add a new SQL pool to the workspace."""
+    ws = resolve_workspace(ctx)
 
     classifier: SqlPoolClassifier | None = None
     if classifier_type is not None:
@@ -279,7 +274,6 @@ async def create_cmd(
 
 
 @sql_pools_group.command("update")
-@click.argument("workspace", required=False, default=None)
 @click.option("--name", required=True, help="Name of the pool to update.")
 @click.option(
     "--max-percent",
@@ -316,7 +310,6 @@ async def create_cmd(
 @coro
 async def update_cmd(
     ctx: CliContext,
-    workspace: str | None,
     name: str,
     max_percent: int | None,
     is_default: bool | None,
@@ -324,11 +317,11 @@ async def update_cmd(
     classifier_type: str | None,
     classifier_values: tuple[str, ...],
 ) -> None:
-    """Update an existing SQL pool in WORKSPACE.
+    """Update an existing SQL pool in the workspace.
 
     Only the flags you provide are changed; all other fields are preserved.
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     cv: list[str] | None = list(classifier_values) if classifier_values else None
     try:
         async with build_http_client(ctx) as http:
@@ -360,13 +353,12 @@ async def update_cmd(
 
 
 @sql_pools_group.command("delete")
-@click.argument("workspace", required=False, default=None)
 @click.option("--name", required=True, help="Name of the pool to delete.")
 @click.pass_obj
 @coro
-async def delete_cmd(ctx: CliContext, workspace: str | None, name: str) -> None:
-    """Remove an SQL pool from WORKSPACE."""
-    ws = resolve_workspace_arg(ctx, workspace)
+async def delete_cmd(ctx: CliContext, name: str) -> None:
+    """Remove an SQL pool from the workspace."""
+    ws = resolve_workspace(ctx)
     if not confirm(f"Delete pool {name!r}?", yes=ctx.yes):
         click.echo("Aborted.")
         return
@@ -389,12 +381,11 @@ async def delete_cmd(ctx: CliContext, workspace: str | None, name: str) -> None:
 
 
 @sql_pools_group.command("enable")
-@click.argument("workspace", required=False, default=None)
 @click.pass_obj
 @coro
-async def enable_cmd(ctx: CliContext, workspace: str | None) -> None:
-    """Enable custom SQL Pools for WORKSPACE (preserves pool configuration)."""
-    ws = resolve_workspace_arg(ctx, workspace)
+async def enable_cmd(ctx: CliContext) -> None:
+    """Enable custom SQL Pools for the workspace (preserves pool configuration)."""
+    ws = resolve_workspace(ctx)
     try:
         async with build_http_client(ctx) as http:
             ws_id = await resolve_workspace_id(http, ws)
@@ -410,15 +401,14 @@ async def enable_cmd(ctx: CliContext, workspace: str | None) -> None:
 
 
 @sql_pools_group.command("disable")
-@click.argument("workspace", required=False, default=None)
 @click.pass_obj
 @coro
-async def disable_cmd(ctx: CliContext, workspace: str | None) -> None:
-    """Disable custom SQL Pools for WORKSPACE (preserves pool configuration).
+async def disable_cmd(ctx: CliContext) -> None:
+    """Disable custom SQL Pools for the workspace (preserves pool configuration).
 
     Re-enabling with 'sql-pools enable' restores the previously saved configuration.
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     try:
         async with build_http_client(ctx) as http:
             ws_id = await resolve_workspace_id(http, ws)
@@ -439,7 +429,6 @@ async def disable_cmd(ctx: CliContext, workspace: str | None) -> None:
 
 
 @sql_pools_group.command("insights")
-@click.argument("workspace", required=False, default=None)
 @click.argument("warehouse", required=False, default=None)
 @LIMIT_OPTION
 @SINCE_OPTION
@@ -448,14 +437,13 @@ async def disable_cmd(ctx: CliContext, workspace: str | None) -> None:
 @coro
 async def insights_cmd(
     ctx: CliContext,
-    workspace: str | None,
     warehouse: str | None,
     limit: int,
     since: str | None,
     until: str | None,
 ) -> None:
     """List SQL pool insights from queryinsights.sql_pool_insights."""
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, warehouse)
     since_dt = parse_iso_optional(since, "--since")
     until_dt = parse_iso_optional(until, "--until")

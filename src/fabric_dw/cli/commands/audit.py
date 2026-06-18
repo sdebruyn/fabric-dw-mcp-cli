@@ -11,7 +11,7 @@ from fabric_dw.cli.commands._utils import (
     coro,
     resolve_item,
     resolve_warehouse_arg,
-    resolve_workspace_arg,
+    resolve_workspace,
 )
 from fabric_dw.exceptions import FabricError
 from fabric_dw.services import audit as _audit_svc
@@ -23,13 +23,12 @@ def audit_group() -> None:
 
 
 @audit_group.command("get")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.pass_obj
 @coro
-async def get_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> None:
-    """Get the current audit settings for ITEM (warehouse) in WORKSPACE."""
-    ws = resolve_workspace_arg(ctx, workspace)
+async def get_cmd(ctx: CliContext, item: str | None) -> None:
+    """Get the current audit settings for ITEM (warehouse)."""
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
@@ -41,7 +40,6 @@ async def get_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> N
 
 
 @audit_group.command("enable")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.option(
     "--retention-days",
@@ -62,12 +60,11 @@ async def get_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> N
 @coro
 async def enable_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     retention_days: int | None,
     unlimited: bool,
 ) -> None:
-    """Enable SQL auditing on ITEM (warehouse) in WORKSPACE.
+    """Enable SQL auditing on ITEM (warehouse).
 
     Omitting both --retention-days and --unlimited defaults to unlimited retention.
     """
@@ -83,7 +80,7 @@ async def enable_cmd(
     else:
         # No flag supplied — default to unlimited retention.
         effective_days = 0
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
@@ -95,13 +92,12 @@ async def enable_cmd(
 
 
 @audit_group.command("disable")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.pass_obj
 @coro
-async def disable_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> None:
-    """Disable SQL auditing on ITEM (warehouse) in WORKSPACE."""
-    ws = resolve_workspace_arg(ctx, workspace)
+async def disable_cmd(ctx: CliContext, item: str | None) -> None:
+    """Disable SQL auditing on ITEM (warehouse)."""
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
@@ -120,7 +116,6 @@ async def disable_cmd(ctx: CliContext, workspace: str | None, item: str | None) 
 
 
 @audit_group.command("set-retention")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.option(
     "--days",
@@ -132,16 +127,15 @@ async def disable_cmd(ctx: CliContext, workspace: str | None, item: str | None) 
 @coro
 async def set_retention_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     days: int,
 ) -> None:
-    """Update the audit log retention period for ITEM (warehouse) in WORKSPACE.
+    """Update the audit log retention period for ITEM (warehouse).
 
     Audit must already be enabled; if disabled, enable it first with
     ``audit enable``.  This command does NOT change the audit state.
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
@@ -153,7 +147,6 @@ async def set_retention_cmd(
 
 
 @audit_group.command("set-groups")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.option(
     "-g",
@@ -165,15 +158,13 @@ async def set_retention_cmd(
 )
 @click.pass_obj
 @coro
-async def set_groups_cmd(
-    ctx: CliContext, workspace: str | None, item: str | None, groups: tuple[str, ...]
-) -> None:
-    """Set audit action groups for ITEM (warehouse) in WORKSPACE.
+async def set_groups_cmd(ctx: CliContext, item: str | None, groups: tuple[str, ...]) -> None:
+    """Set audit action groups for ITEM (warehouse).
 
     Pass --group for each action group name, e.g.
     --group BATCH_COMPLETED_GROUP --group SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP.
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
@@ -185,20 +176,17 @@ async def set_groups_cmd(
 
 
 @audit_group.command("add-group")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.argument("group")
 @click.pass_obj
 @coro
-async def add_group_cmd(
-    ctx: CliContext, workspace: str | None, item: str | None, group: str
-) -> None:
-    """Add GROUP to the audit action groups for ITEM (warehouse) in WORKSPACE.
+async def add_group_cmd(ctx: CliContext, item: str | None, group: str) -> None:
+    """Add GROUP to the audit action groups for ITEM (warehouse).
 
     Idempotent — if GROUP is already present the command succeeds without
     modifying the configuration.  Auditing must already be enabled.
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
@@ -210,20 +198,17 @@ async def add_group_cmd(
 
 
 @audit_group.command("remove-group")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.argument("group")
 @click.pass_obj
 @coro
-async def remove_group_cmd(
-    ctx: CliContext, workspace: str | None, item: str | None, group: str
-) -> None:
-    """Remove GROUP from the audit action groups for ITEM (warehouse) in WORKSPACE.
+async def remove_group_cmd(ctx: CliContext, item: str | None, group: str) -> None:
+    """Remove GROUP from the audit action groups for ITEM (warehouse).
 
     Idempotent — if GROUP is not present the command succeeds without
     modifying the configuration.  Auditing must already be enabled.
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:

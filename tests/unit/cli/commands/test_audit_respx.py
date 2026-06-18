@@ -107,7 +107,7 @@ class TestAuditEnableRespx:
             ):
                 result = runner.invoke(
                     cli,
-                    ["--json", "audit", "enable", WS_GUID, WH_GUID],
+                    ["-w", WS_GUID, "--json", "audit", "enable", WH_GUID],
                 )
 
         assert result.exit_code == 0, result.output
@@ -147,10 +147,11 @@ class TestAuditEnableRespx:
                 result = runner.invoke(
                     cli,
                     [
+                        "-w",
+                        WS_GUID,
                         "--json",
                         "audit",
                         "enable",
-                        WS_GUID,
                         WH_GUID,
                         "--retention-days",
                         "30",
@@ -196,7 +197,7 @@ class TestAuditDisableRespx:
             ):
                 result = runner.invoke(
                     cli,
-                    ["--yes", "--json", "audit", "disable", WS_GUID, WH_GUID],
+                    ["-w", WS_GUID, "--yes", "--json", "audit", "disable", WH_GUID],
                 )
 
         assert result.exit_code == 0, result.output
@@ -223,7 +224,7 @@ class TestAuditDisableRespx:
             ):
                 result = runner.invoke(
                     cli,
-                    ["--yes", "audit", "disable", WS_GUID, WH_GUID],
+                    ["-w", WS_GUID, "--yes", "audit", "disable", WH_GUID],
                 )
 
         assert result.exit_code == 0, result.output
@@ -265,7 +266,7 @@ class TestAuditSetRetentionRespx:
             ):
                 result = runner.invoke(
                     cli,
-                    ["--json", "audit", "set-retention", WS_GUID, WH_GUID, "--days", "90"],
+                    ["-w", WS_GUID, "--json", "audit", "set-retention", WH_GUID, "--days", "90"],
                 )
 
         assert result.exit_code == 0, result.output
@@ -292,7 +293,7 @@ class TestAuditSetRetentionRespx:
             ):
                 result = runner.invoke(
                     cli,
-                    ["audit", "set-retention", WS_GUID, WH_GUID, "--days", "7"],
+                    ["-w", WS_GUID, "audit", "set-retention", WH_GUID, "--days", "7"],
                 )
 
         assert result.exit_code == 0, result.output
@@ -335,7 +336,7 @@ class TestAuditAddGroupRespx:
             ):
                 result = runner.invoke(
                     cli,
-                    ["--json", "audit", "add-group", WS_GUID, WH_GUID, new_group],
+                    ["-w", WS_GUID, "--json", "audit", "add-group", WH_GUID, new_group],
                 )
 
         assert result.exit_code == 0, result.output
@@ -367,7 +368,7 @@ class TestAuditAddGroupRespx:
             ):
                 result = runner.invoke(
                     cli,
-                    ["audit", "add-group", WS_GUID, WH_GUID, new_group],
+                    ["-w", WS_GUID, "audit", "add-group", WH_GUID, new_group],
                 )
 
         assert result.exit_code == 0, result.output
@@ -410,7 +411,7 @@ class TestAuditRemoveGroupRespx:
             ):
                 result = runner.invoke(
                     cli,
-                    ["--json", "audit", "remove-group", WS_GUID, WH_GUID, group_to_remove],
+                    ["-w", WS_GUID, "--json", "audit", "remove-group", WH_GUID, group_to_remove],
                 )
 
         assert result.exit_code == 0, result.output
@@ -443,7 +444,7 @@ class TestAuditRemoveGroupRespx:
             ):
                 result = runner.invoke(
                     cli,
-                    ["audit", "remove-group", WS_GUID, WH_GUID, group_to_remove],
+                    ["-w", WS_GUID, "audit", "remove-group", WH_GUID, group_to_remove],
                 )
 
         assert result.exit_code == 0, result.output

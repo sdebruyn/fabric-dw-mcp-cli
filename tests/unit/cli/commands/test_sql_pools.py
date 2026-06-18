@@ -105,7 +105,7 @@ class TestSqlPoolsGet:
                 new=AsyncMock(return_value=_CONFIG),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "sql-pools", "get", WS_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "--json", "sql-pools", "get"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["customSQLPoolsEnabled"] is True
@@ -127,7 +127,7 @@ class TestSqlPoolsGet:
                 new=AsyncMock(return_value=_CONFIG),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "sql-pools", "get", WS_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "--json", "sql-pools", "get"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["customSQLPoolsEnabled"] is True
@@ -149,7 +149,7 @@ class TestSqlPoolsGet:
                 new=AsyncMock(side_effect=PermissionDeniedError("403")),
             ),
         ):
-            result = runner.invoke(cli, ["sql-pools", "get", WS_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-pools", "get"])
         assert result.exit_code != 0
         assert "admin" in result.output.lower()
 
@@ -171,7 +171,7 @@ class TestSqlPoolsList:
                 new=AsyncMock(return_value=_CONFIG_MULTI),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "sql-pools", "list", WS_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "--json", "sql-pools", "list"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert isinstance(data, list)
@@ -195,7 +195,7 @@ class TestSqlPoolsList:
                 new=AsyncMock(return_value=_CONFIG_MULTI),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "sql-pools", "list", WS_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "--json", "sql-pools", "list"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert isinstance(data, list)
@@ -223,7 +223,7 @@ class TestSqlPoolsList:
                 new=AsyncMock(return_value=_CONFIG_EMPTY),
             ),
         ):
-            result = runner.invoke(cli, ["sql-pools", "list", WS_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-pools", "list"])
         assert result.exit_code == 0
         out = result.output
         assert "No custom SQL pools" in out
@@ -254,7 +254,7 @@ class TestSqlPoolsList:
                 new=AsyncMock(return_value=disabled_empty),
             ),
         ):
-            result = runner.invoke(cli, ["sql-pools", "list", WS_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-pools", "list"])
         assert result.exit_code == 0
         assert "NON-SELECT" in result.output
 
@@ -277,7 +277,7 @@ class TestSqlPoolsList:
                 new=AsyncMock(return_value=_CONFIG_EMPTY),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "sql-pools", "list", WS_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "--json", "sql-pools", "list"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert isinstance(data, dict)
@@ -309,7 +309,9 @@ class TestSqlPoolsShow:
                 new=AsyncMock(return_value=_CONFIG_MULTI),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "sql-pools", "show", WS_GUID, "--name", "ETL"])
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "--json", "sql-pools", "show", "--name", "ETL"]
+            )
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["name"] == "ETL"
@@ -331,7 +333,9 @@ class TestSqlPoolsShow:
                 new=AsyncMock(return_value=_CONFIG_MULTI),
             ),
         ):
-            result = runner.invoke(cli, ["sql-pools", "show", WS_GUID, "--name", "DoesNotExist"])
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "sql-pools", "show", "--name", "DoesNotExist"]
+            )
         assert result.exit_code != 0
 
 
@@ -356,9 +360,10 @@ class TestSqlPoolsCreate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "sql-pools",
                     "create",
-                    WS_GUID,
                     "--name",
                     "NewPool",
                     "--max-percent",
@@ -394,9 +399,10 @@ class TestSqlPoolsCreate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "sql-pools",
                     "create",
-                    WS_GUID,
                     "--name",
                     "NewPool",
                     "--max-percent",
@@ -434,9 +440,10 @@ class TestSqlPoolsCreate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "sql-pools",
                     "create",
-                    WS_GUID,
                     "--name",
                     "Default",
                     "--max-percent",
@@ -466,9 +473,10 @@ class TestSqlPoolsCreate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "sql-pools",
                     "create",
-                    WS_GUID,
                     "--name",
                     "Defaults",
                     "--max-percent",
@@ -503,9 +511,10 @@ class TestSqlPoolsUpdate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "sql-pools",
                     "update",
-                    WS_GUID,
                     "--name",
                     "Default",
                     "--max-percent",
@@ -534,9 +543,10 @@ class TestSqlPoolsUpdate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "sql-pools",
                     "update",
-                    WS_GUID,
                     "--name",
                     "NoPool",
                     "--max-percent",
@@ -567,9 +577,10 @@ class TestSqlPoolsUpdate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "sql-pools",
                     "update",
-                    WS_GUID,
                     "--name",
                     "Default",
                     "--no-optimize-for-reads",
@@ -600,9 +611,10 @@ class TestSqlPoolsUpdate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "sql-pools",
                     "update",
-                    WS_GUID,
                     "--name",
                     "Default",
                     "--no-default",
@@ -633,7 +645,7 @@ class TestSqlPoolsDelete:
         ):
             result = runner.invoke(
                 cli,
-                ["-y", "sql-pools", "delete", WS_GUID, "--name", "Default"],
+                ["-w", WS_GUID, "-y", "sql-pools", "delete", "--name", "Default"],
             )
         assert result.exit_code == 0
         mock_delete.assert_awaited_once()
@@ -656,7 +668,7 @@ class TestSqlPoolsDelete:
         ):
             result = runner.invoke(
                 cli,
-                ["-y", "sql-pools", "delete", WS_GUID, "--name", "NoPool"],
+                ["-w", WS_GUID, "-y", "sql-pools", "delete", "--name", "NoPool"],
             )
         assert result.exit_code != 0
 
@@ -678,7 +690,7 @@ class TestSqlPoolsDelete:
         ):
             result = runner.invoke(
                 cli,
-                ["-y", "sql-pools", "delete", WS_GUID, "--name", "Default"],
+                ["-w", WS_GUID, "-y", "sql-pools", "delete", "--name", "Default"],
             )
         assert result.exit_code != 0
         assert "admin" in result.output.lower()
@@ -702,7 +714,7 @@ class TestSqlPoolsEnable:
                 new=mock_enable,
             ),
         ):
-            result = runner.invoke(cli, ["--json", "sql-pools", "enable", WS_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "--json", "sql-pools", "enable"])
         assert result.exit_code == 0
         mock_enable.assert_awaited_once()
         data = json.loads(result.output)
@@ -724,7 +736,7 @@ class TestSqlPoolsEnable:
                 new=AsyncMock(side_effect=PermissionDeniedError("403")),
             ),
         ):
-            result = runner.invoke(cli, ["sql-pools", "enable", WS_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-pools", "enable"])
         assert result.exit_code != 0
         assert "admin" in result.output.lower()
 
@@ -747,7 +759,7 @@ class TestSqlPoolsDisable:
                 new=mock_disable,
             ),
         ):
-            result = runner.invoke(cli, ["--json", "sql-pools", "disable", WS_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "--json", "sql-pools", "disable"])
         assert result.exit_code == 0
         mock_disable.assert_awaited_once()
         data = json.loads(result.output)
@@ -773,7 +785,7 @@ class TestSqlPoolsGetFabricError:
                 new=AsyncMock(side_effect=FabricError("server error")),
             ),
         ):
-            result = runner.invoke(cli, ["sql-pools", "get", WS_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-pools", "get"])
         assert result.exit_code != 0
         assert "server error" in result.output
 
@@ -797,7 +809,7 @@ class TestSqlPoolsListErrors:
                 new=AsyncMock(side_effect=PermissionDeniedError("403")),
             ),
         ):
-            result = runner.invoke(cli, ["sql-pools", "list", WS_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-pools", "list"])
         assert result.exit_code != 0
         assert "admin" in result.output.lower()
 
@@ -817,7 +829,7 @@ class TestSqlPoolsListErrors:
                 new=AsyncMock(side_effect=FabricError("server error")),
             ),
         ):
-            result = runner.invoke(cli, ["sql-pools", "list", WS_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-pools", "list"])
         assert result.exit_code != 0
 
 
@@ -840,7 +852,7 @@ class TestSqlPoolsShowErrors:
                 new=AsyncMock(side_effect=PermissionDeniedError("403")),
             ),
         ):
-            result = runner.invoke(cli, ["sql-pools", "show", WS_GUID, "--name", "Default"])
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-pools", "show", "--name", "Default"])
         assert result.exit_code != 0
         assert "admin" in result.output.lower()
 
@@ -860,7 +872,7 @@ class TestSqlPoolsShowErrors:
                 new=AsyncMock(side_effect=FabricError("server error")),
             ),
         ):
-            result = runner.invoke(cli, ["sql-pools", "show", WS_GUID, "--name", "Default"])
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-pools", "show", "--name", "Default"])
         assert result.exit_code != 0
 
 
@@ -884,7 +896,8 @@ class TestSqlPoolsCreateErrors:
             ),
         ):
             result = runner.invoke(
-                cli, ["sql-pools", "create", WS_GUID, "--name", "NewPool", "--max-percent", "50"]
+                cli,
+                ["-w", WS_GUID, "sql-pools", "create", "--name", "NewPool", "--max-percent", "50"],
             )
         assert result.exit_code != 0
         assert "admin" in result.output.lower()
@@ -906,7 +919,8 @@ class TestSqlPoolsCreateErrors:
             ),
         ):
             result = runner.invoke(
-                cli, ["sql-pools", "create", WS_GUID, "--name", "NewPool", "--max-percent", "50"]
+                cli,
+                ["-w", WS_GUID, "sql-pools", "create", "--name", "NewPool", "--max-percent", "50"],
             )
         assert result.exit_code != 0
 
@@ -928,7 +942,8 @@ class TestSqlPoolsCreateErrors:
             ),
         ):
             result = runner.invoke(
-                cli, ["sql-pools", "create", WS_GUID, "--name", "NewPool", "--max-percent", "50"]
+                cli,
+                ["-w", WS_GUID, "sql-pools", "create", "--name", "NewPool", "--max-percent", "50"],
             )
         assert result.exit_code != 0
         assert "Invalid pool configuration" in result.output
@@ -955,7 +970,7 @@ class TestSqlPoolsUpdateErrors:
         ):
             result = runner.invoke(
                 cli,
-                ["sql-pools", "update", WS_GUID, "--name", "Default", "--max-percent", "50"],
+                ["-w", WS_GUID, "sql-pools", "update", "--name", "Default", "--max-percent", "50"],
             )
         assert result.exit_code != 0
         assert "admin" in result.output.lower()
@@ -978,7 +993,7 @@ class TestSqlPoolsUpdateErrors:
         ):
             result = runner.invoke(
                 cli,
-                ["sql-pools", "update", WS_GUID, "--name", "Default", "--max-percent", "50"],
+                ["-w", WS_GUID, "sql-pools", "update", "--name", "Default", "--max-percent", "50"],
             )
         assert result.exit_code != 0
 
@@ -1001,7 +1016,7 @@ class TestSqlPoolsUpdateErrors:
         ):
             result = runner.invoke(
                 cli,
-                ["sql-pools", "update", WS_GUID, "--name", "Default", "--max-percent", "50"],
+                ["-w", WS_GUID, "sql-pools", "update", "--name", "Default", "--max-percent", "50"],
             )
         assert result.exit_code != 0
         assert "Invalid pool configuration" in result.output
@@ -1013,7 +1028,7 @@ class TestSqlPoolsDeleteAbort:
     def test_delete_declined_prints_aborted(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         result = runner.invoke(
-            cli, ["sql-pools", "delete", WS_GUID, "--name", "Default"], input="n\n"
+            cli, ["-w", WS_GUID, "sql-pools", "delete", "--name", "Default"], input="n\n"
         )
         assert result.exit_code == 0
         assert "Aborted." in result.output
@@ -1034,7 +1049,9 @@ class TestSqlPoolsDeleteAbort:
                 new=AsyncMock(side_effect=FabricError("server error")),
             ),
         ):
-            result = runner.invoke(cli, ["-y", "sql-pools", "delete", WS_GUID, "--name", "Default"])
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "-y", "sql-pools", "delete", "--name", "Default"]
+            )
         assert result.exit_code != 0
 
 
@@ -1057,7 +1074,7 @@ class TestSqlPoolsEnableFabricError:
                 new=AsyncMock(side_effect=FabricError("server error")),
             ),
         ):
-            result = runner.invoke(cli, ["sql-pools", "enable", WS_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-pools", "enable"])
         assert result.exit_code != 0
 
 
@@ -1080,7 +1097,7 @@ class TestSqlPoolsDisableErrors:
                 new=AsyncMock(side_effect=PermissionDeniedError("403")),
             ),
         ):
-            result = runner.invoke(cli, ["sql-pools", "disable", WS_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-pools", "disable"])
         assert result.exit_code != 0
         assert "admin" in result.output.lower()
 
@@ -1100,7 +1117,7 @@ class TestSqlPoolsDisableErrors:
                 new=AsyncMock(side_effect=FabricError("server error")),
             ),
         ):
-            result = runner.invoke(cli, ["sql-pools", "disable", WS_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-pools", "disable"])
         assert result.exit_code != 0
 
 
@@ -1131,7 +1148,7 @@ class TestSqlPoolsInsights:
                 new=mock_insights,
             ),
         ):
-            result = runner.invoke(cli, ["--json", "sql-pools", "insights", WS_GUID, WS_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "--json", "sql-pools", "insights", WS_GUID])
         assert result.exit_code == 0
         mock_insights.assert_awaited_once()
         data = json.loads(result.output)
@@ -1158,10 +1175,11 @@ class TestSqlPoolsInsights:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "--json",
                     "sql-pools",
                     "insights",
-                    WS_GUID,
                     WS_GUID,
                     "--since",
                     "2024-01-01T00:00:00",
@@ -1196,5 +1214,5 @@ class TestSqlPoolsInsights:
                 new=AsyncMock(side_effect=FabricError("server error")),
             ),
         ):
-            result = runner.invoke(cli, ["sql-pools", "insights", WS_GUID, WS_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-pools", "insights", WS_GUID])
         assert result.exit_code != 0
