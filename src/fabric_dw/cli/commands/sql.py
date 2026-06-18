@@ -2,7 +2,7 @@
 
 Commands
 --------
-- ``sql <ws> <item>`` — execute an arbitrary SQL statement or file.
+- ``sql <item>`` — execute an arbitrary SQL statement or file.
 
 .. note::
    **Breaking change (v0.x → v0.y):** The former ``sql exec`` sub-command was
@@ -21,14 +21,13 @@ from fabric_dw.cli.commands._utils import (
     coro,
     load_sql_body,
     resolve_warehouse_arg,
-    resolve_workspace_arg,
+    resolve_workspace,
 )
 from fabric_dw.exceptions import FabricError
 from fabric_dw.services import sql_exec as _sql_exec_svc
 
 
 @click.command("sql")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.option(
     "-q",
@@ -49,12 +48,11 @@ from fabric_dw.services import sql_exec as _sql_exec_svc
 @coro
 async def sql_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     query_text: str | None,
     query_file: str | None,
 ) -> None:
-    """Execute a SQL statement against ITEM (warehouse or SQL endpoint) in WORKSPACE.
+    """Execute a SQL statement against ITEM (warehouse or SQL endpoint).
 
     Provide the query via -q/--query or -f/--file (not both).
     Multi-statement batches are supported; only the last result set is returned.
@@ -65,7 +63,7 @@ async def sql_cmd(
     """
     query = load_sql_body(query_text, query_file, inline_opt="-q/--query", file_opt="-f/--file")
 
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:

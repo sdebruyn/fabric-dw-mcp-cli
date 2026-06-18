@@ -82,7 +82,7 @@ class TestSql:
         ):
             result = runner.invoke(
                 cli,
-                ["sql", WS_GUID, WH_GUID, "-q", "SELECT 1"],
+                ["-w", WS_GUID, "sql", WH_GUID, "-q", "SELECT 1"],
             )
         assert result.exit_code == 0
 
@@ -106,7 +106,7 @@ class TestSql:
         ):
             result = runner.invoke(
                 cli,
-                ["sql", WS_GUID, WH_GUID, "-q", "SELECT id, name FROM t"],
+                ["-w", WS_GUID, "sql", WH_GUID, "-q", "SELECT id, name FROM t"],
             )
         assert result.exit_code == 0
         # Default is table — output must NOT be parseable as JSON
@@ -133,7 +133,7 @@ class TestSql:
         ):
             result = runner.invoke(
                 cli,
-                ["--json", "sql", WS_GUID, WH_GUID, "-q", "SELECT id, name FROM t"],
+                ["-w", WS_GUID, "--json", "sql", WH_GUID, "-q", "SELECT id, name FROM t"],
             )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -168,7 +168,7 @@ class TestSql:
         ):
             result = runner.invoke(
                 cli,
-                ["sql", WS_GUID, WH_GUID, "-f", str(sql_file)],
+                ["-w", WS_GUID, "sql", WH_GUID, "-f", str(sql_file)],
             )
         assert result.exit_code == 0
         assert captured_query[0] == "SELECT 1 AS n"
@@ -204,7 +204,7 @@ class TestSql:
         ):
             result = runner.invoke(
                 cli,
-                ["sql", WS_GUID, WH_GUID, "-f", str(sql_file)],
+                ["-w", WS_GUID, "sql", WH_GUID, "-f", str(sql_file)],
             )
         assert result.exit_code == 0
         assert captured_query[0][0] == "S", (
@@ -231,7 +231,7 @@ class TestSql:
         ):
             result = runner.invoke(
                 cli,
-                ["sql", WS_GUID, WH_GUID, "-q", "SELECT id, name FROM t"],
+                ["-w", WS_GUID, "sql", WH_GUID, "-q", "SELECT id, name FROM t"],
             )
         assert result.exit_code == 0
         # Default is table; JSON flag not set so output must NOT be parseable as JSON
@@ -259,8 +259,9 @@ class TestSql:
             result = runner.invoke(
                 cli,
                 [
-                    "sql",
+                    "-w",
                     WS_GUID,
+                    "sql",
                     WH_GUID,
                     "-q",
                     "INSERT INTO t VALUES (1)",
@@ -275,7 +276,7 @@ class TestSqlErrors:
 
     def test_no_query_or_file_is_error(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
-        result = runner.invoke(cli, ["sql", WS_GUID, WH_GUID])
+        result = runner.invoke(cli, ["-w", WS_GUID, "sql", WH_GUID])
         assert result.exit_code != 0
 
     def test_both_query_and_file_is_error(
@@ -286,7 +287,7 @@ class TestSqlErrors:
         sql_file.write_text("SELECT 1")
         result = runner.invoke(
             cli,
-            ["sql", WS_GUID, WH_GUID, "-q", "SELECT 1", "-f", str(sql_file)],
+            ["-w", WS_GUID, "sql", WH_GUID, "-q", "SELECT 1", "-f", str(sql_file)],
         )
         assert result.exit_code != 0
 
@@ -309,7 +310,7 @@ class TestSqlErrors:
         ):
             result = runner.invoke(
                 cli,
-                ["sql", WS_GUID, WH_GUID, "-q", "SELECT * FROM sensitive"],
+                ["-w", WS_GUID, "sql", WH_GUID, "-q", "SELECT * FROM sensitive"],
             )
         assert result.exit_code != 0
 
@@ -328,7 +329,7 @@ class TestSqlErrors:
         ):
             result = runner.invoke(
                 cli,
-                ["sql", WS_GUID, WH_GUID, "-q", "SELECT 1"],
+                ["-w", WS_GUID, "sql", WH_GUID, "-q", "SELECT 1"],
             )
         assert result.exit_code != 0
 
@@ -353,6 +354,6 @@ class TestSqlErrors:
         ):
             result = runner.invoke(
                 cli,
-                ["sql", WS_GUID, WH_GUID, "-q", "SELECT 1"],
+                ["-w", WS_GUID, "sql", WH_GUID, "-q", "SELECT 1"],
             )
         assert result.exit_code != 0

@@ -438,7 +438,7 @@ class TestPoolInsights:
                 new=AsyncMock(return_value=[_make_pool_insight_row()]),
             ),
         ):
-            result = runner.invoke(cli, ["sql-pools", "insights", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-pools", "insights", WH_GUID])
         assert result.exit_code == 0
 
     def test_json_output(self, runner: CliRunner, cache_env: Path) -> None:
@@ -460,7 +460,7 @@ class TestPoolInsights:
         ):
             result = runner.invoke(
                 cli,
-                ["--json", "sql-pools", "insights", WS_GUID, WH_GUID],
+                ["-w", WS_GUID, "--json", "sql-pools", "insights", WH_GUID],
             )
         assert result.exit_code == 0
         parsed = json.loads(result.output)

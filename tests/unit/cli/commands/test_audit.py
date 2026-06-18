@@ -64,7 +64,7 @@ class TestAuditGet:
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "audit", "get", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "--json", "audit", "get", WH_GUID])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert parsed["state"] == "Enabled"
@@ -84,7 +84,7 @@ class TestAuditGet:
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "audit", "get", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "--json", "audit", "get", WH_GUID])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert isinstance(parsed, dict)
@@ -102,7 +102,7 @@ class TestAuditGet:
                 new=AsyncMock(side_effect=NotFoundError("not found")),
             ),
         ):
-            result = runner.invoke(cli, ["audit", "get", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "audit", "get", WH_GUID])
         assert result.exit_code != 0
 
 
@@ -125,7 +125,7 @@ class TestAuditEnable:
             ),
             patch("fabric_dw.cli.commands.audit._audit_svc.enable", new=mock_enable),
         ):
-            result = runner.invoke(cli, ["--json", "audit", "enable", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "--json", "audit", "enable", WH_GUID])
         assert result.exit_code == 0
         mock_enable.assert_awaited_once()
         parsed = json.loads(result.output)
@@ -148,7 +148,7 @@ class TestAuditEnable:
             patch("fabric_dw.cli.commands.audit._audit_svc.enable", new=mock_enable),
         ):
             result = runner.invoke(
-                cli, ["audit", "enable", WS_GUID, WH_GUID, "--retention-days", "30"]
+                cli, ["-w", WS_GUID, "audit", "enable", WH_GUID, "--retention-days", "30"]
             )
         assert result.exit_code == 0
         mock_enable.assert_awaited_once()
@@ -178,7 +178,7 @@ class TestAuditEnable:
                 new=mock_enable,
             ),
         ):
-            result = runner.invoke(cli, ["audit", "enable", WS_GUID, WH_GUID, "--unlimited"])
+            result = runner.invoke(cli, ["-w", WS_GUID, "audit", "enable", WH_GUID, "--unlimited"])
         assert result.exit_code == 0
         mock_enable.assert_awaited_once()
         _, kwargs = mock_enable.call_args
@@ -191,7 +191,7 @@ class TestAuditEnable:
         _ = cache_env
         result = runner.invoke(
             cli,
-            ["audit", "enable", WS_GUID, WH_GUID, "--retention-days", "30", "--unlimited"],
+            ["-w", WS_GUID, "audit", "enable", WH_GUID, "--retention-days", "30", "--unlimited"],
         )
         assert result.exit_code != 0
 
@@ -200,7 +200,9 @@ class TestAuditEnable:
     ) -> None:
         """--retention-days 0 must be rejected with a usage error (click.IntRange >= 1)."""
         _ = cache_env
-        result = runner.invoke(cli, ["audit", "enable", WS_GUID, WH_GUID, "--retention-days", "0"])
+        result = runner.invoke(
+            cli, ["-w", WS_GUID, "audit", "enable", WH_GUID, "--retention-days", "0"]
+        )
         assert result.exit_code != 0
         # click.IntRange validation message; the hint to use --unlimited is in the --help text.
         assert "x>=1" in result.output or ">=1" in result.output or "range" in result.output
@@ -210,7 +212,9 @@ class TestAuditEnable:
     ) -> None:
         """Negative --retention-days must be rejected with a usage error."""
         _ = cache_env
-        result = runner.invoke(cli, ["audit", "enable", WS_GUID, WH_GUID, "--retention-days", "-1"])
+        result = runner.invoke(
+            cli, ["-w", WS_GUID, "audit", "enable", WH_GUID, "--retention-days", "-1"]
+        )
         assert result.exit_code != 0
         assert "range" in result.output
 
@@ -234,7 +238,7 @@ class TestAuditDisable:
             ),
             patch("fabric_dw.cli.commands.audit._audit_svc.disable", new=mock_disable),
         ):
-            result = runner.invoke(cli, ["--yes", "audit", "disable", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "--yes", "audit", "disable", WH_GUID])
         assert result.exit_code == 0
         mock_disable.assert_awaited_once()
 
@@ -252,7 +256,7 @@ class TestAuditDisable:
                 new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
             ),
         ):
-            result = runner.invoke(cli, ["audit", "disable", WS_GUID, WH_GUID], input="n\n")
+            result = runner.invoke(cli, ["-w", WS_GUID, "audit", "disable", WH_GUID], input="n\n")
         assert result.exit_code == 0
         assert "Aborted." in result.output
 
@@ -277,7 +281,7 @@ class TestAuditSetRetention:
             patch("fabric_dw.cli.commands.audit._audit_svc.set_retention", new=mock_set_retention),
         ):
             result = runner.invoke(
-                cli, ["audit", "set-retention", WS_GUID, WH_GUID, "--days", "90"]
+                cli, ["-w", WS_GUID, "audit", "set-retention", WH_GUID, "--days", "90"]
             )
         assert result.exit_code == 0
         mock_set_retention.assert_awaited_once()
@@ -299,7 +303,7 @@ class TestAuditSetRetention:
             ),
         ):
             result = runner.invoke(
-                cli, ["--json", "audit", "set-retention", WS_GUID, WH_GUID, "--days", "30"]
+                cli, ["-w", WS_GUID, "--json", "audit", "set-retention", WH_GUID, "--days", "30"]
             )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -325,14 +329,16 @@ class TestAuditSetRetention:
             ),
         ):
             result = runner.invoke(
-                cli, ["audit", "set-retention", WS_GUID, WH_GUID, "--days", "9999"]
+                cli, ["-w", WS_GUID, "audit", "set-retention", WH_GUID, "--days", "9999"]
             )
         assert result.exit_code != 0
 
     def test_set_retention_zero_is_rejected(self, runner: CliRunner, cache_env: Path) -> None:
         """--days 0 must be rejected client-side (L24: >= 1 validation)."""
         _ = cache_env
-        result = runner.invoke(cli, ["audit", "set-retention", WS_GUID, WH_GUID, "--days", "0"])
+        result = runner.invoke(
+            cli, ["-w", WS_GUID, "audit", "set-retention", WH_GUID, "--days", "0"]
+        )
         assert result.exit_code != 0
         # click.IntRange validation message should appear.
         assert "range" in result.output
@@ -340,7 +346,9 @@ class TestAuditSetRetention:
     def test_set_retention_negative_is_rejected(self, runner: CliRunner, cache_env: Path) -> None:
         """--days -1 must be rejected client-side (L24: >= 1 validation)."""
         _ = cache_env
-        result = runner.invoke(cli, ["audit", "set-retention", WS_GUID, WH_GUID, "--days", "-1"])
+        result = runner.invoke(
+            cli, ["-w", WS_GUID, "audit", "set-retention", WH_GUID, "--days", "-1"]
+        )
         assert result.exit_code != 0
         assert "range" in result.output
 
@@ -369,7 +377,7 @@ class TestAuditSetRetention:
             patch("fabric_dw.cli.commands.audit._audit_svc.set_retention", new=mock_set_retention),
         ):
             result = runner.invoke(
-                cli, ["audit", "set-retention", WS_GUID, WH_GUID, "--days", "30"]
+                cli, ["-w", WS_GUID, "audit", "set-retention", WH_GUID, "--days", "30"]
             )
         assert result.exit_code == 0
         # No pre-check GET — service is called exactly once (the PATCH)
@@ -398,9 +406,10 @@ class TestAuditSetGroups:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "audit",
                     "set-groups",
-                    WS_GUID,
                     WH_GUID,
                     "--group",
                     "BATCH_COMPLETED_GROUP",
@@ -433,9 +442,10 @@ class TestAuditSetGroups:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "audit",
                     "set-groups",
-                    WS_GUID,
                     WH_GUID,
                     "--group",
                     "invalid-lowercase-group",
@@ -471,9 +481,10 @@ class TestAuditAddGroup:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "audit",
                     "add-group",
-                    WS_GUID,
                     WH_GUID,
                     "BATCH_COMPLETED_GROUP",
                 ],
@@ -499,7 +510,7 @@ class TestAuditAddGroup:
         ):
             result = runner.invoke(
                 cli,
-                ["--json", "audit", "add-group", WS_GUID, WH_GUID, "BATCH_COMPLETED_GROUP"],
+                ["-w", WS_GUID, "--json", "audit", "add-group", WH_GUID, "BATCH_COMPLETED_GROUP"],
             )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -522,7 +533,7 @@ class TestAuditAddGroup:
         ):
             result = runner.invoke(
                 cli,
-                ["audit", "add-group", WS_GUID, WH_GUID, "invalid-lowercase"],
+                ["-w", WS_GUID, "audit", "add-group", WH_GUID, "invalid-lowercase"],
             )
         assert result.exit_code != 0
 
@@ -547,7 +558,7 @@ class TestAuditAddGroup:
         ):
             result = runner.invoke(
                 cli,
-                ["audit", "add-group", WS_GUID, WH_GUID, "BATCH_COMPLETED_GROUP"],
+                ["-w", WS_GUID, "audit", "add-group", WH_GUID, "BATCH_COMPLETED_GROUP"],
             )
         assert result.exit_code != 0
 
@@ -575,9 +586,10 @@ class TestAuditRemoveGroup:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "audit",
                     "remove-group",
-                    WS_GUID,
                     WH_GUID,
                     "BATCH_COMPLETED_GROUP",
                 ],
@@ -603,7 +615,15 @@ class TestAuditRemoveGroup:
         ):
             result = runner.invoke(
                 cli,
-                ["--json", "audit", "remove-group", WS_GUID, WH_GUID, "BATCH_COMPLETED_GROUP"],
+                [
+                    "-w",
+                    WS_GUID,
+                    "--json",
+                    "audit",
+                    "remove-group",
+                    WH_GUID,
+                    "BATCH_COMPLETED_GROUP",
+                ],
             )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -626,7 +646,7 @@ class TestAuditRemoveGroup:
         ):
             result = runner.invoke(
                 cli,
-                ["audit", "remove-group", WS_GUID, WH_GUID, "invalid-lowercase"],
+                ["-w", WS_GUID, "audit", "remove-group", WH_GUID, "invalid-lowercase"],
             )
         assert result.exit_code != 0
 
@@ -651,7 +671,7 @@ class TestAuditRemoveGroup:
         ):
             result = runner.invoke(
                 cli,
-                ["audit", "remove-group", WS_GUID, WH_GUID, "BATCH_COMPLETED_GROUP"],
+                ["-w", WS_GUID, "audit", "remove-group", WH_GUID, "BATCH_COMPLETED_GROUP"],
             )
         assert result.exit_code != 0
 
