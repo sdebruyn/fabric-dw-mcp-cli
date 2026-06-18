@@ -78,7 +78,7 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 # Maximum number of retry attempts for transient TDS connection drops.
-# Set to 0 to disable retries entirely.  Unit tests can monkeypatch this.
+# Set to 0 to disable execute-phase retries.  Unit tests can monkeypatch this.
 # NOTE: this constant is only used by the *execute-phase* retry logic inside
 # run_query.  The *connect-phase* helper (_with_connect_retry) uses a
 # wall-clock deadline (_CONNECT_RETRY_TIMEOUT_S) instead of a fixed attempt
@@ -1141,7 +1141,7 @@ def run_statements(
     Retry boundary
     --------------
     Transient errors during the **connect** phase (``open_connection``) are
-    retried automatically (up to ``SQL_TRANSIENT_MAX_RETRIES`` times).
+    retried automatically (for up to ``_CONNECT_RETRY_TIMEOUT_S`` seconds, ~120 s by default).
     Transient errors that occur *after* a statement has begun executing are
     **not** retried — the connection state is unknown and re-executing DDL/DML
     could cause duplicates or inconsistency.
