@@ -5,7 +5,11 @@ from __future__ import annotations
 import click
 
 from fabric_dw.cli._context import CliContext
-from fabric_dw.cli._render import render, render_permissions_table
+from fabric_dw.cli._render import (
+    render,
+    render_permissions_table,
+    with_default_collation_for_display,
+)
 from fabric_dw.cli.commands._utils import (
     build_http_client,
     confirm_destructive,
@@ -93,8 +97,11 @@ async def list_cmd(
             # it (table only).  -A spans workspaces, so the column is kept.
             # --json is never pruned (render ignores drop_columns for JSON).
             drop_columns = None if all_workspaces else ("workspaceId",)
+            rows = [w.model_dump(by_alias=True, mode="json") for w in items]
+            if not ctx.json_output:
+                rows = [with_default_collation_for_display(r) for r in rows]
             render(
-                [w.model_dump(by_alias=True, mode="json") for w in items],
+                rows,
                 json_output=ctx.json_output,
                 table_title="Warehouses",
                 drop_columns=drop_columns,
@@ -116,7 +123,12 @@ async def get_cmd(ctx: CliContext, workspace: str | None, warehouse: str | None)
         async with build_http_client(ctx) as http:
             ws_id, entry = await resolve_item(http, ws, wh)
             obj = await _warehouses_svc.get_warehouse(http, ws_id, entry.id)
-            render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
+            dump = obj.model_dump(by_alias=True, mode="json")
+            # Human output substitutes Fabric's effective default collation when
+            # the API returns null; --json keeps the raw API value.
+            if not ctx.json_output:
+                dump = with_default_collation_for_display(dump)
+            render(dump, json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -148,7 +160,10 @@ async def create_cmd(
                 collation=collation,
                 description=description,
             )
-            render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
+            dump = obj.model_dump(by_alias=True, mode="json")
+            if not ctx.json_output:
+                dump = with_default_collation_for_display(dump)
+            render(dump, json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -188,7 +203,10 @@ async def rename_cmd(
                 cache=cache,
                 old_name=entry.display_name or None,
             )
-            render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
+            dump = obj.model_dump(by_alias=True, mode="json")
+            if not ctx.json_output:
+                dump = with_default_collation_for_display(dump)
+            render(dump, json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 

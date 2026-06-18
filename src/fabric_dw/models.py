@@ -65,6 +65,21 @@ class WarehouseKind(StrEnum):
     SNAPSHOT = "WarehouseSnapshot"
 
 
+#: The collation Fabric applies to a warehouse / SQL analytics endpoint when no
+#: explicit collation is specified at creation time.  The Fabric REST API may
+#: return ``null``/empty for ``defaultCollation`` in that case, but Fabric still
+#: applies this case-sensitive (CS) collation as the effective default, derived
+#: from the workspace's Data Warehouse collation setting (whose own default is
+#: this value).
+#:
+#: Source (verified via Microsoft Learn):
+#:  - https://learn.microsoft.com/fabric/data-warehouse/collation
+#:    "New warehouses and all SQL analytics endpoints are configured based on the
+#:     workspace's Data Warehouse default collation setting, which by default is
+#:     the case-sensitive collation ``Latin1_General_100_BIN2_UTF8``."
+FABRIC_DEFAULT_COLLATION = "Latin1_General_100_BIN2_UTF8"
+
+
 class Warehouse(_FabricBase):
     """A Microsoft Fabric Data Warehouse or SQL analytics endpoint."""
 

@@ -16,7 +16,7 @@ from click.testing import CliRunner
 from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.cli._main import cli
 from fabric_dw.exceptions import FabricError, NotFoundError
-from fabric_dw.models import Warehouse, WarehouseKind
+from fabric_dw.models import FABRIC_DEFAULT_COLLATION, Warehouse, WarehouseKind
 from tests.fixtures.api_payloads import (
     WAREHOUSE_CREATE_202_PAYLOAD,
     WAREHOUSE_GET_PAYLOAD,
@@ -351,6 +351,90 @@ class TestWarehousesGet:
         ):
             result = runner.invoke(cli, ["warehouses", "get", WS_GUID, WH_GUID])
         assert result.exit_code != 0
+
+
+class TestWarehousesGetCollationDefault:
+    """warehouses get — Fabric default collation display when API returns null."""
+
+    #: Warehouse GET payload where the API omits/nulls the collation.
+    _NULL_COLLATION_PAYLOAD = json.dumps(
+        {
+            "id": WH_GUID,
+            "displayName": "SalesWarehouse",
+            "type": "Warehouse",
+            "workspaceId": WS_GUID,
+            "properties": {
+                "connectionString": "saleswarehouse.datawarehouse.fabric.microsoft.com",
+                "defaultCollation": None,
+            },
+        }
+    )
+
+    #: Warehouse GET payload with an explicit, non-default collation.
+    _EXPLICIT_COLLATION_PAYLOAD = json.dumps(
+        {
+            "id": WH_GUID,
+            "displayName": "SalesWarehouse",
+            "type": "Warehouse",
+            "workspaceId": WS_GUID,
+            "properties": {
+                "connectionString": "saleswarehouse.datawarehouse.fabric.microsoft.com",
+                "defaultCollation": "Latin1_General_100_CI_AS_KS_WS_SC_UTF8",
+            },
+        }
+    )
+
+    def _invoke(self, runner: CliRunner, payload: str, *, json_flag: bool) -> str:
+        mock_http = AsyncMock()
+        mock_http.request = AsyncMock(return_value=_make_response(200, payload))
+        with (
+            patch(
+                "fabric_dw.cli.commands.warehouses.build_http_client",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.warehouses.resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+        ):
+            args = ["warehouses", "get", WS_GUID, WH_GUID]
+            if json_flag:
+                args = ["--json", *args]
+            result = runner.invoke(cli, args)
+        assert result.exit_code == 0, result.output
+        return result.output
+
+    def test_human_output_shows_default_when_collation_null(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """Human output substitutes Fabric's default collation, marked '(default)'."""
+        _ = cache_env
+        output = self._invoke(runner, self._NULL_COLLATION_PAYLOAD, json_flag=False)
+        assert FABRIC_DEFAULT_COLLATION in output
+        assert f"{FABRIC_DEFAULT_COLLATION} (default)" in output
+
+    def test_json_output_keeps_raw_null_collation(self, runner: CliRunner, cache_env: Path) -> None:
+        """--json must keep the raw API value (null) — no fabricated default."""
+        _ = cache_env
+        output = self._invoke(runner, self._NULL_COLLATION_PAYLOAD, json_flag=True)
+        parsed = json.loads(output)
+        assert parsed["defaultCollation"] is None
+
+    def test_human_output_shows_explicit_collation_unchanged(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """An explicit collation is shown verbatim, with no '(default)' suffix."""
+        _ = cache_env
+        output = self._invoke(runner, self._EXPLICIT_COLLATION_PAYLOAD, json_flag=False)
+        assert "Latin1_General_100_CI_AS_KS_WS_SC_UTF8" in output
+        assert "(default)" not in output
+
+    def test_json_output_keeps_explicit_collation(self, runner: CliRunner, cache_env: Path) -> None:
+        """--json keeps an explicit collation verbatim."""
+        _ = cache_env
+        output = self._invoke(runner, self._EXPLICIT_COLLATION_PAYLOAD, json_flag=True)
+        parsed = json.loads(output)
+        assert parsed["defaultCollation"] == "Latin1_General_100_CI_AS_KS_WS_SC_UTF8"
 
 
 class TestWarehousesCreate:
