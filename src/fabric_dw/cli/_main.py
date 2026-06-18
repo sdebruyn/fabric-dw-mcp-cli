@@ -269,11 +269,17 @@ def _build_command_name(root_ctx: click.Context) -> str | None:
     sorts segments by nesting depth (shallowest first), and joins them to form
     a path like ``warehouses.list`` or ``config.set.workspace``.
 
+    For direct leaf commands registered on the root group (e.g. ``fdw sql``),
+    no sub-group invoke wrapper writes a segment, so ``_segments`` is empty.
+    In that case ``root_ctx.invoked_subcommand`` holds the command name and we
+    return it directly (e.g. ``"sql"``).
+
     Returns ``None`` when no segments were accumulated (e.g. root ``--help``).
     """
     segments: list[tuple[int, str, str]] = root_ctx.meta.get(_CLI_SEGMENTS_KEY, [])
     if not segments:
-        return None
+        # Direct leaf command on the root group (e.g. ``fdw sql -q "SELECT 1"``).
+        return root_ctx.invoked_subcommand or None
 
     # Sort by depth (ascending) to get outermost → innermost order.
     segments_sorted = sorted(segments, key=lambda t: t[0])
