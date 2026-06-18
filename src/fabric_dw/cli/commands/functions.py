@@ -18,7 +18,7 @@ from fabric_dw.cli.commands._utils import (
     load_sql_body,
     parse_qualified_name,
     resolve_warehouse_arg,
-    resolve_workspace_arg,
+    resolve_workspace,
 )
 from fabric_dw.exceptions import FabricError
 from fabric_dw.services import functions as _fns_svc
@@ -35,7 +35,6 @@ def functions_group() -> None:
 
 
 @functions_group.command("list")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.option("--schema", default=None, help="Filter by schema name.")
 @click.option(
@@ -49,13 +48,12 @@ def functions_group() -> None:
 @coro
 async def list_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     schema: str | None,
     kind: str,
 ) -> None:
-    """List T-SQL user-defined functions on ITEM (warehouse or SQL endpoint) in WORKSPACE."""
-    ws = resolve_workspace_arg(ctx, workspace)
+    """List T-SQL user-defined functions on ITEM (warehouse or SQL endpoint)."""
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
@@ -76,19 +74,17 @@ async def list_cmd(
 
 
 @functions_group.command("get")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.argument("qualified_name")
 @click.pass_obj
 @coro
 async def get_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     qualified_name: str,
 ) -> None:
-    """Fetch the full definition of QUALIFIED_NAME (schema.fn) on ITEM in WORKSPACE."""
-    ws = resolve_workspace_arg(ctx, workspace)
+    """Fetch the full definition of QUALIFIED_NAME (schema.fn) on ITEM."""
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     schema, fn_name = parse_qualified_name(qualified_name, kind="function")
     try:
@@ -101,7 +97,6 @@ async def get_cmd(
 
 
 @functions_group.command("create")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.option("--name", "qualified_name", required=True, help="Qualified name: schema.fn.")
 @click.option("--body", "body", default=None, help="Inline function body.")
@@ -110,13 +105,12 @@ async def get_cmd(
 @coro
 async def create_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     qualified_name: str,
     body: str | None,
     from_file: str | None,
 ) -> None:
-    """Create a new T-SQL user-defined function QUALIFIED_NAME on ITEM in WORKSPACE.
+    """Create a new T-SQL user-defined function QUALIFIED_NAME on ITEM.
 
     The body should include the parameter list, RETURNS clause, and function body
     (everything after CREATE FUNCTION [schema].[name]).
@@ -124,7 +118,7 @@ async def create_cmd(
     Scalar UDFs and inline TVFs are preview features as of mid-2026.
     Function DDL is supported on both Data Warehouses and SQL Analytics Endpoints.
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     schema, fn_name = parse_qualified_name(qualified_name, kind="function")
     fn_body = load_sql_body(body, from_file, inline_opt="--body")
@@ -138,7 +132,6 @@ async def create_cmd(
 
 
 @functions_group.command("update")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.argument("qualified_name")
 @click.option("--body", "body", default=None, help="Inline function body.")
@@ -147,18 +140,17 @@ async def create_cmd(
 @coro
 async def update_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     qualified_name: str,
     body: str | None,
     from_file: str | None,
 ) -> None:
-    """Redefine QUALIFIED_NAME (schema.fn) on ITEM in WORKSPACE via CREATE OR ALTER FUNCTION.
+    """Redefine QUALIFIED_NAME (schema.fn) on ITEM via CREATE OR ALTER FUNCTION.
 
     Note: ALTER FUNCTION cannot change the function kind (e.g. scalar to inline TVF).
     You will be asked to confirm unless --yes is passed.
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     schema, fn_name = parse_qualified_name(qualified_name, kind="function")
     fn_body = load_sql_body(body, from_file, inline_opt="--body")
@@ -179,7 +171,6 @@ async def update_cmd(
 
 
 @functions_group.command("drop")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.argument("qualified_name")
 @click.option(
@@ -192,16 +183,15 @@ async def update_cmd(
 @coro
 async def drop_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     qualified_name: str,
     if_exists: bool,
 ) -> None:
-    """Drop QUALIFIED_NAME (schema.fn) from ITEM in WORKSPACE.
+    """Drop QUALIFIED_NAME (schema.fn) from ITEM.
 
     You will be asked to confirm unless --yes is passed.
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     schema, fn_name = parse_qualified_name(qualified_name, kind="function")
     try:
@@ -225,7 +215,6 @@ async def drop_cmd(
 
 
 @functions_group.command("rename")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.argument("qualified_name")
 @click.option("--new-name", required=True, help="New bare (unqualified) function name.")
@@ -233,18 +222,17 @@ async def drop_cmd(
 @coro
 async def rename_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     qualified_name: str,
     new_name: str,
 ) -> None:
-    """Rename QUALIFIED_NAME (schema.fn) on ITEM in WORKSPACE to --new-name.
+    """Rename QUALIFIED_NAME (schema.fn) on ITEM to --new-name.
 
     Uses EXEC sp_rename. The new name must be a bare (unqualified) identifier;
     sp_rename cannot move a function to a different schema.
     You will be asked to confirm unless --yes is passed.
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     schema, fn_name = parse_qualified_name(qualified_name, kind="function")
     try:

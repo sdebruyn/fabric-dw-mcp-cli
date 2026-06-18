@@ -12,7 +12,7 @@ from fabric_dw.cli.commands._utils import (
     confirm_destructive,
     coro,
     resolve_warehouse_arg,
-    resolve_workspace_arg,
+    resolve_workspace,
 )
 from fabric_dw.exceptions import FabricError
 from fabric_dw.services import schemas as _schemas_svc
@@ -24,13 +24,12 @@ def schemas_group() -> None:
 
 
 @schemas_group.command("list")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.pass_obj
 @coro
-async def list_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> None:
-    """List user-defined schemas on ITEM (warehouse) in WORKSPACE."""
-    ws = resolve_workspace_arg(ctx, workspace)
+async def list_cmd(ctx: CliContext, item: str | None) -> None:
+    """List user-defined schemas on ITEM (warehouse)."""
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
@@ -46,19 +45,17 @@ async def list_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> 
 
 
 @schemas_group.command("create")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.argument("name")
 @click.pass_obj
 @coro
 async def create_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     name: str,
 ) -> None:
-    """Create a new SQL schema NAME on ITEM in WORKSPACE."""
-    ws = resolve_workspace_arg(ctx, workspace)
+    """Create a new SQL schema NAME on ITEM."""
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
@@ -70,7 +67,6 @@ async def create_cmd(
 
 
 @schemas_group.command("delete")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.argument("name")
 @click.option(
@@ -86,17 +82,16 @@ async def create_cmd(
 @coro
 async def delete_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     name: str,
     cascade: bool,
 ) -> None:
-    """Drop schema NAME from ITEM in WORKSPACE.
+    """Drop schema NAME from ITEM.
 
     Pass --cascade to also drop all tables and views inside the schema first.
     This is a destructive, irreversible operation.
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:

@@ -91,7 +91,7 @@ class TestFunctionsList:
                 new=AsyncMock(return_value=[_make_fn()]),
             ),
         ):
-            result = runner.invoke(cli, ["functions", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "functions", "list", WH_GUID])
         assert result.exit_code == 0
 
     def test_list_json_output(self, runner: CliRunner, cache_env: Path) -> None:
@@ -111,7 +111,7 @@ class TestFunctionsList:
                 new=AsyncMock(return_value=[_make_fn()]),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "functions", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["--json", "-w", WS_GUID, "functions", "list", WH_GUID])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert isinstance(parsed, list)
@@ -131,7 +131,9 @@ class TestFunctionsList:
             ),
             patch("fabric_dw.services.functions.list_functions", new=mock_list),
         ):
-            result = runner.invoke(cli, ["functions", "list", WS_GUID, WH_GUID, "--schema", "dbo"])
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "functions", "list", WH_GUID, "--schema", "dbo"]
+            )
         assert result.exit_code == 0
         mock_list.assert_awaited_once()
 
@@ -150,7 +152,9 @@ class TestFunctionsList:
             ),
             patch("fabric_dw.services.functions.list_functions", new=mock_list),
         ):
-            result = runner.invoke(cli, ["functions", "list", WS_GUID, WH_GUID, "--kind", "scalar"])
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "functions", "list", WH_GUID, "--kind", "scalar"]
+            )
         assert result.exit_code == 0
         _, kwargs = mock_list.call_args
         assert kwargs.get("kind") == "scalar"
@@ -168,7 +172,7 @@ class TestFunctionsList:
                 new=AsyncMock(side_effect=NotFoundError("not found")),
             ),
         ):
-            result = runner.invoke(cli, ["functions", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "functions", "list", WH_GUID])
         assert result.exit_code != 0
 
     def test_list_works_on_sql_endpoint(self, runner: CliRunner, cache_env: Path) -> None:
@@ -194,7 +198,7 @@ class TestFunctionsList:
                 new=AsyncMock(return_value=[]),
             ),
         ):
-            result = runner.invoke(cli, ["functions", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "functions", "list", WH_GUID])
         assert result.exit_code == 0
 
 
@@ -221,7 +225,9 @@ class TestFunctionsGet:
                 new=AsyncMock(return_value=_make_fn(with_definition=True)),
             ),
         ):
-            result = runner.invoke(cli, ["functions", "get", WS_GUID, WH_GUID, "dbo.fn_clean"])
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "functions", "get", WH_GUID, "dbo.fn_clean"]
+            )
         assert result.exit_code == 0
 
     def test_get_json_output(self, runner: CliRunner, cache_env: Path) -> None:
@@ -242,7 +248,7 @@ class TestFunctionsGet:
             ),
         ):
             result = runner.invoke(
-                cli, ["--json", "functions", "get", WS_GUID, WH_GUID, "dbo.fn_clean"]
+                cli, ["--json", "-w", WS_GUID, "functions", "get", WH_GUID, "dbo.fn_clean"]
             )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -251,7 +257,7 @@ class TestFunctionsGet:
 
     def test_get_missing_dot_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
-        result = runner.invoke(cli, ["functions", "get", WS_GUID, WH_GUID, "nodot"])
+        result = runner.invoke(cli, ["-w", WS_GUID, "functions", "get", WH_GUID, "nodot"])
         assert result.exit_code != 0
 
 
@@ -279,9 +285,10 @@ class TestFunctionsCreate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "functions",
                     "create",
-                    WS_GUID,
                     WH_GUID,
                     "--name",
                     "dbo.fn_clean",
@@ -314,9 +321,10 @@ class TestFunctionsCreate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "functions",
                     "create",
-                    WS_GUID,
                     WH_GUID,
                     "--name",
                     "dbo.fn_clean",
@@ -331,7 +339,7 @@ class TestFunctionsCreate:
         _ = cache_env
         result = runner.invoke(
             cli,
-            ["functions", "create", WS_GUID, WH_GUID, "--name", "dbo.fn_clean"],
+            ["-w", WS_GUID, "functions", "create", WH_GUID, "--name", "dbo.fn_clean"],
         )
         assert result.exit_code != 0
 
@@ -356,9 +364,10 @@ class TestFunctionsCreate:
                 cli,
                 [
                     "--json",
+                    "-w",
+                    WS_GUID,
                     "functions",
                     "create",
-                    WS_GUID,
                     WH_GUID,
                     "--name",
                     "dbo.fn_clean",
@@ -396,9 +405,10 @@ class TestFunctionsCreate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "functions",
                     "create",
-                    WS_GUID,
                     WH_GUID,
                     "--name",
                     "dbo.fn_clean",
@@ -434,9 +444,10 @@ class TestFunctionsUpdate:
                 cli,
                 [
                     "--yes",
+                    "-w",
+                    WS_GUID,
                     "functions",
                     "update",
-                    WS_GUID,
                     WH_GUID,
                     "dbo.fn_clean",
                     "--body",
@@ -464,9 +475,10 @@ class TestFunctionsUpdate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "functions",
                     "update",
-                    WS_GUID,
                     WH_GUID,
                     "dbo.fn_clean",
                     "--body",
@@ -498,9 +510,10 @@ class TestFunctionsUpdate:
                 cli,
                 [
                     "--yes",
+                    "-w",
+                    WS_GUID,
                     "functions",
                     "update",
-                    WS_GUID,
                     WH_GUID,
                     "dbo.fn_clean",
                     "--body",
@@ -532,7 +545,7 @@ class TestFunctionsDrop:
             patch("fabric_dw.services.functions.drop_function", new=mock_drop),
         ):
             result = runner.invoke(
-                cli, ["--yes", "functions", "drop", WS_GUID, WH_GUID, "dbo.fn_clean"]
+                cli, ["--yes", "-w", WS_GUID, "functions", "drop", WH_GUID, "dbo.fn_clean"]
             )
         assert result.exit_code == 0
         mock_drop.assert_awaited_once()
@@ -556,7 +569,7 @@ class TestFunctionsDrop:
         ):
             result = runner.invoke(
                 cli,
-                ["--json", "--yes", "functions", "drop", WS_GUID, WH_GUID, "dbo.fn_clean"],
+                ["--json", "--yes", "-w", WS_GUID, "functions", "drop", WH_GUID, "dbo.fn_clean"],
             )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -578,7 +591,7 @@ class TestFunctionsDrop:
         ):
             result = runner.invoke(
                 cli,
-                ["functions", "drop", WS_GUID, WH_GUID, "dbo.fn_clean"],
+                ["-w", WS_GUID, "functions", "drop", WH_GUID, "dbo.fn_clean"],
                 input="n\n",
             )
         assert result.exit_code == 0
@@ -603,9 +616,10 @@ class TestFunctionsDrop:
                 cli,
                 [
                     "--yes",
+                    "-w",
+                    WS_GUID,
                     "functions",
                     "drop",
-                    WS_GUID,
                     WH_GUID,
                     "dbo.fn_clean",
                     "--if-exists",
@@ -641,9 +655,10 @@ class TestFunctionsRename:
                 cli,
                 [
                     "--yes",
+                    "-w",
+                    WS_GUID,
                     "functions",
                     "rename",
-                    WS_GUID,
                     WH_GUID,
                     "dbo.fn_clean",
                     "--new-name",
@@ -672,9 +687,10 @@ class TestFunctionsRename:
                 cli,
                 [
                     "--yes",
+                    "-w",
+                    WS_GUID,
                     "functions",
                     "rename",
-                    WS_GUID,
                     WH_GUID,
                     "dbo.fn_clean",
                     "--new-name",
@@ -703,9 +719,10 @@ class TestFunctionsRename:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "functions",
                     "rename",
-                    WS_GUID,
                     WH_GUID,
                     "dbo.fn_clean",
                     "--new-name",
@@ -720,7 +737,7 @@ class TestFunctionsRename:
         _ = cache_env
         result = runner.invoke(
             cli,
-            ["--yes", "functions", "rename", WS_GUID, WH_GUID, "dbo.fn_clean"],
+            ["--yes", "-w", WS_GUID, "functions", "rename", WH_GUID, "dbo.fn_clean"],
         )
         assert result.exit_code != 0
 
@@ -746,9 +763,10 @@ class TestFunctionsRename:
                 [
                     "--json",
                     "--yes",
+                    "-w",
+                    WS_GUID,
                     "functions",
                     "rename",
-                    WS_GUID,
                     WH_GUID,
                     "dbo.fn_clean",
                     "--new-name",

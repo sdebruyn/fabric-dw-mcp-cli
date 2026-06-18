@@ -90,7 +90,7 @@ class TestSchemasList:
                 new=mock_list,
             ),
         ):
-            result = runner.invoke(cli, ["schemas", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "schemas", "list", WH_GUID])
         assert result.exit_code == 0
         mock_list.assert_awaited_once()
         assert "sales" in result.output
@@ -112,7 +112,7 @@ class TestSchemasList:
                 new=AsyncMock(return_value=[_make_schema()]),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "schemas", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["--json", "-w", WS_GUID, "schemas", "list", WH_GUID])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert isinstance(parsed, list)
@@ -131,7 +131,7 @@ class TestSchemasList:
                 new=AsyncMock(side_effect=NotFoundError("not found")),
             ),
         ):
-            result = runner.invoke(cli, ["schemas", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "schemas", "list", WH_GUID])
         assert result.exit_code != 0
 
     def test_list_permission_error_returns_nonzero(
@@ -153,7 +153,7 @@ class TestSchemasList:
                 new=AsyncMock(side_effect=PermissionDeniedError("access denied")),
             ),
         ):
-            result = runner.invoke(cli, ["schemas", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "schemas", "list", WH_GUID])
         assert result.exit_code != 0
 
 
@@ -181,7 +181,7 @@ class TestSchemasCreate:
                 new=mock_create,
             ),
         ):
-            result = runner.invoke(cli, ["schemas", "create", WS_GUID, WH_GUID, "sales"])
+            result = runner.invoke(cli, ["-w", WS_GUID, "schemas", "create", WH_GUID, "sales"])
         assert result.exit_code == 0
         mock_create.assert_awaited_once()
         assert "sales" in result.output
@@ -203,7 +203,9 @@ class TestSchemasCreate:
                 new=AsyncMock(return_value=_make_schema()),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "schemas", "create", WS_GUID, WH_GUID, "sales"])
+            result = runner.invoke(
+                cli, ["--json", "-w", WS_GUID, "schemas", "create", WH_GUID, "sales"]
+            )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert parsed["name"] == "sales"
@@ -227,7 +229,7 @@ class TestSchemasCreate:
                 new=mock_create,
             ),
         ):
-            result = runner.invoke(cli, ["schemas", "create", WS_GUID, WH_GUID, "sales"])
+            result = runner.invoke(cli, ["-w", WS_GUID, "schemas", "create", WH_GUID, "sales"])
         assert result.exit_code == 0
         mock_create.assert_awaited_once()
         assert "sales" in result.output
@@ -251,7 +253,7 @@ class TestSchemasCreate:
                 new=AsyncMock(side_effect=PermissionDeniedError("access denied")),
             ),
         ):
-            result = runner.invoke(cli, ["schemas", "create", WS_GUID, WH_GUID, "sales"])
+            result = runner.invoke(cli, ["-w", WS_GUID, "schemas", "create", WH_GUID, "sales"])
         assert result.exit_code != 0
 
 
@@ -278,7 +280,9 @@ class TestSchemasDelete:
                 new=AsyncMock(return_value=None),
             ),
         ):
-            result = runner.invoke(cli, ["-y", "schemas", "delete", WS_GUID, WH_GUID, "sales"])
+            result = runner.invoke(
+                cli, ["-y", "-w", WS_GUID, "schemas", "delete", WH_GUID, "sales"]
+            )
         assert result.exit_code == 0
         assert "dropped" in result.output
 
@@ -301,7 +305,7 @@ class TestSchemasDelete:
             ),
         ):
             result = runner.invoke(
-                cli, ["schemas", "delete", WS_GUID, WH_GUID, "sales"], input="n\n"
+                cli, ["-w", WS_GUID, "schemas", "delete", WH_GUID, "sales"], input="n\n"
             )
         assert result.exit_code == 0
         assert "Aborted." in result.output
@@ -323,7 +327,7 @@ class TestSchemasDelete:
         ):
             result = runner.invoke(
                 cli,
-                ["-y", "schemas", "delete", WS_GUID, WH_GUID, "sales", "--cascade"],
+                ["-y", "-w", WS_GUID, "schemas", "delete", WH_GUID, "sales", "--cascade"],
             )
         assert result.exit_code == 0
         _, kwargs = mock_delete.call_args
@@ -346,7 +350,7 @@ class TestSchemasDelete:
         ):
             result = runner.invoke(
                 cli,
-                ["-y", "schemas", "delete", WS_GUID, WH_GUID, "sales"],
+                ["-y", "-w", WS_GUID, "schemas", "delete", WH_GUID, "sales"],
             )
         assert result.exit_code == 0
         _, kwargs = mock_delete.call_args
@@ -370,7 +374,9 @@ class TestSchemasDelete:
                 new=AsyncMock(return_value=None),
             ),
         ):
-            result = runner.invoke(cli, ["-y", "schemas", "delete", WS_GUID, WH_GUID, "sales"])
+            result = runner.invoke(
+                cli, ["-y", "-w", WS_GUID, "schemas", "delete", WH_GUID, "sales"]
+            )
         assert result.exit_code == 0
         assert "dropped" in result.output
 
@@ -394,7 +400,7 @@ class TestSchemasDelete:
         ):
             result = runner.invoke(
                 cli,
-                ["-y", "schemas", "delete", WS_GUID, WH_GUID, "sales", "--cascade"],
+                ["-y", "-w", WS_GUID, "schemas", "delete", WH_GUID, "sales", "--cascade"],
             )
         # With --yes the prompt is skipped entirely; the command exits cleanly and reports the drop.
         assert result.exit_code == 0
@@ -420,7 +426,9 @@ class TestSchemasDelete:
                 new=AsyncMock(side_effect=PermissionDeniedError("access denied")),
             ),
         ):
-            result = runner.invoke(cli, ["-y", "schemas", "delete", WS_GUID, WH_GUID, "sales"])
+            result = runner.invoke(
+                cli, ["-y", "-w", WS_GUID, "schemas", "delete", WH_GUID, "sales"]
+            )
         assert result.exit_code != 0
 
     def test_delete_cascade_sql_endpoint_succeeds(self, runner: CliRunner, cache_env: Path) -> None:
@@ -443,7 +451,7 @@ class TestSchemasDelete:
         ):
             result = runner.invoke(
                 cli,
-                ["-y", "schemas", "delete", WS_GUID, WH_GUID, "sales", "--cascade"],
+                ["-y", "-w", WS_GUID, "schemas", "delete", WH_GUID, "sales", "--cascade"],
             )
         assert result.exit_code == 0
         assert "dropped" in result.output
@@ -468,7 +476,9 @@ class TestSchemasDelete:
                 new=AsyncMock(return_value=None),
             ),
         ):
-            result = runner.invoke(cli, ["-y", "schemas", "delete", WS_GUID, WH_GUID, "sales"])
+            result = runner.invoke(
+                cli, ["-y", "-w", WS_GUID, "schemas", "delete", WH_GUID, "sales"]
+            )
         assert result.exit_code == 0
         assert "dropped" in result.output
 
@@ -488,7 +498,7 @@ class TestSchemasDelete:
             ),
             patch("fabric_dw.services.schemas.delete_schema", new=mock_delete),
         ):
-            runner.invoke(cli, ["-y", "schemas", "delete", WS_GUID, WH_GUID, "sales"])
+            runner.invoke(cli, ["-y", "-w", WS_GUID, "schemas", "delete", WH_GUID, "sales"])
         _, kwargs = mock_delete.call_args
         assert kwargs.get("kind") == WarehouseKind.WAREHOUSE
 
@@ -514,6 +524,6 @@ class TestSchemasDelete:
             ),
             patch("fabric_dw.services.schemas.delete_schema", new=mock_delete),
         ):
-            runner.invoke(cli, ["-y", "schemas", "delete", WS_GUID, WH_GUID, "sales"])
+            runner.invoke(cli, ["-y", "-w", WS_GUID, "schemas", "delete", WH_GUID, "sales"])
         _, kwargs = mock_delete.call_args
         assert kwargs.get("kind") == WarehouseKind.SQL_ENDPOINT
