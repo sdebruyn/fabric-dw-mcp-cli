@@ -25,7 +25,7 @@ from fabric_dw.cli.commands._utils import (
     parse_qualified_name,
     resolve_item,
     resolve_warehouse_arg,
-    resolve_workspace_arg,
+    resolve_workspace,
 )
 from fabric_dw.exceptions import FabricError
 from fabric_dw.http_client import FabricHttpClient
@@ -49,16 +49,13 @@ def tables_group() -> None:
 
 
 @tables_group.command("list")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.option("--schema", default=None, help="Filter by schema name.")
 @click.pass_obj
 @coro
-async def list_cmd(
-    ctx: CliContext, workspace: str | None, item: str | None, schema: str | None
-) -> None:
-    """List tables on ITEM (warehouse or SQL endpoint) in WORKSPACE."""
-    ws = resolve_workspace_arg(ctx, workspace)
+async def list_cmd(ctx: CliContext, item: str | None, schema: str | None) -> None:
+    """List tables on ITEM (warehouse or SQL endpoint)."""
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
@@ -74,7 +71,6 @@ async def list_cmd(
 
 
 @tables_group.command("read")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.argument("qualified_name")
 @click.option("--count", default=10, show_default=True, help="Max rows to return.")
@@ -91,15 +87,14 @@ async def list_cmd(
 @coro
 async def read_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     qualified_name: str,
     count: int,
     fmt: str,
     output: str | None,
 ) -> None:
-    """Read up to COUNT rows from QUALIFIED_NAME (schema.table) on ITEM in WORKSPACE."""
-    ws = resolve_workspace_arg(ctx, workspace)
+    """Read up to COUNT rows from QUALIFIED_NAME (schema.table) on ITEM."""
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     schema, table_name = parse_qualified_name(qualified_name, kind="table")
     output_path = Path(output) if output else None
@@ -205,7 +200,6 @@ def _parse_schema_file(path: str) -> list[ColumnSpec]:
 
 
 @tables_group.command("create")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.option("--name", "qualified_name", required=True, help="Qualified name: schema.table.")
 # CTAS path
@@ -282,7 +276,6 @@ def _parse_schema_file(path: str) -> list[ColumnSpec]:
 @coro
 async def create_cmd(  # noqa: PLR0912
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     qualified_name: str,
     select_body: str | None,
@@ -297,7 +290,7 @@ async def create_cmd(  # noqa: PLR0912
     encoding: str,
     sample_rows: int,
 ) -> None:
-    """Create a new table on ITEM in WORKSPACE.
+    """Create a new table on ITEM.
 
     \b
     Two modes are available:
@@ -314,7 +307,7 @@ async def create_cmd(  # noqa: PLR0912
       --encoding        File encoding (default 'utf-8-sig').
       --sample-rows     Rows to sample for inference (default 1000).
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     schema, table_name = parse_qualified_name(qualified_name, kind="table")
 
@@ -412,19 +405,17 @@ async def create_cmd(  # noqa: PLR0912
 
 
 @tables_group.command("delete")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.argument("qualified_name")
 @click.pass_obj
 @coro
 async def delete_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     qualified_name: str,
 ) -> None:
-    """Drop QUALIFIED_NAME (schema.table) from ITEM in WORKSPACE."""
-    ws = resolve_workspace_arg(ctx, workspace)
+    """Drop QUALIFIED_NAME (schema.table) from ITEM."""
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     schema, table_name = parse_qualified_name(qualified_name, kind="table")
     try:
@@ -451,19 +442,17 @@ async def delete_cmd(
 
 
 @tables_group.command("clear")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.argument("qualified_name")
 @click.pass_obj
 @coro
 async def clear_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     qualified_name: str,
 ) -> None:
-    """Truncate QUALIFIED_NAME (schema.table) on ITEM in WORKSPACE."""
-    ws = resolve_workspace_arg(ctx, workspace)
+    """Truncate QUALIFIED_NAME (schema.table) on ITEM."""
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     schema, table_name = parse_qualified_name(qualified_name, kind="table")
     try:
@@ -490,7 +479,6 @@ async def clear_cmd(
 
 
 @tables_group.command("clone")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.option("--source", required=True, help="Qualified source table: schema.table.")
 @click.option(
@@ -509,19 +497,18 @@ async def clear_cmd(
 @coro
 async def clone_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     source: str,
     new_table: str,
     at_str: str | None,
 ) -> None:
-    """Clone SOURCE table as a zero-copy clone named NAME on ITEM in WORKSPACE.
+    """Clone SOURCE table as a zero-copy clone named NAME on ITEM.
 
     Creates a new table using ``CREATE TABLE … AS CLONE OF …``.  The optional
     ``--at`` timestamp must be within the warehouse data-retention window (UTC).
     Only supported on Fabric Data Warehouses (not SQL Analytics Endpoints).
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     # Validate both qualified names eagerly so bad input is reported before any I/O.
     parse_qualified_name(source, kind="table")
@@ -590,7 +577,6 @@ def _resolve_url_file_type(fmt: str | None, url: str) -> str:
 
 
 @tables_group.command("load")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.argument("qualified_name")
 @click.option("--file", "file_path", default=None, help="Path to a local file to load.")
@@ -714,7 +700,6 @@ def _resolve_url_file_type(fmt: str | None, url: str) -> str:
 @coro
 async def load_cmd(  # noqa: PLR0912
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     qualified_name: str,
     file_path: str | None,
@@ -739,7 +724,7 @@ async def load_cmd(  # noqa: PLR0912
     sample_rows: int,
     cleanup_on_failure: bool,
 ) -> None:
-    """Load data into QUALIFIED_NAME (schema.table) on ITEM in WORKSPACE via COPY INTO.
+    """Load data into QUALIFIED_NAME (schema.table) on ITEM via COPY INTO.
 
     Exactly one of --file (local path) or --url (remote URL) must be provided.
 
@@ -759,13 +744,13 @@ async def load_cmd(  # noqa: PLR0912
 
     \b
     Examples:
-      fabric-dw tables load myws mywarehouse dbo.sales --file data.csv
-      fabric-dw tables load myws mywarehouse dbo.sales --url https://... --format parquet
-      fabric-dw tables load myws mywarehouse dbo.sales --file data.parquet --create
-      fabric-dw tables load myws mywarehouse dbo.sales \
+      fabric-dw -w myws tables load mywarehouse dbo.sales --file data.csv
+      fabric-dw -w myws tables load mywarehouse dbo.sales --url https://... --format parquet
+      fabric-dw -w myws tables load mywarehouse dbo.sales --file data.parquet --create
+      fabric-dw -w myws tables load mywarehouse dbo.sales \
           --file data.csv --create --if-exists replace -y
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     schema, table_name = parse_qualified_name(qualified_name, kind="table")
 
@@ -1106,7 +1091,6 @@ async def _load_cmd_url(
 
 
 @tables_group.command("rename")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.argument("qualified_name")
 @click.option("--new-name", required=True, help="New (unqualified) table name.")
@@ -1114,18 +1098,17 @@ async def _load_cmd_url(
 @coro
 async def rename_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     qualified_name: str,
     new_name: str,
 ) -> None:
-    """Rename QUALIFIED_NAME (schema.table) on ITEM in WORKSPACE to --new-name.
+    """Rename QUALIFIED_NAME (schema.table) on ITEM to --new-name.
 
     ITEM must be a Data Warehouse; SQL Analytics Endpoints are read-only.
     The new name must be unqualified (bare table name) — sp_rename cannot
     move a table to a different schema.
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     parse_qualified_name(qualified_name, kind="table")
     try:

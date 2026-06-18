@@ -86,7 +86,7 @@ class TestViewsList:
                 new=AsyncMock(return_value=[_make_view()]),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "views", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "--json", "views", "list", WH_GUID])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert isinstance(parsed, list)
@@ -110,7 +110,7 @@ class TestViewsList:
                 new=AsyncMock(return_value=[_make_view()]),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "views", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "--json", "views", "list", WH_GUID])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert isinstance(parsed, list)
@@ -130,7 +130,9 @@ class TestViewsList:
             ),
             patch("fabric_dw.services.views.list_views", new=mock_list),
         ):
-            result = runner.invoke(cli, ["views", "list", WS_GUID, WH_GUID, "--schema", "dbo"])
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "views", "list", WH_GUID, "--schema", "dbo"]
+            )
         assert result.exit_code == 0
         mock_list.assert_awaited_once()
 
@@ -147,7 +149,7 @@ class TestViewsList:
                 new=AsyncMock(side_effect=NotFoundError("not found")),
             ),
         ):
-            result = runner.invoke(cli, ["views", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "views", "list", WH_GUID])
         assert result.exit_code != 0
 
 
@@ -174,7 +176,7 @@ class TestViewsRead:
                 new=AsyncMock(return_value=(["id", "name"], [(1, "Alice")])),
             ),
         ):
-            result = runner.invoke(cli, ["views", "read", WS_GUID, WH_GUID, "dbo.vw_sales"])
+            result = runner.invoke(cli, ["-w", WS_GUID, "views", "read", WH_GUID, "dbo.vw_sales"])
         assert result.exit_code == 0
         # Default output is JSON
         parsed = json.loads(result.output)
@@ -198,7 +200,7 @@ class TestViewsRead:
                 new=AsyncMock(return_value=(["id"], [(42,)])),
             ),
         ):
-            result = runner.invoke(cli, ["views", "read", WS_GUID, WH_GUID, "dbo.vw_sales"])
+            result = runner.invoke(cli, ["-w", WS_GUID, "views", "read", WH_GUID, "dbo.vw_sales"])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert parsed[0]["id"] == 42
@@ -206,14 +208,14 @@ class TestViewsRead:
     def test_read_csv_requires_output(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         result = runner.invoke(
-            cli, ["views", "read", WS_GUID, WH_GUID, "dbo.vw_sales", "--format", "csv"]
+            cli, ["-w", WS_GUID, "views", "read", WH_GUID, "dbo.vw_sales", "--format", "csv"]
         )
         assert result.exit_code != 0
 
     def test_read_parquet_requires_output(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         result = runner.invoke(
-            cli, ["views", "read", WS_GUID, WH_GUID, "dbo.vw_sales", "--format", "parquet"]
+            cli, ["-w", WS_GUID, "views", "read", WH_GUID, "dbo.vw_sales", "--format", "parquet"]
         )
         assert result.exit_code != 0
 
@@ -238,9 +240,10 @@ class TestViewsRead:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "views",
                     "read",
-                    WS_GUID,
                     WH_GUID,
                     "dbo.vw_sales",
                     "--format",
@@ -258,7 +261,7 @@ class TestViewsRead:
         self, runner: CliRunner, cache_env: Path
     ) -> None:
         _ = cache_env
-        result = runner.invoke(cli, ["views", "read", WS_GUID, WH_GUID, "nodot"])
+        result = runner.invoke(cli, ["-w", WS_GUID, "views", "read", WH_GUID, "nodot"])
         assert result.exit_code != 0
 
     def test_read_not_found_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
@@ -278,7 +281,7 @@ class TestViewsRead:
                 new=AsyncMock(side_effect=NotFoundError("view not found")),
             ),
         ):
-            result = runner.invoke(cli, ["views", "read", WS_GUID, WH_GUID, "dbo.vw_missing"])
+            result = runner.invoke(cli, ["-w", WS_GUID, "views", "read", WH_GUID, "dbo.vw_missing"])
         assert result.exit_code != 0
 
 
@@ -307,7 +310,7 @@ class TestViewsGet:
         ):
             result = runner.invoke(
                 cli,
-                ["--json", "views", "get", WS_GUID, WH_GUID, "dbo.vw_sales"],
+                ["-w", WS_GUID, "--json", "views", "get", WH_GUID, "dbo.vw_sales"],
             )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -332,7 +335,7 @@ class TestViewsGet:
             ),
         ):
             result = runner.invoke(
-                cli, ["--json", "views", "get", WS_GUID, WH_GUID, "dbo.vw_sales"]
+                cli, ["-w", WS_GUID, "--json", "views", "get", WH_GUID, "dbo.vw_sales"]
             )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -340,7 +343,7 @@ class TestViewsGet:
 
     def test_get_bad_qualified_name_exits_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
-        result = runner.invoke(cli, ["views", "get", WS_GUID, WH_GUID, "no_dot_here"])
+        result = runner.invoke(cli, ["-w", WS_GUID, "views", "get", WH_GUID, "no_dot_here"])
         assert result.exit_code != 0
 
     def test_get_not_found_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
@@ -360,7 +363,7 @@ class TestViewsGet:
                 new=AsyncMock(side_effect=NotFoundError("not found")),
             ),
         ):
-            result = runner.invoke(cli, ["views", "get", WS_GUID, WH_GUID, "dbo.vw_missing"])
+            result = runner.invoke(cli, ["-w", WS_GUID, "views", "get", WH_GUID, "dbo.vw_missing"])
         assert result.exit_code != 0
 
 
@@ -391,10 +394,11 @@ class TestViewsCreate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "--json",
                     "views",
                     "create",
-                    WS_GUID,
                     WH_GUID,
                     "--name",
                     "dbo.vw_sales",
@@ -430,10 +434,11 @@ class TestViewsCreate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "--json",
                     "views",
                     "create",
-                    WS_GUID,
                     WH_GUID,
                     "--name",
                     "dbo.vw_sales",
@@ -450,7 +455,7 @@ class TestViewsCreate:
         _ = cache_env
         result = runner.invoke(
             cli,
-            ["views", "create", WS_GUID, WH_GUID, "--name", "dbo.vw_sales"],
+            ["-w", WS_GUID, "views", "create", WH_GUID, "--name", "dbo.vw_sales"],
         )
         assert result.exit_code != 0
 
@@ -463,9 +468,10 @@ class TestViewsCreate:
         result = runner.invoke(
             cli,
             [
+                "-w",
+                WS_GUID,
                 "views",
                 "create",
-                WS_GUID,
                 WH_GUID,
                 "--name",
                 "dbo.vw_sales",
@@ -507,9 +513,10 @@ class TestViewsCreate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "views",
                     "create",
-                    WS_GUID,
                     WH_GUID,
                     "--name",
                     "dbo.vw_sales",
@@ -542,9 +549,10 @@ class TestViewsCreate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "views",
                     "create",
-                    WS_GUID,
                     WH_GUID,
                     "--name",
                     "dbo.vw_sales",
@@ -582,11 +590,12 @@ class TestViewsUpdate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "--yes",
                     "--json",
                     "views",
                     "update",
-                    WS_GUID,
                     WH_GUID,
                     "dbo.vw_sales",
                     "--select",
@@ -614,15 +623,7 @@ class TestViewsUpdate:
         ):
             result = runner.invoke(
                 cli,
-                [
-                    "views",
-                    "update",
-                    WS_GUID,
-                    WH_GUID,
-                    "dbo.vw_sales",
-                    "--select",
-                    "SELECT 1",
-                ],
+                ["-w", WS_GUID, "views", "update", WH_GUID, "dbo.vw_sales", "--select", "SELECT 1"],
                 input="n\n",
             )
         assert result.exit_code == 0
@@ -657,10 +658,11 @@ class TestViewsUpdate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "--yes",
                     "views",
                     "update",
-                    WS_GUID,
                     WH_GUID,
                     "dbo.vw_sales",
                     "--from-file",
@@ -696,7 +698,7 @@ class TestViewsDrop:
             ),
         ):
             result = runner.invoke(
-                cli, ["--yes", "views", "drop", WS_GUID, WH_GUID, "dbo.vw_sales"]
+                cli, ["-w", WS_GUID, "--yes", "views", "drop", WH_GUID, "dbo.vw_sales"]
             )
         assert result.exit_code == 0
         mock_drop.assert_awaited_once()
@@ -717,7 +719,7 @@ class TestViewsDrop:
         ):
             result = runner.invoke(
                 cli,
-                ["views", "drop", WS_GUID, WH_GUID, "dbo.vw_sales"],
+                ["-w", WS_GUID, "views", "drop", WH_GUID, "dbo.vw_sales"],
                 input="n\n",
             )
         assert result.exit_code == 0
@@ -727,7 +729,7 @@ class TestViewsDrop:
         self, runner: CliRunner, cache_env: Path
     ) -> None:
         _ = cache_env
-        result = runner.invoke(cli, ["views", "drop", WS_GUID, WH_GUID, "no_dot"])
+        result = runner.invoke(cli, ["-w", WS_GUID, "views", "drop", WH_GUID, "no_dot"])
         assert result.exit_code != 0
 
     def test_drop_permission_denied_returns_nonzero(
@@ -750,7 +752,7 @@ class TestViewsDrop:
             ),
         ):
             result = runner.invoke(
-                cli, ["--yes", "views", "drop", WS_GUID, WH_GUID, "dbo.vw_sales"]
+                cli, ["-w", WS_GUID, "--yes", "views", "drop", WH_GUID, "dbo.vw_sales"]
             )
         assert result.exit_code != 0
 
@@ -792,11 +794,12 @@ class TestViewsRename:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "--yes",
                     "--json",
                     "views",
                     "rename",
-                    WS_GUID,
                     WH_GUID,
                     "dbo.vw_sales",
                     "--new-name",
@@ -828,11 +831,12 @@ class TestViewsRename:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "--yes",
                     "--json",
                     "views",
                     "rename",
-                    WS_GUID,
                     WH_GUID,
                     "dbo.vw_sales",
                     "--new-name",
@@ -860,9 +864,10 @@ class TestViewsRename:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "views",
                     "rename",
-                    WS_GUID,
                     WH_GUID,
                     "dbo.vw_sales",
                     "--new-name",
@@ -879,7 +884,7 @@ class TestViewsRename:
         _ = cache_env
         result = runner.invoke(
             cli,
-            ["views", "rename", WS_GUID, WH_GUID, "nodot", "--new-name", "vw_revenue"],
+            ["-w", WS_GUID, "views", "rename", WH_GUID, "nodot", "--new-name", "vw_revenue"],
         )
         assert result.exit_code != 0
 
@@ -889,7 +894,7 @@ class TestViewsRename:
         _ = cache_env
         result = runner.invoke(
             cli,
-            ["views", "rename", WS_GUID, WH_GUID, "dbo.vw_sales"],
+            ["-w", WS_GUID, "views", "rename", WH_GUID, "dbo.vw_sales"],
         )
         assert result.exit_code != 0
 
@@ -913,10 +918,11 @@ class TestViewsRename:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "--yes",
                     "views",
                     "rename",
-                    WS_GUID,
                     WH_GUID,
                     "dbo.vw_sales",
                     "--new-name",
