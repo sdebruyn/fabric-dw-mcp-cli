@@ -111,7 +111,7 @@ class TestStatisticsList:
                 new=AsyncMock(return_value=[_make_statistic()]),
             ),
         ):
-            result = runner.invoke(cli, ["statistics", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "statistics", "list", WH_GUID])
         assert result.exit_code == 0
 
     def test_list_json_output(self, runner: CliRunner) -> None:
@@ -130,7 +130,7 @@ class TestStatisticsList:
                 new=AsyncMock(return_value=[_make_statistic()]),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "statistics", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["--json", "-w", WS_GUID, "statistics", "list", WH_GUID])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert isinstance(parsed, list)
@@ -151,7 +151,7 @@ class TestStatisticsList:
         ):
             result = runner.invoke(
                 cli,
-                ["statistics", "list", WS_GUID, WH_GUID, "--schema", "dbo"],
+                ["-w", WS_GUID, "statistics", "list", WH_GUID, "--schema", "dbo"],
             )
         assert result.exit_code == 0
         mock_list.assert_awaited_once()
@@ -172,7 +172,7 @@ class TestStatisticsList:
         ):
             result = runner.invoke(
                 cli,
-                ["statistics", "list", WS_GUID, WH_GUID, "--user-only"],
+                ["-w", WS_GUID, "statistics", "list", WH_GUID, "--user-only"],
             )
         assert result.exit_code == 0
         _, kwargs = mock_list.call_args
@@ -190,7 +190,7 @@ class TestStatisticsList:
                 new=AsyncMock(side_effect=NotFoundError("not found")),
             ),
         ):
-            result = runner.invoke(cli, ["statistics", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "statistics", "list", WH_GUID])
         assert result.exit_code != 0
 
 
@@ -218,7 +218,7 @@ class TestStatisticsShow:
         ):
             result = runner.invoke(
                 cli,
-                ["statistics", "show", WS_GUID, WH_GUID, "dbo.sales", "stat_sales_id"],
+                ["-w", WS_GUID, "statistics", "show", WH_GUID, "dbo.sales", "stat_sales_id"],
             )
         assert result.exit_code == 0
 
@@ -239,9 +239,10 @@ class TestStatisticsShow:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "statistics",
                     "show",
-                    WS_GUID,
                     WH_GUID,
                     "dbo.sales",
                     "stat_sales_id",
@@ -255,7 +256,7 @@ class TestStatisticsShow:
     def test_show_bad_qualified_table_returns_nonzero(self, runner: CliRunner) -> None:
         result = runner.invoke(
             cli,
-            ["statistics", "show", WS_GUID, WH_GUID, "nodot", "stat"],
+            ["-w", WS_GUID, "statistics", "show", WH_GUID, "nodot", "stat"],
         )
         assert result.exit_code != 0
 
@@ -285,9 +286,10 @@ class TestStatisticsCreate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "statistics",
                     "create",
-                    WS_GUID,
                     WH_GUID,
                     "--table",
                     "dbo.sales",
@@ -314,9 +316,10 @@ class TestStatisticsCreate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "statistics",
                     "create",
-                    WS_GUID,
                     WH_GUID,
                     "--table",
                     "dbo.sales",
@@ -343,9 +346,10 @@ class TestStatisticsCreate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "statistics",
                     "create",
-                    WS_GUID,
                     WH_GUID,
                     "--table",
                     "dbo.sales",
@@ -380,9 +384,10 @@ class TestStatisticsCreate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "statistics",
                     "create",
-                    WS_GUID,
                     SE_GUID,
                     "--table",
                     "dbo.sales",
@@ -420,9 +425,10 @@ class TestStatisticsUpdate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "statistics",
                     "update",
-                    WS_GUID,
                     WH_GUID,
                     "dbo.sales",
                     "stat_sales_id",
@@ -450,9 +456,10 @@ class TestStatisticsUpdate:
                 cli,
                 [
                     "--json",
+                    "-w",
+                    WS_GUID,
                     "statistics",
                     "update",
-                    WS_GUID,
                     WH_GUID,
                     "dbo.sales",
                     "stat_sales_id",
@@ -480,7 +487,7 @@ class TestStatisticsUpdate:
         ):
             result = runner.invoke(
                 cli,
-                ["statistics", "update", WS_GUID, SE_GUID, "dbo.sales", "s"],
+                ["-w", WS_GUID, "statistics", "update", SE_GUID, "dbo.sales", "s"],
             )
         assert result.exit_code != 0
 
@@ -511,9 +518,10 @@ class TestStatisticsDelete:
                 cli,
                 [
                     "--yes",
+                    "-w",
+                    WS_GUID,
                     "statistics",
                     "delete",
-                    WS_GUID,
                     WH_GUID,
                     "dbo.sales",
                     "stat_sales_id",
@@ -542,9 +550,10 @@ class TestStatisticsDelete:
                 [
                     "--json",
                     "--yes",
+                    "-w",
+                    WS_GUID,
                     "statistics",
                     "delete",
-                    WS_GUID,
                     WH_GUID,
                     "dbo.sales",
                     "stat_sales_id",
@@ -568,7 +577,7 @@ class TestStatisticsDelete:
         ):
             result = runner.invoke(
                 cli,
-                ["statistics", "delete", WS_GUID, WH_GUID, "dbo.sales", "s"],
+                ["-w", WS_GUID, "statistics", "delete", WH_GUID, "dbo.sales", "s"],
                 input="n\n",
             )
         assert result.exit_code == 0
@@ -592,6 +601,6 @@ class TestStatisticsDelete:
         ):
             result = runner.invoke(
                 cli,
-                ["--yes", "statistics", "delete", WS_GUID, SE_GUID, "dbo.sales", "s"],
+                ["--yes", "-w", WS_GUID, "statistics", "delete", SE_GUID, "dbo.sales", "s"],
             )
         assert result.exit_code != 0

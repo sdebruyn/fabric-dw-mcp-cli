@@ -13,7 +13,7 @@ from fabric_dw.cli.commands._utils import (
     coro,
     parse_qualified_name,
     resolve_warehouse_arg,
-    resolve_workspace_arg,
+    resolve_workspace,
 )
 from fabric_dw.exceptions import FabricError
 from fabric_dw.services import statistics as _stats_svc
@@ -30,7 +30,6 @@ def statistics_group() -> None:
 
 
 @statistics_group.command("list")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.option("--schema", default=None, help="Filter by schema name.")
 @click.option("--table", default=None, help="Filter by table name (unqualified).")
@@ -50,15 +49,14 @@ def statistics_group() -> None:
 @coro
 async def list_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     schema: str | None,
     table: str | None,
     user_only: bool,
     auto_only: bool,
 ) -> None:
-    """List statistics on ITEM (warehouse or SQL endpoint) in WORKSPACE."""
-    ws = resolve_workspace_arg(ctx, workspace)
+    """List statistics on ITEM (warehouse or SQL endpoint)."""
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
@@ -81,7 +79,6 @@ async def list_cmd(
 
 
 @statistics_group.command("show")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.argument("qualified_table")
 @click.argument("stat_name")
@@ -96,18 +93,17 @@ async def list_cmd(
 @coro
 async def show_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     qualified_table: str,
     stat_name: str,
     histogram_only: bool,
 ) -> None:
-    """Show details of STAT_NAME on QUALIFIED_TABLE (schema.table) in WORKSPACE.
+    """Show details of STAT_NAME on QUALIFIED_TABLE (schema.table).
 
     Uses DBCC SHOW_STATISTICS with STAT_HEADER, DENSITY_VECTOR, and HISTOGRAM
     variants. Pass --histogram to show only the histogram steps.
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     parse_qualified_name(qualified_table, kind="table")
     try:
@@ -126,7 +122,6 @@ async def show_cmd(
 
 
 @statistics_group.command("create")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.option(
     "--table",
@@ -161,7 +156,6 @@ async def show_cmd(
 @coro
 async def create_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     qualified_table: str,
     column: str,
@@ -169,12 +163,12 @@ async def create_cmd(
     fullscan: bool,
     sample_percent: int | None,
 ) -> None:
-    """Create a statistic on --table (schema.table) on ITEM in WORKSPACE.
+    """Create a statistic on --table (schema.table) on ITEM.
 
     Only Data Warehouses support DDL; SQL Analytics Endpoints are read-only.
     Only single-column statistics are supported (Fabric limitation).
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     parse_qualified_name(qualified_table, kind="table")
     if stat_name is None:
@@ -198,7 +192,6 @@ async def create_cmd(
 
 
 @statistics_group.command("update")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.argument("qualified_table")
 @click.argument("stat_name")
@@ -220,18 +213,17 @@ async def create_cmd(
 @coro
 async def update_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     qualified_table: str,
     stat_name: str,
     fullscan: bool,
     sample_percent: int | None,
 ) -> None:
-    """Update STAT_NAME on QUALIFIED_TABLE (schema.table) on ITEM in WORKSPACE.
+    """Update STAT_NAME on QUALIFIED_TABLE (schema.table) on ITEM.
 
     Only Data Warehouses support DDL; SQL Analytics Endpoints are read-only.
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     parse_qualified_name(qualified_table, kind="table")
     try:
@@ -258,7 +250,6 @@ async def update_cmd(
 
 
 @statistics_group.command("delete")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.argument("qualified_table")
 @click.argument("stat_name")
@@ -266,16 +257,15 @@ async def update_cmd(
 @coro
 async def delete_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     qualified_table: str,
     stat_name: str,
 ) -> None:
-    """Drop STAT_NAME on QUALIFIED_TABLE (schema.table) from ITEM in WORKSPACE.
+    """Drop STAT_NAME on QUALIFIED_TABLE (schema.table) from ITEM.
 
     Only Data Warehouses support DDL; SQL Analytics Endpoints are read-only.
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     parse_qualified_name(qualified_table, kind="table")
     try:

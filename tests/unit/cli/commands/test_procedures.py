@@ -86,7 +86,7 @@ class TestProceduresList:
                 new=AsyncMock(return_value=[_make_proc()]),
             ),
         ):
-            result = runner.invoke(cli, ["procedures", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "procedures", "list", WH_GUID])
         assert result.exit_code == 0
 
     def test_list_json_output(self, runner: CliRunner, cache_env: Path) -> None:
@@ -106,7 +106,7 @@ class TestProceduresList:
                 new=AsyncMock(return_value=[_make_proc()]),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "procedures", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["--json", "-w", WS_GUID, "procedures", "list", WH_GUID])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert isinstance(parsed, list)
@@ -126,7 +126,9 @@ class TestProceduresList:
             ),
             patch("fabric_dw.services.procedures.list_procedures", new=mock_list),
         ):
-            result = runner.invoke(cli, ["procedures", "list", WS_GUID, WH_GUID, "--schema", "dbo"])
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "procedures", "list", WH_GUID, "--schema", "dbo"]
+            )
         assert result.exit_code == 0
         mock_list.assert_awaited_once()
 
@@ -143,7 +145,7 @@ class TestProceduresList:
                 new=AsyncMock(side_effect=NotFoundError("not found")),
             ),
         ):
-            result = runner.invoke(cli, ["procedures", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "procedures", "list", WH_GUID])
         assert result.exit_code != 0
 
     def test_list_works_on_sql_endpoint(self, runner: CliRunner, cache_env: Path) -> None:
@@ -169,7 +171,7 @@ class TestProceduresList:
                 new=AsyncMock(return_value=[]),
             ),
         ):
-            result = runner.invoke(cli, ["procedures", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "procedures", "list", WH_GUID])
         assert result.exit_code == 0
 
 
@@ -196,7 +198,9 @@ class TestProceduresGet:
                 new=AsyncMock(return_value=_make_proc(with_definition=True)),
             ),
         ):
-            result = runner.invoke(cli, ["procedures", "get", WS_GUID, WH_GUID, "dbo.usp_load"])
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "procedures", "get", WH_GUID, "dbo.usp_load"]
+            )
         assert result.exit_code == 0
 
     def test_get_json_output(self, runner: CliRunner, cache_env: Path) -> None:
@@ -217,7 +221,7 @@ class TestProceduresGet:
             ),
         ):
             result = runner.invoke(
-                cli, ["--json", "procedures", "get", WS_GUID, WH_GUID, "dbo.usp_load"]
+                cli, ["--json", "-w", WS_GUID, "procedures", "get", WH_GUID, "dbo.usp_load"]
             )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -225,7 +229,7 @@ class TestProceduresGet:
 
     def test_get_bad_qualified_name_exits_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
-        result = runner.invoke(cli, ["procedures", "get", WS_GUID, WH_GUID, "no_dot_here"])
+        result = runner.invoke(cli, ["-w", WS_GUID, "procedures", "get", WH_GUID, "no_dot_here"])
         assert result.exit_code != 0
 
     def test_get_not_found_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
@@ -245,7 +249,9 @@ class TestProceduresGet:
                 new=AsyncMock(side_effect=NotFoundError("not found")),
             ),
         ):
-            result = runner.invoke(cli, ["procedures", "get", WS_GUID, WH_GUID, "dbo.usp_missing"])
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "procedures", "get", WH_GUID, "dbo.usp_missing"]
+            )
         assert result.exit_code != 0
 
 
@@ -275,9 +281,10 @@ class TestProceduresCreate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "procedures",
                     "create",
-                    WS_GUID,
                     WH_GUID,
                     "--name",
                     "dbo.usp_load",
@@ -309,9 +316,10 @@ class TestProceduresCreate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "procedures",
                     "create",
-                    WS_GUID,
                     WH_GUID,
                     "--name",
                     "dbo.usp_load",
@@ -325,7 +333,7 @@ class TestProceduresCreate:
         _ = cache_env
         result = runner.invoke(
             cli,
-            ["procedures", "create", WS_GUID, WH_GUID, "--name", "dbo.usp_load"],
+            ["-w", WS_GUID, "procedures", "create", WH_GUID, "--name", "dbo.usp_load"],
         )
         assert result.exit_code != 0
 
@@ -338,9 +346,10 @@ class TestProceduresCreate:
         result = runner.invoke(
             cli,
             [
+                "-w",
+                WS_GUID,
                 "procedures",
                 "create",
-                WS_GUID,
                 WH_GUID,
                 "--name",
                 "dbo.usp_load",
@@ -386,9 +395,10 @@ class TestProceduresCreate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "procedures",
                     "create",
-                    WS_GUID,
                     WH_GUID,
                     "--name",
                     "dbo.usp_load",
@@ -421,9 +431,10 @@ class TestProceduresCreate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "procedures",
                     "create",
-                    WS_GUID,
                     WH_GUID,
                     "--name",
                     "dbo.usp_load",
@@ -461,9 +472,10 @@ class TestProceduresUpdate:
                 cli,
                 [
                     "--yes",
+                    "-w",
+                    WS_GUID,
                     "procedures",
                     "update",
-                    WS_GUID,
                     WH_GUID,
                     "dbo.usp_load",
                     "--body",
@@ -489,9 +501,10 @@ class TestProceduresUpdate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "procedures",
                     "update",
-                    WS_GUID,
                     WH_GUID,
                     "dbo.usp_load",
                     "--body",
@@ -536,9 +549,10 @@ class TestProceduresUpdate:
                 cli,
                 [
                     "--yes",
+                    "-w",
+                    WS_GUID,
                     "procedures",
                     "update",
-                    WS_GUID,
                     WH_GUID,
                     "dbo.usp_load",
                     "--from-file",
@@ -573,7 +587,7 @@ class TestProceduresDrop:
             ),
         ):
             result = runner.invoke(
-                cli, ["--yes", "procedures", "drop", WS_GUID, WH_GUID, "dbo.usp_load"]
+                cli, ["--yes", "-w", WS_GUID, "procedures", "drop", WH_GUID, "dbo.usp_load"]
             )
         assert result.exit_code == 0
 
@@ -593,7 +607,7 @@ class TestProceduresDrop:
         ):
             result = runner.invoke(
                 cli,
-                ["procedures", "drop", WS_GUID, WH_GUID, "dbo.usp_load"],
+                ["-w", WS_GUID, "procedures", "drop", WH_GUID, "dbo.usp_load"],
                 input="n\n",
             )
         assert result.exit_code == 0
@@ -603,7 +617,7 @@ class TestProceduresDrop:
         self, runner: CliRunner, cache_env: Path
     ) -> None:
         _ = cache_env
-        result = runner.invoke(cli, ["procedures", "drop", WS_GUID, WH_GUID, "no_dot"])
+        result = runner.invoke(cli, ["-w", WS_GUID, "procedures", "drop", WH_GUID, "no_dot"])
         assert result.exit_code != 0
 
     def test_drop_permission_denied_returns_nonzero(
@@ -626,6 +640,6 @@ class TestProceduresDrop:
             ),
         ):
             result = runner.invoke(
-                cli, ["--yes", "procedures", "drop", WS_GUID, WH_GUID, "dbo.usp_load"]
+                cli, ["--yes", "-w", WS_GUID, "procedures", "drop", WH_GUID, "dbo.usp_load"]
             )
         assert result.exit_code != 0
