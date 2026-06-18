@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import click
 
 from fabric_dw.cli._context import CliContext
@@ -15,9 +17,70 @@ from fabric_dw.cli.commands._utils import (
     resolve_workspace_arg,
     validate_workspace_or_all_workspaces,
 )
-from fabric_dw.exceptions import FabricError
+from fabric_dw.exceptions import FabricError, NotFoundError
 from fabric_dw.services import permissions as _permissions_svc
 from fabric_dw.services import sql_endpoints as _sql_endpoints_svc
+
+if TYPE_CHECKING:
+    from uuid import UUID
+
+    from fabric_dw.cache import ItemEntry
+    from fabric_dw.http_client import FabricHttpClient
+
+# Per-row keys that carry no information in the single-workspace human table:
+# every SQL endpoint row has kind == "SQLEndpoint", and (without -A) a single
+# workspace id.  They are stripped from the dicts handed to ``render`` for the
+# table path only — the ``--json`` path keeps the complete payload.
+_REDUNDANT_TABLE_KEYS = ("kind", "workspaceId")
+
+
+def _strip_table_keys(
+    rows: list[dict[str, object]], *, all_workspaces: bool
+) -> list[dict[str, object]]:
+    """Return *rows* with table-redundant keys removed (human/table path only).
+
+    Always drops ``kind`` (every row is a SQL endpoint).  Drops ``workspaceId``
+    too unless *all_workspaces* is set, in which case rows span workspaces and
+    the column carries real information.
+    """
+    drop = {"kind"} if all_workspaces else set(_REDUNDANT_TABLE_KEYS)
+    return [{k: v for k, v in row.items() if k not in drop} for row in rows]
+
+
+async def _resolve_endpoint_or_hint(
+    http: FabricHttpClient,
+    ws: str,
+    endpoint: str,
+    *,
+    endpoint_explicit: bool,
+) -> tuple[UUID, ItemEntry]:
+    """Resolve *endpoint* in workspace *ws*, turning a stale-default 404 into a clear error.
+
+    When the endpoint argument was NOT supplied explicitly it has been taken
+    from a configured default (env / config file).  A configured default that
+    belongs to a *different* workspace makes ``resolve_item`` issue
+    ``GET /workspaces/{ws}/items/{default}`` which 404s with a cryptic
+    ``EntityNotFound``.  Translate that into an actionable message instead.
+
+    Raises:
+        click.ClickException: When the (defaulted) endpoint is not found in *ws*.
+        NotFoundError: When the endpoint was passed explicitly but not found —
+            the caller's ``except FabricError`` surfaces the original message.
+    """
+    try:
+        return await resolve_item(http, ws, endpoint)
+    except NotFoundError:
+        if endpoint_explicit:
+            raise
+        raise click.ClickException(
+            f"SQL endpoint {endpoint!r} (the configured default) was not found in "
+            f"workspace {ws!r}. The default endpoint likely belongs to a different "
+            "workspace. Pass the endpoint explicitly as the second argument "
+            "('fabric-dw sql-endpoints <command> <workspace> <endpoint>'), or set a "
+            "default that belongs to this workspace with "
+            "'fabric-dw config set warehouse <name|id>' (accepts a warehouse or "
+            "SQL Analytics Endpoint)."
+        ) from None
 
 
 @click.group("sql-endpoints")
@@ -59,8 +122,13 @@ async def list_cmd(ctx: CliContext, workspace: str | None, all_workspaces: bool)
                 resolver, _ = make_resolver(http)
                 ws_id = await resolver.workspace_id(resolved_workspace)
                 items = await _sql_endpoints_svc.list_endpoints(http, ws_id)
+            rows = [ep.model_dump(by_alias=True, mode="json") for ep in items]
+            # The --json path stays COMPLETE; only the human/table path drops the
+            # always-redundant columns (kind, and workspaceId when single-workspace).
+            if not ctx.json_output:
+                rows = _strip_table_keys(rows, all_workspaces=all_workspaces)
             render(
-                [ep.model_dump(by_alias=True, mode="json") for ep in items],
+                rows,
                 json_output=ctx.json_output,
                 table_title="SQL Analytics Endpoints",
             )
@@ -76,10 +144,13 @@ async def list_cmd(ctx: CliContext, workspace: str | None, all_workspaces: bool)
 async def get_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> None:
     """Get details for ITEM (SQL analytics endpoint) in WORKSPACE (both accept name or GUID)."""
     ws = resolve_workspace_arg(ctx, workspace)
+    endpoint_explicit = item is not None
     ep = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
-            ws_id, entry = await resolve_item(http, ws, ep)
+            ws_id, entry = await _resolve_endpoint_or_hint(
+                http, ws, ep, endpoint_explicit=endpoint_explicit
+            )
             obj = await _sql_endpoints_svc.get_endpoint(http, ws_id, entry.id)
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except FabricError as exc:
@@ -114,10 +185,13 @@ async def refresh_cmd(
     command) to emit raw JSON instead.
     """
     ws = resolve_workspace_arg(ctx, workspace)
+    endpoint_explicit = item is not None
     ep = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
-            ws_id, entry = await resolve_item(http, ws, ep)
+            ws_id, entry = await _resolve_endpoint_or_hint(
+                http, ws, ep, endpoint_explicit=endpoint_explicit
+            )
             statuses = await _sql_endpoints_svc.refresh_metadata(
                 http, ws_id, entry.id, recreate_tables=recreate_tables
             )
@@ -144,10 +218,13 @@ async def permissions_cmd(ctx: CliContext, workspace: str | None, item: str | No
     See https://learn.microsoft.com/en-us/fabric/admin/microsoft-fabric-admin for details.
     """
     ws = resolve_workspace_arg(ctx, workspace)
+    endpoint_explicit = item is not None
     ep = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
-            ws_id, entry = await resolve_item(http, ws, ep)
+            ws_id, entry = await _resolve_endpoint_or_hint(
+                http, ws, ep, endpoint_explicit=endpoint_explicit
+            )
             items = await _permissions_svc.list_item_access(http, ws_id, entry.id)
             render_permissions_table(
                 items,
