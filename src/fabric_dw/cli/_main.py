@@ -358,6 +358,14 @@ def _patch_group_for_telemetry(group: click.Group) -> None:
     help="Authentication mode.",
 )
 @click.option(
+    "-w",
+    "--workspace",
+    "workspace",
+    metavar="NAME|GUID",
+    default=None,
+    help="Target workspace (name or GUID). Falls back to the configured default.",
+)
+@click.option(
     "--yes",
     "-y",
     "yes",
@@ -378,6 +386,7 @@ def cli(
     ctx: click.Context,
     json_output: bool,
     auth_mode: str,
+    workspace: str | None,
     yes: bool,
     verbose: bool,
 ) -> None:
@@ -388,6 +397,7 @@ def cli(
         json_output=json_output,
         yes=yes,
         auth=CredentialMode(auth_mode),
+        workspace=workspace,
     )
 
     maybe_print_first_run_notice()

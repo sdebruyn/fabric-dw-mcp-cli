@@ -11,7 +11,9 @@ import pytest
 from click.testing import CliRunner
 
 import fabric_dw.cli as _cli_pkg
+import fabric_dw.cli._main as _main_mod
 import fabric_dw.telemetry as _tel
+from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._main import cli
 
 
@@ -47,6 +49,47 @@ class TestCliHelp:
         runner = CliRunner()
         result = runner.invoke(cli, ["--help"])
         assert "--verbose" in result.output or "-v" in result.output
+
+    def test_global_workspace_option_is_listed(self) -> None:
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--help"])
+        assert "--workspace" in result.output or "-w" in result.output
+
+
+class TestCliWorkspaceOption:
+    """The root -w / --workspace option populates CliContext.workspace."""
+
+    def _captured_workspace(self, args: list[str]) -> str | None:
+        """Invoke *args* and return the workspace stored on the built CliContext.
+
+        Spies on the ``CliContext`` constructor so the workspace passed by the
+        root ``cli`` callback can be inspected. ``cache --help`` runs the root
+        callback (which builds ctx.obj) without any network access.
+        """
+        captured: list[CliContext] = []
+        original = _main_mod.CliContext
+
+        def _spy(**kwargs: object) -> CliContext:
+            obj = original(**kwargs)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+            captured.append(obj)
+            return obj
+
+        with patch.object(_main_mod, "CliContext", _spy):
+            runner = CliRunner()
+            runner.invoke(cli, args)
+        assert captured, "root callback did not construct a CliContext"
+        return captured[-1].workspace
+
+    def test_workspace_long_option_sets_context(self) -> None:
+        args = ["--workspace", "Sales WS", "cache", "--help"]
+        assert self._captured_workspace(args) == "Sales WS"
+
+    def test_workspace_short_option_sets_context(self) -> None:
+        guid = "a1b2c3d4-0000-0000-0000-000000000000"
+        assert self._captured_workspace(["-w", guid, "cache", "--help"]) == guid
+
+    def test_workspace_defaults_to_none_when_absent(self) -> None:
+        assert self._captured_workspace(["cache", "--help"]) is None
 
 
 class TestCliUnknownCommand:

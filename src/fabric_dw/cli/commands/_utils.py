@@ -334,6 +334,19 @@ def get_ctx(click_ctx: click.Context) -> CliContext:
 # ---------------------------------------------------------------------------
 
 
+def _workspace_default(ctx: CliContext) -> str | None:
+    """Return the configured-default workspace, env var first then config file.
+
+    Shared by :func:`resolve_workspace_arg` and :func:`resolve_workspace`:
+    consults ``FABRIC_DW_DEFAULT_WORKSPACE`` then ``ctx.config.defaults.workspace``.
+    Returns *None* when neither is set.
+    """
+    env = os.environ.get("FABRIC_DW_DEFAULT_WORKSPACE")
+    if env:
+        return env
+    return ctx.config.defaults.workspace
+
+
 def resolve_workspace_arg(ctx: CliContext, value: str | None) -> str:
     """Resolve the workspace argument using the priority order.
 
@@ -344,14 +357,35 @@ def resolve_workspace_arg(ctx: CliContext, value: str | None) -> str:
     """
     if value is not None:
         return value
-    env = os.environ.get("FABRIC_DW_DEFAULT_WORKSPACE")
-    if env:
-        return env
-    cfg_val = ctx.config.defaults.workspace
-    if cfg_val is not None:
-        return cfg_val
+    default = _workspace_default(ctx)
+    if default is not None:
+        return default
     raise click.UsageError(
         "no workspace specified; pass one as an argument, or set a persistent default"
+        " with 'fabric-dw config set workspace <name|id>'"
+    )
+
+
+def resolve_workspace(ctx: CliContext) -> str:
+    """Resolve the target workspace for the global ``-w/--workspace`` option.
+
+    Precedence:
+
+    1. Explicit ``-w/--workspace`` (``ctx.workspace``) if not *None*.
+    2. ``FABRIC_DW_DEFAULT_WORKSPACE`` environment variable.
+    3. ``ctx.config.defaults.workspace`` from the config file.
+    4. None of the above → :class:`click.UsageError`.
+
+    Raises:
+        click.UsageError: If no workspace can be resolved from any source.
+    """
+    if ctx.workspace is not None:
+        return ctx.workspace
+    default = _workspace_default(ctx)
+    if default is not None:
+        return default
+    raise click.UsageError(
+        "no workspace specified; pass -w/--workspace <name|id>, or set a persistent default"
         " with 'fabric-dw config set workspace <name|id>'"
     )
 
@@ -403,3 +437,30 @@ def validate_workspace_or_all_workspaces(workspace: str | None, all_workspaces: 
         raise click.UsageError("WORKSPACE and --all-workspaces are mutually exclusive.")
     if not workspace and not all_workspaces:
         raise click.UsageError("Provide WORKSPACE or pass --all-workspaces / -A.")
+
+
+def validate_workspace_option_or_all_workspaces(
+    explicit_workspace: str | None, all_workspaces: bool
+) -> None:
+    """Enforce the ``-w/--workspace`` / ``-A/--all-workspaces`` contract.
+
+    Companion to :func:`validate_workspace_or_all_workspaces` for commands that
+    take the global ``-w`` option rather than a positional WORKSPACE.  An
+    **explicit** ``-w`` (``ctx.workspace is not None``) is mutually exclusive
+    with ``-A``; a configured *default* workspace must NOT conflict with ``-A``
+    (so ``-A`` always wins over a default and only the explicit flag clashes).
+
+    Unlike :func:`validate_workspace_or_all_workspaces`, this helper does NOT
+    require one of the two to be present: neither explicit ``-w`` nor ``-A`` is
+    valid because a configured default may still supply the workspace later.
+
+    Args:
+        explicit_workspace: ``ctx.workspace`` — the explicit ``-w`` value, or
+            *None* when ``-w`` was not passed.
+        all_workspaces: Whether ``--all-workspaces`` / ``-A`` was passed.
+
+    Raises:
+        click.UsageError: If both an explicit ``-w`` and ``-A`` are given.
+    """
+    if explicit_workspace is not None and all_workspaces:
+        raise click.UsageError("-w/--workspace and --all-workspaces / -A are mutually exclusive.")
