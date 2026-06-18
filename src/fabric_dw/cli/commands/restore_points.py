@@ -12,7 +12,7 @@ from fabric_dw.cli.commands._utils import (
     coro,
     resolve_item,
     resolve_warehouse_arg,
-    resolve_workspace_arg,
+    resolve_workspace,
 )
 from fabric_dw.exceptions import FabricError
 from fabric_dw.services import restore as _restore_svc
@@ -24,13 +24,12 @@ def restore_points_group() -> None:
 
 
 @restore_points_group.command("list")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.pass_obj
 @coro
-async def list_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> None:
-    """List all restore points for ITEM (warehouse) in WORKSPACE."""
-    ws = resolve_workspace_arg(ctx, workspace)
+async def list_cmd(ctx: CliContext, item: str | None) -> None:
+    """List all restore points for ITEM (warehouse)."""
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
@@ -47,19 +46,17 @@ async def list_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> 
 
 
 @restore_points_group.command("get")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.argument("restore_point_id")
 @click.pass_obj
 @coro
 async def get_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     restore_point_id: str,
 ) -> None:
-    """Get a restore point by RESTORE_POINT_ID for ITEM (warehouse) in WORKSPACE."""
-    ws = resolve_workspace_arg(ctx, workspace)
+    """Get a restore point by RESTORE_POINT_ID for ITEM (warehouse)."""
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
@@ -72,7 +69,6 @@ async def get_cmd(
 
 
 @restore_points_group.command("create")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.option("--name", default=None, help="Optional display name (max 128 chars).")
 @click.option("--description", default=None, help="Optional description (max 512 chars).")
@@ -80,13 +76,12 @@ async def get_cmd(
 @coro
 async def create_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     name: str | None,
     description: str | None,
 ) -> None:
-    """Create a restore point for ITEM (warehouse) in WORKSPACE at the current timestamp."""
-    ws = resolve_workspace_arg(ctx, workspace)
+    """Create a restore point for ITEM (warehouse) at the current timestamp."""
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
@@ -101,7 +96,6 @@ async def create_cmd(
 
 
 @restore_points_group.command("rename")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.argument("restore_point_id")
 @click.argument("new_name")
@@ -110,14 +104,13 @@ async def create_cmd(
 @coro
 async def rename_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     restore_point_id: str,
     new_name: str,
     description: str | None,
 ) -> None:
-    """Rename RESTORE_POINT_ID to NEW_NAME on ITEM (warehouse) in WORKSPACE."""
-    ws = resolve_workspace_arg(ctx, workspace)
+    """Rename RESTORE_POINT_ID to NEW_NAME on ITEM (warehouse)."""
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
@@ -137,24 +130,22 @@ async def rename_cmd(
 
 
 @restore_points_group.command("delete")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.argument("restore_point_id")
 @click.pass_obj
 @coro
 async def delete_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     restore_point_id: str,
 ) -> None:
-    """Delete RESTORE_POINT_ID on ITEM (warehouse) in WORKSPACE.
+    """Delete RESTORE_POINT_ID on ITEM (warehouse).
 
     Only user-defined restore points can be deleted; system-created points
     are automatically managed by the service.
     You will be asked to confirm unless --yes is passed.
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
@@ -177,25 +168,23 @@ async def delete_cmd(
 
 
 @restore_points_group.command("restore")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.argument("restore_point_id")
 @click.pass_obj
 @coro
 async def restore_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     restore_point_id: str,
 ) -> None:
-    """Restore ITEM (warehouse) in-place to RESTORE_POINT_ID in WORKSPACE.
+    """Restore ITEM (warehouse) in-place to RESTORE_POINT_ID.
 
     WARNING: This is a destructive operation. The warehouse will be
     unavailable for approximately 10 minutes while the restore completes.
     In interactive mode you must type the warehouse name to confirm.
     Pass --yes to skip the prompt for automation.
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:

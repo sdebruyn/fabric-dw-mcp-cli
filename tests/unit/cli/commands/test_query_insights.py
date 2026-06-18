@@ -164,7 +164,7 @@ class TestRequestHistory:
                 new=AsyncMock(return_value=[_make_request_history_row()]),
             ),
         ):
-            result = runner.invoke(cli, ["queries", "request-history", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "request-history", WH_GUID])
         assert result.exit_code == 0
 
     def test_json_output(self, runner: CliRunner, cache_env: Path) -> None:
@@ -186,7 +186,7 @@ class TestRequestHistory:
         ):
             result = runner.invoke(
                 cli,
-                ["--json", "queries", "request-history", WS_GUID, WH_GUID],
+                ["--json", "-w", WS_GUID, "queries", "request-history", WH_GUID],
             )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -205,7 +205,7 @@ class TestRequestHistory:
                 new=AsyncMock(side_effect=NotFoundError("not found")),
             ),
         ):
-            result = runner.invoke(cli, ["queries", "request-history", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "request-history", WH_GUID])
         assert result.exit_code != 0
 
     def test_permission_denied_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
@@ -225,7 +225,7 @@ class TestRequestHistory:
                 new=AsyncMock(side_effect=PermissionDeniedError("no permission")),
             ),
         ):
-            result = runner.invoke(cli, ["queries", "request-history", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "request-history", WH_GUID])
         assert result.exit_code != 0
 
     def test_invalid_since_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
@@ -233,9 +233,10 @@ class TestRequestHistory:
         result = runner.invoke(
             cli,
             [
+                "-w",
+                WS_GUID,
                 "queries",
                 "request-history",
-                WS_GUID,
                 WH_GUID,
                 "--since",
                 "not-a-date",
@@ -248,9 +249,10 @@ class TestRequestHistory:
         result = runner.invoke(
             cli,
             [
+                "-w",
+                WS_GUID,
                 "queries",
                 "request-history",
-                WS_GUID,
                 WH_GUID,
                 "--until",
                 "not-a-date",
@@ -282,7 +284,7 @@ class TestSessionHistory:
                 new=AsyncMock(return_value=[_make_session_history_row()]),
             ),
         ):
-            result = runner.invoke(cli, ["queries", "session-history", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "session-history", WH_GUID])
         assert result.exit_code == 0
 
     def test_json_output(self, runner: CliRunner, cache_env: Path) -> None:
@@ -304,7 +306,7 @@ class TestSessionHistory:
         ):
             result = runner.invoke(
                 cli,
-                ["--json", "queries", "session-history", WS_GUID, WH_GUID],
+                ["--json", "-w", WS_GUID, "queries", "session-history", WH_GUID],
             )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -334,7 +336,7 @@ class TestFrequent:
                 new=AsyncMock(return_value=[_make_frequent_query_row()]),
             ),
         ):
-            result = runner.invoke(cli, ["queries", "frequent", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "frequent", WH_GUID])
         assert result.exit_code == 0
 
     def test_json_output(self, runner: CliRunner, cache_env: Path) -> None:
@@ -356,7 +358,7 @@ class TestFrequent:
         ):
             result = runner.invoke(
                 cli,
-                ["--json", "queries", "frequent", WS_GUID, WH_GUID],
+                ["--json", "-w", WS_GUID, "queries", "frequent", WH_GUID],
             )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -386,7 +388,7 @@ class TestLongRunning:
                 new=AsyncMock(return_value=[_make_long_running_row()]),
             ),
         ):
-            result = runner.invoke(cli, ["queries", "long-running", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "long-running", WH_GUID])
         assert result.exit_code == 0
 
     def test_json_output(self, runner: CliRunner, cache_env: Path) -> None:
@@ -408,7 +410,7 @@ class TestLongRunning:
         ):
             result = runner.invoke(
                 cli,
-                ["--json", "queries", "long-running", WS_GUID, WH_GUID],
+                ["--json", "-w", WS_GUID, "queries", "long-running", WH_GUID],
             )
         assert result.exit_code == 0
         parsed = json.loads(result.output)

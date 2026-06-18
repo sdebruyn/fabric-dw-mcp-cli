@@ -88,7 +88,7 @@ class TestQueriesList:
                 new=AsyncMock(return_value=[_make_running_query()]),
             ),
         ):
-            result = runner.invoke(cli, ["queries", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "list", WH_GUID])
         assert result.exit_code == 0
 
     def test_list_json_output(self, runner: CliRunner, cache_env: Path) -> None:
@@ -108,7 +108,7 @@ class TestQueriesList:
                 new=AsyncMock(return_value=[_make_running_query()]),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "queries", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["--json", "-w", WS_GUID, "queries", "list", WH_GUID])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert isinstance(parsed, list)
@@ -126,7 +126,7 @@ class TestQueriesList:
                 new=AsyncMock(side_effect=NotFoundError("not found")),
             ),
         ):
-            result = runner.invoke(cli, ["queries", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "list", WH_GUID])
         assert result.exit_code != 0
 
 
@@ -150,7 +150,7 @@ class TestQueriesKill:
                 new=AsyncMock(return_value=None),
             ),
         ):
-            result = runner.invoke(cli, ["--yes", "queries", "kill", WS_GUID, WH_GUID, "42"])
+            result = runner.invoke(cli, ["--yes", "-w", WS_GUID, "queries", "kill", WH_GUID, "42"])
         assert result.exit_code == 0
 
     def test_kill_declined_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
@@ -167,7 +167,9 @@ class TestQueriesKill:
                 new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
         ):
-            result = runner.invoke(cli, ["queries", "kill", WS_GUID, WH_GUID, "42"], input="n\n")
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "queries", "kill", WH_GUID, "42"], input="n\n"
+            )
         assert result.exit_code == 0
         assert "Aborted." in result.output
 
@@ -190,7 +192,7 @@ class TestQueriesKill:
                 new=AsyncMock(side_effect=PermissionDeniedError("no permission")),
             ),
         ):
-            result = runner.invoke(cli, ["--yes", "queries", "kill", WS_GUID, WH_GUID, "42"])
+            result = runner.invoke(cli, ["--yes", "-w", WS_GUID, "queries", "kill", WH_GUID, "42"])
         assert result.exit_code != 0
 
 
@@ -260,7 +262,7 @@ class TestQueriesListConnections:
                 new=AsyncMock(return_value=[]),
             ),
         ):
-            result = runner.invoke(cli, ["queries", "list-connections", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "list-connections", WH_GUID])
         assert result.exit_code == 0
 
     def test_list_connections_fabric_error_exits_nonzero(
@@ -278,7 +280,7 @@ class TestQueriesListConnections:
                 new=AsyncMock(side_effect=FabricError("server error")),
             ),
         ):
-            result = runner.invoke(cli, ["queries", "list-connections", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "list-connections", WH_GUID])
         assert result.exit_code != 0
 
 
@@ -302,7 +304,7 @@ class TestQueriesRequestHistory:
                 new=AsyncMock(return_value=[]),
             ),
         ):
-            result = runner.invoke(cli, ["queries", "request-history", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "request-history", WH_GUID])
         assert result.exit_code == 0
 
 
@@ -326,7 +328,7 @@ class TestQueriesSessionHistory:
                 new=AsyncMock(return_value=[]),
             ),
         ):
-            result = runner.invoke(cli, ["queries", "session-history", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "session-history", WH_GUID])
         assert result.exit_code == 0
 
     def test_session_history_fabric_error_exits_nonzero(
@@ -344,7 +346,7 @@ class TestQueriesSessionHistory:
                 new=AsyncMock(side_effect=FabricError("server error")),
             ),
         ):
-            result = runner.invoke(cli, ["queries", "session-history", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "session-history", WH_GUID])
         assert result.exit_code != 0
 
 
@@ -368,7 +370,7 @@ class TestQueriesFrequent:
                 new=AsyncMock(return_value=[]),
             ),
         ):
-            result = runner.invoke(cli, ["queries", "frequent", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "frequent", WH_GUID])
         assert result.exit_code == 0
 
     def test_frequent_fabric_error_exits_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
@@ -384,7 +386,7 @@ class TestQueriesFrequent:
                 new=AsyncMock(side_effect=FabricError("server error")),
             ),
         ):
-            result = runner.invoke(cli, ["queries", "frequent", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "frequent", WH_GUID])
         assert result.exit_code != 0
 
 
@@ -408,7 +410,7 @@ class TestQueriesLongRunning:
                 new=AsyncMock(return_value=[]),
             ),
         ):
-            result = runner.invoke(cli, ["queries", "long-running", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "long-running", WH_GUID])
         assert result.exit_code == 0
 
     def test_long_running_fabric_error_exits_nonzero(
@@ -426,5 +428,5 @@ class TestQueriesLongRunning:
                 new=AsyncMock(side_effect=FabricError("server error")),
             ),
         ):
-            result = runner.invoke(cli, ["queries", "long-running", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "long-running", WH_GUID])
         assert result.exit_code != 0

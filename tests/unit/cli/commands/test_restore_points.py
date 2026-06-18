@@ -102,7 +102,9 @@ class TestRestorePointsList:
                 new=AsyncMock(return_value=[rp]),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "restore-points", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(
+                cli, ["--json", "-w", WS_GUID, "restore-points", "list", WH_GUID]
+            )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert isinstance(parsed, list)
@@ -126,7 +128,9 @@ class TestRestorePointsList:
                 new=AsyncMock(return_value=[rp]),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "restore-points", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(
+                cli, ["--json", "-w", WS_GUID, "restore-points", "list", WH_GUID]
+            )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert isinstance(parsed, list)
@@ -149,7 +153,9 @@ class TestRestorePointsList:
                 new=AsyncMock(return_value=[]),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "restore-points", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(
+                cli, ["--json", "-w", WS_GUID, "restore-points", "list", WH_GUID]
+            )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert parsed == []
@@ -167,7 +173,7 @@ class TestRestorePointsList:
                 new=AsyncMock(side_effect=NotFoundError("warehouse not found")),
             ),
         ):
-            result = runner.invoke(cli, ["restore-points", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "restore-points", "list", WH_GUID])
         assert result.exit_code != 0
 
     def test_list_permission_denied_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
@@ -183,7 +189,7 @@ class TestRestorePointsList:
                 new=AsyncMock(side_effect=PermissionDeniedError("forbidden")),
             ),
         ):
-            result = runner.invoke(cli, ["restore-points", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "restore-points", "list", WH_GUID])
         assert result.exit_code != 0
 
 
@@ -214,7 +220,7 @@ class TestRestorePointsGet:
             ),
         ):
             result = runner.invoke(
-                cli, ["--json", "restore-points", "get", WS_GUID, WH_GUID, RP_ID]
+                cli, ["--json", "-w", WS_GUID, "restore-points", "get", WH_GUID, RP_ID]
             )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -240,7 +246,7 @@ class TestRestorePointsGet:
             ),
         ):
             result = runner.invoke(
-                cli, ["--json", "restore-points", "get", WS_GUID, WH_GUID, RP_ID]
+                cli, ["--json", "-w", WS_GUID, "restore-points", "get", WH_GUID, RP_ID]
             )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -263,7 +269,7 @@ class TestRestorePointsGet:
                 new=AsyncMock(side_effect=NotFoundError("restore point not found")),
             ),
         ):
-            result = runner.invoke(cli, ["restore-points", "get", WS_GUID, WH_GUID, RP_ID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "restore-points", "get", WH_GUID, RP_ID])
         assert result.exit_code != 0
 
 
@@ -294,7 +300,9 @@ class TestRestorePointsCreate:
                 new=mock_create,
             ),
         ):
-            result = runner.invoke(cli, ["--json", "restore-points", "create", WS_GUID, WH_GUID])
+            result = runner.invoke(
+                cli, ["--json", "-w", WS_GUID, "restore-points", "create", WH_GUID]
+            )
         assert result.exit_code == 0
         mock_create.assert_awaited_once()
         parsed = json.loads(result.output)
@@ -319,9 +327,10 @@ class TestRestorePointsCreate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "restore-points",
                     "create",
-                    WS_GUID,
                     WH_GUID,
                     "--name",
                     "MyRestorePoint",
@@ -353,7 +362,7 @@ class TestRestorePointsCreate:
                 new=AsyncMock(side_effect=FabricError("create failed", status=500)),
             ),
         ):
-            result = runner.invoke(cli, ["restore-points", "create", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "restore-points", "create", WH_GUID])
         assert result.exit_code != 0
 
 
@@ -386,7 +395,7 @@ class TestRestorePointsRename:
         ):
             result = runner.invoke(
                 cli,
-                ["--json", "restore-points", "rename", WS_GUID, WH_GUID, RP_ID, "NewName"],
+                ["--json", "-w", WS_GUID, "restore-points", "rename", WH_GUID, RP_ID, "NewName"],
             )
         assert result.exit_code == 0
         mock_update.assert_awaited_once()
@@ -412,9 +421,10 @@ class TestRestorePointsRename:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "restore-points",
                     "rename",
-                    WS_GUID,
                     WH_GUID,
                     RP_ID,
                     "NewName",
@@ -445,7 +455,7 @@ class TestRestorePointsRename:
         ):
             result = runner.invoke(
                 cli,
-                ["restore-points", "rename", WS_GUID, WH_GUID, RP_ID, "NewName"],
+                ["-w", WS_GUID, "restore-points", "rename", WH_GUID, RP_ID, "NewName"],
             )
         assert result.exit_code != 0
 
@@ -476,7 +486,7 @@ class TestRestorePointsDelete:
             ),
         ):
             result = runner.invoke(
-                cli, ["--yes", "restore-points", "delete", WS_GUID, WH_GUID, RP_ID]
+                cli, ["--yes", "-w", WS_GUID, "restore-points", "delete", WH_GUID, RP_ID]
             )
         assert result.exit_code == 0
         assert "deleted" in result.output.lower()
@@ -499,7 +509,7 @@ class TestRestorePointsDelete:
         ):
             result = runner.invoke(
                 cli,
-                ["restore-points", "delete", WS_GUID, WH_GUID, RP_ID],
+                ["-w", WS_GUID, "restore-points", "delete", WH_GUID, RP_ID],
                 input="n\n",
             )
         assert result.exit_code == 0
@@ -524,7 +534,7 @@ class TestRestorePointsDelete:
         ):
             result = runner.invoke(
                 cli,
-                ["restore-points", "delete", WS_GUID, WH_GUID, RP_ID],
+                ["-w", WS_GUID, "restore-points", "delete", WH_GUID, RP_ID],
                 input="y\n",
             )
         assert result.exit_code == 0
@@ -548,7 +558,7 @@ class TestRestorePointsDelete:
             ),
         ):
             result = runner.invoke(
-                cli, ["--yes", "restore-points", "delete", WS_GUID, WH_GUID, RP_ID]
+                cli, ["--yes", "-w", WS_GUID, "restore-points", "delete", WH_GUID, RP_ID]
             )
         assert result.exit_code != 0
 
@@ -579,7 +589,7 @@ class TestRestorePointsRestore:
             ),
         ):
             result = runner.invoke(
-                cli, ["--yes", "restore-points", "restore", WS_GUID, WH_GUID, RP_ID]
+                cli, ["--yes", "-w", WS_GUID, "restore-points", "restore", WH_GUID, RP_ID]
             )
         assert result.exit_code == 0
         assert "restored" in result.output.lower()
@@ -605,7 +615,7 @@ class TestRestorePointsRestore:
             # The prompt asks for the warehouse name: "SalesWarehouse"
             result = runner.invoke(
                 cli,
-                ["restore-points", "restore", WS_GUID, "SalesWarehouse", RP_ID],
+                ["-w", WS_GUID, "restore-points", "restore", "SalesWarehouse", RP_ID],
                 input="SalesWarehouse\n",
             )
         assert result.exit_code == 0
@@ -633,7 +643,7 @@ class TestRestorePointsRestore:
         ):
             result = runner.invoke(
                 cli,
-                ["restore-points", "restore", WS_GUID, "SalesWarehouse", RP_ID],
+                ["-w", WS_GUID, "restore-points", "restore", "SalesWarehouse", RP_ID],
                 input="WrongName\n",
             )
         assert result.exit_code == 0
@@ -658,7 +668,7 @@ class TestRestorePointsRestore:
             ),
         ):
             result = runner.invoke(
-                cli, ["--yes", "restore-points", "restore", WS_GUID, WH_GUID, RP_ID]
+                cli, ["--yes", "-w", WS_GUID, "restore-points", "restore", WH_GUID, RP_ID]
             )
         assert result.exit_code != 0
 
