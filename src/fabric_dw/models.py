@@ -569,6 +569,24 @@ class StatisticDetails(_FabricBase):
 CLASSIFIER_TYPE_APPLICATION_NAME = "Application Name"
 CLASSIFIER_TYPE_APPLICATION_NAME_REGEX = "Application Name Regex"
 
+#: Default (autonomous) workload-management pools.
+#:
+#: When a workspace has **no** custom SQL pools (``customSQLPoolsEnabled`` is
+#: false, or ``customSQLPools`` is empty), Fabric Data Warehouse falls back to
+#: *autonomous workload management*: the SQL analytics endpoint compute is split
+#: evenly (50/50) into two isolated resource pools — ``SELECT`` (read/analytics
+#: queries) and ``NON-SELECT`` (DML/DDL/ETL/ingestion statements). These pools
+#: are managed by Fabric, not created by the user, and the split is fixed.
+#:
+#: Sources (verified via Microsoft Learn):
+#:  - https://learn.microsoft.com/fabric/data-warehouse/workload-management#compute-pool-isolation
+#:  - https://learn.microsoft.com/fabric/data-warehouse/custom-sql-pools
+#:  - https://learn.microsoft.com/sql/relational-databases/system-views/queryinsights-sql-pool-insights-transact-sql?view=fabric
+DEFAULT_SELECT_POOL_NAME = "SELECT"
+DEFAULT_NON_SELECT_POOL_NAME = "NON-SELECT"
+#: Each default pool is allocated 50% of the SQL analytics endpoint compute.
+DEFAULT_POOL_MAX_RESOURCE_PERCENTAGE = 50
+
 
 class SqlPoolClassifier(_FabricBase):
     """A classifier element that routes sessions to a SQL pool.
