@@ -575,6 +575,36 @@ class TestCliCommandInvokedInstrumentation:
         ]
         assert len(command_invoked_calls) == 0
 
+    def test_sql_direct_emits_command_invoked(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Direct leaf ``sql`` command (no sub-group) emits exactly one command_invoked event."""
+        mock = self._run_cli(["sql", "--help"], monkeypatch)
+        command_invoked_calls = [c for c in mock.call_args_list if c[0][0] == "command_invoked"]
+        assert len(command_invoked_calls) == 1
+
+    def test_sql_direct_name_is_sql(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """command_invoked name for the direct ``sql`` command is ``"sql"``."""
+        mock = self._run_cli(["sql", "--help"], monkeypatch)
+        command_invoked_calls = [c for c in mock.call_args_list if c[0][0] == "command_invoked"]
+        assert command_invoked_calls, "No command_invoked event emitted"
+        attrs: dict = command_invoked_calls[0][0][1]
+        assert attrs["name"] == "sql"
+
+    def test_sql_direct_surface_is_cli(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """command_invoked surface for the direct ``sql`` command is ``"cli"``."""
+        mock = self._run_cli(["sql", "--help"], monkeypatch)
+        command_invoked_calls = [c for c in mock.call_args_list if c[0][0] == "command_invoked"]
+        assert command_invoked_calls
+        attrs: dict = command_invoked_calls[0][0][1]
+        assert attrs["surface"] == "cli"
+
+    def test_sql_direct_domain_is_sql(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """command_invoked domain for the direct ``sql`` command is ``"sql"``."""
+        mock = self._run_cli(["sql", "--help"], monkeypatch)
+        command_invoked_calls = [c for c in mock.call_args_list if c[0][0] == "command_invoked"]
+        assert command_invoked_calls
+        attrs: dict = command_invoked_calls[0][0][1]
+        assert attrs["domain"] == "sql"
+
 
 # ---------------------------------------------------------------------------
 # MCP instrumentation — command_invoked emitted per tool call

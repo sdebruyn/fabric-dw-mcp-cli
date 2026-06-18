@@ -1,4 +1,4 @@
-"""Tests for sql CLI sub-commands — TDD."""
+"""Tests for the sql CLI command — TDD."""
 
 from __future__ import annotations
 
@@ -60,10 +60,10 @@ def _make_empty_sql_result() -> SqlResult:
     return SqlResult(columns=[], rows=[], rowcount=3)
 
 
-class TestSqlExec:
-    """sql exec — happy paths."""
+class TestSql:
+    """sql — happy paths."""
 
-    def test_exec_query_flag_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_query_flag_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
         with (
@@ -82,12 +82,12 @@ class TestSqlExec:
         ):
             result = runner.invoke(
                 cli,
-                ["sql", "exec", WS_GUID, WH_GUID, "-q", "SELECT 1"],
+                ["sql", WS_GUID, WH_GUID, "-q", "SELECT 1"],
             )
         assert result.exit_code == 0
 
-    def test_exec_outputs_table_by_default(self, runner: CliRunner, cache_env: Path) -> None:
-        """sql exec defaults to Rich table output (--json on root switches to JSON)."""
+    def test_outputs_table_by_default(self, runner: CliRunner, cache_env: Path) -> None:
+        """sql defaults to Rich table output (--json on root switches to JSON)."""
         _ = cache_env
         mock_http = AsyncMock()
         with (
@@ -106,15 +106,15 @@ class TestSqlExec:
         ):
             result = runner.invoke(
                 cli,
-                ["sql", "exec", WS_GUID, WH_GUID, "-q", "SELECT id, name FROM t"],
+                ["sql", WS_GUID, WH_GUID, "-q", "SELECT id, name FROM t"],
             )
         assert result.exit_code == 0
         # Default is table — output must NOT be parseable as JSON
         with pytest.raises(json.JSONDecodeError):
             json.loads(result.output)
 
-    def test_exec_outputs_json_with_json_flag(self, runner: CliRunner, cache_env: Path) -> None:
-        """Global --json flag triggers JSON output for sql exec."""
+    def test_outputs_json_with_json_flag(self, runner: CliRunner, cache_env: Path) -> None:
+        """Global --json flag triggers JSON output for sql."""
         _ = cache_env
         mock_http = AsyncMock()
         with (
@@ -133,7 +133,7 @@ class TestSqlExec:
         ):
             result = runner.invoke(
                 cli,
-                ["--json", "sql", "exec", WS_GUID, WH_GUID, "-q", "SELECT id, name FROM t"],
+                ["--json", "sql", WS_GUID, WH_GUID, "-q", "SELECT id, name FROM t"],
             )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -141,9 +141,7 @@ class TestSqlExec:
         assert parsed["rows"] == [[1, "foo"], [2, "bar"]]
         assert parsed["rowcount"] == 2
 
-    def test_exec_file_flag_reads_file(
-        self, runner: CliRunner, cache_env: Path, tmp_path: Path
-    ) -> None:
+    def test_file_flag_reads_file(self, runner: CliRunner, cache_env: Path, tmp_path: Path) -> None:
         _ = cache_env
         sql_file = tmp_path / "query.sql"
         sql_file.write_text("SELECT 1 AS n")
@@ -170,12 +168,12 @@ class TestSqlExec:
         ):
             result = runner.invoke(
                 cli,
-                ["sql", "exec", WS_GUID, WH_GUID, "-f", str(sql_file)],
+                ["sql", WS_GUID, WH_GUID, "-f", str(sql_file)],
             )
         assert result.exit_code == 0
         assert captured_query[0] == "SELECT 1 AS n"
 
-    def test_exec_file_flag_strips_utf8_bom(
+    def test_file_flag_strips_utf8_bom(
         self, runner: CliRunner, cache_env: Path, tmp_path: Path
     ) -> None:
         """Files saved with UTF-8 BOM (e.g. from SSMS/ADS) must not pass the BOM to execute."""
@@ -206,15 +204,15 @@ class TestSqlExec:
         ):
             result = runner.invoke(
                 cli,
-                ["sql", "exec", WS_GUID, WH_GUID, "-f", str(sql_file)],
+                ["sql", WS_GUID, WH_GUID, "-f", str(sql_file)],
             )
         assert result.exit_code == 0
         assert captured_query[0][0] == "S", (
             f"BOM not stripped: first char is {captured_query[0][0]!r}"
         )
 
-    def test_exec_default_renders_table(self, runner: CliRunner, cache_env: Path) -> None:
-        """sql exec default output is a Rich table (no --table flag needed anymore)."""
+    def test_default_renders_table(self, runner: CliRunner, cache_env: Path) -> None:
+        """sql default output is a Rich table (no --table flag needed anymore)."""
         _ = cache_env
         mock_http = AsyncMock()
         with (
@@ -233,14 +231,14 @@ class TestSqlExec:
         ):
             result = runner.invoke(
                 cli,
-                ["sql", "exec", WS_GUID, WH_GUID, "-q", "SELECT id, name FROM t"],
+                ["sql", WS_GUID, WH_GUID, "-q", "SELECT id, name FROM t"],
             )
         assert result.exit_code == 0
         # Default is table; JSON flag not set so output must NOT be parseable as JSON
         with pytest.raises(json.JSONDecodeError):
             json.loads(result.output)
 
-    def test_exec_dml_no_rows_shows_rowcount(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_dml_no_rows_shows_rowcount(self, runner: CliRunner, cache_env: Path) -> None:
         """DML with no result rows prints rowcount message."""
         _ = cache_env
         mock_http = AsyncMock()
@@ -262,7 +260,6 @@ class TestSqlExec:
                 cli,
                 [
                     "sql",
-                    "exec",
                     WS_GUID,
                     WH_GUID,
                     "-q",
@@ -273,15 +270,15 @@ class TestSqlExec:
         assert "rowcount" in result.output
 
 
-class TestSqlExecErrors:
-    """sql exec — error paths."""
+class TestSqlErrors:
+    """sql — error paths."""
 
-    def test_exec_no_query_or_file_is_error(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_no_query_or_file_is_error(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
-        result = runner.invoke(cli, ["sql", "exec", WS_GUID, WH_GUID])
+        result = runner.invoke(cli, ["sql", WS_GUID, WH_GUID])
         assert result.exit_code != 0
 
-    def test_exec_both_query_and_file_is_error(
+    def test_both_query_and_file_is_error(
         self, runner: CliRunner, cache_env: Path, tmp_path: Path
     ) -> None:
         _ = cache_env
@@ -289,13 +286,11 @@ class TestSqlExecErrors:
         sql_file.write_text("SELECT 1")
         result = runner.invoke(
             cli,
-            ["sql", "exec", WS_GUID, WH_GUID, "-q", "SELECT 1", "-f", str(sql_file)],
+            ["sql", WS_GUID, WH_GUID, "-q", "SELECT 1", "-f", str(sql_file)],
         )
         assert result.exit_code != 0
 
-    def test_exec_permission_denied_returns_nonzero(
-        self, runner: CliRunner, cache_env: Path
-    ) -> None:
+    def test_permission_denied_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
         with (
@@ -314,11 +309,11 @@ class TestSqlExecErrors:
         ):
             result = runner.invoke(
                 cli,
-                ["sql", "exec", WS_GUID, WH_GUID, "-q", "SELECT * FROM sensitive"],
+                ["sql", WS_GUID, WH_GUID, "-q", "SELECT * FROM sensitive"],
             )
         assert result.exit_code != 0
 
-    def test_exec_not_found_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_not_found_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
         with (
@@ -333,13 +328,11 @@ class TestSqlExecErrors:
         ):
             result = runner.invoke(
                 cli,
-                ["sql", "exec", WS_GUID, WH_GUID, "-q", "SELECT 1"],
+                ["sql", WS_GUID, WH_GUID, "-q", "SELECT 1"],
             )
         assert result.exit_code != 0
 
-    def test_exec_no_connection_string_returns_nonzero(
-        self, runner: CliRunner, cache_env: Path
-    ) -> None:
+    def test_no_connection_string_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
         # build_sql_target raises ClickException when connection_string is None;
@@ -360,6 +353,6 @@ class TestSqlExecErrors:
         ):
             result = runner.invoke(
                 cli,
-                ["sql", "exec", WS_GUID, WH_GUID, "-q", "SELECT 1"],
+                ["sql", WS_GUID, WH_GUID, "-q", "SELECT 1"],
             )
         assert result.exit_code != 0

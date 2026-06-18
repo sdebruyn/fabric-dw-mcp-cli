@@ -48,7 +48,7 @@ uvx fabric-dw workspaces list
 uvx fabric-dw warehouses list <workspace-name-or-id>
 
 # Execute a SQL query against a warehouse
-uvx fabric-dw sql exec <workspace-name-or-id> <warehouse-name-or-id> "SELECT TOP 10 * FROM dbo.my_table"
+uvx fabric-dw sql <workspace-name-or-id> <warehouse-name-or-id> -q "SELECT TOP 10 * FROM dbo.my_table"
 
 # List restore points for a warehouse
 uvx fabric-dw restore-points list <workspace-name-or-id> <warehouse-name-or-id>

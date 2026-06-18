@@ -202,7 +202,7 @@ async def create_procedure(
         schema: The schema name.  Must pass :func:`validate_identifier`.
         procedure_name: The procedure name.  Must pass :func:`validate_identifier`.
         body: The free-form procedure body.  Not validated — the caller owns
-            the SQL (same trust model as ``sql exec``).
+            the SQL (same trust model as ``sql``).
         mode: The credential mode for Entra authentication.
 
     Returns:

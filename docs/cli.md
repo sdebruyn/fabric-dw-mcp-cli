@@ -483,7 +483,8 @@ fabric-dw --json sql-endpoints permissions MyWorkspace MyLakehouseEP
 
 Execute SQL against a Fabric Data Warehouse or SQL Analytics Endpoint.
 
-### sql exec
+> **Breaking change:** The former `sql exec` subcommand was promoted to `sql` itself.
+> Replace `fdw sql exec ...` with `fdw sql ...`.
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
@@ -494,7 +495,7 @@ Execute a SQL statement or file against a warehouse or SQL Analytics Endpoint. P
 **Synopsis**
 
 ```
-fabric-dw sql exec [OPTIONS] [WORKSPACE] [ITEM]
+fabric-dw sql [OPTIONS] [WORKSPACE] [ITEM]
 ```
 
 | Option | Description |
@@ -508,10 +509,10 @@ Output defaults to a Rich table (rows/columns). Pass `--json` on the root comman
 
 ```shell
 # Inline query, Rich table output (default)
-fabric-dw sql exec MyWorkspace SalesWH -q "SELECT TOP 5 * FROM dbo.Sales"
+fabric-dw sql MyWorkspace SalesWH -q "SELECT TOP 5 * FROM dbo.Sales"
 
 # File input, JSON output
-fabric-dw --json sql exec MyWorkspace SalesWH -f ./queries/report.sql
+fabric-dw --json sql MyWorkspace SalesWH -f ./queries/report.sql
 ```
 
 ```json
