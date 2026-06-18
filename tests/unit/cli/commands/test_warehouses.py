@@ -222,6 +222,49 @@ class TestWarehousesListHideWorkspaceId:
         assert WS_GUID in result.output
 
 
+class TestWarehousesListAllWithConfigDefault:
+    """-A must NOT clash with a configured-default workspace (only explicit -w conflicts)."""
+
+    def test_all_workspaces_with_config_default_exits_zero(
+        self,
+        runner: CliRunner,
+        cache_env: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Passing -A together with a configured default workspace must succeed.
+
+        The mutual-exclusion guard only fires when an explicit -w is supplied.
+        A workspace set via FABRIC_DW_DEFAULT_WORKSPACE (or config-file default)
+        is NOT the same as an explicit -w, so -A must win and the command must
+        exit 0.
+        """
+        _ = cache_env
+        # Simulate a configured default workspace via the environment variable.
+        monkeypatch.setenv("FABRIC_DW_DEFAULT_WORKSPACE", WS_GUID)
+        wh = Warehouse.model_validate(
+            {
+                "id": WH_GUID,
+                "displayName": "SalesWarehouse",
+                "workspaceId": WS_GUID,
+                "kind": WarehouseKind.WAREHOUSE,
+            }
+        )
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.warehouses.build_http_client",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.services.warehouses.list_all_workspaces",
+                new=AsyncMock(return_value=[wh]),
+            ),
+        ):
+            # No -w flag; the workspace default is set only via env var.
+            result = runner.invoke(cli, ["warehouses", "list", "-A"])
+        assert result.exit_code == 0, result.output
+
+
 class TestWarehousesListWarehousesOnly:
     """(b) --warehouses-only excludes SQL endpoints and skips the sqlEndpoints fetch."""
 
