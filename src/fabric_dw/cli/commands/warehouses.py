@@ -5,7 +5,11 @@ from __future__ import annotations
 import click
 
 from fabric_dw.cli._context import CliContext
-from fabric_dw.cli._render import render, render_permissions_table
+from fabric_dw.cli._render import (
+    render,
+    render_permissions_table,
+    with_default_collation_for_display,
+)
 from fabric_dw.cli.commands._utils import (
     build_http_client,
     confirm_destructive,
@@ -116,7 +120,12 @@ async def get_cmd(ctx: CliContext, workspace: str | None, warehouse: str | None)
         async with build_http_client(ctx) as http:
             ws_id, entry = await resolve_item(http, ws, wh)
             obj = await _warehouses_svc.get_warehouse(http, ws_id, entry.id)
-            render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
+            dump = obj.model_dump(by_alias=True, mode="json")
+            # Human output substitutes Fabric's effective default collation when
+            # the API returns null; --json keeps the raw API value.
+            if not ctx.json_output:
+                dump = with_default_collation_for_display(dump)
+            render(dump, json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 

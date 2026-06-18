@@ -345,6 +345,52 @@ class TestEndpointsGet:
             result = runner.invoke(cli, ["sql-endpoints", "get", WS_GUID, EP_GUID])
         assert result.exit_code != 0
 
+    def test_get_human_output_shows_default_collation(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """SQL endpoints share the warehouse model: null collation → default '(default)'."""
+        _ = cache_env
+        from fabric_dw.models import FABRIC_DEFAULT_COLLATION  # noqa: PLC0415
+
+        mock_http = AsyncMock()
+        mock_http.request = AsyncMock(return_value=_make_response(200, _ENDPOINT_JSON))
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_endpoints.build_http_client",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_endpoints.resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+        ):
+            result = runner.invoke(cli, ["sql-endpoints", "get", WS_GUID, EP_GUID])
+        assert result.exit_code == 0, result.output
+        assert FABRIC_DEFAULT_COLLATION in result.output
+        assert "(default)" in result.output
+
+    def test_get_json_output_keeps_raw_null_collation(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """--json must keep the raw API value (null) for SQL endpoints too."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_http.request = AsyncMock(return_value=_make_response(200, _ENDPOINT_JSON))
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_endpoints.build_http_client",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_endpoints.resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+        ):
+            result = runner.invoke(cli, ["--json", "sql-endpoints", "get", WS_GUID, EP_GUID])
+        assert result.exit_code == 0, result.output
+        parsed = json.loads(result.output)
+        assert parsed["defaultCollation"] is None
+
 
 def _make_table_sync_statuses() -> list[TableSyncStatus]:
     return [
