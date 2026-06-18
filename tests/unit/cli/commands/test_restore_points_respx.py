@@ -137,9 +137,10 @@ class TestRestorePointsCreateRespx:
                     cli,
                     [
                         "--json",
+                        "-w",
+                        WS_GUID,
                         "restore-points",
                         "create",
-                        WS_GUID,
                         WH_GUID,
                         "--name",
                         "RestorePoint_20240315",
@@ -175,9 +176,10 @@ class TestRestorePointsCreateRespx:
                     cli,
                     [
                         "--json",
+                        "-w",
+                        WS_GUID,
                         "restore-points",
                         "create",
-                        WS_GUID,
                         WH_GUID,
                         "--name",
                         "RestorePoint_20240315",
@@ -210,7 +212,7 @@ class TestRestorePointsCreateRespx:
             ):
                 result = runner.invoke(
                     cli,
-                    ["--json", "restore-points", "create", WS_GUID, WH_GUID],
+                    ["--json", "-w", WS_GUID, "restore-points", "create", WH_GUID],
                 )
 
         assert result.exit_code == 0, result.output
@@ -248,7 +250,7 @@ class TestRestorePointsCreateRespx:
             ):
                 result = runner.invoke(
                     cli,
-                    ["--json", "restore-points", "create", WS_GUID, WH_GUID],
+                    ["--json", "-w", WS_GUID, "restore-points", "create", WH_GUID],
                 )
 
         assert result.exit_code == 0, result.output
@@ -293,9 +295,10 @@ class TestRestorePointsRenameRespx:
                     cli,
                     [
                         "--json",
+                        "-w",
+                        WS_GUID,
                         "restore-points",
                         "rename",
-                        WS_GUID,
                         WH_GUID,
                         RP_ID,
                         "RenamedRestorePoint",
@@ -331,9 +334,10 @@ class TestRestorePointsRenameRespx:
                     cli,
                     [
                         "--json",
+                        "-w",
+                        WS_GUID,
                         "restore-points",
                         "rename",
-                        WS_GUID,
                         WH_GUID,
                         RP_ID,
                         "RenamedRestorePoint",
@@ -365,9 +369,10 @@ class TestRestorePointsRenameRespx:
                     cli,
                     [
                         "--json",
+                        "-w",
+                        WS_GUID,
                         "restore-points",
                         "rename",
-                        WS_GUID,
                         WH_GUID,
                         RP_ID,
                         "RenamedRestorePoint",

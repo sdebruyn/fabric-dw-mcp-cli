@@ -95,7 +95,7 @@ class TestSnapshotsList:
                 new=AsyncMock(return_value=(WS_UUID, _make_wh_entry())),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "snapshots", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["--json", "-w", WS_GUID, "snapshots", "list", WH_GUID])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert isinstance(parsed, list)
@@ -114,7 +114,7 @@ class TestSnapshotsList:
                 new=AsyncMock(return_value=(WS_UUID, _make_wh_entry())),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "snapshots", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["--json", "-w", WS_GUID, "snapshots", "list", WH_GUID])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert isinstance(parsed, list)
@@ -132,7 +132,7 @@ class TestSnapshotsList:
                 new=AsyncMock(side_effect=NotFoundError("not found")),
             ),
         ):
-            result = runner.invoke(cli, ["snapshots", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "snapshots", "list", WH_GUID])
         assert result.exit_code != 0
 
 
@@ -169,7 +169,7 @@ class TestSnapshotsCreate:
         ):
             result = runner.invoke(
                 cli,
-                ["--json", "snapshots", "create", WS_GUID, WH_GUID, "MySnapshot"],
+                ["--json", "-w", WS_GUID, "snapshots", "create", WH_GUID, "MySnapshot"],
             )
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -186,9 +186,10 @@ class TestSnapshotsCreateDatetime:
         result = runner.invoke(
             cli,
             [
+                "-w",
+                WS_GUID,
                 "snapshots",
                 "create",
-                WS_GUID,
                 WH_GUID,
                 "MySnapshot",
                 "--snapshot-dt",
@@ -207,9 +208,10 @@ class TestSnapshotsCreateDatetime:
         result = runner.invoke(
             cli,
             [
+                "-w",
+                WS_GUID,
                 "snapshots",
                 "create",
-                WS_GUID,
                 WH_GUID,
                 "MySnapshot",
                 "--snapshot-dt",
@@ -242,7 +244,7 @@ class TestSnapshotsRename:
         ):
             result = runner.invoke(
                 cli,
-                ["--json", "snapshots", "rename", SNAP_GUID, "NewSnapshotName", WS_GUID],
+                ["--json", "-w", WS_GUID, "snapshots", "rename", SNAP_GUID, "NewSnapshotName"],
             )
         assert result.exit_code == 0
         # Verify that the PATCH request body contained the NEW display name, not the old one.
@@ -277,7 +279,7 @@ class TestSnapshotsDelete:
                 new=AsyncMock(return_value=(WS_UUID, _make_snap_entry(), _cache)),
             ),
         ):
-            result = runner.invoke(cli, ["--yes", "snapshots", "delete", SNAP_GUID, WS_GUID])
+            result = runner.invoke(cli, ["--yes", "-w", WS_GUID, "snapshots", "delete", SNAP_GUID])
         assert result.exit_code == 0
         mock_http.request.assert_awaited_once()
         # Assert only the real success signal — the snapshot name is always in the fixture
@@ -299,7 +301,9 @@ class TestSnapshotsDelete:
                 new=AsyncMock(return_value=(WS_UUID, _make_snap_entry(), _cache)),
             ),
         ):
-            result = runner.invoke(cli, ["snapshots", "delete", SNAP_GUID, WS_GUID], input="n\n")
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "snapshots", "delete", SNAP_GUID], input="n\n"
+            )
         assert result.exit_code == 0
         assert "Aborted." in result.output
 
@@ -329,9 +333,10 @@ class TestSnapshotsRoll:
                 cli,
                 [
                     "--yes",
+                    "-w",
+                    WS_GUID,
                     "snapshots",
                     "roll",
-                    WS_GUID,
                     WH_GUID,
                     "SalesWarehouse_Snapshot_20240315",
                 ],
@@ -364,9 +369,10 @@ class TestSnapshotsRoll:
                 cli,
                 [
                     "--yes",
+                    "-w",
+                    WS_GUID,
                     "snapshots",
                     "roll",
-                    WS_GUID,
                     WH_GUID,
                     "SalesWarehouse_Snapshot_20240315",
                     "--at",
@@ -398,9 +404,10 @@ class TestSnapshotsRoll:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "snapshots",
                     "roll",
-                    WS_GUID,
                     WH_GUID,
                     "SalesWarehouse_Snapshot_20240315",
                 ],
@@ -432,9 +439,10 @@ class TestSnapshotsRoll:
                 cli,
                 [
                     "--yes",
+                    "-w",
+                    WS_GUID,
                     "snapshots",
                     "roll",
-                    WS_GUID,
                     WH_GUID,
                     "SalesWarehouse_Snapshot_20240315",
                 ],

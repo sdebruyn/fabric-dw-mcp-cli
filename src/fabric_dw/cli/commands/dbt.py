@@ -2,7 +2,7 @@
 
 Commands
 --------
-- ``dbt init <ws> <item> <folder>`` — scaffold a new dbt-fabric project.
+- ``dbt init <item> <folder>`` — scaffold a new dbt-fabric project.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from fabric_dw.cli.commands._utils import (
     build_sql_target,
     coro,
     resolve_warehouse_arg,
-    resolve_workspace_arg,
+    resolve_workspace,
 )
 from fabric_dw.exceptions import FabricError
 from fabric_dw.services.dbt_scaffold import (
@@ -38,7 +38,6 @@ def dbt_group() -> None:
 
 
 @dbt_group.command("init")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.argument("folder", required=True)
 @click.option(
@@ -119,7 +118,6 @@ def dbt_group() -> None:
 @coro
 async def init_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     folder: str,
     project_name: str | None,
@@ -132,7 +130,7 @@ async def init_cmd(
     with_sources: bool,
     force: bool,
 ) -> None:
-    """Scaffold a new dbt-fabric project in FOLDER linked to ITEM in WORKSPACE.
+    """Scaffold a new dbt-fabric project in FOLDER linked to ITEM.
 
     Writes dbt_project.yml, profiles.yml (or merges into ~/.dbt/profiles.yml),
     requirements.txt, .gitignore, standard dbt folders, a sample model, and
@@ -140,7 +138,7 @@ async def init_cmd(
 
     If git is on PATH and FOLDER has no .git directory, ``git init`` is run.
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
 
     target_folder = Path(folder)

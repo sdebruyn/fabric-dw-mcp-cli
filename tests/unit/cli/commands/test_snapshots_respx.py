@@ -191,7 +191,7 @@ class TestSnapshotsListRespx:
             ):
                 result = runner.invoke(
                     cli,
-                    ["--json", "snapshots", "list", WS_GUID, WH_GUID],
+                    ["--json", "-w", WS_GUID, "snapshots", "list", WH_GUID],
                 )
 
         assert result.exit_code == 0, result.output
@@ -235,7 +235,7 @@ class TestSnapshotsListRespx:
             ):
                 result = runner.invoke(
                     cli,
-                    ["--json", "snapshots", "list", WS_GUID, WH_GUID],
+                    ["--json", "-w", WS_GUID, "snapshots", "list", WH_GUID],
                 )
 
         assert result.exit_code == 0, result.output
@@ -318,9 +318,10 @@ class TestSnapshotsCreateRespx:
                     cli,
                     [
                         "--json",
+                        "-w",
+                        WS_GUID,
                         "snapshots",
                         "create",
-                        WS_GUID,
                         WH_GUID,
                         "SalesWarehouse_Snapshot_20240315",
                     ],
@@ -374,9 +375,10 @@ class TestSnapshotsCreateRespx:
                     cli,
                     [
                         "--json",
+                        "-w",
+                        WS_GUID,
                         "snapshots",
                         "create",
-                        WS_GUID,
                         WH_GUID,
                         "SalesWarehouse_Snapshot_20240315",
                     ],
@@ -421,9 +423,10 @@ class TestSnapshotsCreateRespx:
                     cli,
                     [
                         "--json",
+                        "-w",
+                        WS_GUID,
                         "snapshots",
                         "create",
-                        WS_GUID,
                         WH_GUID,
                         "SalesWarehouse_Snapshot_20240315",
                     ],
@@ -479,11 +482,12 @@ class TestSnapshotsRenameRespx:
                     [
                         "--json",
                         "--yes",
+                        "-w",
+                        WS_GUID,
                         "snapshots",
                         "rename",
                         SNAP_GUID,
                         "RenamedSnapshot",
-                        WS_GUID,
                     ],
                 )
 
@@ -526,11 +530,12 @@ class TestSnapshotsRenameRespx:
                     [
                         "--json",
                         "--yes",
+                        "-w",
+                        WS_GUID,
                         "snapshots",
                         "rename",
                         SNAP_GUID,
                         "RenamedSnapshot",
-                        WS_GUID,
                     ],
                 )
 
@@ -571,11 +576,12 @@ class TestSnapshotsRenameRespx:
                     [
                         "--json",
                         "--yes",
+                        "-w",
+                        WS_GUID,
                         "snapshots",
                         "rename",
                         SNAP_GUID,
                         "RenamedSnapshot",
-                        WS_GUID,
                     ],
                 )
 
@@ -613,10 +619,11 @@ class TestSnapshotsDeleteRespx:
                     cli,
                     [
                         "--yes",
+                        "-w",
+                        WS_GUID,
                         "snapshots",
                         "delete",
                         SNAP_GUID,
-                        WS_GUID,
                     ],
                 )
 
@@ -641,10 +648,11 @@ class TestSnapshotsDeleteRespx:
                     [
                         "--yes",
                         "--json",
+                        "-w",
+                        WS_GUID,
                         "snapshots",
                         "delete",
                         SNAP_GUID,
-                        WS_GUID,
                     ],
                 )
 

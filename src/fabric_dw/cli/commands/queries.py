@@ -16,7 +16,7 @@ from fabric_dw.cli.commands._utils import (
     coro,
     parse_iso_optional,
     resolve_warehouse_arg,
-    resolve_workspace_arg,
+    resolve_workspace,
 )
 from fabric_dw.exceptions import FabricError
 from fabric_dw.services import queries as _queries_svc
@@ -29,13 +29,12 @@ def queries_group() -> None:
 
 
 @queries_group.command("list")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.pass_obj
 @coro
-async def list_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> None:
-    """List currently running queries on ITEM (warehouse or endpoint) in WORKSPACE."""
-    ws = resolve_workspace_arg(ctx, workspace)
+async def list_cmd(ctx: CliContext, item: str | None) -> None:
+    """List currently running queries on ITEM (warehouse or endpoint)."""
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
@@ -51,13 +50,12 @@ async def list_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> 
 
 
 @queries_group.command("list-connections")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.pass_obj
 @coro
-async def list_connections_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> None:
-    """List active SQL connections on ITEM (warehouse or endpoint) in WORKSPACE."""
-    ws = resolve_workspace_arg(ctx, workspace)
+async def list_connections_cmd(ctx: CliContext, item: str | None) -> None:
+    """List active SQL connections on ITEM (warehouse or endpoint)."""
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
@@ -73,16 +71,13 @@ async def list_connections_cmd(ctx: CliContext, workspace: str | None, item: str
 
 
 @queries_group.command("kill")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.argument("session_id", type=int)
 @click.pass_obj
 @coro
-async def kill_cmd(
-    ctx: CliContext, workspace: str | None, item: str | None, session_id: int
-) -> None:
-    """Kill the session SESSION_ID on ITEM (warehouse or endpoint) in WORKSPACE."""
-    ws = resolve_workspace_arg(ctx, workspace)
+async def kill_cmd(ctx: CliContext, item: str | None, session_id: int) -> None:
+    """Kill the session SESSION_ID on ITEM (warehouse or endpoint)."""
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
@@ -108,7 +103,6 @@ async def kill_cmd(
 
 
 @queries_group.command("request-history")
-@click.argument("workspace", required=False, default=None)
 @click.argument("warehouse", required=False, default=None)
 @LIMIT_OPTION
 @SINCE_OPTION
@@ -117,14 +111,13 @@ async def kill_cmd(
 @coro
 async def request_history_cmd(
     ctx: CliContext,
-    workspace: str | None,
     warehouse: str | None,
     limit: int,
     since: str | None,
     until: str | None,
 ) -> None:
     """List completed SQL requests from queryinsights.exec_requests_history."""
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, warehouse)
     since_dt = parse_iso_optional(since, "--since")
     until_dt = parse_iso_optional(until, "--until")
@@ -149,7 +142,6 @@ async def request_history_cmd(
 
 
 @queries_group.command("session-history")
-@click.argument("workspace", required=False, default=None)
 @click.argument("warehouse", required=False, default=None)
 @LIMIT_OPTION
 @SINCE_OPTION
@@ -158,14 +150,13 @@ async def request_history_cmd(
 @coro
 async def session_history_cmd(
     ctx: CliContext,
-    workspace: str | None,
     warehouse: str | None,
     limit: int,
     since: str | None,
     until: str | None,
 ) -> None:
     """List completed sessions from queryinsights.exec_sessions_history."""
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, warehouse)
     since_dt = parse_iso_optional(since, "--since")
     until_dt = parse_iso_optional(until, "--until")
@@ -190,7 +181,6 @@ async def session_history_cmd(
 
 
 @queries_group.command("frequent")
-@click.argument("workspace", required=False, default=None)
 @click.argument("warehouse", required=False, default=None)
 @LIMIT_OPTION
 @SINCE_OPTION
@@ -199,14 +189,13 @@ async def session_history_cmd(
 @coro
 async def frequent_cmd(
     ctx: CliContext,
-    workspace: str | None,
     warehouse: str | None,
     limit: int,
     since: str | None,
     until: str | None,
 ) -> None:
     """List frequently-run queries from queryinsights.frequently_run_queries."""
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, warehouse)
     since_dt = parse_iso_optional(since, "--since")
     until_dt = parse_iso_optional(until, "--until")
@@ -231,7 +220,6 @@ async def frequent_cmd(
 
 
 @queries_group.command("long-running")
-@click.argument("workspace", required=False, default=None)
 @click.argument("warehouse", required=False, default=None)
 @LIMIT_OPTION
 @SINCE_OPTION
@@ -240,14 +228,13 @@ async def frequent_cmd(
 @coro
 async def long_running_cmd(
     ctx: CliContext,
-    workspace: str | None,
     warehouse: str | None,
     limit: int,
     since: str | None,
     until: str | None,
 ) -> None:
     """List long-running queries from queryinsights.long_running_queries."""
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, warehouse)
     since_dt = parse_iso_optional(since, "--since")
     until_dt = parse_iso_optional(until, "--until")

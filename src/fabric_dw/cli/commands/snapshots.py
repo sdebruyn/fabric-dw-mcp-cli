@@ -17,7 +17,7 @@ from fabric_dw.cli.commands._utils import (
     resolve_item,
     resolve_item_with_cache,
     resolve_warehouse_arg,
-    resolve_workspace_arg,
+    resolve_workspace,
 )
 from fabric_dw.exceptions import FabricError
 from fabric_dw.services import snapshots as _snapshots_svc
@@ -29,13 +29,12 @@ def snapshots_group() -> None:
 
 
 @snapshots_group.command("list")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.pass_obj
 @coro
-async def list_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> None:
-    """List all snapshots for ITEM (warehouse) in WORKSPACE."""
-    ws = resolve_workspace_arg(ctx, workspace)
+async def list_cmd(ctx: CliContext, item: str | None) -> None:
+    """List all snapshots for ITEM (warehouse)."""
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
@@ -51,7 +50,6 @@ async def list_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> 
 
 
 @snapshots_group.command("create")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.argument("name")
 @click.option("--description", default=None, help="Optional description.")
@@ -64,14 +62,13 @@ async def list_cmd(ctx: CliContext, workspace: str | None, item: str | None) -> 
 @coro
 async def create_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     name: str,
     description: str | None,
     snapshot_dt: str | None,
 ) -> None:
-    """Create a new snapshot named NAME for ITEM (warehouse) in WORKSPACE."""
-    ws = resolve_workspace_arg(ctx, workspace)
+    """Create a new snapshot named NAME for ITEM (warehouse)."""
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     parsed_dt: datetime | None = None
     if snapshot_dt is not None:
@@ -96,7 +93,6 @@ async def create_cmd(
 @snapshots_group.command("rename")
 @click.argument("snapshot")
 @click.argument("new_name")
-@click.argument("workspace", required=False, default=None)
 @click.option("--description", default=None, help="Optional new description.")
 @click.pass_obj
 @coro
@@ -104,20 +100,15 @@ async def rename_cmd(
     ctx: CliContext,
     snapshot: str,
     new_name: str,
-    workspace: str | None,
     description: str | None,
 ) -> None:
-    """Rename SNAPSHOT to NEW_NAME in WORKSPACE (workspace and snapshot accept name or GUID).
+    """Rename SNAPSHOT to NEW_NAME (snapshot accepts name or GUID).
 
-    Argument order note (L08): WORKSPACE appears after SNAPSHOT and NEW_NAME here
-    and in the ``delete`` sub-command because these operations target a snapshot
-    GUID directly, making the snapshot the primary positional argument.  The
-    ``list``, ``create``, and ``roll`` sub-commands lead with WORKSPACE because
-    they need to scope the operation to a warehouse first.  The asymmetry is
-    intentional; WORKSPACE is optional in all cases and falls back to the
-    ``FABRIC_WORKSPACE`` environment variable.
+    The target workspace is taken from the global ``-w/--workspace`` option,
+    the ``FABRIC_DW_DEFAULT_WORKSPACE`` environment variable, or the configured
+    default.
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     try:
         async with build_http_client(ctx) as http:
             ws_id, entry, cache = await resolve_item_with_cache(http, ws, snapshot)
@@ -137,16 +128,16 @@ async def rename_cmd(
 
 @snapshots_group.command("delete")
 @click.argument("snapshot")
-@click.argument("workspace", required=False, default=None)
 @click.pass_obj
 @coro
-async def delete_cmd(ctx: CliContext, snapshot: str, workspace: str | None) -> None:
-    """Delete SNAPSHOT from WORKSPACE (both accept name or GUID).
+async def delete_cmd(ctx: CliContext, snapshot: str) -> None:
+    """Delete SNAPSHOT (accepts name or GUID).
 
-    Argument order note (L08): see ``rename`` — WORKSPACE is intentionally last
-    because this operation targets a snapshot GUID directly.
+    The target workspace is taken from the global ``-w/--workspace`` option,
+    the ``FABRIC_DW_DEFAULT_WORKSPACE`` environment variable, or the configured
+    default.
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     try:
         async with build_http_client(ctx) as http:
             ws_id, entry, cache = await resolve_item_with_cache(http, ws, snapshot)
@@ -175,7 +166,6 @@ async def delete_cmd(ctx: CliContext, snapshot: str, workspace: str | None) -> N
 
 
 @snapshots_group.command("roll")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.argument("snapshot_name")
 @click.option(
@@ -188,17 +178,16 @@ async def delete_cmd(ctx: CliContext, snapshot: str, workspace: str | None) -> N
 @coro
 async def roll_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     snapshot_name: str,
     new_dt: str | None,
 ) -> None:
-    """Roll SNAPSHOT_NAME on ITEM (warehouse) in WORKSPACE to a new timestamp.
+    """Roll SNAPSHOT_NAME on ITEM (warehouse) to a new timestamp.
 
-    WORKSPACE and ITEM accept name or GUID.
+    ITEM accepts name or GUID.
     SNAPSHOT_NAME must be the display name of the snapshot database.
     """
-    ws = resolve_workspace_arg(ctx, workspace)
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     parsed_dt: datetime | None = None
     if new_dt is not None:

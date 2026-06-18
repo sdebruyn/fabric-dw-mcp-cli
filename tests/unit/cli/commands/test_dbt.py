@@ -70,7 +70,7 @@ def _invoke_init(runner: CliRunner, tmp_path: Path, extra_args: list[str] | None
         ) as mock_scaffold,
     ):
         mock_scaffold.return_value = [tmp_path / "myproject" / "dbt_project.yml"]
-        args = ["dbt", "init", WS_GUID, WH_GUID, folder]
+        args = ["-w", WS_GUID, "dbt", "init", WH_GUID, folder]
         if extra_args:
             args.extend(extra_args)
         return runner.invoke(cli, args)
@@ -110,7 +110,7 @@ class TestDbtInitCommand:
             patch("fabric_dw.services.dbt_scaffold.scaffold") as mock_scaffold,
         ):
             mock_scaffold.return_value = []
-            result = runner.invoke(cli, ["dbt", "init", WS_GUID, WH_GUID, folder])
+            result = runner.invoke(cli, ["-w", WS_GUID, "dbt", "init", WH_GUID, folder])
         assert result.exit_code == 0
 
     def test_explicit_project_name_accepted(
@@ -201,7 +201,7 @@ class TestDbtInitWithSources:
             mock_scaffold.return_value = []
             result = runner.invoke(
                 cli,
-                ["dbt", "init", WS_GUID, WH_GUID, folder, "--with-sources"],
+                ["-w", WS_GUID, "dbt", "init", WH_GUID, folder, "--with-sources"],
             )
         assert result.exit_code == 0
         mock_schemas.assert_called_once()
@@ -232,7 +232,7 @@ class TestDbtInitErrors:
         ):
             result = runner.invoke(
                 cli,
-                ["dbt", "init", WS_GUID, WH_GUID, str(folder)],
+                ["-w", WS_GUID, "dbt", "init", WH_GUID, str(folder)],
             )
         assert result.exit_code != 0
 
@@ -252,5 +252,5 @@ class TestDbtInitErrors:
                 new=AsyncMock(side_effect=NotFoundError("Workspace not found")),
             ),
         ):
-            result = runner.invoke(cli, ["dbt", "init", WS_GUID, WH_GUID, folder])
+            result = runner.invoke(cli, ["-w", WS_GUID, "dbt", "init", WH_GUID, folder])
         assert result.exit_code != 0
