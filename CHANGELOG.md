@@ -7,7 +7,7 @@ Versions follow [CalVer](https://calver.org/) in the form `YYYY.MM.MICRO`.
 
 ---
 
-## [Unreleased] — v2026.6.1
+## [Unreleased]
 
 ### Breaking changes
 

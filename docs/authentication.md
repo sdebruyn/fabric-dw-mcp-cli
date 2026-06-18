@@ -10,12 +10,12 @@ If you are already signed in via [Azure CLI](https://learn.microsoft.com/cli/azu
 
 ```bash
 az login          # or: az login --tenant <tenant-id>
-fabric-dw warehouses list "Sales Workspace"
+fabric-dw -w "Sales Workspace" warehouses list
 ```
 
 ```powershell
 Connect-AzAccount
-fabric-dw warehouses list "Sales Workspace"
+fabric-dw -w "Sales Workspace" warehouses list
 ```
 
 If neither of those works for you, read on for the alternatives.

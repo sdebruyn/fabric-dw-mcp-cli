@@ -150,7 +150,7 @@ Get details for a workspace, including its default Data Warehouse collation.
 **Synopsis**
 
 ```
-fabric-dw workspaces get <WORKSPACE>
+fabric-dw workspaces get [WORKSPACE]
 ```
 
 **Example**
@@ -179,7 +179,7 @@ Set the default Data Warehouse collation for a workspace. `COLLATION` must be on
 **Synopsis**
 
 ```
-fabric-dw workspaces set-collation <WORKSPACE> COLLATION
+fabric-dw workspaces set-collation [WORKSPACE] COLLATION
 ```
 
 **Example**
@@ -203,12 +203,13 @@ List all Data Warehouses and SQL Analytics Endpoints in a workspace. Pass `-A` /
 **Synopsis**
 
 ```
-fabric-dw [-w WORKSPACE] warehouses list [-A]
+fabric-dw [-w WORKSPACE] warehouses list [-A] [--warehouses-only]
 ```
 
 | Option | Description |
 | --- | --- |
 | `-A` / `--all-workspaces` | Scan all visible workspaces and aggregate results. Mutually exclusive with `-w`. |
+| `--warehouses-only` | List only Warehouses; exclude SQL Analytics Endpoints (skips an API call). |
 
 **Example**
 
