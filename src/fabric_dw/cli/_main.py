@@ -22,6 +22,7 @@ from fabric_dw.cli.commands.procedures import procedures_group
 from fabric_dw.cli.commands.queries import queries_group
 from fabric_dw.cli.commands.restore_points import restore_points_group
 from fabric_dw.cli.commands.schemas import schemas_group
+from fabric_dw.cli.commands.settings import settings_group
 from fabric_dw.cli.commands.snapshots import snapshots_group
 from fabric_dw.cli.commands.sql import sql_cmd
 from fabric_dw.cli.commands.sql_endpoints import sql_endpoints_group
@@ -455,4 +456,5 @@ cli.add_command(tables_group)
 cli.add_command(views_group)
 cli.add_command(procedures_group)
 cli.add_command(statistics_group)
+cli.add_command(settings_group)
 cli.add_command(functions_group)

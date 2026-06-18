@@ -2478,6 +2478,80 @@ fabric-dw [-w WORKSPACE] statistics delete [ITEM] QUALIFIED_TABLE STAT_NAME
 
 ---
 
+## fabric-dw settings
+
+Manage **server-side** database settings on a Fabric Data Warehouse or SQL Analytics Endpoint.
+
+> **Note:** `settings` manages server-side warehouse/database configuration. For client-side CLI defaults (workspace, warehouse) use [`fabric-dw config`](#defaults-fabric-dw-config) instead.
+
+`show` and `result-set-caching` work on both Data Warehouses and SQL Analytics Endpoints. The `retention` command sets the time-travel retention period, which is primarily a Warehouse concept and may be a no-op on a SQL Analytics Endpoint.
+
+The workspace is resolved from the global `-w/--workspace` option, the `FABRIC_DW_DEFAULT_WORKSPACE` environment variable, or the client-side config default. `ITEM` may be a display name or GUID.
+
+### settings show
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Display all server-side database settings for an item in a single table.
+
+```shell
+fabric-dw -w <workspace> settings show [ITEM]
+```
+
+**Example:**
+
+```shell
+fabric-dw -w MyWorkspace settings show MyWarehouse
+fabric-dw -w MyWorkspace --json settings show MyWarehouse
+```
+
+### settings result-set-caching
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Enable or disable result-set caching.
+
+Executes `ALTER DATABASE CURRENT SET RESULT_SET_CACHING { ON | OFF }` on the target.
+
+```shell
+fabric-dw -w <workspace> settings result-set-caching [ITEM] (on|off)
+```
+
+`STATE` is case-insensitive (`on`, `off`, `ON`, `OFF`).
+
+**Example:**
+
+```shell
+fabric-dw -w MyWorkspace settings result-set-caching MyWarehouse on
+fabric-dw -w MyWorkspace settings result-set-caching MyWarehouse off
+fabric-dw -w MyWorkspace --json settings result-set-caching MyWarehouse on
+```
+
+### settings retention
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Set the time-travel retention period in days.
+
+Executes `ALTER DATABASE CURRENT SET TIME_TRAVEL_RETENTION_PERIOD = <DAYS> DAYS` on the target.
+
+```shell
+fabric-dw -w <workspace> settings retention [ITEM] --days DAYS
+```
+
+| Option | Description | Default |
+| --- | --- | --- |
+| `--days N` | Retention period in days (1-120, required). | — |
+
+**Example:**
+
+```shell
+fabric-dw -w MyWorkspace settings retention MyWarehouse --days 30
+fabric-dw -w MyWorkspace --json settings retention MyWarehouse --days 7
+```
+
+---
+
 ## fabric-dw cache
 
 Manage the local name-to-UUID lookup cache. `fabric-dw` caches workspace and item name-to-GUID mappings to avoid repeated API round-trips. Use these commands if you rename items outside the CLI or need to force a fresh lookup.

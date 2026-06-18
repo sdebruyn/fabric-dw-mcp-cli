@@ -577,6 +577,33 @@ class StatisticDetails(_FabricBase):
 
 
 # ---------------------------------------------------------------------------
+# Warehouse Settings
+# ---------------------------------------------------------------------------
+
+
+class WarehouseSettings(_FabricBase):
+    """Server-side database settings read from ``sys.databases``.
+
+    Both Data Warehouses and SQL Analytics Endpoints expose these settings.
+    The two write operations (:func:`~fabric_dw.services.settings.set_result_set_caching`
+    and :func:`~fabric_dw.services.settings.set_time_travel_retention`) require
+    a Data Warehouse (they execute ``ALTER DATABASE CURRENT SET …``).
+
+    Attributes:
+        database: The database name (from ``sys.databases.name``).
+        result_set_caching: Whether result-set caching is enabled.
+        time_travel_retention_days: Time-travel retention period in days.
+        time_travel_retention_cutoff_date: The earliest date for which time-travel
+            data is retained, or ``None`` when not applicable.
+    """
+
+    database: str
+    result_set_caching: bool
+    time_travel_retention_days: int | None
+    time_travel_retention_cutoff_date: datetime | None
+
+
+# ---------------------------------------------------------------------------
 # SQL Pools (beta)
 # ---------------------------------------------------------------------------
 
