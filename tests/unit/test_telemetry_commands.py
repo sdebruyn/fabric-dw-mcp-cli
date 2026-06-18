@@ -340,7 +340,6 @@ class TestEmitCommandInvokedDisabled:
         with patch(_EMIT_EVENT) as mock_emit, patch(_TELEMETRY_ENABLED, return_value=False):
             emit_command_invoked(
                 name="warehouses.list",
-                surface="cli",
                 status="success",
                 duration_ms=50.0,
             )
@@ -375,7 +374,6 @@ class TestEmitCommandInvokedEnabled:
     def test_emits_one_event(self) -> None:
         mock = self._run(
             name="warehouses.list",
-            surface="cli",
             status="success",
             duration_ms=50.0,
         )
@@ -384,7 +382,6 @@ class TestEmitCommandInvokedEnabled:
     def test_event_name_is_command_invoked(self) -> None:
         mock = self._run(
             name="warehouses.list",
-            surface="cli",
             status="success",
             duration_ms=50.0,
         )
@@ -394,7 +391,6 @@ class TestEmitCommandInvokedEnabled:
     def test_attributes_contain_name(self) -> None:
         mock = self._run(
             name="warehouses.list",
-            surface="cli",
             status="success",
             duration_ms=50.0,
         )
@@ -404,7 +400,6 @@ class TestEmitCommandInvokedEnabled:
     def test_attributes_contain_domain(self) -> None:
         mock = self._run(
             name="warehouses.list",
-            surface="cli",
             status="success",
             duration_ms=50.0,
         )
@@ -415,7 +410,6 @@ class TestEmitCommandInvokedEnabled:
         """surface must NOT appear as a custom dimension — native cloud_RoleName now (#477)."""
         mock = self._run(
             name="warehouses.list",
-            surface="cli",
             status="success",
             duration_ms=50.0,
         )
@@ -429,7 +423,6 @@ class TestEmitCommandInvokedEnabled:
         """ai.operation.name must be set to the command name for native operation_Name (#477)."""
         mock = self._run(
             name="warehouses.list",
-            surface="cli",
             status="success",
             duration_ms=50.0,
         )
@@ -442,7 +435,6 @@ class TestEmitCommandInvokedEnabled:
     def test_attributes_contain_status(self) -> None:
         mock = self._run(
             name="warehouses.list",
-            surface="cli",
             status="success",
             duration_ms=50.0,
         )
@@ -452,7 +444,6 @@ class TestEmitCommandInvokedEnabled:
     def test_attributes_contain_duration_bucket(self) -> None:
         mock = self._run(
             name="warehouses.list",
-            surface="cli",
             status="success",
             duration_ms=50.0,
         )
@@ -462,7 +453,6 @@ class TestEmitCommandInvokedEnabled:
     def test_destructive_op_attribute_when_true(self) -> None:
         mock = self._run(
             name="delete_warehouse",
-            surface="mcp",
             status="success",
             duration_ms=200.0,
             destructive=True,
@@ -473,7 +463,6 @@ class TestEmitCommandInvokedEnabled:
     def test_destructive_op_absent_when_false(self) -> None:
         mock = self._run(
             name="list_warehouses",
-            surface="mcp",
             status="success",
             duration_ms=50.0,
             destructive=False,
@@ -485,7 +474,6 @@ class TestEmitCommandInvokedEnabled:
         """The emitted attributes must not contain any identifier-like strings."""
         mock = self._run(
             name="warehouses.list",
-            surface="cli",
             status="success",
             duration_ms=50.0,
         )
@@ -509,7 +497,6 @@ class TestEmitCommandInvokedEnabled:
             # Must not raise.
             emit_command_invoked(
                 name="warehouses.list",
-                surface="cli",
                 status="success",
                 duration_ms=50.0,
             )

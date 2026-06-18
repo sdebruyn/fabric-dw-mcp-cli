@@ -351,7 +351,7 @@ def _detect_auth_mode() -> str:
 _tenant_id_override: str | None = None
 
 
-def _build_envelope(surface: str) -> dict[str, object]:  # noqa: ARG001
+def _build_envelope() -> dict[str, object]:
     """Build the shared telemetry envelope attached to every event.
 
     Custom dimensions included here are those with no native Part A mapping.
@@ -363,7 +363,9 @@ def _build_envelope(surface: str) -> dict[str, object]:  # noqa: ARG001
 
     Fields omitted entirely (dropped in #477):
     - ``anonymous_install_id`` — already shipped natively as ``user_Id`` (← ``enduser.pseudo.id``)
-    - ``is_ci``                — telemetry is disabled entirely in CI; this was always ``False``
+    - ``is_ci``                — ``is_ci=True`` never reached the backend (telemetry is suppressed
+                                 in CI); ``is_ci=False`` carries no signal.  The dimension was
+                                 always either absent or constant, so it was dropped.
 
     ``tenant_id`` is always present (``"unknown"`` when unresolved) so it is
     reliably queryable on every event.  No native Part A slot is reachable for
@@ -396,7 +398,7 @@ def _build_envelope(surface: str) -> dict[str, object]:  # noqa: ARG001
     }
 
 
-def _build_otel_resource(surface: str) -> object:
+def _build_otel_resource(surface: str) -> object | None:
     """Build an OTel Resource that populates native Part A context fields.
 
     The Resource is passed to ``configure_azure_monitor`` so the exporter
@@ -830,7 +832,7 @@ def emit_event(name: str, attributes: dict[str, object]) -> None:
 
         from opentelemetry._logs import LogRecord  # noqa: PLC0415
 
-        envelope = _build_envelope(_current_surface)
+        envelope = _build_envelope()
         merged: dict[str, object] = {**envelope, **attributes}
 
         # Add the special attributes that drive native App Insights mapping:

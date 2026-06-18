@@ -283,7 +283,7 @@ def test_envelope_contains_required_fields(monkeypatch: pytest.MonkeyPatch, tmp_
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     mod = _reload_telemetry()
-    envelope = mod._build_envelope("cli")  # type: ignore[attr-defined]
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
 
     # Fields that must remain as custom dimensions (no native Part A mapping).
     required = {
@@ -324,8 +324,8 @@ def test_envelope_surface_not_in_custom_dimensions(
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     mod = _reload_telemetry()
-    assert "surface" not in mod._build_envelope("cli")  # type: ignore[attr-defined]
-    assert "surface" not in mod._build_envelope("mcp")  # type: ignore[attr-defined]
+    assert "surface" not in mod._build_envelope()  # type: ignore[attr-defined]
+    assert "surface" not in mod._build_envelope()  # type: ignore[attr-defined]
 
 
 def test_envelope_is_ci_not_in_custom_dimensions(
@@ -336,7 +336,7 @@ def test_envelope_is_ci_not_in_custom_dimensions(
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     mod = _reload_telemetry()
-    envelope = mod._build_envelope("cli")  # type: ignore[attr-defined]
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
     assert "is_ci" not in envelope, "is_ci must not be emitted as a custom dimension (#477)"
 
 
@@ -351,7 +351,7 @@ def test_envelope_anonymous_install_id_not_in_custom_dimensions(
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     mod = _reload_telemetry()
-    envelope = mod._build_envelope("cli")  # type: ignore[attr-defined]
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
     assert "anonymous_install_id" not in envelope
 
 
@@ -359,7 +359,7 @@ def test_envelope_python_version_is_minor(monkeypatch: pytest.MonkeyPatch, tmp_p
     """python_version must be 'major.minor' format (e.g. '3.12')."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     mod = _reload_telemetry()
-    envelope = mod._build_envelope("cli")  # type: ignore[attr-defined]
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
     pv = envelope["python_version"]
     parts = str(pv).split(".")
     assert len(parts) == 2, f"Expected 'major.minor', got {pv!r}"
@@ -370,7 +370,7 @@ def test_envelope_os_is_lowercase(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     """os field must be lowercase."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     mod = _reload_telemetry()
-    envelope = mod._build_envelope("cli")  # type: ignore[attr-defined]
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
     assert envelope["os"] == envelope["os"].lower()
 
 
@@ -383,7 +383,7 @@ def test_envelope_tenant_id_from_azure_tenant_id(
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     mod = _reload_telemetry()
-    envelope = mod._build_envelope("cli")  # type: ignore[attr-defined]
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
     assert envelope["tenant_id"] == "my-tenant-123"
 
 
@@ -396,7 +396,7 @@ def test_envelope_tenant_id_from_fabric_interactive_when_no_azure(
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     mod = _reload_telemetry()
-    envelope = mod._build_envelope("cli")  # type: ignore[attr-defined]
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
     assert envelope["tenant_id"] == "interactive-tenant"
 
 
@@ -415,7 +415,7 @@ def test_envelope_tenant_id_unknown_when_no_env(
 
     mod = _reload_telemetry()
     mod._tenant_id_override = None  # type: ignore[attr-defined]
-    envelope = mod._build_envelope("cli")  # type: ignore[attr-defined]
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
     assert envelope.get("tenant_id") == "unknown"
 
 
@@ -1162,7 +1162,7 @@ def test_set_tenant_id_reflected_in_envelope(
     mod = _reload_telemetry()
     mod.set_tenant_id("runtime-tenant-xyz")  # type: ignore[attr-defined]
 
-    envelope = mod._build_envelope("cli")  # type: ignore[attr-defined]
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
     assert envelope["tenant_id"] == "runtime-tenant-xyz"
 
 
@@ -1176,7 +1176,7 @@ def test_set_tenant_id_takes_precedence_over_env(
     mod = _reload_telemetry()
     mod.set_tenant_id("runtime-tenant")  # type: ignore[attr-defined]
 
-    envelope = mod._build_envelope("cli")  # type: ignore[attr-defined]
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
     assert envelope["tenant_id"] == "runtime-tenant"
 
 
@@ -1494,7 +1494,7 @@ def test_envelope_uses_token_tid_over_env_var(
     tid_value = "token-tenant-id-from-tid-claim"
     mod._tenant_id_override = tid_value  # type: ignore[attr-defined]
 
-    envelope = mod._build_envelope("cli")  # type: ignore[attr-defined]
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
     assert envelope.get("tenant_id") == tid_value
 
 
@@ -1523,7 +1523,7 @@ def test_envelope_falls_back_to_azure_tenant_id_env_when_no_override(
     # Ensure no override is set
     mod._tenant_id_override = None  # type: ignore[attr-defined]
 
-    envelope = mod._build_envelope("cli")  # type: ignore[attr-defined]
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
     assert envelope.get("tenant_id") == "fallback-env-tenant"
 
 
@@ -1554,7 +1554,7 @@ def test_envelope_tenant_id_unknown_when_no_source(
     mod = _reload_telemetry()
     mod._tenant_id_override = None  # type: ignore[attr-defined]
 
-    envelope = mod._build_envelope("cli")  # type: ignore[attr-defined]
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
     assert envelope.get("tenant_id") == "unknown"
 
 
@@ -2269,7 +2269,7 @@ def _build_test_envelope(
     mod = _reload_telemetry()
     mod._tenant_id_override = None  # type: ignore[attr-defined]
 
-    envelope_attrs = mod._build_envelope("cli")  # type: ignore[attr-defined]
+    envelope_attrs = mod._build_envelope()  # type: ignore[attr-defined]
     merged: dict[str, object] = {**envelope_attrs}
     merged["microsoft.custom_event.name"] = event_name
     merged["enduser.pseudo.id"] = mod._get_install_id()  # type: ignore[attr-defined]
@@ -2325,7 +2325,7 @@ def test_emit_event_produces_eventdata_envelope(
     )
 
     assert envelope.data.base_data is not None
-    event_data_name = envelope.data.base_data.name  # ty: ignore[unresolved-attribute]
+    event_data_name = envelope.data.base_data.name  # type: ignore[union-attr]
     assert event_data_name == event_name, (
         f"Expected event name {event_name!r} in EventData, got {event_data_name!r}."
     )
@@ -2605,7 +2605,7 @@ def test_emit_event_sets_ai_operation_name(monkeypatch: pytest.MonkeyPatch, tmp_
 
     # Simulate the attribute building done inside emit_event for a lifecycle event.
     event_name = "app_started"
-    envelope_attrs = mod._build_envelope("cli")  # type: ignore[attr-defined]
+    envelope_attrs = mod._build_envelope()  # type: ignore[attr-defined]
     merged: dict[str, object] = {**envelope_attrs}
     merged["microsoft.custom_event.name"] = event_name
     merged["enduser.pseudo.id"] = mod._get_install_id()  # type: ignore[attr-defined]
@@ -2690,4 +2690,69 @@ def test_cloud_role_instance_from_resource_not_hostname(
         f"cloud_RoleInstance must be the pseudonymous install_id {known_install_id!r}, "
         f"got {role_instance!r}.  "
         "Set via resource attribute service.instance.id (#477)."
+    )
+
+
+def test_ai_device_id_from_resource_not_hostname(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ai.device.id must come from install_id via the OTel Resource, not platform.node().
+
+    This is the privacy test for #477 (parallel to the cloud_RoleInstance check above).
+    The exporter falls back to platform.node() for ai.device.id when device.id is absent
+    from the resource.  We must ensure the device.id resource attribute is set so the
+    hostname is never shipped.
+    """
+    import platform as _platform  # noqa: PLC0415
+
+    from azure.monitor.opentelemetry.exporter.export.logs._exporter import (  # noqa: PLC0415
+        _convert_log_to_envelope,
+    )
+    from opentelemetry.sdk._logs._internal import (  # noqa: PLC0415
+        InstrumentationScope,
+        ReadableLogRecord,
+    )
+    from opentelemetry.sdk._logs._internal import LogRecord as SDKLogRecord  # noqa: PLC0415
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    known_install_id = "ffff6666-dead-beef-1234-aaaaaaaaaaaa"
+    config_dir = tmp_path / "fabric-dw"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "install_id").write_text(known_install_id, encoding="utf-8")
+
+    mod = _reload_telemetry()
+
+    # Build a log record using the production resource (as _get_tracer would do).
+    attrs: dict[str, object] = {
+        "microsoft.custom_event.name": "test_event",
+        "enduser.pseudo.id": known_install_id,
+        "ai.operation.name": "test_event",
+    }
+    sdk_record = SDKLogRecord(attributes=attrs)  # type: ignore[arg-type]  # ty: ignore[no-matching-overload]
+
+    # Use the resource built by _build_otel_resource (the production code path).
+    resource = mod._build_otel_resource("cli")  # type: ignore[attr-defined]
+    scope = InstrumentationScope("fabric_dw.telemetry")
+    readable = ReadableLogRecord(
+        log_record=sdk_record,
+        resource=resource,
+        instrumentation_scope=scope,  # type: ignore[arg-type]
+    )
+
+    envelope = _convert_log_to_envelope(readable)
+    assert envelope.tags is not None
+
+    hostname = _platform.node()
+    device_id = envelope.tags.get("ai.device.id")
+
+    assert device_id != hostname, (
+        f"ai.device.id must NOT be the machine hostname {hostname!r} — "
+        "hostnames often embed the user's real name (#477 privacy fix).  "
+        f"Got ai.device.id={device_id!r}."
+    )
+    assert device_id == known_install_id, (
+        f"ai.device.id must be the pseudonymous install_id {known_install_id!r}, "
+        f"got {device_id!r}.  "
+        "Set via resource attribute device.id (#477)."
     )

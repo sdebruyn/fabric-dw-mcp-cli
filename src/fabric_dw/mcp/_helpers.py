@@ -117,7 +117,6 @@ def _wrap_mcp_tool_with_telemetry(
             status = map_status(exc_seen)
             emit_command_invoked(
                 name=name,
-                surface="mcp",
                 status=status,
                 duration_ms=duration,
                 destructive=destructive,

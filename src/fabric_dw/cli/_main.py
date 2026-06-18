@@ -245,7 +245,6 @@ class _InstrumentedGroup(click.Group):
                 status = map_status(exc_seen)
                 emit_command_invoked(
                     name=command_name,
-                    surface="cli",
                     status=status,
                     duration_ms=duration,
                 )

@@ -346,7 +346,6 @@ def duration_bucket(duration_ms: float) -> str:
 def emit_command_invoked(
     *,
     name: str,
-    surface: str,  # noqa: ARG001
     status: str,
     duration_ms: float,
     destructive: bool = False,
@@ -359,10 +358,6 @@ def emit_command_invoked(
     Args:
         name: The command name — for CLI: ``"<group>.<subcommand>"``,
               for MCP: the tool name.
-        surface: ``"cli"`` or ``"mcp"``.  Kept as a parameter for call-site
-              compatibility but no longer emitted as a custom dimension — it is
-              now shipped natively as ``cloud_RoleName`` via the OTel Resource
-              (``service.name`` = surface, set in ``record_app_started``).
         status: One of ``"success"``, ``"user_error"``, ``"api_error"``.
         duration_ms: Wall-clock duration in milliseconds.
         destructive: Whether this is a permanently-destructive operation.
