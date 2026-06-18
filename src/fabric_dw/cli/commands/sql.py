@@ -1,8 +1,12 @@
-"""SQL sub-commands for the fabric-dw CLI.
+"""SQL command for the fabric-dw CLI.
 
 Commands
 --------
-- ``sql exec <ws> <item>`` — execute an arbitrary SQL statement or file.
+- ``sql <ws> <item>`` — execute an arbitrary SQL statement or file.
+
+.. note::
+   **Breaking change (v0.x → v0.y):** The former ``sql exec`` sub-command was
+   promoted to ``sql`` itself.  Replace ``fdw sql exec ...`` with ``fdw sql ...``.
 """
 
 from __future__ import annotations
@@ -23,12 +27,7 @@ from fabric_dw.exceptions import FabricError
 from fabric_dw.services import sql_exec as _sql_exec_svc
 
 
-@click.group("sql")
-def sql_group() -> None:
-    """Execute SQL statements against Fabric warehouses and SQL Analytics Endpoints."""
-
-
-@sql_group.command("exec")
+@click.command("sql")
 @click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.option(
@@ -48,7 +47,7 @@ def sql_group() -> None:
 )
 @click.pass_obj
 @coro
-async def exec_cmd(
+async def sql_cmd(
     ctx: CliContext,
     workspace: str | None,
     item: str | None,

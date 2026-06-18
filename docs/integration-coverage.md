@@ -159,7 +159,7 @@ during these tests.
 
 | Feature | Integration test | CLI | MCP |
 |---|---|---|---|
-| `sql exec` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_sql_exec.py#L13) | ✅ | ✅ |
+| `sql` | [✅](https://github.com/sdebruyn/fabric-dw-mcp-cli/blob/main/tests/integration/test_services_sql_exec.py#L13) | ✅ | ✅ |
 
 ## What this does and doesn't cover
 
@@ -180,7 +180,7 @@ So a ✅ in "Integration test" gives confidence that the Fabric API contract is 
 
 The integration tests provision two ephemeral fixtures:
 
-- An **ephemeral Data Warehouse** (`ephemeral_warehouse` / `ephemeral_sql_target` in `conftest.py`) used by warehouse-focused tests (tables, views, schemas, stored procedures, audit, snapshots, restore points, queries, query insights, sql exec).
+- An **ephemeral Data Warehouse** (`ephemeral_warehouse` / `ephemeral_sql_target` in `conftest.py`) used by warehouse-focused tests (tables, views, schemas, stored procedures, audit, snapshots, restore points, queries, query insights, sql).
 - A **schema-enabled Lakehouse** with its paired **SQL Analytics Endpoint** (`ephemeral_lakehouse` / `ephemeral_sql_endpoint` in `conftest.py`) used by the SQL Analytics Endpoint tests. The Lakehouse is created with `enableSchemas=true`; Fabric auto-provisions the SQL endpoint alongside it. The fixture polls until provisioning reaches `Success` (up to 5 minutes) and skips rather than fails if it does not complete in time.
 
 The one remaining ❌ in the coverage table (`restore-points restore`) is not run in standard CI:
