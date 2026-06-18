@@ -657,7 +657,13 @@ def shutdown_telemetry(timeout_ms: int = 8000) -> None:
         return
     _sdk_shutdown = True
 
-    # Reserve ~2 s for shutdown cleanup; the rest goes to force_flush.
+    # Reserve ~2 s for the provider.shutdown() cleanup call; the rest goes to
+    # force_flush.  At the default timeout_ms=8000 this gives 6 s for
+    # force_flush and 2 s for shutdown — both well within the daemon-thread
+    # join cap (timeout_ms/1000 + 0.5 s).  If timeout_ms were set below 4000
+    # the floor kicks in and both allocations become 2 s, which still fits
+    # inside the join cap because the daemon thread is killed when the main
+    # thread exits — the cap is a worst-case wall-clock bound, not a guarantee.
     flush_timeout_ms = max(timeout_ms - 2000, 2000)
 
     def _do_shutdown() -> None:
@@ -670,6 +676,7 @@ def shutdown_telemetry(timeout_ms: int = 8000) -> None:
         # closes the exporter.  Without the explicit force_flush, those records
         # depend on the BatchLogRecordProcessor worker waking up inside shutdown()
         # which races with our outer join timeout.
+        # Resolve the provider once and reuse it for both flush and shutdown.
         with contextlib.suppress(Exception):
             from opentelemetry._logs import get_logger_provider  # noqa: PLC0415
 
@@ -677,11 +684,6 @@ def shutdown_telemetry(timeout_ms: int = 8000) -> None:
             log_force_flush = getattr(log_provider, "force_flush", None)
             if callable(log_force_flush):
                 log_force_flush(timeout_millis=flush_timeout_ms)
-
-        with contextlib.suppress(Exception):
-            from opentelemetry._logs import get_logger_provider  # noqa: PLC0415
-
-            log_provider = get_logger_provider()
             log_shutdown = getattr(log_provider, "shutdown", None)
             if callable(log_shutdown):
                 log_shutdown()
