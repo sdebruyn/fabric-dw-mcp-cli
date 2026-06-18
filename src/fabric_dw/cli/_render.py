@@ -83,7 +83,7 @@ def render(
     json_output: bool,
     console: Console | None = None,
     table_title: str | None = None,
-    drop_columns: Sequence[str] | None = None,
+    drop_columns: tuple[str, ...] | list[str] | None = None,
 ) -> None:
     """Print *data* to stdout using JSON or Rich formatting.
 
@@ -99,7 +99,8 @@ def render(
         table_title: Optional title shown above the Rich Table.
             Ignored when *json_output=True* or when *data* is not a list.
         drop_columns: Optional column names to omit from the **human-readable
-            table only**.  Useful for hiding redundant columns (e.g. a
+            table only**.  Must be a ``tuple[str, ...]`` or ``list[str]`` (not
+            a bare ``str``).  Useful for hiding redundant columns (e.g. a
             workspace-id column when every row shares the same workspace).
             Ignored when *json_output=True* (machine-readable output is never
             pruned) and when *data* is not a list.
@@ -149,7 +150,7 @@ def _render_table(
     *,
     console: Console,
     title: str | None,
-    drop_columns: Sequence[str] | None = None,
+    drop_columns: tuple[str, ...] | list[str] | None = None,
 ) -> None:
     """Render a list of dicts as a Rich Table.
 
