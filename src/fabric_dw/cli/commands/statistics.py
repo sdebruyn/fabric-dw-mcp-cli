@@ -219,7 +219,7 @@ async def update_cmd(
     fullscan: bool,
     sample_percent: int | None,
 ) -> None:
-    """Update STAT_NAME on QUALIFIED_TABLE (schema.table) on ITEM.
+    """Update STAT_NAME on QUALIFIED_TABLE (schema.table) for ITEM.
 
     Only Data Warehouses support DDL; SQL Analytics Endpoints are read-only.
     """
