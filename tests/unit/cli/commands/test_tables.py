@@ -105,7 +105,7 @@ class TestTablesList:
                 new=AsyncMock(return_value=[_make_table()]),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "tables", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "--json", "tables", "list", WH_GUID])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert isinstance(parsed, list)
@@ -129,7 +129,7 @@ class TestTablesList:
                 new=AsyncMock(return_value=[_make_table()]),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "tables", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "--json", "tables", "list", WH_GUID])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert isinstance(parsed, list)
@@ -150,7 +150,9 @@ class TestTablesList:
             ),
             patch("fabric_dw.services.tables.list_tables", new=mock_list),
         ):
-            result = runner.invoke(cli, ["tables", "list", WS_GUID, WH_GUID, "--schema", "dbo"])
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "tables", "list", WH_GUID, "--schema", "dbo"]
+            )
         assert result.exit_code == 0
         mock_list.assert_awaited_once()
 
@@ -167,7 +169,7 @@ class TestTablesList:
                 new=AsyncMock(side_effect=NotFoundError("not found")),
             ),
         ):
-            result = runner.invoke(cli, ["tables", "list", WS_GUID, WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "tables", "list", WH_GUID])
         assert result.exit_code != 0
 
 
@@ -194,7 +196,7 @@ class TestTablesRead:
                 new=AsyncMock(return_value=(["id", "name"], [(1, "Alice")])),
             ),
         ):
-            result = runner.invoke(cli, ["tables", "read", WS_GUID, WH_GUID, "dbo.sales"])
+            result = runner.invoke(cli, ["-w", WS_GUID, "tables", "read", WH_GUID, "dbo.sales"])
         assert result.exit_code == 0
         # Default output is JSON; row data must appear
         parsed = json.loads(result.output)
@@ -218,7 +220,7 @@ class TestTablesRead:
                 new=AsyncMock(return_value=(["id"], [(42,)])),
             ),
         ):
-            result = runner.invoke(cli, ["tables", "read", WS_GUID, WH_GUID, "dbo.sales"])
+            result = runner.invoke(cli, ["-w", WS_GUID, "tables", "read", WH_GUID, "dbo.sales"])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert parsed[0]["id"] == 42
@@ -226,14 +228,14 @@ class TestTablesRead:
     def test_read_csv_requires_output(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         result = runner.invoke(
-            cli, ["tables", "read", WS_GUID, WH_GUID, "dbo.sales", "--format", "csv"]
+            cli, ["-w", WS_GUID, "tables", "read", WH_GUID, "dbo.sales", "--format", "csv"]
         )
         assert result.exit_code != 0
 
     def test_read_parquet_requires_output(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         result = runner.invoke(
-            cli, ["tables", "read", WS_GUID, WH_GUID, "dbo.sales", "--format", "parquet"]
+            cli, ["-w", WS_GUID, "tables", "read", WH_GUID, "dbo.sales", "--format", "parquet"]
         )
         assert result.exit_code != 0
 
@@ -258,9 +260,10 @@ class TestTablesRead:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "tables",
                     "read",
-                    WS_GUID,
                     WH_GUID,
                     "dbo.sales",
                     "--format",
@@ -298,10 +301,11 @@ class TestTablesRead:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "--json",
                     "tables",
                     "read",
-                    WS_GUID,
                     WH_GUID,
                     "dbo.sales",
                     "--format",
@@ -321,7 +325,7 @@ class TestTablesRead:
         self, runner: CliRunner, cache_env: Path
     ) -> None:
         _ = cache_env
-        result = runner.invoke(cli, ["tables", "read", WS_GUID, WH_GUID, "nodot"])
+        result = runner.invoke(cli, ["-w", WS_GUID, "tables", "read", WH_GUID, "nodot"])
         assert result.exit_code != 0
 
     def test_read_not_found_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
@@ -341,7 +345,7 @@ class TestTablesRead:
                 new=AsyncMock(side_effect=NotFoundError("table not found")),
             ),
         ):
-            result = runner.invoke(cli, ["tables", "read", WS_GUID, WH_GUID, "dbo.missing"])
+            result = runner.invoke(cli, ["-w", WS_GUID, "tables", "read", WH_GUID, "dbo.missing"])
         assert result.exit_code != 0
 
 
@@ -372,10 +376,11 @@ class TestTablesCreate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "--json",
                     "tables",
                     "create",
-                    WS_GUID,
                     WH_GUID,
                     "--name",
                     "dbo.sales",
@@ -411,10 +416,11 @@ class TestTablesCreate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "--json",
                     "tables",
                     "create",
-                    WS_GUID,
                     WH_GUID,
                     "--name",
                     "dbo.sales",
@@ -434,7 +440,7 @@ class TestTablesCreate:
         _ = cache_env
         result = runner.invoke(
             cli,
-            ["tables", "create", WS_GUID, WH_GUID, "--name", "dbo.sales"],
+            ["-w", WS_GUID, "tables", "create", WH_GUID, "--name", "dbo.sales"],
         )
         assert result.exit_code != 0
 
@@ -447,9 +453,10 @@ class TestTablesCreate:
         result = runner.invoke(
             cli,
             [
+                "-w",
+                WS_GUID,
                 "tables",
                 "create",
-                WS_GUID,
                 WH_GUID,
                 "--name",
                 "dbo.sales",
@@ -483,9 +490,10 @@ class TestTablesCreate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "tables",
                     "create",
-                    WS_GUID,
                     WH_GUID,
                     "--name",
                     "dbo.sales",
@@ -517,10 +525,11 @@ class TestTablesCreate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "--json",
                     "tables",
                     "create",
-                    WS_GUID,
                     WH_GUID,
                     "--name",
                     "dbo.sales",
@@ -551,9 +560,10 @@ class TestTablesCreate:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "tables",
                     "create",
-                    WS_GUID,
                     SE_GUID,
                     "--name",
                     "dbo.sales",
@@ -590,7 +600,7 @@ class TestTablesDelete:
             ),
         ):
             result = runner.invoke(
-                cli, ["--yes", "tables", "delete", WS_GUID, WH_GUID, "dbo.sales"]
+                cli, ["-w", WS_GUID, "--yes", "tables", "delete", WH_GUID, "dbo.sales"]
             )
         assert result.exit_code == 0
         mock_delete.assert_awaited_once()
@@ -611,7 +621,7 @@ class TestTablesDelete:
         ):
             result = runner.invoke(
                 cli,
-                ["tables", "delete", WS_GUID, WH_GUID, "dbo.sales"],
+                ["-w", WS_GUID, "tables", "delete", WH_GUID, "dbo.sales"],
                 input="n\n",
             )
         assert result.exit_code == 0
@@ -621,7 +631,7 @@ class TestTablesDelete:
         self, runner: CliRunner, cache_env: Path
     ) -> None:
         _ = cache_env
-        result = runner.invoke(cli, ["tables", "delete", WS_GUID, WH_GUID, "nodot"])
+        result = runner.invoke(cli, ["-w", WS_GUID, "tables", "delete", WH_GUID, "nodot"])
         assert result.exit_code != 0
 
     def test_delete_permission_denied_returns_nonzero(
@@ -644,7 +654,7 @@ class TestTablesDelete:
             ),
         ):
             result = runner.invoke(
-                cli, ["--yes", "tables", "delete", WS_GUID, WH_GUID, "dbo.sales"]
+                cli, ["-w", WS_GUID, "--yes", "tables", "delete", WH_GUID, "dbo.sales"]
             )
         assert result.exit_code != 0
 
@@ -668,7 +678,7 @@ class TestTablesDelete:
             ),
         ):
             result = runner.invoke(
-                cli, ["--yes", "tables", "delete", WS_GUID, WH_GUID, "dbo.sales"]
+                cli, ["-w", WS_GUID, "--yes", "tables", "delete", WH_GUID, "dbo.sales"]
             )
         assert result.exit_code == 0
         # Must have proceeded to actual delete (DDL guard passed)
@@ -689,7 +699,7 @@ class TestTablesDelete:
             ),
         ):
             result = runner.invoke(
-                cli, ["--yes", "tables", "delete", WS_GUID, SE_GUID, "dbo.sales"]
+                cli, ["-w", WS_GUID, "--yes", "tables", "delete", SE_GUID, "dbo.sales"]
             )
         assert result.exit_code != 0
         assert "read-only" in result.output
@@ -719,7 +729,9 @@ class TestTablesClear:
                 new=mock_clear,
             ),
         ):
-            result = runner.invoke(cli, ["--yes", "tables", "clear", WS_GUID, WH_GUID, "dbo.sales"])
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "--yes", "tables", "clear", WH_GUID, "dbo.sales"]
+            )
         assert result.exit_code == 0
         mock_clear.assert_awaited_once()
 
@@ -739,7 +751,7 @@ class TestTablesClear:
         ):
             result = runner.invoke(
                 cli,
-                ["tables", "clear", WS_GUID, WH_GUID, "dbo.sales"],
+                ["-w", WS_GUID, "tables", "clear", WH_GUID, "dbo.sales"],
                 input="n\n",
             )
         assert result.exit_code == 0
@@ -749,7 +761,7 @@ class TestTablesClear:
         self, runner: CliRunner, cache_env: Path
     ) -> None:
         _ = cache_env
-        result = runner.invoke(cli, ["tables", "clear", WS_GUID, WH_GUID, "nodot"])
+        result = runner.invoke(cli, ["-w", WS_GUID, "tables", "clear", WH_GUID, "nodot"])
         assert result.exit_code != 0
 
     def test_clear_permission_denied_returns_nonzero(
@@ -771,7 +783,9 @@ class TestTablesClear:
                 new=AsyncMock(side_effect=PermissionDeniedError("no permission")),
             ),
         ):
-            result = runner.invoke(cli, ["--yes", "tables", "clear", WS_GUID, WH_GUID, "dbo.sales"])
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "--yes", "tables", "clear", WH_GUID, "dbo.sales"]
+            )
         assert result.exit_code != 0
 
     def test_clear_warehouse_item_allowed(self, runner: CliRunner, cache_env: Path) -> None:
@@ -793,7 +807,9 @@ class TestTablesClear:
                 new=mock_clear,
             ),
         ):
-            result = runner.invoke(cli, ["--yes", "tables", "clear", WS_GUID, WH_GUID, "dbo.sales"])
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "--yes", "tables", "clear", WH_GUID, "dbo.sales"]
+            )
         assert result.exit_code == 0
         # Must have proceeded to actual clear (DDL guard passed)
         mock_clear.assert_awaited_once()
@@ -812,7 +828,9 @@ class TestTablesClear:
                 new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
             ),
         ):
-            result = runner.invoke(cli, ["--yes", "tables", "clear", WS_GUID, SE_GUID, "dbo.sales"])
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "--yes", "tables", "clear", SE_GUID, "dbo.sales"]
+            )
         assert result.exit_code != 0
         assert "read-only" in result.output
 
@@ -850,10 +868,11 @@ class TestTablesClone:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "--json",
                     "tables",
                     "clone",
-                    WS_GUID,
                     WH_GUID,
                     "--source",
                     "dbo.source_tbl",
@@ -893,10 +912,11 @@ class TestTablesClone:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "--json",
                     "tables",
                     "clone",
-                    WS_GUID,
                     WH_GUID,
                     "--source",
                     "dbo.source_tbl",
@@ -926,9 +946,10 @@ class TestTablesClone:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "tables",
                     "clone",
-                    WS_GUID,
                     WH_GUID,
                     "--source",
                     "dbo.source_tbl",
@@ -947,9 +968,10 @@ class TestTablesClone:
         result = runner.invoke(
             cli,
             [
+                "-w",
+                WS_GUID,
                 "tables",
                 "clone",
-                WS_GUID,
                 WH_GUID,
                 "--source",
                 "dbo.source_tbl",
@@ -965,14 +987,7 @@ class TestTablesClone:
         _ = cache_env
         result = runner.invoke(
             cli,
-            [
-                "tables",
-                "clone",
-                WS_GUID,
-                WH_GUID,
-                "--name",
-                "dbo.sales_clone",
-            ],
+            ["-w", WS_GUID, "tables", "clone", WH_GUID, "--name", "dbo.sales_clone"],
         )
         assert result.exit_code != 0
 
@@ -980,14 +995,7 @@ class TestTablesClone:
         _ = cache_env
         result = runner.invoke(
             cli,
-            [
-                "tables",
-                "clone",
-                WS_GUID,
-                WH_GUID,
-                "--source",
-                "dbo.source_tbl",
-            ],
+            ["-w", WS_GUID, "tables", "clone", WH_GUID, "--source", "dbo.source_tbl"],
         )
         assert result.exit_code != 0
 
@@ -998,9 +1006,10 @@ class TestTablesClone:
         result = runner.invoke(
             cli,
             [
+                "-w",
+                WS_GUID,
                 "tables",
                 "clone",
-                WS_GUID,
                 WH_GUID,
                 "--source",
                 "nodot",
@@ -1017,9 +1026,10 @@ class TestTablesClone:
         result = runner.invoke(
             cli,
             [
+                "-w",
+                WS_GUID,
                 "tables",
                 "clone",
-                WS_GUID,
                 WH_GUID,
                 "--source",
                 "dbo.source_tbl",
@@ -1046,9 +1056,10 @@ class TestTablesClone:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "tables",
                     "clone",
-                    WS_GUID,
                     SE_GUID,
                     "--source",
                     "dbo.source_tbl",
@@ -1081,9 +1092,10 @@ class TestTablesClone:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "tables",
                     "clone",
-                    WS_GUID,
                     WH_GUID,
                     "--source",
                     "dbo.source_tbl",
@@ -1117,9 +1129,10 @@ class TestTablesClone:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "tables",
                     "clone",
-                    WS_GUID,
                     WH_GUID,
                     "--source",
                     "dbo.source_tbl",
@@ -1159,10 +1172,11 @@ class TestTablesRename:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "--json",
                     "tables",
                     "rename",
-                    WS_GUID,
                     WH_GUID,
                     "dbo.sales",
                     "--new-name",
@@ -1201,10 +1215,11 @@ class TestTablesRename:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "--json",
                     "tables",
                     "rename",
-                    WS_GUID,
                     WH_GUID,
                     "dbo.sales",
                     "--new-name",
@@ -1217,7 +1232,7 @@ class TestTablesRename:
 
     def test_rename_missing_new_name_fails(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
-        result = runner.invoke(cli, ["tables", "rename", WS_GUID, WH_GUID, "dbo.sales"])
+        result = runner.invoke(cli, ["-w", WS_GUID, "tables", "rename", WH_GUID, "dbo.sales"])
         assert result.exit_code != 0
 
     def test_rename_undotted_qualified_name_fails_before_io(
@@ -1227,7 +1242,7 @@ class TestTablesRename:
         _ = cache_env
         result = runner.invoke(
             cli,
-            ["tables", "rename", WS_GUID, WH_GUID, "nodot", "--new-name", "sales_v2"],
+            ["-w", WS_GUID, "tables", "rename", WH_GUID, "nodot", "--new-name", "sales_v2"],
         )
         assert result.exit_code != 0
         assert "table" in result.output.lower() or "Usage" in result.output
@@ -1255,9 +1270,10 @@ class TestTablesRename:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "tables",
                     "rename",
-                    WS_GUID,
                     WH_GUID,
                     "dbo.sales",
                     "--new-name",
@@ -1286,7 +1302,7 @@ class TestTablesRename:
         ):
             result = runner.invoke(
                 cli,
-                ["tables", "rename", WS_GUID, SE_GUID, "dbo.sales", "--new-name", "sales_v2"],
+                ["-w", WS_GUID, "tables", "rename", SE_GUID, "dbo.sales", "--new-name", "sales_v2"],
             )
         assert result.exit_code != 0
         assert "read-only" in result.output
@@ -1312,7 +1328,7 @@ class TestTablesRename:
         ):
             result = runner.invoke(
                 cli,
-                ["tables", "rename", WS_GUID, WH_GUID, "dbo.sales", "--new-name", "sales_v2"],
+                ["-w", WS_GUID, "tables", "rename", WH_GUID, "dbo.sales", "--new-name", "sales_v2"],
             )
         assert result.exit_code != 0
 
@@ -1346,10 +1362,11 @@ class TestTablesCreateEmpty:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "--json",
                     "tables",
                     "create",
-                    WS_GUID,
                     WH_GUID,
                     "--name",
                     "dbo.sales",
@@ -1392,10 +1409,11 @@ class TestTablesCreateEmpty:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "--json",
                     "tables",
                     "create",
-                    WS_GUID,
                     WH_GUID,
                     "--name",
                     "dbo.sales",
@@ -1438,10 +1456,11 @@ class TestTablesCreateEmpty:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "--json",
                     "tables",
                     "create",
-                    WS_GUID,
                     WH_GUID,
                     "--name",
                     "dbo.sales",
@@ -1475,10 +1494,11 @@ class TestTablesCreateEmpty:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    WS_GUID,
                     "--json",
                     "tables",
                     "create",
-                    WS_GUID,
                     WH_GUID,
                     "--name",
                     "dbo.sales",
@@ -1493,7 +1513,7 @@ class TestTablesCreateEmpty:
         _ = cache_env
         result = runner.invoke(
             cli,
-            ["tables", "create", WS_GUID, WH_GUID, "--name", "dbo.sales"],
+            ["-w", WS_GUID, "tables", "create", WH_GUID, "--name", "dbo.sales"],
         )
         assert result.exit_code != 0
 
@@ -1506,9 +1526,10 @@ class TestTablesCreateEmpty:
         result = runner.invoke(
             cli,
             [
+                "-w",
+                WS_GUID,
                 "tables",
                 "create",
-                WS_GUID,
                 WH_GUID,
                 "--name",
                 "dbo.sales",
@@ -1531,9 +1552,10 @@ class TestTablesCreateEmpty:
         result = runner.invoke(
             cli,
             [
+                "-w",
+                WS_GUID,
                 "tables",
                 "create",
-                WS_GUID,
                 WH_GUID,
                 "--name",
                 "dbo.sales",
@@ -1591,9 +1613,10 @@ class TestTablesCreateEmpty:
         result = runner.invoke(
             cli,
             [
+                "-w",
+                WS_GUID,
                 "tables",
                 "create",
-                WS_GUID,
                 WH_GUID,
                 "--name",
                 "dbo.sales",
@@ -1613,17 +1636,15 @@ class TestTablesCreateEmpty:
 class TestLoadCreateAndLoad:
     """Tests for 'tables load --create' (auto-create + load)."""
 
-    def _invoke(self, runner: CliRunner, args: list[str]) -> object:
-        return runner.invoke(cli, ["tables", "load", *args], catch_exceptions=False)
-
     def test_create_with_url_raises_usage_error(self, runner: CliRunner) -> None:
         """--create is not supported with --url."""
         result = runner.invoke(
             cli,
             [
+                "-w",
+                "ws",
                 "tables",
                 "load",
-                "ws",
                 "wh",
                 "dbo.sales",
                 "--url",
@@ -1645,9 +1666,10 @@ class TestLoadCreateAndLoad:
         result = runner.invoke(
             cli,
             [
+                "-w",
+                "ws",
                 "tables",
                 "load",
-                "ws",
                 "wh",
                 "dbo.sales",
                 "--file",
@@ -1685,9 +1707,10 @@ class TestLoadCreateAndLoad:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    "ws",
                     "tables",
                     "load",
-                    "ws",
                     "wh",
                     "dbo.sales",
                     "--file",
@@ -1724,9 +1747,10 @@ class TestLoadCreateAndLoad:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    "ws",
                     "tables",
                     "load",
-                    "ws",
                     "wh",
                     "dbo.sales",
                     "--file",
@@ -1771,10 +1795,11 @@ class TestLoadCreateAndLoad:
             result = runner.invoke(
                 cli,
                 [
+                    "-w",
+                    "ws",
                     "-y",
                     "tables",
                     "load",
-                    "ws",
                     "wh",
                     "dbo.sales",
                     "--file",
@@ -1799,9 +1824,10 @@ class TestLoadCreateAndLoad:
         result = runner.invoke(
             cli,
             [
+                "-w",
+                "ws",
                 "tables",
                 "load",
-                "ws",
                 "wh",
                 "dbo.sales",
                 "--file",
@@ -1824,9 +1850,10 @@ class TestLoadCreateAndLoad:
         result = runner.invoke(
             cli,
             [
+                "-w",
+                "ws",
                 "tables",
                 "load",
-                "ws",
                 "wh",
                 "dbo.sales",
                 "--file",
@@ -1844,9 +1871,10 @@ class TestLoadCreateAndLoad:
         result = runner.invoke(
             cli,
             [
+                "-w",
+                "ws",
                 "tables",
                 "load",
-                "ws",
                 "wh",
                 "dbo.sales",
                 "--url",

@@ -16,7 +16,7 @@ from fabric_dw.cli.commands._utils import (
     load_sql_body,
     parse_qualified_name,
     resolve_warehouse_arg,
-    resolve_workspace_arg,
+    resolve_workspace,
 )
 from fabric_dw.exceptions import FabricError
 from fabric_dw.services import views as _views_svc
@@ -29,16 +29,13 @@ def views_group() -> None:
 
 
 @views_group.command("list")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.option("--schema", default=None, help="Filter by schema name.")
 @click.pass_obj
 @coro
-async def list_cmd(
-    ctx: CliContext, workspace: str | None, item: str | None, schema: str | None
-) -> None:
-    """List views on ITEM (warehouse or SQL endpoint) in WORKSPACE."""
-    ws = resolve_workspace_arg(ctx, workspace)
+async def list_cmd(ctx: CliContext, item: str | None, schema: str | None) -> None:
+    """List views on ITEM (warehouse or SQL endpoint)."""
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
@@ -54,7 +51,6 @@ async def list_cmd(
 
 
 @views_group.command("read")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.argument("qualified_name")
 @click.option("--count", default=10, show_default=True, help="Max rows to return.")
@@ -71,15 +67,14 @@ async def list_cmd(
 @coro
 async def read_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     qualified_name: str,
     count: int,
     fmt: str,
     output: str | None,
 ) -> None:
-    """Read up to COUNT rows from QUALIFIED_NAME (schema.view) on ITEM in WORKSPACE."""
-    ws = resolve_workspace_arg(ctx, workspace)
+    """Read up to COUNT rows from QUALIFIED_NAME (schema.view) on ITEM."""
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     schema, view_name = parse_qualified_name(qualified_name, kind="view")
     output_path = Path(output) if output else None
@@ -105,19 +100,17 @@ async def read_cmd(
 
 
 @views_group.command("get")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.argument("qualified_name")
 @click.pass_obj
 @coro
 async def get_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     qualified_name: str,
 ) -> None:
-    """Fetch the full definition of QUALIFIED_NAME (schema.view) on ITEM in WORKSPACE."""
-    ws = resolve_workspace_arg(ctx, workspace)
+    """Fetch the full definition of QUALIFIED_NAME (schema.view) on ITEM."""
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     schema, view_name = parse_qualified_name(qualified_name, kind="view")
     try:
@@ -130,7 +123,6 @@ async def get_cmd(
 
 
 @views_group.command("create")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.option("--name", "qualified_name", required=True, help="Qualified name: schema.view.")
 @click.option("--select", "select_body", default=None, help="Inline SELECT statement.")
@@ -139,14 +131,13 @@ async def get_cmd(
 @coro
 async def create_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     qualified_name: str,
     select_body: str | None,
     from_file: str | None,
 ) -> None:
-    """Create a new view QUALIFIED_NAME on ITEM in WORKSPACE."""
-    ws = resolve_workspace_arg(ctx, workspace)
+    """Create a new view QUALIFIED_NAME on ITEM."""
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     schema, view_name = parse_qualified_name(qualified_name, kind="view")
     body = load_sql_body(select_body, from_file)
@@ -160,7 +151,6 @@ async def create_cmd(
 
 
 @views_group.command("update")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.argument("qualified_name")
 @click.option("--select", "select_body", default=None, help="Inline SELECT statement.")
@@ -169,14 +159,13 @@ async def create_cmd(
 @coro
 async def update_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     qualified_name: str,
     select_body: str | None,
     from_file: str | None,
 ) -> None:
-    """Redefine QUALIFIED_NAME (schema.view) on ITEM in WORKSPACE via CREATE OR ALTER VIEW."""
-    ws = resolve_workspace_arg(ctx, workspace)
+    """Redefine QUALIFIED_NAME (schema.view) on ITEM via CREATE OR ALTER VIEW."""
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     schema, view_name = parse_qualified_name(qualified_name, kind="view")
     body = load_sql_body(select_body, from_file)
@@ -197,19 +186,17 @@ async def update_cmd(
 
 
 @views_group.command("drop")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.argument("qualified_name")
 @click.pass_obj
 @coro
 async def drop_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     qualified_name: str,
 ) -> None:
-    """Drop QUALIFIED_NAME (schema.view) from ITEM in WORKSPACE."""
-    ws = resolve_workspace_arg(ctx, workspace)
+    """Drop QUALIFIED_NAME (schema.view) from ITEM."""
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     schema, view_name = parse_qualified_name(qualified_name, kind="view")
     try:
@@ -231,7 +218,6 @@ async def drop_cmd(
 
 
 @views_group.command("rename")
-@click.argument("workspace", required=False, default=None)
 @click.argument("item", required=False, default=None)
 @click.argument("qualified_name")
 @click.option("--new-name", required=True, help="New bare (unqualified) view name.")
@@ -239,13 +225,12 @@ async def drop_cmd(
 @coro
 async def rename_cmd(
     ctx: CliContext,
-    workspace: str | None,
     item: str | None,
     qualified_name: str,
     new_name: str,
 ) -> None:
-    """Rename QUALIFIED_NAME (schema.view) on ITEM in WORKSPACE to --new-name."""
-    ws = resolve_workspace_arg(ctx, workspace)
+    """Rename QUALIFIED_NAME (schema.view) on ITEM to --new-name."""
+    ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     schema, view_name = parse_qualified_name(qualified_name, kind="view")
     try:
