@@ -941,10 +941,9 @@ def _with_connect_retry(
             continue
         else:
             # Connection succeeded.
-            # Return a max_attempts value that is always > attempt + 1 so that
-            # the execute-phase retry gate in run_query (``attempt < max_attempts - 1``)
-            # continues to fire correctly: the execute phase is allowed at most
-            # one retry regardless of how many connect retries occurred.
+            # ``max_attempts`` is returned as ``attempt + 2`` purely for API
+            # compatibility; ``run_query`` ignores it (prefixed ``_max_attempts``)
+            # and gates execute-phase retries on ``_max_execute_attempts`` instead.
             return conn, attempt, attempt + 2, last_exc
 
 
