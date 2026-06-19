@@ -60,7 +60,6 @@ __all__ = [
     "SQL_COPT_SS_ACCESS_TOKEN",
     "SQL_LOGIN_TIMEOUT_S",
     "SQL_QUERY_TIMEOUT_S",
-    "SQL_TRANSIENT_MAX_RETRIES",
     "SqlTarget",
     "build_connection_string",
     "is_auth_failed_message",
@@ -77,27 +76,21 @@ __all__ = [
 # Transient-retry configuration
 # ---------------------------------------------------------------------------
 
-# Retained for backward compatibility — exported in __all__ and referenced in
-# some tests / downstream code.  No longer used by the execute-phase retry logic
-# in run_query, which now uses a wall-clock deadline (_CONNECT_RETRY_TIMEOUT_S)
-# and _EXECUTE_RETRY_DELAYS instead of a fixed attempt count.
-SQL_TRANSIENT_MAX_RETRIES: int = 2
-
 # Backoff delays (seconds) for the *execute-phase* retry loop.
 # The delay before attempt N+1 is _EXECUTE_RETRY_DELAYS[min(N, len-1)],
 # so the sequence is:
 #   attempt 1 → fails → sleep 2 s → attempt 2
 #   attempt 2 → fails → sleep 5 s → attempt 3
 #   attempt 3+ → fails → sleep 10 s → attempt 4 … (capped at 10 s)
-# The loop continues until the wall-clock deadline (based on
-# _CONNECT_RETRY_TIMEOUT_S) is exceeded, at which point the last
-# transient error is re-raised.
+#
+# The loop retries up to len(_EXECUTE_RETRY_DELAYS) + 1 attempts total
+# (initial attempt + 3 retries = 4 attempts max) AND stops early if the
+# wall-clock deadline (_CONNECT_RETRY_TIMEOUT_S) is exceeded.  Both guards
+# are applied so the worst-case bound is clearly bounded:
+#   worst case <= (len(_EXECUTE_RETRY_DELAYS) + 1) attempts
+#              x (max connect budget + SQL_QUERY_TIMEOUT_S)
+#            = 4 x (120 s + 300 s) = ~1680 s (~28 minutes absolute max)
 _EXECUTE_RETRY_DELAYS: tuple[float, ...] = (2.0, 5.0, 10.0)
-
-# Retained for backward compatibility — no longer used internally.
-# The execute-phase retry is now governed by _EXECUTE_RETRY_DELAYS and the
-# _CONNECT_RETRY_TIMEOUT_S wall-clock deadline instead of a fixed attempt count.
-_TRANSIENT_RETRY_DELAYS: tuple[float, ...] = (10.0, 10.0)
 
 # ---------------------------------------------------------------------------
 # Connect-phase retry configuration
@@ -916,11 +909,8 @@ def _with_connect_retry(
         - ``conn`` is the open connection (ready to use).
         - ``attempt`` is the zero-based attempt index that succeeded (0 on the
           first attempt, 1 on the first retry, etc.).
-        - ``max_attempts`` is always ``attempt + 2``.  This sentinel ensures that
-          the execute-phase retry gate in :func:`run_query`
-          (``attempt < max_attempts - 1``) evaluates to ``True``, preserving the
-          "at most one execute-phase retry" behaviour regardless of how many
-          connect-phase retries occurred.
+        - ``max_attempts`` is always ``attempt + 2`` (a sentinel value retained
+          for API compatibility; callers no longer use it as a retry gate).
         - ``last_exc`` is the last transient exception seen before success
           (``None`` on first-attempt success).
 
@@ -977,35 +967,38 @@ def run_query(  # noqa: PLR0913, PLR0915
     ``execute(sql, params)`` where *params* is a ``Sequence`` (list or tuple).
     Use ``?`` placeholders in *statement*.
 
-    Retry boundary (D10)
-    --------------------
-    Transient errors during the **connect** phase (``open_connection``) are
-    always safe to retry — no statement has reached the server yet.
+    Retry boundary — commit-phase safety
+    -------------------------------------
+    The retry loop covers ONLY the **execute + fetch** phase (up to and
+    including reading ``cursor.rowcount`` or calling ``fetchall``/``fetchone``).
+    The **commit** is performed ONCE, outside the retry loop, after a
+    successful execute+fetch.
 
-    Transient errors during the **execute** phase are retried when
-    ``fetch != "none"`` — that is, for **all** fetch modes except ``"none"``:
+    This split is the key safety guarantee for COPY INTO / DML:
 
-    * ``"all"`` / ``"one"`` — read-only SELECT / row-returning queries.
-    * ``"rowcount"`` — statements such as ``COPY INTO`` that produce no result
-      set but report an affected-row count.  These are safe to retry because a
-      mid-operation TDS drop means the server did NOT commit the statement; the
-      COPY INTO bulk-loader is idempotent on a fresh connection.
+    * If a transient TDS error occurs **during execute**, the statement has NOT
+      been sent to (or committed on) the server — it is safe to discard the
+      connection and retry on a fresh one.
+    * If a transient error occurs **during or after commit**, the load may
+      already have been committed server-side — retrying the statement could
+      cause a double-load.  Such errors are therefore **re-raised immediately**
+      without retrying the statement.
 
-    DML / DDL statements (``fetch="none"``) are **never** retried after
-    ``cursor.execute`` has begun, because the server may have already applied
-    the change — retrying non-idempotent statements could cause duplicate rows
-    or double-DDL errors.
+    Transient execute-phase errors are retried only when ``fetch != "none"``
+    (i.e. for ``"all"``, ``"one"``, and ``"rowcount"``).  DML / DDL
+    (``fetch="none"``) is never retried after ``cursor.execute`` has begun.
 
-    The execute-phase retry uses a **time-budgeted loop**: when a transient
-    connection error occurs during ``cursor.execute``, the tainted connection is
-    discarded and a fresh one is opened via :func:`_with_connect_retry`.  This
-    repeats until either an attempt succeeds or the total elapsed time since the
-    first execute-phase failure exceeds ``_CONNECT_RETRY_TIMEOUT_S`` (~120 s).
-    Between retry attempts the loop sleeps with a small exponential backoff
-    (starting at ~2 s, capped at ~10 s — see ``_EXECUTE_RETRY_DELAYS``).
+    Attempt cap and time budget
+    ---------------------------
+    The loop retries at most ``len(_EXECUTE_RETRY_DELAYS)`` times (3 retries =
+    4 total attempts: initial + 3) **in addition** to the wall-clock deadline
+    (``_CONNECT_RETRY_TIMEOUT_S``, ~120 s).  Both guards are applied so the
+    worst case is clearly bounded.  Between retries the loop sleeps with
+    exponential backoff (starting at ~2 s, capped at ~10 s — see
+    ``_EXECUTE_RETRY_DELAYS``).
 
-    If the time budget is exhausted before any attempt succeeds, the last
-    transient error is re-raised.
+    If the attempt cap or the time budget is exhausted before any attempt
+    succeeds, the last transient error is re-raised.
 
     Args:
         target: The :class:`SqlTarget` identifying the warehouse.
@@ -1054,12 +1047,23 @@ def run_query(  # noqa: PLR0913, PLR0915
         Exception: Any other driver error is propagated unchanged.
     """
     # Whether execute-phase transient errors are safe to retry.
-    # Only read-only fetches (fetch != "none") can safely be retried after
+    # Only non-DML fetches (fetch != "none") can safely be retried after
     # execute has started — DML could have already been applied server-side.
     execute_retry_allowed = fetch != "none"
 
-    def _execute_once(c: _Connection) -> tuple[list[str], list[tuple[Any, ...]]]:
-        """Run the statement on *c* and return (cols, rows)."""
+    # Maximum number of execute-phase attempts: initial + len(_EXECUTE_RETRY_DELAYS) retries.
+    # Both this cap AND the wall-clock deadline must be satisfied for a retry to fire.
+    _max_execute_attempts = len(_EXECUTE_RETRY_DELAYS) + 1  # = 4
+
+    def _execute_and_fetch(c: _Connection) -> tuple[list[str], list[tuple[Any, ...]]]:
+        """Run the statement on *c*, fetch results, and return (cols, rows).
+
+        This helper covers ONLY the execute + fetch phase.  It deliberately
+        does NOT call c.commit() — the caller is responsible for committing
+        after this function returns successfully.  This split ensures that
+        the retry loop never re-executes a statement that may already have
+        been committed server-side.
+        """
         cur = c.cursor()
         if params:
             cur.execute(statement, params)
@@ -1067,9 +1071,8 @@ def run_query(  # noqa: PLR0913, PLR0915
             cur.execute(statement)
 
         if fetch == "none":
-            # No result set to read; commit now (if requested) and return.
-            if commit and not autocommit:
-                c.commit()
+            # No result set to read.  Return without committing — commit is
+            # the caller's responsibility (or suppressed for fetch="none").
             return [], []
 
         if fetch == "rowcount":
@@ -1078,24 +1081,19 @@ def run_query(  # noqa: PLR0913, PLR0915
             # cursor.description is None and fetchall() raises
             # ProgrammingError: Invalid cursor state.
             # cursor.rowcount is correctly set to the number of affected rows.
-            rc = cur.rowcount
-            if commit and not autocommit:
-                c.commit()
-            return [], [(rc,)]
+            return [], [(cur.rowcount,)]
 
         # Defensive guard: if the driver returns no result set (description is
-        # None) for an "all" or "one" fetch, commit (when requested) and return
-        # empty results instead of calling fetchall()/fetchone() which would
-        # raise "ProgrammingError: Invalid cursor state".
+        # None) for an "all" or "one" fetch, return empty results instead of
+        # calling fetchall()/fetchone() which would raise
+        # "ProgrammingError: Invalid cursor state".
         if cur.description is None:
-            if commit and not autocommit:
-                c.commit()
             return [], []
 
-        # Fetch the result set BEFORE committing.  Committing first invalidates
-        # the cursor's prepared statement on mssql-python, which causes
-        # "Associated statement is not prepared" on the subsequent fetchall/
-        # fetchone call.
+        # Fetch the result set BEFORE the caller commits.  Committing first
+        # invalidates the cursor's prepared statement on mssql-python, which
+        # causes "Associated statement is not prepared" on the subsequent
+        # fetchall/fetchone call.
         cols = [col[0] for col in cur.description]
 
         if fetch == "one":
@@ -1105,16 +1103,15 @@ def run_query(  # noqa: PLR0913, PLR0915
                 ([row] if row is not None else []),
             )
         else:
-            rows: list[tuple[Any, ...]] = cur.fetchall()
-            result = cols, rows
+            fetched_rows: list[tuple[Any, ...]] = cur.fetchall()
+            result = cols, fetched_rows
 
-        if commit and not autocommit:
-            c.commit()
         return result
 
     conn, _attempt, _max_attempts, _ = _with_connect_retry(target, mode, autocommit)
-    # execute_attempt counts execute-phase failures so far (for backoff indexing).
-    execute_attempt = 0
+    # execute_attempt counts execute-phase attempts so far (for backoff indexing
+    # and the attempt cap).  Starts at 1 for the first attempt.
+    execute_attempt = 1
     # deadline is set on the first execute-phase transient failure.  The total
     # wall-clock budget for execute-phase retries is _CONNECT_RETRY_TIMEOUT_S
     # (~120 s), reusing the same constant as the connect-phase loop.
@@ -1122,7 +1119,7 @@ def run_query(  # noqa: PLR0913, PLR0915
 
     while True:
         try:
-            result = _execute_once(conn)
+            result = _execute_and_fetch(conn)
         except Exception as exc:
             # Mark tainted so close() physically closes instead of pooling.
             if isinstance(conn, _PooledConnection):
@@ -1145,17 +1142,32 @@ def run_query(  # noqa: PLR0913, PLR0915
             # Close the tainted connection before sleeping.  _PooledConnection
             # is idempotent so a later close() call is a no-op.
             conn.close()
-            # If the total execute-phase budget is exhausted, stop retrying.
-            if time.monotonic() >= execute_deadline:
+            # Check both guards: attempt cap and wall-clock deadline.
+            if execute_attempt >= _max_execute_attempts or time.monotonic() >= execute_deadline:
                 raise
             # Sleep with exponential backoff before opening a fresh connection.
-            delay = _EXECUTE_RETRY_DELAYS[min(execute_attempt, len(_EXECUTE_RETRY_DELAYS) - 1)]
-            time.sleep(delay)
+            # Backoff index is 0-based from the first failure (attempt 1 failed
+            # → delay index 0, attempt 2 failed → delay index 1, etc.).
+            delay_idx = min(execute_attempt - 1, len(_EXECUTE_RETRY_DELAYS) - 1)
+            time.sleep(_EXECUTE_RETRY_DELAYS[delay_idx])
             execute_attempt += 1
             # Open a fresh connection for the next execute attempt.
             conn, _attempt, _max_attempts, _ = _with_connect_retry(target, mode, autocommit)
         else:
-            # Execute succeeded — return the pooled connection and surface the result.
+            # Execute + fetch succeeded.  Now commit (if requested) OUTSIDE the
+            # retry loop.  If commit raises, the error propagates directly to
+            # the caller — we do NOT retry here.  Retrying after a commit
+            # failure would risk re-executing the statement and causing a
+            # double-load (e.g. double COPY INTO).  The connection is marked
+            # for discard on commit failure (unknown transaction state).
+            try:
+                if commit and not autocommit:
+                    conn.commit()
+            except Exception:
+                if isinstance(conn, _PooledConnection):
+                    conn.mark_discard()
+                conn.close()
+                raise
             conn.close()
             return result
 

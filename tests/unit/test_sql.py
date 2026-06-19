@@ -1076,15 +1076,15 @@ class TestTransientRetry:
         The execute-phase retry loop is time-budgeted: it keeps retrying until
         _CONNECT_RETRY_TIMEOUT_S seconds have elapsed since the first failure.
         With the clock advanced past the deadline immediately after the first
-        failure, the loop stops after the first retry (connect call 2) and
-        raises the error on the second failure.
+        failure, the attempt-cap/deadline check fires before sleeping and the
+        loop stops after the first attempt — no retry connection is opened.
 
         Clock sequence (injected via _make_fake_time_module):
           - connect-phase _with_connect_retry: call 0 → deadline base
           - first execute fails → call 1 → sets execute_deadline (t=0)
           - call 2 → time.monotonic() check: t > deadline → stop, raise
 
-        Total connect calls: 2 (initial + 1 retry before deadline check fires).
+        Total connect calls: 1 (deadline already expired after first failure).
         """
         # Monotonic values consumed in order:
         #   [0] deadline base inside _with_connect_retry
@@ -1172,49 +1172,6 @@ class TestTransientRetry:
 
         assert rows == [(7,)]
         assert mock_mssql.connect.call_count == 4
-
-    def test_sql_transient_max_retries_constant_is_backward_compatible(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """SQL_TRANSIENT_MAX_RETRIES is exported but no longer controls the execute-phase retry.
-
-        The execute-phase retry is now governed by _CONNECT_RETRY_TIMEOUT_S and
-        _EXECUTE_RETRY_DELAYS.  SQL_TRANSIENT_MAX_RETRIES is retained for backward
-        compatibility only.  Changing it has no effect on the retry count.
-        """
-        original_retries = _sql_module.SQL_TRANSIENT_MAX_RETRIES
-        _sql_module.SQL_TRANSIENT_MAX_RETRIES = 0
-        try:
-            # With the clock staying well within budget, at least one retry fires
-            # regardless of SQL_TRANSIENT_MAX_RETRIES.
-            timeout = _sql_module._CONNECT_RETRY_TIMEOUT_S  # type: ignore[attr-defined]
-            fake_time = _make_fake_time_module(
-                monotonic_values=[
-                    0.0,  # initial _with_connect_retry deadline base
-                    0.0,  # execute_deadline set
-                    timeout / 2,  # deadline check: within budget → retry
-                    timeout / 2,  # retry conn _with_connect_retry deadline base
-                    timeout + 1,  # deadline check after second failure → expired
-                ]
-            )
-            monkeypatch.setattr(_sql_module, "time", fake_time)
-
-            mock_mssql, _, _ = _make_mock_mssql()
-            bad_cursor = MagicMock()
-            bad_cursor.execute.side_effect = Exception("communication link failure")
-            bad_conn = MagicMock()
-            bad_conn.cursor.return_value = bad_cursor
-            mock_mssql.connect.return_value = bad_conn
-            _patch_mssql(monkeypatch, mock_mssql)
-
-            with pytest.raises(Exception, match="communication link failure"):
-                run_query(_make_target(), "SELECT 1")
-
-            # At least 2 connect calls: the retry loop fired at least once
-            # even with SQL_TRANSIENT_MAX_RETRIES=0.
-            assert mock_mssql.connect.call_count >= 2
-        finally:
-            _sql_module.SQL_TRANSIENT_MAX_RETRIES = original_retries
 
     def test_run_statements_retries_transient_connect_failure(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1414,6 +1371,144 @@ class TestTransientRetry:
 
         # fetch="none" → execute_retry_allowed=False → only one connect.
         assert mock_mssql.connect.call_count == 1
+
+    # ------------------------------------------------------------------
+    # Commit-phase safety: transient error during COMMIT must NOT retry
+    # ------------------------------------------------------------------
+
+    def test_commit_phase_transient_not_retried_statement_executed_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CRITICAL: a transient error during COMMIT is NOT retried; the statement executes once.
+
+        This is the key safety guarantee for COPY INTO / bulk-load operations.
+        If a TDS drop occurs after the statement has executed but during the
+        commit, the load may already be committed server-side.  Retrying the
+        statement would risk a double-load.
+
+        The expected behaviour:
+          1. connect → execute COPY INTO succeeds (cursor.rowcount read)
+          2. commit() raises transient "Communication link failure"
+          3. run_query re-raises the error immediately — NO second execute
+
+        Assertions:
+          - cursor.execute called exactly once (no double-load)
+          - the transient error propagates to the caller
+          - connect called exactly once (no retry connection opened)
+        """
+        mock_mssql, _, _ = _make_mock_mssql()
+
+        # Cursor that succeeds on execute but commit raises transient.
+        execute_cursor = MagicMock()
+        execute_cursor.description = None  # COPY INTO: no result set
+        execute_cursor.rowcount = 100
+
+        execute_conn = MagicMock()
+        execute_conn.cursor.return_value = execute_cursor
+        execute_conn.commit.side_effect = Exception("Communication link failure")
+
+        mock_mssql.connect.return_value = execute_conn
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with pytest.raises(Exception, match="Communication link failure"):
+            run_query(
+                _make_target(),
+                "COPY INTO [dbo].[t] FROM 'https://onelake.dfs.fabric.microsoft.com/...'",
+                fetch="rowcount",
+                commit=True,
+            )
+
+        # The statement must have been executed exactly once — no retry.
+        execute_cursor.execute.assert_called_once()
+        # Only one connect attempt — the retry loop never fires for commit errors.
+        assert mock_mssql.connect.call_count == 1
+
+    def test_execute_phase_retried_commit_called_once_on_success(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Execute-phase retry: multiple connects, but commit is called exactly once.
+
+        Sequence:
+          1. connect 1 → execute fails (transient)
+          2. connect 2 → execute succeeds (rowcount=7)
+          3. commit() called once (outside the retry loop)
+
+        Asserts: connect called twice, commit called exactly once.
+        """
+        mock_mssql, _, _ = _make_mock_mssql()
+
+        bad_cursor = MagicMock()
+        bad_cursor.execute.side_effect = Exception("communication link failure")
+        bad_conn = MagicMock()
+        bad_conn.cursor.return_value = bad_cursor
+
+        good_cursor = MagicMock()
+        good_cursor.description = None  # COPY INTO: no result set
+        good_cursor.rowcount = 7
+        good_conn = MagicMock()
+        good_conn.cursor.return_value = good_cursor
+
+        mock_mssql.connect.side_effect = [bad_conn, good_conn]
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        cols, rows = run_query(
+            _make_target(),
+            "COPY INTO [dbo].[t] FROM 'https://onelake.dfs.fabric.microsoft.com/...' WITH (...);",
+            fetch="rowcount",
+            commit=True,
+        )
+
+        assert cols == []
+        assert rows == [(7,)]
+        # Two connections were opened (initial + 1 retry).
+        assert mock_mssql.connect.call_count == 2
+        # The bad connection's execute was never committed.
+        bad_conn.commit.assert_not_called()
+        # Commit was called exactly once — on the successful connection.
+        good_conn.commit.assert_called_once()
+
+    def test_execute_retry_bounded_by_attempt_cap(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Persistent transient execute errors give up after the attempt cap (4 connects).
+
+        The attempt cap is len(_EXECUTE_RETRY_DELAYS) + 1 = 4 attempts max.
+        With the clock staying well within the wall-clock deadline, the loop
+        must stop after exactly 4 connect+execute attempts (initial + 3 retries)
+        regardless of the deadline.
+
+        Clock sequence: all deadline checks return a time within budget so that
+        only the attempt cap terminates the loop.
+        """
+        delays = _sql_module._EXECUTE_RETRY_DELAYS  # type: ignore[attr-defined]
+        max_attempts = len(delays) + 1  # = 4
+
+        # Provide enough monotonic values for the retry loop:
+        # _with_connect_retry is called once per attempt (4 times), each call
+        # consumes one monotonic value for its own deadline base.
+        # The execute deadline is set on the first failure (1 monotonic call).
+        # Each subsequent failure does an attempt-cap check first (before the
+        # time check), so we need time values that are within budget for the
+        # deadline checks that do fire.
+        mono_values = [0.0] * 20  # all within budget (t=0 << deadline)
+
+        fake_time = _make_fake_time_module(monotonic_values=mono_values)
+        monkeypatch.setattr(_sql_module, "time", fake_time)
+
+        mock_mssql, _, _ = _make_mock_mssql()
+        bad_cursor = MagicMock()
+        bad_cursor.execute.side_effect = Exception("communication link failure")
+        bad_conn = MagicMock()
+        bad_conn.cursor.return_value = bad_cursor
+        mock_mssql.connect.return_value = bad_conn
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with pytest.raises(Exception, match="communication link failure"):
+            run_query(_make_target(), "SELECT 1")
+
+        # Must have stopped at exactly max_attempts connects.
+        assert mock_mssql.connect.call_count == max_attempts, (
+            f"expected {max_attempts} connect calls (attempt cap), "
+            f"got {mock_mssql.connect.call_count}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -2286,12 +2381,10 @@ class TestAuthFailedConnectRetry:
         assert mock_mssql.connect.call_count == 1
 
     def test_retry_policy_constants(self) -> None:
-        """Connect-phase uses a ~120 s deadline; execute-phase constants unchanged."""
+        """Connect-phase uses a ~120 s deadline; execute-phase constants are set."""
         assert _sql_module._CONNECT_RETRY_TIMEOUT_S == 120.0
         assert _sql_module._CONNECT_RETRY_DELAYS == (5.0, 10.0, 15.0)
-        # Execute-phase constants remain as before.
-        assert _sql_module.SQL_TRANSIENT_MAX_RETRIES == 2
-        assert _sql_module._TRANSIENT_RETRY_DELAYS == (10.0, 10.0)
+        assert _sql_module._EXECUTE_RETRY_DELAYS == (2.0, 5.0, 10.0)
 
     def test_dml_not_retried_execute_phase_unchanged(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """fetch='none' DML must still NOT be retried after execute raises transient (D10).
