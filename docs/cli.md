@@ -523,9 +523,15 @@ fdw -w MyWorkspace --json sql-endpoints permissions MyLakehouseEP
 
 ## fabric-dw sql
 
-Execute SQL against a Fabric Data Warehouse or SQL Analytics Endpoint.
+SQL execution and query-plan capture against a Fabric Data Warehouse or SQL Analytics Endpoint.
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
+
+!!! warning "Breaking change (v0.x → current)"
+
+    `fdw sql -q "…"` has been renamed to `fdw sql exec -q "…"`.  Update any scripts or aliases that use the old form.
+
+### sql exec
 
 Execute a SQL statement or file against a warehouse or SQL Analytics Endpoint. Provide the query via `-q`/`--query` or `-f`/`--file` (not both). Multi-statement batches are supported; only the last result set is returned. DDL/DML statements return empty columns and rows.
 
@@ -536,7 +542,7 @@ Execute a SQL statement or file against a warehouse or SQL Analytics Endpoint. P
 **Synopsis**
 
 ```
-fdw [-w WORKSPACE] sql [OPTIONS] [ITEM]
+fdw [-w WORKSPACE] sql exec [OPTIONS] [ITEM]
 ```
 
 | Option | Description |
@@ -550,14 +556,42 @@ Output defaults to a Rich table (rows/columns). Pass `--json` on the root comman
 
 ```shell
 # Inline query, Rich table output (default)
-fdw -w MyWorkspace sql SalesWH -q "SELECT TOP 5 * FROM dbo.Sales"
+fdw -w MyWorkspace sql exec SalesWH -q "SELECT TOP 5 * FROM dbo.Sales"
 
 # File input, JSON output
-fdw -w MyWorkspace --json sql SalesWH -f ./queries/report.sql
+fdw -w MyWorkspace --json sql exec SalesWH -f ./queries/report.sql
 ```
 
 ```json
 {"columns": ["id", "name"], "rows": [[1, "Alice"], [2, "Bob"]], "rowcount": 2}
+```
+
+### sql plan
+
+Capture the **estimated** SHOWPLAN_XML execution plan for a SQL statement without executing it. The query is **not** run — only the plan is returned. This means DDL/DML query text is safe to plan without modifying any data.
+
+The plan XML uses the standard namespace `http://schemas.microsoft.com/sqlserver/2004/07/showplan` and can be opened in SSMS, Azure Data Studio, or uploaded to [pastetheplan.com](https://www.pastetheplan.com) for visual analysis.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] sql plan [OPTIONS] [ITEM]
+```
+
+| Option | Description |
+| --- | --- |
+| `-q` / `--query TEXT` | SQL statement to plan. |
+| `-f` / `--file PATH` | Path to a `.sql` file to plan. |
+| `-o` / `--output PATH` | Write the plan XML to this file (recommended extension: `.sqlplan`). When omitted, the XML is printed to stdout. |
+
+**Example**
+
+```shell
+# Print plan XML to stdout
+fdw -w MyWorkspace sql plan SalesWH -q "SELECT TOP 5 * FROM dbo.Sales"
+
+# Save plan to file (opens in SSMS / Azure Data Studio)
+fdw -w MyWorkspace sql plan SalesWH -q "SELECT TOP 5 * FROM dbo.Sales" -o plan.sqlplan
 ```
 
 ---

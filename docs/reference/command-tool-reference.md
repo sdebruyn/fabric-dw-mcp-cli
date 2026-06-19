@@ -82,13 +82,15 @@ tool descriptions see [MCP tools](../mcp-tools.md).
 
 | Command | Summary |
 | ------- | ------- |
-| `fdw sql` | Execute a SQL statement against ITEM (warehouse or SQL endpoint). |
+| `fdw sql exec` | Execute a SQL statement against ITEM (warehouse or SQL endpoint). |
+| `fdw sql plan` | Capture the estimated SHOWPLAN_XML for ITEM (warehouse or SQL endpoint). |
 
 ### MCP tools
 
 | Tool | Summary |
 | ---- | ------- |
 | `execute_sql` | Execute an arbitrary SQL statement or batch against a warehouse or SQL Analytics |
+| `get_query_plan` | Capture the estimated SHOWPLAN_XML execution plan for a SQL query without executing it. |
 
 
 ## Tables

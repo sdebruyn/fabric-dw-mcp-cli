@@ -26,13 +26,23 @@ before the command group:
 
 ```
 fabric-dw -w MyWorkspace warehouses list
-fabric-dw -w MyWorkspace sql SalesWH -q "SELECT 1"
+fabric-dw -w MyWorkspace sql exec SalesWH -q "SELECT 1"
 ```
 
 **Migration:** replace every `<command> <WORKSPACE> …` invocation with
 `-w <WORKSPACE> <command> …`.  Scripts that rely on `FABRIC_DW_DEFAULT_WORKSPACE`
 or `fabric-dw config set workspace` require no changes — the environment variable
 and the configured default continue to work exactly as before.
+
+**`sql` is now a command group; `exec` is the direct-execute subcommand.**
+
+The `sql` command is now a group with two subcommands:
+
+- `sql exec WAREHOUSE -q "..."` — execute a SQL query (equivalent to the old `sql` command).
+- `sql plan WAREHOUSE -q "..."` — capture the estimated SHOWPLAN_XML without executing.
+
+**Migration:** replace every `fdw sql <WAREHOUSE> …` invocation with
+`fdw sql exec <WAREHOUSE> …`.
 
 **Workspace resolution order** (unchanged):
 

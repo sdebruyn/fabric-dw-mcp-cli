@@ -509,6 +509,26 @@ Multi-statement batches are supported; only the **last** result set is returned.
 
 ---
 
+### get_query_plan
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Capture the **estimated** SHOWPLAN_XML execution plan for a SQL query without executing it.
+
+This tool does **not** execute the query — it only retrieves the estimated plan. Because no data is modified, this tool is permitted even when `FABRIC_MCP_READONLY=1`. DDL/DML query text is safe to plan without modifying any data.
+
+The plan XML uses the standard namespace `http://schemas.microsoft.com/sqlserver/2004/07/showplan` and can be opened in SSMS, Azure Data Studio, or uploaded to [pastetheplan.com](https://www.pastetheplan.com) for visual analysis.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
+- `query` (`str`) — SQL statement to generate an estimated execution plan for.
+
+**Returns:** `{ "plan_xml": str }` — the SHOWPLAN_XML string.
+
+---
+
 ## Restore Points
 
 Restore point IDs are timestamp-based strings (e.g. `"1726617378000"`), not GUIDs. Each `RestorePoint` object has `id`, `displayName`, `description`, `creationMode` (`"UserDefined"` or `"SystemCreated"`), and `eventDateTime`.

@@ -101,6 +101,7 @@ DOMAIN_MAP: dict[str, str] = {
     "list_long_running_queries": "queries",
     # SQL execution
     "execute_sql": "sql",
+    "get_query_plan": "sql",
     # Snapshots
     "list_snapshots": "snapshots",
     "create_snapshot": "snapshots",

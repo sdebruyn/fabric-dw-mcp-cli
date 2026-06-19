@@ -315,7 +315,7 @@ def test_workspaces_get_json_valid(
 def test_sql_exec_select1_clean_stderr(
     _cli_smoke_sql_env: dict[str, str],  # noqa: PT019 — value IS used in the body
 ) -> None:
-    """``sql -q 'SELECT 1'`` must exit 0 with a clean stderr.
+    """``sql exec -q 'SELECT 1'`` must exit 0 with a clean stderr.
 
     Exercises the sync SQL / TDS credential path (mssql-python lifecycle, separate
     from the async aiohttp credential) through interpreter teardown.  The workspace
@@ -328,12 +328,12 @@ def test_sql_exec_select1_clean_stderr(
     inside this test function itself.
     """
     child_env = _child_env(_cli_smoke_sql_env)
-    result = _run("sql", "-q", "SELECT 1 AS n", env=child_env)
+    result = _run("sql", "exec", "-q", "SELECT 1 AS n", env=child_env)
     assert result.returncode == 0, (
-        f"sql exited {result.returncode}; stderr:\n{result.stderr}\nstdout:\n{result.stdout}"
+        f"sql exec exited {result.returncode}; stderr:\n{result.stderr}\nstdout:\n{result.stdout}"
     )
-    assert result.stdout.strip(), "sql produced no output"
+    assert result.stdout.strip(), "sql exec produced no output"
     for forbidden in _STDERR_FORBIDDEN:
         assert forbidden not in result.stderr, (
-            f"'sql' stderr contains forbidden pattern {forbidden!r}:\n{result.stderr}"
+            f"'sql exec' stderr contains forbidden pattern {forbidden!r}:\n{result.stderr}"
         )

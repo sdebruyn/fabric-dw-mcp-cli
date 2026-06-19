@@ -24,7 +24,7 @@ from fabric_dw.cli.commands.restore_points import restore_points_group
 from fabric_dw.cli.commands.schemas import schemas_group
 from fabric_dw.cli.commands.settings import settings_group
 from fabric_dw.cli.commands.snapshots import snapshots_group
-from fabric_dw.cli.commands.sql import sql_cmd
+from fabric_dw.cli.commands.sql import sql_group
 from fabric_dw.cli.commands.sql_endpoints import sql_endpoints_group
 from fabric_dw.cli.commands.sql_pools import sql_pools_group
 from fabric_dw.cli.commands.statistics import statistics_group
@@ -264,12 +264,12 @@ def _build_command_name(root_ctx: click.Context) -> str | None:
 
     Reads the ``_segments`` list written by patched sub-group invoke wrappers,
     sorts segments by nesting depth (shallowest first), and joins them to form
-    a path like ``warehouses.list`` or ``config.set.workspace``.
+    a path like ``warehouses.list``, ``sql.exec``, or ``config.set.workspace``.
 
-    For direct leaf commands registered on the root group (e.g. ``fdw sql``),
-    no sub-group invoke wrapper writes a segment, so ``_segments`` is empty.
-    In that case ``root_ctx.invoked_subcommand`` holds the command name and we
-    return it directly (e.g. ``"sql"``).
+    For direct leaf commands registered on the root group (not currently used —
+    all commands are now groups), no sub-group invoke wrapper writes a segment,
+    so ``_segments`` is empty.  In that case ``root_ctx.invoked_subcommand``
+    holds the command name and we return it directly.
 
     Returns ``None`` when no segments were accumulated (e.g. root ``--help``).
     """
@@ -448,7 +448,7 @@ cli.add_command(audit_group)
 cli.add_command(queries_group)
 cli.add_command(restore_points_group)
 cli.add_command(snapshots_group)
-cli.add_command(sql_cmd)
+cli.add_command(sql_group)
 cli.add_command(sql_pools_group)
 cli.add_command(schemas_group)
 cli.add_command(tables_group)

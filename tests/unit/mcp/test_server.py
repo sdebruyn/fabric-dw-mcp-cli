@@ -87,6 +87,7 @@ EXPECTED_TOOL_NAMES: frozenset[str] = frozenset(
         "list_sql_pool_insights",
         # Generic SQL execution
         "execute_sql",
+        "get_query_plan",
         # Snapshots
         "list_snapshots",
         "create_snapshot",
@@ -1944,4 +1945,87 @@ async def test_rename_view_bad_qualified_name_raises_tool_error(ctx_patch) -> No
                 "qualified_name": "nodot",
                 "new_name": "vw_revenue",
             },
+        )
+
+
+# ---------------------------------------------------------------------------
+# get_query_plan tool
+# ---------------------------------------------------------------------------
+
+_PLAN_XML = (
+    "<ShowPlanXML xmlns='http://schemas.microsoft.com/sqlserver/2004/07/showplan'>"
+    "<Batch><Statements><StmtSimple /></Statements></Batch></ShowPlanXML>"
+)
+
+
+async def test_get_query_plan_happy_path(mock_ctx, ctx_patch) -> None:
+    """get_query_plan calls sql_exec.get_plan and returns plan_xml dict."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = _make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.sql_exec.get_plan",
+            new=AsyncMock(return_value=_PLAN_XML),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "get_query_plan",
+            {"workspace": _WS_NAME, "item": _WH_NAME, "query": "SELECT 1"},
+        )
+
+    assert isinstance(result, dict)
+    assert result["plan_xml"] == _PLAN_XML
+
+
+async def test_get_query_plan_allowed_under_readonly(
+    mock_ctx, ctx_patch, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """get_query_plan is permitted even when FABRIC_MCP_READONLY=1 (read-only safe)."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    monkeypatch.setenv("FABRIC_MCP_READONLY", "1")
+
+    item = _make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.sql_exec.get_plan",
+            new=AsyncMock(return_value=_PLAN_XML),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "get_query_plan",
+            {"workspace": _WS_NAME, "item": _WH_NAME, "query": "SELECT 1"},
+        )
+
+    # Must succeed (not raise ToolError) under readonly
+    assert isinstance(result, dict)
+    assert "plan_xml" in result
+
+
+async def test_get_query_plan_no_connection_string_raises_tool_error(mock_ctx, ctx_patch) -> None:
+    """get_query_plan raises ToolError when the item has no connection string."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = _make_item_entry(connection_string=None)
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with (
+        ctx_patch,
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "get_query_plan",
+            {"workspace": _WS_NAME, "item": _WH_NAME, "query": "SELECT 1"},
         )

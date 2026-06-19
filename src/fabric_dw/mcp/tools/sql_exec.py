@@ -88,3 +88,44 @@ def register(mcp: FastMCP) -> None:
             "row_count_returned": len(sliced_rows),
             "truncated": truncated,
         }
+
+    @mcp.tool(name="get_query_plan")
+    async def get_query_plan(
+        workspace: str,
+        item: str,
+        query: str,
+    ) -> dict[str, Any]:
+        """Capture the estimated SHOWPLAN_XML execution plan for a SQL query without executing it.
+
+        This tool does NOT execute the query — it only retrieves the estimated execution
+        plan as SHOWPLAN_XML.  Because no data is modified, this tool is permitted even
+        under ``FABRIC_MCP_READONLY=1``.
+
+        The plan XML uses the standard namespace
+        ``http://schemas.microsoft.com/sqlserver/2004/07/showplan`` and can be opened
+        in SSMS, Azure Data Studio, or uploaded to pastetheplan.com for visual analysis.
+
+        Since the query is not executed, DDL/DML query text is safe to plan without
+        modifying any data.
+
+        Supports both Warehouse and SQL Analytics Endpoint items.
+
+        Args:
+            workspace: Workspace name or GUID.
+            item: Warehouse or SQL Analytics Endpoint name or GUID.
+            query: SQL statement to generate an estimated execution plan for.
+
+        Returns:
+            A dict with key ``plan_xml`` (str) containing the SHOWPLAN_XML string.
+        """
+        assert_workspace_allowed(workspace)
+        ctx = get_context()
+        try:
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
+            assert_workspace_allowed(workspace, str(ws_id))
+            _log.debug("get_query_plan ws=%s item=%s", ws_id, entry.id)
+            target = make_sql_target(ws_id, entry, item)
+            plan_xml = await _sql_exec_svc.get_plan(target, query, mode=ctx.auth_mode)
+        except FabricError as exc:
+            raise fabric_err(exc) from exc
+        return {"plan_xml": plan_xml}

@@ -58,7 +58,7 @@ uvx fabric-dw warehouses list
 uvx fabric-dw -w MyWorkspace warehouses list
 
 # Execute a SQL query against a warehouse in the configured default workspace
-uvx fabric-dw sql SalesWH -q "SELECT TOP 10 * FROM dbo.my_table"
+uvx fabric-dw sql exec SalesWH -q "SELECT TOP 10 * FROM dbo.my_table"
 
 # List restore points for a warehouse
 uvx fabric-dw -w MyWorkspace restore-points list SalesWH

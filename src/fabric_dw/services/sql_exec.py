@@ -3,6 +3,7 @@
 Public API
 ----------
 - :func:`execute` — run an arbitrary SQL batch and return the last result set.
+- :func:`get_plan` — capture the estimated SHOWPLAN_XML for a query without executing it.
 """
 
 from __future__ import annotations
@@ -16,14 +17,21 @@ from uuid import UUID
 
 from fabric_dw import sql
 from fabric_dw.auth import CredentialMode
-from fabric_dw.exceptions import PermissionDeniedError
+from fabric_dw.exceptions import FabricError, PermissionDeniedError
 from fabric_dw.models import SqlResult
 from fabric_dw.sql import SqlTarget
 
-__all__ = ["execute"]
+__all__ = ["execute", "get_plan"]
 
 # Column-name suffix applied to varbinary columns so callers can detect them.
 _BINARY_SUFFIX = "__base64"
+
+# Shared hint appended to PermissionDeniedError raised from SQL execution.
+_SQL_EXEC_PERMISSION_HINT = (
+    "The caller must have at least READ permission on the "
+    "warehouse/SQL endpoint. See "
+    "https://learn.microsoft.com/fabric/data-warehouse/sql-permissions"
+)
 
 
 def _serialize_value(value: object) -> object:
@@ -195,11 +203,7 @@ async def execute(
                         if isinstance(mapped, PermissionDeniedError):
                             raise PermissionDeniedError(
                                 str(mapped),
-                                hint=(
-                                    "The caller must have at least READ permission on the "
-                                    "warehouse/SQL endpoint. See "
-                                    "https://learn.microsoft.com/fabric/data-warehouse/sql-permissions"
-                                ),
+                                hint=_SQL_EXEC_PERMISSION_HINT,
                             ) from exc
                         raise mapped from exc
                     raise
@@ -242,5 +246,112 @@ async def execute(
 
                 cols, rows, rowcount = last
                 return SqlResult(columns=cols, rows=rows, rowcount=rowcount)
+
+    return await asyncio.to_thread(_run)
+
+
+async def get_plan(
+    target: SqlTarget,
+    query: str,
+    *,
+    mode: CredentialMode = CredentialMode.DEFAULT,
+) -> str:
+    """Capture the estimated SHOWPLAN_XML for *query* without executing it.
+
+    Issues ``SET SHOWPLAN_XML ON`` on the connection before running *query*,
+    then concatenates the first column of every returned row (the standard SQL
+    Server Showplan column, read positionally to avoid locale/version sensitivity).
+    ``SET SHOWPLAN_XML OFF`` is guaranteed to run in a ``finally`` block before
+    the connection is closed or returned to the pool.
+
+    **Pool-safety guarantee:** if ``SET SHOWPLAN_XML OFF`` itself raises, the
+    connection is marked for physical discard (via
+    :meth:`~fabric_dw.sql._PooledConnection.mark_discard`) before ``close()``
+    is called.  This prevents a poisoned connection with
+    ``SHOWPLAN_XML`` still ``ON`` from being checked back into the pool and
+    corrupting the next query on that connection.
+
+    The query is **not** executed under ``SHOWPLAN_XML`` — only the estimated
+    plan is returned.  This means DDL/DML query text is safe to plan without
+    modifying any data.
+
+    Args:
+        target: The warehouse or SQL analytics endpoint to connect to.
+        query: The SQL statement to plan.
+        mode: The credential mode for Entra authentication.
+
+    Returns:
+        The SHOWPLAN_XML string (one or more XML fragments concatenated).
+
+    Raises:
+        AuthError: If the driver raises an authentication failure.
+        PermissionDeniedError: If the driver raises a SQL permission-denial error.
+            The exception message contains a hint pointing to the documentation
+            for the required permissions.
+        Exception: Any other driver error is propagated unchanged.
+    """
+
+    def _run() -> str:
+        conn, _, _, _ = sql._with_connect_retry(target, mode, autocommit=False)
+        with closing(conn):
+            cursor = conn.cursor()
+            with closing(cursor):
+                _exc_in_flight: bool = False
+                plan_parts: list[str] = []
+                try:
+                    cursor.execute("SET SHOWPLAN_XML ON")
+                    cursor.execute(query)
+                    rows = cursor.fetchall()
+                    # Read the first column positionally (row[0]) — the standard
+                    # Showplan column name varies by SQL Server version/locale.
+                    plan_parts = [str(row[0]) for row in rows if row[0] is not None]
+                except BaseException as exc:
+                    _exc_in_flight = True
+                    if isinstance(exc, Exception):
+                        mapped = sql.map_driver_error(exc)
+                        if mapped is not None:
+                            if isinstance(mapped, PermissionDeniedError):
+                                raise PermissionDeniedError(
+                                    str(mapped),
+                                    hint=_SQL_EXEC_PERMISSION_HINT,
+                                ) from exc
+                            raise mapped from exc
+                    raise
+                finally:
+                    # Always attempt to restore SHOWPLAN_XML to OFF before the
+                    # connection is closed or returned to the pool.  If the OFF
+                    # command itself fails, mark the connection for physical discard
+                    # so it is never returned to the pool with SHOWPLAN_XML still ON
+                    # (which would poison the next query on that connection).
+                    #
+                    # When the main body already raised an exception (_exc_in_flight),
+                    # we suppress the OFF exception so the original error propagates
+                    # unmodified.  When the main body succeeded, we let the OFF
+                    # exception propagate (which also ensures mark_discard is called).
+                    #
+                    # BaseException (KeyboardInterrupt, SystemExit) that fires inside
+                    # the try body also sets _exc_in_flight via the `except BaseException`
+                    # block above, so the OFF failure is suppressed and mark_discard is
+                    # still called in that case too.
+                    try:
+                        cursor.execute("SET SHOWPLAN_XML OFF")
+                    except Exception:
+                        # Discard the connection: it must not re-enter the pool.
+                        if isinstance(conn, sql._PooledConnection):
+                            conn.mark_discard()
+                        if not _exc_in_flight:
+                            # No original exception — propagate the OFF failure.
+                            raise
+                        # Original exception already in flight — suppress OFF failure
+                        # so the original propagates cleanly.
+
+                # Raise after the finally block so the empty-plan check does not
+                # interfere with the _exc_in_flight / OFF-failure suppression logic.
+                if not plan_parts:
+                    raise FabricError(
+                        "No execution plan was returned — the statement type may not "
+                        "support SHOWPLAN_XML (e.g. SET, PRINT, or comment-only batches)."
+                    )
+                return "".join(plan_parts)
 
     return await asyncio.to_thread(_run)
