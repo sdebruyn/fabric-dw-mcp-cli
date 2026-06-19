@@ -205,12 +205,9 @@ You can also add the server interactively without editing the file: start the CL
 
 To share the configuration with a project instead of setting it globally, add a `.mcp.json` file (or `.github/mcp.json`) in the project root with the same `mcpServers` block. Project-level configuration takes precedence over user-level when server names conflict.
 
-### Desktop (preview)
+### Desktop
 
 Source: <https://docs.github.com/en/copilot/how-tos/github-copilot-app/customize-github-copilot-app>
-
-!!! warning "Technical preview"
-    The GitHub Copilot desktop app is in technical preview and subject to change. The configuration approach described here reflects the current state of the preview.
 
 The GitHub Copilot desktop app is built on top of Copilot CLI and shares the same MCP configuration. **Any MCP servers you have added to `~/.copilot/mcp-config.json` for the CLI are automatically available in the desktop app.** No separate config file is needed.
 
