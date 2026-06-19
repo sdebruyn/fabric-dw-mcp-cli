@@ -16,33 +16,57 @@ Manage SQL tables on Microsoft Fabric Data Warehouses and SQL Analytics Endpoint
 
 ## CLI
 
-### tables list
+### tables clear
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse only
 
-List all tables on a warehouse or SQL Analytics Endpoint. Pass `--schema` to filter to a single schema.
+Truncate a table (delete all rows, keep structure). You will be asked to confirm unless `--yes` is passed.
 
 **Synopsis**
 
 ```
-fdw [-w WORKSPACE] tables list [OPTIONS] [WAREHOUSE]
+fdw [-w WORKSPACE] tables clear [OPTIONS] [WAREHOUSE] QUALIFIED_NAME
 ```
-
-| Option | Description |
-| --- | --- |
-| `--schema TEXT` | Only list tables in this schema. |
 
 **Example**
 
 ```shell
-fdw -w MyWorkspace tables list SalesWH --schema dbo
+fdw -w MyWorkspace --yes tables clear SalesWH dbo.staging_load
 ```
 
+---
+
+### tables clone
+
+**Targets:** Data Warehouse only
+
+Create a zero-copy clone of a table using `CREATE TABLE … AS CLONE OF`. Pass `--at` to clone from a point in time within the warehouse data-retention window.
+
+**Synopsis**
+
 ```
- schema_name  name      created               modified
- ------------ --------- --------------------- ---------------------
- dbo          customers 2026-01-10T08:00:00Z  2026-06-01T12:00:00Z
- dbo          orders    2026-02-01T09:00:00Z  2026-05-15T14:00:00Z
+fdw [-w WORKSPACE] tables clone [OPTIONS] [ITEM]
+```
+
+| Option | Description |
+| --- | --- |
+| `--source SCHEMA.TABLE` | **Required.** Qualified source table to clone. |
+| `--name SCHEMA.TABLE` | **Required.** Qualified name for the new clone. |
+| `--at ISO8601` | Optional UTC timestamp for a historical clone (e.g. `2024-05-20T14:00:00`). Must be within the data-retention window. |
+
+**Example**
+
+```shell
+# Clone to the current state
+fdw -w MyWorkspace tables clone SalesWH \
+  --source dbo.orders \
+  --name dbo.orders_backup
+
+# Point-in-time clone
+fdw -w MyWorkspace tables clone SalesWH \
+  --source dbo.orders \
+  --name dbo.orders_may_snapshot \
+  --at 2024-05-20T14:00:00
 ```
 
 ---
@@ -67,41 +91,6 @@ fdw -w MyWorkspace tables count SalesWH dbo.orders
 
 ```json
 {"schema": "dbo", "name": "orders", "row_count": 999999}
-```
-
----
-
-### tables read
-
-**Targets:** Data Warehouse · SQL Analytics Endpoint
-
-Read up to `--count` rows from a table and emit them as JSON (default), CSV, or Parquet.
-
-CSV and Parquet formats require `--output`. JSON is emitted to stdout by default.
-
-**Synopsis**
-
-```
-fdw [-w WORKSPACE] tables read [OPTIONS] [WAREHOUSE] QUALIFIED_NAME
-```
-
-| Option | Description | Default |
-| --- | --- | --- |
-| `--count N` | Maximum rows to return. | `10` |
-| `--format {json\|csv\|parquet}` | Output format. | `json` |
-| `--output PATH` | Write to file instead of stdout. Required for `csv` and `parquet`. | |
-
-**Example**
-
-```shell
-fdw -w MyWorkspace tables read SalesWH dbo.orders --count 5
-```
-
-```json
-[
-  {"id": 1, "amount": 99.99, "customer_id": 42},
-  ...
-]
 ```
 
 ---
@@ -220,83 +209,33 @@ fdw -w MyWorkspace --yes tables delete SalesWH dbo.orders_2026
 
 ---
 
-### tables clear
+### tables list
 
-**Targets:** Data Warehouse only
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
-Truncate a table (delete all rows, keep structure). You will be asked to confirm unless `--yes` is passed.
-
-**Synopsis**
-
-```
-fdw [-w WORKSPACE] tables clear [OPTIONS] [WAREHOUSE] QUALIFIED_NAME
-```
-
-**Example**
-
-```shell
-fdw -w MyWorkspace --yes tables clear SalesWH dbo.staging_load
-```
-
----
-
-### tables clone
-
-**Targets:** Data Warehouse only
-
-Create a zero-copy clone of a table using `CREATE TABLE … AS CLONE OF`. Pass `--at` to clone from a point in time within the warehouse data-retention window.
+List all tables on a warehouse or SQL Analytics Endpoint. Pass `--schema` to filter to a single schema.
 
 **Synopsis**
 
 ```
-fdw [-w WORKSPACE] tables clone [OPTIONS] [ITEM]
+fdw [-w WORKSPACE] tables list [OPTIONS] [WAREHOUSE]
 ```
 
 | Option | Description |
 | --- | --- |
-| `--source SCHEMA.TABLE` | **Required.** Qualified source table to clone. |
-| `--name SCHEMA.TABLE` | **Required.** Qualified name for the new clone. |
-| `--at ISO8601` | Optional UTC timestamp for a historical clone (e.g. `2024-05-20T14:00:00`). Must be within the data-retention window. |
+| `--schema TEXT` | Only list tables in this schema. |
 
 **Example**
 
 ```shell
-# Clone to the current state
-fdw -w MyWorkspace tables clone SalesWH \
-  --source dbo.orders \
-  --name dbo.orders_backup
-
-# Point-in-time clone
-fdw -w MyWorkspace tables clone SalesWH \
-  --source dbo.orders \
-  --name dbo.orders_may_snapshot \
-  --at 2024-05-20T14:00:00
+fdw -w MyWorkspace tables list SalesWH --schema dbo
 ```
 
----
-
-### tables rename
-
-**Targets:** Data Warehouse only
-
-Rename a table via `sp_rename`. The new name must be an unqualified (bare) identifier — `sp_rename` cannot move a table to a different schema.
-
-**Synopsis**
-
 ```
-fdw [-w WORKSPACE] tables rename [OPTIONS] [ITEM] QUALIFIED_NAME
-```
-
-`QUALIFIED_NAME` is the current dot-separated `schema.table_name`.
-
-| Option | Description |
-| --- | --- |
-| `--new-name TEXT` | **Required.** New bare table name (no schema prefix). |
-
-**Example**
-
-```shell
-fdw -w MyWorkspace tables rename SalesWH dbo.orders_2025 --new-name orders_archive_2025
+ schema_name  name      created               modified
+ ------------ --------- --------------------- ---------------------
+ dbo          customers 2026-01-10T08:00:00Z  2026-06-01T12:00:00Z
+ dbo          orders    2026-02-01T09:00:00Z  2026-05-15T14:00:00Z
 ```
 
 ---
@@ -405,21 +344,102 @@ fdw -w MyWorkspace tables load SalesWH dbo.events \
 
 ---
 
-## MCP tools
-
-### list_tables
+### tables read
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
-List SQL tables on a warehouse or SQL Analytics Endpoint.
+Read up to `--count` rows from a table and emit them as JSON (default), CSV, or Parquet.
+
+CSV and Parquet formats require `--output`. JSON is emitted to stdout by default.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] tables read [OPTIONS] [WAREHOUSE] QUALIFIED_NAME
+```
+
+| Option | Description | Default |
+| --- | --- | --- |
+| `--count N` | Maximum rows to return. | `10` |
+| `--format {json\|csv\|parquet}` | Output format. | `json` |
+| `--output PATH` | Write to file instead of stdout. Required for `csv` and `parquet`. | |
+
+**Example**
+
+```shell
+fdw -w MyWorkspace tables read SalesWH dbo.orders --count 5
+```
+
+```json
+[
+  {"id": 1, "amount": 99.99, "customer_id": 42},
+  ...
+]
+```
+
+---
+
+### tables rename
+
+**Targets:** Data Warehouse only
+
+Rename a table via `sp_rename`. The new name must be an unqualified (bare) identifier — `sp_rename` cannot move a table to a different schema.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] tables rename [OPTIONS] [ITEM] QUALIFIED_NAME
+```
+
+`QUALIFIED_NAME` is the current dot-separated `schema.table_name`.
+
+| Option | Description |
+| --- | --- |
+| `--new-name TEXT` | **Required.** New bare table name (no schema prefix). |
+
+**Example**
+
+```shell
+fdw -w MyWorkspace tables rename SalesWH dbo.orders_2025 --new-name orders_archive_2025
+```
+
+---
+
+## MCP tools
+
+### clear_table
+
+**Targets:** Data Warehouse only
+
+Truncate a SQL table (remove all rows, preserve structure).
+
+**CAUTION**: This is a destructive, irreversible operation. All rows will be permanently deleted. The table structure is preserved. Confirm with the user before calling.
 
 **Parameters:**
 
 - `workspace` (`str`) — workspace name or GUID.
 - `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `schema` (`str | null`, optional) — when provided, only tables in this schema are returned.
+- `qualified_name` (`str`) — dot-separated table name, e.g. `dbo.sales`.
 
-**Returns:** `list[Table]` — each with `schema_name`, `name`, `qualified_name`, `created`, `modified`.
+**Returns:** `{ "truncated": true }` — confirmation.
+
+---
+
+### clone_table
+
+**Targets:** Data Warehouse only
+
+Create a zero-copy clone of a table using `CREATE TABLE … AS CLONE OF …`. Only supported on Fabric Data Warehouses (not SQL Analytics Endpoints).
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse name or GUID.
+- `source` (`str`) — qualified source table name, e.g. `dbo.sales`.
+- `new_table` (`str`) — qualified name for the new cloned table, e.g. `dbo.sales_clone`.
+- `at` (`str | null`, optional) — ISO-8601 UTC timestamp for a point-in-time clone (e.g. `2024-05-20T14:00:00`). Must be within the data-retention window. When omitted, the clone reflects the current state of the source table.
+
+**Returns:** `Table` — the newly-created cloned table record.
 
 ---
 
@@ -436,42 +456,6 @@ Return the total row count of a table via `SELECT COUNT_BIG(*)`.
 - `qualified_name` (`str`) — dot-separated table name, e.g. `dbo.sales`.
 
 **Returns:** `{ "schema": str, "name": str, "row_count": int }` — the schema name, table name, and total row count.
-
----
-
-### read_table
-
-**Targets:** Data Warehouse · SQL Analytics Endpoint
-
-Return up to `count` rows from a table as JSON-serialisable columns and rows.
-
-**Parameters:**
-
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `qualified_name` (`str`) — dot-separated table name, e.g. `dbo.sales`.
-- `count` (`int`, default `10`) — maximum rows to return.
-
-**Returns:** `{ "columns": list[str], "rows": list[list] }` — column names and row arrays.
-
----
-
-### create_table
-
-**Targets:** Data Warehouse only
-
-Create a new SQL table via CTAS (`CREATE TABLE … AS SELECT`).
-
-**CAUTION**: `select_body` is executed verbatim as DDL. Confirm intent before calling. The first non-comment keyword must be `SELECT`.
-
-**Parameters:**
-
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `qualified_name` (`str`) — dot-separated table name, e.g. `dbo.sales`.
-- `select_body` (`str`) — the SELECT statement for the CTAS source.
-
-**Returns:** `Table` — the newly-created table record.
 
 ---
 
@@ -512,6 +496,25 @@ Server-side file access is unreliable in MCP deployments, so CSV/Parquet schema 
 
 ---
 
+### create_table
+
+**Targets:** Data Warehouse only
+
+Create a new SQL table via CTAS (`CREATE TABLE … AS SELECT`).
+
+**CAUTION**: `select_body` is executed verbatim as DDL. Confirm intent before calling. The first non-comment keyword must be `SELECT`.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`) — dot-separated table name, e.g. `dbo.sales`.
+- `select_body` (`str`) — the SELECT statement for the CTAS source.
+
+**Returns:** `Table` — the newly-created table record.
+
+---
+
 ### delete_table
 
 **Targets:** Data Warehouse only
@@ -527,99 +530,6 @@ Drop a SQL table.
 - `qualified_name` (`str`) — dot-separated table name, e.g. `dbo.sales`.
 
 **Returns:** `{ "dropped": true }` — confirmation.
-
----
-
-### clear_table
-
-**Targets:** Data Warehouse only
-
-Truncate a SQL table (remove all rows, preserve structure).
-
-**CAUTION**: This is a destructive, irreversible operation. All rows will be permanently deleted. The table structure is preserved. Confirm with the user before calling.
-
-**Parameters:**
-
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `qualified_name` (`str`) — dot-separated table name, e.g. `dbo.sales`.
-
-**Returns:** `{ "truncated": true }` — confirmation.
-
----
-
-### clone_table
-
-**Targets:** Data Warehouse only
-
-Create a zero-copy clone of a table using `CREATE TABLE … AS CLONE OF …`. Only supported on Fabric Data Warehouses (not SQL Analytics Endpoints).
-
-**Parameters:**
-
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse name or GUID.
-- `source` (`str`) — qualified source table name, e.g. `dbo.sales`.
-- `new_table` (`str`) — qualified name for the new cloned table, e.g. `dbo.sales_clone`.
-- `at` (`str | null`, optional) — ISO-8601 UTC timestamp for a point-in-time clone (e.g. `2024-05-20T14:00:00`). Must be within the data-retention window. When omitted, the clone reflects the current state of the source table.
-
-**Returns:** `Table` — the newly-created cloned table record.
-
----
-
-### rename_table
-
-**Targets:** Data Warehouse only
-
-Rename a SQL table via `sp_rename`. Only supported on Fabric Data Warehouses (SQL Analytics Endpoints are rejected). The new name must be a bare (unqualified) identifier — `sp_rename` cannot move a table to a different schema.
-
-**Parameters:**
-
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse name or GUID.
-- `qualified_name` (`str`) — current dot-separated qualified table name, e.g. `dbo.sales`.
-- `new_name` (`str`) — new bare table name (no schema prefix), e.g. `sales_v2`.
-
-**Returns:** `Table` — the updated table record.
-
----
-
-### load_table_from_url
-
-**Targets:** Data Warehouse only
-
-Load data into a Data Warehouse table via `COPY INTO` from a remote URL. For OneLake or same-tenant URLs, no credential is needed. For secured external URLs (Azure Blob Storage, ADLS Gen2), supply `credential_type` and the appropriate `secret`/`identity` values.
-
-!!! warning "JSON not supported for remote URLs"
-
-    If you need to load JSON, download the file locally and use the CLI `tables load --file` command instead (which converts JSON to Parquet client-side).
-
-!!! note "Secret safety"
-
-    The `secret` and `identity` parameters are accepted but are **never** logged or echoed in any server output.
-
-!!! note "Table must exist"
-
-    This tool does not create the target table. Use [`import_table_from_url`](#import_table_from_url) for a load-only flow with `if_exists` control over an existing table, or the CLI `tables load --file --create` for auto-create from a local file with schema inference.
-
-**Parameters:**
-
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse name or GUID. SQL Analytics Endpoints are rejected.
-- `qualified_name` (`str`) — dot-separated qualified table name, e.g. `dbo.sales`.
-- `url` (`str`) — source URL (OneLake DFS URL or external Azure Blob URL).
-- `file_type` (`"CSV" | "PARQUET"`) — file type to load.
-- `credential_type` (`"none" | "sas" | "managed-identity" | "service-principal" | "account-key"`, default `"none"`) — credential type for secured external URLs.
-- `secret` (`str | null`, optional) — credential secret (SAS token, client secret, or account key). Never logged.
-- `identity` (`str | null`, optional) — identity for `managed-identity` or `service-principal`.
-- `delimiter` (`str | null`, optional) — CSV column delimiter (e.g. `,`, `\t`).
-- `has_header` (`bool`, default `true`) — when `true`, the first CSV row is a header and is skipped.
-- `encoding` (`str | null`, optional) — CSV encoding (e.g. `UTF8`, `UTF8BOM`).
-- `field_quote` (`str | null`, optional) — CSV field-quote character.
-- `row_terminator` (`str | null`, optional) — CSV row terminator (e.g. `\n`, `\r\n`).
-- `max_errors` (`int | null`, optional) — maximum errors before aborting.
-- `rejected_row_location` (`str | null`, optional) — URL to write rejected rows to.
-
-**Returns:** `CopyIntoResult` — `{ "rows_loaded": int, "rows_rejected": int, "target": "schema.table" }`.
 
 ---
 
@@ -670,3 +580,93 @@ Load data from a remote URL into an existing Data Warehouse table with control o
 - `rejected_row_location` (`str | null`, optional) — URL to write rejected rows to.
 
 **Returns:** `CopyIntoResult` — `{ "rows_loaded": int, "rows_rejected": int, "target": "schema.table" }`.
+
+---
+
+### list_tables
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+List SQL tables on a warehouse or SQL Analytics Endpoint.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
+- `schema` (`str | null`, optional) — when provided, only tables in this schema are returned.
+
+**Returns:** `list[Table]` — each with `schema_name`, `name`, `qualified_name`, `created`, `modified`.
+
+---
+
+### load_table_from_url
+
+**Targets:** Data Warehouse only
+
+Load data into a Data Warehouse table via `COPY INTO` from a remote URL. For OneLake or same-tenant URLs, no credential is needed. For secured external URLs (Azure Blob Storage, ADLS Gen2), supply `credential_type` and the appropriate `secret`/`identity` values.
+
+!!! warning "JSON not supported for remote URLs"
+
+    If you need to load JSON, download the file locally and use the CLI `tables load --file` command instead (which converts JSON to Parquet client-side).
+
+!!! note "Secret safety"
+
+    The `secret` and `identity` parameters are accepted but are **never** logged or echoed in any server output.
+
+!!! note "Table must exist"
+
+    This tool does not create the target table. Use [`import_table_from_url`](#import_table_from_url) for a load-only flow with `if_exists` control over an existing table, or the CLI `tables load --file --create` for auto-create from a local file with schema inference.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse name or GUID. SQL Analytics Endpoints are rejected.
+- `qualified_name` (`str`) — dot-separated qualified table name, e.g. `dbo.sales`.
+- `url` (`str`) — source URL (OneLake DFS URL or external Azure Blob URL).
+- `file_type` (`"CSV" | "PARQUET"`) — file type to load.
+- `credential_type` (`"none" | "sas" | "managed-identity" | "service-principal" | "account-key"`, default `"none"`) — credential type for secured external URLs.
+- `secret` (`str | null`, optional) — credential secret (SAS token, client secret, or account key). Never logged.
+- `identity` (`str | null`, optional) — identity for `managed-identity` or `service-principal`.
+- `delimiter` (`str | null`, optional) — CSV column delimiter (e.g. `,`, `\t`).
+- `has_header` (`bool`, default `true`) — when `true`, the first CSV row is a header and is skipped.
+- `encoding` (`str | null`, optional) — CSV encoding (e.g. `UTF8`, `UTF8BOM`).
+- `field_quote` (`str | null`, optional) — CSV field-quote character.
+- `row_terminator` (`str | null`, optional) — CSV row terminator (e.g. `\n`, `\r\n`).
+- `max_errors` (`int | null`, optional) — maximum errors before aborting.
+- `rejected_row_location` (`str | null`, optional) — URL to write rejected rows to.
+
+**Returns:** `CopyIntoResult` — `{ "rows_loaded": int, "rows_rejected": int, "target": "schema.table" }`.
+
+---
+
+### read_table
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Return up to `count` rows from a table as JSON-serialisable columns and rows.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`) — dot-separated table name, e.g. `dbo.sales`.
+- `count` (`int`, default `10`) — maximum rows to return.
+
+**Returns:** `{ "columns": list[str], "rows": list[list] }` — column names and row arrays.
+
+---
+
+### rename_table
+
+**Targets:** Data Warehouse only
+
+Rename a SQL table via `sp_rename`. Only supported on Fabric Data Warehouses (SQL Analytics Endpoints are rejected). The new name must be a bare (unqualified) identifier — `sp_rename` cannot move a table to a different schema.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse name or GUID.
+- `qualified_name` (`str`) — current dot-separated qualified table name, e.g. `dbo.sales`.
+- `new_name` (`str`) — new bare table name (no schema prefix), e.g. `sales_v2`.
+
+**Returns:** `Table` — the updated table record.
