@@ -263,7 +263,7 @@ def parse_showplan(xml_text: str) -> list[PlanOperator]:
             ShowPlan document.
     """
     try:
-        root_elem = ET.fromstring(xml_text)  # noqa: S314  (stdlib, trusted internal XML)
+        root_elem = ET.fromstring(xml_text)  # noqa: S314  # nosec B314  (stdlib, trusted Fabric API XML)
     except ET.ParseError as exc:
         raise ValueError(f"Malformed SHOWPLAN XML: {exc}") from exc
 
