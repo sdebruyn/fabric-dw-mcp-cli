@@ -29,7 +29,6 @@ Design notes
 
 from __future__ import annotations
 
-import asyncio
 import pathlib
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any
@@ -45,10 +44,36 @@ __all__ = [
     "render_reference",
 ]
 
-# Relative to repo root (resolved at import time so tests can compare).
-OUTPUT_PATH = (
-    pathlib.Path(__file__).parent.parent.parent / "docs" / "reference" / "command-tool-reference.md"
-)
+
+def _find_repo_root() -> pathlib.Path:
+    """Walk up from this file's location to find the repo root.
+
+    The repo root is identified as the directory containing both
+    ``pyproject.toml`` and a ``docs/`` subdirectory.
+
+    Raises:
+        FileNotFoundError: When no repo root matching those criteria is found
+            within the directory tree above this file.  This prevents silently
+            writing the generated page into the wrong location (e.g. under
+            site-packages after a wheel install).
+    """
+    candidate = pathlib.Path(__file__).resolve().parent
+    for _ in range(20):  # guard against infinite loops on unusual filesystems
+        if (candidate / "pyproject.toml").exists() and (candidate / "docs").is_dir():
+            return candidate
+        parent = candidate.parent
+        if parent == candidate:
+            break
+        candidate = parent
+    msg = (
+        "Could not locate the repo root (a directory containing pyproject.toml and docs/) "
+        f"while walking up from {pathlib.Path(__file__).resolve()}. "
+        "Run `just gen-docs` from the repository root, or install the package in editable mode."
+    )
+    raise FileNotFoundError(msg)
+
+
+OUTPUT_PATH = _find_repo_root() / "docs" / "reference" / "command-tool-reference.md"
 
 _HEADER = """\
 <!-- AUTO-GENERATED — do not edit by hand. Run `just gen-docs` to regenerate. -->
@@ -146,8 +171,8 @@ def collect_mcp_entries(_mcp: FastMCP | None = None) -> list[tuple[str, str, str
 
     Tools are registered via :func:`~fabric_dw.mcp.tools.register_all` against
     a fresh :class:`~mcp.server.fastmcp.FastMCP` instance (no lifespan, no
-    network calls).  The registered tool list is obtained via
-    :meth:`~mcp.server.fastmcp.FastMCP.list_tools` (the public async API).
+    network calls).  The registered tool list is obtained synchronously via
+    ``mcp._tool_manager.list_tools()`` to avoid any async dependency.
 
     The ``summary`` is the first line of the tool's description.
 
@@ -164,7 +189,7 @@ def collect_mcp_entries(_mcp: FastMCP | None = None) -> list[tuple[str, str, str
 
     mcp = _mcp if _mcp is not None else _build_mcp_server()
 
-    tools = asyncio.run(mcp.list_tools())
+    tools = mcp._tool_manager.list_tools()
 
     entries: list[tuple[str, str, str]] = []
     for tool in tools:
@@ -188,6 +213,9 @@ def collect_mcp_entries(_mcp: FastMCP | None = None) -> list[tuple[str, str, str
 # ---------------------------------------------------------------------------
 
 # Human-friendly display labels for each domain slug.
+# Every domain that appears in DOMAIN_MAP values (and in _KNOWN_DOMAINS from
+# telemetry_commands) MUST have an explicit entry here.  The completeness guard
+# below raises ValueError at import time for any missing entry.
 _DOMAIN_LABELS: dict[str, str] = {
     "workspaces": "Workspaces",
     "warehouses": "Warehouses",
@@ -210,6 +238,29 @@ _DOMAIN_LABELS: dict[str, str] = {
     "completion": "Shell completion",
     "settings": "Server-side settings",
 }
+
+
+def _assert_domain_labels_complete() -> None:
+    """Raise ValueError if any known domain is missing from ``_DOMAIN_LABELS``.
+
+    This guard runs once at module import time.  It ensures that adding a new
+    domain to ``_KNOWN_DOMAINS`` (in :mod:`fabric_dw.telemetry_commands`) without
+    adding a corresponding entry to ``_DOMAIN_LABELS`` is a hard failure rather
+    than a silent wrong label in the generated page.
+    """
+    from fabric_dw.telemetry_commands import _KNOWN_DOMAINS  # noqa: PLC0415
+
+    missing = sorted(_KNOWN_DOMAINS - set(_DOMAIN_LABELS))
+    if missing:
+        msg = (
+            "The following domains are listed in _KNOWN_DOMAINS but have no entry in "
+            f"_DOMAIN_LABELS in fabric_dw.docgen: {missing}. "
+            "Add a human-friendly label for each missing domain to _DOMAIN_LABELS."
+        )
+        raise ValueError(msg)
+
+
+_assert_domain_labels_complete()
 
 
 def render_reference(

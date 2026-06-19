@@ -14,7 +14,13 @@ from __future__ import annotations
 
 import pytest
 
-from fabric_dw.docgen import OUTPUT_PATH, collect_cli_entries, collect_mcp_entries, render_reference
+from fabric_dw.docgen import (
+    _DOMAIN_LABELS,
+    OUTPUT_PATH,
+    collect_cli_entries,
+    collect_mcp_entries,
+    render_reference,
+)
 
 # ---------------------------------------------------------------------------
 # Smoke / spot-check tests
@@ -64,6 +70,22 @@ def test_collect_mcp_entry_has_summary() -> None:
         assert domain, f"Empty domain for MCP tool {name!r}"
         assert name, "Empty tool name"
         assert summary, f"Empty summary for MCP tool {name!r}"
+
+
+# ---------------------------------------------------------------------------
+# _DOMAIN_LABELS completeness guard
+# ---------------------------------------------------------------------------
+
+
+def test_domain_labels_cover_all_known_domains() -> None:
+    """Every domain in _KNOWN_DOMAINS must have an explicit entry in _DOMAIN_LABELS."""
+    from fabric_dw.telemetry_commands import _KNOWN_DOMAINS  # noqa: PLC0415
+
+    missing = sorted(_KNOWN_DOMAINS - set(_DOMAIN_LABELS))
+    assert not missing, (
+        f"Domains in _KNOWN_DOMAINS but missing from _DOMAIN_LABELS: {missing}. "
+        "Add a human-friendly label for each to fabric_dw.docgen._DOMAIN_LABELS."
+    )
 
 
 # ---------------------------------------------------------------------------
