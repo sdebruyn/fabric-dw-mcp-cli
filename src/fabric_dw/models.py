@@ -289,7 +289,7 @@ class ExecRequestHistory(_FabricBase):
     submit_time: datetime | None = None
     start_time: datetime | None = None
     end_time: datetime | None = None
-    total_elapsed_time_ms: int | None = None
+    total_elapsed_time_ms: float | None = None
 
     # --- details ---
     database_name: str | None = None
@@ -303,7 +303,7 @@ class ExecRequestHistory(_FabricBase):
     label: str | None = None
     result_cache_hit: int | None = None
     sql_pool_name: str | None = None
-    allocated_cpu_time_ms: int | None = None
+    allocated_cpu_time_ms: float | None = None
     data_scanned_remote_storage_mb: float | None = None
     data_scanned_memory_mb: float | None = None
     data_scanned_disk_mb: float | None = None
@@ -328,7 +328,7 @@ class ExecSessionHistory(_FabricBase):
     # --- timing ---
     session_start_time: datetime
     session_end_time: datetime | None = None
-    total_query_elapsed_time_ms: int
+    total_query_elapsed_time_ms: float
     last_request_start_time: datetime
     last_request_end_time: datetime | None = None
 
@@ -368,11 +368,11 @@ class FrequentlyRunQuery(_FabricBase):
     last_run_start_time: datetime | None = None
     last_run_command: str | None = None
     number_of_runs: int
-    avg_total_elapsed_time_ms: int
-    last_run_total_elapsed_time_ms: int
+    avg_total_elapsed_time_ms: float
+    last_run_total_elapsed_time_ms: float
     last_dist_statement_id: UUID | None = None
-    min_run_total_elapsed_time_ms: int
-    max_run_total_elapsed_time_ms: int
+    min_run_total_elapsed_time_ms: float
+    max_run_total_elapsed_time_ms: float
     number_of_successful_runs: int
     number_of_failed_runs: int
     number_of_canceled_runs: int
@@ -384,9 +384,9 @@ class LongRunningQuery(_FabricBase):
 
     last_run_start_time: datetime | None = None
     last_run_command: str | None = None
-    median_total_elapsed_time_ms: int
+    median_total_elapsed_time_ms: float
     number_of_runs: int
-    last_run_total_elapsed_time_ms: int
+    last_run_total_elapsed_time_ms: float
     last_dist_statement_id: UUID | None = None
     query_hash: str | None = None
 
