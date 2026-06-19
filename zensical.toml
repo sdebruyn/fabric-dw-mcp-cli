@@ -14,6 +14,10 @@ watch = ["README.md", "CONTRIBUTING.md", "LICENSE", "SECURITY.md", "CODE_OF_COND
 nav = [
   { "Home" = "index.md" },
   { "Install" = "install.md" },
+  { "Commands" = [
+    { "Workspaces" = "commands/workspaces.md" },
+    { "Tables" = "commands/tables.md" }
+  ] },
   { "Reference" = [
     { "CLI" = "cli.md" },
     { "Authentication" = "authentication.md" },
