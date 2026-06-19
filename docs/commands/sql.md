@@ -8,10 +8,6 @@ SQL execution and query-plan capture against a Fabric Data Warehouse or SQL Anal
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
-!!! warning "Breaking change (v0.x → current)"
-
-    `fdw sql -q "…"` has been renamed to `fdw sql exec -q "…"`.  Update any scripts or aliases that use the old form.
-
 ---
 
 ## CLI
