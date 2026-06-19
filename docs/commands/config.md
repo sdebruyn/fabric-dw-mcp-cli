@@ -13,7 +13,7 @@ fdw config set warehouse MyWarehouse
 
 Once set, the stored workspace is used whenever `-w` / `--workspace` is not passed and `FABRIC_DW_DEFAULT_WORKSPACE` is not set. The stored warehouse value fills in optional `[WAREHOUSE]` / `[ITEM]` positionals shown in `[brackets]` in the synopsis below. All stored values are resolved in the same way as explicit arguments (name or GUID).
 
-Resolution order for the workspace (see also [Selecting a workspace](../cli.md#selecting-a-workspace)):
+Resolution order for the workspace (see also [Selecting a workspace](../concepts.md#selecting-a-workspace)):
 
 1. `-w` / `--workspace` flag on the root command.
 2. `FABRIC_DW_DEFAULT_WORKSPACE` environment variable.

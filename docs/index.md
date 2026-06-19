@@ -20,9 +20,9 @@ Both the CLI and the MCP server surfaces are built from a single Python package 
 
     Get the package installed and verify your setup.
 
-- :material-console: **[CLI Reference](cli.md)**
+- :material-console: **[Commands](reference/command-tool-reference.md)**
 
-    Command-line interface for DW administration tasks.
+    Per-domain CLI commands and MCP tools for DW administration tasks.
 
 - :material-server: **[MCP Reference](mcp.md)**
 

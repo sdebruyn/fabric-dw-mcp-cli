@@ -8,7 +8,7 @@ Manage **server-side** database settings on a Fabric Data Warehouse or SQL Analy
 
 !!! note
 
-    `settings` manages server-side warehouse/database configuration. For client-side CLI defaults (workspace, warehouse) use [`fdw config`](../cli.md#defaults-fabric-dw-config) instead.
+    `settings` manages server-side warehouse/database configuration. For client-side CLI defaults (workspace, warehouse) use [`fdw config`](config.md) instead.
 
 `show` and `result-set-caching` work on both Data Warehouses and SQL Analytics Endpoints. The `retention` command sets the time-travel retention period, which is primarily a Warehouse concept and may be a no-op on a SQL Analytics Endpoint.
 
