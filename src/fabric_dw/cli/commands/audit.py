@@ -105,7 +105,7 @@ async def disable_cmd(ctx: CliContext, item: str | None) -> None:
         async with build_http_client(ctx) as http:
             ws_id, entry = await resolve_item(http, ws, wh)
             confirmed = confirm(
-                f"Disable auditing on {entry.kind.value} {entry.display_name!r} ({entry.id})?",
+                f"Disable auditing on {entry.kind.label} {entry.display_name!r} ({entry.id})?",
                 yes=ctx.yes,
             )
             if not confirmed:
@@ -172,7 +172,7 @@ async def set_groups_cmd(ctx: CliContext, item: str | None, groups: tuple[str, .
         async with build_http_client(ctx) as http:
             ws_id, entry = await resolve_item(http, ws, wh)
             obj = await _audit_svc.set_action_groups(
-                http, ws_id, entry.id, list(groups), kind=entry.kind
+                http, ws_id, entry.id, list(groups), entry.kind
             )
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:

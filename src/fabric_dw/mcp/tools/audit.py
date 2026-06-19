@@ -119,7 +119,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 action_groups,
             )
             result = await audit.set_action_groups(
-                ctx.http, ws_id, item.id, action_groups, kind=item.kind
+                ctx.http, ws_id, item.id, action_groups, item.kind
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc

@@ -862,7 +862,7 @@ async def test_endpoint_set_action_groups_uses_sql_endpoints_collection() -> Non
         client = await _make_client()
         async with client:
             result = await audit.set_action_groups(
-                client, _WS_ID, _EP_ID, groups, kind=WarehouseKind.SQL_ENDPOINT
+                client, _WS_ID, _EP_ID, groups, WarehouseKind.SQL_ENDPOINT
             )
 
     assert patch_route.called
@@ -929,3 +929,54 @@ def test_audit_path_sql_endpoint_uses_sql_endpoints_segment() -> None:
     assert "/sqlEndpoints/" in path
     assert "/warehouses/" not in path
     assert str(_EP_ID) in path
+
+
+def test_audit_path_snapshot_raises_value_error() -> None:
+    """_audit_path must reject WarehouseKind.SNAPSHOT with a clear ValueError.
+
+    SQL audit is not supported on warehouse snapshots; without this guard a
+    snapshot would fall through to the /warehouses/ route and 404 cryptically.
+    """
+    from fabric_dw.services.audit import _audit_path  # noqa: PLC0415
+
+    with pytest.raises(ValueError, match="snapshot"):
+        _audit_path(_WS_ID, _WH_ID, WarehouseKind.SNAPSHOT)
+
+
+async def test_get_settings_snapshot_raises_value_error() -> None:
+    """get_settings must reject a SNAPSHOT-kind item before issuing any request."""
+    with respx.mock:
+        # No route registered: if a request were issued, respx would raise.
+        client = await _make_client()
+        async with client:
+            with pytest.raises(ValueError, match="snapshot"):
+                await audit.get_settings(client, _WS_ID, _WH_ID, WarehouseKind.SNAPSHOT)
+
+
+async def test_enable_snapshot_raises_value_error() -> None:
+    """enable must reject a SNAPSHOT-kind item before issuing any request."""
+    with respx.mock:
+        client = await _make_client()
+        async with client:
+            with pytest.raises(ValueError, match="snapshot"):
+                await audit.enable(client, _WS_ID, _WH_ID, WarehouseKind.SNAPSHOT)
+
+
+async def test_disable_snapshot_raises_value_error() -> None:
+    """disable must reject a SNAPSHOT-kind item before issuing any request."""
+    with respx.mock:
+        client = await _make_client()
+        async with client:
+            with pytest.raises(ValueError, match="snapshot"):
+                await audit.disable(client, _WS_ID, _WH_ID, WarehouseKind.SNAPSHOT)
+
+
+async def test_set_action_groups_snapshot_raises_value_error() -> None:
+    """set_action_groups must reject a SNAPSHOT-kind item before issuing any request."""
+    with respx.mock:
+        client = await _make_client()
+        async with client:
+            with pytest.raises(ValueError, match="snapshot"):
+                await audit.set_action_groups(
+                    client, _WS_ID, _WH_ID, ["BATCH_COMPLETED_GROUP"], WarehouseKind.SNAPSHOT
+                )

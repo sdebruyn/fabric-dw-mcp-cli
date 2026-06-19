@@ -52,7 +52,7 @@ fdw -w MyWorkspace audit add-group SalesWH BATCH_COMPLETED_GROUP
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
-Disable SQL auditing on a warehouse.
+Disable SQL auditing on a warehouse or SQL Analytics Endpoint.
 
 **Synopsis**
 
@@ -72,7 +72,7 @@ fdw -w MyWorkspace audit disable SalesWH
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
-Enable SQL auditing on a warehouse.
+Enable SQL auditing on a warehouse or SQL Analytics Endpoint.
 
 **Synopsis**
 
@@ -103,7 +103,7 @@ fdw -w MyWorkspace audit enable --unlimited SalesWH
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
-Get the current audit settings for a warehouse.
+Get the current audit settings for a warehouse or SQL Analytics Endpoint.
 
 **Synopsis**
 
@@ -149,7 +149,7 @@ fdw -w MyWorkspace audit remove-group SalesWH BATCH_COMPLETED_GROUP
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
-Set the audit action groups for a warehouse. Pass `--group` / `-g` once per action group. This replaces the existing list of groups.
+Set the audit action groups for a warehouse or SQL Analytics Endpoint. Pass `--group` / `-g` once per action group. This replaces the existing list of groups.
 
 **Synopsis**
 
@@ -186,7 +186,7 @@ fdw [-w WORKSPACE] audit set-retention --days INTEGER [WAREHOUSE]
 
 | Option | Description |
 | --- | --- |
-| `--days INTEGER` | Retention period in days (1–3653; 3653 ≈ 10 years). (required) |
+| `--days INTEGER` | Retention period in days (1–3650; 3650 ≈ 10 years). (required) |
 
 **Example**
 
@@ -302,6 +302,6 @@ Update the audit log retention period without changing the audit enabled/disable
 
 - `workspace` (`str`) — workspace name or GUID.
 - `warehouse` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `days` (`int`) — retention period in days (1–3653; 3653 ≈ 10 years).
+- `days` (`int`) — retention period in days (1–3650; 3650 ≈ 10 years).
 
 **Returns:** `AuditSettings` — the updated audit settings.

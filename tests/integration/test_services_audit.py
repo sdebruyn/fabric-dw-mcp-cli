@@ -287,6 +287,6 @@ async def test_endpoint_set_action_groups(
         workspace_id,
         ephemeral_sql_endpoint.id,
         ["BATCH_COMPLETED_GROUP"],
-        kind=WarehouseKind.SQL_ENDPOINT,
+        WarehouseKind.SQL_ENDPOINT,
     )
     assert "BATCH_COMPLETED_GROUP" in updated.action_groups

@@ -111,7 +111,17 @@ def _audit_path(workspace_id: UUID, item_id: UUID, kind: WarehouseKind) -> str:
 
     Returns:
         A relative URL path string (no leading ``https://api.fabric.microsoft.com/v1``).
+
+    Raises:
+        ValueError: If *kind* is :attr:`~fabric_dw.models.WarehouseKind.SNAPSHOT`.
+            SQL audit is not supported on warehouse snapshots (per Microsoft Learn,
+            "SQL audit logs aren't supported for warehouse snapshots").  Without this
+            guard a snapshot would fall through to the ``/warehouses/`` route and
+            return a cryptic 404.
     """
+    if kind == WarehouseKind.SNAPSHOT:
+        msg = "SQL audit is not supported on warehouse snapshots."
+        raise ValueError(msg)
     collection = "sqlEndpoints" if kind == WarehouseKind.SQL_ENDPOINT else "warehouses"
     return f"/workspaces/{workspace_id}/{collection}/{item_id}/settings/sqlAudit"
 
@@ -274,8 +284,8 @@ async def set_action_groups(
     workspace_id: UUID,
     item_id: UUID,
     action_groups: list[str],
-    *,
     kind: WarehouseKind = WarehouseKind.WAREHOUSE,
+    *,
     ensure_enabled: bool = True,
 ) -> AuditSettings:
     """Replace the audited action groups for a Data Warehouse or SQL Analytics Endpoint.
