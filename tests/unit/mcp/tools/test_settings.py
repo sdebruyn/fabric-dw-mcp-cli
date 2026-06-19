@@ -11,6 +11,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw.exceptions import NotFoundError
 from fabric_dw.models import WarehouseSettings
+from fabric_dw.services.settings import RETENTION_MAX, RETENTION_MIN
 from tests.unit.mcp.conftest import (
     WH_NAME,
     WS_NAME,
@@ -123,6 +124,8 @@ async def test_set_result_set_caching_enable(mock_ctx, ctx_patch) -> None:
     assert result["result_set_caching"] is True
     _, kwargs = mock_set.call_args
     assert kwargs.get("enabled") is True
+    # The tool must forward the server's active credential mode to the service.
+    assert kwargs.get("mode") is mock_ctx.auth_mode
 
 
 async def test_set_result_set_caching_disable(mock_ctx, ctx_patch) -> None:
@@ -177,6 +180,25 @@ async def test_set_result_set_caching_workspace_allowlist_blocks(ctx_patch) -> N
         )
 
 
+async def test_set_result_set_caching_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
+    """set_result_set_caching wraps FabricError from the service into ToolError."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.settings.set_result_set_caching",
+            new=AsyncMock(side_effect=NotFoundError("warehouse not found")),
+        ),
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "set_result_set_caching",
+            {"workspace": WS_NAME, "item": WH_NAME, "enabled": True},
+        )
+
+
 # ---------------------------------------------------------------------------
 # set_time_travel_retention — happy path + bounds validation + guards
 # ---------------------------------------------------------------------------
@@ -201,16 +223,20 @@ async def test_set_time_travel_retention_happy_path(mock_ctx, ctx_patch) -> None
 
     assert isinstance(result, dict)
     assert result["time_travel_retention_days"] == 30
-    args, _ = mock_set.call_args
-    # days is passed as the second positional argument after target
-    assert args[1] == 30
+    # days may be passed positionally (after target) or by keyword; accept either
+    # so the assertion does not break if the signature changes.
+    args, kwargs = mock_set.call_args
+    passed_days = kwargs.get("days", args[1] if len(args) > 1 else None)
+    assert passed_days == 30
+    # The tool must forward the server's active credential mode to the service.
+    assert kwargs.get("mode") is mock_ctx.auth_mode
 
 
 async def test_set_time_travel_retention_min_bound(mock_ctx, ctx_patch) -> None:
-    """set_time_travel_retention accepts days=1 (lower bound)."""
+    """set_time_travel_retention accepts days=RETENTION_MIN (lower bound)."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
-    settings = _make_settings(time_travel_retention_days=1)
+    settings = _make_settings(time_travel_retention_days=RETENTION_MIN)
     mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
 
     with (
@@ -222,17 +248,17 @@ async def test_set_time_travel_retention_min_bound(mock_ctx, ctx_patch) -> None:
     ):
         result = await mcp._tool_manager.call_tool(
             "set_time_travel_retention",
-            {"workspace": WS_NAME, "item": WH_NAME, "days": 1},
+            {"workspace": WS_NAME, "item": WH_NAME, "days": RETENTION_MIN},
         )
 
-    assert result["time_travel_retention_days"] == 1
+    assert result["time_travel_retention_days"] == RETENTION_MIN
 
 
 async def test_set_time_travel_retention_max_bound(mock_ctx, ctx_patch) -> None:
-    """set_time_travel_retention accepts days=120 (upper bound)."""
+    """set_time_travel_retention accepts days=RETENTION_MAX (upper bound)."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
-    settings = _make_settings(time_travel_retention_days=120)
+    settings = _make_settings(time_travel_retention_days=RETENTION_MAX)
     mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
 
     with (
@@ -244,14 +270,14 @@ async def test_set_time_travel_retention_max_bound(mock_ctx, ctx_patch) -> None:
     ):
         result = await mcp._tool_manager.call_tool(
             "set_time_travel_retention",
-            {"workspace": WS_NAME, "item": WH_NAME, "days": 120},
+            {"workspace": WS_NAME, "item": WH_NAME, "days": RETENTION_MAX},
         )
 
-    assert result["time_travel_retention_days"] == 120
+    assert result["time_travel_retention_days"] == RETENTION_MAX
 
 
 async def test_set_time_travel_retention_below_min_raises_tool_error(ctx_patch) -> None:
-    """set_time_travel_retention raises ToolError when days < 1."""
+    """set_time_travel_retention raises ToolError when days < RETENTION_MIN."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     with (
@@ -260,12 +286,12 @@ async def test_set_time_travel_retention_below_min_raises_tool_error(ctx_patch) 
     ):
         await mcp._tool_manager.call_tool(
             "set_time_travel_retention",
-            {"workspace": WS_NAME, "item": WH_NAME, "days": 0},
+            {"workspace": WS_NAME, "item": WH_NAME, "days": RETENTION_MIN - 1},
         )
 
 
 async def test_set_time_travel_retention_above_max_raises_tool_error(ctx_patch) -> None:
-    """set_time_travel_retention raises ToolError when days > 120."""
+    """set_time_travel_retention raises ToolError when days > RETENTION_MAX."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     with (
@@ -274,7 +300,28 @@ async def test_set_time_travel_retention_above_max_raises_tool_error(ctx_patch) 
     ):
         await mcp._tool_manager.call_tool(
             "set_time_travel_retention",
-            {"workspace": WS_NAME, "item": WH_NAME, "days": 121},
+            {"workspace": WS_NAME, "item": WH_NAME, "days": RETENTION_MAX + 1},
+        )
+
+
+async def test_set_time_travel_retention_fabric_error_becomes_tool_error(
+    mock_ctx, ctx_patch
+) -> None:
+    """set_time_travel_retention wraps FabricError from the service into ToolError."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.settings.set_time_travel_retention",
+            new=AsyncMock(side_effect=NotFoundError("warehouse not found")),
+        ),
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "set_time_travel_retention",
+            {"workspace": WS_NAME, "item": WH_NAME, "days": 30},
         )
 
 
