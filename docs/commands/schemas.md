@@ -8,10 +8,6 @@ Manage SQL schemas on Microsoft Fabric Data Warehouses and SQL Analytics Endpoin
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
-!!! note "List source"
-
-    No public REST API exists for enumerating warehouse schemas. `schemas list` (CLI) falls back to TDS via `sys.schemas`, filtering out well-known system schemas (`sys`, `INFORMATION_SCHEMA`, `guest`, `db_*` fixed-role schemas). `dbo` is always included because it is user-writable. `list_schemas` (MCP) uses the same TDS approach.
-
 !!! note "SQL Analytics Endpoints"
 
     `schemas list`, `schemas create`, and `schemas delete` (CLI) and `list_schemas`, `create_schema`, and `delete_schema` (MCP) all work on both Fabric Data Warehouses and SQL Analytics Endpoints. When `schemas delete --cascade` (CLI) or `delete_schema` with `cascade=True` (MCP) is used on a SQL Analytics Endpoint, views, stored procedures, and functions in the schema are dropped, but tables are **not** dropped (because `DROP TABLE` is a Warehouse-only operation on Fabric). If the schema contains tables, the final `DROP SCHEMA` will be rejected by the engine; remove the tables manually first or omit `--cascade` and drop the schema only after it is empty.
