@@ -28,11 +28,11 @@ def queries_group() -> None:
     """Inspect and manage running queries on Fabric warehouses and SQL Analytics Endpoints."""
 
 
-@queries_group.command("list")
+@queries_group.command("running")
 @click.argument("item", required=False, default=None)
 @click.pass_obj
 @coro
-async def list_cmd(ctx: CliContext, item: str | None) -> None:
+async def running_cmd(ctx: CliContext, item: str | None) -> None:
     """List currently running queries on ITEM (warehouse or endpoint)."""
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
@@ -49,11 +49,11 @@ async def list_cmd(ctx: CliContext, item: str | None) -> None:
         raise click.ClickException(str(exc)) from exc
 
 
-@queries_group.command("list-connections")
+@queries_group.command("connections")
 @click.argument("item", required=False, default=None)
 @click.pass_obj
 @coro
-async def list_connections_cmd(ctx: CliContext, item: str | None) -> None:
+async def connections_cmd(ctx: CliContext, item: str | None) -> None:
     """List active SQL connections on ITEM (warehouse or endpoint)."""
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
@@ -98,18 +98,18 @@ async def kill_cmd(ctx: CliContext, item: str | None, session_id: int) -> None:
 
 
 # ---------------------------------------------------------------------------
-# request-history
+# history
 # ---------------------------------------------------------------------------
 
 
-@queries_group.command("request-history")
+@queries_group.command("history")
 @click.argument("warehouse", required=False, default=None)
 @LIMIT_OPTION
 @SINCE_OPTION
 @UNTIL_OPTION
 @click.pass_obj
 @coro
-async def request_history_cmd(
+async def history_cmd(
     ctx: CliContext,
     warehouse: str | None,
     limit: int,
@@ -137,18 +137,18 @@ async def request_history_cmd(
 
 
 # ---------------------------------------------------------------------------
-# session-history
+# sessions
 # ---------------------------------------------------------------------------
 
 
-@queries_group.command("session-history")
+@queries_group.command("sessions")
 @click.argument("warehouse", required=False, default=None)
 @LIMIT_OPTION
 @SINCE_OPTION
 @UNTIL_OPTION
 @click.pass_obj
 @coro
-async def session_history_cmd(
+async def sessions_cmd(
     ctx: CliContext,
     warehouse: str | None,
     limit: int,

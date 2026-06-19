@@ -69,7 +69,7 @@ def _make_running_query() -> RunningQuery:
 
 
 class TestQueriesList:
-    """queries list — happy path and error path."""
+    """queries running — happy path and error path."""
 
     def test_list_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -88,7 +88,7 @@ class TestQueriesList:
                 new=AsyncMock(return_value=[_make_running_query()]),
             ),
         ):
-            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "list", WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "running", WH_GUID])
         assert result.exit_code == 0
 
     def test_list_json_output(self, runner: CliRunner, cache_env: Path) -> None:
@@ -108,7 +108,7 @@ class TestQueriesList:
                 new=AsyncMock(return_value=[_make_running_query()]),
             ),
         ):
-            result = runner.invoke(cli, ["--json", "-w", WS_GUID, "queries", "list", WH_GUID])
+            result = runner.invoke(cli, ["--json", "-w", WS_GUID, "queries", "running", WH_GUID])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert isinstance(parsed, list)
@@ -126,7 +126,7 @@ class TestQueriesList:
                 new=AsyncMock(side_effect=NotFoundError("not found")),
             ),
         ):
-            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "list", WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "running", WH_GUID])
         assert result.exit_code != 0
 
 
@@ -228,7 +228,7 @@ class TestQueriesDefaultFallback:
                 new=AsyncMock(return_value=[_make_running_query()]),
             ),
         ):
-            result = runner.invoke(cli, ["queries", "list"])
+            result = runner.invoke(cli, ["queries", "running"])
         assert result.exit_code == 0
 
     def test_list_missing_workspace_raises_usage_error(
@@ -238,12 +238,12 @@ class TestQueriesDefaultFallback:
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
         monkeypatch.delenv("FABRIC_DW_DEFAULT_WORKSPACE", raising=False)
         monkeypatch.delenv("FABRIC_DW_DEFAULT_WAREHOUSE", raising=False)
-        result = runner.invoke(cli, ["queries", "list"])
+        result = runner.invoke(cli, ["queries", "running"])
         assert result.exit_code != 0
 
 
 class TestQueriesListConnections:
-    """queries list-connections — happy path + FabricError (lines 89-101)."""
+    """queries connections — happy path + FabricError (lines 89-101)."""
 
     def test_list_connections_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -262,7 +262,7 @@ class TestQueriesListConnections:
                 new=AsyncMock(return_value=[]),
             ),
         ):
-            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "list-connections", WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "connections", WH_GUID])
         assert result.exit_code == 0
 
     def test_list_connections_fabric_error_exits_nonzero(
@@ -280,12 +280,12 @@ class TestQueriesListConnections:
                 new=AsyncMock(side_effect=FabricError("server error")),
             ),
         ):
-            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "list-connections", WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "connections", WH_GUID])
         assert result.exit_code != 0
 
 
 class TestQueriesRequestHistory:
-    """queries request-history — happy path."""
+    """queries history — happy path."""
 
     def test_request_history_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -304,12 +304,12 @@ class TestQueriesRequestHistory:
                 new=AsyncMock(return_value=[]),
             ),
         ):
-            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "request-history", WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "history", WH_GUID])
         assert result.exit_code == 0
 
 
 class TestQueriesSessionHistory:
-    """queries session-history — happy path + FabricError (lines 210-211)."""
+    """queries sessions — happy path + FabricError (lines 210-211)."""
 
     def test_session_history_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -328,7 +328,7 @@ class TestQueriesSessionHistory:
                 new=AsyncMock(return_value=[]),
             ),
         ):
-            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "session-history", WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "sessions", WH_GUID])
         assert result.exit_code == 0
 
     def test_session_history_fabric_error_exits_nonzero(
@@ -346,7 +346,7 @@ class TestQueriesSessionHistory:
                 new=AsyncMock(side_effect=FabricError("server error")),
             ),
         ):
-            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "session-history", WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "sessions", WH_GUID])
         assert result.exit_code != 0
 
 
