@@ -77,16 +77,26 @@ __all__ = [
 # Transient-retry configuration
 # ---------------------------------------------------------------------------
 
-# Maximum number of retry attempts for transient TDS connection drops.
-# Set to 0 to disable execute-phase retries.  Unit tests can monkeypatch this.
-# NOTE: this constant is only used by the *execute-phase* retry logic inside
-# run_query.  The *connect-phase* helper (_with_connect_retry) uses a
-# wall-clock deadline (_CONNECT_RETRY_TIMEOUT_S) instead of a fixed attempt
-# count so that slow warehouse warm-ups are fully covered.
+# Retained for backward compatibility — exported in __all__ and referenced in
+# some tests / downstream code.  No longer used by the execute-phase retry logic
+# in run_query, which now uses a wall-clock deadline (_CONNECT_RETRY_TIMEOUT_S)
+# and _EXECUTE_RETRY_DELAYS instead of a fixed attempt count.
 SQL_TRANSIENT_MAX_RETRIES: int = 2
 
-# Fixed delays (seconds) between retry attempts for the *execute phase*.
-# Index 0 = delay before attempt 2, index 1 = delay before attempt 3, etc.
+# Backoff delays (seconds) for the *execute-phase* retry loop.
+# The delay before attempt N+1 is _EXECUTE_RETRY_DELAYS[min(N, len-1)],
+# so the sequence is:
+#   attempt 1 → fails → sleep 2 s → attempt 2
+#   attempt 2 → fails → sleep 5 s → attempt 3
+#   attempt 3+ → fails → sleep 10 s → attempt 4 … (capped at 10 s)
+# The loop continues until the wall-clock deadline (based on
+# _CONNECT_RETRY_TIMEOUT_S) is exceeded, at which point the last
+# transient error is re-raised.
+_EXECUTE_RETRY_DELAYS: tuple[float, ...] = (2.0, 5.0, 10.0)
+
+# Retained for backward compatibility — no longer used internally.
+# The execute-phase retry is now governed by _EXECUTE_RETRY_DELAYS and the
+# _CONNECT_RETRY_TIMEOUT_S wall-clock deadline instead of a fixed attempt count.
 _TRANSIENT_RETRY_DELAYS: tuple[float, ...] = (10.0, 10.0)
 
 # ---------------------------------------------------------------------------
@@ -948,7 +958,7 @@ def _with_connect_retry(
             return conn, attempt, attempt + 2, last_exc
 
 
-def run_query(  # noqa: PLR0913
+def run_query(  # noqa: PLR0913, PLR0915
     target: SqlTarget,
     statement: str,
     *,
@@ -986,10 +996,16 @@ def run_query(  # noqa: PLR0913
     the change — retrying non-idempotent statements could cause duplicate rows
     or double-DDL errors.
 
-    The execute-phase retry fires **at most once**: one extra connect + execute
-    attempt, regardless of ``SQL_TRANSIENT_MAX_RETRIES``.  If that second
-    attempt also fails, the error is propagated immediately — there is no
-    execute-phase retry loop.
+    The execute-phase retry uses a **time-budgeted loop**: when a transient
+    connection error occurs during ``cursor.execute``, the tainted connection is
+    discarded and a fresh one is opened via :func:`_with_connect_retry`.  This
+    repeats until either an attempt succeeds or the total elapsed time since the
+    first execute-phase failure exceeds ``_CONNECT_RETRY_TIMEOUT_S`` (~120 s).
+    Between retry attempts the loop sleeps with a small exponential backoff
+    (starting at ~2 s, capped at ~10 s — see ``_EXECUTE_RETRY_DELAYS``).
+
+    If the time budget is exhausted before any attempt succeeds, the last
+    transient error is re-raised.
 
     Args:
         target: The :class:`SqlTarget` identifying the warehouse.
@@ -1096,38 +1112,52 @@ def run_query(  # noqa: PLR0913
             c.commit()
         return result
 
-    conn, attempt, max_attempts, _ = _with_connect_retry(target, mode, autocommit)
-    try:
+    conn, _attempt, _max_attempts, _ = _with_connect_retry(target, mode, autocommit)
+    # execute_attempt counts execute-phase failures so far (for backoff indexing).
+    execute_attempt = 0
+    # deadline is set on the first execute-phase transient failure.  The total
+    # wall-clock budget for execute-phase retries is _CONNECT_RETRY_TIMEOUT_S
+    # (~120 s), reusing the same constant as the connect-phase loop.
+    execute_deadline: float | None = None
+
+    while True:
         try:
-            return _execute_once(conn)
+            result = _execute_once(conn)
         except Exception as exc:
             # Mark tainted so close() physically closes instead of pooling.
             if isinstance(conn, _PooledConnection):
                 conn.mark_discard()
             mapped = map_driver_error(exc)
             if mapped:
-                # Auth/permission errors are never transient — raise immediately.
-                raise mapped from exc
-            # Only retry execute-phase transient errors when the statement is
-            # read-only (fetch != "none").  Non-idempotent DML must not be
-            # re-executed (D10 retry boundary).
-            if (
-                execute_retry_allowed
-                and is_transient_connection_error(exc)
-                and attempt < max_attempts - 1
-            ):
-                # Retry: close the tainted connection and open a fresh one.
-                # The outer finally also calls conn.close(); _PooledConnection.close()
-                # is idempotent (_closed guard) so the second call is a no-op.
+                # Auth/permission/not-found errors are deterministic —
+                # raise immediately without retrying.
                 conn.close()
-                conn2, _a, _m, _ = _with_connect_retry(target, mode, autocommit)
-                try:
-                    return _execute_once(conn2)
-                finally:
-                    conn2.close()
-            raise
-    finally:
-        conn.close()
+                raise mapped from exc
+            # Only retry execute-phase transient errors when the statement
+            # is safe to re-run (fetch != "none").  Non-idempotent DML must
+            # not be re-executed (D10 retry boundary).
+            if not (execute_retry_allowed and is_transient_connection_error(exc)):
+                conn.close()
+                raise
+            # Set the deadline on the first execute-phase transient failure.
+            if execute_deadline is None:
+                execute_deadline = time.monotonic() + _CONNECT_RETRY_TIMEOUT_S
+            # Close the tainted connection before sleeping.  _PooledConnection
+            # is idempotent so a later close() call is a no-op.
+            conn.close()
+            # If the total execute-phase budget is exhausted, stop retrying.
+            if time.monotonic() >= execute_deadline:
+                raise
+            # Sleep with exponential backoff before opening a fresh connection.
+            delay = _EXECUTE_RETRY_DELAYS[min(execute_attempt, len(_EXECUTE_RETRY_DELAYS) - 1)]
+            time.sleep(delay)
+            execute_attempt += 1
+            # Open a fresh connection for the next execute attempt.
+            conn, _attempt, _max_attempts, _ = _with_connect_retry(target, mode, autocommit)
+        else:
+            # Execute succeeded — return the pooled connection and surface the result.
+            conn.close()
+            return result
 
 
 def run_statements(
