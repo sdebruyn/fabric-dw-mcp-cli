@@ -169,7 +169,9 @@ Take ownership of a Warehouse. Not supported for SQL analytics endpoints.
 
 Return all principals (users, groups, service principals) with access to a Warehouse, including their effective permissions.
 
-> **Note:** Requires **Fabric Administrator** role (`Tenant.Read.All` or `Tenant.ReadWrite.All` scope). See [Microsoft Fabric admin documentation](https://learn.microsoft.com/en-us/fabric/admin/microsoft-fabric-admin) for how to request the role.
+!!! note
+
+    Requires **Fabric Administrator** role (`Tenant.Read.All` or `Tenant.ReadWrite.All` scope). See [Microsoft Fabric admin documentation](https://learn.microsoft.com/en-us/fabric/admin/microsoft-fabric-admin) for how to request the role.
 
 **Parameters:**
 
@@ -234,7 +236,9 @@ Refresh metadata for a SQL analytics endpoint by syncing from the underlying Lak
 
 Return all principals (users, groups, service principals) with access to a SQL Analytics Endpoint, including their effective permissions.
 
-> **Note:** Requires **Fabric Administrator** role (`Tenant.Read.All` or `Tenant.ReadWrite.All` scope). See [Microsoft Fabric admin documentation](https://learn.microsoft.com/en-us/fabric/admin/microsoft-fabric-admin) for how to request the role.
+!!! note
+
+    Requires **Fabric Administrator** role (`Tenant.Read.All` or `Tenant.ReadWrite.All` scope). See [Microsoft Fabric admin documentation](https://learn.microsoft.com/en-us/fabric/admin/microsoft-fabric-admin) for how to request the role.
 
 **Parameters:**
 
@@ -487,7 +491,9 @@ Return long-running queries from `queryinsights.long_running_queries`.
 
 Execute an arbitrary SQL statement or batch against a warehouse or SQL Analytics Endpoint.
 
-> **Warning:** This tool executes arbitrary SQL, including DDL (DROP, ALTER, TRUNCATE) and DML (DELETE, UPDATE). Use only when the user explicitly requests data modification. Default to SELECT when the user's intent is read-only investigation.
+!!! warning
+
+    This tool executes arbitrary SQL, including DDL (DROP, ALTER, TRUNCATE) and DML (DELETE, UPDATE). Use only when the user explicitly requests data modification. Default to SELECT when the user's intent is read-only investigation.
 
 Multi-statement batches are supported; only the **last** result set is returned. DDL/DML statements that produce no result set return `columns=[]` and `rows=[]`.
 
@@ -809,7 +815,9 @@ Return up to `count` rows from a view as JSON-serialisable columns and rows.
 
 ## Tables
 
-> **List-source note** — no public REST API exists for enumerating warehouse tables. `list_tables` uses TDS `sys.tables JOIN sys.schemas`.
+!!! note "List source"
+
+    No public REST API exists for enumerating warehouse tables. `list_tables` uses TDS `sys.tables JOIN sys.schemas`.
 
 ### list_tables
 
@@ -977,11 +985,17 @@ Rename a SQL table via `sp_rename`. Only supported on Fabric Data Warehouses (SQ
 
 Load data into a Data Warehouse table via `COPY INTO` from a remote URL. For OneLake or same-tenant URLs, no credential is needed. For secured external URLs (Azure Blob Storage, ADLS Gen2), supply `credential_type` and the appropriate `secret`/`identity` values.
 
-> **JSON not supported for remote URLs.** If you need to load JSON, download the file locally and use the CLI `tables load --file` command instead (which converts JSON to Parquet client-side).
+!!! warning "JSON not supported for remote URLs"
 
-> **Secret safety.** The `secret` and `identity` parameters are accepted but are **never** logged or echoed in any server output.
+    If you need to load JSON, download the file locally and use the CLI `tables load --file` command instead (which converts JSON to Parquet client-side).
 
-> **Table must exist.** This tool does not create the target table. Use [`import_table_from_url`](#import_table_from_url) for a load-only flow with `if_exists` control over an existing table, or the CLI `tables load --file --create` for auto-create from a local file with schema inference.
+!!! note "Secret safety"
+
+    The `secret` and `identity` parameters are accepted but are **never** logged or echoed in any server output.
+
+!!! note "Table must exist"
+
+    This tool does not create the target table. Use [`import_table_from_url`](#import_table_from_url) for a load-only flow with `if_exists` control over an existing table, or the CLI `tables load --file --create` for auto-create from a local file with schema inference.
 
 **Parameters:**
 
@@ -1011,11 +1025,17 @@ Load data into a Data Warehouse table via `COPY INTO` from a remote URL. For One
 
 Load data from a remote URL into an existing Data Warehouse table with control over what happens when the table already has data. This tool extends [`load_table_from_url`](#load_table_from_url) with an `if_exists` policy.
 
-> **Schema inference not supported for remote URLs.** This tool does not auto-create the target table from the source schema (downloading the full file just for schema inference is not practical for remote sources). To auto-create a table from schema, use the CLI `tables load --file --create` with a local file. For `if_exists="replace"`, use the CLI instead.
+!!! warning "Schema inference not supported for remote URLs"
 
-> **`truncate` and `replace` are destructive** and require `FABRIC_MCP_ALLOW_DESTRUCTIVE=1`.
+    This tool does not auto-create the target table from the source schema (downloading the full file just for schema inference is not practical for remote sources). To auto-create a table from schema, use the CLI `tables load --file --create` with a local file. For `if_exists="replace"`, use the CLI instead.
 
-> **Secret safety.** The `secret` and `identity` parameters are accepted but are **never** logged or echoed in any server output.
+!!! warning "Destructive operation"
+
+    **`truncate` and `replace` are destructive** and require `FABRIC_MCP_ALLOW_DESTRUCTIVE=1`.
+
+!!! note "Secret safety"
+
+    The `secret` and `identity` parameters are accepted but are **never** logged or echoed in any server output.
 
 **`if_exists` policy:**
 
@@ -1089,7 +1109,9 @@ Fetch the full definition of a single stored procedure.
 
 Create a new stored procedure.
 
-> **CAUTION:** `body` is executed verbatim as DDL. Ensure the body matches the user's intent before calling this tool.
+!!! warning "Caution"
+
+    `body` is executed verbatim as DDL. Ensure the body matches the user's intent before calling this tool.
 
 **Parameters:**
 
@@ -1108,7 +1130,9 @@ Create a new stored procedure.
 
 Redefine a stored procedure via `CREATE OR ALTER PROCEDURE`.
 
-> **CAUTION:** `body` is executed verbatim as DDL. Ensure the body matches the user's intent before calling this tool.
+!!! warning "Caution"
+
+    `body` is executed verbatim as DDL. Ensure the body matches the user's intent before calling this tool.
 
 **Parameters:**
 
@@ -1139,7 +1163,9 @@ Drop a stored procedure.
 
 ## Functions
 
-> **Preview:** Scalar UDFs (`FN`) and inline TVFs (`IF`) are preview features on Fabric DW as of mid-2026. Function DDL is supported on both Data Warehouses and SQL Analytics Endpoints — no endpoint guard applies.
+!!! warning "Preview"
+
+    Scalar UDFs (`FN`) and inline TVFs (`IF`) are preview features on Fabric DW as of mid-2026. Function DDL is supported on both Data Warehouses and SQL Analytics Endpoints — no endpoint guard applies.
 
 ### list_functions
 
@@ -1180,7 +1206,9 @@ Fetch the full definition of a single T-SQL user-defined function, including its
 
 Create a new T-SQL user-defined function. Scalar UDFs and inline TVFs are preview features.
 
-> **CAUTION:** `body` is executed verbatim as DDL. Ensure the body matches the user's intent before calling this tool.
+!!! warning "Caution"
+
+    `body` is executed verbatim as DDL. Ensure the body matches the user's intent before calling this tool.
 
 **Parameters:**
 
@@ -1199,9 +1227,13 @@ Create a new T-SQL user-defined function. Scalar UDFs and inline TVFs are previe
 
 Redefine a T-SQL user-defined function via `CREATE OR ALTER FUNCTION`.
 
-> **Note:** `ALTER FUNCTION` cannot change the function kind (e.g. scalar to inline TVF). The body must be compatible with the original function's kind.
+!!! note
 
-> **CAUTION:** `body` is executed verbatim as DDL. Ensure the body matches the user's intent before calling this tool.
+    `ALTER FUNCTION` cannot change the function kind (e.g. scalar to inline TVF). The body must be compatible with the original function's kind.
+
+!!! warning "Caution"
+
+    `body` is executed verbatim as DDL. Ensure the body matches the user's intent before calling this tool.
 
 **Parameters:**
 
@@ -1250,9 +1282,13 @@ Rename a T-SQL user-defined function via `sp_rename`. The new name must be a bar
 
 ## Schemas
 
-> **List-source note** — no public REST API exists for enumerating warehouse schemas. `list_schemas` uses TDS `sys.schemas`, filtering out `sys`, `INFORMATION_SCHEMA`, `guest`, and `db_*` fixed-role schemas. `dbo` is always included because it is user-writable.
+!!! note "List source"
 
-> **SQL Analytics Endpoints** — `list_schemas`, `create_schema`, and `delete_schema` all work on both Fabric Data Warehouses and SQL Analytics Endpoints. When `delete_schema` is called with `cascade=True` on a SQL Analytics Endpoint, views, stored procedures, and functions are dropped, but tables are **not** dropped (because `DROP TABLE` is a Warehouse-only operation on Fabric). If the schema still contains tables after the cascade pass, the subsequent `DROP SCHEMA` will be rejected by the engine; remove the tables manually before deleting the schema.
+    No public REST API exists for enumerating warehouse schemas. `list_schemas` uses TDS `sys.schemas`, filtering out `sys`, `INFORMATION_SCHEMA`, `guest`, and `db_*` fixed-role schemas. `dbo` is always included because it is user-writable.
+
+!!! note "SQL Analytics Endpoints"
+
+    `list_schemas`, `create_schema`, and `delete_schema` all work on both Fabric Data Warehouses and SQL Analytics Endpoints. When `delete_schema` is called with `cascade=True` on a SQL Analytics Endpoint, views, stored procedures, and functions are dropped, but tables are **not** dropped (because `DROP TABLE` is a Warehouse-only operation on Fabric). If the schema still contains tables after the cascade pass, the subsequent `DROP SCHEMA` will be rejected by the engine; remove the tables manually before deleting the schema.
 
 ### list_schemas
 
@@ -1459,8 +1495,11 @@ Return SQL pool insight events from `queryinsights.sql_pool_insights`.
 
 Manage user-defined statistics on Fabric Data Warehouses and inspect them on SQL Analytics Endpoints.
 
-> **Note:** Only **single-column, histogram-based** statistics can be created or updated (Fabric limitation). Multi-column statistics are not supported.
-> Write tools (`create_statistics`, `update_statistics`, `delete_statistics`) are rejected on SQL Analytics Endpoints. Read tools (`list_statistics`, `show_statistics`) work on both item kinds.
+!!! note
+
+    Only **single-column, histogram-based** statistics can be created or updated (Fabric limitation). Multi-column statistics are not supported.
+
+    Write tools (`create_statistics`, `update_statistics`, `delete_statistics`) are rejected on SQL Analytics Endpoints. Read tools (`list_statistics`, `show_statistics`) work on both item kinds.
 
 ### list_statistics
 
@@ -1579,7 +1618,9 @@ Drop a statistic via `DROP STATISTICS`. **Destructive and irreversible.** Requir
 
 Generate [dbt-fabric](https://docs.getdbt.com/docs/core/connect-data-platform/fabric-setup) project file contents pre-wired to a Microsoft Fabric Data Warehouse. Unlike the CLI `dbt init` command, these tools return file contents as text rather than writing files to disk, making them suitable for AI-assisted workflows where the AI agent writes the files.
 
-> **Security note** — when `authentication="ServicePrincipal"` is used, the returned `profiles_yml` contains Jinja2 `env_var()` placeholders (`{{ env_var('AZURE_TENANT_ID') }}` etc.) rather than literal secrets. Never hard-code secrets into source-controlled files.
+!!! warning "Security"
+
+    When `authentication="ServicePrincipal"` is used, the returned `profiles_yml` contains Jinja2 `env_var()` placeholders (`{{ env_var('AZURE_TENANT_ID') }}` etc.) rather than literal secrets. Never hard-code secrets into source-controlled files.
 
 ### generate_dbt_profile
 

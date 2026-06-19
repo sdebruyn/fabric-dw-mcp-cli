@@ -61,7 +61,9 @@ Every command that operates on a workspace (everything except `workspaces list` 
 
 The `workspaces` command group is an exception: `workspaces get` and `workspaces set-collation` take the workspace as an explicit positional argument (not via `-w`), and `workspaces list` takes no workspace at all.
 
-> **`-A` / `--all-workspaces` interaction:** passing `-A` on the two list commands that support it (`warehouses list`, `sql-endpoints list`) explicitly scans every visible workspace. This flag is mutually exclusive with `-w` (an explicit `-w` conflicts with scanning all workspaces), but it does **not** conflict with a configured default workspace or `FABRIC_DW_DEFAULT_WORKSPACE` — the configured default is silently ignored when `-A` is used.
+!!! note "-A / --all-workspaces interaction"
+
+    Passing `-A` on the two list commands that support it (`warehouses list`, `sql-endpoints list`) explicitly scans every visible workspace. This flag is mutually exclusive with `-w` (an explicit `-w` conflicts with scanning all workspaces), but it does **not** conflict with a configured default workspace or `FABRIC_DW_DEFAULT_WORKSPACE` — the configured default is silently ignored when `-A` is used.
 
 ---
 
@@ -145,7 +147,9 @@ fabric-dw workspaces list
 
 Get details for a workspace, including its default Data Warehouse collation.
 
-> **Note:** The `workspaces` group is exempt from the global `-w/--workspace` option. Pass the workspace name or GUID as a positional argument instead.
+!!! note
+
+    The `workspaces` group is exempt from the global `-w/--workspace` option. Pass the workspace name or GUID as a positional argument instead.
 
 **Synopsis**
 
@@ -174,7 +178,9 @@ defaultDataWarehouseCollation     Latin1_General_100_CI_AS_KS_WS_SC_UTF8
 
 Set the default Data Warehouse collation for a workspace. `COLLATION` must be one of the supported Fabric collations.
 
-> **Note:** The `workspaces` group is exempt from the global `-w/--workspace` option. Pass the workspace name or GUID as a positional argument instead.
+!!! note
+
+    The `workspaces` group is exempt from the global `-w/--workspace` option. Pass the workspace name or GUID as a positional argument instead.
 
 **Synopsis**
 
@@ -522,7 +528,9 @@ Execute SQL against a Fabric Data Warehouse or SQL Analytics Endpoint.
 
 Execute a SQL statement or file against a warehouse or SQL Analytics Endpoint. Provide the query via `-q`/`--query` or `-f`/`--file` (not both). Multi-statement batches are supported; only the last result set is returned. DDL/DML statements return empty columns and rows.
 
-> **Warning:** This command executes arbitrary SQL, including DDL and DML. Ensure you have the correct target before running destructive statements.
+!!! warning
+
+    This command executes arbitrary SQL, including DDL and DML. Ensure you have the correct target before running destructive statements.
 
 **Synopsis**
 
@@ -1396,7 +1404,9 @@ fabric-dw -w MyWorkspace --yes procedures drop SalesWH dbo.usp_archive_orders
 
 Manage T-SQL user-defined functions on Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
 
-> **Preview:** Scalar UDFs (`FN`) and inline TVFs (`IF`) are preview features as of mid-2026. Function DDL is supported on both Data Warehouses and SQL Analytics Endpoints — no endpoint guard is applied.
+!!! warning "Preview"
+
+    Scalar UDFs (`FN`) and inline TVFs (`IF`) are preview features as of mid-2026. Function DDL is supported on both Data Warehouses and SQL Analytics Endpoints — no endpoint guard is applied.
 
 ### functions list
 
@@ -1487,7 +1497,9 @@ fabric-dw -w MyWorkspace functions create SalesWH \
 
 Redefine an existing T-SQL user-defined function via `CREATE OR ALTER FUNCTION`.
 
-> **Note:** `ALTER FUNCTION` cannot change the function kind (e.g. scalar to inline TVF). The body must be compatible with the original function's kind.
+!!! note
+
+    `ALTER FUNCTION` cannot change the function kind (e.g. scalar to inline TVF). The body must be compatible with the original function's kind.
 
 **Synopsis**
 
@@ -1566,7 +1578,9 @@ fabric-dw -w MyWorkspace --yes functions rename SalesWH dbo.fn_clean_input \
 
 Manage SQL tables on Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
 
-> **List-source note** — no public REST API exists for enumerating warehouse tables. `tables list` falls back to TDS via `sys.tables JOIN sys.schemas`, the same approach used by `views list`.
+!!! note "List source"
+
+    No public REST API exists for enumerating warehouse tables. `tables list` falls back to TDS via `sys.tables JOIN sys.schemas`, the same approach used by `views list`.
 
 ### tables list
 
@@ -1858,7 +1872,9 @@ Use `--if-exists` to control behaviour when the table already exists:
 
 Use `--cleanup-on-failure` to drop the table if WE created it in this call and the subsequent `COPY INTO` fails. A pre-existing table is never dropped by this flag.
 
-> **Not atomic.** `CREATE TABLE` and `COPY INTO` are separate statements. A failure between them may leave an empty table. Use `--cleanup-on-failure` to auto-drop in that case.
+!!! warning "Not atomic"
+
+    `CREATE TABLE` and `COPY INTO` are separate statements. A failure between them may leave an empty table. Use `--cleanup-on-failure` to auto-drop in that case.
 
 **Synopsis**
 
@@ -1935,9 +1951,13 @@ fabric-dw -w MyWorkspace tables load SalesWH dbo.events \
 
 Manage SQL schemas on Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
 
-> **List-source note** — no public REST API exists for enumerating warehouse schemas. `schemas list` falls back to TDS via `sys.schemas`, filtering out well-known system schemas (`sys`, `INFORMATION_SCHEMA`, `guest`, `db_*` fixed-role schemas). `dbo` is always included because it is user-writable.
+!!! note "List source"
 
-> **SQL Analytics Endpoints** — `schemas list`, `schemas create`, and `schemas delete` all work on both Fabric Data Warehouses and SQL Analytics Endpoints. When `schemas delete --cascade` is used on a SQL Analytics Endpoint, views, stored procedures, and functions in the schema are dropped, but tables are **not** dropped (because `DROP TABLE` is a Warehouse-only operation on Fabric). If the schema contains tables, the final `DROP SCHEMA` will be rejected by the engine; remove the tables manually first or omit `--cascade` and drop the schema only after it is empty.
+    No public REST API exists for enumerating warehouse schemas. `schemas list` falls back to TDS via `sys.schemas`, filtering out well-known system schemas (`sys`, `INFORMATION_SCHEMA`, `guest`, `db_*` fixed-role schemas). `dbo` is always included because it is user-writable.
+
+!!! note "SQL Analytics Endpoints"
+
+    `schemas list`, `schemas create`, and `schemas delete` all work on both Fabric Data Warehouses and SQL Analytics Endpoints. When `schemas delete --cascade` is used on a SQL Analytics Endpoint, views, stored procedures, and functions in the schema are dropped, but tables are **not** dropped (because `DROP TABLE` is a Warehouse-only operation on Fabric). If the schema contains tables, the final `DROP SCHEMA` will be rejected by the engine; remove the tables manually first or omit `--cascade` and drop the schema only after it is empty.
 
 ### schemas list
 
@@ -2394,8 +2414,11 @@ fabric-dw -w MyWorkspace sql-pools insights SalesWH
 
 Manage user-defined statistics on Fabric Data Warehouses and read their details on SQL Analytics Endpoints.
 
-> **Note:** Only **single-column, histogram-based** statistics can be created or updated (Fabric limitation). Multi-column statistics are not supported.
-> DDL operations (`create`, `update`, `delete`) require a **Data Warehouse** — they are rejected client-side on SQL Analytics Endpoints. `list` and `show` work on both item kinds.
+!!! note
+
+    Only **single-column, histogram-based** statistics can be created or updated (Fabric limitation). Multi-column statistics are not supported.
+
+    DDL operations (`create`, `update`, `delete`) require a **Data Warehouse** — they are rejected client-side on SQL Analytics Endpoints. `list` and `show` work on both item kinds.
 
 ### statistics list
 
@@ -2479,7 +2502,9 @@ fabric-dw [-w WORKSPACE] statistics delete [ITEM] QUALIFIED_TABLE STAT_NAME
 
 Manage **server-side** database settings on a Fabric Data Warehouse or SQL Analytics Endpoint.
 
-> **Note:** `settings` manages server-side warehouse/database configuration. For client-side CLI defaults (workspace, warehouse) use [`fabric-dw config`](#defaults-fabric-dw-config) instead.
+!!! note
+
+    `settings` manages server-side warehouse/database configuration. For client-side CLI defaults (workspace, warehouse) use [`fabric-dw config`](#defaults-fabric-dw-config) instead.
 
 `show` and `result-set-caching` work on both Data Warehouses and SQL Analytics Endpoints. The `retention` command sets the time-travel retention period, which is primarily a Warehouse concept and may be a no-op on a SQL Analytics Endpoint.
 
@@ -2589,7 +2614,9 @@ No dbt installation is required to run these commands — `fabric-dw` generates 
 
 Scaffold a new dbt project directory connected to a Fabric Data Warehouse. The command creates the folder, writes `dbt_project.yml`, `profiles.yml`, `requirements.txt`, `.gitignore`, standard dbt model directories, a sample model, and a README. If `git` is on your PATH and the target folder is not already a git repository, `git init` is run automatically.
 
-> **Security note** — when `--auth sp` (Service Principal) is used, `profiles.yml` emits Jinja2 `env_var()` placeholders (`{{ env_var('AZURE_TENANT_ID') }}` etc.) instead of literal secrets. You must set `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, and `AZURE_CLIENT_SECRET` in your environment before running dbt.
+!!! warning "Security"
+
+    When `--auth sp` (Service Principal) is used, `profiles.yml` emits Jinja2 `env_var()` placeholders (`{{ env_var('AZURE_TENANT_ID') }}` etc.) instead of literal secrets. You must set `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, and `AZURE_CLIENT_SECRET` in your environment before running dbt.
 
 **Usage**
 
