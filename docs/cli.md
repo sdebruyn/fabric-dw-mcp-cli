@@ -518,9 +518,6 @@ fabric-dw -w MyWorkspace --json sql-endpoints permissions MyLakehouseEP
 
 Execute SQL against a Fabric Data Warehouse or SQL Analytics Endpoint.
 
-> **Breaking change:** The former `sql exec` subcommand was promoted to `sql` itself.
-> Replace `fdw sql exec ...` with `fdw sql ...`.
-
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
 Execute a SQL statement or file against a warehouse or SQL Analytics Endpoint. Provide the query via `-q`/`--query` or `-f`/`--file` (not both). Multi-statement batches are supported; only the last result set is returned. DDL/DML statements return empty columns and rows.

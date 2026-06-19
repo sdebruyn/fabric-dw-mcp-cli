@@ -3,10 +3,6 @@
 Commands
 --------
 - ``sql <item>`` — execute an arbitrary SQL statement or file.
-
-.. note::
-   **Breaking change (v0.x → v0.y):** The former ``sql exec`` sub-command was
-   promoted to ``sql`` itself.  Replace ``fdw sql exec ...`` with ``fdw sql ...``.
 """
 
 from __future__ import annotations
