@@ -19,6 +19,7 @@ nav = [
     { "Authentication" = "authentication.md" },
     { "MCP" = "mcp.md" },
     { "MCP tools" = "mcp-tools.md" },
+    { "CLI & MCP by domain" = "reference/command-tool-reference.md" },
     { "Shell Completion" = "completion.md" },
     { "Troubleshooting" = "troubleshooting.md" }
   ] },
