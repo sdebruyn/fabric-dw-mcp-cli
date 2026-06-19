@@ -737,7 +737,7 @@ fabric-dw -w MyWorkspace audit remove-group SalesWH BATCH_COMPLETED_GROUP
 
 Inspect and manage running queries on Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
 
-### queries list
+### queries running
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
@@ -746,13 +746,13 @@ List all currently running queries on a warehouse or SQL Analytics Endpoint.
 **Synopsis**
 
 ```
-fabric-dw [-w WORKSPACE] queries list [WAREHOUSE]
+fabric-dw [-w WORKSPACE] queries running [WAREHOUSE]
 ```
 
 **Example**
 
 ```shell
-fabric-dw -w MyWorkspace queries list SalesWH
+fabric-dw -w MyWorkspace queries running SalesWH
 ```
 
 ```
@@ -763,22 +763,22 @@ fabric-dw -w MyWorkspace queries list SalesWH
 
 ---
 
-### queries list-connections
+### queries connections
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
-List all active SQL connections on a warehouse or SQL Analytics Endpoint. This queries `sys.dm_exec_connections` and shows lower-level connection info (including idle connections) that is not visible in `queries list`.
+List all active SQL connections on a warehouse or SQL Analytics Endpoint. This queries `sys.dm_exec_connections` and shows lower-level connection info (including idle connections) that is not visible in `queries running`.
 
 **Synopsis**
 
 ```
-fabric-dw [-w WORKSPACE] queries list-connections [WAREHOUSE]
+fabric-dw [-w WORKSPACE] queries connections [WAREHOUSE]
 ```
 
 **Example**
 
 ```shell
-fabric-dw -w MyWorkspace queries list-connections SalesWH
+fabric-dw -w MyWorkspace queries connections SalesWH
 ```
 
 ```
@@ -810,7 +810,7 @@ fabric-dw -w MyWorkspace --yes queries kill SalesWH 42
 
 ---
 
-### queries request-history
+### queries history
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
@@ -819,7 +819,7 @@ List completed SQL requests from `queryinsights.exec_requests_history`. Supports
 **Synopsis**
 
 ```
-fabric-dw [-w WORKSPACE] queries request-history [OPTIONS] [WAREHOUSE]
+fabric-dw [-w WORKSPACE] queries history [OPTIONS] [WAREHOUSE]
 ```
 
 | Option | Description | Default |
@@ -831,12 +831,12 @@ fabric-dw [-w WORKSPACE] queries request-history [OPTIONS] [WAREHOUSE]
 **Example**
 
 ```shell
-fabric-dw -w MyWorkspace queries request-history SalesWH --limit 50 --since 2026-06-01T00:00:00
+fabric-dw -w MyWorkspace queries history SalesWH --limit 50 --since 2026-06-01T00:00:00
 ```
 
 ---
 
-### queries session-history
+### queries sessions
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
@@ -845,7 +845,7 @@ List completed sessions from `queryinsights.exec_sessions_history`.
 **Synopsis**
 
 ```
-fabric-dw [-w WORKSPACE] queries session-history [OPTIONS] [WAREHOUSE]
+fabric-dw [-w WORKSPACE] queries sessions [OPTIONS] [WAREHOUSE]
 ```
 
 | Option | Description | Default |
@@ -857,7 +857,7 @@ fabric-dw [-w WORKSPACE] queries session-history [OPTIONS] [WAREHOUSE]
 **Example**
 
 ```shell
-fabric-dw -w MyWorkspace queries session-history SalesWH
+fabric-dw -w MyWorkspace queries sessions SalesWH
 ```
 
 ---

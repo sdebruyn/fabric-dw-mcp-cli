@@ -142,7 +142,7 @@ def _make_pool_insight_row() -> SqlPoolInsight:
 
 
 # ---------------------------------------------------------------------------
-# request-history (now under queries group)
+# history (now under queries group)
 # ---------------------------------------------------------------------------
 
 
@@ -164,7 +164,7 @@ class TestRequestHistory:
                 new=AsyncMock(return_value=[_make_request_history_row()]),
             ),
         ):
-            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "request-history", WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "history", WH_GUID])
         assert result.exit_code == 0
 
     def test_json_output(self, runner: CliRunner, cache_env: Path) -> None:
@@ -186,7 +186,7 @@ class TestRequestHistory:
         ):
             result = runner.invoke(
                 cli,
-                ["--json", "-w", WS_GUID, "queries", "request-history", WH_GUID],
+                ["--json", "-w", WS_GUID, "queries", "history", WH_GUID],
             )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -205,7 +205,7 @@ class TestRequestHistory:
                 new=AsyncMock(side_effect=NotFoundError("not found")),
             ),
         ):
-            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "request-history", WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "history", WH_GUID])
         assert result.exit_code != 0
 
     def test_permission_denied_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
@@ -225,7 +225,7 @@ class TestRequestHistory:
                 new=AsyncMock(side_effect=PermissionDeniedError("no permission")),
             ),
         ):
-            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "request-history", WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "history", WH_GUID])
         assert result.exit_code != 0
 
     def test_invalid_since_returns_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
@@ -236,7 +236,7 @@ class TestRequestHistory:
                 "-w",
                 WS_GUID,
                 "queries",
-                "request-history",
+                "history",
                 WH_GUID,
                 "--since",
                 "not-a-date",
@@ -252,7 +252,7 @@ class TestRequestHistory:
                 "-w",
                 WS_GUID,
                 "queries",
-                "request-history",
+                "history",
                 WH_GUID,
                 "--until",
                 "not-a-date",
@@ -262,7 +262,7 @@ class TestRequestHistory:
 
 
 # ---------------------------------------------------------------------------
-# session-history (now under queries group)
+# sessions (now under queries group)
 # ---------------------------------------------------------------------------
 
 
@@ -284,7 +284,7 @@ class TestSessionHistory:
                 new=AsyncMock(return_value=[_make_session_history_row()]),
             ),
         ):
-            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "session-history", WH_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "sessions", WH_GUID])
         assert result.exit_code == 0
 
     def test_json_output(self, runner: CliRunner, cache_env: Path) -> None:
@@ -306,7 +306,7 @@ class TestSessionHistory:
         ):
             result = runner.invoke(
                 cli,
-                ["--json", "-w", WS_GUID, "queries", "session-history", WH_GUID],
+                ["--json", "-w", WS_GUID, "queries", "sessions", WH_GUID],
             )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -499,7 +499,7 @@ class TestQueryInsightsDefaultFallback:
                 new=AsyncMock(return_value=[_make_request_history_row()]),
             ),
         ):
-            result = runner.invoke(cli, ["queries", "request-history"])
+            result = runner.invoke(cli, ["queries", "history"])
         assert result.exit_code == 0
 
     def test_missing_workspace_raises_usage_error(
@@ -509,5 +509,5 @@ class TestQueryInsightsDefaultFallback:
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
         monkeypatch.delenv("FABRIC_DW_DEFAULT_WORKSPACE", raising=False)
         monkeypatch.delenv("FABRIC_DW_DEFAULT_WAREHOUSE", raising=False)
-        result = runner.invoke(cli, ["queries", "request-history"])
+        result = runner.invoke(cli, ["queries", "history"])
         assert result.exit_code != 0
