@@ -134,6 +134,19 @@ class TestWarehouseKind:
     def test_snapshot_value(self) -> None:
         assert WarehouseKind.SNAPSHOT.value == "WarehouseSnapshot"
 
+    def test_warehouse_label(self) -> None:
+        assert WarehouseKind.WAREHOUSE.label == "Data Warehouse"
+
+    def test_sql_endpoint_label(self) -> None:
+        assert WarehouseKind.SQL_ENDPOINT.label == "SQL Analytics Endpoint"
+
+    def test_snapshot_label(self) -> None:
+        assert WarehouseKind.SNAPSHOT.label == "Warehouse Snapshot"
+
+    def test_label_differs_from_raw_value_for_endpoint(self) -> None:
+        # Guards against regressing to the raw camelCase enum value in prompts.
+        assert WarehouseKind.SQL_ENDPOINT.label != WarehouseKind.SQL_ENDPOINT.value
+
 
 class TestWarehouseSnapshot:
     def test_round_trip(self) -> None:

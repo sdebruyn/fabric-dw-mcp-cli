@@ -1,9 +1,21 @@
+"""Integration tests for services.audit — runs against a real Fabric environment.
+
+Covers both Data Warehouse targets (using ``ephemeral_warehouse``) and SQL
+Analytics Endpoint targets (using ``ephemeral_sql_endpoint``).
+
+Per Microsoft Learn, SQL auditing applies to both item types:
+"Applies to: SQL analytics endpoint and Warehouse in Microsoft Fabric"
+Verified REST route for endpoints:
+  GET/PATCH /v1/workspaces/{ws}/sqlEndpoints/{id}/settings/sqlAudit
+  (learn.microsoft.com/en-us/rest/api/fabric/sqlendpoint/sql-audit-settings)
+"""
+
 from uuid import UUID
 
 import pytest
 
 from fabric_dw.http_client import FabricHttpClient
-from fabric_dw.models import Warehouse
+from fabric_dw.models import Warehouse, WarehouseKind
 from fabric_dw.services import audit
 
 pytestmark = pytest.mark.integration
@@ -218,3 +230,63 @@ async def test_remove_action_group_rejects_invalid_name(
 ) -> None:
     with pytest.raises(ValueError, match="bad_group"):
         await audit.remove_action_group(http, workspace_id, ephemeral_warehouse.id, "bad_group")
+
+
+# ---------------------------------------------------------------------------
+# SQL Analytics Endpoint audit tests
+# Verified REST route: GET/PATCH /v1/workspaces/{ws}/sqlEndpoints/{id}/settings/sqlAudit
+# ---------------------------------------------------------------------------
+
+
+async def test_endpoint_get_settings(
+    http: FabricHttpClient,
+    workspace_id: UUID,
+    ephemeral_sql_endpoint: Warehouse,
+) -> None:
+    """get_settings via /sqlEndpoints/ route must return a valid AuditSettings object."""
+    assert ephemeral_sql_endpoint.kind == WarehouseKind.SQL_ENDPOINT
+    settings = await audit.get_settings(
+        http, workspace_id, ephemeral_sql_endpoint.id, WarehouseKind.SQL_ENDPOINT
+    )
+    assert settings.state in {"Enabled", "Disabled"}
+
+
+async def test_endpoint_enable_then_disable_roundtrip(
+    http: FabricHttpClient,
+    workspace_id: UUID,
+    ephemeral_sql_endpoint: Warehouse,
+) -> None:
+    """Enable then disable audit on a SQL analytics endpoint via the /sqlEndpoints/ route."""
+    assert ephemeral_sql_endpoint.kind == WarehouseKind.SQL_ENDPOINT
+    enabled = await audit.enable(
+        http,
+        workspace_id,
+        ephemeral_sql_endpoint.id,
+        WarehouseKind.SQL_ENDPOINT,
+        retention_days=7,
+    )
+    assert enabled.state == "Enabled"
+    assert enabled.retention_days == 7
+
+    disabled = await audit.disable(
+        http, workspace_id, ephemeral_sql_endpoint.id, WarehouseKind.SQL_ENDPOINT
+    )
+    assert disabled.state == "Disabled"
+
+
+async def test_endpoint_set_action_groups(
+    http: FabricHttpClient,
+    workspace_id: UUID,
+    ephemeral_sql_endpoint: Warehouse,
+) -> None:
+    """set_action_groups on a SQL analytics endpoint must use the /sqlEndpoints/ route."""
+    assert ephemeral_sql_endpoint.kind == WarehouseKind.SQL_ENDPOINT
+    await audit.enable(http, workspace_id, ephemeral_sql_endpoint.id, WarehouseKind.SQL_ENDPOINT)
+    updated = await audit.set_action_groups(
+        http,
+        workspace_id,
+        ephemeral_sql_endpoint.id,
+        ["BATCH_COMPLETED_GROUP"],
+        WarehouseKind.SQL_ENDPOINT,
+    )
+    assert "BATCH_COMPLETED_GROUP" in updated.action_groups

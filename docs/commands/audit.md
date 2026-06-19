@@ -4,9 +4,25 @@ title: Audit
 
 # Audit
 
-Manage SQL audit settings for Microsoft Fabric Data Warehouses.
+Manage SQL audit settings for Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
 
-**Targets:** Data Warehouse only
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Per Microsoft Learn, SQL auditing applies to both item types
+("Applies to: ✅ SQL analytics endpoint and Warehouse in Microsoft Fabric").
+
+!!! note "SQL Analytics Endpoint limitations"
+    When auditing a SQL analytics endpoint, the following limitations apply:
+
+    - **DML operations are not captured.** `INSERT`, `UPDATE`, `DELETE`, and `MERGE` are not
+      recorded because data manipulation for Lakehouse tables occurs through the Lakehouse runtime,
+      not through the SQL analytics endpoint.
+    - **Direct access to the audit folder is not currently supported.** Users cannot browse or
+      download the underlying `.XEL` audit files from the Lakehouse audit folder.
+    - Audit events can still be queried via the T-SQL function `sys.fn_get_audit_file_v2`.
+
+    Source: [SQL audit logs in Fabric Data Warehouse — SQL analytics endpoint limitations](
+    https://learn.microsoft.com/fabric/data-warehouse/sql-audit-logs#limitations)
 
 ---
 
@@ -14,7 +30,7 @@ Manage SQL audit settings for Microsoft Fabric Data Warehouses.
 
 ### audit add-group
 
-**Targets:** Data Warehouse only
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
 Add a single audit action group without overwriting the others. Idempotent — if the group is already present the command succeeds without modifying the configuration. Auditing must already be enabled.
 
@@ -34,9 +50,9 @@ fdw -w MyWorkspace audit add-group SalesWH BATCH_COMPLETED_GROUP
 
 ### audit disable
 
-**Targets:** Data Warehouse only
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
-Disable SQL auditing on a warehouse.
+Disable SQL auditing on a warehouse or SQL Analytics Endpoint.
 
 **Synopsis**
 
@@ -54,9 +70,9 @@ fdw -w MyWorkspace audit disable SalesWH
 
 ### audit enable
 
-**Targets:** Data Warehouse only
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
-Enable SQL auditing on a warehouse.
+Enable SQL auditing on a warehouse or SQL Analytics Endpoint.
 
 **Synopsis**
 
@@ -85,9 +101,9 @@ fdw -w MyWorkspace audit enable --unlimited SalesWH
 
 ### audit get
 
-**Targets:** Data Warehouse only
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
-Get the current audit settings for a warehouse.
+Get the current audit settings for a warehouse or SQL Analytics Endpoint.
 
 **Synopsis**
 
@@ -111,7 +127,7 @@ actionGroups     BATCH_COMPLETED_GROUP
 
 ### audit remove-group
 
-**Targets:** Data Warehouse only
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
 Remove a single audit action group without overwriting the others. Idempotent — if the group is not present the command succeeds without modifying the configuration. Auditing must already be enabled.
 
@@ -131,9 +147,9 @@ fdw -w MyWorkspace audit remove-group SalesWH BATCH_COMPLETED_GROUP
 
 ### audit set-groups
 
-**Targets:** Data Warehouse only
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
-Set the audit action groups for a warehouse. Pass `--group` / `-g` once per action group. This replaces the existing list of groups.
+Set the audit action groups for a warehouse or SQL Analytics Endpoint. Pass `--group` / `-g` once per action group. This replaces the existing list of groups.
 
 **Synopsis**
 
@@ -158,7 +174,7 @@ fdw -w MyWorkspace audit set-groups \
 
 ### audit set-retention
 
-**Targets:** Data Warehouse only
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
 Update the audit log retention period without changing the audit enabled/disabled state. Audit must already be enabled; if it is disabled, run `audit enable` first.
 
@@ -170,7 +186,7 @@ fdw [-w WORKSPACE] audit set-retention --days INTEGER [WAREHOUSE]
 
 | Option | Description |
 | --- | --- |
-| `--days INTEGER` | Retention period in days (1–3653; 3653 ≈ 10 years). (required) |
+| `--days INTEGER` | Retention period in days (1–3650; 3650 ≈ 10 years). (required) |
 
 **Example**
 
@@ -184,14 +200,14 @@ fdw -w MyWorkspace audit set-retention --days 90 SalesWH
 
 ### add_audit_group
 
-**Targets:** Data Warehouse only
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
 Add a single audit action group without overwriting the others. Idempotent — if the group is already present the current settings are returned unchanged. Auditing must already be enabled.
 
 **Parameters:**
 
 - `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse name or GUID.
+- `warehouse` (`str`) — warehouse or SQL analytics endpoint name or GUID.
 - `group` (`str`) — action group name (e.g. `"BATCH_COMPLETED_GROUP"`).
 
 **Returns:** `AuditSettings` — the updated audit settings.
@@ -200,14 +216,14 @@ Add a single audit action group without overwriting the others. Idempotent — i
 
 ### disable_audit
 
-**Targets:** Data Warehouse only
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
-Disable SQL auditing on a warehouse.
+Disable SQL auditing on a warehouse or SQL analytics endpoint.
 
 **Parameters:**
 
 - `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse name or GUID.
+- `warehouse` (`str`) — warehouse or SQL analytics endpoint name or GUID.
 
 **Returns:** `AuditSettings` — the updated audit settings.
 
@@ -215,14 +231,14 @@ Disable SQL auditing on a warehouse.
 
 ### enable_audit
 
-**Targets:** Data Warehouse only
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
-Enable SQL auditing on a warehouse.
+Enable SQL auditing on a warehouse or SQL analytics endpoint.
 
 **Parameters:**
 
 - `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse name or GUID.
+- `warehouse` (`str`) — warehouse or SQL analytics endpoint name or GUID.
 - `retention_days` (`int`, default `0`) — audit log retention in days; `0` means unlimited.
 
 **Returns:** `AuditSettings` — the updated audit settings.
@@ -231,14 +247,14 @@ Enable SQL auditing on a warehouse.
 
 ### get_audit_settings
 
-**Targets:** Data Warehouse only
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
-Fetch the current SQL audit settings for a warehouse.
+Fetch the current SQL audit settings for a warehouse or SQL analytics endpoint.
 
 **Parameters:**
 
 - `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse name or GUID.
+- `warehouse` (`str`) — warehouse or SQL analytics endpoint name or GUID.
 
 **Returns:** `AuditSettings` — object with `state` (`Enabled` or `Disabled`), `retentionDays`, and `auditActionsAndGroups`.
 
@@ -246,14 +262,14 @@ Fetch the current SQL audit settings for a warehouse.
 
 ### remove_audit_group
 
-**Targets:** Data Warehouse only
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
 Remove a single audit action group without overwriting the others. Idempotent — if the group is not present the current settings are returned unchanged. Auditing must already be enabled.
 
 **Parameters:**
 
 - `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse name or GUID.
+- `warehouse` (`str`) — warehouse or SQL analytics endpoint name or GUID.
 - `group` (`str`) — action group name (e.g. `"BATCH_COMPLETED_GROUP"`).
 
 **Returns:** `AuditSettings` — the updated audit settings.
@@ -262,14 +278,14 @@ Remove a single audit action group without overwriting the others. Idempotent �
 
 ### set_audit_action_groups
 
-**Targets:** Data Warehouse only
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
-Replace the audited action groups for a warehouse. This overwrites the existing list of groups.
+Replace the audited action groups for a warehouse or SQL analytics endpoint. This overwrites the existing list of groups.
 
 **Parameters:**
 
 - `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse name or GUID.
+- `warehouse` (`str`) — warehouse or SQL analytics endpoint name or GUID.
 - `action_groups` (`list[str]`) — list of audit action group names (e.g. `["BATCH_COMPLETED_GROUP"]`).
 
 **Returns:** `AuditSettings` — the updated audit settings.
@@ -278,14 +294,14 @@ Replace the audited action groups for a warehouse. This overwrites the existing 
 
 ### set_audit_retention
 
-**Targets:** Data Warehouse only
+**Targets:** Data Warehouse · SQL Analytics Endpoint
 
 Update the audit log retention period without changing the audit enabled/disabled state. Audit must already be enabled; if it is disabled, enable it first with `enable_audit`.
 
 **Parameters:**
 
 - `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse name or GUID.
-- `days` (`int`) — retention period in days (1–3653; 3653 ≈ 10 years).
+- `warehouse` (`str`) — warehouse or SQL analytics endpoint name or GUID.
+- `days` (`int`) — retention period in days (1–3650; 3650 ≈ 10 years).
 
 **Returns:** `AuditSettings` — the updated audit settings.

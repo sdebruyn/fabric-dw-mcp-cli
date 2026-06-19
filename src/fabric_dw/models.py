@@ -64,6 +64,19 @@ class WarehouseKind(StrEnum):
     SQL_ENDPOINT = "SQLEndpoint"
     SNAPSHOT = "WarehouseSnapshot"
 
+    @property
+    def label(self) -> str:
+        """Return a human-readable label for user-facing messages and prompts.
+
+        Unlike the raw enum *value* (e.g. ``"SQLEndpoint"``), this renders a
+        friendly, spaced label suitable for CLI prompts and error messages.
+        """
+        return {
+            WarehouseKind.WAREHOUSE: "Data Warehouse",
+            WarehouseKind.SQL_ENDPOINT: "SQL Analytics Endpoint",
+            WarehouseKind.SNAPSHOT: "Warehouse Snapshot",
+        }[self]
+
 
 #: The collation Fabric applies to a warehouse / SQL analytics endpoint when no
 #: explicit collation is specified at creation time.  The Fabric REST API may

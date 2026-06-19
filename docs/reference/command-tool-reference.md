@@ -298,24 +298,24 @@ For full options, examples, and notes, see the per-domain pages under **Commands
 
 | Command | Summary |
 | ------- | ------- |
-| `fdw audit add-group` | Add GROUP to the audit action groups for ITEM (warehouse). |
-| `fdw audit disable` | Disable SQL auditing on ITEM (warehouse). |
-| `fdw audit enable` | Enable SQL auditing on ITEM (warehouse). |
-| `fdw audit get` | Get the current audit settings for ITEM (warehouse). |
-| `fdw audit remove-group` | Remove GROUP from the audit action groups for ITEM (warehouse). |
-| `fdw audit set-groups` | Set audit action groups for ITEM (warehouse). |
-| `fdw audit set-retention` | Update the audit log retention period for ITEM (warehouse). |
+| `fdw audit add-group` | Add GROUP to the audit action groups for ITEM (warehouse or SQL analytics endpoint). |
+| `fdw audit disable` | Disable SQL auditing on ITEM (warehouse or SQL analytics endpoint). |
+| `fdw audit enable` | Enable SQL auditing on ITEM (warehouse or SQL analytics endpoint). |
+| `fdw audit get` | Get the current audit settings for ITEM (warehouse or SQL analytics endpoint). |
+| `fdw audit remove-group` | Remove GROUP from the audit action groups for ITEM (warehouse or SQL analytics endpoint). |
+| `fdw audit set-groups` | Set audit action groups for ITEM (warehouse or SQL analytics endpoint). |
+| `fdw audit set-retention` | Update the audit log retention period for ITEM (warehouse or SQL analytics endpoint). |
 
 ### MCP tools
 
 | Tool | Summary |
 | ---- | ------- |
 | `add_audit_group` | Add a single audit action group without overwriting the others. |
-| `disable_audit` | Disable SQL auditing on a warehouse. |
-| `enable_audit` | Enable SQL auditing on a warehouse. |
-| `get_audit_settings` | Fetch the current SQL audit settings for a warehouse. |
+| `disable_audit` | Disable SQL auditing on a warehouse or SQL analytics endpoint. |
+| `enable_audit` | Enable SQL auditing on a warehouse or SQL analytics endpoint. |
+| `get_audit_settings` | Fetch the current SQL audit settings for a warehouse or SQL analytics endpoint. |
 | `remove_audit_group` | Remove a single audit action group without overwriting the others. |
-| `set_audit_action_groups` | Replace the audited action groups for a warehouse. |
+| `set_audit_action_groups` | Replace the audited action groups for a warehouse or SQL analytics endpoint. |
 | `set_audit_retention` | Update the audit log retention period without changing the audit enabled/disabled state. |
 
 
