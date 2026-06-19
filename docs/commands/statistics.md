@@ -12,8 +12,6 @@ Manage user-defined statistics on Fabric Data Warehouses and read their details 
 
     Only **single-column, histogram-based** statistics can be created or updated (Fabric limitation). Multi-column statistics are not supported.
 
-    DDL operations (`create`, `update`, `delete`) require a **Data Warehouse** — they are rejected client-side on SQL Analytics Endpoints. `list` and `show` work on both item kinds.
-
 ---
 
 ## CLI
