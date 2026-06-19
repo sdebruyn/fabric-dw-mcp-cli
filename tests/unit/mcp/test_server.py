@@ -159,6 +159,10 @@ EXPECTED_TOOL_NAMES: frozenset[str] = frozenset(
         "create_statistics",
         "update_statistics",
         "delete_statistics",
+        # Settings
+        "get_warehouse_settings",
+        "set_result_set_caching",
+        "set_time_travel_retention",
         # dbt scaffold
         "generate_dbt_profile",
     }
