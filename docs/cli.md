@@ -570,6 +570,8 @@ fdw -w MyWorkspace --json sql exec SalesWH -f ./queries/report.sql
 
 Capture the **estimated** SHOWPLAN_XML execution plan for a SQL statement without executing it. The query is **not** run — only the plan is returned. This means DDL/DML query text is safe to plan without modifying any data.
 
+By default the plan is rendered as a **Rich terminal tree**: each operator is shown with its physical/logical op name, estimated row count, cost percentage (colour-coded), and badges for parallel execution or warnings. For multi-statement batches, one tree is printed per statement.
+
 The plan XML uses the standard namespace `http://schemas.microsoft.com/sqlserver/2004/07/showplan` and can be opened in SSMS, Azure Data Studio, or uploaded to [pastetheplan.com](https://www.pastetheplan.com) for visual analysis.
 
 **Synopsis**
@@ -582,16 +584,25 @@ fdw [-w WORKSPACE] sql plan [OPTIONS] [ITEM]
 | --- | --- |
 | `-q` / `--query TEXT` | SQL statement to plan. |
 | `-f` / `--file PATH` | Path to a `.sql` file to plan. |
-| `-o` / `--output PATH` | Write the plan XML to this file (recommended extension: `.sqlplan`). When omitted, the XML is printed to stdout. |
+| `-o` / `--output PATH` | Write the raw plan XML to this file (recommended extension: `.sqlplan`). Opens in SSMS / Azure Data Studio. |
+| `--raw` / `--xml` | Print the raw SHOWPLAN XML to stdout instead of the Rich terminal tree. Useful for piping or inspection. |
+
+Pass the root `--json` flag to emit the parsed operator tree as machine-readable JSON instead of the Rich tree.
 
 **Example**
 
 ```shell
-# Print plan XML to stdout
+# Default: render a Rich terminal tree in the console
 fdw -w MyWorkspace sql plan SalesWH -q "SELECT TOP 5 * FROM dbo.Sales"
 
-# Save plan to file (opens in SSMS / Azure Data Studio)
+# Save raw plan XML to file (opens in SSMS / Azure Data Studio)
 fdw -w MyWorkspace sql plan SalesWH -q "SELECT TOP 5 * FROM dbo.Sales" -o plan.sqlplan
+
+# Print raw SHOWPLAN XML to stdout (pipe-friendly)
+fdw -w MyWorkspace sql plan SalesWH -q "SELECT TOP 5 * FROM dbo.Sales" --raw
+
+# Emit the operator tree as JSON
+fdw -w MyWorkspace --json sql plan SalesWH -q "SELECT TOP 5 * FROM dbo.Sales"
 ```
 
 ---

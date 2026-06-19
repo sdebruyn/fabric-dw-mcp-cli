@@ -8,9 +8,13 @@ Commands
 
 from __future__ import annotations
 
+import json as _json
+
 import click
 
 from fabric_dw.cli._context import CliContext
+from fabric_dw.cli._plan_parse import parse_showplan
+from fabric_dw.cli._plan_render import operator_to_dict, render_plan_tree
 from fabric_dw.cli._render import render
 from fabric_dw.cli.commands._utils import (
     build_http_client,
@@ -111,9 +115,16 @@ async def sql_exec_cmd(
     type=click.Path(file_okay=True, dir_okay=False, writable=True),
     help=(
         "Write the plan XML to this file (recommend .sqlplan extension). "
-        "Opens in SSMS, Azure Data Studio, or pastetheplan.com. "
-        "When omitted, the XML is printed to stdout."
+        "Opens in SSMS, Azure Data Studio, or pastetheplan.com."
     ),
+)
+@click.option(
+    "--raw",
+    "--xml",
+    "raw",
+    is_flag=True,
+    default=False,
+    help="Print the raw SHOWPLAN XML to stdout instead of the Rich terminal tree.",
 )
 @click.pass_obj
 @coro
@@ -123,6 +134,7 @@ async def sql_plan_cmd(
     query_text: str | None,
     query_file: str | None,
     output_path: str | None,
+    raw: bool,
 ) -> None:
     """Capture the estimated SHOWPLAN_XML for ITEM (warehouse or SQL endpoint).
 
@@ -130,9 +142,12 @@ async def sql_plan_cmd(
     The query is NOT executed — only the estimated execution plan is captured.
     This means DDL/DML query text is safe to plan without modifying any data.
 
-    The plan XML can be opened in SSMS, Azure Data Studio, or uploaded to
-    pastetheplan.com for visual analysis.  Use -o/--output to save to a file
-    (recommended extension: .sqlplan).  Without -o, the XML is printed to stdout.
+    By default the plan is rendered as a Rich terminal tree showing each
+    operator with estimated rows, cost percentage, and parallel/warning badges.
+    Use --raw/--xml to print the raw SHOWPLAN XML to stdout (e.g. for piping).
+    Use -o/--output to save the raw XML to a file (recommended extension:
+    .sqlplan); opens in SSMS, Azure Data Studio, or pastetheplan.com.
+    Pass the root --json flag for machine-readable JSON of the operator tree.
     """
     query = load_sql_body(query_text, query_file, inline_opt="-q/--query", file_opt="-f/--file")
 
@@ -144,10 +159,21 @@ async def sql_plan_cmd(
             plan_xml = await _sql_exec_svc.get_plan(target, query, mode=ctx.auth)
 
             if output_path is not None:
+                # Always write raw XML to file, regardless of other flags.
                 with open(output_path, "w", encoding="utf-8") as fh:
                     fh.write(plan_xml)
                 click.echo(f"Execution plan written to {output_path}")
-            else:
+            elif raw:
+                # --raw/--xml: pipe-friendly raw XML to stdout.
                 click.echo(plan_xml)
+            elif ctx.json_output:
+                # Global --json: emit the parsed operator tree as JSON.
+                operators = parse_showplan(plan_xml)
+                payload = [operator_to_dict(op) for op in operators]
+                click.echo(_json.dumps(payload, indent=2))
+            else:
+                # Default: render a Rich terminal tree.
+                operators = parse_showplan(plan_xml)
+                render_plan_tree(operators)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc

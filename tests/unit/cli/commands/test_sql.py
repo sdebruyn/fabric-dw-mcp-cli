@@ -370,8 +370,8 @@ class TestSqlExecErrors:
 class TestSqlPlan:
     """sql plan — happy paths."""
 
-    def test_plan_stdout_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
-        """sql plan prints plan XML to stdout and exits 0."""
+    def test_plan_default_renders_tree(self, runner: CliRunner, cache_env: Path) -> None:
+        """sql plan default output is a Rich terminal tree (not raw XML)."""
         _ = cache_env
         mock_http = AsyncMock()
         with (
@@ -393,10 +393,11 @@ class TestSqlPlan:
                 ["-w", WS_GUID, "sql", "plan", WH_GUID, "-q", "SELECT 1"],
             )
         assert result.exit_code == 0
-        assert "ShowPlanXML" in result.output
+        # Raw XML must NOT appear in terminal tree output
+        assert "<ShowPlanXML" not in result.output
 
-    def test_plan_stdout_contains_xml(self, runner: CliRunner, cache_env: Path) -> None:
-        """sql plan without -o writes the XML to stdout."""
+    def test_plan_raw_flag_prints_xml(self, runner: CliRunner, cache_env: Path) -> None:
+        """sql plan --raw prints the raw SHOWPLAN XML to stdout."""
         _ = cache_env
         mock_http = AsyncMock()
         with (
@@ -415,10 +416,61 @@ class TestSqlPlan:
         ):
             result = runner.invoke(
                 cli,
-                ["-w", WS_GUID, "sql", "plan", WH_GUID, "-q", "SELECT 1 AS n"],
+                ["-w", WS_GUID, "sql", "plan", WH_GUID, "-q", "SELECT 1", "--raw"],
             )
         assert result.exit_code == 0
         assert _PLAN_XML in result.output
+
+    def test_plan_xml_alias_prints_xml(self, runner: CliRunner, cache_env: Path) -> None:
+        """sql plan --xml is an alias for --raw."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.sql_exec.get_plan",
+                new=AsyncMock(return_value=_PLAN_XML),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", WS_GUID, "sql", "plan", WH_GUID, "-q", "SELECT 1", "--xml"],
+            )
+        assert result.exit_code == 0
+        assert "ShowPlanXML" in result.output
+
+    def test_plan_json_flag_emits_operator_tree(self, runner: CliRunner, cache_env: Path) -> None:
+        """sql plan --json emits the parsed operator tree as JSON."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.sql_exec.get_plan",
+                new=AsyncMock(return_value=_PLAN_XML),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", WS_GUID, "--json", "sql", "plan", WH_GUID, "-q", "SELECT 1"],
+            )
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert isinstance(parsed, list)
 
     def test_plan_output_file(self, runner: CliRunner, cache_env: Path, tmp_path: Path) -> None:
         """sql plan -o FILE writes the XML to the file and echoes a confirmation."""
