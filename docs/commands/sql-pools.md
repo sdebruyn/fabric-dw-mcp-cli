@@ -4,10 +4,7 @@ title: SQL Pools
 
 # SQL Pools
 
-!!! warning "Beta / preview feature"
-    Manages workspace SQL Pools (currently in preview; the API may change before GA).  Callers must hold the **workspace admin role**.
-
-Manage custom SQL Pools at the workspace level with sub-resource commands that mirror the Azure CLI style.
+Manage custom SQL Pools at the workspace level with sub-resource commands that mirror the Azure CLI style. Callers must hold the **workspace admin role**.
 
 **Targets:** Workspace (not item-specific)
 
@@ -262,8 +259,7 @@ fdw -w MyWorkspace sql-pools update --name ETL --max-percent 40
 
 ## MCP tools
 
-!!! warning "Beta / preview feature"
-    The SQL Pools tools manage the workspace SQL Pools configuration (currently in preview; the API may change before GA). All callers must hold the **workspace admin role**.
+All callers must hold the **workspace admin role**.
 
 ### create_sql_pool
 
