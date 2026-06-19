@@ -171,6 +171,10 @@ DOMAIN_MAP: dict[str, str] = {
     "generate_dbt_profile": "dbt",
     # Cache
     "clear_cache": "cache",
+    # Settings (server-side warehouse settings)
+    "settings": "settings",
+    # Tables (load sub-domain)
+    "import_table_from_url": "tables",
 }
 
 # ---------------------------------------------------------------------------
@@ -198,6 +202,7 @@ _KNOWN_DOMAINS: frozenset[str] = frozenset(
         "cache",
         "config",
         "completion",
+        "settings",
     }
 )
 
