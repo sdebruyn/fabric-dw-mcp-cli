@@ -11,7 +11,12 @@ from fabric_dw.exceptions import AuthError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import View
 from fabric_dw.services import views
 from fabric_dw.services.views import read_view, validate_identifier
-from tests.unit.services._helpers import _make_conn, _make_conn_for_ddl, _make_target
+from tests.unit.services._helpers import (
+    _make_conn,
+    _make_conn_for_ddl,
+    _make_no_result_conn,
+    _make_target,
+)
 
 # ---------------------------------------------------------------------------
 # Fixture data
@@ -424,6 +429,15 @@ class TestCountViewRows:
             pytest.raises(PermissionDeniedError),
         ):
             await views.count_view_rows(target, "dbo", "vw_sales")
+
+    async def test_raises_not_found_when_description_is_none(self) -> None:
+        target = _make_target()
+        conn = _make_no_result_conn()
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(NotFoundError),
+        ):
+            await views.count_view_rows(target, "dbo", "missing")
 
 
 # ===========================================================================

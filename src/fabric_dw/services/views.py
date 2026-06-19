@@ -243,6 +243,9 @@ async def count_view_rows(
 
     def _run() -> int:
         _cols, rows = run_query(target, count_sql, mode=mode)
+        if not rows:
+            msg = f"View [{schema}].[{view_name}] not found"
+            raise NotFoundError(msg)
         return int(rows[0][0])
 
     return await asyncio.to_thread(_run)

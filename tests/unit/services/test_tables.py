@@ -15,7 +15,12 @@ from fabric_dw.exceptions import AuthError, ItemKindError, NotFoundError, Permis
 from fabric_dw.models import ColumnSpec, Table, WarehouseKind
 from fabric_dw.services import tables
 from fabric_dw.services.tables import validate_identifier
-from tests.unit.services._helpers import _make_conn, _make_conn_for_ddl, _make_target
+from tests.unit.services._helpers import (
+    _make_conn,
+    _make_conn_for_ddl,
+    _make_no_result_conn,
+    _make_target,
+)
 
 # ---------------------------------------------------------------------------
 # Fixture data
@@ -411,6 +416,15 @@ class TestCountTableRows:
             pytest.raises(PermissionDeniedError),
         ):
             await tables.count_table_rows(target, "dbo", "sales")
+
+    async def test_raises_not_found_when_description_is_none(self) -> None:
+        target = _make_target()
+        conn = _make_no_result_conn()
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(NotFoundError),
+        ):
+            await tables.count_table_rows(target, "dbo", "missing")
 
 
 # ===========================================================================

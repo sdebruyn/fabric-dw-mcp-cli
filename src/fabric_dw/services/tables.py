@@ -268,6 +268,9 @@ async def count_table_rows(
 
     def _run() -> int:
         _cols, rows = run_query(target, count_sql, mode=mode)
+        if not rows:
+            msg = f"Table [{schema}].[{table_name}] not found"
+            raise NotFoundError(msg)
         return int(rows[0][0])
 
     return await asyncio.to_thread(_run)
