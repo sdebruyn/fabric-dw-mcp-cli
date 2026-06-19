@@ -34,7 +34,7 @@ uvx fabric-dw --help
 After installation, confirm the CLI is available:
 
 ```bash
-fabric-dw --help
+fdw --help
 ```
 
 You should see the top-level help output listing available commands.

@@ -8,7 +8,7 @@
 The easiest way to install completion for your shell is the built-in command:
 
 ```shell
-fabric-dw completion install bash   # or zsh / fish
+fdw completion install bash   # or zsh / fish
 ```
 
 This writes the script to the conventional location for your shell and prints
@@ -17,7 +17,7 @@ the command you need to reload it.
 Add `--print` to inspect the script before installing:
 
 ```shell
-fabric-dw completion install bash --print
+fdw completion install bash --print
 ```
 
 ## Manual setup

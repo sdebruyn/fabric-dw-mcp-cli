@@ -909,7 +909,7 @@ Create a new SQL table via CTAS (`CREATE TABLE … AS SELECT`).
 
 Create an empty SQL table from an explicit column specification (DDL only — no data is ever read or inserted). This scaffolds the table structure so that data can be loaded separately.
 
-Server-side file access is unreliable in MCP deployments, so CSV/Parquet schema inference is not available via this tool. Use `fabric-dw tables create --from-parquet` or `--from-csv` (CLI) for file-based schema inference.
+Server-side file access is unreliable in MCP deployments, so CSV/Parquet schema inference is not available via this tool. Use `fdw tables create --from-parquet` or `--from-csv` (CLI) for file-based schema inference.
 
 **Parameters:**
 
@@ -1652,7 +1652,7 @@ Read and modify server-side database settings on Fabric Data Warehouses and SQL 
 
 > **Note:** The read tool (`get_warehouse_settings`) works on both Data Warehouses and SQL Analytics Endpoints. The write tools (`set_result_set_caching`, `set_time_travel_retention`) execute `ALTER DATABASE CURRENT SET …` statements, which require autocommit and are primarily meaningful on Data Warehouses. Both setters return the effective `WarehouseSettings` read back after the change.
 
-CLI equivalents: `fabric-dw settings get`, `fabric-dw settings set-result-set-caching`, `fabric-dw settings set-time-travel-retention`.
+CLI equivalents: `fdw settings get`, `fdw settings set-result-set-caching`, `fdw settings set-time-travel-retention`.
 
 ### get_warehouse_settings
 
