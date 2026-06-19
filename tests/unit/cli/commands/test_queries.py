@@ -243,7 +243,7 @@ class TestQueriesDefaultFallback:
 
 
 class TestQueriesListConnections:
-    """queries connections — happy path + FabricError (lines 89-101)."""
+    """queries connections — happy path + FabricError."""
 
     def test_list_connections_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
@@ -309,7 +309,7 @@ class TestQueriesRequestHistory:
 
 
 class TestQueriesSessionHistory:
-    """queries sessions — happy path + FabricError (lines 210-211)."""
+    """queries sessions — happy path + FabricError."""
 
     def test_session_history_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
