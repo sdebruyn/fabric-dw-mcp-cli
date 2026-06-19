@@ -66,7 +66,7 @@ def test_context_settings_preserves_help_option_names() -> None:
 # ---------------------------------------------------------------------------
 
 # This is the short help that was truncated in the issue report.
-_FULL_AUDIT_HELP = "Manage SQL audit settings for Microsoft Fabric Data Warehouses."
+_FULL_AUDIT_HELP = "Manage SQL audit settings for Data Warehouses and SQL Analytics Endpoints."
 
 
 def test_formatter_does_not_truncate_at_max_content_width() -> None:

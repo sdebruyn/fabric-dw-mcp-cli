@@ -19,7 +19,7 @@ from fabric_dw.services import audit as _audit_svc
 
 @click.group("audit")
 def audit_group() -> None:
-    """Manage SQL audit settings for Microsoft Fabric Data Warehouses."""
+    """Manage SQL audit settings for Data Warehouses and SQL Analytics Endpoints."""
 
 
 @audit_group.command("get")
@@ -27,13 +27,13 @@ def audit_group() -> None:
 @click.pass_obj
 @coro
 async def get_cmd(ctx: CliContext, item: str | None) -> None:
-    """Get the current audit settings for ITEM (warehouse)."""
+    """Get the current audit settings for ITEM (warehouse or SQL analytics endpoint)."""
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
             ws_id, entry = await resolve_item(http, ws, wh)
-            obj = await _audit_svc.get_settings(http, ws_id, entry.id)
+            obj = await _audit_svc.get_settings(http, ws_id, entry.id, entry.kind)
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -64,7 +64,7 @@ async def enable_cmd(
     retention_days: int | None,
     unlimited: bool,
 ) -> None:
-    """Enable SQL auditing on ITEM (warehouse).
+    """Enable SQL auditing on ITEM (warehouse or SQL analytics endpoint).
 
     Omitting both --retention-days and --unlimited defaults to unlimited retention.
     """
@@ -85,7 +85,9 @@ async def enable_cmd(
     try:
         async with build_http_client(ctx) as http:
             ws_id, entry = await resolve_item(http, ws, wh)
-            obj = await _audit_svc.enable(http, ws_id, entry.id, retention_days=effective_days)
+            obj = await _audit_svc.enable(
+                http, ws_id, entry.id, entry.kind, retention_days=effective_days
+            )
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -96,20 +98,20 @@ async def enable_cmd(
 @click.pass_obj
 @coro
 async def disable_cmd(ctx: CliContext, item: str | None) -> None:
-    """Disable SQL auditing on ITEM (warehouse)."""
+    """Disable SQL auditing on ITEM (warehouse or SQL analytics endpoint)."""
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
             ws_id, entry = await resolve_item(http, ws, wh)
             confirmed = confirm(
-                f"Disable auditing on warehouse {entry.display_name!r} ({entry.id})?",
+                f"Disable auditing on {entry.kind.value} {entry.display_name!r} ({entry.id})?",
                 yes=ctx.yes,
             )
             if not confirmed:
                 click.echo("Aborted.")
                 return
-            obj = await _audit_svc.disable(http, ws_id, entry.id)
+            obj = await _audit_svc.disable(http, ws_id, entry.id, entry.kind)
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -130,7 +132,7 @@ async def set_retention_cmd(
     item: str | None,
     days: int,
 ) -> None:
-    """Update the audit log retention period for ITEM (warehouse).
+    """Update the audit log retention period for ITEM (warehouse or SQL analytics endpoint).
 
     Audit must already be enabled; if disabled, enable it first with
     ``audit enable``.  This command does NOT change the audit state.
@@ -140,7 +142,7 @@ async def set_retention_cmd(
     try:
         async with build_http_client(ctx) as http:
             ws_id, entry = await resolve_item(http, ws, wh)
-            obj = await _audit_svc.set_retention(http, ws_id, entry.id, days=days)
+            obj = await _audit_svc.set_retention(http, ws_id, entry.id, entry.kind, days=days)
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -159,7 +161,7 @@ async def set_retention_cmd(
 @click.pass_obj
 @coro
 async def set_groups_cmd(ctx: CliContext, item: str | None, groups: tuple[str, ...]) -> None:
-    """Set audit action groups for ITEM (warehouse).
+    """Set audit action groups for ITEM (warehouse or SQL analytics endpoint).
 
     Pass --group for each action group name, e.g.
     --group BATCH_COMPLETED_GROUP --group SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP.
@@ -169,7 +171,9 @@ async def set_groups_cmd(ctx: CliContext, item: str | None, groups: tuple[str, .
     try:
         async with build_http_client(ctx) as http:
             ws_id, entry = await resolve_item(http, ws, wh)
-            obj = await _audit_svc.set_action_groups(http, ws_id, entry.id, list(groups))
+            obj = await _audit_svc.set_action_groups(
+                http, ws_id, entry.id, list(groups), kind=entry.kind
+            )
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -181,7 +185,7 @@ async def set_groups_cmd(ctx: CliContext, item: str | None, groups: tuple[str, .
 @click.pass_obj
 @coro
 async def add_group_cmd(ctx: CliContext, item: str | None, group: str) -> None:
-    """Add GROUP to the audit action groups for ITEM (warehouse).
+    """Add GROUP to the audit action groups for ITEM (warehouse or SQL analytics endpoint).
 
     Idempotent — if GROUP is already present the command succeeds without
     modifying the configuration.  Auditing must already be enabled.
@@ -191,7 +195,7 @@ async def add_group_cmd(ctx: CliContext, item: str | None, group: str) -> None:
     try:
         async with build_http_client(ctx) as http:
             ws_id, entry = await resolve_item(http, ws, wh)
-            obj = await _audit_svc.add_action_group(http, ws_id, entry.id, group)
+            obj = await _audit_svc.add_action_group(http, ws_id, entry.id, group, entry.kind)
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -203,7 +207,7 @@ async def add_group_cmd(ctx: CliContext, item: str | None, group: str) -> None:
 @click.pass_obj
 @coro
 async def remove_group_cmd(ctx: CliContext, item: str | None, group: str) -> None:
-    """Remove GROUP from the audit action groups for ITEM (warehouse).
+    """Remove GROUP from the audit action groups for ITEM (warehouse or SQL analytics endpoint).
 
     Idempotent — if GROUP is not present the command succeeds without
     modifying the configuration.  Auditing must already be enabled.
@@ -213,7 +217,7 @@ async def remove_group_cmd(ctx: CliContext, item: str | None, group: str) -> Non
     try:
         async with build_http_client(ctx) as http:
             ws_id, entry = await resolve_item(http, ws, wh)
-            obj = await _audit_svc.remove_action_group(http, ws_id, entry.id, group)
+            obj = await _audit_svc.remove_action_group(http, ws_id, entry.id, group, entry.kind)
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc

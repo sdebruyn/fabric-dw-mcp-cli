@@ -11,13 +11,13 @@ import pytest
 import respx
 
 from fabric_dw.exceptions import PermissionDeniedError
-from fabric_dw.models import AuditSettings
+from fabric_dw.models import AuditSettings, WarehouseKind
 from fabric_dw.services import audit
 from fabric_dw.services.audit import _validate_action_group
 from tests.unit.services._helpers import _make_client
 
 # ---------------------------------------------------------------------------
-# Constants
+# Constants — Warehouse (existing)
 # ---------------------------------------------------------------------------
 
 _WS_ID = UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
@@ -25,6 +25,14 @@ _WH_ID = UUID("d4e5f6a7-b8c9-0123-def0-123456789abc")
 
 _AUDIT_PATH = f"/workspaces/{_WS_ID}/warehouses/{_WH_ID}/settings/sqlAudit"
 _AUDIT_URL = f"https://api.fabric.microsoft.com/v1{_AUDIT_PATH}"
+
+# ---------------------------------------------------------------------------
+# Constants — SQL Analytics Endpoint
+# ---------------------------------------------------------------------------
+
+_EP_ID = UUID("e1f2a3b4-c5d6-7890-ef01-234567890abc")
+_EP_AUDIT_PATH = f"/workspaces/{_WS_ID}/sqlEndpoints/{_EP_ID}/settings/sqlAudit"
+_EP_AUDIT_URL = f"https://api.fabric.microsoft.com/v1{_EP_AUDIT_PATH}"
 
 AUDIT_SETTINGS_PAYLOAD: dict[str, Any] = {
     "state": "Enabled",
@@ -754,3 +762,170 @@ async def test_set_retention_403_raises_permission_denied() -> None:
         async with client:
             with pytest.raises(PermissionDeniedError):
                 await audit.set_retention(client, _WS_ID, _WH_ID, days=30)
+
+
+# ---------------------------------------------------------------------------
+# SQL Analytics Endpoint — kind-aware routing
+# Verifies the 'sqlEndpoints' collection segment is used (not 'warehouses').
+# See: _EP_AUDIT_URL / _EP_AUDIT_PATH constants above.
+# ---------------------------------------------------------------------------
+
+
+async def test_endpoint_get_settings_uses_sql_endpoints_collection() -> None:
+    """get_settings with SQL_ENDPOINT kind must call /sqlEndpoints/{id}/settings/sqlAudit."""
+    with respx.mock:
+        ep_route = respx.get(_EP_AUDIT_URL).mock(
+            return_value=httpx.Response(200, json=AUDIT_SETTINGS_PAYLOAD)
+        )
+        # Ensure the warehouse path is NOT called.
+        wh_route = respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        client = await _make_client()
+        async with client:
+            result = await audit.get_settings(client, _WS_ID, _EP_ID, WarehouseKind.SQL_ENDPOINT)
+
+    assert ep_route.called, "Expected GET on /sqlEndpoints/ path"
+    assert not wh_route.called, "Must NOT hit /warehouses/ path for SQL_ENDPOINT"
+    assert isinstance(result, AuditSettings)
+    assert result.state == "Enabled"
+
+
+async def test_endpoint_enable_uses_sql_endpoints_collection() -> None:
+    """enable with SQL_ENDPOINT kind must PATCH /sqlEndpoints/{id}/settings/sqlAudit."""
+    with respx.mock:
+        patch_route = respx.patch(_EP_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        get_route = respx.get(_EP_AUDIT_URL).mock(
+            return_value=httpx.Response(200, json=AUDIT_SETTINGS_PAYLOAD)
+        )
+        client = await _make_client()
+        async with client:
+            result = await audit.enable(
+                client, _WS_ID, _EP_ID, WarehouseKind.SQL_ENDPOINT, retention_days=7
+            )
+
+    assert patch_route.called
+    assert get_route.called
+    sent_body = json.loads(patch_route.calls[0].request.content)
+    assert sent_body == {"state": "Enabled", "retentionDays": 7}
+    assert isinstance(result, AuditSettings)
+
+
+async def test_endpoint_disable_uses_sql_endpoints_collection() -> None:
+    """disable with SQL_ENDPOINT kind must PATCH /sqlEndpoints/{id}/settings/sqlAudit."""
+    with respx.mock:
+        patch_route = respx.patch(_EP_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        respx.get(_EP_AUDIT_URL).mock(
+            return_value=httpx.Response(200, json=AUDIT_SETTINGS_DISABLED_PAYLOAD)
+        )
+        client = await _make_client()
+        async with client:
+            result = await audit.disable(client, _WS_ID, _EP_ID, WarehouseKind.SQL_ENDPOINT)
+
+    assert patch_route.called
+    sent_body = json.loads(patch_route.calls[0].request.content)
+    assert sent_body == {"state": "Disabled"}
+    assert isinstance(result, AuditSettings)
+    assert result.state == "Disabled"
+
+
+async def test_endpoint_set_retention_uses_sql_endpoints_collection() -> None:
+    """set_retention with SQL_ENDPOINT kind must PATCH /sqlEndpoints/{id}/settings/sqlAudit."""
+    enabled = AUDIT_SETTINGS_PAYLOAD.copy()
+    updated = AUDIT_SETTINGS_PAYLOAD.copy()
+    updated["retentionDays"] = 14
+
+    with respx.mock:
+        patch_route = respx.patch(_EP_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        respx.get(_EP_AUDIT_URL).mock(
+            side_effect=[
+                httpx.Response(200, json=enabled),  # pre-flight GET
+                httpx.Response(200, json=updated),  # re-fetch after PATCH
+            ]
+        )
+        client = await _make_client()
+        async with client:
+            result = await audit.set_retention(
+                client, _WS_ID, _EP_ID, WarehouseKind.SQL_ENDPOINT, days=14
+            )
+
+    assert patch_route.called
+    sent_body = json.loads(patch_route.calls[0].request.content)
+    assert sent_body == {"retentionDays": 14}
+    assert result.retention_days == 14
+
+
+async def test_endpoint_set_action_groups_uses_sql_endpoints_collection() -> None:
+    """set_action_groups with SQL_ENDPOINT kind must PATCH /sqlEndpoints/{id}/settings/sqlAudit."""
+    groups = ["BATCH_COMPLETED_GROUP"]
+    with respx.mock:
+        respx.get(_EP_AUDIT_URL).mock(return_value=httpx.Response(200, json=AUDIT_SETTINGS_PAYLOAD))
+        patch_route = respx.patch(_EP_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        client = await _make_client()
+        async with client:
+            result = await audit.set_action_groups(
+                client, _WS_ID, _EP_ID, groups, kind=WarehouseKind.SQL_ENDPOINT
+            )
+
+    assert patch_route.called
+    sent_body = json.loads(patch_route.calls[0].request.content)
+    assert sent_body["auditActionsAndGroups"] == groups
+    assert sent_body.get("state") == "Enabled"
+    assert isinstance(result, AuditSettings)
+    assert result.action_groups == groups
+
+
+async def test_endpoint_add_action_group_uses_sql_endpoints_collection() -> None:
+    """add_action_group with SQL_ENDPOINT kind must PATCH /sqlEndpoints/{id}/settings/sqlAudit."""
+    new_group = "FAILED_DATABASE_AUTHENTICATION_GROUP"
+    with respx.mock:
+        respx.get(_EP_AUDIT_URL).mock(return_value=httpx.Response(200, json=AUDIT_SETTINGS_PAYLOAD))
+        patch_route = respx.patch(_EP_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        client = await _make_client()
+        async with client:
+            result = await audit.add_action_group(
+                client, _WS_ID, _EP_ID, new_group, WarehouseKind.SQL_ENDPOINT
+            )
+
+    assert patch_route.called
+    sent_body = json.loads(patch_route.calls[0].request.content)
+    assert new_group in sent_body["auditActionsAndGroups"]
+    assert new_group in result.action_groups
+
+
+async def test_endpoint_remove_action_group_uses_sql_endpoints_collection() -> None:
+    """remove_action_group with SQL_ENDPOINT kind must PATCH /sqlEndpoints/{id}/settings/sqlAudit.
+
+    Verifies that the correct collection segment is used in the PATCH URL.
+    """
+    group_to_remove = "SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP"
+    with respx.mock:
+        respx.get(_EP_AUDIT_URL).mock(return_value=httpx.Response(200, json=AUDIT_SETTINGS_PAYLOAD))
+        patch_route = respx.patch(_EP_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        client = await _make_client()
+        async with client:
+            result = await audit.remove_action_group(
+                client, _WS_ID, _EP_ID, group_to_remove, WarehouseKind.SQL_ENDPOINT
+            )
+
+    assert patch_route.called
+    sent_body = json.loads(patch_route.calls[0].request.content)
+    assert group_to_remove not in sent_body["auditActionsAndGroups"]
+    assert group_to_remove not in result.action_groups
+
+
+def test_audit_path_warehouse_uses_warehouses_segment() -> None:
+    """_audit_path must use 'warehouses' segment for WAREHOUSE kind."""
+    from fabric_dw.services.audit import _audit_path  # noqa: PLC0415
+
+    path = _audit_path(_WS_ID, _WH_ID, WarehouseKind.WAREHOUSE)
+    assert "/warehouses/" in path
+    assert "/sqlEndpoints/" not in path
+
+
+def test_audit_path_sql_endpoint_uses_sql_endpoints_segment() -> None:
+    """_audit_path must use 'sqlEndpoints' segment for SQL_ENDPOINT kind."""
+    from fabric_dw.services.audit import _audit_path  # noqa: PLC0415
+
+    path = _audit_path(_WS_ID, _EP_ID, WarehouseKind.SQL_ENDPOINT)
+    assert "/sqlEndpoints/" in path
+    assert "/warehouses/" not in path
+    assert str(_EP_ID) in path

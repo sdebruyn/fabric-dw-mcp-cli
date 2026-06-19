@@ -1,6 +1,14 @@
-"""SQL audit settings service for Microsoft Fabric Data Warehouses.
+"""SQL audit settings service for Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
 
-Wraps the warehouse-scoped ``/settings/sqlAudit`` endpoint:
+Wraps the item-scoped ``/settings/sqlAudit`` endpoint for both item types:
+
+- ``GET /v1/workspaces/{ws}/warehouses/{id}/settings/sqlAudit``
+- ``GET /v1/workspaces/{ws}/sqlEndpoints/{id}/settings/sqlAudit``
+
+Per Microsoft Learn, SQL auditing applies to both Data Warehouses and SQL Analytics
+Endpoints (``Applies to: ✅ SQL analytics endpoint and Warehouse``).
+
+Public functions:
 
 - :func:`get_settings` — fetch current audit configuration.
 - :func:`enable`       — enable auditing (optionally with a retention period).
@@ -16,7 +24,7 @@ import re
 from uuid import UUID
 
 from fabric_dw.http_client import FabricHttpClient, HttpBase
-from fabric_dw.models import AuditSettings
+from fabric_dw.models import AuditSettings, WarehouseKind
 
 __all__ = [
     "add_action_group",
@@ -51,7 +59,8 @@ def _validate_action_group(name: str) -> None:
 async def _require_enabled(
     http: FabricHttpClient,
     workspace_id: UUID,
-    warehouse_id: UUID,
+    item_id: UUID,
+    kind: WarehouseKind,
     *,
     msg: str = "audit is disabled; enable first",
 ) -> AuditSettings:
@@ -64,7 +73,8 @@ async def _require_enabled(
     Args:
         http: Authenticated Fabric HTTP client.
         workspace_id: GUID of the Fabric workspace.
-        warehouse_id: GUID of the Data Warehouse.
+        item_id: GUID of the Data Warehouse or SQL Analytics Endpoint.
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
         msg: Error message to use when auditing is disabled.
 
     Returns:
@@ -73,39 +83,63 @@ async def _require_enabled(
     Raises:
         ValueError: If auditing is currently disabled.
         PermissionDeniedError: If the caller lacks the required permission (HTTP 403).
-        NotFoundError: If the warehouse does not exist (HTTP 404).
+        NotFoundError: If the item does not exist (HTTP 404).
     """
-    current = await get_settings(http, workspace_id, warehouse_id)
+    current = await get_settings(http, workspace_id, item_id, kind)
     if current.state == "Disabled":
         raise ValueError(msg)
     return current
 
 
-def _audit_path(workspace_id: UUID, warehouse_id: UUID) -> str:
-    """Return the relative path for the sqlAudit settings endpoint."""
-    return f"/workspaces/{workspace_id}/warehouses/{warehouse_id}/settings/sqlAudit"
+def _audit_path(workspace_id: UUID, item_id: UUID, kind: WarehouseKind) -> str:
+    """Return the relative path for the sqlAudit settings endpoint.
+
+    The collection segment depends on the item kind:
+
+    - :attr:`~fabric_dw.models.WarehouseKind.WAREHOUSE` → ``/warehouses/{id}/settings/sqlAudit``
+    - :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT` →
+      ``/sqlEndpoints/{id}/settings/sqlAudit``
+
+    Source: Microsoft REST API reference for
+    ``GET/PATCH /v1/workspaces/{ws}/sqlEndpoints/{id}/settings/sqlAudit``
+    (verified at https://learn.microsoft.com/en-us/rest/api/fabric/sqlendpoint/sql-audit-settings).
+
+    Args:
+        workspace_id: GUID of the Fabric workspace.
+        item_id: GUID of the Data Warehouse or SQL Analytics Endpoint.
+        kind: The :class:`~fabric_dw.models.WarehouseKind` discriminating the URL segment.
+
+    Returns:
+        A relative URL path string (no leading ``https://api.fabric.microsoft.com/v1``).
+    """
+    collection = "sqlEndpoints" if kind == WarehouseKind.SQL_ENDPOINT else "warehouses"
+    return f"/workspaces/{workspace_id}/{collection}/{item_id}/settings/sqlAudit"
 
 
 async def get_settings(
     http: FabricHttpClient,
     workspace_id: UUID,
-    warehouse_id: UUID,
+    item_id: UUID,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
 ) -> AuditSettings:
-    """Fetch the current SQL audit settings for a warehouse.
+    """Fetch the current SQL audit settings for a Data Warehouse or SQL Analytics Endpoint.
 
     Args:
         http: Authenticated Fabric HTTP client.
         workspace_id: GUID of the Fabric workspace.
-        warehouse_id: GUID of the Data Warehouse.
+        item_id: GUID of the Data Warehouse or SQL Analytics Endpoint.
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
+            Defaults to :attr:`~fabric_dw.models.WarehouseKind.WAREHOUSE` for
+            backwards compatibility.
 
     Returns:
         The current :class:`~fabric_dw.models.AuditSettings`.
 
     Raises:
         PermissionDeniedError: If the caller lacks the required permission (HTTP 403).
-        NotFoundError: If the warehouse does not exist (HTTP 404).
+        NotFoundError: If the item does not exist (HTTP 404).
     """
-    path = _audit_path(workspace_id, warehouse_id)
+    path = _audit_path(workspace_id, item_id, kind)
     resp = await http.request("GET", HttpBase.FABRIC, path)
     return AuditSettings.model_validate(resp.json())
 
@@ -113,16 +147,20 @@ async def get_settings(
 async def enable(
     http: FabricHttpClient,
     workspace_id: UUID,
-    warehouse_id: UUID,
+    item_id: UUID,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
     *,
     retention_days: int = 0,
 ) -> AuditSettings:
-    """Enable SQL auditing on a warehouse.
+    """Enable SQL auditing on a Data Warehouse or SQL Analytics Endpoint.
 
     Args:
         http: Authenticated Fabric HTTP client.
         workspace_id: GUID of the Fabric workspace.
-        warehouse_id: GUID of the Data Warehouse.
+        item_id: GUID of the Data Warehouse or SQL Analytics Endpoint.
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
+            Defaults to :attr:`~fabric_dw.models.WarehouseKind.WAREHOUSE` for
+            backwards compatibility.
         retention_days: How many days to retain audit logs.  ``0`` means
             unlimited (Microsoft's interpretation per the Learn documentation).
 
@@ -137,7 +175,7 @@ async def enable(
         msg = f"retention_days must be >= 0; got {retention_days}"
         raise ValueError(msg)
 
-    path = _audit_path(workspace_id, warehouse_id)
+    path = _audit_path(workspace_id, item_id, kind)
     await http.request(
         "PATCH",
         HttpBase.FABRIC,
@@ -145,20 +183,24 @@ async def enable(
         json={"state": "Enabled", "retentionDays": retention_days},
     )
     # PATCH returns empty/partial body on this endpoint; re-fetch required.
-    return await get_settings(http, workspace_id, warehouse_id)
+    return await get_settings(http, workspace_id, item_id, kind)
 
 
 async def disable(
     http: FabricHttpClient,
     workspace_id: UUID,
-    warehouse_id: UUID,
+    item_id: UUID,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
 ) -> AuditSettings:
-    """Disable SQL auditing on a warehouse.
+    """Disable SQL auditing on a Data Warehouse or SQL Analytics Endpoint.
 
     Args:
         http: Authenticated Fabric HTTP client.
         workspace_id: GUID of the Fabric workspace.
-        warehouse_id: GUID of the Data Warehouse.
+        item_id: GUID of the Data Warehouse or SQL Analytics Endpoint.
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
+            Defaults to :attr:`~fabric_dw.models.WarehouseKind.WAREHOUSE` for
+            backwards compatibility.
 
     Returns:
         The fresh :class:`~fabric_dw.models.AuditSettings` after the update.
@@ -166,16 +208,17 @@ async def disable(
     Raises:
         PermissionDeniedError: If the caller lacks the required permission (HTTP 403).
     """
-    path = _audit_path(workspace_id, warehouse_id)
+    path = _audit_path(workspace_id, item_id, kind)
     await http.request("PATCH", HttpBase.FABRIC, path, json={"state": "Disabled"})
     # PATCH returns empty/partial body on this endpoint; re-fetch required.
-    return await get_settings(http, workspace_id, warehouse_id)
+    return await get_settings(http, workspace_id, item_id, kind)
 
 
 async def set_retention(
     http: FabricHttpClient,
     workspace_id: UUID,
-    warehouse_id: UUID,
+    item_id: UUID,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
     *,
     days: int,
 ) -> AuditSettings:
@@ -193,7 +236,10 @@ async def set_retention(
     Args:
         http: Authenticated Fabric HTTP client.
         workspace_id: GUID of the Fabric workspace.
-        warehouse_id: GUID of the Data Warehouse.
+        item_id: GUID of the Data Warehouse or SQL Analytics Endpoint.
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
+            Defaults to :attr:`~fabric_dw.models.WarehouseKind.WAREHOUSE` for
+            backwards compatibility.
         days: Retention period in days.  Must be >= 1.
 
     Returns:
@@ -212,25 +258,27 @@ async def set_retention(
     await _require_enabled(
         http,
         workspace_id,
-        warehouse_id,
+        item_id,
+        kind,
         msg="audit is disabled; enable first before setting retention",
     )
 
-    path = _audit_path(workspace_id, warehouse_id)
+    path = _audit_path(workspace_id, item_id, kind)
     await http.request("PATCH", HttpBase.FABRIC, path, json={"retentionDays": days})
     # PATCH returns empty/partial body on this endpoint; re-fetch required.
-    return await get_settings(http, workspace_id, warehouse_id)
+    return await get_settings(http, workspace_id, item_id, kind)
 
 
 async def set_action_groups(
     http: FabricHttpClient,
     workspace_id: UUID,
-    warehouse_id: UUID,
+    item_id: UUID,
     action_groups: list[str],
     *,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
     ensure_enabled: bool = True,
 ) -> AuditSettings:
-    """Replace the audited action groups for a warehouse.
+    """Replace the audited action groups for a Data Warehouse or SQL Analytics Endpoint.
 
     Action-group names must consist exclusively of upper-case ASCII letters,
     digits, and underscores (``^[A-Z0-9_]+$``).  Examples of valid names:
@@ -239,9 +287,12 @@ async def set_action_groups(
     Args:
         http: Authenticated Fabric HTTP client.
         workspace_id: GUID of the Fabric workspace.
-        warehouse_id: GUID of the Data Warehouse.
+        item_id: GUID of the Data Warehouse or SQL Analytics Endpoint.
         action_groups: List of action-group name strings to set.  Pass an empty
             list to clear all action groups.
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
+            Defaults to :attr:`~fabric_dw.models.WarehouseKind.WAREHOUSE` for
+            backwards compatibility.
         ensure_enabled: Controls whether auditing is simultaneously activated.
             When ``True`` (default), the PATCH also sets ``state=Enabled`` so
             that auditing is active after the call even if it was previously
@@ -279,11 +330,11 @@ async def set_action_groups(
     # authoritative post-PATCH state without a stale re-fetch.
     if not ensure_enabled:
         # ensure_enabled=False: guard against writing to a disabled audit config.
-        current = await _require_enabled(http, workspace_id, warehouse_id)
+        current = await _require_enabled(http, workspace_id, item_id, kind)
     else:
-        current = await get_settings(http, workspace_id, warehouse_id)
+        current = await get_settings(http, workspace_id, item_id, kind)
 
-    path = _audit_path(workspace_id, warehouse_id)
+    path = _audit_path(workspace_id, item_id, kind)
 
     # Fabric's PATCH /settings/sqlAudit accepts an ``auditActionsAndGroups`` field
     # alongside ``state`` and ``retentionDays``.  Using PATCH to set the action groups
@@ -309,8 +360,9 @@ async def set_action_groups(
 async def add_action_group(
     http: FabricHttpClient,
     workspace_id: UUID,
-    warehouse_id: UUID,
+    item_id: UUID,
     group: str,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
 ) -> AuditSettings:
     """Add a single audit action group without overwriting the others.
 
@@ -334,8 +386,11 @@ async def add_action_group(
     Args:
         http: Authenticated Fabric HTTP client.
         workspace_id: GUID of the Fabric workspace.
-        warehouse_id: GUID of the Data Warehouse.
+        item_id: GUID of the Data Warehouse or SQL Analytics Endpoint.
         group: Name of the action group to add.
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
+            Defaults to :attr:`~fabric_dw.models.WarehouseKind.WAREHOUSE` for
+            backwards compatibility.
 
     Returns:
         The authoritative :class:`~fabric_dw.models.AuditSettings` after the
@@ -351,17 +406,17 @@ async def add_action_group(
         ValueError: If auditing is currently disabled (``state == "Disabled"``).
             Enable auditing first with :func:`enable`.
         PermissionDeniedError: If the caller lacks the required permission (HTTP 403).
-        NotFoundError: If the warehouse does not exist (HTTP 404).
+        NotFoundError: If the item does not exist (HTTP 404).
     """
     _validate_action_group(group)
 
-    current = await _require_enabled(http, workspace_id, warehouse_id)
+    current = await _require_enabled(http, workspace_id, item_id, kind)
 
     if group in current.action_groups:
         return current
 
     new_groups = [*current.action_groups, group]
-    path = _audit_path(workspace_id, warehouse_id)
+    path = _audit_path(workspace_id, item_id, kind)
     await http.request(
         "PATCH",
         HttpBase.FABRIC,
@@ -377,8 +432,9 @@ async def add_action_group(
 async def remove_action_group(
     http: FabricHttpClient,
     workspace_id: UUID,
-    warehouse_id: UUID,
+    item_id: UUID,
     group: str,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
 ) -> AuditSettings:
     """Remove a single audit action group without overwriting the others.
 
@@ -409,8 +465,11 @@ async def remove_action_group(
     Args:
         http: Authenticated Fabric HTTP client.
         workspace_id: GUID of the Fabric workspace.
-        warehouse_id: GUID of the Data Warehouse.
+        item_id: GUID of the Data Warehouse or SQL Analytics Endpoint.
         group: Name of the action group to remove.
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
+            Defaults to :attr:`~fabric_dw.models.WarehouseKind.WAREHOUSE` for
+            backwards compatibility.
 
     Returns:
         The authoritative :class:`~fabric_dw.models.AuditSettings` after the
@@ -421,18 +480,18 @@ async def remove_action_group(
         ValueError: If auditing is currently disabled (``state == "Disabled"``).
             Enable auditing first with :func:`enable`.
         PermissionDeniedError: If the caller lacks the required permission (HTTP 403).
-        NotFoundError: If the warehouse does not exist (HTTP 404).
+        NotFoundError: If the item does not exist (HTTP 404).
     """
     _validate_action_group(group)
 
-    current = await _require_enabled(http, workspace_id, warehouse_id)
+    current = await _require_enabled(http, workspace_id, item_id, kind)
 
     if group not in current.action_groups:
         # Group already absent — idempotent success, no PATCH needed.
         return current
 
     new_groups = [g for g in current.action_groups if g != group]
-    path = _audit_path(workspace_id, warehouse_id)
+    path = _audit_path(workspace_id, item_id, kind)
     await http.request(
         "PATCH",
         HttpBase.FABRIC,
