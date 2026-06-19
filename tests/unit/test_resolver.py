@@ -923,6 +923,220 @@ def test_negative_clear_scope_removes_matching_scope_only(tmp_path: Path) -> Non
 
 
 # ---------------------------------------------------------------------------
+# #471 — lakehouse-derived SQL endpoint: fallback to parent Lakehouse
+# ---------------------------------------------------------------------------
+
+# The GUID used inside the endpoint's sqlEndpointProperties.id.
+# For lakehouse-derived endpoints, the Lakehouse's sqlEndpointProperties.id
+# equals the SQL endpoint's own Fabric item ID (ITEM_GUID).
+_LH_EP_INNER_ID = ITEM_GUID
+_LH_CONN_STRING = "lh-derived-ep.datawarehouse.fabric.microsoft.com"
+
+# Lakehouse-derived SQL endpoint: item detail returns empty connectionString.
+_LAKEHOUSES_URL_471 = f"https://api.fabric.microsoft.com/v1/workspaces/{WS_GUID}/lakehouses"
+
+
+def _sql_endpoint_empty_conn_payload(item_id: str, ws_id: str, name: str) -> dict[str, object]:
+    """SQL endpoint detail payload where connectionString is permanently empty (lakehouse-derived).
+
+    Models the behaviour of lakehouse-derived SQL analytics endpoints: the /sqlEndpoints/{id}
+    resource always returns an empty connectionString; the real value lives on the Lakehouse.
+    """
+    return {
+        "id": item_id,
+        "displayName": name,
+        "type": "SQLEndpoint",
+        "workspaceId": ws_id,
+        "properties": {
+            "sqlEndpointProperties": {
+                "connectionString": "",
+                "id": _LH_EP_INNER_ID,
+                "provisioningStatus": "Success",
+            }
+        },
+    }
+
+
+def _lakehouses_payload_with_match(endpoint_inner_id: str, conn_string: str) -> dict[str, object]:
+    """Lakehouses list payload with a lakehouse whose sqlEndpointProperties.id matches."""
+    return {
+        "value": [
+            {
+                "id": "aabbccdd-0000-0000-0000-000000000001",
+                "displayName": "SalesLakehouse",
+                "workspaceId": WS_GUID,
+                "properties": {
+                    "sqlEndpointProperties": {
+                        "id": endpoint_inner_id,
+                        "connectionString": conn_string,
+                        "provisioningStatus": "Success",
+                    }
+                },
+            }
+        ],
+        "continuationUri": None,
+    }
+
+
+async def test_item_sql_endpoint_empty_conn_string_falls_back_to_lakehouse(
+    tmp_path: Path,
+) -> None:
+    """Resolver.item() must fall back to the parent Lakehouse when the SQL endpoint's own
+    connectionString is empty (permanent for lakehouse-derived endpoints).
+
+    Flow:
+    1. /items/{id}           → generic discovery (type = SQLEndpoint)
+    2. /sqlEndpoints/{id}    → empty connectionString
+    3. /lakehouses           → scanned; matching Lakehouse found via sqlEndpointProperties.id
+    4. ItemEntry returned with connection_string from the Lakehouse.
+    """
+    resolver, client, _ = _make_resolver(tmp_path)
+    generic_payload = _sql_endpoint_empty_conn_payload(ITEM_GUID, WS_GUID, "LakehouseEP")
+    specific_payload = _sql_endpoint_empty_conn_payload(ITEM_GUID, WS_GUID, "LakehouseEP")
+    lh_payload = _lakehouses_payload_with_match(_LH_EP_INNER_ID, _LH_CONN_STRING)
+    with respx.mock:
+        respx.get(_FABRIC_ITEM_URL).mock(return_value=httpx.Response(200, json=generic_payload))
+        respx.get(
+            f"https://api.fabric.microsoft.com/v1/workspaces/{WS_GUID}/sqlEndpoints/{ITEM_GUID}"
+        ).mock(return_value=httpx.Response(200, json=specific_payload))
+        respx.get(_LAKEHOUSES_URL_471).mock(return_value=httpx.Response(200, json=lh_payload))
+        async with client:
+            result = await resolver.item(WS_GUID, ITEM_GUID)
+    assert result.id == ITEM_UUID
+    assert result.kind == WarehouseKind.SQL_ENDPOINT
+    # The connection string must come from the parent Lakehouse, not the empty endpoint field.
+    assert result.connection_string == _LH_CONN_STRING
+
+
+async def test_item_sql_endpoint_with_conn_string_skips_lakehouse_scan(
+    tmp_path: Path,
+) -> None:
+    """Resolver.item() must NOT scan lakehouses when the endpoint already carries a
+    connectionString — the fast path must not incur any extra HTTP call.
+    """
+    resolver, client, _ = _make_resolver(tmp_path)
+    generic_payload = _sql_endpoint_detail_payload(ITEM_GUID, WS_GUID, "RegularSQLEP")
+    specific_payload = _sql_endpoint_detail_payload(ITEM_GUID, WS_GUID, "RegularSQLEP")
+    with respx.mock:
+        respx.get(_FABRIC_ITEM_URL).mock(return_value=httpx.Response(200, json=generic_payload))
+        respx.get(
+            f"https://api.fabric.microsoft.com/v1/workspaces/{WS_GUID}/sqlEndpoints/{ITEM_GUID}"
+        ).mock(return_value=httpx.Response(200, json=specific_payload))
+        # /lakehouses must NOT be called — any call would raise from respx strict mode
+        async with client:
+            result = await resolver.item(WS_GUID, ITEM_GUID)
+    assert result.kind == WarehouseKind.SQL_ENDPOINT
+    assert result.connection_string == "mysqlep.datawarehouse.fabric.microsoft.com"
+    # Verify /lakehouses was never called
+    lakehouses_calls = [c for c in respx.calls if "/lakehouses" in str(c.request.url)]
+    assert not lakehouses_calls, (
+        "lakehouse scan must not be triggered when conn_string is already set"
+    )
+
+
+async def test_item_sql_endpoint_no_matching_lakehouse_returns_none_conn_string(
+    tmp_path: Path,
+) -> None:
+    """When the endpoint's connectionString is empty and no matching Lakehouse exists,
+    resolver returns an ItemEntry with connection_string=None (graceful degradation).
+    """
+    resolver, client, _ = _make_resolver(tmp_path)
+    generic_payload = _sql_endpoint_empty_conn_payload(ITEM_GUID, WS_GUID, "LakehouseEP")
+    specific_payload = _sql_endpoint_empty_conn_payload(ITEM_GUID, WS_GUID, "LakehouseEP")
+    no_match_lh_payload: dict[str, object] = {"value": [], "continuationUri": None}
+    with respx.mock:
+        respx.get(_FABRIC_ITEM_URL).mock(return_value=httpx.Response(200, json=generic_payload))
+        respx.get(
+            f"https://api.fabric.microsoft.com/v1/workspaces/{WS_GUID}/sqlEndpoints/{ITEM_GUID}"
+        ).mock(return_value=httpx.Response(200, json=specific_payload))
+        respx.get(_LAKEHOUSES_URL_471).mock(
+            return_value=httpx.Response(200, json=no_match_lh_payload)
+        )
+        async with client:
+            result = await resolver.item(WS_GUID, ITEM_GUID)
+    assert result.kind == WarehouseKind.SQL_ENDPOINT
+    assert result.connection_string is None
+
+
+async def test_item_sql_endpoint_matching_lakehouse_empty_conn_returns_none(
+    tmp_path: Path,
+) -> None:
+    """Provisioning race: a matching Lakehouse exists but its connectionString is still empty.
+
+    The endpoint is paired with a Lakehouse (sqlEndpointProperties.id matches) but the
+    Lakehouse has not yet exposed a connectionString.  The resolver must return
+    connection_string=None rather than an empty string (regression sentinel for the
+    ``return conn or None`` guard in resolve_lakehouse_connection_string).
+    """
+    resolver, client, _ = _make_resolver(tmp_path)
+    generic_payload = _sql_endpoint_empty_conn_payload(ITEM_GUID, WS_GUID, "LakehouseEP")
+    specific_payload = _sql_endpoint_empty_conn_payload(ITEM_GUID, WS_GUID, "LakehouseEP")
+    # Matching lakehouse, but its connectionString is empty (still provisioning).
+    matching_empty_lh = _lakehouses_payload_with_match(_LH_EP_INNER_ID, "")
+    with respx.mock:
+        respx.get(_FABRIC_ITEM_URL).mock(return_value=httpx.Response(200, json=generic_payload))
+        respx.get(
+            f"https://api.fabric.microsoft.com/v1/workspaces/{WS_GUID}/sqlEndpoints/{ITEM_GUID}"
+        ).mock(return_value=httpx.Response(200, json=specific_payload))
+        respx.get(_LAKEHOUSES_URL_471).mock(
+            return_value=httpx.Response(200, json=matching_empty_lh)
+        )
+        async with client:
+            result = await resolver.item(WS_GUID, ITEM_GUID)
+    assert result.kind == WarehouseKind.SQL_ENDPOINT
+    assert result.connection_string is None
+
+
+async def test_item_sql_endpoint_unresolved_conn_not_cached_and_retries(
+    tmp_path: Path,
+) -> None:
+    """An unresolved SQL-endpoint connection string must NOT be cached (issue #471).
+
+    Caching an interim None would serve that stale value for the full 24h TTL, locking
+    the caller out of SQL-over-endpoint commands.  The first call (still provisioning,
+    empty connectionString everywhere) must return None WITHOUT writing to the cache, and
+    the second call must re-fetch and pick up the now-populated connection string.
+    """
+    resolver, client, cache = _make_resolver(tmp_path)
+    generic_payload = _sql_endpoint_empty_conn_payload(ITEM_GUID, WS_GUID, "LakehouseEP")
+    empty_specific = _sql_endpoint_empty_conn_payload(ITEM_GUID, WS_GUID, "LakehouseEP")
+    populated_specific = _sql_endpoint_detail_payload(ITEM_GUID, WS_GUID, "LakehouseEP")
+    no_match_lh: dict[str, object] = {"value": [], "continuationUri": None}
+
+    sql_ep_calls = {"n": 0}
+
+    def sql_ep_side_effect(_request: httpx.Request) -> httpx.Response:
+        # First call: still provisioning (empty); second call: populated.
+        sql_ep_calls["n"] += 1
+        if sql_ep_calls["n"] == 1:
+            return httpx.Response(200, json=empty_specific)
+        return httpx.Response(200, json=populated_specific)
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(_FABRIC_ITEM_URL).mock(
+            return_value=httpx.Response(200, json=generic_payload)
+        )
+        mock_router.get(
+            f"https://api.fabric.microsoft.com/v1/workspaces/{WS_GUID}/sqlEndpoints/{ITEM_GUID}"
+        ).mock(side_effect=sql_ep_side_effect)
+        mock_router.get(_LAKEHOUSES_URL_471).mock(
+            return_value=httpx.Response(200, json=no_match_lh)
+        )
+        async with client:
+            first = await resolver.item(WS_GUID, ITEM_GUID)
+            # The unresolved entry must not have been persisted.
+            assert cache.get_item(WS_UUID, ITEM_GUID) is None
+            assert cache.get_item(WS_UUID, "LakehouseEP") is None
+            # Second call re-fetches (cache miss) and now picks up the connection string.
+            second = await resolver.item(WS_GUID, ITEM_GUID)
+
+    assert first.connection_string is None
+    assert second.connection_string == "mysqlep.datawarehouse.fabric.microsoft.com"
+    # The /sqlEndpoints resource was fetched twice — no stale cache short-circuit.
+    assert sql_ep_calls["n"] == 2
+
+
+# ---------------------------------------------------------------------------
 # D13 cross-layer parity — positive cache hit is not blocked by negative cache
 # ---------------------------------------------------------------------------
 
