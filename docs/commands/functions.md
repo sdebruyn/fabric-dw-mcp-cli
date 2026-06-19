@@ -8,10 +8,6 @@ Manage T-SQL user-defined functions on Microsoft Fabric Data Warehouses and SQL 
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
-!!! warning "Preview"
-
-    Scalar UDFs (`FN`) and inline TVFs (`IF`) are preview features as of mid-2026. Function DDL is supported on both Data Warehouses and SQL Analytics Endpoints — no endpoint guard is applied.
-
 ---
 
 ## CLI
