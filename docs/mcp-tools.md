@@ -1031,7 +1031,7 @@ Load data from a remote URL into an existing Data Warehouse table with control o
 
 !!! warning "Destructive operation"
 
-    `truncate` and `replace` are destructive and require `FABRIC_MCP_ALLOW_DESTRUCTIVE=1`.
+    **`truncate` and `replace` are destructive** and require `FABRIC_MCP_ALLOW_DESTRUCTIVE=1`.
 
 !!! note "Secret safety"
 
