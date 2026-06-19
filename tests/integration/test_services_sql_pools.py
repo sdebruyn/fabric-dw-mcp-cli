@@ -5,9 +5,11 @@ Run only in environments where admin credentials are available.
 """
 
 import contextlib
+from collections.abc import AsyncGenerator
 from uuid import UUID
 
 import pytest
+import pytest_asyncio
 
 from fabric_dw.exceptions import AlreadyExistsError, NotFoundError
 from fabric_dw.http_client import FabricHttpClient
@@ -19,7 +21,9 @@ pytestmark = pytest.mark.integration
 # Prefix used to identify pools created by test runs so stale pools can be
 # cleaned up before a new run tries to create pools with the same names or
 # would push the sum of maxResourcePercentage over 100.
-_PYTEST_POOL_PREFIX = "pytest"
+# The hyphen suffix ensures this cannot match any non-test pool whose name
+# merely starts with "pytest" but is not test-owned.
+_PYTEST_POOL_PREFIX = "pytest-"
 
 
 async def _remove_stale_pytest_pools(
@@ -45,6 +49,22 @@ async def _remove_stale_pytest_pools(
             await sql_pools.delete_pool(http, workspace_id, pool.name)
 
 
+@pytest_asyncio.fixture(autouse=True, scope="function")
+async def _clean_stale_pools(
+    http: FabricHttpClient,
+    workspace_id: UUID,
+) -> AsyncGenerator[None, None]:
+    """Autouse fixture: sweep stale pytest-prefixed pools before every test.
+
+    Runs before every sql-pools test in this module so that any test pool
+    left behind by an interrupted prior run is removed before the workspace
+    configuration is read or modified.  This protects every test regardless
+    of run order.
+    """
+    await _remove_stale_pytest_pools(http, workspace_id)
+    yield
+
+
 async def test_get_configuration_returns_model(http: FabricHttpClient, workspace_id: UUID) -> None:
     config = await sql_pools.get_configuration(http, workspace_id)
     assert isinstance(config, SqlPoolsConfiguration)
@@ -55,6 +75,8 @@ async def test_get_configuration_returns_model(http: FabricHttpClient, workspace
 async def test_enable_disable_roundtrip(http: FabricHttpClient, workspace_id: UUID) -> None:
     original = await sql_pools.get_configuration(http, workspace_id)
 
+    pool_name = "pytest-roundtrip-pool"
+
     # The API refuses to set customSQLPoolsEnabled=True when customSQLPools is
     # empty.  Seed at least one pool so the enable call can succeed.
     seed_config = SqlPoolsConfiguration.model_validate(
@@ -62,7 +84,7 @@ async def test_enable_disable_roundtrip(http: FabricHttpClient, workspace_id: UU
             "customSQLPoolsEnabled": True,
             "customSQLPools": [
                 {
-                    "name": "pytest-roundtrip-pool",
+                    "name": pool_name,
                     "isDefault": True,
                     "maxResourcePercentage": 100,
                     "optimizeForReads": False,
@@ -80,22 +102,21 @@ async def test_enable_disable_roundtrip(http: FabricHttpClient, workspace_id: UU
         enabled = await sql_pools.enable(http, workspace_id)
         assert enabled.custom_sql_pools_enabled is True
     finally:
+        # Best-effort targeted delete before the full config restore so the
+        # pool does not accumulate in the workspace if the restore call raises.
+        with contextlib.suppress(Exception):
+            await sql_pools.delete_pool(http, workspace_id, pool_name)
         await sql_pools.update_configuration(http, workspace_id, original)
 
 
 async def test_create_update_delete_roundtrip(http: FabricHttpClient, workspace_id: UUID) -> None:
     """Integration test: create → update → delete roundtrip for a single pool.
 
-    Before creating the test pool, any stale ``pytest``-prefixed pools left by
-    interrupted prior runs are removed.  This prevents the sum of
-    ``maxResourcePercentage`` from exceeding 100 when a previous teardown did
-    not complete (e.g. due to a transient connection drop).
+    Stale ``pytest-``-prefixed pools left by interrupted prior runs are
+    removed by the ``_clean_stale_pools`` autouse fixture that runs before
+    this test, ensuring the workspace starts clean and the sum of
+    ``maxResourcePercentage`` does not exceed 100.
     """
-    # Purge any leftover test pools so that the workspace starts clean.
-    # This must happen before capturing ``original`` so that the saved state
-    # does not include stale pools that would be re-introduced on restore.
-    await _remove_stale_pytest_pools(http, workspace_id)
-
     original = await sql_pools.get_configuration(http, workspace_id)
 
     pool_name = "pytest-integration-pool"
@@ -144,4 +165,8 @@ async def test_create_update_delete_roundtrip(http: FabricHttpClient, workspace_
             await sql_pools.delete_pool(http, workspace_id, pool_name)
 
     finally:
+        # Best-effort targeted delete before the full config restore so the
+        # pool does not accumulate in the workspace if the restore call raises.
+        with contextlib.suppress(Exception):
+            await sql_pools.delete_pool(http, workspace_id, pool_name)
         await sql_pools.update_configuration(http, workspace_id, original)
