@@ -13,7 +13,7 @@ fdw [-w WORKSPACE] [GLOBAL OPTIONS] <noun> <verb> [ARGS] [OPTIONS]
 !!! tip "`fdw` and `fabric-dw` are the same command"
     The CLI is installed as two interchangeable entry points: every example below can be run as either `fdw …` or `fabric-dw …`. The examples use the shorter `fdw`.
 
-**Name-or-GUID arguments** — wherever a synopsis shows `WAREHOUSE`, `ENDPOINT`, `SNAPSHOT`, or `WORKSPACE` (positional in the `workspaces` group only), the value can be either the display name or the item's GUID. The CLI resolves names to GUIDs automatically and caches the mapping locally (see [`fdw cache`](#fabric-dw-cache)).
+**Name-or-GUID arguments** — wherever a synopsis shows `WAREHOUSE`, `ENDPOINT`, `SNAPSHOT`, or `WORKSPACE` (positional in the `workspaces` group only), the value can be either the display name or the item's GUID. The CLI resolves names to GUIDs automatically and caches the mapping locally (see [`fabric-dw cache`](#fabric-dw-cache)).
 
 **Positional arguments with defaults** — positional arguments shown in `[brackets]` may be omitted when a default has been set with [`fdw config set`](#defaults-fabric-dw-config). See [Defaults — fabric-dw config](#defaults-fabric-dw-config) for details.
 
@@ -1239,13 +1239,13 @@ Return the total row count of a view using `SELECT COUNT_BIG(*)`.
 **Synopsis**
 
 ```
-fabric-dw [-w WORKSPACE] views count [WAREHOUSE] QUALIFIED_NAME
+fdw [-w WORKSPACE] views count [WAREHOUSE] QUALIFIED_NAME
 ```
 
 **Example**
 
 ```shell
-fabric-dw -w MyWorkspace views count SalesWH dbo.vw_sales
+fdw -w MyWorkspace views count SalesWH dbo.vw_sales
 ```
 
 ```json
@@ -1647,13 +1647,13 @@ Return the total row count of a table using `SELECT COUNT_BIG(*)`.
 **Synopsis**
 
 ```
-fabric-dw [-w WORKSPACE] tables count [WAREHOUSE] QUALIFIED_NAME
+fdw [-w WORKSPACE] tables count [WAREHOUSE] QUALIFIED_NAME
 ```
 
 **Example**
 
 ```shell
-fabric-dw -w MyWorkspace tables count SalesWH dbo.orders
+fdw -w MyWorkspace tables count SalesWH dbo.orders
 ```
 
 ```json
