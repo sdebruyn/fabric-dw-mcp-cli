@@ -83,8 +83,7 @@ _HEADER = """\
 This page is generated from the live code tree.  Every CLI command and MCP
 tool is listed here, grouped by functional domain, with a one-line summary.
 
-For full option details see the [CLI reference](../cli.md) and for full MCP
-tool descriptions see [MCP tools](../mcp-tools.md).
+For full options, examples, and notes, see the per-domain pages under **Commands**.
 """
 
 # ---------------------------------------------------------------------------
