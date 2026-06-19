@@ -243,8 +243,9 @@ class TestParseShowplan:
 
 class TestCostPct:
     def test_root_cost_pct_via_parse(self) -> None:
+        # root own = 1.5 - (0.9 + 0.5) = 0.1  => 0.1/1.5*100 ≈ 6.67%
         root = parse_showplan(_FIXTURE_XML)[0]
-        assert root.cost_pct == pytest.approx(40.0)
+        assert root.cost_pct == pytest.approx(100.0 * 0.1 / 1.5, rel=1e-3)
 
     def test_first_child_cost_pct(self) -> None:
         root = parse_showplan(_FIXTURE_XML)[0]
@@ -255,6 +256,13 @@ class TestCostPct:
         root = parse_showplan(_FIXTURE_XML)[0]
         child = root.children[1]
         assert child.cost_pct == pytest.approx(33.33, rel=1e-2)
+
+    def test_cost_pcts_sum_to_100(self) -> None:
+        """All operator cost percentages in a plan must sum to ≈ 100%."""
+        root = parse_showplan(_FIXTURE_XML)[0]
+        all_nodes = [root, *root.children]
+        total = sum(node.cost_pct for node in all_nodes)
+        assert total == pytest.approx(100.0, abs=0.5)
 
     def test_zero_root_cost_guard(self) -> None:
         root = PlanOperator(
@@ -268,7 +276,7 @@ class TestCostPct:
         second = parse_showplan(_FIXTURE_XML)[1]
         assert second.cost_pct == pytest.approx(100.0)
 
-    def test_cost_pcts_do_not_exceed_100_for_leaf(self) -> None:
+    def test_cost_pcts_do_not_exceed_100_per_node(self) -> None:
         root = parse_showplan(_FIXTURE_XML)[0]
         all_nodes = [root, *root.children]
         for node in all_nodes:
@@ -342,9 +350,10 @@ class TestRenderPlanTree:
         assert "5.0K" in output
 
     def test_renders_cost_pct(self) -> None:
+        # root own cost = 1.5 - (0.9 + 0.5) = 0.1 => 6.7%
         operators = parse_showplan(_FIXTURE_XML)
         output = _render_to_str(operators)
-        assert "40.0%" in output
+        assert "6.7%" in output
 
     def test_renders_parallel_badge(self) -> None:
         operators = parse_showplan(_FIXTURE_XML)
@@ -380,3 +389,61 @@ class TestRenderPlanTree:
         second = parse_showplan(_FIXTURE_XML)[1]
         output = _render_to_str([second])
         assert "(Clustered Index Scan)" not in output
+
+    def test_bracket_identifiers_not_stripped_from_stmt_text(self) -> None:
+        """SQL bracket identifiers in stmt_text must survive Rich rendering."""
+        bracket_xml = (
+            f'<ShowPlanXML xmlns="{_NS}">'  # noqa: S608
+            f"<BatchSequence><Batch><Statements>"
+            f'<StmtSimple StatementText="SELECT [name] FROM [dbo].[Orders]"'
+            f' StatementId="1">'
+            f"<QueryPlan>"
+            f'<RelOp NodeId="0" PhysicalOp="Clustered Index Scan"'
+            f' LogicalOp="Clustered Index Scan"'
+            f' EstimateRows="1" EstimatedTotalSubtreeCost="0.003" Parallel="0">'
+            f'<IndexScan Ordered="true"/>'
+            f"</RelOp>"
+            f"</QueryPlan>"
+            f"</StmtSimple>"
+            f"</Statements></Batch></BatchSequence>"
+            f"</ShowPlanXML>"
+        )
+        operators = parse_showplan(bracket_xml)
+        output = _render_to_str(operators)
+        assert "[name]" in output
+        assert "[dbo]" in output
+        assert "[Orders]" in output
+
+
+class TestParseShowplanErrors:
+    """Error-path tests for parse_showplan and humanise_rows."""
+
+    def test_malformed_xml_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="Malformed SHOWPLAN XML"):
+            parse_showplan("not valid xml at all")
+
+    def test_truncated_xml_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="Malformed SHOWPLAN XML"):
+            parse_showplan("<ShowPlanXML")
+
+    def test_valid_xml_not_showplan_returns_empty(self) -> None:
+        # Well-formed XML that is not a ShowPlanXML document — no StmtSimple nodes
+        operators = parse_showplan("<root><child/></root>")
+        assert operators == []
+
+
+class TestHumaniseRowsEdgeCases:
+    def test_nan_returns_string(self) -> None:
+        result = humanise_rows(float("nan"))
+        assert isinstance(result, str)
+        # Must not raise
+
+    def test_inf_returns_string(self) -> None:
+        result = humanise_rows(float("inf"))
+        assert isinstance(result, str)
+        # Must not raise
+
+    def test_neg_inf_returns_string(self) -> None:
+        result = humanise_rows(float("-inf"))
+        assert isinstance(result, str)
+        # Must not raise

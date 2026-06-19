@@ -70,6 +70,38 @@ _PLAN_XML = (
     "<Batch><Statements><StmtSimple /></Statements></Batch></ShowPlanXML>"
 )
 
+_NS = "http://schemas.microsoft.com/sqlserver/2004/07/showplan"
+
+# A realistic plan XML that exercises the tree-render path: Hash Match over two
+# Clustered Index Scans, one Parallel node, one Warnings node.
+_RICH_PLAN_XML = (
+    f'<ShowPlanXML xmlns="{_NS}" Version="1.6" Build="16.0.0.0">'  # noqa: S608
+    f"<BatchSequence><Batch><Statements>"
+    f'<StmtSimple StatementText="SELECT o.id FROM dbo.Orders o" StatementId="1">'
+    f"<QueryPlan>"
+    f'<RelOp NodeId="0" PhysicalOp="Hash Match" LogicalOp="Inner Join"'
+    f' EstimateRows="5000" EstimatedTotalSubtreeCost="1.5" Parallel="0">'
+    f"<Hash>"
+    f'<RelOp NodeId="1" PhysicalOp="Clustered Index Scan"'
+    f' LogicalOp="Clustered Index Scan"'
+    f' EstimateRows="10000" EstimatedTotalSubtreeCost="0.9" Parallel="1">'
+    f'<IndexScan Ordered="false">'
+    f"<Warnings><PlanAffectingConvert ConvertIssue='Cardinality Estimate'/></Warnings>"
+    f"</IndexScan>"
+    f"</RelOp>"
+    f'<RelOp NodeId="2" PhysicalOp="Clustered Index Scan"'
+    f' LogicalOp="Clustered Index Scan"'
+    f' EstimateRows="3000" EstimatedTotalSubtreeCost="0.5" Parallel="0">'
+    f'<IndexScan Ordered="false"/>'
+    f"</RelOp>"
+    f"</Hash>"
+    f"</RelOp>"
+    f"</QueryPlan>"
+    f"</StmtSimple>"
+    f"</Statements></Batch></BatchSequence>"
+    f"</ShowPlanXML>"
+)
+
 
 class TestSqlExec:
     """sql exec — happy paths (regression: was 'sql' before #507)."""
@@ -385,7 +417,7 @@ class TestSqlPlan:
             ),
             patch(
                 "fabric_dw.services.sql_exec.get_plan",
-                new=AsyncMock(return_value=_PLAN_XML),
+                new=AsyncMock(return_value=_RICH_PLAN_XML),
             ),
         ):
             result = runner.invoke(
@@ -393,8 +425,12 @@ class TestSqlPlan:
                 ["-w", WS_GUID, "sql", "plan", WH_GUID, "-q", "SELECT 1"],
             )
         assert result.exit_code == 0
-        # Raw XML must NOT appear in terminal tree output
         assert "<ShowPlanXML" not in result.output
+        assert "Hash Match" in result.output
+        assert "Clustered Index Scan" in result.output
+        assert "%" in result.output
+        assert "[Parallel]" in result.output
+        assert "[!Warnings]" in result.output
 
     def test_plan_raw_flag_prints_xml(self, runner: CliRunner, cache_env: Path) -> None:
         """sql plan --raw prints the raw SHOWPLAN XML to stdout."""
@@ -581,3 +617,32 @@ class TestSqlPlanErrors:
                 ["-w", WS_GUID, "sql", "plan", WH_GUID, "-q", "SELECT 1"],
             )
         assert result.exit_code != 0
+
+    def test_plan_malformed_xml_returns_clean_error(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """Malformed XML from the API must produce a clean CLI error, not a traceback."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.sql_exec.get_plan",
+                new=AsyncMock(return_value="not valid xml at all"),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", WS_GUID, "sql", "plan", WH_GUID, "-q", "SELECT 1"],
+            )
+        assert result.exit_code != 0
+        # Must show a clean Error: message, not a raw Python traceback
+        assert "Error:" in result.output
+        assert "ParseError" not in result.output

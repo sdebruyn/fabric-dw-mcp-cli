@@ -14,6 +14,7 @@ Public API
 
 from __future__ import annotations
 
+import math
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 
@@ -115,6 +116,8 @@ def humanise_rows(rows: float) -> str:
         >>> humanise_rows(5.7)
         '5.7'
     """
+    if not math.isfinite(rows):
+        return str(rows)
     if rows >= _BILLION:
         return f"{rows / _BILLION:.1f}B"
     if rows >= _MILLION:
@@ -158,21 +161,27 @@ def _assign_cost_pct(node: PlanOperator, root_total_cost: float) -> None:
     """Recursively set :attr:`PlanOperator.cost_pct` on *node* and its children.
 
     ``node_own_cost = node.estimated_total_subtree_cost
-                      - max(child.estimated_total_subtree_cost)``
+                      - sum(child.estimated_total_subtree_cost for each child)``
+
+    A node's subtree cost already includes the sum of all children's subtree
+    costs, so subtracting the sum gives the cost attributable solely to this
+    node's own work.  The whole plan tree then sums to exactly 100 % (within
+    floating-point precision).
 
     For leaf nodes (no children) the subtree cost is entirely the node's own.
     Guarded against zero or missing root cost — no division by zero.
+    Clamped to ≥ 0 to absorb tiny float-noise artefacts.
 
     Args:
         node: The operator whose cost % is to be set.
         root_total_cost: Total cost of the root node (denominator).
     """
     if node.children:
-        max_child_cost = max(c.estimated_total_subtree_cost for c in node.children)
+        children_cost = sum(c.estimated_total_subtree_cost for c in node.children)
     else:
-        max_child_cost = 0.0
+        children_cost = 0.0
 
-    own_cost = max(0.0, node.estimated_total_subtree_cost - max_child_cost)
+    own_cost = max(0.0, node.estimated_total_subtree_cost - children_cost)
 
     if root_total_cost > 0.0:
         node.cost_pct = own_cost / root_total_cost * 100.0
@@ -250,9 +259,13 @@ def parse_showplan(xml_text: str) -> list[PlanOperator]:
         ``StmtSimple``, with :attr:`~PlanOperator.cost_pct` already set.
 
     Raises:
-        xml.etree.ElementTree.ParseError: When *xml_text* is not valid XML.
+        ValueError: When *xml_text* is not valid XML or is not a recognised
+            ShowPlan document.
     """
-    root_elem = ET.fromstring(xml_text)  # noqa: S314  (stdlib, trusted internal XML)
+    try:
+        root_elem = ET.fromstring(xml_text)  # noqa: S314  (stdlib, trusted internal XML)
+    except ET.ParseError as exc:
+        raise ValueError(f"Malformed SHOWPLAN XML: {exc}") from exc
 
     results: list[PlanOperator] = []
 

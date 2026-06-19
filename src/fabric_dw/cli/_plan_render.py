@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 from rich.console import Console
+from rich.markup import escape
 from rich.tree import Tree
 
 from fabric_dw.cli._plan_parse import PlanOperator, humanise_rows
@@ -62,11 +63,11 @@ def _node_label(node: PlanOperator) -> str:
     """
     parts: list[str] = []
 
-    # Operator names
-    parts.append(f"[bold]{node.physical_op}[/bold]")
+    # Operator names (escaped so bracket characters in op names render literally)
+    parts.append(f"[bold]{escape(node.physical_op)}[/bold]")
     unknown = "Unknown"
     if node.logical_op not in {node.physical_op, unknown, ""}:
-        parts.append(f"({node.logical_op})")
+        parts.append(f"({escape(node.logical_op)})")
 
     # Estimated rows
     parts.append(humanise_rows(node.estimate_rows))
@@ -139,9 +140,10 @@ def render_plan_tree(
         return
 
     for idx, root in enumerate(operators):
-        # Statement header
+        # Statement header (stmt_text escaped so SQL bracket identifiers render literally)
         if root.stmt_text:
-            con.print(f"\n[bold dim]Statement {idx + 1}:[/bold dim] {root.stmt_text.strip()}")
+            stmt = escape(root.stmt_text.strip())
+            con.print(f"\n[bold dim]Statement {idx + 1}:[/bold dim] {stmt}")
         elif len(operators) > 1:
             con.print(f"\n[bold dim]Statement {idx + 1}[/bold dim]")
 
