@@ -1208,6 +1208,120 @@ class TestTransientRetry:
         # Must NOT retry — only one connect attempt.
         assert mock_mssql.connect.call_count == 1
 
+    # ------------------------------------------------------------------
+    # fetch="rowcount" (COPY INTO) execute-phase transient retry
+    # ------------------------------------------------------------------
+
+    def test_rowcount_transient_retries_then_succeeds(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """COPY INTO (fetch='rowcount'): transient execute error is retried on a fresh connection.
+
+        Sequence:
+          1. _with_connect_retry -> bad_conn (connect call 1)
+          2. _execute_once(bad_conn) raises transient "Communication link failure"
+          3. execute_retry_allowed=True (rowcount != none) -> retry on fresh conn
+          4. _with_connect_retry -> good_conn (connect call 2)
+          5. _execute_once(good_conn) succeeds; rowcount == 5
+        Result: ([], [(5,)]) — the COPY INTO rowcount path succeeds.
+        """
+        mock_mssql, _, _ = _make_mock_mssql()
+
+        bad_cursor = MagicMock()
+        bad_cursor.execute.side_effect = Exception(
+            "Driver Error: Communication link failure; "
+            "DDBC Error: [Microsoft]Communication link failure"
+        )
+        bad_conn = MagicMock()
+        bad_conn.cursor.return_value = bad_cursor
+
+        good_cursor = MagicMock()
+        good_cursor.description = None  # COPY INTO produces no result set
+        good_cursor.rowcount = 5
+        good_conn = MagicMock()
+        good_conn.cursor.return_value = good_cursor
+
+        mock_mssql.connect.side_effect = [bad_conn, good_conn]
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        cols, rows = run_query(
+            _make_target(),
+            "COPY INTO [dbo].[t] FROM 'https://onelake.dfs.fabric.microsoft.com/...' WITH (...);",
+            fetch="rowcount",
+            commit=True,
+        )
+
+        assert mock_mssql.connect.call_count == 2
+        assert cols == []
+        assert rows == [(5,)]
+
+    def test_rowcount_deterministic_error_not_retried(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """COPY INTO (fetch='rowcount'): a deterministic (non-transient) error is NOT retried.
+
+        A syntax / permission / programming error raised during execute must
+        surface immediately without opening a second connection.
+        """
+        mock_mssql, _, mock_cursor = _make_mock_mssql()
+        mock_cursor.execute.side_effect = Exception("Incorrect syntax near 'COPY'")
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with pytest.raises(Exception, match="Incorrect syntax near"):
+            run_query(
+                _make_target(),
+                "COPY BADSTATEMENT",
+                fetch="rowcount",
+            )
+
+        # Only one connection should have been opened — no retry.
+        assert mock_mssql.connect.call_count == 1
+
+    def test_rowcount_transient_budget_exhausted_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """COPY INTO (fetch='rowcount'): when both attempts fail, the error is re-raised.
+
+        The execute-phase retry fires at most ONCE (D10 boundary).  With both
+        fresh connections failing transiently, the second failure propagates.
+        Total connect calls: 2.
+        """
+        mock_mssql, _, _ = _make_mock_mssql()
+
+        bad_cursor = MagicMock()
+        bad_cursor.execute.side_effect = Exception("Communication link failure")
+        bad_conn = MagicMock()
+        bad_conn.cursor.return_value = bad_cursor
+        mock_mssql.connect.return_value = bad_conn
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with pytest.raises(Exception, match="Communication link failure"):
+            run_query(
+                _make_target(),
+                "COPY INTO [dbo].[t] FROM 'https://...' WITH (...);",
+                fetch="rowcount",
+            )
+
+        # 1 initial + 1 execute-phase retry = 2 connect calls; no third attempt.
+        assert mock_mssql.connect.call_count == 2
+
+    def test_fetch_none_does_not_retry_transient(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """fetch='none' (DML/DDL): a transient execute error is NOT retried.
+
+        Non-idempotent statements (INSERT / UPDATE / DDL) must never be
+        re-executed after cursor.execute has been called, because the server
+        may have already applied the change.
+        """
+        mock_mssql, _, mock_cursor = _make_mock_mssql()
+        mock_cursor.execute.side_effect = Exception("Communication link failure")
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with pytest.raises(Exception, match="Communication link failure"):
+            run_query(_make_target(), "INSERT INTO t VALUES (1)", fetch="none")
+
+        # fetch="none" → execute_retry_allowed=False → only one connect.
+        assert mock_mssql.connect.call_count == 1
+
 
 # ---------------------------------------------------------------------------
 # GitHub OIDC SQL token injection — build_connection_string + open_connection

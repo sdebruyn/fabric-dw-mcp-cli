@@ -972,8 +972,15 @@ def run_query(  # noqa: PLR0913
     Transient errors during the **connect** phase (``open_connection``) are
     always safe to retry — no statement has reached the server yet.
 
-    Transient errors during the **execute** phase are only retried when
-    ``fetch != "none"`` (i.e. the statement is a read-only SELECT or similar).
+    Transient errors during the **execute** phase are retried when
+    ``fetch != "none"`` — that is, for **all** fetch modes except ``"none"``:
+
+    * ``"all"`` / ``"one"`` — read-only SELECT / row-returning queries.
+    * ``"rowcount"`` — statements such as ``COPY INTO`` that produce no result
+      set but report an affected-row count.  These are safe to retry because a
+      mid-operation TDS drop means the server did NOT commit the statement; the
+      COPY INTO bulk-loader is idempotent on a fresh connection.
+
     DML / DDL statements (``fetch="none"``) are **never** retried after
     ``cursor.execute`` has begun, because the server may have already applied
     the change — retrying non-idempotent statements could cause duplicate rows
