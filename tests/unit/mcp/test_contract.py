@@ -48,7 +48,8 @@ from tests.unit.mcp.conftest import WS_ID, WS_NAME, make_item_entry
 
 # 77 baseline + 5 statistics + 1 dbt + 3 table-create + 6 functions
 # + 1 load_table_from_url + 1 import_table_from_url + 3 settings
-_EXPECTED_TOOL_COUNT = 90
+# + 2 count_table_rows / count_view_rows
+_EXPECTED_TOOL_COUNT = 92
 
 
 # ---------------------------------------------------------------------------

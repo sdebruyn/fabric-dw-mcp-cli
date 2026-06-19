@@ -1060,3 +1060,89 @@ async def test_rename_view_clears_negative_cache(mock_ctx, ctx_patch) -> None:
         )
 
     mock_ctx.resolver.clear_negative_cache.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# count_view_rows
+# ---------------------------------------------------------------------------
+
+
+async def test_count_view_rows_happy_path(mock_ctx, ctx_patch) -> None:
+    """count_view_rows resolves item, calls the service, and returns a row_count dict."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.views.count_view_rows",
+            new=AsyncMock(return_value=7),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "count_view_rows",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.vw_sales"},
+        )
+
+    assert isinstance(result, dict)
+    assert result["schema"] == "dbo"
+    assert result["name"] == "vw_sales"
+    assert result["row_count"] == 7
+
+
+async def test_count_view_rows_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
+    """count_view_rows wraps FabricError into ToolError."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.views.count_view_rows",
+            new=AsyncMock(side_effect=NotFoundError("view not found")),
+        ),
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "count_view_rows",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.vw_sales"},
+        )
+
+
+async def test_count_view_rows_workspace_allowlist_blocks(ctx_patch) -> None:
+    """count_view_rows raises ToolError when workspace is not in FABRIC_MCP_WORKSPACES."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
+        pytest.raises(ToolError, match="allowlist"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "count_view_rows",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.vw_sales"},
+        )
+
+
+async def test_count_view_rows_bad_qualified_name_raises_tool_error(ctx_patch) -> None:
+    """count_view_rows raises ToolError when qualified_name has no dot."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with (
+        ctx_patch,
+        pytest.raises(ToolError, match="qualified_name"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "count_view_rows",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "nodot"},
+        )

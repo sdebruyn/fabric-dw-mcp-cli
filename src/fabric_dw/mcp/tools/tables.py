@@ -114,6 +114,42 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             "rows": safe_rows(rows),
         }
 
+    @mcp.tool(name="count_table_rows")
+    async def count_table_rows(
+        workspace: str,
+        item: str,
+        qualified_name: str,
+    ) -> dict[str, Any]:
+        """Return the total row count of a table via ``SELECT COUNT_BIG(*)``.
+
+        Works on both Fabric Data Warehouses and SQL Analytics Endpoints.
+
+        Args:
+            workspace: Workspace name or GUID.
+            item: Warehouse or SQL endpoint name or GUID.
+            qualified_name: Dot-separated qualified table name, e.g. ``dbo.sales``.
+        """
+        schema, table_name = parse_qualified_name(qualified_name, kind="table")
+        assert_workspace_allowed(workspace)
+        ctx = get_context()
+        try:
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
+            assert_workspace_allowed(workspace, str(ws_id))
+            _log.debug(
+                "count_table_rows ws=%s item=%s table=%s.%s",
+                ws_id,
+                entry.id,
+                schema,
+                table_name,
+            )
+            target = make_sql_target(ws_id, entry, item)
+            row_count = await tables_svc.count_table_rows(
+                target, schema, table_name, mode=ctx.auth_mode
+            )
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        return {"schema": schema, "name": table_name, "row_count": row_count}
+
     @mutating_tool(mcp, "create_table")
     async def create_table(
         workspace: str, item: str, qualified_name: str, select_body: str

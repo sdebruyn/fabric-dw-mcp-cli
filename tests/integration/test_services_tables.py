@@ -232,3 +232,22 @@ async def test_rename_table_roundtrip(
             await tables.delete_table(sql_target, schema, old_name)
         with contextlib.suppress(Exception):
             await tables.delete_table(sql_target, schema, new_name)
+
+
+async def test_count_table_rows_returns_nonnegative_int(
+    warehouse_schema: tuple[SqlTarget, str],
+) -> None:
+    """count_table_rows must return a non-negative integer for a real table."""
+    sql_target, schema = warehouse_schema
+    table_name = "pytest_tables_count"
+    select_body = "SELECT 1 AS id UNION ALL SELECT 2 AS id UNION ALL SELECT 3 AS id"
+
+    try:
+        await tables.create_table(sql_target, schema, table_name, select_body)
+        count = await tables.count_table_rows(sql_target, schema, table_name)
+        assert isinstance(count, int)
+        assert count >= 0
+        assert count == 3
+    finally:
+        with contextlib.suppress(Exception):
+            await tables.delete_table(sql_target, schema, table_name)

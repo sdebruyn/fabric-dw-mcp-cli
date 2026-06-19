@@ -5,6 +5,7 @@ Public API
 - :func:`validate_identifier`     — re-exported from :mod:`fabric_dw.identifiers`.
 - :func:`list_tables`             — list all tables via TDS ``sys.tables JOIN sys.schemas``.
 - :func:`read_table`              — ``SELECT TOP (N) * FROM [schema].[table]``.
+- :func:`count_table_rows`        — ``SELECT COUNT_BIG(*) FROM [schema].[table]``.
 - :func:`create_table`            — ``CREATE TABLE … AS <select_body>`` (CTAS).
 - :func:`create_empty_table`      — ``CREATE TABLE … (col TYPE [NULL|NOT NULL], …)`` (DDL only).
 - :func:`create_table_from_parquet` — infer schema from Parquet file → :func:`create_empty_table`.
@@ -41,6 +42,7 @@ from fabric_dw.types import arrow_type_to_tsql, validate_tsql_type
 __all__ = [
     "clear_table",
     "clone_table",
+    "count_table_rows",
     "create_empty_table",
     "create_table",
     "create_table_from_csv",
@@ -94,6 +96,9 @@ ORDER BY s.name, t.name;
 
 # TOP count is an internal int (not user-supplied string), safe to embed.
 _READ_TABLE_SQL = "SELECT TOP ({count}) * FROM {schema_q}.{table_q};"
+
+# COUNT_BIG(*) is bigint-safe (avoids INT overflow on wide tables).
+_COUNT_TABLE_SQL = "SELECT COUNT_BIG(*) AS row_count FROM {schema_q}.{table_q};"
 
 _FETCH_TABLE_SQL = """\
 SELECT s.name AS schema_name, t.name, t.create_date AS created,
@@ -223,6 +228,47 @@ async def read_table(
             msg = f"Table [{schema}].[{table_name}] not found"
             raise NotFoundError(msg)
         return cols, list(rows)
+
+    return await asyncio.to_thread(_run)
+
+
+async def count_table_rows(
+    target: SqlTarget,
+    schema: str,
+    table_name: str,
+    *,
+    mode: CredentialMode = CredentialMode.DEFAULT,
+) -> int:
+    """Return the total row count of *schema*.*table_name* via ``COUNT_BIG(*)``.
+
+    Uses ``COUNT_BIG(*)`` rather than ``COUNT(*)`` to avoid integer overflow on
+    tables with more than 2 147 483 647 rows.
+
+    Args:
+        target: The warehouse or SQL Analytics Endpoint to query.
+        schema: The schema name.  Must pass :func:`validate_identifier`.
+        table_name: The table name.  Must pass :func:`validate_identifier`.
+        mode: The credential mode for Entra authentication.
+
+    Returns:
+        The number of rows in the table as a Python :class:`int`.
+
+    Raises:
+        ValueError: If *schema* or *table_name* fails identifier validation.
+        FabricError: If the table does not exist or the engine reports an error.
+        PermissionDeniedError: If the driver reports a permission error.
+    """
+    validate_identifier(schema)
+    validate_identifier(table_name)
+
+    count_sql = _COUNT_TABLE_SQL.format(
+        schema_q=quote_identifier(schema),
+        table_q=quote_identifier(table_name),
+    )
+
+    def _run() -> int:
+        _cols, rows = run_query(target, count_sql, mode=mode)
+        return int(rows[0][0])
 
     return await asyncio.to_thread(_run)
 

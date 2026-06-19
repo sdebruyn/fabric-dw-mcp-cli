@@ -105,6 +105,7 @@ EXPECTED_TOOL_NAMES: frozenset[str] = frozenset(
         # Views
         "list_views",
         "read_view",
+        "count_view_rows",
         "get_view",
         "create_view",
         "update_view",
@@ -126,6 +127,7 @@ EXPECTED_TOOL_NAMES: frozenset[str] = frozenset(
         # Tables
         "list_tables",
         "read_table",
+        "count_table_rows",
         "create_table",
         "create_empty_table",
         "clone_table",

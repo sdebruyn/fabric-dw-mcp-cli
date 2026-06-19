@@ -199,6 +199,35 @@ def _parse_schema_file(path: str) -> list[ColumnSpec]:
     return specs
 
 
+@tables_group.command("count")
+@click.argument("item", required=False, default=None)
+@click.argument("qualified_name")
+@click.pass_obj
+@coro
+async def count_cmd(
+    ctx: CliContext,
+    item: str | None,
+    qualified_name: str,
+) -> None:
+    """Count rows in QUALIFIED_NAME (schema.table) on ITEM."""
+    ws = resolve_workspace(ctx)
+    wh = resolve_warehouse_arg(ctx, item)
+    schema, table_name = parse_qualified_name(qualified_name, kind="table")
+    try:
+        async with build_http_client(ctx) as http:
+            target, _entry = await build_sql_target(http, ws, wh)
+            row_count = await _tables_svc.count_table_rows(
+                target, schema, table_name, mode=ctx.auth
+            )
+            render(
+                {"schema": schema, "name": table_name, "row_count": row_count},
+                json_output=ctx.json_output,
+                table_title="Row Count",
+            )
+    except (ValueError, FabricError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
 @tables_group.command("create")
 @click.argument("item", required=False, default=None)
 @click.option("--name", "qualified_name", required=True, help="Qualified name: schema.table.")

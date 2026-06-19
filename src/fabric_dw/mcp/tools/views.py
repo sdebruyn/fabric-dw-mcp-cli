@@ -94,6 +94,42 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             "rows": safe_rows(rows),
         }
 
+    @mcp.tool(name="count_view_rows")
+    async def count_view_rows(
+        workspace: str,
+        item: str,
+        qualified_name: str,
+    ) -> dict[str, Any]:
+        """Return the total row count of a view via ``SELECT COUNT_BIG(*)``.
+
+        Works on both Fabric Data Warehouses and SQL Analytics Endpoints.
+
+        Args:
+            workspace: Workspace name or GUID.
+            item: Warehouse or SQL endpoint name or GUID.
+            qualified_name: Dot-separated qualified view name, e.g. ``dbo.vw_sales``.
+        """
+        schema, view_name = parse_qualified_name(qualified_name, kind="view")
+        assert_workspace_allowed(workspace)
+        ctx = get_context()
+        try:
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
+            assert_workspace_allowed(workspace, str(ws_id))
+            _log.debug(
+                "count_view_rows ws=%s item=%s view=%s.%s",
+                ws_id,
+                entry.id,
+                schema,
+                view_name,
+            )
+            target = make_sql_target(ws_id, entry, item)
+            row_count = await views_svc.count_view_rows(
+                target, schema, view_name, mode=ctx.auth_mode
+            )
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        return {"schema": schema, "name": view_name, "row_count": row_count}
+
     @mcp.tool(name="get_view")
     async def get_view(workspace: str, item: str, qualified_name: str) -> dict[str, Any]:
         """Fetch the full definition of a view (schema.view).

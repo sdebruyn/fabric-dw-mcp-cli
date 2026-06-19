@@ -121,6 +121,7 @@ DOMAIN_MAP: dict[str, str] = {
     # Tables
     "list_tables": "tables",
     "read_table": "tables",
+    "count_table_rows": "tables",
     "create_table": "tables",
     "create_empty_table": "tables",
     "clone_table": "tables",
@@ -131,6 +132,7 @@ DOMAIN_MAP: dict[str, str] = {
     # Views
     "list_views": "views",
     "read_view": "views",
+    "count_view_rows": "views",
     "get_view": "views",
     "create_view": "views",
     "update_view": "views",

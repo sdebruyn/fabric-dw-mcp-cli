@@ -286,3 +286,22 @@ async def test_rename_view_creates_new_and_removes_old(
             await views.drop_view(sql_target, schema, old_name)
         with contextlib.suppress(Exception):
             await views.drop_view(sql_target, schema, new_name)
+
+
+async def test_count_view_rows_returns_nonnegative_int(
+    warehouse_schema: tuple[SqlTarget, str],
+) -> None:
+    """count_view_rows must return a non-negative integer for a real view."""
+    sql_target, schema = warehouse_schema
+    view_name = "pytest_views_count"
+    select_body = "SELECT 1 AS id UNION ALL SELECT 2 AS id"
+
+    try:
+        await views.create_view(sql_target, schema, view_name, select_body)
+        count = await views.count_view_rows(sql_target, schema, view_name)
+        assert isinstance(count, int)
+        assert count >= 0
+        assert count == 2
+    finally:
+        with contextlib.suppress(Exception):
+            await views.drop_view(sql_target, schema, view_name)

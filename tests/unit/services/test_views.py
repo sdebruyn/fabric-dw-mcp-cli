@@ -365,6 +365,68 @@ class TestReadView:
 
 
 # ===========================================================================
+# count_view_rows
+# ===========================================================================
+
+
+class TestCountViewRows:
+    async def test_returns_row_count(self) -> None:
+        target = _make_target()
+        conn = _make_conn([(42,)], ["row_count"])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await views.count_view_rows(target, "dbo", "vw_sales")
+        assert result == 42
+
+    async def test_returns_zero_for_empty_view(self) -> None:
+        target = _make_target()
+        conn = _make_conn([(0,)], ["row_count"])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await views.count_view_rows(target, "dbo", "vw_sales")
+        assert result == 0
+
+    async def test_sql_uses_count_big(self) -> None:
+        target = _make_target()
+        conn = _make_conn([(10,)], ["row_count"])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await views.count_view_rows(target, "dbo", "vw_sales")
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0].upper()
+        assert "COUNT_BIG(*)" in call_sql
+
+    async def test_sql_uses_bracket_quoting(self) -> None:
+        target = _make_target()
+        conn = _make_conn([(5,)], ["row_count"])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await views.count_view_rows(target, "dbo", "vw_sales")
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert "[dbo]" in call_sql
+        assert "[vw_sales]" in call_sql
+
+    async def test_validates_schema_identifier(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await views.count_view_rows(target, "bad;schema", "vw_sales")
+
+    async def test_validates_view_name_identifier(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await views.count_view_rows(target, "dbo", "view--injection")
+
+    async def test_fabric_error_propagates(self) -> None:
+        target = _make_target()
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.execute.side_effect = Exception("permission was denied on object vw_sales")
+        conn.cursor.return_value = cursor
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(PermissionDeniedError),
+        ):
+            await views.count_view_rows(target, "dbo", "vw_sales")
+
+
+# ===========================================================================
 # get_view
 # ===========================================================================
 
