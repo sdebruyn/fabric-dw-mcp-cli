@@ -4,7 +4,7 @@ title: Concepts
 
 # Concepts
 
-The sections below describe cross-cutting concepts that apply to all `fabric-dw` commands: how the CLI distinguishes between item kinds, which global flags are available on every invocation, and how the target workspace is resolved. Understanding these concepts first makes the rest of the [CLI reference](cli.md) easier to follow.
+The sections below describe cross-cutting concepts that apply to all `fdw`/`fabric-dw` commands: how the CLI distinguishes between item kinds, which global flags are available on every invocation, and how the target workspace is resolved. Understanding these concepts first makes the rest of the [command & tool reference](reference/command-tool-reference.md) easier to follow.
 
 ---
 
@@ -44,11 +44,20 @@ The `--auth` flag and the `FABRIC_AUTH` environment variable accept the same thr
 
 Every command that operates on a workspace (everything except `workspaces list` and `cache clear`) resolves the target workspace from the following sources, in priority order:
 
-1. **`-w` / `--workspace` flag** — explicit value passed on the root command, e.g. `fabric-dw -w MyWorkspace warehouses list`.
+1. **`-w` / `--workspace` flag** — explicit value passed on the root command, e.g. `fdw -w MyWorkspace warehouses list`.
 2. **`FABRIC_DW_DEFAULT_WORKSPACE` environment variable** — if the flag is absent, the CLI reads this variable.
-3. **Configured default** — set with `fabric-dw config set workspace VALUE`; used when neither the flag nor the environment variable is present.
+3. **Configured default** — set with `fdw config set workspace VALUE`; used when neither the flag nor the environment variable is present.
 4. **Error** — if none of the above is set, the CLI prints a helpful message suggesting you set one of the above.
 
 The `workspaces` command group is an exception: `workspaces get` and `workspaces set-collation` take the workspace as an explicit positional argument (not via `-w`), and `workspaces list` takes no workspace at all.
 
-> **`-A` / `--all-workspaces` interaction:** passing `-A` on the two list commands that support it (`warehouses list`, `sql-endpoints list`) explicitly scans every visible workspace. This flag is mutually exclusive with `-w` (an explicit `-w` conflicts with scanning all workspaces), but it does **not** conflict with a configured default workspace or `FABRIC_DW_DEFAULT_WORKSPACE` — the configured default is silently ignored when `-A` is used.
+!!! note "-A / --all-workspaces interaction"
+
+    Passing `-A` on the two list commands that support it (`warehouses list`, `sql-endpoints list`) explicitly scans every visible workspace. This flag is mutually exclusive with `-w` (an explicit `-w` conflicts with scanning all workspaces), but it does **not** conflict with a configured default workspace or `FABRIC_DW_DEFAULT_WORKSPACE` — the configured default is silently ignored when `-A` is used.
+
+---
+
+## Name-or-GUID resolution
+
+!!! note "Name-or-GUID resolution"
+    All `workspace`, `warehouse`, `endpoint`, and `snapshot` parameters — on both `fdw`/`fabric-dw` commands and the MCP tools — accept either the item's display name or its GUID. The resolver translates names to GUIDs automatically and caches the mapping locally. Use `fdw cache clear` (CLI) or the `clear_cache` MCP tool to force a fresh lookup after renaming items outside this tool.
