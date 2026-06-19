@@ -816,6 +816,8 @@ fabric-dw -w MyWorkspace --yes queries kill SalesWH 42
 
 List completed SQL requests from `queryinsights.exec_requests_history`. Supports optional time-range filtering with `--since` and `--until` (ISO-8601 strings). The `--limit` option caps the number of rows returned (default: 100, max: 10 000).
 
+> **Note:** Elapsed-time and CPU-time fields (e.g. `total_elapsed_time_ms`, `allocated_cpu_time_ms`) are typed as `float` (`number` in JSON) because Fabric returns fractional millisecond values. Count fields (e.g. `row_count`) remain `int`.
+
 **Synopsis**
 
 ```
@@ -841,6 +843,8 @@ fabric-dw -w MyWorkspace queries history SalesWH --limit 50 --since 2026-06-01T0
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
 List completed sessions from `queryinsights.exec_sessions_history`.
+
+> **Note:** `total_query_elapsed_time_ms` is typed as `float` (`number` in JSON) because Fabric returns fractional millisecond values.
 
 **Synopsis**
 
@@ -868,6 +872,8 @@ fabric-dw -w MyWorkspace queries sessions SalesWH
 
 List frequently-run queries from `queryinsights.frequently_run_queries`.
 
+> **Note:** Elapsed-time fields (e.g. `avg_total_elapsed_time_ms`, `min_run_total_elapsed_time_ms`, `max_run_total_elapsed_time_ms`, `last_run_total_elapsed_time_ms`) are typed as `float` (`number` in JSON) because Fabric returns fractional millisecond values. Count fields (`number_of_runs`, `number_of_successful_runs`, `number_of_failed_runs`, `number_of_canceled_runs`) remain `int`.
+
 **Synopsis**
 
 ```
@@ -893,6 +899,8 @@ fabric-dw -w MyWorkspace queries frequent SalesWH --limit 20
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
 List long-running queries from `queryinsights.long_running_queries`.
+
+> **Note:** `median_total_elapsed_time_ms` and `last_run_total_elapsed_time_ms` are typed as `float` (`number` in JSON) because Fabric returns fractional millisecond values. `number_of_runs` remains `int`.
 
 **Synopsis**
 

@@ -157,9 +157,16 @@ def _cell(value: object) -> str:
 
     ``None`` is rendered as ``[dim]NULL[/dim]`` so SQL NULLs are visually
     distinct from the literal string ``'None'``.
+
+    Whole-number ``float`` values (e.g. ``1500.0``) are rendered without the
+    spurious ``.0`` suffix (e.g. ``"1500"``), matching the appearance of the
+    underlying integer.  Fractional floats (e.g. ``1234.5``) are rendered
+    as-is via ``str()``.
     """
     if value is None:
         return "[dim]NULL[/dim]"
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
     return str(value)
 
 

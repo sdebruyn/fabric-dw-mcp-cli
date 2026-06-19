@@ -396,7 +396,7 @@ class SqlPoolInsight(_FabricBase):
 
     sql_pool_name: str | None = None
     timestamp: datetime | None = None
-    max_resource_percentage: int | None = None
+    max_resource_percentage: int | None = None  # integer percentage (0-100); reviewed, not widened
     is_optimized_for_reads: bool | None = None
     current_workspace_capacity: str | None = None
     is_pool_under_pressure: bool | None = None

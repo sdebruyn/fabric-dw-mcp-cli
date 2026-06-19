@@ -133,6 +133,22 @@ class TestCellHelper:
         # The actual string "None" must NOT be changed — only Python None
         assert _cell("None") == "None"
 
+    def test_integral_float_renders_without_dot_zero(self) -> None:
+        """Whole-number float values must render as integers (no spurious '.0')."""
+        assert _cell(1500.0) == "1500"
+
+    def test_fractional_float_renders_with_decimal(self) -> None:
+        """Fractional float values must retain their decimal component."""
+        assert _cell(1234.5) == "1234.5"
+
+    def test_negative_integral_float_renders_without_dot_zero(self) -> None:
+        """Negative whole-number floats also suppress the '.0' suffix."""
+        assert _cell(-42.0) == "-42"
+
+    def test_zero_float_renders_as_zero(self) -> None:
+        """0.0 must render as '0', not '0.0'."""
+        assert _cell(0.0) == "0"
+
 
 class TestNullRendering:
     """NULL values in table and panel output are rendered as dim 'NULL', not 'None'."""

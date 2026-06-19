@@ -425,7 +425,7 @@ Return completed SQL requests from `queryinsights.exec_requests_history`.
 - `since` (`str | null`, optional) — ISO-8601 lower bound on `submit_time`.
 - `until` (`str | null`, optional) — ISO-8601 upper bound on `submit_time`.
 
-**Returns:** `list[dict]` — array of request-history row objects.
+**Returns:** `list[dict]` — array of request-history row objects. Elapsed-time and CPU-time fields (e.g. `total_elapsed_time_ms`, `allocated_cpu_time_ms`) are JSON `number` (float) because Fabric returns fractional millisecond values.
 
 ---
 
@@ -443,7 +443,7 @@ Return completed sessions from `queryinsights.exec_sessions_history`.
 - `since` (`str | null`, optional) — ISO-8601 lower bound on `session_start_time`.
 - `until` (`str | null`, optional) — ISO-8601 upper bound on `session_start_time`.
 
-**Returns:** `list[dict]` — array of session-history row objects.
+**Returns:** `list[dict]` — array of session-history row objects. `total_query_elapsed_time_ms` is JSON `number` (float) because Fabric returns fractional millisecond values.
 
 ---
 
@@ -461,7 +461,7 @@ Return frequently-run queries from `queryinsights.frequently_run_queries`.
 - `since` (`str | null`, optional) — ISO-8601 lower bound on `last_run_start_time`.
 - `until` (`str | null`, optional) — ISO-8601 upper bound on `last_run_start_time`.
 
-**Returns:** `list[dict]` — array of frequently-run query row objects.
+**Returns:** `list[dict]` — array of frequently-run query row objects. Elapsed-time fields (e.g. `avg_total_elapsed_time_ms`, `min_run_total_elapsed_time_ms`, `max_run_total_elapsed_time_ms`, `last_run_total_elapsed_time_ms`) are JSON `number` (float); count fields remain `integer`.
 
 ---
 
@@ -479,7 +479,7 @@ Return long-running queries from `queryinsights.long_running_queries`.
 - `since` (`str | null`, optional) — ISO-8601 lower bound on `last_run_start_time`.
 - `until` (`str | null`, optional) — ISO-8601 upper bound on `last_run_start_time`.
 
-**Returns:** `list[dict]` — array of long-running query row objects.
+**Returns:** `list[dict]` — array of long-running query row objects. `median_total_elapsed_time_ms` and `last_run_total_elapsed_time_ms` are JSON `number` (float); `number_of_runs` remains `integer`.
 
 ---
 

@@ -1079,6 +1079,46 @@ class TestExecSessionHistoryFieldParsing:
         with pytest.raises(ValidationError):
             obj.status = "completed"  # type: ignore[misc]
 
+
+# ---------------------------------------------------------------------------
+# ExecSessionHistory — elapsed-time fields are float
+# ---------------------------------------------------------------------------
+
+
+class TestExecSessionHistoryFloatElapsedTime:
+    """queryinsights.exec_sessions_history returns elapsed-time columns as floats.
+
+    Pydantic v2 raises ``int_from_float`` for fractional values on ``int`` fields.
+    ``total_query_elapsed_time_ms`` must be typed ``float``.
+    """
+
+    _MINIMAL: ClassVar[dict] = {
+        "session_id": 1,
+        "connection_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "session_start_time": "2024-03-15T10:00:00Z",
+        "total_query_elapsed_time_ms": 0,
+        "last_request_start_time": "2024-03-15T10:00:00Z",
+        "login_name": "user@example.com",
+        "status": "running",
+        "is_user_process": True,
+        "prev_error": 0,
+        "group_id": 0,
+        "text_size": -1,
+        "date_first": 7,
+        "quoted_identifier": True,
+        "arithabort": True,
+        "ansi_null_dflt_on": True,
+        "ansi_defaults": False,
+        "ansi_warnings": True,
+        "ansi_padding": True,
+        "ansi_nulls": True,
+        "concat_null_yields_null": True,
+        "transaction_isolation_level": 2,
+        "lock_timeout": -1,
+        "deadlock_priority": 0,
+        "original_security_id": b"\x01\x02\x03",
+    }
+
     def test_total_query_elapsed_time_ms_accepts_float(self) -> None:
         """Fabric returns total_query_elapsed_time_ms as float — must not raise int_from_float."""
         payload = {**self._MINIMAL, "total_query_elapsed_time_ms": 1234.5}
@@ -1134,6 +1174,20 @@ class TestFrequentlyRunQueryFloatElapsedTime:
         assert isinstance(obj.number_of_failed_runs, int)
         assert isinstance(obj.number_of_canceled_runs, int)
 
+    @pytest.mark.parametrize(
+        "count_field",
+        [
+            "number_of_runs",
+            "number_of_successful_runs",
+            "number_of_failed_runs",
+            "number_of_canceled_runs",
+        ],
+    )
+    def test_count_field_rejects_fractional_float(self, count_field: str) -> None:
+        """Count fields must be int — fractional input must raise int_from_float."""
+        with pytest.raises(ValidationError, match="int_from_float"):
+            FrequentlyRunQuery.model_validate({**self._MINIMAL, count_field: 5.5})
+
 
 # ---------------------------------------------------------------------------
 # LongRunningQuery — elapsed-time fields are float
@@ -1173,6 +1227,11 @@ class TestLongRunningQueryFloatElapsedTime:
         """number_of_runs is a count — must stay int."""
         obj = LongRunningQuery.model_validate(self._MINIMAL)
         assert isinstance(obj.number_of_runs, int)
+
+    def test_number_of_runs_rejects_fractional_float(self) -> None:
+        """number_of_runs is a count — fractional input must raise int_from_float."""
+        with pytest.raises(ValidationError, match="int_from_float"):
+            LongRunningQuery.model_validate({**self._MINIMAL, "number_of_runs": 5.5})
 
 
 # ---------------------------------------------------------------------------
