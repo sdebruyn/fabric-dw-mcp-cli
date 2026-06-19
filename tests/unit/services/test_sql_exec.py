@@ -787,3 +787,164 @@ class TestExecuteLoginRetry:
 
         fake_time = _sql_module.time  # type: ignore[attr-defined]
         fake_time.sleep.assert_not_called()  # ty: ignore[unresolved-attribute]
+
+
+# ---------------------------------------------------------------------------
+# get_plan — SHOWPLAN_XML capture
+# ---------------------------------------------------------------------------
+
+_PLAN_XML = (
+    "<ShowPlanXML xmlns='http://schemas.microsoft.com/sqlserver/2004/07/showplan'>"
+    "<Batch><Statements><StmtSimple /></Statements></Batch></ShowPlanXML>"
+)
+
+
+def _make_plan_conn(plan_rows: list[tuple[object, ...]]) -> MagicMock:
+    """Return a mock connection whose cursor.execute/fetchall simulate SHOWPLAN_XML."""
+    cursor = MagicMock()
+    # description is None for SET statements; non-None for the actual plan
+    cursor.description = [("Microsoft SQL Server 2005 XML Showplan", None)]
+    cursor.fetchall.return_value = plan_rows
+    cursor.nextset.return_value = False
+    conn = MagicMock()
+    conn.cursor.return_value = cursor
+    return conn
+
+
+async def test_get_plan_returns_concatenated_xml() -> None:
+    """get_plan concatenates the first column of all rows."""
+    target = _make_target()
+    conn = _make_plan_conn([(_PLAN_XML,)])
+
+    with patch("fabric_dw.sql._with_connect_retry", return_value=(conn, 0, 1, None)):
+        result = await sql_exec.get_plan(target, "SELECT 1")
+
+    assert result == _PLAN_XML
+
+
+async def test_get_plan_concatenates_multiple_rows() -> None:
+    """When the driver returns multiple rows, get_plan concatenates them."""
+    target = _make_target()
+    part1 = "<ShowPlanXML>part1"
+    part2 = "part2</ShowPlanXML>"
+    conn = _make_plan_conn([(part1,), (part2,)])
+
+    with patch("fabric_dw.sql._with_connect_retry", return_value=(conn, 0, 1, None)):
+        result = await sql_exec.get_plan(target, "SELECT 1")
+
+    assert result == part1 + part2
+
+
+async def test_get_plan_reads_first_column_positionally() -> None:
+    """get_plan reads row[0] (positional), not by column name."""
+    target = _make_target()
+    # Simulate a row with multiple columns; only the first should be read
+    cursor = MagicMock()
+    cursor.description = [("col_0", None), ("col_1", None)]
+    cursor.fetchall.return_value = [(_PLAN_XML, "ignored")]
+    cursor.nextset.return_value = False
+    conn = MagicMock()
+    conn.cursor.return_value = cursor
+
+    with patch("fabric_dw.sql._with_connect_retry", return_value=(conn, 0, 1, None)):
+        result = await sql_exec.get_plan(target, "SELECT 1")
+
+    assert result == _PLAN_XML
+
+
+async def test_get_plan_issues_showplan_on_then_off() -> None:
+    """get_plan must issue SET SHOWPLAN_XML ON before the query and OFF after."""
+    target = _make_target()
+    conn = _make_plan_conn([(_PLAN_XML,)])
+    cursor = conn.cursor()
+
+    with patch("fabric_dw.sql._with_connect_retry", return_value=(conn, 0, 1, None)):
+        await sql_exec.get_plan(target, "SELECT 1 AS n")
+
+    # Verify the three execute calls: ON, query, OFF
+    calls = [c.args[0] for c in cursor.execute.call_args_list]
+    assert calls[0] == "SET SHOWPLAN_XML ON"
+    assert calls[1] == "SELECT 1 AS n"
+    assert calls[2] == "SET SHOWPLAN_XML OFF"
+
+
+async def test_get_plan_off_called_even_on_query_error() -> None:
+    """SET SHOWPLAN_XML OFF must be issued in finally even when the query fails."""
+    target = _make_target()
+    cursor = MagicMock()
+    # First execute (SET ON) succeeds; second (query) fails
+    cursor.execute.side_effect = [None, Exception("syntax error"), None]
+    conn = MagicMock()
+    conn.cursor.return_value = cursor
+
+    with (
+        patch("fabric_dw.sql._with_connect_retry", return_value=(conn, 0, 1, None)),
+        pytest.raises(Exception, match="syntax error"),
+    ):
+        await sql_exec.get_plan(target, "SLECT 1")
+
+    # OFF must still have been called (the 3rd execute call)
+    calls = [c.args[0] for c in cursor.execute.call_args_list]
+    assert "SET SHOWPLAN_XML OFF" in calls
+
+
+async def test_get_plan_pool_safety_marks_discard_when_off_fails() -> None:
+    """When SET SHOWPLAN_XML OFF raises, the connection must be marked for discard.
+
+    This is the critical pool-safety invariant: a connection that may still have
+    SHOWPLAN_XML ON must never be returned to the pool.
+    """
+    from fabric_dw.sql import _PooledConnection  # noqa: PLC0415
+
+    target = _make_target()
+    underlying = MagicMock()
+    key = ("ws-id-sentinel", "test-db", "default")
+    pooled = _PooledConnection(underlying, key)
+
+    cursor = MagicMock()
+    off_error = Exception("SET SHOWPLAN_XML OFF failed")
+    # Calls: SET ON → query → fetchall → SET OFF (raises)
+    cursor.execute.side_effect = [None, None, None]
+    cursor.fetchall.return_value = [(_PLAN_XML,)]
+
+    def _execute_side_effect(sql: str) -> None:
+        if "OFF" in sql:
+            raise off_error
+
+    cursor.execute.side_effect = _execute_side_effect
+    underlying.cursor.return_value = cursor
+
+    with (
+        patch("fabric_dw.sql._with_connect_retry", return_value=(pooled, 0, 1, None)),
+        pytest.raises(Exception, match="SET SHOWPLAN_XML OFF failed"),
+    ):
+        await sql_exec.get_plan(target, "SELECT 1")
+
+    # Connection must be marked for discard — pool-safety guarantee
+    assert pooled._discard is True
+
+
+async def test_get_plan_permission_denied_raises_permission_denied() -> None:
+    """Permission denial during get_plan is raised as PermissionDeniedError."""
+    target = _make_target()
+    conn = MagicMock()
+    cursor = MagicMock()
+    cursor.execute.side_effect = Exception("permission was denied on object SensitiveTable")
+    conn.cursor.return_value = cursor
+
+    with (
+        patch("fabric_dw.sql._with_connect_retry", return_value=(conn, 0, 1, None)),
+        pytest.raises(PermissionDeniedError),
+    ):
+        await sql_exec.get_plan(target, "SELECT * FROM SensitiveTable")
+
+
+async def test_get_plan_closes_connection() -> None:
+    """get_plan closes the connection after use."""
+    target = _make_target()
+    conn = _make_plan_conn([(_PLAN_XML,)])
+
+    with patch("fabric_dw.sql._with_connect_retry", return_value=(conn, 0, 1, None)):
+        await sql_exec.get_plan(target, "SELECT 1")
+
+    conn.close.assert_called_once()
