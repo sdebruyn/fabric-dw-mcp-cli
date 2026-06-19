@@ -14,8 +14,10 @@ from fabric_dw.models import (
     CreationModeType,
     ExecRequestHistory,
     ExecSessionHistory,
+    FrequentlyRunQuery,
     ItemAccess,
     ItemAccessPrincipal,
+    LongRunningQuery,
     PrincipalType,
     RestorePoint,
     RunningQuery,
@@ -1076,3 +1078,184 @@ class TestExecSessionHistoryFieldParsing:
         obj = ExecSessionHistory.model_validate(self._MINIMAL)
         with pytest.raises(ValidationError):
             obj.status = "completed"  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# ExecSessionHistory — elapsed-time fields are float
+# ---------------------------------------------------------------------------
+
+
+class TestExecSessionHistoryFloatElapsedTime:
+    """queryinsights.exec_sessions_history returns elapsed-time columns as floats.
+
+    Pydantic v2 raises ``int_from_float`` for fractional values on ``int`` fields.
+    ``total_query_elapsed_time_ms`` must be typed ``float``.
+    """
+
+    _MINIMAL: ClassVar[dict] = {
+        "session_id": 1,
+        "connection_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "session_start_time": "2024-03-15T10:00:00Z",
+        "total_query_elapsed_time_ms": 0,
+        "last_request_start_time": "2024-03-15T10:00:00Z",
+        "login_name": "user@example.com",
+        "status": "running",
+        "is_user_process": True,
+        "prev_error": 0,
+        "group_id": 0,
+        "text_size": -1,
+        "date_first": 7,
+        "quoted_identifier": True,
+        "arithabort": True,
+        "ansi_null_dflt_on": True,
+        "ansi_defaults": False,
+        "ansi_warnings": True,
+        "ansi_padding": True,
+        "ansi_nulls": True,
+        "concat_null_yields_null": True,
+        "transaction_isolation_level": 2,
+        "lock_timeout": -1,
+        "deadlock_priority": 0,
+        "original_security_id": b"\x01\x02\x03",
+    }
+
+    def test_total_query_elapsed_time_ms_accepts_float(self) -> None:
+        """Fabric returns total_query_elapsed_time_ms as float — must not raise int_from_float."""
+        payload = {**self._MINIMAL, "total_query_elapsed_time_ms": 1234.5}
+        obj = ExecSessionHistory.model_validate(payload)
+        assert obj.total_query_elapsed_time_ms == 1234.5
+        assert isinstance(obj.total_query_elapsed_time_ms, float)
+
+
+# ---------------------------------------------------------------------------
+# FrequentlyRunQuery — elapsed-time fields are float
+# ---------------------------------------------------------------------------
+
+
+class TestFrequentlyRunQueryFloatElapsedTime:
+    """queryinsights.frequently_run_queries returns elapsed-time columns as floats.
+
+    Pydantic v2 raises ``int_from_float`` for fractional values on ``int`` fields.
+    All ``*_elapsed_time_ms`` fields must be typed ``float``.
+    """
+
+    _MINIMAL: ClassVar[dict] = {
+        "number_of_runs": 5,
+        "avg_total_elapsed_time_ms": 200,
+        "last_run_total_elapsed_time_ms": 180,
+        "min_run_total_elapsed_time_ms": 100,
+        "max_run_total_elapsed_time_ms": 300,
+        "number_of_successful_runs": 4,
+        "number_of_failed_runs": 1,
+        "number_of_canceled_runs": 0,
+    }
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "avg_total_elapsed_time_ms",
+            "last_run_total_elapsed_time_ms",
+            "min_run_total_elapsed_time_ms",
+            "max_run_total_elapsed_time_ms",
+        ],
+    )
+    def test_elapsed_time_field_accepts_fractional_float(self, field: str) -> None:
+        """Fractional ms values must validate without int_from_float error."""
+        payload = {**self._MINIMAL, field: 1234.5}
+        obj = FrequentlyRunQuery.model_validate(payload)
+        assert getattr(obj, field) == 1234.5
+        assert isinstance(getattr(obj, field), float)
+
+    def test_number_of_runs_remains_int(self) -> None:
+        """Count fields must stay int — not changed by this fix."""
+        obj = FrequentlyRunQuery.model_validate(self._MINIMAL)
+        assert isinstance(obj.number_of_runs, int)
+        assert isinstance(obj.number_of_successful_runs, int)
+        assert isinstance(obj.number_of_failed_runs, int)
+        assert isinstance(obj.number_of_canceled_runs, int)
+
+    @pytest.mark.parametrize(
+        "count_field",
+        [
+            "number_of_runs",
+            "number_of_successful_runs",
+            "number_of_failed_runs",
+            "number_of_canceled_runs",
+        ],
+    )
+    def test_count_field_rejects_fractional_float(self, count_field: str) -> None:
+        """Count fields must be int — fractional input must raise int_from_float."""
+        with pytest.raises(ValidationError, match="int_from_float"):
+            FrequentlyRunQuery.model_validate({**self._MINIMAL, count_field: 5.5})
+
+
+# ---------------------------------------------------------------------------
+# LongRunningQuery — elapsed-time fields are float
+# ---------------------------------------------------------------------------
+
+
+class TestLongRunningQueryFloatElapsedTime:
+    """queryinsights.long_running_queries returns elapsed-time columns as floats.
+
+    ``median_total_elapsed_time_ms`` is a statistical median and is virtually
+    always fractional.  ``last_run_total_elapsed_time_ms`` is also returned as
+    float by Fabric.  Both must be typed ``float``; ``number_of_runs`` is a
+    genuine integer count and must not change.
+    """
+
+    _MINIMAL: ClassVar[dict] = {
+        "median_total_elapsed_time_ms": 5000,
+        "number_of_runs": 3,
+        "last_run_total_elapsed_time_ms": 6000,
+    }
+
+    def test_median_elapsed_time_accepts_fractional_float(self) -> None:
+        """Fractional median_total_elapsed_time_ms must not raise int_from_float."""
+        payload = {**self._MINIMAL, "median_total_elapsed_time_ms": 1234.5}
+        obj = LongRunningQuery.model_validate(payload)
+        assert obj.median_total_elapsed_time_ms == 1234.5
+        assert isinstance(obj.median_total_elapsed_time_ms, float)
+
+    def test_last_run_elapsed_time_accepts_fractional_float(self) -> None:
+        """Fractional last_run_total_elapsed_time_ms must not raise int_from_float."""
+        payload = {**self._MINIMAL, "last_run_total_elapsed_time_ms": 5999.7}
+        obj = LongRunningQuery.model_validate(payload)
+        assert obj.last_run_total_elapsed_time_ms == 5999.7
+        assert isinstance(obj.last_run_total_elapsed_time_ms, float)
+
+    def test_number_of_runs_remains_int(self) -> None:
+        """number_of_runs is a count — must stay int."""
+        obj = LongRunningQuery.model_validate(self._MINIMAL)
+        assert isinstance(obj.number_of_runs, int)
+
+    def test_number_of_runs_rejects_fractional_float(self) -> None:
+        """number_of_runs is a count — fractional input must raise int_from_float."""
+        with pytest.raises(ValidationError, match="int_from_float"):
+            LongRunningQuery.model_validate({**self._MINIMAL, "number_of_runs": 5.5})
+
+
+# ---------------------------------------------------------------------------
+# ExecRequestHistory — elapsed-time / cpu-time fields are float
+# ---------------------------------------------------------------------------
+
+
+class TestExecRequestHistoryFloatElapsedTime:
+    """queryinsights.exec_requests_history returns elapsed/cpu time as floats."""
+
+    _MINIMAL: ClassVar[dict] = {
+        "row_count": 0,
+    }
+
+    def test_total_elapsed_time_ms_accepts_fractional_float(self) -> None:
+        """Fractional total_elapsed_time_ms must not raise int_from_float."""
+        payload = {**self._MINIMAL, "total_elapsed_time_ms": 4321.9}
+        obj = ExecRequestHistory.model_validate(payload)
+        assert obj.total_elapsed_time_ms == 4321.9
+        assert isinstance(obj.total_elapsed_time_ms, float)
+
+    def test_allocated_cpu_time_ms_accepts_fractional_float(self) -> None:
+        """Fractional allocated_cpu_time_ms must not raise int_from_float."""
+        payload = {**self._MINIMAL, "allocated_cpu_time_ms": 99.5}
+        obj = ExecRequestHistory.model_validate(payload)
+        assert obj.allocated_cpu_time_ms == 99.5
+        assert isinstance(obj.allocated_cpu_time_ms, float)
