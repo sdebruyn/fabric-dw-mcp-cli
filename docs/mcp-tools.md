@@ -1614,6 +1614,73 @@ Drop a statistic via `DROP STATISTICS`. **Destructive and irreversible.** Requir
 
 ---
 
+## Settings
+
+Read and modify server-side database settings on Fabric Data Warehouses and SQL Analytics Endpoints.
+
+> **Note:** The read tool (`get_warehouse_settings`) works on both Data Warehouses and SQL Analytics Endpoints. The write tools (`set_result_set_caching`, `set_time_travel_retention`) execute `ALTER DATABASE CURRENT SET …` statements, which require autocommit and are primarily meaningful on Data Warehouses. Both setters return the effective `WarehouseSettings` read back after the change.
+
+CLI equivalents: `fabric-dw settings get`, `fabric-dw settings set-result-set-caching`, `fabric-dw settings set-time-travel-retention`.
+
+### get_warehouse_settings
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+**Guards:** `assert_workspace_allowed`
+
+Return the current server-side database settings for a warehouse. Reads `result_set_caching`, `time_travel_retention_days`, and `time_travel_retention_cutoff_date` from `sys.databases`.
+
+**Parameters:**
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `workspace` | `str` | Workspace name or GUID. |
+| `item` | `str` | Warehouse or SQL Analytics Endpoint name or GUID. |
+
+**Returns:** `WarehouseSettings` — `{ database, result_set_caching, time_travel_retention_days, time_travel_retention_cutoff_date }`.
+
+---
+
+### set_result_set_caching
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+**Guards:** `assert_writes_allowed`, `assert_workspace_allowed`
+
+Enable or disable result-set caching on a warehouse. Executes `ALTER DATABASE CURRENT SET RESULT_SET_CACHING { ON | OFF }` and returns the effective settings after the change.
+
+**Parameters:**
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `workspace` | `str` | Workspace name or GUID. |
+| `item` | `str` | Warehouse or SQL Analytics Endpoint name or GUID. |
+| `enabled` | `bool` | `true` to enable result-set caching, `false` to disable it. |
+
+**Returns:** `WarehouseSettings` — the effective settings after the change.
+
+---
+
+### set_time_travel_retention
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+**Guards:** `assert_writes_allowed`, `assert_workspace_allowed`
+
+Set the time-travel retention period on a warehouse. Executes `ALTER DATABASE CURRENT SET TIME_TRAVEL_RETENTION_PERIOD = <n> DAYS` and returns the effective settings after the change.
+
+**Parameters:**
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `workspace` | `str` | Workspace name or GUID. |
+| `item` | `str` | Warehouse or SQL Analytics Endpoint name or GUID. |
+| `days` | `int` | Retention period in days. Must be in the range 1–120 (inclusive). |
+
+**Returns:** `WarehouseSettings` — the effective settings after the change.
+
+---
+
 ## dbt scaffold
 
 Generate [dbt-fabric](https://docs.getdbt.com/docs/core/connect-data-platform/fabric-setup) project file contents pre-wired to a Microsoft Fabric Data Warehouse. Unlike the CLI `dbt init` command, these tools return file contents as text rather than writing files to disk, making them suitable for AI-assisted workflows where the AI agent writes the files.

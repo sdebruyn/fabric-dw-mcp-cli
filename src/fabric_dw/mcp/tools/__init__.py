@@ -22,6 +22,7 @@ Domains
 - :mod:`.load` — ``COPY INTO`` table loading (remote URL)
 - :mod:`.sql_pools` — SQL Pools beta API, pool insights DMV
 - :mod:`.statistics` — DW statistics listing, inspection, and DDL
+- :mod:`.settings` — warehouse database settings (result-set caching, time-travel retention)
 - :mod:`.cache` — cache management (clear_cache)
 - :mod:`.dbt` — generate dbt-fabric project file contents
 """
@@ -40,6 +41,7 @@ from fabric_dw.mcp.tools import (
     queries,
     restore,
     schemas,
+    settings,
     snapshots,
     sql_endpoints,
     sql_exec,
@@ -69,6 +71,7 @@ _DOMAINS = [
     tables,
     load,
     statistics,
+    settings,
     sql_pools,
     cache,
     dbt,
