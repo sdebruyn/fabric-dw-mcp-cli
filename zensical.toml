@@ -24,7 +24,6 @@ nav = [
   ] },
   { "Contributing" = [
     { "Contributing" = "contributing.md" },
-    { "Integration test coverage" = "integration-coverage.md" },
     { "Code of Conduct" = "code-of-conduct.md" },
     { "License" = "license.md" },
     { "Security" = "security.md" }
