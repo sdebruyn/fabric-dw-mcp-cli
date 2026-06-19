@@ -10,7 +10,7 @@ Manage Microsoft Fabric workspaces — list all workspaces the authenticated pri
 
 !!! note "Workspace selection"
 
-    The `workspaces` CLI group is exempt from the global `-w/--workspace` option. Pass the workspace name or GUID as a positional argument to `workspaces get` and `workspaces set-collation` instead. `workspaces list` takes no workspace argument at all.
+    The `workspaces` CLI group is exempt from the global `-w/--workspace` option. Pass the workspace name or GUID as a positional argument to `workspaces get` and `workspaces set-collation` instead.
 
 ---
 
