@@ -99,6 +99,7 @@ tool descriptions see [MCP tools](../mcp-tools.md).
 | ------- | ------- |
 | `fdw tables clear` | Truncate QUALIFIED_NAME (schema.table) on ITEM. |
 | `fdw tables clone` | Clone SOURCE table as a zero-copy clone named NAME on ITEM. |
+| `fdw tables count` | Count rows in QUALIFIED_NAME (schema.table) on ITEM. |
 | `fdw tables create` | Create a new table on ITEM. |
 | `fdw tables delete` | Drop QUALIFIED_NAME (schema.table) from ITEM. |
 | `fdw tables list` | List tables on ITEM (warehouse or SQL endpoint). |
@@ -112,6 +113,7 @@ tool descriptions see [MCP tools](../mcp-tools.md).
 | ---- | ------- |
 | `clear_table` | Truncate a SQL table (remove all rows, keep structure). |
 | `clone_table` | Create a zero-copy clone of a table using ``CREATE TABLE … AS CLONE OF …``. |
+| `count_table_rows` | Return the total row count of a table via ``SELECT COUNT_BIG(*)``. |
 | `create_empty_table` | Create an empty table from an explicit column spec (DDL only, no data). |
 | `create_table` | Create a new SQL table via CTAS (CREATE TABLE AS SELECT). |
 | `delete_table` | Drop a SQL table. |
@@ -128,6 +130,7 @@ tool descriptions see [MCP tools](../mcp-tools.md).
 
 | Command | Summary |
 | ------- | ------- |
+| `fdw views count` | Count rows in QUALIFIED_NAME (schema.view) on ITEM. |
 | `fdw views create` | Create a new view QUALIFIED_NAME on ITEM. |
 | `fdw views drop` | Drop QUALIFIED_NAME (schema.view) from ITEM. |
 | `fdw views get` | Fetch the full definition of QUALIFIED_NAME (schema.view) on ITEM. |
@@ -140,6 +143,7 @@ tool descriptions see [MCP tools](../mcp-tools.md).
 
 | Tool | Summary |
 | ---- | ------- |
+| `count_view_rows` | Return the total row count of a view via ``SELECT COUNT_BIG(*)``. |
 | `create_view` | Create a new SQL view. |
 | `drop_view` | Drop a SQL view. |
 | `get_view` | Fetch the full definition of a view (schema.view). |
@@ -320,13 +324,13 @@ tool descriptions see [MCP tools](../mcp-tools.md).
 
 | Command | Summary |
 | ------- | ------- |
+| `fdw queries connections` | List active SQL connections on ITEM (warehouse or endpoint). |
 | `fdw queries frequent` | List frequently-run queries from queryinsights.frequently_run_queries. |
+| `fdw queries history` | List completed SQL requests from queryinsights.exec_requests_history. |
 | `fdw queries kill` | Kill the session SESSION_ID on ITEM (warehouse or endpoint). |
-| `fdw queries list` | List currently running queries on ITEM (warehouse or endpoint). |
-| `fdw queries list-connections` | List active SQL connections on ITEM (warehouse or endpoint). |
 | `fdw queries long-running` | List long-running queries from queryinsights.long_running_queries. |
-| `fdw queries request-history` | List completed SQL requests from queryinsights.exec_requests_history. |
-| `fdw queries session-history` | List completed sessions from queryinsights.exec_sessions_history. |
+| `fdw queries running` | List currently running queries on ITEM (warehouse or endpoint). |
+| `fdw queries sessions` | List completed sessions from queryinsights.exec_sessions_history. |
 
 ### MCP tools
 
@@ -434,4 +438,12 @@ tool descriptions see [MCP tools](../mcp-tools.md).
 | `fdw settings result-set-caching` | Enable or disable result-set caching on ITEM. |
 | `fdw settings retention` | Set the time-travel retention period on ITEM. |
 | `fdw settings show` | Show all server-side settings for ITEM. |
+
+### MCP tools
+
+| Tool | Summary |
+| ---- | ------- |
+| `get_warehouse_settings` | Return the current server-side database settings for a warehouse. |
+| `set_result_set_caching` | Enable or disable result-set caching on a warehouse. |
+| `set_time_travel_retention` | Set the time-travel retention period on a warehouse. |
 
