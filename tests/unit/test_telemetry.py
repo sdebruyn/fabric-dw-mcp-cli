@@ -260,7 +260,14 @@ def test_emit_event_no_op_when_disabled(monkeypatch: pytest.MonkeyPatch, tmp_pat
 
 
 def test_envelope_contains_required_fields(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """_build_envelope must return a dict with all required fields."""
+    """_build_envelope must return a dict with all required custom-dimension fields.
+
+    Fields moved to native Part A via the OTel Resource (#477) are NOT present
+    here: ``app_version`` (→ application_Version), ``surface`` (→ cloud_RoleName).
+    Fields dropped entirely (#477): ``anonymous_install_id`` (duplicate of user_Id),
+    ``is_ci`` (always False — telemetry is disabled in CI).
+    ``tenant_id`` is now always present (``"unknown"`` when unresolved).
+    """
     monkeypatch.delenv("FABRIC_TELEMETRY", raising=False)
     monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
     monkeypatch.delenv("DO_NOT_TRACK", raising=False)
@@ -271,29 +278,41 @@ def test_envelope_contains_required_fields(monkeypatch: pytest.MonkeyPatch, tmp_
     monkeypatch.delenv("CIRCLECI", raising=False)
     monkeypatch.delenv("GITLAB_CI", raising=False)
     monkeypatch.delenv("TF_BUILD", raising=False)
+    monkeypatch.delenv("AZURE_TENANT_ID", raising=False)
+    monkeypatch.delenv("FABRIC_INTERACTIVE_TENANT_ID", raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     mod = _reload_telemetry()
-    envelope = mod._build_envelope("cli")  # type: ignore[attr-defined]
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
 
+    # Fields that must remain as custom dimensions (no native Part A mapping).
     required = {
-        "anonymous_install_id",
         "session_id",
-        "app_version",
         "python_version",
         "os",
         "arch",
         "install_method",
-        "surface",
-        "is_ci",
         "auth_mode",
+        "tenant_id",  # always present, "unknown" when unresolved (#477 Finding 2)
     }
     for field in required:
         assert field in envelope, f"Missing envelope field: {field}"
 
+    # Fields that were dropped or moved to native (#477) must NOT appear.
+    dropped = {"anonymous_install_id", "is_ci", "app_version", "surface"}
+    for field in dropped:
+        assert field not in envelope, f"Field should have been removed from envelope: {field}"
 
-def test_envelope_surface_field(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Surface field must match the argument passed to _build_envelope."""
+
+def test_envelope_surface_not_in_custom_dimensions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """surface must NOT be a custom dimension — it is now native cloud_RoleName (#477).
+
+    The surface is set via the OTel Resource (``service.name``), which the exporter
+    maps to ``cloud_RoleName``.  Emitting it again as a custom dimension would be
+    redundant.
+    """
     monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
     monkeypatch.delenv("CI", raising=False)
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
@@ -305,41 +324,42 @@ def test_envelope_surface_field(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     mod = _reload_telemetry()
-    assert mod._build_envelope("cli")["surface"] == "cli"  # type: ignore[attr-defined]
-    assert mod._build_envelope("mcp")["surface"] == "mcp"  # type: ignore[attr-defined]
+    assert "surface" not in mod._build_envelope()  # type: ignore[attr-defined]
+    assert "surface" not in mod._build_envelope()  # type: ignore[attr-defined]
 
 
-def test_envelope_is_ci_true_when_ci_env_set(
+def test_envelope_is_ci_not_in_custom_dimensions(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """is_ci must be True when CI env var is set."""
+    """is_ci must NOT be in the envelope — telemetry is disabled in CI so it was always False."""
     monkeypatch.setenv("CI", "true")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     mod = _reload_telemetry()
-    envelope = mod._build_envelope("cli")  # type: ignore[attr-defined]
-    assert envelope["is_ci"] is True
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
+    assert "is_ci" not in envelope, "is_ci must not be emitted as a custom dimension (#477)"
 
 
-def test_envelope_is_ci_false_when_no_ci_markers(
+def test_envelope_anonymous_install_id_not_in_custom_dimensions(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """is_ci must be False when no CI env vars are present."""
-    ci_vars = ["CI", "GITHUB_ACTIONS", "JENKINS_URL", "TRAVIS", "CIRCLECI", "GITLAB_CI", "TF_BUILD"]
-    for var in ci_vars:
-        monkeypatch.delenv(var, raising=False)
+    """anonymous_install_id must NOT be in the envelope.
+
+    It is already shipped natively as ``user_Id`` via ``enduser.pseudo.id``.
+    Emitting it again as a custom dimension would be redundant (#477 Finding 5).
+    """
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     mod = _reload_telemetry()
-    envelope = mod._build_envelope("cli")  # type: ignore[attr-defined]
-    assert envelope["is_ci"] is False
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
+    assert "anonymous_install_id" not in envelope
 
 
 def test_envelope_python_version_is_minor(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """python_version must be 'major.minor' format (e.g. '3.12')."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     mod = _reload_telemetry()
-    envelope = mod._build_envelope("cli")  # type: ignore[attr-defined]
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
     pv = envelope["python_version"]
     parts = str(pv).split(".")
     assert len(parts) == 2, f"Expected 'major.minor', got {pv!r}"
@@ -350,7 +370,7 @@ def test_envelope_os_is_lowercase(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     """os field must be lowercase."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     mod = _reload_telemetry()
-    envelope = mod._build_envelope("cli")  # type: ignore[attr-defined]
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
     assert envelope["os"] == envelope["os"].lower()
 
 
@@ -363,7 +383,7 @@ def test_envelope_tenant_id_from_azure_tenant_id(
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     mod = _reload_telemetry()
-    envelope = mod._build_envelope("cli")  # type: ignore[attr-defined]
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
     assert envelope["tenant_id"] == "my-tenant-123"
 
 
@@ -376,26 +396,27 @@ def test_envelope_tenant_id_from_fabric_interactive_when_no_azure(
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     mod = _reload_telemetry()
-    envelope = mod._build_envelope("cli")  # type: ignore[attr-defined]
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
     assert envelope["tenant_id"] == "interactive-tenant"
 
 
-def test_envelope_tenant_id_absent_when_no_env(
+def test_envelope_tenant_id_unknown_when_no_env(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """tenant_id is absent from the envelope when neither AZURE_TENANT_ID nor
-    FABRIC_INTERACTIVE_TENANT_ID is set.
+    """tenant_id is always present in the envelope (#477 Finding 2).
 
-    OTel attribute values may not be None; the key is omitted entirely when no
-    tenant ID is available.
+    When neither AZURE_TENANT_ID nor FABRIC_INTERACTIVE_TENANT_ID is set and no
+    runtime override has been stored, ``tenant_id`` is ``"unknown"`` so the key
+    is reliably queryable on every event.
     """
     monkeypatch.delenv("AZURE_TENANT_ID", raising=False)
     monkeypatch.delenv("FABRIC_INTERACTIVE_TENANT_ID", raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     mod = _reload_telemetry()
-    envelope = mod._build_envelope("cli")  # type: ignore[attr-defined]
-    assert "tenant_id" not in envelope
+    mod._tenant_id_override = None  # type: ignore[attr-defined]
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
+    assert envelope.get("tenant_id") == "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -1141,7 +1162,7 @@ def test_set_tenant_id_reflected_in_envelope(
     mod = _reload_telemetry()
     mod.set_tenant_id("runtime-tenant-xyz")  # type: ignore[attr-defined]
 
-    envelope = mod._build_envelope("cli")  # type: ignore[attr-defined]
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
     assert envelope["tenant_id"] == "runtime-tenant-xyz"
 
 
@@ -1155,7 +1176,7 @@ def test_set_tenant_id_takes_precedence_over_env(
     mod = _reload_telemetry()
     mod.set_tenant_id("runtime-tenant")  # type: ignore[attr-defined]
 
-    envelope = mod._build_envelope("cli")  # type: ignore[attr-defined]
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
     assert envelope["tenant_id"] == "runtime-tenant"
 
 
@@ -1473,7 +1494,7 @@ def test_envelope_uses_token_tid_over_env_var(
     tid_value = "token-tenant-id-from-tid-claim"
     mod._tenant_id_override = tid_value  # type: ignore[attr-defined]
 
-    envelope = mod._build_envelope("cli")  # type: ignore[attr-defined]
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
     assert envelope.get("tenant_id") == tid_value
 
 
@@ -1502,14 +1523,17 @@ def test_envelope_falls_back_to_azure_tenant_id_env_when_no_override(
     # Ensure no override is set
     mod._tenant_id_override = None  # type: ignore[attr-defined]
 
-    envelope = mod._build_envelope("cli")  # type: ignore[attr-defined]
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
     assert envelope.get("tenant_id") == "fallback-env-tenant"
 
 
-def test_envelope_omits_tenant_id_when_no_source(
+def test_envelope_tenant_id_unknown_when_no_source(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """_build_envelope omits tenant_id when neither override nor env vars are set."""
+    """_build_envelope uses ``"unknown"`` for tenant_id when neither override nor env vars are set.
+
+    tenant_id is always present (#477 Finding 2) so it is reliably queryable on every event.
+    """
     for var in [
         "FABRIC_TELEMETRY",
         "FABRIC_DISABLE_TELEMETRY",
@@ -1530,8 +1554,8 @@ def test_envelope_omits_tenant_id_when_no_source(
     mod = _reload_telemetry()
     mod._tenant_id_override = None  # type: ignore[attr-defined]
 
-    envelope = mod._build_envelope("cli")  # type: ignore[attr-defined]
-    assert "tenant_id" not in envelope
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
+    assert envelope.get("tenant_id") == "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -2200,29 +2224,27 @@ def test_emit_event_noop_when_telemetry_disabled(
     assert called == [], "_get_tracer must not be called when telemetry is disabled"
 
 
-def test_emit_event_produces_eventdata_envelope(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """emit_event must produce a customEvent log record that converts to EventData.
+def _build_test_envelope(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    install_id: str = "ccccdddd-dead-beef-1234-aaaaaaaaaaaa",
+    event_name: str = "test_custom_event",
+    resource_version: str = "1.2.3",
+) -> tuple[Any, Any, dict[str, Any]]:
+    """Shared helper: build and convert a log record through the real exporter.
 
-    Runs the emitted log record through the REAL Azure Monitor log exporter
-    conversion function (``_convert_log_to_envelope``) and asserts:
-    - ``envelope.data.base_type == "EventData"``  (lands in customEvents table)
-    - ``envelope.tags["ai.user.id"] == <install_id>``  (Users blade)
-    - event name present in envelope
-    - ``session_id`` in custom properties (customDimensions fallback for Sessions)
-
-    This test does NOT require a real network connection — it only exercises the
-    local envelope-construction logic, not the HTTP transport.
+    Returns ``(envelope, mod, custom_props)`` for assertions.
     """
-    # Lazy imports: the Azure Monitor SDK is not required at collection time.
-    from azure.monitor.opentelemetry.exporter.export.logs._exporter import _convert_log_to_envelope  # noqa: I001, PLC0415
-    from opentelemetry.sdk._logs._internal import InstrumentationScope  # noqa: PLC0415
+    from azure.monitor.opentelemetry.exporter.export.logs._exporter import (  # noqa: PLC0415
+        _convert_log_to_envelope,
+    )
+    from opentelemetry.sdk._logs._internal import (  # noqa: PLC0415
+        InstrumentationScope,
+        ReadableLogRecord,
+    )
     from opentelemetry.sdk._logs._internal import LogRecord as SDKLogRecord  # noqa: PLC0415
-    from opentelemetry.sdk._logs._internal import ReadableLogRecord  # noqa: PLC0415
     from opentelemetry.sdk.resources import Resource  # noqa: PLC0415
 
-    # Force telemetry on with a deterministic install ID.
     for var in (
         "FABRIC_TELEMETRY",
         "FABRIC_DISABLE_TELEMETRY",
@@ -2234,42 +2256,63 @@ def test_emit_event_produces_eventdata_envelope(
         "CIRCLECI",
         "GITLAB_CI",
         "TF_BUILD",
+        "AZURE_TENANT_ID",
+        "FABRIC_INTERACTIVE_TENANT_ID",
     ):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
-    # Write a known install ID so the test is deterministic.
-    known_install_id = "ccccdddd-dead-beef-1234-aaaaaaaaaaaa"
     config_dir = tmp_path / "fabric-dw"
     config_dir.mkdir(parents=True, exist_ok=True)
-    (config_dir / "install_id").write_text(known_install_id, encoding="utf-8")
+    (config_dir / "install_id").write_text(install_id, encoding="utf-8")
 
     mod = _reload_telemetry()
+    mod._tenant_id_override = None  # type: ignore[attr-defined]
 
-    # Construct the attributes exactly as emit_event would build them.
-    event_name = "test_custom_event"
-    envelope_attrs = mod._build_envelope("cli")  # type: ignore[attr-defined]
+    envelope_attrs = mod._build_envelope()  # type: ignore[attr-defined]
     merged: dict[str, object] = {**envelope_attrs}
     merged["microsoft.custom_event.name"] = event_name
     merged["enduser.pseudo.id"] = mod._get_install_id()  # type: ignore[attr-defined]
     merged["extra_dimension"] = "extra_value"
+    merged["ai.operation.name"] = event_name
 
-    # Build a real SDK log record (what the OTel Logger.emit() path would create).
     sdk_record = SDKLogRecord(attributes=merged)  # type: ignore[arg-type]  # ty: ignore[no-matching-overload]
-    resource = Resource.create({"service.name": "fabric_dw.telemetry"})
+    resource = Resource.create(
+        {
+            "service.namespace": "fabric-dw",
+            "service.name": "cli",
+            "service.instance.id": install_id,
+            "service.version": resource_version,
+            "device.id": install_id,
+        }
+    )
     scope = InstrumentationScope("fabric_dw.telemetry")
     readable = ReadableLogRecord(
         log_record=sdk_record, resource=resource, instrumentation_scope=scope
     )
-
-    # Run it through the real exporter conversion (no network call).
     envelope = _convert_log_to_envelope(readable)
+    assert envelope.data is not None
+    assert envelope.data.base_data is not None
+    custom_props: dict[str, Any] = envelope.data.base_data.properties or {}  # ty: ignore[unresolved-attribute]
+    return envelope, mod, custom_props
 
-    # --- Assertions ---
-    # The Azure Monitor SDK types have Optional fields; assert non-None before
-    # accessing nested attributes so the assertions are self-documenting.
-    assert envelope.data is not None, "envelope.data must not be None"
+
+def test_emit_event_produces_eventdata_envelope(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """emit_event must produce an EventData envelope with correct base fields.
+
+    Verifies: base_type, ai.user.id, event name, session_id (#460).
+    Does NOT require a real network connection.
+    """
+    known_install_id = "ccccdddd-dead-beef-1234-aaaaaaaaaaaa"
+    event_name = "test_custom_event"
+    envelope, _mod, custom_props = _build_test_envelope(
+        monkeypatch, tmp_path, install_id=known_install_id, event_name=event_name
+    )
+
     assert envelope.tags is not None, "envelope.tags must not be None"
+    assert envelope.data is not None
     assert envelope.data.base_type == "EventData", (
         f"Expected base_type='EventData' (customEvents), got {envelope.data.base_type!r}.  "
         "This means the log record would land in 'traces', not 'customEvents'."
@@ -2281,15 +2324,435 @@ def test_emit_event_produces_eventdata_envelope(
         "enduser.pseudo.id must map to ai.user.id for the Users blade."
     )
 
-    assert envelope.data.base_data is not None, "envelope.data.base_data must not be None"
-    event_data_name = envelope.data.base_data.name  # ty: ignore[unresolved-attribute]
+    assert envelope.data.base_data is not None
+    event_data_name = envelope.data.base_data.name  # type: ignore[union-attr]
     assert event_data_name == event_name, (
         f"Expected event name {event_name!r} in EventData, got {event_data_name!r}."
     )
 
-    custom_props = envelope.data.base_data.properties or {}  # ty: ignore[unresolved-attribute]
     assert "session_id" in custom_props, (
         "session_id must appear in customDimensions (custom properties).  "
         "ai.session.id has no attribute mapping in azure-monitor-opentelemetry-exporter "
         "1.0.0b53, so session_id is kept as a custom dimension for Logs blade queries."
+    )
+
+
+def test_emit_event_envelope_tenant_id_always_present(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """tenant_id must always be in customDimensions, never absent (#477 Finding 2)."""
+    _envelope, _mod, custom_props = _build_test_envelope(monkeypatch, tmp_path)
+
+    assert "tenant_id" in custom_props, (
+        "tenant_id must always appear in customDimensions so it is reliably queryable "
+        "on every event even when no tenant has been resolved yet (#477 Finding 2)."
+    )
+    assert custom_props["tenant_id"] == "unknown", (
+        "tenant_id must be 'unknown' when no tenant is resolved "
+        "(not absent — must be queryable on every event)."
+    )
+
+
+def test_emit_event_envelope_redundant_dimensions_dropped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """anonymous_install_id and is_ci must NOT be in customDimensions (#477 Finding 5)."""
+    _envelope, _mod, custom_props = _build_test_envelope(monkeypatch, tmp_path)
+
+    assert "anonymous_install_id" not in custom_props, (
+        "anonymous_install_id must not appear in customDimensions — it is already shipped "
+        "natively as user_Id (← enduser.pseudo.id).  Sending it twice is redundant (#477)."
+    )
+    assert "is_ci" not in custom_props, (
+        "is_ci must not appear in customDimensions — telemetry is disabled entirely in CI "
+        "so this was always False and carries no signal (#477)."
+    )
+
+
+def test_emit_event_envelope_part_a_native_fields(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Native Part A fields must be populated from the OTel Resource (#477).
+
+    Checks: cloud_RoleInstance = install_id (not hostname), cloud_RoleName not
+    unknown_service:*, application_Version, operation_Name.
+    """
+    import platform as _platform  # noqa: PLC0415
+
+    known_install_id = "ccccdddd-dead-beef-1234-aaaaaaaaaaaa"
+    event_name = "test_custom_event"
+    envelope, _mod, _custom_props = _build_test_envelope(
+        monkeypatch, tmp_path, install_id=known_install_id, event_name=event_name
+    )
+
+    assert envelope.tags is not None
+
+    # cloud_RoleInstance must be install_id, NOT platform.node() (#477 privacy fix).
+    role_instance = envelope.tags.get("ai.cloud.roleInstance")
+    hostname = _platform.node()
+    assert role_instance != hostname, (
+        f"cloud_RoleInstance must not be the machine hostname {hostname!r}.  "
+        "This would leak the user's real name on every event (#477 privacy fix)."
+    )
+    assert role_instance == known_install_id, (
+        f"cloud_RoleInstance must be the pseudonymous install_id {known_install_id!r}, "
+        f"got {role_instance!r}.  Set via resource service.instance.id (#477)."
+    )
+
+    # cloud_RoleName must be meaningful (not unknown_service:*) (#477 Finding 3).
+    role_name = envelope.tags.get("ai.cloud.role")
+    assert role_name is not None, "cloud_RoleName must not be None"
+    assert "unknown_service" not in role_name, (
+        f"cloud_RoleName must not be 'unknown_service:*', got {role_name!r}.  "
+        "Set via resource service.namespace + service.name (#477 Finding 3)."
+    )
+
+    # application_Version must be populated (#477 Finding 3).
+    app_version_tag = envelope.tags.get("ai.application.ver")
+    assert app_version_tag == "1.2.3", (
+        f"application_Version must be '1.2.3', got {app_version_tag!r}.  "
+        "Set via resource service.version (#477 Finding 3)."
+    )
+
+    # operation_Name must be set (#477 Finding 4).
+    op_name = envelope.tags.get("ai.operation.name")
+    assert op_name == event_name, (
+        f"operation_Name must be the event name {event_name!r}, got {op_name!r}.  "
+        "Set via ai.operation.name record attribute (#477 Finding 4)."
+    )
+
+
+# ---------------------------------------------------------------------------
+# #477: hostname privacy — _build_otel_resource prevents platform.node() fallback
+# ---------------------------------------------------------------------------
+
+
+def test_build_otel_resource_sets_service_instance_id_to_install_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """_build_otel_resource must set service.instance.id to the anonymous install_id.
+
+    This prevents the exporter from falling back to platform.node() for
+    cloud_RoleInstance, which would leak the machine hostname (#477 privacy fix).
+    """
+    from opentelemetry.sdk.resources import Resource  # noqa: PLC0415
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    known_install_id = "aaaa1111-dead-beef-1234-bbbbbbbbbbbb"
+    config_dir = tmp_path / "fabric-dw"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "install_id").write_text(known_install_id, encoding="utf-8")
+
+    mod = _reload_telemetry()
+    resource = mod._build_otel_resource("cli")  # type: ignore[attr-defined]
+
+    assert isinstance(resource, Resource), "_build_otel_resource must return a Resource"
+    attrs = dict(resource.attributes)
+    assert attrs.get("service.instance.id") == known_install_id, (
+        f"service.instance.id must be install_id {known_install_id!r}, "
+        f"got {attrs.get('service.instance.id')!r}.  "
+        "This prevents hostname fallback for cloud_RoleInstance (#477)."
+    )
+
+
+def test_build_otel_resource_sets_device_id_to_install_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """_build_otel_resource must set device.id to the anonymous install_id.
+
+    This prevents the exporter from falling back to platform.node() for
+    ai.device.id (#477 privacy fix).
+    """
+    from opentelemetry.sdk.resources import Resource  # noqa: PLC0415
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    known_install_id = "cccc3333-dead-beef-1234-dddddddddddd"
+    config_dir = tmp_path / "fabric-dw"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "install_id").write_text(known_install_id, encoding="utf-8")
+
+    mod = _reload_telemetry()
+    resource = mod._build_otel_resource("mcp")  # type: ignore[attr-defined]
+
+    assert isinstance(resource, Resource), "_build_otel_resource must return a Resource"
+    attrs = dict(resource.attributes)
+    assert attrs.get("device.id") == known_install_id, (
+        f"device.id must be install_id {known_install_id!r}, "
+        f"got {attrs.get('device.id')!r}.  "
+        "This prevents hostname fallback for ai.device.id (#477)."
+    )
+
+
+def test_build_otel_resource_service_instance_id_is_not_hostname(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """service.instance.id in the OTel Resource must never be the machine hostname.
+
+    The hostname is the fallback used by the exporter when service.instance.id
+    is absent.  We must always set a non-identifying value (#477 privacy fix).
+    """
+    import platform as _platform  # noqa: PLC0415
+
+    from opentelemetry.sdk.resources import Resource  # noqa: PLC0415
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    mod = _reload_telemetry()
+    resource = mod._build_otel_resource("cli")  # type: ignore[attr-defined]
+
+    assert isinstance(resource, Resource), "_build_otel_resource must return a Resource"
+    attrs = dict(resource.attributes)
+
+    hostname = _platform.node()
+    assert attrs.get("service.instance.id") != hostname, (
+        f"service.instance.id must not be the machine hostname {hostname!r}.  "
+        "This would leak the user's real name on every telemetry event (#477)."
+    )
+
+
+def test_build_otel_resource_sets_service_name_to_surface(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """_build_otel_resource must set service.name to the surface (cloud_RoleName)."""
+    from opentelemetry.sdk.resources import Resource  # noqa: PLC0415
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    mod = _reload_telemetry()
+    for surface in ("cli", "mcp"):
+        resource = mod._build_otel_resource(surface)  # type: ignore[attr-defined]
+        assert isinstance(resource, Resource)
+        attrs = dict(resource.attributes)
+        assert attrs.get("service.name") == surface, (
+            f"service.name must be {surface!r}, got {attrs.get('service.name')!r}"
+        )
+        assert attrs.get("service.namespace") == "fabric-dw", (
+            f"service.namespace must be 'fabric-dw', got {attrs.get('service.namespace')!r}"
+        )
+
+
+def test_get_tracer_passes_resource_to_configure_azure_monitor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """_get_tracer must pass a ``resource`` kwarg to configure_azure_monitor (#477).
+
+    The resource is what sets native Part A fields (cloud_RoleName, cloud_RoleInstance,
+    application_Version, ai.device.id) and prevents the hostname fallback.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
+    monkeypatch.delenv("CI", raising=False)
+    for ci_var in ("GITHUB_ACTIONS", "JENKINS_URL", "TRAVIS", "CIRCLECI", "GITLAB_CI", "TF_BUILD"):
+        monkeypatch.delenv(ci_var, raising=False)
+
+    mod = _reload_telemetry()
+
+    captured_kwargs: dict[str, object] = {}
+
+    def fake_configure(**kwargs: object) -> None:
+        captured_kwargs.update(kwargs)
+
+    fake_otel_logger = object()
+
+    fake_azure_mod: Any = types.ModuleType("azure.monitor.opentelemetry")
+    fake_azure_mod.configure_azure_monitor = fake_configure
+
+    fake_logs_mod: Any = types.ModuleType("opentelemetry._logs")
+    fake_logs_mod.get_logger = lambda *_a, **_kw: fake_otel_logger
+    fake_logs_mod.LogRecord = object
+    fake_logs_mod.SeverityNumber = object
+
+    mod._sdk_initialised = False
+    mod._tracer = None
+    mod._otel_logger = None
+
+    monkeypatch.setitem(sys.modules, "azure.monitor.opentelemetry", fake_azure_mod)
+    monkeypatch.setitem(sys.modules, "opentelemetry._logs", fake_logs_mod)
+
+    mod._get_tracer()
+
+    assert "resource" in captured_kwargs, (
+        "configure_azure_monitor must receive a 'resource' kwarg so native Part A fields "
+        "are set from the OTel Resource instead of hostname fallback (#477)."
+    )
+
+    mod._sdk_initialised = False
+    mod._tracer = None
+    mod._otel_logger = None
+
+
+def test_emit_event_sets_ai_operation_name(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """emit_event must set ai.operation.name on the log record (#477 Finding 4).
+
+    Callers can override by passing it in attributes; the event name is used as
+    a fallback for lifecycle events when it is not explicitly provided.
+    """
+    from azure.monitor.opentelemetry.exporter.export.logs._exporter import (  # noqa: PLC0415
+        _convert_log_to_envelope,
+    )
+    from opentelemetry.sdk._logs._internal import (  # noqa: PLC0415
+        InstrumentationScope,
+        ReadableLogRecord,
+    )
+    from opentelemetry.sdk._logs._internal import LogRecord as SDKLogRecord  # noqa: PLC0415
+    from opentelemetry.sdk.resources import Resource  # noqa: PLC0415
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    mod = _reload_telemetry()
+
+    # Simulate the attribute building done inside emit_event for a lifecycle event.
+    event_name = "app_started"
+    envelope_attrs = mod._build_envelope()  # type: ignore[attr-defined]
+    merged: dict[str, object] = {**envelope_attrs}
+    merged["microsoft.custom_event.name"] = event_name
+    merged["enduser.pseudo.id"] = mod._get_install_id()  # type: ignore[attr-defined]
+    # emit_event sets ai.operation.name = event_name when not already present.
+    if "ai.operation.name" not in merged:
+        merged["ai.operation.name"] = event_name
+
+    sdk_record = SDKLogRecord(attributes=merged)  # type: ignore[arg-type]  # ty: ignore[no-matching-overload]
+    resource = Resource.create({"service.name": "cli", "service.namespace": "fabric-dw"})
+    scope = InstrumentationScope("fabric_dw.telemetry")
+    readable = ReadableLogRecord(
+        log_record=sdk_record, resource=resource, instrumentation_scope=scope
+    )
+
+    envelope = _convert_log_to_envelope(readable)
+    assert envelope.tags is not None
+    op_name = envelope.tags.get("ai.operation.name")
+    assert op_name == event_name, (
+        f"ai.operation.name must be {event_name!r} on the envelope, got {op_name!r}.  "
+        "operation_Name should be populated for lifecycle events (#477 Finding 4)."
+    )
+
+
+def test_cloud_role_instance_from_resource_not_hostname(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """cloud_RoleInstance must come from service.instance.id, not platform.node().
+
+    This is the key privacy test for #477 Finding 1.  The exporter falls back to
+    platform.node() when service.instance.id is absent.  We must ensure our
+    resource attribute is set so the hostname is never shipped.
+    """
+    import platform as _platform  # noqa: PLC0415
+
+    from azure.monitor.opentelemetry.exporter.export.logs._exporter import (  # noqa: PLC0415
+        _convert_log_to_envelope,
+    )
+    from opentelemetry.sdk._logs._internal import (  # noqa: PLC0415
+        InstrumentationScope,
+        ReadableLogRecord,
+    )
+    from opentelemetry.sdk._logs._internal import LogRecord as SDKLogRecord  # noqa: PLC0415
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    known_install_id = "eeee5555-dead-beef-1234-ffffffffffff"
+    config_dir = tmp_path / "fabric-dw"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "install_id").write_text(known_install_id, encoding="utf-8")
+
+    mod = _reload_telemetry()
+
+    # Build a log record with our resource (as _get_tracer would do in production).
+    attrs: dict[str, object] = {
+        "microsoft.custom_event.name": "test_event",
+        "enduser.pseudo.id": known_install_id,
+        "ai.operation.name": "test_event",
+    }
+    sdk_record = SDKLogRecord(attributes=attrs)  # type: ignore[arg-type]  # ty: ignore[no-matching-overload]
+
+    # Use the resource built by _build_otel_resource (the production code path).
+    resource = mod._build_otel_resource("cli")  # type: ignore[attr-defined]
+    scope = InstrumentationScope("fabric_dw.telemetry")
+    readable = ReadableLogRecord(
+        log_record=sdk_record,
+        resource=resource,
+        instrumentation_scope=scope,  # type: ignore[arg-type]
+    )
+
+    envelope = _convert_log_to_envelope(readable)
+    assert envelope.tags is not None
+
+    hostname = _platform.node()
+    role_instance = envelope.tags.get("ai.cloud.roleInstance")
+
+    assert role_instance != hostname, (
+        f"cloud_RoleInstance must NOT be the machine hostname {hostname!r} — "
+        "hostnames often embed the user's real name (#477 privacy fix, Finding 1).  "
+        f"Got cloud_RoleInstance={role_instance!r}."
+    )
+    assert role_instance == known_install_id, (
+        f"cloud_RoleInstance must be the pseudonymous install_id {known_install_id!r}, "
+        f"got {role_instance!r}.  "
+        "Set via resource attribute service.instance.id (#477)."
+    )
+
+
+def test_ai_device_id_from_resource_not_hostname(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ai.device.id must come from install_id via the OTel Resource, not platform.node().
+
+    This is the privacy test for #477 (parallel to the cloud_RoleInstance check above).
+    The exporter falls back to platform.node() for ai.device.id when device.id is absent
+    from the resource.  We must ensure the device.id resource attribute is set so the
+    hostname is never shipped.
+    """
+    import platform as _platform  # noqa: PLC0415
+
+    from azure.monitor.opentelemetry.exporter.export.logs._exporter import (  # noqa: PLC0415
+        _convert_log_to_envelope,
+    )
+    from opentelemetry.sdk._logs._internal import (  # noqa: PLC0415
+        InstrumentationScope,
+        ReadableLogRecord,
+    )
+    from opentelemetry.sdk._logs._internal import LogRecord as SDKLogRecord  # noqa: PLC0415
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    known_install_id = "ffff6666-dead-beef-1234-aaaaaaaaaaaa"
+    config_dir = tmp_path / "fabric-dw"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "install_id").write_text(known_install_id, encoding="utf-8")
+
+    mod = _reload_telemetry()
+
+    # Build a log record using the production resource (as _get_tracer would do).
+    attrs: dict[str, object] = {
+        "microsoft.custom_event.name": "test_event",
+        "enduser.pseudo.id": known_install_id,
+        "ai.operation.name": "test_event",
+    }
+    sdk_record = SDKLogRecord(attributes=attrs)  # type: ignore[arg-type]  # ty: ignore[no-matching-overload]
+
+    # Use the resource built by _build_otel_resource (the production code path).
+    resource = mod._build_otel_resource("cli")  # type: ignore[attr-defined]
+    scope = InstrumentationScope("fabric_dw.telemetry")
+    readable = ReadableLogRecord(
+        log_record=sdk_record,
+        resource=resource,
+        instrumentation_scope=scope,  # type: ignore[arg-type]
+    )
+
+    envelope = _convert_log_to_envelope(readable)
+    assert envelope.tags is not None
+
+    hostname = _platform.node()
+    device_id = envelope.tags.get("ai.device.id")
+
+    assert device_id != hostname, (
+        f"ai.device.id must NOT be the machine hostname {hostname!r} — "
+        "hostnames often embed the user's real name (#477 privacy fix).  "
+        f"Got ai.device.id={device_id!r}."
+    )
+    assert device_id == known_install_id, (
+        f"ai.device.id must be the pseudonymous install_id {known_install_id!r}, "
+        f"got {device_id!r}.  "
+        "Set via resource attribute device.id (#477)."
     )

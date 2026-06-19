@@ -18,8 +18,9 @@ Architecture notes
 - All public functions are fire-and-forget: they catch every exception and
   never propagate errors to the caller.
 - No network calls are made when telemetry is disabled.
-- ``tenant_id`` is included in the envelope only when telemetry is enabled
-  (it comes from env vars; token-claim extraction is deferred to #366).
+- ``tenant_id`` is always present in the envelope (``"unknown"`` when unresolved)
+  so it is reliably queryable on every event.  Token-claim extraction is via
+  ``cache_tenant_id_from_token()`` (#366).
 - Auto-HTTP instrumentation is explicitly disabled to prevent MSAL OAuth
   request URLs (containing tenant IDs) from leaking as span attributes.
 - ``shutdown_on_exit`` is disabled; a bounded ``force_flush`` + ``provider.shutdown()``
@@ -39,9 +40,27 @@ land in the ``customEvents`` table and populate the App Insights
 
 Key attribute mappings in azure-monitor-opentelemetry-exporter 1.0.0b53:
 
+Record-level (per-event):
 - ``microsoft.custom_event.name`` → EventData.name  (``customEvents`` table)
 - ``enduser.pseudo.id``            → tags["ai.user.id"] ("Users" blade)
   (DO NOT use ``enduser.id`` — that maps to ``ai.user.authUserId``, a PII field)
+- ``ai.operation.name``            → tags["ai.operation.name"] ("operation_Name")
+  Set to the command/tool name on ``command_invoked`` events.
+
+Resource-level (set once, apply to all events via the OTel Resource):
+- ``service.namespace`` + ``service.name`` → tags["ai.cloud.role"] (``cloud_RoleName``)
+  Set to ``"fabric-dw"`` + surface (``"cli"`` | ``"mcp"``).
+- ``service.instance.id``          → tags["ai.cloud.roleInstance"] (``cloud_RoleInstance``)
+  Set to ``anonymous_install_id`` — NOT the machine hostname (#477 privacy fix).
+- ``service.version``              → tags["ai.application.ver"] (``application_Version``)
+  Populated from the package version.
+- ``device.id``                    → tags["ai.device.id"]
+  Set to ``anonymous_install_id`` to prevent hostname fallback (#477 privacy fix).
+
+Privacy: setting ``service.instance.id`` and ``device.id`` on the Resource prevents
+the exporter's hostname fallback (``platform.node()``) for ``cloud_RoleInstance``
+and ``ai.device.id`` respectively.  Hostnames often embed the user's real name
+(``sam-macbook``, ``DESKTOP-...``), which contradicts the project's anonymity stance.
 
 Sessions limitation: ``ai.session.id`` has NO attribute mapping in exporter
 1.0.0b53 (AI_SESSION_ID is never written to tags by the log exporter).  Native
@@ -332,41 +351,96 @@ def _detect_auth_mode() -> str:
 _tenant_id_override: str | None = None
 
 
-def _build_envelope(surface: str) -> dict[str, object]:
-    """Build the shared telemetry envelope attached to every event."""
-    import platform as _platform  # noqa: PLC0415
+def _build_envelope() -> dict[str, object]:
+    """Build the shared telemetry envelope attached to every event.
 
-    try:
-        from fabric_dw._version import __version__ as _version  # noqa: PLC0415
-    except Exception:
-        _version = "unknown"
+    Custom dimensions included here are those with no native Part A mapping.
+    Fields that have native App Insights homes are set via the OTel Resource
+    (``_build_otel_resource``) and are NOT duplicated here:
+
+    - ``app_version``  → native ``application_Version`` (resource ``service.version``)
+    - ``surface``      → native ``cloud_RoleName``       (resource ``service.name``)
+
+    Fields omitted entirely (dropped in #477):
+    - ``anonymous_install_id`` — already shipped natively as ``user_Id`` (← ``enduser.pseudo.id``)
+    - ``is_ci``                — ``is_ci=True`` never reached the backend (telemetry is suppressed
+                                 in CI); ``is_ci=False`` carries no signal.  The dimension was
+                                 always either absent or constant, so it was dropped.
+
+    ``tenant_id`` is always present (``"unknown"`` when unresolved) so it is
+    reliably queryable on every event.  No native Part A slot is reachable for
+    tenant on the log-record path in this exporter version; ``customDimensions``
+    is the correct mechanism here.
+    """
+    import platform as _platform  # noqa: PLC0415
 
     python_info = sys.version_info
     python_version = f"{python_info.major}.{python_info.minor}"
 
     # Prefer the runtime-set override (populated by #366 token-claim hook),
-    # then fall back to environment variables.
-    tenant_id = _tenant_id_override or (
-        os.environ.get("AZURE_TENANT_ID") or os.environ.get("FABRIC_INTERACTIVE_TENANT_ID") or None
+    # then fall back to environment variables, then "unknown" so the key is
+    # always present on every event (Finding 2 / #477).
+    tenant_id: str = (
+        _tenant_id_override
+        or os.environ.get("AZURE_TENANT_ID")
+        or os.environ.get("FABRIC_INTERACTIVE_TENANT_ID")
+        or "unknown"
     )
 
-    envelope: dict[str, object] = {
-        "anonymous_install_id": _get_install_id(),
+    return {
         "session_id": _SESSION_ID,
-        "app_version": _version,
         "python_version": python_version,
         "os": _platform.system().lower(),
         "arch": _platform.machine().lower(),
         "install_method": _detect_install_method(),
-        "surface": surface,
-        "is_ci": _is_ci(),
         "auth_mode": _detect_auth_mode(),
+        "tenant_id": tenant_id,
     }
-    # Only include tenant_id when a value is known — OTel attributes do not
-    # accept None, and omitting the key is cleaner than an empty string.
-    if tenant_id is not None:
-        envelope["tenant_id"] = tenant_id
-    return envelope
+
+
+def _build_otel_resource(surface: str) -> object | None:
+    """Build an OTel Resource that populates native Part A context fields.
+
+    The Resource is passed to ``configure_azure_monitor`` so the exporter
+    sets Part A tags from it rather than using hostname fallbacks.
+
+    Mappings (#477):
+    - ``service.namespace`` + ``service.name`` → ``cloud_RoleName`` / ``AppRoleName``
+      Gives a meaningful role name (e.g. ``"fabric-dw.cli"``) instead of
+      ``unknown_service:*``, and creates two Application Map nodes.
+    - ``service.instance.id`` = install_id → ``cloud_RoleInstance`` / ``AppRoleInstance``
+      Prevents hostname fallback (``platform.node()``).  The pseudonymous install UUID
+      is non-identifying and gives meaningful per-install instance counts.
+    - ``service.version`` = app_version → ``application_Version`` / ``AppVersion``
+      Enables version-adoption and release-regression views.
+    - ``device.id`` = install_id → ``ai.device.id``
+      ``_populate_part_a_fields`` overrides ``ai.device.id`` with this value only when
+      it is truthy; an empty string would leave the hostname default in place.
+
+    Returns the ``opentelemetry.sdk.resources.Resource`` object, or ``None`` if
+    the SDK import fails (the caller falls back to the default resource).
+    """
+    try:
+        from opentelemetry.sdk.resources import Resource  # noqa: PLC0415
+
+        try:
+            from fabric_dw._version import __version__ as _version  # noqa: PLC0415
+        except Exception:
+            _version = "unknown"
+
+        install_id = _get_install_id()
+
+        return Resource.create(
+            {
+                "service.namespace": "fabric-dw",
+                "service.name": surface,  # "cli" | "mcp" → cloud_RoleName = "fabric-dw.cli|mcp"
+                "service.instance.id": install_id,  # → cloud_RoleInstance (not hostname)
+                "service.version": _version,  # → application_Version
+                "device.id": install_id,  # → ai.device.id (not hostname)
+            }
+        )
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -464,6 +538,11 @@ def _get_tracer() -> object | None:
 
     Privacy / hang safeguards
     -------------------------
+    - ``resource`` is built via ``_build_otel_resource`` and passed to
+      ``configure_azure_monitor`` so ``service.instance.id`` and ``device.id``
+      are set explicitly.  This prevents the exporter from falling back to
+      ``platform.node()`` for ``cloud_RoleInstance`` / ``ai.device.id``, which
+      would leak the machine hostname on every event (#477 privacy fix).
     - ``instrumentation_options`` explicitly disables all auto-HTTP and Azure SDK
       instrumentors so MSAL OAuth URLs (containing tenant IDs) are never captured
       as span attributes (B1).
@@ -515,29 +594,39 @@ def _get_tracer() -> object | None:
         # respected.
         os.environ.setdefault("APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL", "true")
 
-        configure_azure_monitor(
-            connection_string=_get_connection_string(),
-            logger_name="fabric_dw.telemetry",
+        # Build the OTel Resource that populates native Part A fields and prevents
+        # hostname fallback for cloud_RoleInstance / ai.device.id (#477).
+        resource = _build_otel_resource(_current_surface)
+
+        configure_kwargs: dict[str, object] = {
+            "connection_string": _get_connection_string(),
+            "logger_name": "fabric_dw.telemetry",
             # disable_logging=False (default) is intentional: the log/event
             # exporter must be active so customEvents land in the customEvents
             # table.  Without the logs pipeline, log records carrying
             # microsoft.custom_event.name are silently dropped and events never
             # appear in the App Insights "Usage → Events" or "Usage → Users" blades.
-            disable_logging=False,
-            disable_metrics=True,
+            "disable_logging": False,
+            "disable_metrics": True,
             # A1: disable PerformanceCounters — not covered by disable_metrics in
             # azure-monitor-opentelemetry 1.8+; its _get_processor_time callback
             # divides by zero on short-lived processes and logs a traceback (#399).
-            enable_performance_counters=False,
+            "enable_performance_counters": False,
             # A2: belt-and-suspenders — QuickPulse must never ping the LiveEndpoint.
             # Suppresses _quickpulse/_exporter.py::_ping tracebacks on connection
             # refused even if the default changes in a future SDK version (#411).
-            enable_live_metrics=False,
+            "enable_live_metrics": False,
             # B2: disable unbounded (30 s) atexit flush — we do our own bounded flush.
-            shutdown_on_exit=False,
+            "shutdown_on_exit": False,
             # B1: disable all auto-HTTP / Azure SDK instrumentors (privacy).
-            instrumentation_options=_INSTRUMENTATION_OPTIONS,
-        )
+            "instrumentation_options": _INSTRUMENTATION_OPTIONS,
+        }
+        # Pass the resource when available so native Part A fields are populated
+        # (cloud_RoleName, cloud_RoleInstance, application_Version, ai.device.id).
+        if resource is not None:
+            configure_kwargs["resource"] = resource
+
+        configure_azure_monitor(**configure_kwargs)
         # Obtain the OTel Logger via the global LoggerProvider set up by
         # configure_azure_monitor.  This logger is used in emit_event to fire
         # customEvents as log records (not spans).
@@ -720,6 +809,11 @@ def emit_event(name: str, attributes: dict[str, object]) -> None:
     carries ``ai.user.id`` (→ "Usage → Users" blade).  This is a randomly
     generated UUID — not a username, email, or any PII.
 
+    Callers may pass ``ai.operation.name`` in *attributes* to populate the
+    native ``operation_Name`` Part A field.  ``emit_command_invoked`` sets
+    this to the command/tool name so it appears in the portal's "Operation
+    Name" column instead of being blank.
+
     Sessions note: ``ai.session.id`` has no attribute mapping in
     azure-monitor-opentelemetry-exporter 1.0.0b53.  ``session_id`` is therefore
     kept as a custom dimension (customDimensions) so it is query-able in the
@@ -738,10 +832,10 @@ def emit_event(name: str, attributes: dict[str, object]) -> None:
 
         from opentelemetry._logs import LogRecord  # noqa: PLC0415
 
-        envelope = _build_envelope(_current_surface)
+        envelope = _build_envelope()
         merged: dict[str, object] = {**envelope, **attributes}
 
-        # Add the two special attributes that drive native App Insights mapping:
+        # Add the special attributes that drive native App Insights mapping:
         #   microsoft.custom_event.name → EventData.name (customEvents table)
         #   enduser.pseudo.id           → ai.user.id ("Users" blade)
         # NOTE: enduser.pseudo.id contains the anonymous install UUID — a random
@@ -750,6 +844,10 @@ def emit_event(name: str, attributes: dict[str, object]) -> None:
         # which maps to ai.user.authUserId (authenticated / PII field).
         merged["microsoft.custom_event.name"] = name
         merged["enduser.pseudo.id"] = _get_install_id()
+        # ai.operation.name may already be in merged (set by caller e.g. emit_command_invoked).
+        # It is left as-is when present; only set the event name as fallback for lifecycle events.
+        if "ai.operation.name" not in merged:
+            merged["ai.operation.name"] = name
 
         record = LogRecord(  # ty: ignore[no-matching-overload]
             attributes=merged,  # type: ignore[arg-type]
@@ -773,7 +871,9 @@ def record_app_started(surface: str) -> None:
     """
     global _current_surface  # noqa: PLW0603
     _current_surface = surface
-    emit_event("app_started", {"surface": surface})
+    # ``surface`` is no longer sent as a custom dimension: it is shipped natively
+    # as ``cloud_RoleName`` via the OTel Resource (``service.name`` = surface).
+    emit_event("app_started", {})
 
 
 def record_app_exited(

@@ -340,7 +340,6 @@ class TestEmitCommandInvokedDisabled:
         with patch(_EMIT_EVENT) as mock_emit, patch(_TELEMETRY_ENABLED, return_value=False):
             emit_command_invoked(
                 name="warehouses.list",
-                surface="cli",
                 status="success",
                 duration_ms=50.0,
             )
@@ -375,7 +374,6 @@ class TestEmitCommandInvokedEnabled:
     def test_emits_one_event(self) -> None:
         mock = self._run(
             name="warehouses.list",
-            surface="cli",
             status="success",
             duration_ms=50.0,
         )
@@ -384,7 +382,6 @@ class TestEmitCommandInvokedEnabled:
     def test_event_name_is_command_invoked(self) -> None:
         mock = self._run(
             name="warehouses.list",
-            surface="cli",
             status="success",
             duration_ms=50.0,
         )
@@ -394,7 +391,6 @@ class TestEmitCommandInvokedEnabled:
     def test_attributes_contain_name(self) -> None:
         mock = self._run(
             name="warehouses.list",
-            surface="cli",
             status="success",
             duration_ms=50.0,
         )
@@ -404,37 +400,41 @@ class TestEmitCommandInvokedEnabled:
     def test_attributes_contain_domain(self) -> None:
         mock = self._run(
             name="warehouses.list",
-            surface="cli",
             status="success",
             duration_ms=50.0,
         )
         attrs: dict = mock.call_args[0][1]
         assert attrs["domain"] == "warehouses"
 
-    def test_attributes_contain_surface_cli(self) -> None:
+    def test_surface_not_in_custom_dimensions(self) -> None:
+        """surface must NOT appear as a custom dimension — native cloud_RoleName now (#477)."""
         mock = self._run(
             name="warehouses.list",
-            surface="cli",
             status="success",
             duration_ms=50.0,
         )
         attrs: dict = mock.call_args[0][1]
-        assert attrs["surface"] == "cli"
+        assert "surface" not in attrs, (
+            "surface must not be in emit_event attrs — it is now shipped natively as "
+            "cloud_RoleName via the OTel Resource (#477 Finding 3)."
+        )
 
-    def test_attributes_contain_surface_mcp(self) -> None:
+    def test_attributes_contain_ai_operation_name(self) -> None:
+        """ai.operation.name must be set to the command name for native operation_Name (#477)."""
         mock = self._run(
-            name="list_warehouses",
-            surface="mcp",
+            name="warehouses.list",
             status="success",
             duration_ms=50.0,
         )
         attrs: dict = mock.call_args[0][1]
-        assert attrs["surface"] == "mcp"
+        assert attrs.get("ai.operation.name") == "warehouses.list", (
+            "ai.operation.name must equal the command name so operation_Name is "
+            "populated in the portal (#477 Finding 4)."
+        )
 
     def test_attributes_contain_status(self) -> None:
         mock = self._run(
             name="warehouses.list",
-            surface="cli",
             status="success",
             duration_ms=50.0,
         )
@@ -444,7 +444,6 @@ class TestEmitCommandInvokedEnabled:
     def test_attributes_contain_duration_bucket(self) -> None:
         mock = self._run(
             name="warehouses.list",
-            surface="cli",
             status="success",
             duration_ms=50.0,
         )
@@ -454,7 +453,6 @@ class TestEmitCommandInvokedEnabled:
     def test_destructive_op_attribute_when_true(self) -> None:
         mock = self._run(
             name="delete_warehouse",
-            surface="mcp",
             status="success",
             duration_ms=200.0,
             destructive=True,
@@ -465,7 +463,6 @@ class TestEmitCommandInvokedEnabled:
     def test_destructive_op_absent_when_false(self) -> None:
         mock = self._run(
             name="list_warehouses",
-            surface="mcp",
             status="success",
             duration_ms=50.0,
             destructive=False,
@@ -477,7 +474,6 @@ class TestEmitCommandInvokedEnabled:
         """The emitted attributes must not contain any identifier-like strings."""
         mock = self._run(
             name="warehouses.list",
-            surface="cli",
             status="success",
             duration_ms=50.0,
         )
@@ -501,7 +497,6 @@ class TestEmitCommandInvokedEnabled:
             # Must not raise.
             emit_command_invoked(
                 name="warehouses.list",
-                surface="cli",
                 status="success",
                 duration_ms=50.0,
             )
@@ -548,12 +543,17 @@ class TestCliCommandInvokedInstrumentation:
         attrs: dict = command_invoked_calls[0][0][1]
         assert attrs["name"] == "cache.clear"
 
-    def test_cache_clear_surface_is_cli(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_cache_clear_surface_not_in_custom_dimensions(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """surface must not be in command_invoked attrs — it is native cloud_RoleName (#477)."""
         mock = self._run_cli(["cache", "clear"], monkeypatch)
         command_invoked_calls = [c for c in mock.call_args_list if c[0][0] == "command_invoked"]
         assert command_invoked_calls
         attrs: dict = command_invoked_calls[0][0][1]
-        assert attrs["surface"] == "cli"
+        assert "surface" not in attrs, (
+            "surface must not appear in command_invoked attrs (#477 Finding 3)"
+        )
 
     def test_cache_clear_domain_is_cache(self, monkeypatch: pytest.MonkeyPatch) -> None:
         mock = self._run_cli(["cache", "clear"], monkeypatch)
@@ -589,13 +589,17 @@ class TestCliCommandInvokedInstrumentation:
         attrs: dict = command_invoked_calls[0][0][1]
         assert attrs["name"] == "sql"
 
-    def test_sql_direct_surface_is_cli(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """command_invoked surface for the direct ``sql`` command is ``"cli"``."""
+    def test_sql_direct_surface_not_in_custom_dimensions(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """command_invoked must not include surface as a custom dimension (#477)."""
         mock = self._run_cli(["sql", "--help"], monkeypatch)
         command_invoked_calls = [c for c in mock.call_args_list if c[0][0] == "command_invoked"]
         assert command_invoked_calls
         attrs: dict = command_invoked_calls[0][0][1]
-        assert attrs["surface"] == "cli"
+        assert "surface" not in attrs, (
+            "surface must not appear in command_invoked attrs (#477 Finding 3)"
+        )
 
     def test_sql_direct_domain_is_sql(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """command_invoked domain for the direct ``sql`` command is ``"sql"``."""
@@ -744,7 +748,8 @@ class TestMcpCommandInvokedInstrumentation:
         attrs: dict = mock_emit.call_args_list[-1][0][1]
         assert attrs["name"] == "list_warehouses"
 
-    def test_wrap_surface_is_mcp(self) -> None:
+    def test_wrap_surface_not_in_custom_dimensions(self) -> None:
+        """surface must not appear in MCP command_invoked attrs (#477 Finding 3)."""
         import asyncio  # noqa: PLC0415
 
         from fabric_dw.mcp._helpers import _wrap_mcp_tool_with_telemetry  # noqa: PLC0415
@@ -758,7 +763,10 @@ class TestMcpCommandInvokedInstrumentation:
             asyncio.run(wrapped())
 
         attrs: dict = mock_emit.call_args_list[-1][0][1]
-        assert attrs["surface"] == "mcp"
+        assert "surface" not in attrs, (
+            "surface must not appear in MCP command_invoked attrs — it is now "
+            "native cloud_RoleName via the OTel Resource (#477 Finding 3)."
+        )
 
     def test_wrap_destructive_flag(self) -> None:
         import asyncio  # noqa: PLC0415
