@@ -4,6 +4,7 @@ Requires workspace admin rights on FABRIC_TEST_WORKSPACE_ID.
 Run only in environments where admin credentials are available.
 """
 
+import contextlib
 from uuid import UUID
 
 import pytest
@@ -14,6 +15,34 @@ from fabric_dw.models import SqlPool, SqlPoolsConfiguration
 from fabric_dw.services import sql_pools
 
 pytestmark = pytest.mark.integration
+
+# Prefix used to identify pools created by test runs so stale pools can be
+# cleaned up before a new run tries to create pools with the same names or
+# would push the sum of maxResourcePercentage over 100.
+_PYTEST_POOL_PREFIX = "pytest"
+
+
+async def _remove_stale_pytest_pools(
+    http: FabricHttpClient,
+    workspace_id: UUID,
+) -> None:
+    """Remove any leftover pytest-created custom SQL pools from the workspace.
+
+    Pools whose name starts with ``_PYTEST_POOL_PREFIX`` are considered
+    test-owned.  They may be left behind when a previous run is interrupted
+    before teardown completes (e.g. a transient connection drop mid-finally).
+    Calling this helper before creating new pools prevents the sum of
+    ``maxResourcePercentage`` across all pools from exceeding 100.
+
+    The operation is best-effort: individual delete failures are suppressed so
+    that a partial cleanup does not mask the original test failure.  If no
+    stale pools exist, this is a no-op (one GET, zero PATCHes).
+    """
+    current = await sql_pools.get_configuration(http, workspace_id)
+    stale = [p for p in current.custom_sql_pools if p.name.startswith(_PYTEST_POOL_PREFIX)]
+    for pool in stale:
+        with contextlib.suppress(Exception):
+            await sql_pools.delete_pool(http, workspace_id, pool.name)
 
 
 async def test_get_configuration_returns_model(http: FabricHttpClient, workspace_id: UUID) -> None:
@@ -55,7 +84,18 @@ async def test_enable_disable_roundtrip(http: FabricHttpClient, workspace_id: UU
 
 
 async def test_create_update_delete_roundtrip(http: FabricHttpClient, workspace_id: UUID) -> None:
-    """Integration test: create → update → delete roundtrip for a single pool."""
+    """Integration test: create → update → delete roundtrip for a single pool.
+
+    Before creating the test pool, any stale ``pytest``-prefixed pools left by
+    interrupted prior runs are removed.  This prevents the sum of
+    ``maxResourcePercentage`` from exceeding 100 when a previous teardown did
+    not complete (e.g. due to a transient connection drop).
+    """
+    # Purge any leftover test pools so that the workspace starts clean.
+    # This must happen before capturing ``original`` so that the saved state
+    # does not include stale pools that would be re-introduced on restore.
+    await _remove_stale_pytest_pools(http, workspace_id)
+
     original = await sql_pools.get_configuration(http, workspace_id)
 
     pool_name = "pytest-integration-pool"
