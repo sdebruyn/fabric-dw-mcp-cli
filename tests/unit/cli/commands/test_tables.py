@@ -350,6 +350,86 @@ class TestTablesRead:
 
 
 # ===========================================================================
+# tables count
+# ===========================================================================
+
+
+class TestTablesCount:
+    def test_count_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.count_table_rows",
+                new=AsyncMock(return_value=42),
+            ),
+        ):
+            result = runner.invoke(cli, ["-w", WS_GUID, "tables", "count", WH_GUID, "dbo.sales"])
+        assert result.exit_code == 0
+
+    def test_count_renders_row_count(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.count_table_rows",
+                new=AsyncMock(return_value=99),
+            ),
+        ):
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "--json", "tables", "count", WH_GUID, "dbo.sales"]
+            )
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["schema"] == "dbo"
+        assert parsed["name"] == "sales"
+        assert parsed["row_count"] == 99
+
+    def test_count_bad_qualified_name_exits_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        result = runner.invoke(cli, ["-w", WS_GUID, "tables", "count", WH_GUID, "nodot"])
+        assert result.exit_code != 0
+
+    def test_count_fabric_error_exits_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.count_table_rows",
+                new=AsyncMock(side_effect=NotFoundError("table not found")),
+            ),
+        ):
+            result = runner.invoke(cli, ["-w", WS_GUID, "tables", "count", WH_GUID, "dbo.missing"])
+        assert result.exit_code != 0
+
+
+# ===========================================================================
 # tables create
 # ===========================================================================
 

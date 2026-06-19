@@ -15,7 +15,12 @@ from fabric_dw.exceptions import AuthError, ItemKindError, NotFoundError, Permis
 from fabric_dw.models import ColumnSpec, Table, WarehouseKind
 from fabric_dw.services import tables
 from fabric_dw.services.tables import validate_identifier
-from tests.unit.services._helpers import _make_conn, _make_conn_for_ddl, _make_target
+from tests.unit.services._helpers import (
+    _make_conn,
+    _make_conn_for_ddl,
+    _make_no_result_conn,
+    _make_target,
+)
 
 # ---------------------------------------------------------------------------
 # Fixture data
@@ -349,6 +354,77 @@ class TestReadTable:
         with patch("fabric_dw.sql.open_connection", return_value=conn):
             await tables.read_table(target, "dbo", "sales")
         conn.close.assert_called_once()
+
+
+# ===========================================================================
+# count_table_rows
+# ===========================================================================
+
+
+class TestCountTableRows:
+    async def test_returns_row_count(self) -> None:
+        target = _make_target()
+        conn = _make_conn([(42,)], ["row_count"])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await tables.count_table_rows(target, "dbo", "sales")
+        assert result == 42
+
+    async def test_returns_zero_for_empty_table(self) -> None:
+        target = _make_target()
+        conn = _make_conn([(0,)], ["row_count"])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await tables.count_table_rows(target, "dbo", "sales")
+        assert result == 0
+
+    async def test_sql_uses_count_big(self) -> None:
+        target = _make_target()
+        conn = _make_conn([(10,)], ["row_count"])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await tables.count_table_rows(target, "dbo", "sales")
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0].upper()
+        assert "COUNT_BIG(*)" in call_sql
+
+    async def test_sql_uses_bracket_quoting(self) -> None:
+        target = _make_target()
+        conn = _make_conn([(5,)], ["row_count"])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await tables.count_table_rows(target, "dbo", "sales")
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert "[dbo]" in call_sql
+        assert "[sales]" in call_sql
+
+    async def test_validates_schema_identifier(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await tables.count_table_rows(target, "bad;schema", "sales")
+
+    async def test_validates_table_name_identifier(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await tables.count_table_rows(target, "dbo", "table--injection")
+
+    async def test_fabric_error_propagates(self) -> None:
+        target = _make_target()
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.execute.side_effect = Exception("permission was denied on object sales")
+        conn.cursor.return_value = cursor
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(PermissionDeniedError),
+        ):
+            await tables.count_table_rows(target, "dbo", "sales")
+
+    async def test_raises_not_found_when_description_is_none(self) -> None:
+        target = _make_target()
+        conn = _make_no_result_conn()
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(NotFoundError),
+        ):
+            await tables.count_table_rows(target, "dbo", "missing")
 
 
 # ===========================================================================

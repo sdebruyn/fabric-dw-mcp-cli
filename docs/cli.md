@@ -1229,6 +1229,30 @@ fabric-dw -w MyWorkspace views rename SalesWH dbo.vw_recent --new-name vw_revenu
 
 ---
 
+### views count
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Return the total row count of a view using `SELECT COUNT_BIG(*)`.
+
+**Synopsis**
+
+```
+fabric-dw [-w WORKSPACE] views count [WAREHOUSE] QUALIFIED_NAME
+```
+
+**Example**
+
+```shell
+fabric-dw -w MyWorkspace views count SalesWH dbo.vw_sales
+```
+
+```json
+{"schema": "dbo", "name": "vw_sales", "row_count": 12345}
+```
+
+---
+
 ### views read
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -1609,6 +1633,30 @@ fabric-dw -w MyWorkspace tables list SalesWH --schema dbo
  ------------ --------- --------------------- ---------------------
  dbo          customers 2026-01-10T08:00:00Z  2026-06-01T12:00:00Z
  dbo          orders    2026-02-01T09:00:00Z  2026-05-15T14:00:00Z
+```
+
+---
+
+### tables count
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Return the total row count of a table using `SELECT COUNT_BIG(*)`.
+
+**Synopsis**
+
+```
+fabric-dw [-w WORKSPACE] tables count [WAREHOUSE] QUALIFIED_NAME
+```
+
+**Example**
+
+```shell
+fabric-dw -w MyWorkspace tables count SalesWH dbo.orders
+```
+
+```json
+{"schema": "dbo", "name": "orders", "row_count": 999999}
 ```
 
 ---

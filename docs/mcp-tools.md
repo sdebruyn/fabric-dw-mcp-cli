@@ -796,6 +796,22 @@ Rename a SQL view via `sp_rename`. Works on both Data Warehouses and SQL Analyti
 
 ---
 
+### count_view_rows
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Return the total row count of a view via `SELECT COUNT_BIG(*)`.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`) — dot-separated schema and view name, e.g. `dbo.vw_sales`.
+
+**Returns:** `{ "schema": str, "name": str, "row_count": int }` — the schema name, view name, and total row count.
+
+---
+
 ### read_view
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -832,6 +848,22 @@ List SQL tables on a warehouse or SQL Analytics Endpoint.
 - `schema` (`str | null`, optional) — when provided, only tables in this schema are returned.
 
 **Returns:** `list[Table]` — each with `schema_name`, `name`, `qualified_name`, `created`, `modified`.
+
+---
+
+### count_table_rows
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Return the total row count of a table via `SELECT COUNT_BIG(*)`.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`) — dot-separated table name, e.g. `dbo.sales`.
+
+**Returns:** `{ "schema": str, "name": str, "row_count": int }` — the schema name, table name, and total row count.
 
 ---
 

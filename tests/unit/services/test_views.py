@@ -11,7 +11,12 @@ from fabric_dw.exceptions import AuthError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import View
 from fabric_dw.services import views
 from fabric_dw.services.views import read_view, validate_identifier
-from tests.unit.services._helpers import _make_conn, _make_conn_for_ddl, _make_target
+from tests.unit.services._helpers import (
+    _make_conn,
+    _make_conn_for_ddl,
+    _make_no_result_conn,
+    _make_target,
+)
 
 # ---------------------------------------------------------------------------
 # Fixture data
@@ -362,6 +367,77 @@ class TestReadView:
         call_sql: str = cursor.execute.call_args[0][0].upper()
         # Assert the full TOP clause to avoid accidental matches on other numbers.
         assert "TOP (10)" in call_sql
+
+
+# ===========================================================================
+# count_view_rows
+# ===========================================================================
+
+
+class TestCountViewRows:
+    async def test_returns_row_count(self) -> None:
+        target = _make_target()
+        conn = _make_conn([(42,)], ["row_count"])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await views.count_view_rows(target, "dbo", "vw_sales")
+        assert result == 42
+
+    async def test_returns_zero_for_empty_view(self) -> None:
+        target = _make_target()
+        conn = _make_conn([(0,)], ["row_count"])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await views.count_view_rows(target, "dbo", "vw_sales")
+        assert result == 0
+
+    async def test_sql_uses_count_big(self) -> None:
+        target = _make_target()
+        conn = _make_conn([(10,)], ["row_count"])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await views.count_view_rows(target, "dbo", "vw_sales")
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0].upper()
+        assert "COUNT_BIG(*)" in call_sql
+
+    async def test_sql_uses_bracket_quoting(self) -> None:
+        target = _make_target()
+        conn = _make_conn([(5,)], ["row_count"])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await views.count_view_rows(target, "dbo", "vw_sales")
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert "[dbo]" in call_sql
+        assert "[vw_sales]" in call_sql
+
+    async def test_validates_schema_identifier(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await views.count_view_rows(target, "bad;schema", "vw_sales")
+
+    async def test_validates_view_name_identifier(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await views.count_view_rows(target, "dbo", "view--injection")
+
+    async def test_fabric_error_propagates(self) -> None:
+        target = _make_target()
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.execute.side_effect = Exception("permission was denied on object vw_sales")
+        conn.cursor.return_value = cursor
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(PermissionDeniedError),
+        ):
+            await views.count_view_rows(target, "dbo", "vw_sales")
+
+    async def test_raises_not_found_when_description_is_none(self) -> None:
+        target = _make_target()
+        conn = _make_no_result_conn()
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(NotFoundError),
+        ):
+            await views.count_view_rows(target, "dbo", "missing")
 
 
 # ===========================================================================

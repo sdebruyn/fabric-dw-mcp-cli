@@ -5,6 +5,7 @@ Public API
 - :func:`validate_identifier` — re-exported from :mod:`fabric_dw.identifiers`.
 - :func:`list_views`          — list all views (optionally filtered by schema).
 - :func:`read_view`           — ``SELECT TOP (N) * FROM [schema].[view]``.
+- :func:`count_view_rows`     — ``SELECT COUNT_BIG(*) FROM [schema].[view]``.
 - :func:`get_view`            — fetch a single view with its definition.
 - :func:`create_view`         — issue CREATE VIEW … AS <select_body>.
 - :func:`update_view`         — issue CREATE OR ALTER VIEW … AS <select_body>.
@@ -26,6 +27,7 @@ from fabric_dw.services._helpers import reject_non_select
 from fabric_dw.sql import SqlTarget, run_query
 
 __all__ = [
+    "count_view_rows",
     "create_view",
     "drop_view",
     "get_view",
@@ -42,6 +44,9 @@ __all__ = [
 
 # TOP count is injected as a literal int (not user input) — safe.
 _READ_VIEW_SQL = "SELECT TOP ({count}) * FROM {schema_q}.{view_q};"
+
+# COUNT_BIG(*) is bigint-safe (avoids INT overflow on wide views).
+_COUNT_VIEW_SQL = "SELECT COUNT_BIG(*) AS row_count FROM {schema_q}.{view_q};"
 
 _LIST_VIEWS_SQL = """\
 SELECT
@@ -198,6 +203,50 @@ async def read_view(
             msg = f"View [{schema}].[{view_name}] not found"
             raise NotFoundError(msg)
         return cols, list(rows)
+
+    return await asyncio.to_thread(_run)
+
+
+async def count_view_rows(
+    target: SqlTarget,
+    schema: str,
+    view_name: str,
+    *,
+    mode: CredentialMode = CredentialMode.DEFAULT,
+) -> int:
+    """Return the total row count of *schema*.*view_name* via ``COUNT_BIG(*)``.
+
+    Uses ``COUNT_BIG(*)`` rather than ``COUNT(*)`` to avoid integer overflow on
+    views that return more than 2 147 483 647 rows.
+
+    Args:
+        target: The warehouse or SQL Analytics Endpoint to query.
+        schema: The schema name.  Must pass :func:`validate_identifier`.
+        view_name: The view name.  Must pass :func:`validate_identifier`.
+        mode: The credential mode for Entra authentication.
+
+    Returns:
+        The number of rows in the view as a Python :class:`int`.
+
+    Raises:
+        ValueError: If *schema* or *view_name* fails identifier validation.
+        FabricError: If the view does not exist or the engine reports an error.
+        PermissionDeniedError: If the driver reports a permission error.
+    """
+    validate_identifier(schema)
+    validate_identifier(view_name)
+
+    count_sql = _COUNT_VIEW_SQL.format(
+        schema_q=quote_identifier(schema),
+        view_q=quote_identifier(view_name),
+    )
+
+    def _run() -> int:
+        _cols, rows = run_query(target, count_sql, mode=mode)
+        if not rows:
+            msg = f"View [{schema}].[{view_name}] not found"
+            raise NotFoundError(msg)
+        return int(rows[0][0])
 
     return await asyncio.to_thread(_run)
 
