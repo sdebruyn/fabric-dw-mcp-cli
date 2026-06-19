@@ -2397,8 +2397,11 @@ fabric-dw -w MyWorkspace sql-pools insights SalesWH
 
 Manage user-defined statistics on Fabric Data Warehouses and read their details on SQL Analytics Endpoints.
 
-> **Note:** Only **single-column, histogram-based** statistics can be created or updated (Fabric limitation). Multi-column statistics are not supported.
-> DDL operations (`create`, `update`, `delete`) require a **Data Warehouse** — they are rejected client-side on SQL Analytics Endpoints. `list` and `show` work on both item kinds.
+!!! note
+
+    Only **single-column, histogram-based** statistics can be created or updated (Fabric limitation). Multi-column statistics are not supported.
+
+    DDL operations (`create`, `update`, `delete`) require a **Data Warehouse** — they are rejected client-side on SQL Analytics Endpoints. `list` and `show` work on both item kinds.
 
 ### statistics list
 
@@ -2592,7 +2595,9 @@ No dbt installation is required to run these commands — `fabric-dw` generates 
 
 Scaffold a new dbt project directory connected to a Fabric Data Warehouse. The command creates the folder, writes `dbt_project.yml`, `profiles.yml`, `requirements.txt`, `.gitignore`, standard dbt model directories, a sample model, and a README. If `git` is on your PATH and the target folder is not already a git repository, `git init` is run automatically.
 
-> **Security note** — when `--auth sp` (Service Principal) is used, `profiles.yml` emits Jinja2 `env_var()` placeholders (`{{ env_var('AZURE_TENANT_ID') }}` etc.) instead of literal secrets. You must set `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, and `AZURE_CLIENT_SECRET` in your environment before running dbt.
+!!! warning "Security"
+
+    When `--auth sp` (Service Principal) is used, `profiles.yml` emits Jinja2 `env_var()` placeholders (`{{ env_var('AZURE_TENANT_ID') }}` etc.) instead of literal secrets. You must set `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, and `AZURE_CLIENT_SECRET` in your environment before running dbt.
 
 **Usage**
 
