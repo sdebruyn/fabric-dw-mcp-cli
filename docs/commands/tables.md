@@ -10,7 +10,7 @@ Manage SQL tables on Microsoft Fabric Data Warehouses and SQL Analytics Endpoint
 
 !!! note "List source"
 
-    No public REST API exists for enumerating warehouse tables. `tables list` (CLI) and `list_tables` (MCP) fall back to TDS via `sys.tables JOIN sys.schemas`, the same approach used by `views list` / `list_views`.
+    No public REST API exists for enumerating warehouse tables. `tables list` (CLI) falls back to TDS via `sys.tables JOIN sys.schemas`, the same approach used by `views list`. `list_tables` (MCP) uses TDS `sys.tables JOIN sys.schemas`.
 
 ---
 
