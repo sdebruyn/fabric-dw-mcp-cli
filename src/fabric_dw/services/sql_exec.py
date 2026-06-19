@@ -17,7 +17,7 @@ from uuid import UUID
 
 from fabric_dw import sql
 from fabric_dw.auth import CredentialMode
-from fabric_dw.exceptions import PermissionDeniedError
+from fabric_dw.exceptions import FabricError, PermissionDeniedError
 from fabric_dw.models import SqlResult
 from fabric_dw.sql import SqlTarget
 
@@ -25,6 +25,13 @@ __all__ = ["execute", "get_plan"]
 
 # Column-name suffix applied to varbinary columns so callers can detect them.
 _BINARY_SUFFIX = "__base64"
+
+# Shared hint appended to PermissionDeniedError raised from SQL execution.
+_SQL_EXEC_PERMISSION_HINT = (
+    "The caller must have at least READ permission on the "
+    "warehouse/SQL endpoint. See "
+    "https://learn.microsoft.com/fabric/data-warehouse/sql-permissions"
+)
 
 
 def _serialize_value(value: object) -> object:
@@ -196,11 +203,7 @@ async def execute(
                         if isinstance(mapped, PermissionDeniedError):
                             raise PermissionDeniedError(
                                 str(mapped),
-                                hint=(
-                                    "The caller must have at least READ permission on the "
-                                    "warehouse/SQL endpoint. See "
-                                    "https://learn.microsoft.com/fabric/data-warehouse/sql-permissions"
-                                ),
+                                hint=_SQL_EXEC_PERMISSION_HINT,
                             ) from exc
                         raise mapped from exc
                     raise
@@ -294,27 +297,25 @@ async def get_plan(
             cursor = conn.cursor()
             with closing(cursor):
                 _exc_in_flight: bool = False
+                plan_parts: list[str] = []
                 try:
                     cursor.execute("SET SHOWPLAN_XML ON")
                     cursor.execute(query)
                     rows = cursor.fetchall()
                     # Read the first column positionally (row[0]) — the standard
                     # Showplan column name varies by SQL Server version/locale.
-                    plan_parts: list[str] = [str(row[0]) for row in rows if row[0] is not None]
-                except Exception as exc:
+                    plan_parts = [str(row[0]) for row in rows if row[0] is not None]
+                except BaseException as exc:
                     _exc_in_flight = True
-                    mapped = sql.map_driver_error(exc)
-                    if mapped is not None:
-                        if isinstance(mapped, PermissionDeniedError):
-                            raise PermissionDeniedError(
-                                str(mapped),
-                                hint=(
-                                    "The caller must have at least READ permission on the "
-                                    "warehouse/SQL endpoint. See "
-                                    "https://learn.microsoft.com/fabric/data-warehouse/sql-permissions"
-                                ),
-                            ) from exc
-                        raise mapped from exc
+                    if isinstance(exc, Exception):
+                        mapped = sql.map_driver_error(exc)
+                        if mapped is not None:
+                            if isinstance(mapped, PermissionDeniedError):
+                                raise PermissionDeniedError(
+                                    str(mapped),
+                                    hint=_SQL_EXEC_PERMISSION_HINT,
+                                ) from exc
+                            raise mapped from exc
                     raise
                 finally:
                     # Always attempt to restore SHOWPLAN_XML to OFF before the
@@ -327,6 +328,11 @@ async def get_plan(
                     # we suppress the OFF exception so the original error propagates
                     # unmodified.  When the main body succeeded, we let the OFF
                     # exception propagate (which also ensures mark_discard is called).
+                    #
+                    # BaseException (KeyboardInterrupt, SystemExit) that fires inside
+                    # the try body also sets _exc_in_flight via the `except BaseException`
+                    # block above, so the OFF failure is suppressed and mark_discard is
+                    # still called in that case too.
                     try:
                         cursor.execute("SET SHOWPLAN_XML OFF")
                     except Exception:
@@ -339,6 +345,13 @@ async def get_plan(
                         # Original exception already in flight — suppress OFF failure
                         # so the original propagates cleanly.
 
+                # Raise after the finally block so the empty-plan check does not
+                # interfere with the _exc_in_flight / OFF-failure suppression logic.
+                if not plan_parts:
+                    raise FabricError(
+                        "No execution plan was returned — the statement type may not "
+                        "support SHOWPLAN_XML (e.g. SET, PRINT, or comment-only batches)."
+                    )
                 return "".join(plan_parts)
 
     return await asyncio.to_thread(_run)
