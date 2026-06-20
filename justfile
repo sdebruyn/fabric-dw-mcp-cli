@@ -38,7 +38,4 @@ audit:
     uvx 'bandit[sarif]==1.9.4' -r src/ -ll
     uvx 'pip-audit==2.10.1' --strict
 
-gen-docs:
-    uv run python -m fabric_dw.docgen
-
 check: lint type test
