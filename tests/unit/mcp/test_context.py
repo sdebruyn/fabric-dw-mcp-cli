@@ -77,6 +77,63 @@ class TestBuildContext:
         with pytest.raises(ConfigError, match="invalid FABRIC_AUTH"):
             build_context(environ={"FABRIC_AUTH": "not-a-valid-mode"})
 
+    def test_max_429_retries_env_var_wired_to_client(self) -> None:
+        """FABRIC_DW_MAX_429_RETRIES must propagate to the HTTP client."""
+        fake_http = MagicMock()
+        with patch("fabric_dw.mcp._context.FabricHttpClient", return_value=fake_http) as mock_cls:
+            build_context(environ={"FABRIC_AUTH": "default", "FABRIC_DW_MAX_429_RETRIES": "15"})
+        _, kwargs = mock_cls.call_args
+        assert kwargs.get("max_429_retries") == 15
+
+    def test_retry_deadline_s_env_var_wired_to_client(self) -> None:
+        """FABRIC_DW_RETRY_DEADLINE_S must propagate to the HTTP client."""
+        fake_http = MagicMock()
+        with patch("fabric_dw.mcp._context.FabricHttpClient", return_value=fake_http) as mock_cls:
+            build_context(environ={"FABRIC_AUTH": "default", "FABRIC_DW_RETRY_DEADLINE_S": "600.0"})
+        _, kwargs = mock_cls.call_args
+        assert kwargs.get("combined_deadline_s") == 600.0
+
+    def test_no_retry_env_vars_no_kwargs_passed(self) -> None:
+        """When no retry env vars are set, the client receives no explicit retries/deadline."""
+        fake_http = MagicMock()
+        with patch("fabric_dw.mcp._context.FabricHttpClient", return_value=fake_http) as mock_cls:
+            build_context(environ={"FABRIC_AUTH": "default"})
+        _, kwargs = mock_cls.call_args
+        assert "max_429_retries" not in kwargs
+        assert "combined_deadline_s" not in kwargs
+
+    def test_malformed_max_429_retries_env_var_ignored(self) -> None:
+        """A non-integer FABRIC_DW_MAX_429_RETRIES must be ignored (client uses its default)."""
+        fake_http = MagicMock()
+        with patch("fabric_dw.mcp._context.FabricHttpClient", return_value=fake_http) as mock_cls:
+            build_context(environ={"FABRIC_AUTH": "default", "FABRIC_DW_MAX_429_RETRIES": "bad"})
+        _, kwargs = mock_cls.call_args
+        assert "max_429_retries" not in kwargs
+
+    def test_malformed_retry_deadline_env_var_ignored(self) -> None:
+        """A non-float FABRIC_DW_RETRY_DEADLINE_S must be ignored."""
+        fake_http = MagicMock()
+        with patch("fabric_dw.mcp._context.FabricHttpClient", return_value=fake_http) as mock_cls:
+            build_context(environ={"FABRIC_AUTH": "default", "FABRIC_DW_RETRY_DEADLINE_S": "bad"})
+        _, kwargs = mock_cls.call_args
+        assert "combined_deadline_s" not in kwargs
+
+    def test_inf_retry_deadline_env_var_ignored(self) -> None:
+        """A non-finite FABRIC_DW_RETRY_DEADLINE_S (inf) must be ignored."""
+        fake_http = MagicMock()
+        with patch("fabric_dw.mcp._context.FabricHttpClient", return_value=fake_http) as mock_cls:
+            build_context(environ={"FABRIC_AUTH": "default", "FABRIC_DW_RETRY_DEADLINE_S": "inf"})
+        _, kwargs = mock_cls.call_args
+        assert "combined_deadline_s" not in kwargs
+
+    def test_float_formatted_int_retries_accepted(self) -> None:
+        """FABRIC_DW_MAX_429_RETRIES='20.0' is accepted as 20 (Docker float-int)."""
+        fake_http = MagicMock()
+        with patch("fabric_dw.mcp._context.FabricHttpClient", return_value=fake_http) as mock_cls:
+            build_context(environ={"FABRIC_AUTH": "default", "FABRIC_DW_MAX_429_RETRIES": "20.0"})
+        _, kwargs = mock_cls.call_args
+        assert kwargs.get("max_429_retries") == 20
+
 
 # ---------------------------------------------------------------------------
 # fabric_lifespan tests

@@ -523,6 +523,28 @@ class _LazyGroup(_InstrumentedGroup):
     default=False,
     help="Enable debug logging.",
 )
+@click.option(
+    "--max-429-retries",
+    "max_429_retries",
+    type=click.IntRange(min=1),
+    default=None,
+    metavar="N",
+    help=(
+        "Maximum consecutive 429 responses before raising RateLimitedError "
+        "(default: 10, or as configured by FABRIC_DW_MAX_429_RETRIES / config file)."
+    ),
+)
+@click.option(
+    "--retry-deadline",
+    "retry_deadline",
+    type=click.FloatRange(min=0.1),
+    default=None,
+    metavar="SECONDS",
+    help=(
+        "Combined wall-clock deadline in seconds for the 429-loop and 5xx-retry budget "
+        "(default: 300.0, or as configured by FABRIC_DW_RETRY_DEADLINE_S / config file)."
+    ),
+)
 @click.pass_context
 def cli(
     ctx: click.Context,
@@ -531,6 +553,8 @@ def cli(
     workspace: str | None,
     yes: bool,
     verbose: bool,
+    max_429_retries: int | None,
+    retry_deadline: float | None,
 ) -> None:
     """Microsoft Fabric Data Warehouse CLI & MCP Server."""
     setup_logging(logging.DEBUG if verbose else logging.INFO)
@@ -540,6 +564,8 @@ def cli(
         yes=yes,
         auth=CredentialMode(auth_mode),
         workspace=workspace,
+        max_429_retries=max_429_retries,
+        retry_deadline_s=retry_deadline,
     )
 
     maybe_print_first_run_notice()
