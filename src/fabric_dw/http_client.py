@@ -15,7 +15,7 @@ Tenacity wraps ``_request_with_retry`` and retries on ``FabricServerError``
 (5xx) up to 3 attempts with exponential back-off.  Inside each attempt,
 ``_do_request`` executes a 429-loop of up to ``max_429_retries`` iterations.
 Both mechanisms share a common wall-clock deadline (``_combined_deadline_s``
-seconds from the first attempt, default 120 s) so the combined worst-case
+seconds from the first attempt, default 300 s) so the combined worst-case
 latency is bounded even if the server returns large Retry-After values.
 
 Timeout retry safety
@@ -83,7 +83,7 @@ __all__ = [
 # Module-level defaults (used as constructor defaults)
 _DEFAULT_RPS: int = 2
 _DEFAULT_TIMEOUT: float = 60.0  # bumped from 30.0 to reduce spurious timeouts on slow responses
-_MAX_429_RETRIES: int = 5
+_MAX_429_RETRIES: int = 10
 _DEFAULT_POLL_INTERVAL: float = 2.0
 _TOKEN_REFRESH_BUFFER: float = 300.0  # seconds before expiry to refresh
 
@@ -91,7 +91,7 @@ _TOKEN_REFRESH_BUFFER: float = 300.0  # seconds before expiry to refresh
 # When this deadline is reached, whichever retry loop is active at that point
 # aborts and re-raises; this prevents unbounded waits when a server advertises
 # very large Retry-After values across multiple tenacity attempts.
-_DEFAULT_COMBINED_DEADLINE_S: float = 120.0
+_DEFAULT_COMBINED_DEADLINE_S: float = 300.0
 
 # HTTP methods that are safe to retry on timeout: repeating them cannot duplicate
 # server-side state.  POST/PATCH/DELETE are excluded — a timed-out POST may have
@@ -246,7 +246,7 @@ class FabricHttpClient:
     (5xx) up to 3 attempts.  Inside each tenacity attempt, ``_do_request`` runs
     a 429-loop of up to ``max_429_retries`` iterations.  Both mechanisms share a
     common wall-clock deadline (``combined_deadline_s`` seconds from the first
-    send, default 120 s) so the total latency is bounded even when the server
+    send, default 300 s) so the total latency is bounded even when the server
     advertises large ``Retry-After`` values.
 
     Args:
@@ -254,12 +254,12 @@ class FabricHttpClient:
         rps:                    Maximum requests per second (default 2).
         timeout:                HTTP request timeout in seconds (default 60.0).
         max_429_retries:        Maximum consecutive 429 responses before raising
-                                ``RateLimitedError`` (default 5).
+                                ``RateLimitedError`` (default 10).
         poll_interval:          Default LRO polling interval in seconds (default 2.0).
         token_refresh_buffer:   Seconds before token expiry at which a refresh is
                                 triggered (default 300.0).
         combined_deadline_s:    Maximum wall-clock seconds for the combined
-                                5xx-retry + 429-loop budget (default 120.0).
+                                5xx-retry + 429-loop budget (default 300.0).
     """
 
     def __init__(  # noqa: PLR0913

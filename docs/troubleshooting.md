@@ -142,10 +142,10 @@ After re-authenticating, retry your command. `FabricSqlClient` opens a fresh con
 **Error you see:**
 
 ```
-fabric_dw.exceptions.RateLimitedError: Received 429 5 consecutive times for https://api.fabric.microsoft.com/v1/...
+fabric_dw.exceptions.RateLimitedError: Received 429 10 consecutive times for https://api.fabric.microsoft.com/v1/...
 ```
 
-**What happened:** The Fabric REST API enforces a rate limit. `fabric-dw` honours the `Retry-After` response header and automatically backs off, but if the API returns 429 more than 5 consecutive times the client raises `RateLimitedError` rather than waiting indefinitely. The internal rate limiter is set to **2 RPS**.
+**What happened:** The Fabric REST API enforces a rate limit. `fabric-dw` honours the `Retry-After` response header and automatically backs off, but if the API returns 429 more than 10 consecutive times the client raises `RateLimitedError` rather than waiting indefinitely. The internal rate limiter is set to **2 RPS**.
 
 **Resolution:**
 
