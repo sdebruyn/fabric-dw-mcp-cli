@@ -240,6 +240,19 @@ _SHORT_HELP_MAP: dict[str, str] = {
     "workspaces": "Manage Microsoft Fabric workspaces.",
 }
 
+# Guard: both maps must cover exactly the same set of command names.  A command
+# added to _COMMAND_MAP but not _SHORT_HELP_MAP (or vice-versa) would silently
+# show an empty description or fail to load.  This check fires at import time
+# so the mistake is caught by the first test run, not at runtime.
+if _COMMAND_MAP.keys() != _SHORT_HELP_MAP.keys():
+    _missing_help = _COMMAND_MAP.keys() - _SHORT_HELP_MAP.keys()
+    _missing_cmd = _SHORT_HELP_MAP.keys() - _COMMAND_MAP.keys()
+    raise ValueError(
+        f"_COMMAND_MAP and _SHORT_HELP_MAP must cover the same commands.  "
+        f"Missing from _SHORT_HELP_MAP: {_missing_help!r}.  "
+        f"Missing from _COMMAND_MAP: {_missing_cmd!r}."
+    )
+
 
 class _InstrumentedGroup(click.Group):
     """A :class:`click.Group` subclass that emits one ``command_invoked``
@@ -415,9 +428,9 @@ class _LazyGroup(_InstrumentedGroup):
         module_path, attr_name = spec.rsplit(":", 1)
         try:
             module = importlib.import_module(module_path)
-        except ImportError:
+            cmd: click.Command = getattr(module, attr_name)
+        except (ImportError, AttributeError):
             return None
-        cmd: click.Command = getattr(module, attr_name)
         # Replicate what _InstrumentedGroup.add_command does so that telemetry
         # and global-options injection are applied on the lazily-loaded group.
         if isinstance(cmd, click.Group):
@@ -425,14 +438,37 @@ class _LazyGroup(_InstrumentedGroup):
         _patch_command_for_global_options(cmd)
         return cmd
 
+    def resolve_command(
+        self, ctx: click.Context, args: list[str]
+    ) -> tuple[str | None, click.Command | None, list[str]]:
+        """Resolve a command name, supplying the lazy command list for suggestions.
+
+        Click's base :meth:`resolve_command` passes ``self.commands`` (the
+        eagerly-registered dict) to the "Did you mean?" resolver.  Since this
+        group never calls :meth:`add_command`, that dict is always empty and
+        typo suggestions are permanently suppressed.  Override to pass the
+        lazy command names instead.
+        """
+        # Temporarily populate self.commands with stubs so Click's resolver can
+        # compute "Did you mean?" possibilities without triggering real imports.
+        # We restore the empty dict immediately after resolution.
+        dummy_cmds = {name: click.Command(name) for name in _COMMAND_MAP}
+        original_commands = self.commands  # type: ignore[attr-defined]
+        self.commands = dummy_cmds  # type: ignore[attr-defined]
+        try:
+            return super().resolve_command(ctx, args)
+        finally:
+            self.commands = original_commands  # type: ignore[attr-defined]
+
     def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         """Render the command list from :data:`_SHORT_HELP_MAP` without importing modules."""
         commands: list[tuple[str, str]] = []
         max_name_len = max(len(n) for n in _COMMAND_MAP)
         for name in self.list_commands(ctx):
             help_text = _SHORT_HELP_MAP.get(name, "")
-            # Truncate to the available width so long descriptions don't overflow.
-            limit = (formatter.width - 6 - max_name_len) if formatter.width else 45
+            # Truncate to the available width.  Clamp to 0 to prevent negative
+            # slice indices (which slice from the tail) on very narrow terminals.
+            limit = max(0, formatter.width - 6 - max_name_len) if formatter.width else 45
             short_help = help_text[:limit] if limit and len(help_text) > limit else help_text
             commands.append((name, short_help))
         if commands:
