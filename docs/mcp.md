@@ -22,6 +22,13 @@ You will also need an Azure credential the server can use to call the Fabric RES
 - `FABRIC_AUTH=sp` plus `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` for service-principal auth.
 - `FABRIC_AUTH=interactive` to force browser sign-in.
 
+Two optional environment variables tune the HTTP retry budget:
+
+| Variable | Description | Default |
+|---|---|---|
+| `FABRIC_DW_MAX_429_RETRIES` | Maximum consecutive 429 responses before raising `RateLimitedError` | 10 |
+| `FABRIC_DW_COMBINED_DEADLINE_S` | Combined wall-clock deadline (seconds) for 429-loop + 5xx retries | 300.0 |
+
 ## Claude Code
 
 Source: <https://code.claude.com/docs/en/mcp>

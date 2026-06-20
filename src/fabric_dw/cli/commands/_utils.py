@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager
@@ -63,12 +64,95 @@ def coro(f: Callable[_P, Coroutine[None, None, _R]]) -> Callable[_P, _R]:
 # ---------------------------------------------------------------------------
 
 
+_logger_utils = logging.getLogger("fabric_dw.cli.utils")
+
+# Minimum accepted value for combined_deadline_s — enforced in both CLI
+# (click.FloatRange) and env-var / config-file fallback paths.
+_MIN_COMBINED_DEADLINE_S: float = 0.1
+
+
+def _resolve_max_429_retries(ctx: CliContext) -> int | None:
+    """Resolve effective max_429_retries with precedence CLI > env > config > None.
+
+    Returns *None* when no source supplies a value, letting the HTTP client use
+    its own built-in default (10).  Malformed env/config values are logged and
+    skipped so a bad stored value never blocks all requests.
+    """
+    # 1. CLI option (already validated by click.IntRange(min=1))
+    if ctx.max_429_retries is not None:
+        return ctx.max_429_retries
+    # 2. Environment variable
+    raw = os.environ.get("FABRIC_DW_MAX_429_RETRIES")
+    if raw is not None:
+        try:
+            v = int(raw)
+            if v >= 1:
+                return v
+            _logger_utils.warning("FABRIC_DW_MAX_429_RETRIES=%r is less than 1; ignoring", raw)
+        except ValueError:
+            _logger_utils.warning(
+                "FABRIC_DW_MAX_429_RETRIES=%r is not a valid integer; ignoring", raw
+            )
+    # 3. Config file
+    cfg_val = ctx.config.defaults.max_429_retries
+    if cfg_val is not None:
+        if cfg_val >= 1:
+            return cfg_val
+        _logger_utils.warning("config max_429_retries=%r is less than 1; ignoring", cfg_val)
+    return None
+
+
+def _resolve_combined_deadline_s(ctx: CliContext) -> float | None:
+    """Resolve effective combined_deadline_s with precedence CLI > env > config > None.
+
+    Returns *None* when no source supplies a value, letting the HTTP client use
+    its own built-in default (300.0).  Malformed env/config values are logged
+    and skipped.
+    """
+    # 1. CLI option (already validated by click.FloatRange(min=0.1))
+    if ctx.combined_deadline_s is not None:
+        return ctx.combined_deadline_s
+    # 2. Environment variable
+    raw = os.environ.get("FABRIC_DW_COMBINED_DEADLINE_S")
+    if raw is not None:
+        try:
+            v = float(raw)
+            if v >= _MIN_COMBINED_DEADLINE_S:
+                return v
+            _logger_utils.warning(
+                "FABRIC_DW_COMBINED_DEADLINE_S=%r is less than %s; ignoring",
+                raw,
+                _MIN_COMBINED_DEADLINE_S,
+            )
+        except ValueError:
+            _logger_utils.warning(
+                "FABRIC_DW_COMBINED_DEADLINE_S=%r is not a valid float; ignoring", raw
+            )
+    # 3. Config file
+    cfg_val = ctx.config.defaults.combined_deadline_s
+    if cfg_val is not None:
+        if cfg_val >= _MIN_COMBINED_DEADLINE_S:
+            return cfg_val
+        _logger_utils.warning(
+            "config combined_deadline_s=%r is less than %s; ignoring",
+            cfg_val,
+            _MIN_COMBINED_DEADLINE_S,
+        )
+    return None
+
+
 @asynccontextmanager
 async def build_http_client(ctx: CliContext) -> AsyncIterator[FabricHttpClient]:
     """Yield an authenticated :class:`FabricHttpClient` for *ctx*.
 
     Centralises the ``get_credential(ctx.auth)`` + ``FabricHttpClient(credential)``
     pattern that was previously duplicated in every command module.
+
+    The retry budget is resolved with precedence CLI option > env var
+    (``FABRIC_DW_MAX_429_RETRIES`` / ``FABRIC_DW_COMBINED_DEADLINE_S``) >
+    config file (``[defaults] max_429_retries`` / ``combined_deadline_s``) >
+    built-in default (10 / 300.0).  Malformed env/config values are logged and
+    skipped; the next source in the chain is tried.
 
     Raises:
         click.UsageError: When ``get_credential`` raises :class:`~fabric_dw.exceptions.ConfigError`
@@ -80,7 +164,18 @@ async def build_http_client(ctx: CliContext) -> AsyncIterator[FabricHttpClient]:
         credential = _auth.get_credential(ctx.auth)
     except ConfigError as exc:
         raise click.UsageError(str(exc)) from exc
-    async with FabricHttpClient(credential) as http:
+
+    retries = _resolve_max_429_retries(ctx)
+    deadline = _resolve_combined_deadline_s(ctx)
+
+    # Pass only the kwargs that were explicitly resolved so the HTTP client
+    # can apply its own built-in defaults for the rest.
+    client = FabricHttpClient(
+        credential,
+        **({"max_429_retries": retries} if retries is not None else {}),  # type: ignore[arg-type]
+        **({"combined_deadline_s": deadline} if deadline is not None else {}),  # type: ignore[arg-type]
+    )
+    async with client as http:
         yield http
 
 

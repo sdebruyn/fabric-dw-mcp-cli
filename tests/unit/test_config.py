@@ -313,3 +313,99 @@ def test_set_default_concurrent_no_lost_update(tmp_path: Path) -> None:
     # After both threads converge, both keys must be set (no lost update).
     assert loaded.defaults.workspace == "ConcurrentWS"
     assert loaded.defaults.warehouse == "ConcurrentWH"
+
+
+# ---------------------------------------------------------------------------
+# Retry-budget fields — round-trip and set_default numeric coercion
+# ---------------------------------------------------------------------------
+
+
+def test_round_trip_max_429_retries(tmp_path: Path) -> None:
+    """max_429_retries is saved and loaded as an int."""
+    path = tmp_path / "config.toml"
+    cfg = UserConfig(defaults=Defaults(max_429_retries=15))
+    save_config(cfg, path)
+    loaded = load_config(path)
+    assert loaded.defaults.max_429_retries == 15
+    assert loaded.defaults.combined_deadline_s is None
+
+
+def test_round_trip_combined_deadline_s(tmp_path: Path) -> None:
+    """combined_deadline_s is saved and loaded as a float."""
+    path = tmp_path / "config.toml"
+    cfg = UserConfig(defaults=Defaults(combined_deadline_s=600.0))
+    save_config(cfg, path)
+    loaded = load_config(path)
+    assert loaded.defaults.combined_deadline_s == 600.0
+    assert loaded.defaults.max_429_retries is None
+
+
+def test_round_trip_all_four_defaults(tmp_path: Path) -> None:
+    """All four Defaults fields survive a save/load cycle together."""
+    path = tmp_path / "config.toml"
+    cfg = UserConfig(
+        defaults=Defaults(
+            workspace="SalesWS",
+            warehouse="SalesDW",
+            max_429_retries=7,
+            combined_deadline_s=180.0,
+        )
+    )
+    save_config(cfg, path)
+    loaded = load_config(path)
+    assert loaded.defaults.workspace == "SalesWS"
+    assert loaded.defaults.warehouse == "SalesDW"
+    assert loaded.defaults.max_429_retries == 7
+    assert loaded.defaults.combined_deadline_s == 180.0
+
+
+def test_set_default_max_429_retries_persists(tmp_path: Path) -> None:
+    """set_default('max_429_retries', '20') stores 20 as int and preserves other keys."""
+    path = tmp_path / "config.toml"
+    save_config(UserConfig(defaults=Defaults(workspace="WS")), path)
+    set_default("max_429_retries", "20", path)
+    loaded = load_config(path)
+    assert loaded.defaults.max_429_retries == 20
+    assert loaded.defaults.workspace == "WS"  # preserved
+
+
+def test_set_default_combined_deadline_s_persists(tmp_path: Path) -> None:
+    """set_default('combined_deadline_s', '450.0') stores 450.0 as float."""
+    path = tmp_path / "config.toml"
+    set_default("combined_deadline_s", "450.0", path)
+    loaded = load_config(path)
+    assert loaded.defaults.combined_deadline_s == 450.0
+
+
+def test_set_default_max_429_retries_none_clears(tmp_path: Path) -> None:
+    """set_default('max_429_retries', None) clears the key."""
+    path = tmp_path / "config.toml"
+    save_config(UserConfig(defaults=Defaults(max_429_retries=5, combined_deadline_s=120.0)), path)
+    set_default("max_429_retries", None, path)
+    loaded = load_config(path)
+    assert loaded.defaults.max_429_retries is None
+    assert loaded.defaults.combined_deadline_s == 120.0  # preserved
+
+
+def test_set_default_combined_deadline_s_none_clears(tmp_path: Path) -> None:
+    """set_default('combined_deadline_s', None) clears the key."""
+    path = tmp_path / "config.toml"
+    save_config(UserConfig(defaults=Defaults(max_429_retries=8, combined_deadline_s=200.0)), path)
+    set_default("combined_deadline_s", None, path)
+    loaded = load_config(path)
+    assert loaded.defaults.combined_deadline_s is None
+    assert loaded.defaults.max_429_retries == 8  # preserved
+
+
+def test_set_default_max_429_retries_bad_value_raises(tmp_path: Path) -> None:
+    """set_default('max_429_retries', 'not-a-number') raises ValueError."""
+    path = tmp_path / "config.toml"
+    with pytest.raises(ValueError, match="invalid literal"):
+        set_default("max_429_retries", "not-a-number", path)
+
+
+def test_set_default_combined_deadline_s_bad_value_raises(tmp_path: Path) -> None:
+    """set_default('combined_deadline_s', 'bad') raises ValueError."""
+    path = tmp_path / "config.toml"
+    with pytest.raises(ValueError, match="could not convert"):
+        set_default("combined_deadline_s", "bad", path)

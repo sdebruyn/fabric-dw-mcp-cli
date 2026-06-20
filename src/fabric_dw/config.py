@@ -1,8 +1,8 @@
 """User-level configuration for fabric-dw CLI.
 
-Stores persistent defaults (workspace, warehouse) in a TOML file at
-``$XDG_CONFIG_HOME/fabric-dw/config.toml`` (falling back to
-``~/.config/fabric-dw/config.toml``).
+Stores persistent defaults (workspace, warehouse, and HTTP retry knobs)
+in a TOML file at ``$XDG_CONFIG_HOME/fabric-dw/config.toml`` (falling
+back to ``~/.config/fabric-dw/config.toml``).
 
 The TOML shape is intentionally tiny:
 
@@ -11,6 +11,8 @@ The TOML shape is intentionally tiny:
     [defaults]
     workspace = "Sales Workspace"
     warehouse = "Sales-DW"
+    max_429_retries = 10
+    combined_deadline_s = 300.0
 
 Reads are done with :mod:`tomllib` (stdlib, Python 3.11+).
 Writes use :mod:`tomli_w` for spec-compliant serialisation (handles newlines,
@@ -55,10 +57,12 @@ class ConfigError(RuntimeError):
 
 @dataclass(frozen=True)
 class Defaults:
-    """Persistent workspace / warehouse defaults."""
+    """Persistent workspace / warehouse defaults and HTTP retry knobs."""
 
     workspace: str | None = None
     warehouse: str | None = None
+    max_429_retries: int | None = None
+    combined_deadline_s: float | None = None
 
 
 @dataclass(frozen=True)
@@ -141,10 +145,16 @@ def load_config(path: Path | None = None) -> UserConfig:
 
     workspace = defaults_raw.get("workspace")
     warehouse = defaults_raw.get("warehouse")
+    raw_retries = defaults_raw.get("max_429_retries")
+    raw_deadline = defaults_raw.get("combined_deadline_s")
     return UserConfig(
         defaults=Defaults(
             workspace=workspace if isinstance(workspace, str) else None,
             warehouse=warehouse if isinstance(warehouse, str) else None,
+            max_429_retries=int(raw_retries) if isinstance(raw_retries, int) else None,
+            combined_deadline_s=float(raw_deadline)
+            if isinstance(raw_deadline, (int, float))
+            else None,
         )
     )
 
@@ -159,17 +169,49 @@ def save_config(config: UserConfig, path: Path | None = None) -> None:
     resolved = path if path is not None else default_path()
     resolved.parent.mkdir(parents=True, exist_ok=True)
 
-    defaults_dict: dict[str, str] = {}
-    if config.defaults.workspace is not None:
-        defaults_dict["workspace"] = config.defaults.workspace
-    if config.defaults.warehouse is not None:
-        defaults_dict["warehouse"] = config.defaults.warehouse
-
-    data: dict[str, object] = {"defaults": defaults_dict}
+    data: dict[str, object] = {"defaults": _defaults_to_dict(config.defaults)}
 
     lock = filelock.FileLock(str(resolved) + ".lock", timeout=_LOCK_TIMEOUT)
     with lock:
         _write_config_unlocked(resolved, data)
+
+
+def _defaults_to_dict(d: Defaults) -> dict[str, object]:
+    """Serialise *d* to a TOML-compatible dict, omitting ``None`` values."""
+    out: dict[str, object] = {}
+    if d.workspace is not None:
+        out["workspace"] = d.workspace
+    if d.warehouse is not None:
+        out["warehouse"] = d.warehouse
+    if d.max_429_retries is not None:
+        out["max_429_retries"] = d.max_429_retries
+    if d.combined_deadline_s is not None:
+        out["combined_deadline_s"] = d.combined_deadline_s
+    return out
+
+
+def _read_defaults_locked(resolved: Path) -> Defaults:
+    """Read :class:`Defaults` from *resolved* — must be called inside a FileLock."""
+    if not resolved.exists():
+        return Defaults()
+    try:
+        raw = resolved.read_text(encoding="utf-8")
+        data = tomllib.loads(raw)
+        defaults_raw = data.get("defaults", {})
+        if not isinstance(defaults_raw, dict):
+            return Defaults()
+        ws = defaults_raw.get("workspace")
+        wh = defaults_raw.get("warehouse")
+        rr = defaults_raw.get("max_429_retries")
+        rd = defaults_raw.get("combined_deadline_s")
+        return Defaults(
+            workspace=ws if isinstance(ws, str) else None,
+            warehouse=wh if isinstance(wh, str) else None,
+            max_429_retries=int(rr) if isinstance(rr, int) else None,
+            combined_deadline_s=float(rd) if isinstance(rd, (int, float)) else None,
+        )
+    except (OSError, tomllib.TOMLDecodeError):
+        return Defaults()
 
 
 def set_default(key: str, value: str | None, path: Path | None = None) -> None:
@@ -180,14 +222,17 @@ def set_default(key: str, value: str | None, path: Path | None = None) -> None:
     CLI invocations (C20).
 
     Args:
-        key: One of ``"workspace"`` or ``"warehouse"``.
-        value: The new value, or *None* to clear (unset) the key.
+        key: One of ``"workspace"``, ``"warehouse"``, ``"max_429_retries"``,
+             or ``"combined_deadline_s"``.
+        value: The new value (as a string for numeric keys it is coerced), or
+               *None* to clear (unset) the key.
         path: Optional override for the config file path.
 
     Raises:
         ValueError: If *key* is not a recognised defaults field.
+        ValueError: If a numeric key receives a value that cannot be coerced.
     """
-    allowed = {"workspace", "warehouse"}
+    allowed = {"workspace", "warehouse", "max_429_retries", "combined_deadline_s"}
     if key not in allowed:
         raise ValueError(f"Unknown config key {key!r}; must be one of {sorted(allowed)}")
 
@@ -195,40 +240,32 @@ def set_default(key: str, value: str | None, path: Path | None = None) -> None:
     resolved.parent.mkdir(parents=True, exist_ok=True)
     lock = filelock.FileLock(str(resolved) + ".lock", timeout=_LOCK_TIMEOUT)
 
+    # Coerce numeric keys before acquiring the lock so ValueError surfaces early.
+    coerced_int: int | None = None
+    coerced_float: float | None = None
+    if value is not None:
+        if key == "max_429_retries":
+            coerced_int = int(value)
+        elif key == "combined_deadline_s":
+            coerced_float = float(value)
+
     try:
         with lock:
             # Read inside the lock so the full read-modify-write is atomic.
-            if not resolved.exists():
-                current = Defaults()
-            else:
-                try:
-                    raw = resolved.read_text(encoding="utf-8")
-                    data = tomllib.loads(raw)
-                    defaults_raw = data.get("defaults", {})
-                    if isinstance(defaults_raw, dict):
-                        ws = defaults_raw.get("workspace")
-                        wh = defaults_raw.get("warehouse")
-                        current = Defaults(
-                            workspace=ws if isinstance(ws, str) else None,
-                            warehouse=wh if isinstance(wh, str) else None,
-                        )
-                    else:
-                        current = Defaults()
-                except (OSError, tomllib.TOMLDecodeError):
-                    current = Defaults()
-
+            current = _read_defaults_locked(resolved)
             new_defaults = Defaults(
                 workspace=value if key == "workspace" else current.workspace,
                 warehouse=value if key == "warehouse" else current.warehouse,
+                max_429_retries=coerced_int
+                if key == "max_429_retries"
+                else current.max_429_retries,
+                combined_deadline_s=coerced_float
+                if key == "combined_deadline_s"
+                else current.combined_deadline_s,
             )
             # _write_config_unlocked is called inside the lock so the full
             # read-modify-write stays within a single lock cycle (C20).
-            defaults_dict: dict[str, str] = {}
-            if new_defaults.workspace is not None:
-                defaults_dict["workspace"] = new_defaults.workspace
-            if new_defaults.warehouse is not None:
-                defaults_dict["warehouse"] = new_defaults.warehouse
-            toml_data: dict[str, object] = {"defaults": defaults_dict}
+            toml_data: dict[str, object] = {"defaults": _defaults_to_dict(new_defaults)}
             _write_config_unlocked(resolved, toml_data)
     except filelock.Timeout:
         raise ConfigError(

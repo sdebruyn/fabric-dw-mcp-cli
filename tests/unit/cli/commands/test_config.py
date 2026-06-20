@@ -157,3 +157,100 @@ class TestConfigClear:
         runner.invoke(cli, ["config", "set", "workspace", "WS"])
         result = runner.invoke(cli, ["config", "clear"], input="y\n")
         assert result.exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# config set / unset max-429-retries and combined-deadline
+# ---------------------------------------------------------------------------
+
+
+class TestConfigSetRetryBudget:
+    def test_set_max_429_retries_exits_zero(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        result = runner.invoke(cli, ["config", "set", "max-429-retries", "15"])
+        assert result.exit_code == 0
+
+    def test_set_max_429_retries_writes_file(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "max-429-retries", "20"])
+        cfg = load_config(default_path())
+        assert cfg.defaults.max_429_retries == 20
+
+    def test_set_max_429_retries_invalid_rejected(
+        self, runner: CliRunner, config_env: Path
+    ) -> None:
+        _ = config_env
+        result = runner.invoke(cli, ["config", "set", "max-429-retries", "0"])
+        assert result.exit_code != 0
+
+    def test_set_combined_deadline_exits_zero(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        result = runner.invoke(cli, ["config", "set", "combined-deadline", "600.0"])
+        assert result.exit_code == 0
+
+    def test_set_combined_deadline_writes_file(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "combined-deadline", "450.5"])
+        cfg = load_config(default_path())
+        assert cfg.defaults.combined_deadline_s == 450.5
+
+    def test_set_combined_deadline_invalid_rejected(
+        self, runner: CliRunner, config_env: Path
+    ) -> None:
+        _ = config_env
+        result = runner.invoke(cli, ["config", "set", "combined-deadline", "0.0"])
+        assert result.exit_code != 0
+
+    def test_set_retries_preserves_workspace(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "workspace", "MyWS"])
+        runner.invoke(cli, ["config", "set", "max-429-retries", "12"])
+        cfg = load_config(default_path())
+        assert cfg.defaults.max_429_retries == 12
+        assert cfg.defaults.workspace == "MyWS"
+
+
+class TestConfigUnsetRetryBudget:
+    def test_unset_max_429_retries_exits_zero(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "max-429-retries", "8"])
+        result = runner.invoke(cli, ["config", "unset", "max-429-retries"])
+        assert result.exit_code == 0
+
+    def test_unset_max_429_retries_clears_key(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "max-429-retries", "8"])
+        runner.invoke(cli, ["config", "set", "combined-deadline", "200.0"])
+        runner.invoke(cli, ["config", "unset", "max-429-retries"])
+        cfg = load_config(default_path())
+        assert cfg.defaults.max_429_retries is None
+        assert cfg.defaults.combined_deadline_s == 200.0  # preserved
+
+    def test_unset_combined_deadline_clears_key(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "max-429-retries", "6"])
+        runner.invoke(cli, ["config", "set", "combined-deadline", "300.0"])
+        runner.invoke(cli, ["config", "unset", "combined-deadline"])
+        cfg = load_config(default_path())
+        assert cfg.defaults.combined_deadline_s is None
+        assert cfg.defaults.max_429_retries == 6  # preserved
+
+
+class TestConfigShowRetryBudget:
+    def test_show_includes_retry_budget_fields(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "max-429-retries", "10"])
+        runner.invoke(cli, ["config", "set", "combined-deadline", "300.0"])
+        result = runner.invoke(cli, ["--json", "config", "show"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["defaults"]["max_429_retries"] == 10
+        assert data["defaults"]["combined_deadline_s"] == 300.0
+
+    def test_show_null_when_not_set(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        result = runner.invoke(cli, ["--json", "config", "show"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["defaults"]["max_429_retries"] is None
+        assert data["defaults"]["combined_deadline_s"] is None
