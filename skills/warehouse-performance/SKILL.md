@@ -67,8 +67,8 @@ MCP equivalents: `list_request_history`, `list_session_history`.
 Missing or stale statistics are a common cause of poor plan choices across many queries. Reading statistics works on both DWH and SQL Analytics Endpoints; only the DDL fixes (create/update/delete) require a DWH.
 
 ```bash
-fdw statistics list <workspace>/<warehouse>                         # enumerate statistics objects
-fdw statistics show <workspace>/<warehouse> <statistic> --histogram # header + histogram steps
+fdw statistics list <workspace>/<warehouse>                                       # enumerate statistics objects
+fdw statistics show <workspace>/<warehouse> <schema.table> <stat_name> --histogram # header + histogram steps
 ```
 
 MCP equivalents: `list_statistics`, `show_statistics`.
@@ -124,8 +124,8 @@ fdw sql-pools create <workspace> --name reads-pool --max-percent 60 --optimize-f
 
 fdw sql-pools update  <workspace> --name reads-pool --max-percent 70   # adjust a lever on an existing pool
 fdw sql-pools delete  <workspace> --name reads-pool                     # remove a custom pool
-fdw sql-pools enable  <workspace>   # turn the autonomous SQL pools feature on
-fdw sql-pools disable <workspace>   # turn it off
+fdw sql-pools enable  <workspace>   # enable custom SQL pools (preserves pool config; default state with no custom pools is autonomous WLM)
+fdw sql-pools disable <workspace>   # disable custom SQL pools (preserves pool config; re-enabling restores it)
 ```
 
 MCP equivalents: `create_sql_pool`, `update_sql_pool`, `delete_sql_pool`, `enable_sql_pools`, `disable_sql_pools`.

@@ -12,7 +12,7 @@ title: Agent Skills
 | `warehouse-performance` | "investigate warehouse performance", "why is my warehouse slow", "tune sql pools", "find expensive queries", "find the most frequent queries", "check sql pool pressure", "enable result set caching" | Surfaces long-running and frequent queries plus SQL pool insights, audits statistics health, checks result-set caching, reviews and tunes SQL pool configuration, and produces a prioritized findings report (all mutating actions gated on confirmation) |
 | `dbt-setup` | "set up dbt", "scaffold a dbt project", "create dbt profile", "generate dbt sources" | Generates a complete dbt-fabric scaffold (profiles, project, column-rich sources, requirements) and writes it to disk |
 
-Both skills require the [fabric-dw MCP server](mcp.md) to be configured in your AI client.
+All three skills require the [fabric-dw MCP server](mcp.md) to be configured in your AI client.
 
 ## Install via Claude Code Plugin
 
