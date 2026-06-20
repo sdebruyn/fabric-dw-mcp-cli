@@ -164,7 +164,7 @@ Return all principals (users, groups, service principals) with access to a SQL A
 
 !!! note
 
-    Requires **Fabric Administrator** role (`Tenant.Read.All` or `Tenant.ReadWrite.All` scope). See [Microsoft Fabric admin documentation](https://learn.microsoft.com/en-us/fabric/admin/microsoft-fabric-admin) for how to request the role.
+    Requires **Fabric Administrator** role (`Tenant.Read.All` or `Tenant.ReadWrite.All` scope). See [Microsoft Fabric admin documentation](https://learn.microsoft.com/en-us/fabric/admin/microsoft-fabric-admin?WT.mc_id=MVP_310840) for how to request the role.
 
 **Parameters:**
 

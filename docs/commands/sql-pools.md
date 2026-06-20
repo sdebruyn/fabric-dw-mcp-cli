@@ -170,8 +170,8 @@ split evenly (50/50) into two isolated pools, `SELECT` (read/analytics queries)
 and `NON-SELECT` (DML/DDL/ETL/ingestion statements). In that case this command
 reports the default pools rather than printing an empty list. The default split
 is documented in
-[Workload management](https://learn.microsoft.com/fabric/data-warehouse/workload-management#compute-pool-isolation)
-and [Custom SQL pools](https://learn.microsoft.com/fabric/data-warehouse/custom-sql-pools).
+[Workload management](https://learn.microsoft.com/fabric/data-warehouse/workload-management?WT.mc_id=MVP_310840#compute-pool-isolation)
+and [Custom SQL pools](https://learn.microsoft.com/fabric/data-warehouse/custom-sql-pools?WT.mc_id=MVP_310840).
 
 **Synopsis**
 
