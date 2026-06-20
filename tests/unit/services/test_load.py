@@ -2476,7 +2476,7 @@ class TestInferColumnsFromLocal:
 class TestCreateAndLoad:
     """Tests for the create_and_load orchestration function."""
 
-    def _make_target(self) -> object:
+    def _make_target(self):  # type: ignore[return]  # SqlTarget imported locally to avoid top-level import
         from fabric_dw.sql import SqlTarget  # noqa: PLC0415
 
         return SqlTarget(
