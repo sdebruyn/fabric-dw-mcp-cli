@@ -78,15 +78,17 @@ class TestResolveDomain:
 
 
 def _collect_live_cli_group_names() -> frozenset[str]:
-    """Walk the live Click command tree and return all top-level group/command names.
+    """Return all top-level CLI command group names.
 
+    Uses :data:`fabric_dw.cli._main._COMMAND_MAP` directly so that the lazy
+    group's command list is available without importing any command module.
     Hidden commands are included deliberately: telemetry fires for all commands
     regardless of the ``hidden`` flag, so a hidden group without a DOMAIN_MAP
     entry would silently log ``domain="unknown"``.
     """
-    from fabric_dw.cli._main import cli  # noqa: PLC0415
+    from fabric_dw.cli._main import _COMMAND_MAP  # noqa: PLC0415
 
-    return frozenset(cli.commands)
+    return frozenset(_COMMAND_MAP)
 
 
 class TestDomainCoverage:
