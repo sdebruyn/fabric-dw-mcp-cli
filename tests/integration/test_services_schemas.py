@@ -7,7 +7,7 @@ Fixture notes:
   warm warehouse and the shared SQL analytics endpoint.
 - ``warehouse_schema``: creates a uniquely-named schema in the shared warm warehouse
   and cascade-drops it on teardown.  Used for tests that create or delete schemas
-  (warehouse-only, because schema DDL on the endpoint is covered in PR 3).
+  (warehouse-only for now; dual-target schema DDL will be added in a follow-up, see #592).
 
 Design: The schema-CRUD tests below create *additional* schemas inside the
 shared warehouse (not inside ``warehouse_schema``'s isolation schema, because

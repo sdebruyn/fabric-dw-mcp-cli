@@ -1085,19 +1085,24 @@ async def warehouse_schema(
 # Dual-target read fixture (warehouse + SQL analytics endpoint)
 # ---------------------------------------------------------------------------
 
+# Symbolic constants for the two read_target param values.  Reused in both
+# pytest.param() calls and the if-branch so a typo is caught at definition
+# time rather than silently routing tests to the wrong target.
+_PARAM_WAREHOUSE = "warehouse"
+_PARAM_SQL_ENDPOINT = "sql_endpoint"
+
 
 @pytest.fixture(
     params=[
-        pytest.param("warehouse"),
-        pytest.param("sql_endpoint", marks=pytest.mark.sql_endpoint),
+        pytest.param(_PARAM_WAREHOUSE),
+        pytest.param(_PARAM_SQL_ENDPOINT, marks=pytest.mark.sql_endpoint),
     ]
 )
 def read_target(
     request: pytest.FixtureRequest,
     shared_warehouse: SharedWarehouseTarget,
-    shared_sql_endpoint: SharedSqlEndpointTarget,
 ) -> SqlTarget:
-    """Parametrized fixture that yields the read :class:`~fabric_dw.sql.SqlTarget`.
+    """Parametrized fixture that returns the read :class:`~fabric_dw.sql.SqlTarget`.
 
     Runs each requesting test TWICE: once against the shared warm warehouse and
     once against the shared SQL analytics endpoint.  The endpoint leg carries
@@ -1110,12 +1115,24 @@ def read_target(
     to refer to it in assertions.
 
     **Tests that request this fixture MUST NOT mutate the seed schema.**
-    For mutating (DDL) tests on both targets, use the ``mutable_schema_target``
-    fixture (added in PR 3).
+    Mutating dual-target tests will use a future fixture (see #592).
+
+    Implementation note
+    -------------------
+    ``shared_sql_endpoint`` is resolved LAZILY via ``request.getfixturevalue``
+    only on the ``sql_endpoint`` leg.  It is intentionally NOT declared as a
+    signature parameter — that would cause pytest to provision the SQL analytics
+    endpoint (~6 min Lakehouse create + poll + seed) even for the ``[warehouse]``
+    leg and during local ``-m "not sql_endpoint"`` runs, which must stay fast and
+    free of endpoint provisioning.
     """
-    if request.param == "warehouse":
+    if request.param == _PARAM_WAREHOUSE:
         return shared_warehouse.sql_target
-    return shared_sql_endpoint.sql_target
+    if request.param == _PARAM_SQL_ENDPOINT:
+        ep: SharedSqlEndpointTarget = request.getfixturevalue("shared_sql_endpoint")
+        return ep.sql_target
+    msg = f"Unknown read_target param: {request.param!r}"
+    raise ValueError(msg)
 
 
 # ---------------------------------------------------------------------------

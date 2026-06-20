@@ -8,7 +8,8 @@ Fixture notes:
   ``sample`` schema (``sample.colors`` / ``sample.numbers``).
 - ``warehouse_schema``: creates a uniquely-named schema inside the session-shared
   warm warehouse and cascade-drops it on teardown.  Used exclusively for mutating
-  tests (CREATE / DROP / CLEAR / RENAME / CLONE).
+  tests (CREATE / DROP / CLEAR / RENAME / CLONE — warehouse-only for now; dual-target
+  mutating tests will follow in a later PR, see #592).
 """
 
 from __future__ import annotations
