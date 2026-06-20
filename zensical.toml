@@ -46,6 +46,9 @@ nav = [
     { "Shell Completion" = "completion.md" },
     { "Troubleshooting" = "troubleshooting.md" }
   ] },
+  { "Guides" = [
+    { "Query performance" = "guides/query-performance.md" }
+  ] },
   { "Contributing" = [
     { "Contributing" = "contributing.md" },
     { "Code of Conduct" = "code-of-conduct.md" },
