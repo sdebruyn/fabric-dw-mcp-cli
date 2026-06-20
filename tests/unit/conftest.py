@@ -7,6 +7,39 @@ from collections.abc import Generator
 from unittest.mock import patch
 
 import pytest
+from pytest_socket import disable_socket, enable_socket
+
+
+@pytest.fixture(autouse=True)
+def _block_real_sockets() -> Generator[None, None, None]:
+    """Block all real network I/O for every unit test.
+
+    Unit tests must not make live HTTP calls (or any TCP/UDP connections) to
+    external hosts.  This fixture calls ``pytest-socket``'s ``disable_socket()``
+    which replaces the ``socket.socket`` constructor with a stub that raises
+    ``SocketBlockedError`` immediately, making accidental network access fail
+    loudly instead of hanging or silently returning stale data.
+
+    If a unit test legitimately needs to connect to ``localhost`` (e.g. an
+    in-process server), pass ``allow_hosts=["localhost", "127.0.0.1", "::1"]``
+    to ``disable_socket()``, or use ``@pytest.mark.allow_hosts(["localhost"])``
+    on that specific test.
+
+    Integration tests (``tests/integration/``) are NOT subject to this fixture
+    because this conftest lives under ``tests/unit/`` and pytest scopes conftest
+    fixtures to their directory tree.
+
+    Unix-domain sockets (AF_UNIX) are allowed because asyncio's internal
+    event-loop uses ``socket.socketpair()`` (AF_UNIX) as a wakeup pipe.
+    Blocking those would crash every async test with ``SocketBlockedError``
+    before the test body even runs.  AF_UNIX sockets cannot reach the internet,
+    so permitting them is safe.
+    """
+    disable_socket(allow_unix_socket=True)
+    try:
+        yield
+    finally:
+        enable_socket()
 
 
 @pytest.fixture(autouse=True)
