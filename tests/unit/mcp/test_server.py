@@ -290,9 +290,7 @@ def test_registered_tools_non_empty_descriptions() -> None:
     register_all(mcp)
     all_tools = asyncio.run(mcp.list_tools())
     missing_desc = [t.name for t in all_tools if not (t.description or "").strip()]
-    assert not missing_desc, (
-        f"Tools with missing or empty description: {sorted(missing_desc)}"
-    )
+    assert not missing_desc, f"Tools with missing or empty description: {sorted(missing_desc)}"
 
 
 # ---------------------------------------------------------------------------

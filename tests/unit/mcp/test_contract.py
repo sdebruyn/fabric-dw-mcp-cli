@@ -333,5 +333,3 @@ async def test_destructive_tool_allowed_with_env_flag(
             )
 
     assert not result.isError, f"Expected success; got error: {result!r}"
-
-
