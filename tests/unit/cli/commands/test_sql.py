@@ -17,7 +17,7 @@ from uuid import UUID
 
 import click
 import pytest
-from click.testing import CliRunner
+from click.testing import CliRunner, Result
 
 from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._main import cli
@@ -646,3 +646,225 @@ class TestSqlPlanErrors:
         # Must show a clean Error: message, not a raw Python traceback
         assert "Error:" in result.output
         assert "ParseError" not in result.output
+
+
+class TestSqlPlanFormatMermaid:
+    """sql plan --format mermaid — output routing and regression coverage."""
+
+    def _invoke_mermaid(
+        self,
+        runner: CliRunner,
+        extra_args: list[str],
+    ) -> Result:
+        """Invoke sql plan --format mermaid with patched services."""
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.sql_exec.get_plan",
+                new=AsyncMock(return_value=_RICH_PLAN_XML),
+            ),
+        ):
+            return runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "sql",
+                    "plan",
+                    WH_GUID,
+                    "-q",
+                    "SELECT 1",
+                    "--format",
+                    "mermaid",
+                    *extra_args,
+                ],
+            )
+
+    def test_format_mermaid_stdout_contains_flowchart(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """--format mermaid emits Mermaid flowchart to stdout."""
+        _ = cache_env
+        result = self._invoke_mermaid(runner, [])
+        assert result.exit_code == 0
+        assert "flowchart TD" in result.output
+
+    def test_format_mermaid_stdout_not_xml(self, runner: CliRunner, cache_env: Path) -> None:
+        """--format mermaid output must NOT be raw XML."""
+        _ = cache_env
+        result = self._invoke_mermaid(runner, [])
+        assert "<ShowPlanXML" not in result.output
+
+    def test_format_mermaid_output_file_written(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        """--format mermaid -o FILE writes the diagram to FILE and suppresses stdout diagram."""
+        _ = cache_env
+        out_file = tmp_path / "plan.md"
+        result = self._invoke_mermaid(runner, ["-o", str(out_file)])
+        assert result.exit_code == 0
+        assert out_file.exists()
+        content = out_file.read_text(encoding="utf-8")
+        assert "flowchart TD" in content
+        # Confirmation message on stdout, not the diagram itself
+        assert "Mermaid diagram written to" in result.output
+        assert "flowchart TD" not in result.output
+
+    def test_raw_and_format_together_is_error(self, runner: CliRunner, cache_env: Path) -> None:
+        """--raw and --format cannot be combined; must produce a usage error."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.sql_exec.get_plan",
+                new=AsyncMock(return_value=_RICH_PLAN_XML),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "sql",
+                    "plan",
+                    WH_GUID,
+                    "-q",
+                    "SELECT 1",
+                    "--raw",
+                    "--format",
+                    "mermaid",
+                ],
+            )
+        assert result.exit_code != 0
+
+
+class TestSqlPlanOutputRouting:
+    """Regression tests for the -o/--output orthogonality fixes."""
+
+    def test_json_with_output_file_writes_file_not_stdout(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        """--json -o FILE must write JSON to FILE and not print JSON to stdout.
+
+        Regression: the original code ignored output_path in the --json branch.
+        """
+        _ = cache_env
+        out_file = tmp_path / "plan.json"
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.sql_exec.get_plan",
+                new=AsyncMock(return_value=_RICH_PLAN_XML),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "--json",
+                    "sql",
+                    "plan",
+                    WH_GUID,
+                    "-q",
+                    "SELECT 1",
+                    "-o",
+                    str(out_file),
+                ],
+            )
+        assert result.exit_code == 0
+        # File must exist and contain JSON
+        assert out_file.exists()
+        parsed = json.loads(out_file.read_text(encoding="utf-8"))
+        assert isinstance(parsed, list)
+        # stdout must NOT contain JSON (only a confirmation message)
+        with pytest.raises(json.JSONDecodeError):
+            json.loads(result.output)
+        assert "JSON written to" in result.output
+
+    def test_default_with_output_file_does_not_render_tree(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        """Default mode -o FILE must write raw XML to file and NOT render the Rich tree.
+
+        Regression: the original code ran render_plan_tree() even when -o was given.
+        """
+        _ = cache_env
+        out_file = tmp_path / "plan.sqlplan"
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.sql_exec.get_plan",
+                new=AsyncMock(return_value=_RICH_PLAN_XML),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", WS_GUID, "sql", "plan", WH_GUID, "-q", "SELECT 1", "-o", str(out_file)],
+            )
+        assert result.exit_code == 0
+        # File must contain the raw SHOWPLAN XML
+        assert out_file.exists()
+        assert "<ShowPlanXML" in out_file.read_text(encoding="utf-8")
+        # Rich tree must NOT appear on stdout (only the confirmation message)
+        assert "Hash Match" not in result.output
+        assert "Execution plan written to" in result.output
+
+    def test_default_without_output_file_renders_tree(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """Default mode without -o still renders the Rich terminal tree."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.sql_exec.get_plan",
+                new=AsyncMock(return_value=_RICH_PLAN_XML),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", WS_GUID, "sql", "plan", WH_GUID, "-q", "SELECT 1"],
+            )
+        assert result.exit_code == 0
+        assert "Hash Match" in result.output
