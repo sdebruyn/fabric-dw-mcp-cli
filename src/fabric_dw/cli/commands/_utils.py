@@ -5,9 +5,10 @@ from __future__ import annotations
 import logging
 import math
 import os
+import re
 from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, ParamSpec, TypeVar, cast
@@ -362,6 +363,113 @@ def parse_iso_optional(value: str | None, param_name: str) -> datetime | None:
         return None
     return parse_iso_datetime(value, param_name, assume_utc=False)
 
+
+# ---------------------------------------------------------------------------
+# Relative-duration parser and --ago resolver
+# ---------------------------------------------------------------------------
+
+_UNIT_RE = re.compile(r"(\d+)([a-zA-Z]+)")
+_VALID_UNITS: frozenset[str] = frozenset("smhdw")
+_DURATION_EXAMPLES = "e.g. 1h, 90m, 3600s, 2d, 1w, 1h30m, 2d12h"
+_UNIT_SECONDS: dict[str, int] = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+
+
+def parse_duration(value: str) -> timedelta:
+    """Parse a relative duration string into a :class:`~datetime.timedelta`.
+
+    Supported units: ``s`` (seconds), ``m`` (minutes), ``h`` (hours),
+    ``d`` (days), ``w`` (weeks).  Both single-unit (``1h``, ``90m``) and
+    compound (``1h30m``, ``2d12h``) forms are accepted.
+
+    Args:
+        value: The raw duration string supplied by the user.
+
+    Returns:
+        A :class:`~datetime.timedelta` representing the duration.
+
+    Raises:
+        click.UsageError: If *value* is empty, contains an unknown unit,
+            uses a fractional coefficient, is negative, or evaluates to zero.
+    """
+    stripped = value.strip()
+    if not stripped:
+        raise click.UsageError(f"--ago requires a non-empty duration ({_DURATION_EXAMPLES}).")
+    if stripped.startswith("-"):
+        raise click.UsageError(
+            f"--ago duration must be positive; got {value!r} ({_DURATION_EXAMPLES})."
+        )
+    if re.search(r"\d+\.\d+", stripped):
+        raise click.UsageError(
+            f"--ago does not support fractional values; got {value!r} ({_DURATION_EXAMPLES})."
+        )
+
+    tokens = _UNIT_RE.findall(stripped)
+
+    if not tokens:
+        raise click.UsageError(
+            f"--ago value {value!r} has no recognised unit; use s/m/h/d/w ({_DURATION_EXAMPLES})."
+        )
+
+    # Ensure the full string is covered by the recognised (number, unit) pairs.
+    reconstructed = "".join(n + u for n, u in tokens)
+    if reconstructed != stripped:
+        raise click.UsageError(
+            f"--ago value {value!r} is not a valid duration ({_DURATION_EXAMPLES})."
+        )
+
+    total_seconds = 0
+    for num_str, unit in tokens:
+        if unit not in _VALID_UNITS:
+            raise click.UsageError(
+                f"--ago unknown unit {unit!r} in {value!r}; use s/m/h/d/w ({_DURATION_EXAMPLES})."
+            )
+        total_seconds += int(num_str) * _UNIT_SECONDS[unit]
+
+    if total_seconds == 0:
+        raise click.UsageError(
+            f"--ago duration must be greater than zero; got {value!r} ({_DURATION_EXAMPLES})."
+        )
+
+    return timedelta(seconds=total_seconds)
+
+
+def resolve_since(since: str | None, ago: str | None) -> datetime | None:
+    """Resolve the effective lower-bound datetime from ``--since`` and ``--ago``.
+
+    Exactly one of *since* or *ago* may be provided.  When *ago* is given the
+    result is a tz-aware UTC datetime equal to ``datetime.now(UTC) - parse_duration(ago)``.
+
+    Args:
+        since: Raw ISO-8601 string from ``--since`` (or *None*).
+        ago: Raw duration string from ``--ago`` (or *None*).
+
+    Returns:
+        A :class:`~datetime.datetime` (tz-aware UTC when *ago* is used;
+        tz as supplied by *since* otherwise) or *None* when both are absent.
+
+    Raises:
+        click.UsageError: If both *since* and *ago* are set, or if either
+            value is invalid.
+    """
+    if since is not None and ago is not None:
+        raise click.UsageError("--since and --ago are mutually exclusive.")
+    if ago is not None:
+        return datetime.now(UTC) - parse_duration(ago)
+    if since is not None:
+        return parse_iso_optional(since, "--since")
+    return None
+
+
+#: Shared Click option for ``--ago`` used by query-insights commands.
+AGO_OPTION = click.option(
+    "--ago",
+    default=None,
+    metavar="DURATION",
+    help=(
+        "Relative alternative to --since: return rows newer than now minus this duration "
+        "(e.g. 1h, 90m, 3600s, 2d). Mutually exclusive with --since."
+    ),
+)
 
 #: Shared Click option for ``--limit`` used by query-insights commands.
 LIMIT_OPTION = click.option(

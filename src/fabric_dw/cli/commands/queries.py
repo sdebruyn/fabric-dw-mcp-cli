@@ -7,6 +7,7 @@ import click
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import render
 from fabric_dw.cli.commands._utils import (
+    AGO_OPTION,
     LIMIT_OPTION,
     SINCE_OPTION,
     UNTIL_OPTION,
@@ -15,6 +16,7 @@ from fabric_dw.cli.commands._utils import (
     confirm_destructive,
     coro,
     parse_iso_optional,
+    resolve_since,
     resolve_warehouse_arg,
     resolve_workspace,
 )
@@ -107,6 +109,7 @@ async def kill_cmd(ctx: CliContext, item: str | None, session_id: int) -> None:
 @LIMIT_OPTION
 @SINCE_OPTION
 @UNTIL_OPTION
+@AGO_OPTION
 @click.pass_obj
 @coro
 async def history_cmd(
@@ -115,11 +118,12 @@ async def history_cmd(
     limit: int,
     since: str | None,
     until: str | None,
+    ago: str | None,
 ) -> None:
     """List completed SQL requests from queryinsights.exec_requests_history."""
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, warehouse)
-    since_dt = parse_iso_optional(since, "--since")
+    since_dt = resolve_since(since, ago)
     until_dt = parse_iso_optional(until, "--until")
     try:
         async with build_http_client(ctx) as http:
@@ -146,6 +150,7 @@ async def history_cmd(
 @LIMIT_OPTION
 @SINCE_OPTION
 @UNTIL_OPTION
+@AGO_OPTION
 @click.pass_obj
 @coro
 async def sessions_cmd(
@@ -154,11 +159,12 @@ async def sessions_cmd(
     limit: int,
     since: str | None,
     until: str | None,
+    ago: str | None,
 ) -> None:
     """List completed sessions from queryinsights.exec_sessions_history."""
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, warehouse)
-    since_dt = parse_iso_optional(since, "--since")
+    since_dt = resolve_since(since, ago)
     until_dt = parse_iso_optional(until, "--until")
     try:
         async with build_http_client(ctx) as http:
@@ -185,6 +191,7 @@ async def sessions_cmd(
 @LIMIT_OPTION
 @SINCE_OPTION
 @UNTIL_OPTION
+@AGO_OPTION
 @click.pass_obj
 @coro
 async def frequent_cmd(
@@ -193,11 +200,12 @@ async def frequent_cmd(
     limit: int,
     since: str | None,
     until: str | None,
+    ago: str | None,
 ) -> None:
     """List frequently-run queries from queryinsights.frequently_run_queries."""
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, warehouse)
-    since_dt = parse_iso_optional(since, "--since")
+    since_dt = resolve_since(since, ago)
     until_dt = parse_iso_optional(until, "--until")
     try:
         async with build_http_client(ctx) as http:
@@ -224,6 +232,7 @@ async def frequent_cmd(
 @LIMIT_OPTION
 @SINCE_OPTION
 @UNTIL_OPTION
+@AGO_OPTION
 @click.pass_obj
 @coro
 async def long_running_cmd(
@@ -232,11 +241,12 @@ async def long_running_cmd(
     limit: int,
     since: str | None,
     until: str | None,
+    ago: str | None,
 ) -> None:
     """List long-running queries from queryinsights.long_running_queries."""
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, warehouse)
-    since_dt = parse_iso_optional(since, "--since")
+    since_dt = resolve_since(since, ago)
     until_dt = parse_iso_optional(until, "--until")
     try:
         async with build_http_client(ctx) as http:

@@ -12,6 +12,7 @@ import click
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import confirm, render
 from fabric_dw.cli.commands._utils import (
+    AGO_OPTION,
     LIMIT_OPTION,
     SINCE_OPTION,
     UNTIL_OPTION,
@@ -19,6 +20,7 @@ from fabric_dw.cli.commands._utils import (
     build_sql_target,
     coro,
     parse_iso_optional,
+    resolve_since,
     resolve_warehouse_arg,
     resolve_workspace,
     resolve_workspace_id,
@@ -433,6 +435,7 @@ async def disable_cmd(ctx: CliContext) -> None:
 @LIMIT_OPTION
 @SINCE_OPTION
 @UNTIL_OPTION
+@AGO_OPTION
 @click.pass_obj
 @coro
 async def insights_cmd(
@@ -441,11 +444,12 @@ async def insights_cmd(
     limit: int,
     since: str | None,
     until: str | None,
+    ago: str | None,
 ) -> None:
     """List SQL pool insights from queryinsights.sql_pool_insights."""
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, warehouse)
-    since_dt = parse_iso_optional(since, "--since")
+    since_dt = resolve_since(since, ago)
     until_dt = parse_iso_optional(until, "--until")
     try:
         async with build_http_client(ctx) as http:

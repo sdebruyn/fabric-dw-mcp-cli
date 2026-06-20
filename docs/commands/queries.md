@@ -56,13 +56,15 @@ fdw [-w WORKSPACE] queries frequent [OPTIONS] [WAREHOUSE]
 | Option | Description | Default |
 | --- | --- | --- |
 | `--limit INTEGER` | Maximum rows to return (1–10 000). | `100` |
-| `--since ISO8601` | Return rows with last_run_start_time >= this value. | — |
+| `--since ISO8601` | Return rows with last_run_start_time >= this value. Mutually exclusive with `--ago`. | — |
 | `--until ISO8601` | Return rows with last_run_start_time <= this value. | — |
+| `--ago DURATION` | Relative alternative to `--since`: rows newer than now minus this duration (e.g. `1h`, `90m`, `3600s`, `2d`). Mutually exclusive with `--since`. | — |
 
 **Example**
 
 ```shell
 fdw -w MyWorkspace queries frequent SalesWH --limit 20
+fdw -w MyWorkspace queries frequent SalesWH --ago 1h
 ```
 
 ---
@@ -84,13 +86,15 @@ fdw [-w WORKSPACE] queries history [OPTIONS] [WAREHOUSE]
 | Option | Description | Default |
 | --- | --- | --- |
 | `--limit INTEGER` | Maximum rows to return (1–10 000). | `100` |
-| `--since ISO8601` | Return rows with timestamp >= this value. | — |
+| `--since ISO8601` | Return rows with timestamp >= this value. Mutually exclusive with `--ago`. | — |
 | `--until ISO8601` | Return rows with timestamp <= this value. | — |
+| `--ago DURATION` | Relative alternative to `--since`: rows newer than now minus this duration (e.g. `1h`, `90m`, `3600s`, `2d`). Mutually exclusive with `--since`. | — |
 
 **Example**
 
 ```shell
 fdw -w MyWorkspace queries history SalesWH --limit 50 --since 2026-06-01T00:00:00
+fdw -w MyWorkspace queries history SalesWH --ago 1h
 ```
 
 ---
@@ -132,13 +136,15 @@ fdw [-w WORKSPACE] queries long-running [OPTIONS] [WAREHOUSE]
 | Option | Description | Default |
 | --- | --- | --- |
 | `--limit INTEGER` | Maximum rows to return (1–10 000). | `100` |
-| `--since ISO8601` | Return rows with last_run_start_time >= this value. | — |
+| `--since ISO8601` | Return rows with last_run_start_time >= this value. Mutually exclusive with `--ago`. | — |
 | `--until ISO8601` | Return rows with last_run_start_time <= this value. | — |
+| `--ago DURATION` | Relative alternative to `--since`: rows newer than now minus this duration (e.g. `1h`, `90m`, `3600s`, `2d`). Mutually exclusive with `--since`. | — |
 
 **Example**
 
 ```shell
 fdw -w MyWorkspace queries long-running SalesWH
+fdw -w MyWorkspace queries long-running SalesWH --ago 2d
 ```
 
 ---
@@ -186,13 +192,15 @@ fdw [-w WORKSPACE] queries sessions [OPTIONS] [WAREHOUSE]
 | Option | Description | Default |
 | --- | --- | --- |
 | `--limit INTEGER` | Maximum rows to return (1–10 000). | `100` |
-| `--since ISO8601` | Return rows with session_start_time >= this value. | — |
+| `--since ISO8601` | Return rows with session_start_time >= this value. Mutually exclusive with `--ago`. | — |
 | `--until ISO8601` | Return rows with session_start_time <= this value. | — |
+| `--ago DURATION` | Relative alternative to `--since`: rows newer than now minus this duration (e.g. `1h`, `90m`, `3600s`, `2d`). Mutually exclusive with `--since`. | — |
 
 **Example**
 
 ```shell
 fdw -w MyWorkspace queries sessions SalesWH
+fdw -w MyWorkspace queries sessions SalesWH --ago 90m
 ```
 
 ---
