@@ -78,12 +78,14 @@ Performs a structured query performance analysis on a Fabric Data Warehouse:
 6. Reads current data-clustering columns via `get_cluster_columns` (DW-only; skipped for SQL Analytics Endpoints)
 7. Reports findings and recommendations; optionally applies statistics changes (`create_statistics` / `update_statistics`) and re-clustering (`set_cluster_columns`) after explicit user confirmation
 
-To visualize the execution plan, use the CLI:
+To visualize the execution plan, use the CLI (pass the warehouse name as the first positional argument and the query via `-q`):
 
 ```bash
-fdw sql plan "<query>" --format html   # opens in browser
-fdw sql plan "<query>" --format svg    # saves as SVG image
+fdw sql plan <warehouse> -q "<query>" --format html -o plan.html   # writes self-contained HTML file; open plan.html in any browser
+fdw sql plan <workspace>/<warehouse> -q "<query>" --format svg -o plan.svg   # renders SVG via system dot binary (requires Graphviz)
 ```
+
+`--format html` requires `-o/--output` and writes a file — it does not open the browser automatically.
 
 ### dbt-setup
 

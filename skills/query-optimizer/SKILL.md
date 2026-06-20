@@ -31,12 +31,14 @@ If the warehouse is a SQL Analytics Endpoint, skip steps 8, 9, 11 (clustering), 
 
 Call `get_query_plan` with the query text. This returns a SHOWPLAN_XML document without executing the query.
 
-To visualize the plan, use the CLI:
+To visualize the plan, use the CLI (pass the warehouse name as the first argument and the query via `-q`):
 
 ```bash
-fdw sql plan "<query>" --format html   # open in browser for visual inspection
-fdw sql plan "<query>" --format svg    # embed or save as image
+fdw sql plan <warehouse> -q "<query>" --format html -o plan.html   # writes self-contained HTML; open plan.html in any browser
+fdw sql plan <workspace>/<warehouse> -q "<query>" --format svg -o plan.svg   # renders SVG via system dot binary (requires Graphviz)
 ```
+
+Note: `--format html` requires `-o/--output`; it writes a file and does not open the browser automatically.
 
 ### Step 2 — Parse the plan XML
 
@@ -105,23 +107,21 @@ For each finding, propose a concrete action:
 - **Query rewrite**: explicit CAST to avoid CONVERT_IMPLICIT, predicate restructuring for SARGability
 - **Clustering**: recommend clustering column(s) with rationale from column metadata
 
-### Step 12 — Apply statistics changes (optional, confirm first)
+### Step 12 — Apply statistics changes (optional — ask the user first)
 
-> **Requires explicit user confirmation before proceeding.** This is a write operation.
+> **Before calling any statistics tool, ask the user explicitly:** "Should I apply the statistics changes now?" The MCP server enforces its own write-guard (controlled by `FABRIC_MCP_ALLOW_WRITES` / `FABRIC_MCP_ALLOW_DESTRUCTIVE` server config), but it does not pop a user dialog — the agent must ask before proceeding.
 
-If the user approves, apply statistics changes using `create_statistics` (for absent stats) or `update_statistics` (for stale stats). For large tables, prefer `update_statistics` with a SAMPLE percentage rather than FULLSCAN to limit execution time.
+If the user confirms, apply statistics changes using `create_statistics` (for absent stats) or `update_statistics` (for stale stats). For large tables, prefer `update_statistics` with a SAMPLE percentage rather than FULLSCAN to limit execution time.
 
-### Step 13 — Re-cluster the table (optional, confirm first — destructive)
+### Step 13 — Re-cluster the table (optional — ask the user first, destructive)
 
-> **Requires explicit user confirmation before proceeding.**
->
-> **Warning:** `set_cluster_columns` performs a full transactional CTAS-swap. This is a complete copy of the table and may take significant time on large tables. During the operation the table is briefly unavailable. Dependent views and stored procedures that reference the table may need to be refreshed or re-validated after the rename completes. Only proceed after the user explicitly acknowledges these consequences.
+> **Before calling `set_cluster_columns`, ask the user explicitly and surface the following:** "`set_cluster_columns` performs a full transactional CTAS-swap — a complete physical copy of the table. This may take significant time on large tables, the table will be briefly unavailable during the swap, and dependent views or stored procedures may need refreshing afterwards. Should I proceed?" Only call the tool after the user explicitly acknowledges and approves.
 
-If the user approves and acknowledges the above, call `set_cluster_columns` with the recommended clustering columns.
+If the user confirms and acknowledges, call `set_cluster_columns` with the recommended clustering columns.
 
 ## Guardrails
 
-- Steps 12 and 13 each require separate, explicit user confirmation
+- Steps 12 and 13 are opt-in: the agent must ask the user for explicit confirmation before calling any write or destructive tool. The tools enforce a server-side write/destructive guard, but they do not prompt the user — that is the agent's responsibility.
 - Steps 8, 9, 11, and 13 apply only to Fabric Data Warehouses — skip them for SQL Analytics Endpoints
 - Stale-statistics detection is heuristic; always frame it as a flag, not a certainty
 - Do not run the original query against the warehouse during analysis — `get_query_plan` obtains the plan without execution
