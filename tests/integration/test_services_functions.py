@@ -2,14 +2,15 @@
 
 Run with: pytest -m integration tests/integration/test_services_functions.py
 
-Fixture note: uses ``warehouse_schema`` from conftest, which creates a uniquely-named
-schema inside the session-shared warm warehouse and cascade-drops it on teardown.
-All functions created here are created inside that schema; the schema cascade drop
-handles cleanup, with additional try/finally guards for mid-test failures.
+Fixture note: uses ``mutable_schema_target`` from conftest, which creates a
+uniquely-named schema on BOTH the shared warm warehouse and the shared SQL analytics
+endpoint, then cascade-drops it on teardown.  All functions are created inside that
+schema; the cascade drop handles cleanup, with additional try/finally guards for
+mid-test failures.
 
-The SQL Analytics Endpoint read test uses ``ephemeral_sql_endpoint`` (SQL Analytics
-Endpoint, a ``Warehouse`` object typed as ``WarehouseKind.SQL_ENDPOINT``) because
-the shared warehouse fixture does not cover endpoint-only behaviour.
+The ``mutable_schema_target`` fixture is parametrized over two targets:
+  - ``[warehouse]``     — Data Warehouse (always runs)
+  - ``[sql_endpoint]``  — SQL Analytics Endpoint (``pytest.mark.sql_endpoint``, CI only)
 
 Note on scope:
 - Scalar UDFs and inline TVFs are **preview** features on Fabric DW as of mid-2026.
@@ -22,12 +23,11 @@ Note on scope:
 from __future__ import annotations
 
 import contextlib
-from uuid import UUID
 
 import pytest
 
 from fabric_dw.exceptions import NotFoundError
-from fabric_dw.models import FunctionDetails, FunctionKind, Warehouse
+from fabric_dw.models import FunctionDetails, FunctionKind
 from fabric_dw.services import functions
 from fabric_dw.sql import SqlTarget
 
@@ -64,19 +64,18 @@ RETURN (SELECT 1 AS id WHERE 1 >= @min_val)
 
 
 async def test_list_functions_returns_list(
-    warehouse_schema: tuple[SqlTarget, str],
+    read_target: SqlTarget,
 ) -> None:
-    """list_functions on the shared warehouse must return a (possibly empty) list."""
-    sql_target, _schema = warehouse_schema
-    result = await functions.list_functions(sql_target)
+    """list_functions on either target must return a (possibly empty) list."""
+    result = await functions.list_functions(read_target)
     assert isinstance(result, list)
 
 
 async def test_create_scalar_function_returns_function_details(
-    warehouse_schema: tuple[SqlTarget, str],
+    mutable_schema_target: tuple[SqlTarget, str],
 ) -> None:
     """create_function must return FunctionDetails with correct schema/name/kind."""
-    sql_target, schema = warehouse_schema
+    sql_target, schema = mutable_schema_target
     fn_name = "pytest_fns_create_scalar"
 
     try:
@@ -96,10 +95,10 @@ async def test_create_scalar_function_returns_function_details(
 
 
 async def test_list_functions_includes_created_function(
-    warehouse_schema: tuple[SqlTarget, str],
+    mutable_schema_target: tuple[SqlTarget, str],
 ) -> None:
     """A newly created function must appear in list_functions results."""
-    sql_target, schema = warehouse_schema
+    sql_target, schema = mutable_schema_target
     fn_name = "pytest_fns_list"
 
     try:
@@ -123,10 +122,10 @@ async def test_list_functions_includes_created_function(
 
 
 async def test_list_functions_kind_filter_scalar(
-    warehouse_schema: tuple[SqlTarget, str],
+    mutable_schema_target: tuple[SqlTarget, str],
 ) -> None:
     """list_functions with kind='scalar' must only return FN functions."""
-    sql_target, schema = warehouse_schema
+    sql_target, schema = mutable_schema_target
     fn_name = "pytest_fns_kind_scalar"
 
     try:
@@ -141,10 +140,10 @@ async def test_list_functions_kind_filter_scalar(
 
 
 async def test_get_function_returns_definition(
-    warehouse_schema: tuple[SqlTarget, str],
+    mutable_schema_target: tuple[SqlTarget, str],
 ) -> None:
     """get_function must return FunctionDetails with definition and parameters populated."""
-    sql_target, schema = warehouse_schema
+    sql_target, schema = mutable_schema_target
     fn_name = "pytest_fns_get"
 
     try:
@@ -164,19 +163,19 @@ async def test_get_function_returns_definition(
 
 
 async def test_get_function_raises_not_found_for_missing_function(
-    warehouse_schema: tuple[SqlTarget, str],
+    mutable_schema_target: tuple[SqlTarget, str],
 ) -> None:
     """get_function must raise NotFoundError when the function does not exist."""
-    sql_target, schema = warehouse_schema
+    sql_target, schema = mutable_schema_target
     with pytest.raises(NotFoundError):
         await functions.get_function(sql_target, schema, "pytest_fns_does_not_exist_xyz")
 
 
 async def test_update_function_changes_definition(
-    warehouse_schema: tuple[SqlTarget, str],
+    mutable_schema_target: tuple[SqlTarget, str],
 ) -> None:
     """update_function must redefine the function and return the updated definition."""
-    sql_target, schema = warehouse_schema
+    sql_target, schema = mutable_schema_target
     fn_name = "pytest_fns_update"
 
     try:
@@ -192,10 +191,10 @@ async def test_update_function_changes_definition(
 
 
 async def test_drop_function_removes_function(
-    warehouse_schema: tuple[SqlTarget, str],
+    mutable_schema_target: tuple[SqlTarget, str],
 ) -> None:
     """drop_function must remove the function so it no longer appears in list_functions."""
-    sql_target, schema = warehouse_schema
+    sql_target, schema = mutable_schema_target
     fn_name = "pytest_fns_drop"
 
     await functions.create_function(sql_target, schema, fn_name, _SCALAR_INLINEABLE_BODY)
@@ -216,10 +215,10 @@ async def test_drop_function_removes_function(
 
 
 async def test_rename_function_roundtrip(
-    warehouse_schema: tuple[SqlTarget, str],
+    mutable_schema_target: tuple[SqlTarget, str],
 ) -> None:
     """rename_function must rename the function and return updated details."""
-    sql_target, schema = warehouse_schema
+    sql_target, schema = mutable_schema_target
     fn_name = "pytest_fns_rename_src"
     new_name = "pytest_fns_rename_dst"
 
@@ -243,10 +242,10 @@ async def test_rename_function_roundtrip(
 
 
 async def test_create_function_full_roundtrip(
-    warehouse_schema: tuple[SqlTarget, str],
+    mutable_schema_target: tuple[SqlTarget, str],
 ) -> None:
     """End-to-end: create -> list -> get -> update -> rename -> drop."""
-    sql_target, schema = warehouse_schema
+    sql_target, schema = mutable_schema_target
     fn_name = "pytest_fns_roundtrip"
     renamed = "pytest_fns_roundtrip_v2"
 
@@ -289,11 +288,11 @@ async def test_create_function_full_roundtrip(
 
 
 async def test_create_inline_tvf_and_list_by_kind(
-    warehouse_schema: tuple[SqlTarget, str],
+    mutable_schema_target: tuple[SqlTarget, str],
 ) -> None:
     """create_function with an inline TVF body must return kind=inline_tvf
     and list_functions with kind='inline_tvf' must include it."""
-    sql_target, schema = warehouse_schema
+    sql_target, schema = mutable_schema_target
     fn_name = "pytest_fns_inline_tvf"
 
     try:
@@ -315,24 +314,3 @@ async def test_create_inline_tvf_and_list_by_kind(
     finally:
         with contextlib.suppress(Exception):
             await functions.drop_function(sql_target, schema, fn_name)
-
-
-# ---------------------------------------------------------------------------
-# SQL Analytics Endpoint — list is allowed (no endpoint guard on functions)
-# ---------------------------------------------------------------------------
-
-
-async def test_list_functions_on_sql_analytics_endpoint(
-    ephemeral_sql_endpoint: Warehouse,
-    workspace_id: UUID,
-) -> None:
-    """list_functions on a SQL analytics endpoint must succeed (read OK, no guard)."""
-    if ephemeral_sql_endpoint.connection_string is None:
-        pytest.skip("SQL analytics endpoint has no connection string")
-    target = SqlTarget(
-        workspace_id=str(workspace_id),
-        database=ephemeral_sql_endpoint.name,
-        connection_string=ephemeral_sql_endpoint.connection_string,
-    )
-    result = await functions.list_functions(target)
-    assert isinstance(result, list)

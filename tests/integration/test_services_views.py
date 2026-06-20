@@ -2,10 +2,15 @@
 
 Run with: pytest -m integration tests/integration/test_services_views.py
 
-Fixture note: uses ``warehouse_schema`` from conftest, which creates a uniquely-named
-schema inside the session-shared warm warehouse and cascade-drops it on teardown.
-All views created here are created inside that schema and cleaned up by the schema
-cascade drop, with additional try/finally guards for mid-test failures.
+Fixture note: uses ``mutable_schema_target`` from conftest, which creates a
+uniquely-named schema on BOTH the shared warm warehouse and the shared SQL analytics
+endpoint, then cascade-drops it on teardown.  All views are created inside that
+schema and cleaned up by the cascade drop, with additional try/finally guards for
+mid-test failures.
+
+The ``mutable_schema_target`` fixture is parametrized over two targets:
+  - ``[warehouse]``     — Data Warehouse (always runs)
+  - ``[sql_endpoint]``  — SQL Analytics Endpoint (``pytest.mark.sql_endpoint``, CI only)
 """
 
 from __future__ import annotations
@@ -23,19 +28,18 @@ pytestmark = pytest.mark.integration
 
 
 async def test_list_views_returns_list(
-    warehouse_schema: tuple[SqlTarget, str],
+    read_target: SqlTarget,
 ) -> None:
-    """list_views on the shared warehouse must return a list (may be non-empty)."""
-    sql_target, _schema = warehouse_schema
-    result = await views.list_views(sql_target)
+    """list_views on either target must return a list (may be non-empty)."""
+    result = await views.list_views(read_target)
     assert isinstance(result, list)
 
 
 async def test_create_view_returns_view_object(
-    warehouse_schema: tuple[SqlTarget, str],
+    mutable_schema_target: tuple[SqlTarget, str],
 ) -> None:
     """create_view must return a View with the correct schema/name."""
-    sql_target, schema = warehouse_schema
+    sql_target, schema = mutable_schema_target
     view_name = "pytest_views_create"
     select_body = "SELECT 1 AS id, 'hello' AS greeting"
 
@@ -53,10 +57,10 @@ async def test_create_view_returns_view_object(
 
 
 async def test_list_views_includes_created_view(
-    warehouse_schema: tuple[SqlTarget, str],
+    mutable_schema_target: tuple[SqlTarget, str],
 ) -> None:
     """A newly created view must appear in list_views results."""
-    sql_target, schema = warehouse_schema
+    sql_target, schema = mutable_schema_target
     view_name = "pytest_views_list"
     select_body = "SELECT 42 AS answer"
 
@@ -81,10 +85,10 @@ async def test_list_views_includes_created_view(
 
 
 async def test_get_view_returns_definition(
-    warehouse_schema: tuple[SqlTarget, str],
+    mutable_schema_target: tuple[SqlTarget, str],
 ) -> None:
     """get_view must return the View with its definition populated."""
-    sql_target, schema = warehouse_schema
+    sql_target, schema = mutable_schema_target
     view_name = "pytest_views_get"
     select_body = "SELECT 99 AS magic_number"
 
@@ -103,19 +107,19 @@ async def test_get_view_returns_definition(
 
 
 async def test_get_view_raises_not_found_for_missing_view(
-    warehouse_schema: tuple[SqlTarget, str],
+    mutable_schema_target: tuple[SqlTarget, str],
 ) -> None:
     """get_view must raise NotFoundError when the view does not exist."""
-    sql_target, schema = warehouse_schema
+    sql_target, schema = mutable_schema_target
     with pytest.raises(NotFoundError):
         await views.get_view(sql_target, schema, "pytest_views_does_not_exist")
 
 
 async def test_read_view_returns_columns_and_rows(
-    warehouse_schema: tuple[SqlTarget, str],
+    mutable_schema_target: tuple[SqlTarget, str],
 ) -> None:
     """read_view must return (columns, rows) where columns contains expected names."""
-    sql_target, schema = warehouse_schema
+    sql_target, schema = mutable_schema_target
     view_name = "pytest_views_read"
     select_body = "SELECT 7 AS lucky_number, 'world' AS message"
 
@@ -139,19 +143,19 @@ async def test_read_view_returns_columns_and_rows(
 
 
 async def test_read_view_raises_not_found_for_missing_view(
-    warehouse_schema: tuple[SqlTarget, str],
+    mutable_schema_target: tuple[SqlTarget, str],
 ) -> None:
     """read_view must raise NotFoundError when the view does not exist."""
-    sql_target, schema = warehouse_schema
+    sql_target, schema = mutable_schema_target
     with pytest.raises(NotFoundError):
         await views.read_view(sql_target, schema, "pytest_views_read_missing")
 
 
 async def test_update_view_changes_definition(
-    warehouse_schema: tuple[SqlTarget, str],
+    mutable_schema_target: tuple[SqlTarget, str],
 ) -> None:
     """update_view must redefine the view and return the updated definition."""
-    sql_target, schema = warehouse_schema
+    sql_target, schema = mutable_schema_target
     view_name = "pytest_views_update"
     original_body = "SELECT 1 AS version"
     updated_body = "SELECT 2 AS version, 'updated' AS status"
@@ -175,10 +179,10 @@ async def test_update_view_changes_definition(
 
 
 async def test_drop_view_removes_view(
-    warehouse_schema: tuple[SqlTarget, str],
+    mutable_schema_target: tuple[SqlTarget, str],
 ) -> None:
     """drop_view must remove the view so it no longer appears in list_views."""
-    sql_target, schema = warehouse_schema
+    sql_target, schema = mutable_schema_target
     view_name = "pytest_views_drop"
     select_body = "SELECT 0 AS placeholder"
 
@@ -200,10 +204,10 @@ async def test_drop_view_removes_view(
 
 
 async def test_create_view_full_roundtrip(
-    warehouse_schema: tuple[SqlTarget, str],
+    mutable_schema_target: tuple[SqlTarget, str],
 ) -> None:
     """End-to-end: create → list → get → read → update → read → drop."""
-    sql_target, schema = warehouse_schema
+    sql_target, schema = mutable_schema_target
     view_name = "pytest_views_roundtrip"
     v1_body = "SELECT 1 AS n"
     v2_body = "SELECT 2 AS n, 'v2' AS label"
@@ -242,10 +246,10 @@ async def test_create_view_full_roundtrip(
 
 
 async def test_rename_view_creates_new_and_removes_old(
-    warehouse_schema: tuple[SqlTarget, str],
+    mutable_schema_target: tuple[SqlTarget, str],
 ) -> None:
     """rename_view must make the old name disappear and the new name appear."""
-    sql_target, schema = warehouse_schema
+    sql_target, schema = mutable_schema_target
     old_name = "pytest_views_rename_old"
     new_name = "pytest_views_rename_new"
     qualified = f"{schema}.{old_name}"
@@ -289,10 +293,10 @@ async def test_rename_view_creates_new_and_removes_old(
 
 
 async def test_count_view_rows_returns_nonnegative_int(
-    warehouse_schema: tuple[SqlTarget, str],
+    mutable_schema_target: tuple[SqlTarget, str],
 ) -> None:
     """count_view_rows must return a non-negative integer for a real view."""
-    sql_target, schema = warehouse_schema
+    sql_target, schema = mutable_schema_target
     view_name = "pytest_views_count"
     select_body = "SELECT 1 AS id UNION ALL SELECT 2 AS id"
 

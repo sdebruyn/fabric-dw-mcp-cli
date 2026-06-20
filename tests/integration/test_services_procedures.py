@@ -2,15 +2,19 @@
 
 Run with: pytest -m integration tests/integration/test_services_procedures.py
 
-Fixture note: uses ``warehouse_schema`` from conftest, which creates a uniquely-named
-schema inside the session-shared warm warehouse and cascade-drops it on teardown.
-All procedures created here are created inside that schema; the schema cascade drop
-handles cleanup, with additional try/finally guards for mid-test failures.
+Fixture note: uses ``mutable_schema_target`` from conftest, which creates a
+uniquely-named schema on BOTH the shared warm warehouse and the shared SQL analytics
+endpoint, then cascade-drops it on teardown.  All procedures are created inside that
+schema; the cascade drop handles cleanup, with additional try/finally guards for
+mid-test failures.
 
-Note on scope: stored procedures are supported on **both** Fabric Data Warehouses
-and SQL Analytics Endpoints.  The ``warehouse_schema`` fixture points at a warehouse;
-a separate endpoint variant is not set up here because endpoint tests require a
-Lakehouse, which is out of scope.  The service itself has no endpoint guard.
+The ``mutable_schema_target`` fixture is parametrized over two targets:
+  - ``[warehouse]``     — Data Warehouse (always runs)
+  - ``[sql_endpoint]``  — SQL Analytics Endpoint (``pytest.mark.sql_endpoint``, CI only)
+
+Stored procedures are supported on **both** Fabric Data Warehouses and SQL Analytics
+Endpoints.  The service has no ``_assert_not_sql_endpoint`` guard — this file proves
+it on both targets.
 """
 
 from __future__ import annotations
@@ -28,19 +32,18 @@ pytestmark = pytest.mark.integration
 
 
 async def test_list_procedures_returns_list(
-    warehouse_schema: tuple[SqlTarget, str],
+    read_target: SqlTarget,
 ) -> None:
-    """list_procedures on the shared warehouse must return a list."""
-    sql_target, _schema = warehouse_schema
-    result = await procedures.list_procedures(sql_target)
+    """list_procedures on either target must return a list."""
+    result = await procedures.list_procedures(read_target)
     assert isinstance(result, list)
 
 
 async def test_create_procedure_returns_procedure_object(
-    warehouse_schema: tuple[SqlTarget, str],
+    mutable_schema_target: tuple[SqlTarget, str],
 ) -> None:
     """create_procedure must return a StoredProcedure with the correct schema/name."""
-    sql_target, schema = warehouse_schema
+    sql_target, schema = mutable_schema_target
     proc_name = "pytest_procs_create"
     body = "BEGIN SELECT 1 AS id, 'hello' AS greeting END"
 
@@ -58,10 +61,10 @@ async def test_create_procedure_returns_procedure_object(
 
 
 async def test_list_procedures_includes_created_procedure(
-    warehouse_schema: tuple[SqlTarget, str],
+    mutable_schema_target: tuple[SqlTarget, str],
 ) -> None:
     """A newly created procedure must appear in list_procedures results."""
-    sql_target, schema = warehouse_schema
+    sql_target, schema = mutable_schema_target
     proc_name = "pytest_procs_list"
     body = "BEGIN SELECT 42 AS answer END"
 
@@ -85,10 +88,10 @@ async def test_list_procedures_includes_created_procedure(
 
 
 async def test_get_procedure_returns_definition(
-    warehouse_schema: tuple[SqlTarget, str],
+    mutable_schema_target: tuple[SqlTarget, str],
 ) -> None:
     """get_procedure must return the StoredProcedure with its definition populated."""
-    sql_target, schema = warehouse_schema
+    sql_target, schema = mutable_schema_target
     proc_name = "pytest_procs_get"
     body = "BEGIN SELECT 99 AS magic_number END"
 
@@ -107,19 +110,19 @@ async def test_get_procedure_returns_definition(
 
 
 async def test_get_procedure_raises_not_found_for_missing_procedure(
-    warehouse_schema: tuple[SqlTarget, str],
+    mutable_schema_target: tuple[SqlTarget, str],
 ) -> None:
     """get_procedure must raise NotFoundError when the procedure does not exist."""
-    sql_target, schema = warehouse_schema
+    sql_target, schema = mutable_schema_target
     with pytest.raises(NotFoundError):
         await procedures.get_procedure(sql_target, schema, "pytest_procs_does_not_exist")
 
 
 async def test_update_procedure_changes_definition(
-    warehouse_schema: tuple[SqlTarget, str],
+    mutable_schema_target: tuple[SqlTarget, str],
 ) -> None:
     """update_procedure must redefine the procedure and return the updated definition."""
-    sql_target, schema = warehouse_schema
+    sql_target, schema = mutable_schema_target
     proc_name = "pytest_procs_update"
     original_body = "BEGIN SELECT 1 AS version END"
     updated_body = "BEGIN SELECT 2 AS version, 'updated' AS status END"
@@ -137,10 +140,10 @@ async def test_update_procedure_changes_definition(
 
 
 async def test_drop_procedure_removes_procedure(
-    warehouse_schema: tuple[SqlTarget, str],
+    mutable_schema_target: tuple[SqlTarget, str],
 ) -> None:
     """drop_procedure must remove the procedure so it no longer appears in list_procedures."""
-    sql_target, schema = warehouse_schema
+    sql_target, schema = mutable_schema_target
     proc_name = "pytest_procs_drop"
     body = "BEGIN SELECT 0 AS placeholder END"
 
@@ -162,12 +165,12 @@ async def test_drop_procedure_removes_procedure(
 
 
 async def test_create_procedure_full_roundtrip(
-    warehouse_schema: tuple[SqlTarget, str],
+    mutable_schema_target: tuple[SqlTarget, str],
 ) -> None:
     """End-to-end: create -> list -> get (definition contains body) -> update (definition
     changes) -> drop.
     """
-    sql_target, schema = warehouse_schema
+    sql_target, schema = mutable_schema_target
     proc_name = "pytest_procs_roundtrip"
     v1_body = "BEGIN SELECT 1 AS n END"
     v2_body = "BEGIN SELECT 2 AS n, 'v2' AS label END"

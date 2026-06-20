@@ -72,7 +72,8 @@ _SNAP_SQL_READINESS_POLL_S = 5.0
 
 # Name of the read-only seed schema pre-populated in the shared warehouse.
 # Tests that only READ data (list / get / query) may use this schema directly.
-# Tests that mutate state MUST use the ``warehouse_schema`` fixture instead.
+# Dual-target mutating tests MUST use the ``mutable_schema_target`` fixture;
+# ``warehouse_schema`` is for DWH-only DDL (e.g. tables) only.
 SEED_SCHEMA_NAME = "sample"
 
 
@@ -1115,7 +1116,7 @@ def read_target(
     to refer to it in assertions.
 
     **Tests that request this fixture MUST NOT mutate the seed schema.**
-    Mutating dual-target tests will use a future fixture (see #592).
+    Mutating dual-target tests use the ``mutable_schema_target`` fixture instead.
 
     Implementation note
     -------------------
@@ -1133,6 +1134,63 @@ def read_target(
         return ep.sql_target
     msg = f"Unknown read_target param: {request.param!r}"
     raise ValueError(msg)
+
+
+# ---------------------------------------------------------------------------
+# Dual-target mutable schema fixture (warehouse + SQL analytics endpoint)
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture(
+    params=[
+        pytest.param(_PARAM_WAREHOUSE),
+        pytest.param(_PARAM_SQL_ENDPOINT, marks=pytest.mark.sql_endpoint),
+    ]
+)
+async def mutable_schema_target(
+    request: pytest.FixtureRequest,
+    shared_warehouse: SharedWarehouseTarget,
+) -> AsyncIterator[tuple[SqlTarget, str]]:
+    """Parametrized fixture that creates an isolated schema on each SQL target.
+
+    Runs each requesting test TWICE: once on the shared warm warehouse and once
+    on the shared SQL analytics endpoint.  The endpoint leg carries
+    ``pytest.mark.sql_endpoint`` so it is excluded from local runs (via
+    ``addopts = "-m 'not … sql_endpoint'"`` in pyproject.toml) and opted-in
+    explicitly on CI.
+
+    Yields ``(sql_target, schema_name)`` where *schema_name* is a uniquely-named
+    schema (``pytest_<8-hex-chars>``) that has already been created on *sql_target*.
+    Teardown cascade-drops the schema on the same target, so any views/procedures/
+    functions created inside it are cleaned up automatically.
+
+    Implementation note
+    -------------------
+    ``shared_sql_endpoint`` is resolved LAZILY via ``request.getfixturevalue``
+    only on the ``sql_endpoint`` leg — identical pattern to ``read_target``.  It
+    is intentionally NOT declared as a signature parameter to avoid provisioning
+    the SQL analytics endpoint during local runs or the ``[warehouse]`` leg.
+
+    Both ``create_schema`` and ``delete_schema(cascade=True)`` are themselves
+    dual-target (no ``_assert_not_sql_endpoint`` guard), so the isolation and
+    teardown mechanism works identically on both targets.
+    """
+    if request.param == _PARAM_WAREHOUSE:
+        sql_target = shared_warehouse.sql_target
+    elif request.param == _PARAM_SQL_ENDPOINT:
+        ep: SharedSqlEndpointTarget = request.getfixturevalue("shared_sql_endpoint")
+        sql_target = ep.sql_target
+    else:
+        msg = f"Unknown mutable_schema_target param: {request.param!r}"
+        raise ValueError(msg)
+
+    schema_name = f"pytest_{uuid.uuid4().hex[:8]}"
+    await schemas.create_schema(sql_target, schema_name)
+    try:
+        yield sql_target, schema_name
+    finally:
+        with contextlib.suppress(Exception):
+            await schemas.delete_schema(sql_target, schema_name, cascade=True)
 
 
 # ---------------------------------------------------------------------------
