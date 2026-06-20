@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import httpx
 import pytest
@@ -221,8 +221,6 @@ class TestInferFileFormat:
 
 class TestJsonToParquet:
     def test_converts_json_to_parquet(self, tmp_path: Path) -> None:
-        pytest.importorskip("pyarrow")
-
         json_file = tmp_path / "data.json"
         json_file.write_text(
             '{"id": 1, "name": "Alice"}\n{"id": 2, "name": "Bob"}\n',
@@ -576,8 +574,6 @@ class TestLoadLocalFile:
 
     async def test_json_converted_to_parquet(self, tmp_path: Path) -> None:
         """JSON local files are converted to Parquet before upload."""
-        pytest.importorskip("pyarrow")
-
         json_file = tmp_path / "data.json"
         json_file.write_text('{"id": 1}\n{"id": 2}\n', encoding="utf-8")
 
@@ -773,8 +769,6 @@ class TestTempFileCleanup:
         self, tmp_path: Path
     ) -> None:
         """B2: temp Parquet file must be deleted even if create_staging_lakehouse raises."""
-        pytest.importorskip("pyarrow")
-
         json_file = tmp_path / "data.json"
         json_file.write_text('{"id": 1}\n', encoding="utf-8")
 
@@ -1059,8 +1053,6 @@ class TestOneLakeUploadFile:
 
     def _make_credential(self) -> AsyncTokenCredential:
         """Return a minimal async credential stub that returns a fake token."""
-        from unittest.mock import AsyncMock, MagicMock  # noqa: PLC0415
-
         token = MagicMock()
         token.token = "fake-bearer-token"  # noqa: S105
         cred = AsyncMock(spec=AsyncTokenCredential)
@@ -1773,8 +1765,6 @@ class TestOnelakeUploadFileAuthError:
     _LH_ID = "ffffffff-0000-1111-2222-333333333333"
 
     def _make_failing_credential(self, exc: Exception) -> AsyncTokenCredential:
-        from unittest.mock import AsyncMock, MagicMock  # noqa: PLC0415
-
         cred = MagicMock(spec=AsyncTokenCredential)
         cred.get_token = AsyncMock(side_effect=exc)
         return cred  # type: ignore[return-value]
@@ -1943,8 +1933,6 @@ class TestLogDfsErrorUnreadableBody:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """_log_dfs_error must handle resp.text raising an exception gracefully."""
-        from unittest.mock import PropertyMock  # noqa: PLC0415
-
         resp = httpx.Response(
             500,
             headers={"x-ms-error-code": "InternalError", "x-ms-request-id": "req-999"},
@@ -1970,8 +1958,6 @@ class TestLogDfsErrorUnreadableBody:
 class TestCreateStagingLakehouse:
     def _make_sync_resp(self, headers: dict, body: dict) -> object:
         """Return a sync-style mock response (json() is NOT async in FabricHttpClient)."""
-        from unittest.mock import MagicMock  # noqa: PLC0415
-
         resp = MagicMock()
         resp.headers = headers
         resp.json.return_value = body
@@ -2107,7 +2093,7 @@ class TestDeleteLakehouse:
 
         mock_http.request.assert_called_once()
         call_args = mock_http.request.call_args
-        assert "DELETE" in call_args[0]
+        assert call_args[0][0] == "DELETE"
         assert "lh-id-xyz" in call_args[0][2]
 
     async def test_404_suppressed(self) -> None:
@@ -2136,7 +2122,10 @@ class TestCopyIntoFromUrlRejectedRowValidation:
         target = SqlTarget(
             workspace_id="ws-id", database="db", connection_string="server=x;database=y"
         )
-        with pytest.raises(ValueError, match="only HTTPS"):
+        with (
+            patch("fabric_dw.services.load.run_query") as mock_rq,
+            pytest.raises(ValueError, match="only HTTPS"),
+        ):
             await copy_into_from_url(
                 target,
                 "dbo",
@@ -2145,6 +2134,8 @@ class TestCopyIntoFromUrlRejectedRowValidation:
                 file_type="PARQUET",
                 rejected_row_location="http://example.com/rejected/",
             )
+        # Validation fires before SQL execution — run_query must not be called.
+        mock_rq.assert_not_called()
 
     async def test_fabric_error_reraised_as_is(self) -> None:
         """FabricError from run_query must be re-raised as-is (not wrapped)."""
@@ -2235,8 +2226,6 @@ class TestLoadLocalFileUnlinkError:
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """OSError from unlink of converted temp file must be logged as WARNING, not raised."""
-        pytest.importorskip("pyarrow")
-
         json_file = tmp_path / "data.json"
         json_file.write_text('{"id": 1}\n', encoding="utf-8")
 
@@ -2449,7 +2438,6 @@ class TestInferColumnsFromLocal:
 
     async def test_json_path_converts_then_infers(self, tmp_path: Path) -> None:
         """JSON format must convert to Parquet, infer columns, then clean up the temp file."""
-        pytest.importorskip("pyarrow")
         from fabric_dw.services.load import _infer_columns_from_local  # noqa: PLC0415
 
         json_file = tmp_path / "data.json"
