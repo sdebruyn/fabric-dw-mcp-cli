@@ -2121,9 +2121,7 @@ class TestTablesColumns:
                 new=AsyncMock(return_value=_COLUMNS_RESULT),
             ),
         ):
-            result = runner.invoke(
-                cli, ["-w", WS_GUID, "tables", "columns", WH_GUID, "dbo.sales"]
-            )
+            result = runner.invoke(cli, ["-w", WS_GUID, "tables", "columns", WH_GUID, "dbo.sales"])
         assert result.exit_code == 0, result.output
 
     def test_columns_json_output(self, runner: CliRunner, cache_env: Path) -> None:
@@ -2170,9 +2168,7 @@ class TestTablesColumns:
                 new=AsyncMock(side_effect=NotFoundError("Table [dbo].[ghost] not found")),
             ),
         ):
-            result = runner.invoke(
-                cli, ["-w", WS_GUID, "tables", "columns", WH_GUID, "dbo.ghost"]
-            )
+            result = runner.invoke(cli, ["-w", WS_GUID, "tables", "columns", WH_GUID, "dbo.ghost"])
         assert result.exit_code != 0
         assert "not found" in result.output.lower()
 

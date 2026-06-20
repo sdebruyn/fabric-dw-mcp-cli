@@ -1104,8 +1104,6 @@ class TestViewsColumns:
                 new=AsyncMock(side_effect=NotFoundError("View [dbo].[ghost] not found")),
             ),
         ):
-            result = runner.invoke(
-                cli, ["-w", WS_GUID, "views", "columns", WH_GUID, "dbo.ghost"]
-            )
+            result = runner.invoke(cli, ["-w", WS_GUID, "views", "columns", WH_GUID, "dbo.ghost"])
         assert result.exit_code != 0
         assert "not found" in result.output.lower()

@@ -217,9 +217,7 @@ async def columns_cmd(
     try:
         async with build_http_client(ctx) as http:
             target, _entry = await build_sql_target(http, ws, wh)
-            cols = await _get_columns(
-                target, schema, table_name, kind_label="table", mode=ctx.auth
-            )
+            cols = await _get_columns(target, schema, table_name, kind_label="table", mode=ctx.auth)
             render(
                 cols,
                 json_output=ctx.json_output,

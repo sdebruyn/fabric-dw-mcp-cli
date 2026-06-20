@@ -21,6 +21,7 @@ from fabric_dw.telemetry_commands import (
     now_ms,
     resolve_domain,
 )
+from tests.unit._tool_introspection import collect_live_mcp_tool_names
 
 # Telemetry patch targets (lazily imported inside emit_command_invoked).
 _TELEMETRY_ENABLED = "fabric_dw.telemetry.telemetry_enabled"
@@ -72,143 +73,55 @@ class TestResolveDomain:
 
 
 # ---------------------------------------------------------------------------
-# Domain coverage — exhaustive check
+# Domain coverage — live introspection
 # ---------------------------------------------------------------------------
 
 
+def _collect_live_cli_group_names() -> frozenset[str]:
+    """Walk the live Click command tree and return all top-level group/command names.
+
+    Hidden commands are included deliberately: telemetry fires for all commands
+    regardless of the ``hidden`` flag, so a hidden group without a DOMAIN_MAP
+    entry would silently log ``domain="unknown"``.
+    """
+    from fabric_dw.cli._main import cli  # noqa: PLC0415
+
+    return frozenset(cli.commands)
+
+
 class TestDomainCoverage:
-    """Every registered MCP tool and every CLI command must resolve to a known domain."""
+    """Every registered MCP tool and every CLI command must resolve to a known domain.
 
-    # Canonical MCP tool names taken from test_server.EXPECTED_TOOL_NAMES.
-    MCP_TOOL_NAMES: frozenset[str] = frozenset(
-        {
-            "list_workspaces",
-            "get_workspace",
-            "set_workspace_collation",
-            "list_warehouses",
-            "get_warehouse",
-            "create_warehouse",
-            "rename_warehouse",
-            "delete_warehouse",
-            "takeover_warehouse",
-            "get_warehouse_permissions",
-            "list_sql_endpoints",
-            "get_sql_endpoint",
-            "refresh_sql_endpoint_metadata",
-            "get_sql_endpoint_permissions",
-            "get_audit_settings",
-            "enable_audit",
-            "disable_audit",
-            "set_audit_action_groups",
-            "add_audit_group",
-            "remove_audit_group",
-            "set_audit_retention",
-            "list_running_queries",
-            "kill_session",
-            "list_connections",
-            "list_request_history",
-            "list_session_history",
-            "list_frequent_queries",
-            "list_long_running_queries",
-            "execute_sql",
-            "list_snapshots",
-            "create_snapshot",
-            "rename_snapshot",
-            "delete_snapshot",
-            "roll_snapshot_timestamp",
-            "list_restore_points",
-            "get_restore_point",
-            "create_restore_point",
-            "update_restore_point",
-            "delete_restore_point",
-            "restore_warehouse_in_place",
-            "list_schemas",
-            "create_schema",
-            "delete_schema",
-            "get_view_columns",
-            "list_views",
-            "read_view",
-            "count_view_rows",
-            "get_view",
-            "create_view",
-            "update_view",
-            "drop_view",
-            "rename_view",
-            "list_procedures",
-            "get_procedure",
-            "create_procedure",
-            "update_procedure",
-            "drop_procedure",
-            "list_functions",
-            "get_function",
-            "create_function",
-            "update_function",
-            "drop_function",
-            "rename_function",
-            "get_table_columns",
-            "list_tables",
-            "read_table",
-            "count_table_rows",
-            "create_table",
-            "create_empty_table",
-            "clone_table",
-            "rename_table",
-            "delete_table",
-            "clear_table",
-            "load_table_from_url",
-            "get_sql_pools_configuration",
-            "list_sql_pools",
-            "get_sql_pool",
-            "create_sql_pool",
-            "update_sql_pool",
-            "delete_sql_pool",
-            "enable_sql_pools",
-            "disable_sql_pools",
-            "list_sql_pool_insights",
-            "list_statistics",
-            "show_statistics",
-            "create_statistics",
-            "update_statistics",
-            "delete_statistics",
-            "generate_dbt_profile",
-            "clear_cache",
-        }
-    )
-
-    # Canonical CLI group names (top-level groups registered on the root cli).
-    CLI_GROUP_NAMES: frozenset[str] = frozenset(
-        {
-            "workspaces",
-            "warehouses",
-            "sql-endpoints",
-            "sql",
-            "tables",
-            "views",
-            "procedures",
-            "schemas",
-            "statistics",
-            "functions",
-            "snapshots",
-            "restore-points",
-            "audit",
-            "queries",
-            "sql-pools",
-            "dbt",
-            "cache",
-            "config",
-            "completion",
-        }
-    )
+    Both surfaces are introspected LIVE from the production code paths — no
+    hardcoded frozensets.  Adding a new CLI group or MCP tool without a
+    ``DOMAIN_MAP`` entry will cause these tests to fail with a clear message.
+    """
 
     def test_all_mcp_tools_resolve_to_known_domain(self) -> None:
         """Every MCP tool name must resolve to a domain that is NOT 'unknown'."""
-        unknown = {name for name in self.MCP_TOOL_NAMES if resolve_domain(name) == "unknown"}
-        assert unknown == set(), f"MCP tools with unknown domain: {sorted(unknown)}"
+        tool_names = collect_live_mcp_tool_names()
+        assert len(tool_names) > 0, (
+            "No MCP tools were discovered — register_all() appears to have registered nothing. "
+            "Check that fabric_dw.mcp.tools._DOMAINS is populated."
+        )
+        unknown = {name for name in tool_names if resolve_domain(name) == "unknown"}
+        assert unknown == set(), (
+            f"MCP tools with no DOMAIN_MAP entry (would log domain='unknown'): {sorted(unknown)}. "
+            "Add each missing name to DOMAIN_MAP in fabric_dw.telemetry_commands."
+        )
 
     def test_all_cli_groups_resolve_to_known_domain(self) -> None:
         """Every top-level CLI group name must resolve to a domain that is NOT 'unknown'."""
-        unknown = {name for name in self.CLI_GROUP_NAMES if resolve_domain(name) == "unknown"}
-        assert unknown == set(), f"CLI groups with unknown domain: {sorted(unknown)}"
+        group_names = _collect_live_cli_group_names()
+        assert len(group_names) > 0, (
+            "No CLI groups were discovered — cli.commands appears to be empty. "
+            "Check that fabric_dw.cli._main.cli has subcommands registered."
+        )
+        unknown = {name for name in group_names if resolve_domain(name) == "unknown"}
+        assert unknown == set(), (
+            f"CLI groups with no DOMAIN_MAP entry (would log domain='unknown'): {sorted(unknown)}. "
+            "Add each missing name to DOMAIN_MAP in fabric_dw.telemetry_commands."
+        )
 
 
 # ---------------------------------------------------------------------------

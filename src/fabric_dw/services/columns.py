@@ -59,9 +59,7 @@ ORDER BY c.column_id;
 # ---------------------------------------------------------------------------
 
 # Types that carry a character/byte length in max_length.
-_LENGTH_TYPES: frozenset[str] = frozenset(
-    {"char", "varchar", "binary", "varbinary"}
-)
+_LENGTH_TYPES: frozenset[str] = frozenset({"char", "varchar", "binary", "varbinary"})
 
 # Types that carry a character length but store it in BYTES (÷2 for char len).
 _NCHAR_TYPES: frozenset[str] = frozenset({"nchar", "nvarchar"})
@@ -205,9 +203,7 @@ async def get_object_columns(
         return results
 
     result = await asyncio.to_thread(_run)
-    _log.debug(
-        "get_object_columns: %s.%s → %d columns", schema, object_name, len(result)
-    )
+    _log.debug("get_object_columns: %s.%s → %d columns", schema, object_name, len(result))
     return result
 
 
