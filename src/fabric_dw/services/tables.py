@@ -1008,11 +1008,11 @@ async def recluster_table(
 
     Rebuilds *schema*.*table_name* with a new ``CLUSTER BY`` column set (or
     removes clustering entirely when *cluster_by* is ``None`` or empty).  The
-    operation is atomic: all four DDL steps execute inside a single implicit
+    operation is atomic: all three DDL steps execute inside a single implicit
     transaction on ONE connection with ``autocommit=False``.  Any failure before
     the final ``COMMIT`` automatically rolls back, leaving no orphan temp table.
 
-    The four steps issued in order::
+    The three steps issued in order::
 
         CREATE TABLE [schema].[__recluster_<12hex>]
             [WITH (CLUSTER BY ([c1],[c2]))]
@@ -1053,8 +1053,7 @@ async def recluster_table(
             *cluster_by* name fails identifier validation.
         PermissionDeniedError: If the driver reports a permission error.
     """
-    if kind == WarehouseKind.SQL_ENDPOINT:
-        raise ItemKindError(_SQL_ENDPOINT_CLUSTERING_MSG)
+    _assert_not_sql_endpoint(kind)
 
     validate_identifier(schema)
     validate_identifier(table_name)
@@ -1079,8 +1078,16 @@ async def recluster_table(
     # nosec B608 — all embedded values are safe; no user input is interpolated.
     ctas_ddl = f"CREATE TABLE {tmp_q}{cluster_clause} AS SELECT * FROM {orig_q}"  # noqa: S608 # nosec B608
     drop_ddl = f"DROP TABLE {orig_q}"
-    # sp_rename @objname = 'schema.tmp', @newname = 'orig', @objtype = 'OBJECT'
-    rename_ddl = f"EXEC sp_rename '{tmp_objname}', '{table_name}', 'OBJECT'"
+    # Use _SP_RENAME_SQL as a template: replace the two ? placeholders with the
+    # SQL-string-literal form of each argument.  Both values are validated
+    # identifiers (or a hex-only tmp_name), so single-quote escaping is a
+    # no-op in practice — it is kept for defense-in-depth consistency with the
+    # parameterised path used by rename_table.
+    _obj_escaped = tmp_objname.replace("'", "''")
+    _new_escaped = table_name.replace("'", "''")
+    rename_ddl = _SP_RENAME_SQL.replace("?", f"'{_obj_escaped}'", 1).replace(
+        "?", f"'{_new_escaped}'", 1
+    )
 
     def _run() -> None:
         run_statements(

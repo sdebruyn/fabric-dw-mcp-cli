@@ -607,11 +607,6 @@ async def cluster_by_cmd(
     wh = resolve_warehouse_arg(ctx, item)
     schema, table_name = parse_qualified_name(qualified_name, kind="table")
     cluster_by_list: list[str] | None = list(cluster_by) or None
-    click.echo(
-        "WARNING: Dependent views and stored procedures referencing this table "
-        "are NOT updated by sp_rename and may need refreshing.",
-        err=True,
-    )
     try:
         async with build_http_client(ctx) as http:
             target, entry = await build_sql_target(http, ws, wh)
@@ -622,6 +617,11 @@ async def cluster_by_cmd(
             ):
                 click.echo("Aborted.")
                 return
+            click.echo(
+                "WARNING: Dependent views and stored procedures referencing this table "
+                "are NOT updated by sp_rename and may need refreshing.",
+                err=True,
+            )
             t = await _tables_svc.recluster_table(
                 target,
                 schema,

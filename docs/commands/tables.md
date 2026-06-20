@@ -94,7 +94,7 @@ Change (or remove) the data-clustering columns of an existing table via a transa
 
     Dependent views and stored procedures that reference this table by name are **NOT** automatically updated by `sp_rename` and may need refreshing after the swap.
 
-The operation is atomic: all four steps run inside a single transaction. Any failure rolls back automatically — no orphan temp table is left behind.
+The operation is atomic: all three steps run inside a single transaction. Any failure rolls back automatically — no orphan temp table is left behind.
 
 **Synopsis**
 

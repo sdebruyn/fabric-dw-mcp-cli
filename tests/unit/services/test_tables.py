@@ -1735,20 +1735,24 @@ class TestCreateTableFromCsvClusterBy:
 
 class TestReclusterTable:
     async def test_happy_path_sql_order(self) -> None:
-        """CTAS → DROP → sp_rename executed in order with commit_per_statement=False."""
+        """CTAS → DROP → sp_rename in order; autocommit and commit_per_statement are False."""
         target = _make_target()
         fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
         captured: list[list[str]] = []
+        captured_kwargs: list[dict[str, object]] = []
 
         def _fake_run_statements(
             _tgt: object,
             stmts: list[str],
             *,
             mode: object = None,  # noqa: ARG001
-            autocommit: bool = False,  # noqa: ARG001
-            commit_per_statement: bool = True,  # noqa: ARG001
+            autocommit: bool = False,
+            commit_per_statement: bool = True,
         ) -> None:
             captured.append(list(stmts))
+            captured_kwargs.append(
+                {"autocommit": autocommit, "commit_per_statement": commit_per_statement}
+            )
 
         with (
             patch("fabric_dw.services.tables.run_statements", side_effect=_fake_run_statements),
@@ -1759,6 +1763,9 @@ class TestReclusterTable:
             )
 
         assert len(captured) == 1
+        # Transactional guarantee: must use autocommit=False + commit_per_statement=False
+        assert captured_kwargs[0]["autocommit"] is False
+        assert captured_kwargs[0]["commit_per_statement"] is False
         stmts = captured[0]
         assert len(stmts) == 3
 
@@ -1805,14 +1812,22 @@ class TestReclusterTable:
         assert "AS SELECT * FROM [dbo].[sales]" in ctas
 
     async def test_rollback_on_ctas_failure_drop_and_rename_not_run(self) -> None:
-        """When CTAS fails, run_statements raises before DROP/rename — no orphan table."""
+        """When CTAS fails, run_statements raises before DROP/rename — no orphan table.
+
+        Asserts a single run_statements call (atomicity): all three DDL statements
+        are issued as ONE batch.  A split-into-3-calls impl would still pass the
+        error propagation check but break the transaction guarantee.
+        """
         target = _make_target()
+        call_count = 0
 
         def _fake_run_statements(
             _tgt: object,
             _stmts: list[str],
             **_kwargs: object,
         ) -> None:
+            nonlocal call_count
+            call_count += 1
             raise RuntimeError("CTAS failed: syntax error")
 
         with (
@@ -1821,9 +1836,12 @@ class TestReclusterTable:
         ):
             await tables.recluster_table(target, "dbo", "sales")
 
+        # All three statements must have been submitted as a single batch
+        assert call_count == 1
+
     async def test_rejects_sql_endpoint(self) -> None:
         target = _make_target()
-        with pytest.raises(ItemKindError, match="clustering"):
+        with pytest.raises(ItemKindError):
             await tables.recluster_table(target, "dbo", "sales", kind=WarehouseKind.SQL_ENDPOINT)
 
     async def test_more_than_four_cols_raises_before_ddl(self) -> None:

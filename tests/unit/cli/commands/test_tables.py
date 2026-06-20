@@ -2223,6 +2223,11 @@ class TestTablesClusterBy:
             )
         assert result.exit_code == 0
         assert "Aborted." in result.output
+        # The dependent-views warning (sp_rename caveat) must NOT appear on abort —
+        # it is only emitted when the swap actually proceeds.
+        # Note: confirm_destructive itself prints "WARNING: <prompt>" — that is distinct
+        # from the sp_rename caveat and is expected to appear on every invocation.
+        assert "sp_rename" not in result.output
 
     def test_yes_flag_skips_confirmation(self, runner: CliRunner, cache_env: Path) -> None:
         """--yes bypasses the prompt and calls recluster_table."""
@@ -2343,7 +2348,7 @@ class TestTablesClusterBy:
         assert result.exit_code != 0
 
     def test_always_prints_warning(self, runner: CliRunner, cache_env: Path) -> None:
-        """The dependent-views warning is always emitted (not gated on --verbose)."""
+        """The dependent-views warning is emitted when the swap proceeds; not --verbose gated."""
         _ = cache_env
         mock_http = AsyncMock()
         mock_recluster = AsyncMock(return_value=_make_table())

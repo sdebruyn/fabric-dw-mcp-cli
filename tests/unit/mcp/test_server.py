@@ -2065,7 +2065,10 @@ async def test_set_cluster_columns_happy_path(mock_ctx, ctx_patch) -> None:
     assert isinstance(result, dict)
     assert result["name"] == "sales"
     mock_recluster.assert_called_once()
-    _, kwargs = mock_recluster.call_args
+    args, kwargs = mock_recluster.call_args
+    # schema and table_name must be forwarded as positional args (wiring check)
+    assert args[1] == "dbo"
+    assert args[2] == "sales"
     assert kwargs.get("cluster_by") == ["CustomerID", "SaleDate"]
 
 
@@ -2098,4 +2101,5 @@ async def test_set_cluster_columns_sql_endpoint_raises_tool_error(mock_ctx, ctx_
             },
         )
 
-    assert "clustering" in str(exc_info.value).lower()
+    err_str = str(exc_info.value).lower()
+    assert "sql endpoint" in err_str or "itemkinderror" in err_str
