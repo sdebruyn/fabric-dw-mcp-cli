@@ -105,6 +105,24 @@ jobs:
           language: Python
           label: code-coverage/pytest
 
+  runtime-smoke:
+    name: Runtime smoke (no dev deps)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v8.2.0
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      # Install only runtime (production) dependencies — no dev group.
+      # This mirrors what `uvx fabric-dw` / `pip install fabric-dw` produces.
+      - run: uv sync --frozen --no-dev
+      - run: uv run --no-dev fabric-dw --help
+
   slow:
     name: Slow tests (wall-clock timing)
     runs-on: ubuntu-latest
