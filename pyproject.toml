@@ -161,8 +161,9 @@ docstring-code-format = true
 markers = [
     "integration: hits real Fabric APIs",
     "slow: relies on real wall-clock timing; excluded from the default unit run",
+    "sql_endpoint: exercises a live SQL Analytics Endpoint (slow to provision; excluded from local runs by default)",
 ]
-addopts = "-ra --strict-markers -m 'not integration and not slow'"
+addopts = "-ra --strict-markers -m 'not integration and not slow and not sql_endpoint'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = [
