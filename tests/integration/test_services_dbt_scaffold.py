@@ -1,13 +1,22 @@
-"""Integration tests for dbt scaffold against an ephemeral Fabric Data Warehouse.
+"""Integration tests for dbt scaffold against a Fabric Data Warehouse or SQL Analytics Endpoint.
 
 These tests verify that the scaffold command writes ALL required files and
 directories, and that those files parse cleanly as YAML where applicable.
+
+Fixture notes:
+- Most tests use ``ephemeral_sql_target`` to build a ``DbtScaffoldConfig`` (connection
+  string + database name only — no live SQL reads required for file generation).
+- ``test_scaffold_with_sources_generates_real_schemas`` uses ``read_target`` to verify
+  that ``--with-sources`` works against both Data Warehouses and SQL Analytics Endpoints.
+  Both targets expose the ``sample`` seed schema, so the generated ``_sources.yml`` will
+  contain at least that schema.
 
 Marked ``integration`` — requires FABRIC_TEST_WORKSPACE_ID in environment.
 """
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 from collections.abc import Iterator
 from pathlib import Path
@@ -54,7 +63,7 @@ def dbt_config(ephemeral_sql_target: SqlTarget) -> DbtScaffoldConfig:
 
 
 # ---------------------------------------------------------------------------
-# Integration tests
+# Integration tests — file-generation (ephemeral warehouse, no SQL reads)
 # ---------------------------------------------------------------------------
 
 
@@ -163,8 +172,6 @@ def test_scaffold_with_sources_generates_real_schemas(
     ephemeral_sql_target: SqlTarget,
 ) -> None:
     """--with-sources generates _sources.yml from actual warehouse schemas/tables."""
-    import asyncio  # noqa: PLC0415
-
     schemas, tables = asyncio.run(
         _fetch_schemas_and_tables(ephemeral_sql_target, CredentialMode.DEFAULT)
     )
@@ -185,10 +192,51 @@ def test_scaffold_with_sources_generates_real_schemas(
     assert isinstance(parsed, dict)
 
 
+# ---------------------------------------------------------------------------
+# Dual-target --with-sources test — runs against both warehouse and endpoint
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_scaffold_with_sources_against_read_target(
+    temp_dbt_folder: Path,
+    read_target: SqlTarget,
+) -> None:
+    """--with-sources generates a valid _sources.yml from either target.
+
+    Both the shared warehouse and the shared SQL analytics endpoint expose the
+    ``sample`` seed schema (``sample.colors``, ``sample.numbers``), so the
+    generated ``_sources.yml`` will contain at least that schema and its tables.
+
+    The ``read_target`` fixture is parametrized over two targets:
+      - ``[warehouse]``     — Data Warehouse (always runs)
+      - ``[sql_endpoint]``  — SQL Analytics Endpoint (``pytest.mark.sql_endpoint``, CI only)
+    """
+    schemas, tables = asyncio.run(_fetch_schemas_and_tables(read_target, CredentialMode.DEFAULT))
+
+    cfg = DbtScaffoldConfig(
+        host=read_target.connection_string,
+        database=read_target.database,
+        project_name="integration_test_project",
+        dbt_auth=DbtAuthMode.AUTO,
+        with_sources=True,
+        schemas=schemas,
+        tables=tables,
+    )
+    scaffold(cfg, temp_dbt_folder, force=True)
+    sources = temp_dbt_folder / "models" / "staging" / "_sources.yml"
+    assert sources.is_file()
+    parsed = yaml.safe_load(sources.read_text())
+    assert isinstance(parsed, dict)
+    # Both targets expose the seed ``sample`` schema with two tables.
+    source_names = {s["name"] for s in parsed.get("sources", [])}
+    assert "sample" in source_names, (
+        f"Expected 'sample' schema in generated _sources.yml; got: {source_names}"
+    )
+
+
 async def _fetch_schemas_and_tables(target: SqlTarget, mode: CredentialMode) -> tuple:
     """Helper: fetch schemas and tables concurrently."""
-    import asyncio  # noqa: PLC0415
-
     from fabric_dw.services import schemas as schemas_svc  # noqa: PLC0415
     from fabric_dw.services import tables as tables_svc  # noqa: PLC0415
 

@@ -2,65 +2,71 @@
 
 Run with: pytest -m integration tests/integration/test_services_statistics.py
 
-Fixture note: the full lifecycle roundtrip uses ``warehouse_schema``, which creates
-a uniquely-named schema inside the session-shared warm warehouse and cascade-drops
-it on teardown.  Statistics are schema-scoped so each test is fully isolated.
-Client-side guard tests (create/update/drop endpoint rejection) use ``shared_warehouse``
-directly — the ``ItemKindError`` is raised before any SQL, so no per-test schema DDL
-is needed.  The SQL Analytics Endpoint read-only test uses ``ephemeral_sql_endpoint``
-because it requires an actual SQL Analytics Endpoint (Lakehouse-backed item).
+Fixture notes:
+- ``read_target`` (parametrized): runs list_statistics against both the shared warm
+  warehouse and the shared SQL analytics endpoint.
+- ``shared_warehouse``: used for the three client-side guard tests.  The guard fires
+  before any I/O (off the hardcoded ``kind=WarehouseKind.SQL_ENDPOINT`` argument), so
+  no live SQL connection is needed and no dual-target parametrization is required.
+- ``warehouse_schema``: used for the full create/show/update/drop lifecycle because
+  ``tables.create_table`` and ``statistics.create_statistics`` are DWH-only operations.
+
+The ``read_target`` fixture is parametrized over two targets:
+  - ``[warehouse]``     — Data Warehouse (always runs)
+  - ``[sql_endpoint]``  — SQL Analytics Endpoint (``pytest.mark.sql_endpoint``, CI only)
+
+Note on ``show_statistics``: DBCC SHOW_STATISTICS requires a statistic to exist on a
+table. Since CREATE STATISTICS is DWH-only (rejected on SQL Analytics Endpoints), the
+show_statistics test is covered only through the warehouse roundtrip below.  On the SQL
+analytics endpoint, show_statistics could theoretically surface auto-created stats from
+the Lakehouse Delta tables, but the endpoint may not have any statistics to show on a
+freshly provisioned endpoint, so no separate show_statistics endpoint test is added here.
 """
 
 from __future__ import annotations
 
 import contextlib
-from uuid import UUID
 
 import pytest
 
 from fabric_dw.exceptions import ItemKindError, NotFoundError
-from fabric_dw.models import Statistic, StatisticDetails, Warehouse, WarehouseKind
+from fabric_dw.models import Statistic, StatisticDetails, WarehouseKind
 from fabric_dw.services import statistics, tables
 from fabric_dw.sql import SqlTarget
-from tests.integration.conftest import SharedWarehouseTarget
+
+from .conftest import SharedWarehouseTarget
 
 pytestmark = pytest.mark.integration
 
 
-def _endpoint_to_target(endpoint: Warehouse, workspace_id: UUID) -> SqlTarget:
-    """Build a SqlTarget from an ephemeral SQL Analytics Endpoint Warehouse."""
-    assert endpoint.connection_string, "SQL endpoint has no connection string"
-    return SqlTarget(
-        workspace_id=str(workspace_id),
-        database=endpoint.name,
-        connection_string=endpoint.connection_string,
-    )
-
-
 # ---------------------------------------------------------------------------
-# list / read-only operations on a SQL Analytics Endpoint
+# Dual-target read test — runs against both warehouse and SQL analytics endpoint
 # ---------------------------------------------------------------------------
 
 
-async def test_list_statistics_on_sql_endpoint(
-    ephemeral_sql_endpoint: Warehouse,
-    workspace_id: UUID,
+async def test_list_statistics_returns_a_list(
+    read_target: SqlTarget,
 ) -> None:
-    """list_statistics works on SQL Analytics Endpoints (read-only is allowed)."""
-    target = _endpoint_to_target(ephemeral_sql_endpoint, workspace_id)
-    result = await statistics.list_statistics(target)
+    """list_statistics works on both Data Warehouses and SQL Analytics Endpoints."""
+    result = await statistics.list_statistics(read_target)
     assert isinstance(result, list)
 
 
 # ---------------------------------------------------------------------------
 # SQL Endpoint guard rejection (client-side, no network SQL required)
+#
+# These tests pass ``kind=WarehouseKind.SQL_ENDPOINT`` explicitly.  The guard
+# fires before any I/O, so we only need a minimal SqlTarget from the shared
+# warehouse — no parametrisation over read_target is required (and would be
+# misleading: the [warehouse] leg would pass trivially without touching the
+# connection, giving false confidence that the guard was exercised live).
 # ---------------------------------------------------------------------------
 
 
 async def test_create_statistics_endpoint_guard_rejected(
     shared_warehouse: SharedWarehouseTarget,
 ) -> None:
-    """create_statistics raises ItemKindError on SQL Analytics Endpoints (client-side guard)."""
+    """create_statistics raises ItemKindError when kind=SQL_ENDPOINT (client-side guard)."""
     with pytest.raises(ItemKindError, match="read-only"):
         await statistics.create_statistics(
             shared_warehouse.sql_target,
@@ -74,7 +80,7 @@ async def test_create_statistics_endpoint_guard_rejected(
 async def test_update_statistics_endpoint_guard_rejected(
     shared_warehouse: SharedWarehouseTarget,
 ) -> None:
-    """update_statistics raises ItemKindError on SQL Analytics Endpoints (client-side guard)."""
+    """update_statistics raises ItemKindError when kind=SQL_ENDPOINT (client-side guard)."""
     with pytest.raises(ItemKindError, match="read-only"):
         await statistics.update_statistics(
             shared_warehouse.sql_target,
@@ -87,7 +93,7 @@ async def test_update_statistics_endpoint_guard_rejected(
 async def test_drop_statistics_endpoint_guard_rejected(
     shared_warehouse: SharedWarehouseTarget,
 ) -> None:
-    """drop_statistics raises ItemKindError on SQL Analytics Endpoints (client-side guard)."""
+    """drop_statistics raises ItemKindError when kind=SQL_ENDPOINT (client-side guard)."""
     with pytest.raises(ItemKindError, match="read-only"):
         await statistics.drop_statistics(
             shared_warehouse.sql_target,
@@ -99,6 +105,7 @@ async def test_drop_statistics_endpoint_guard_rejected(
 
 # ---------------------------------------------------------------------------
 # Full create → list → show → update → drop round-trip on shared warehouse
+# (DWH-only: CREATE TABLE and CREATE STATISTICS are not supported on endpoints)
 # ---------------------------------------------------------------------------
 
 
