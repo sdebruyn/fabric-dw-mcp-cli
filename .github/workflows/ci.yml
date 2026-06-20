@@ -86,7 +86,7 @@ jobs:
         uses: codecov/test-results-action@v1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          flags: python-${{ matrix.python-version }}
+          flags: unit,python-${{ matrix.python-version }}
       # Upload coverage to GitHub Code Quality (public preview).
       # Only runs on Python 3.13 to avoid duplicate uploads across matrix entries.
       # Fork-PR guard: skip on PRs from forks (they lack write permissions).

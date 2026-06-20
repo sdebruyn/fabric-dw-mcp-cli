@@ -226,15 +226,21 @@ jobs:
 
           if [ -n "${PYTEST_K_INPUT}" ]; then
             echo "Running subset: -k '${PYTEST_K_INPUT}' with ${WORKERS} worker(s)"
-            uv run pytest tests/integration -m integration -v -n "${WORKERS}" -k "${PYTEST_K_INPUT}" --cov --cov-branch --cov-report=xml
+            uv run pytest tests/integration -m integration -v -n "${WORKERS}" -k "${PYTEST_K_INPUT}" --cov --cov-branch --cov-report=xml --junitxml=junit.xml -o junit_family=legacy
           else
             echo "Running full integration suite with ${WORKERS} worker(s)"
-            uv run pytest tests/integration -m integration -v -n "${WORKERS}" --cov --cov-branch --cov-report=xml
+            uv run pytest tests/integration -m integration -v -n "${WORKERS}" --cov --cov-branch --cov-report=xml --junitxml=junit.xml -o junit_family=legacy
           fi
 
       - name: Upload coverage reports to Codecov
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          flags: integration
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/test-results-action@v1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           flags: integration
