@@ -2,9 +2,11 @@
 
 Public API
 ----------
-- :func:`format_data_type`   — format a ``sys.columns`` type row into a T-SQL type string.
-- :func:`get_object_columns` — return column metadata for any named SQL object
+- :func:`format_data_type`          — format a ``sys.columns`` type row into a T-SQL type string.
+- :func:`get_object_columns`        — return column metadata for any named SQL object
   (table or view) via ``sys.columns JOIN sys.types``, ordered by ``column_id``.
+- :func:`get_object_columns_or_raise` — same, but raises
+  :class:`~fabric_dw.exceptions.NotFoundError` when the object does not exist.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from fabric_dw.sql import SqlTarget, run_query
 __all__ = [
     "format_data_type",
     "get_object_columns",
+    "get_object_columns_or_raise",
 ]
 
 _log = logging.getLogger(__name__)

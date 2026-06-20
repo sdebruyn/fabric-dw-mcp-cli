@@ -7,8 +7,12 @@ from unittest.mock import patch
 import pytest
 
 from fabric_dw.exceptions import NotFoundError
-from fabric_dw.services.columns import format_data_type, get_object_columns, get_object_columns_or_raise
-from tests.unit.services._helpers import _make_conn, _make_target
+from fabric_dw.services.columns import (
+    format_data_type,
+    get_object_columns,
+    get_object_columns_or_raise,
+)
+from tests.unit.services._helpers import _make_target
 
 # ---------------------------------------------------------------------------
 # Fixture data shared across tests
@@ -124,9 +128,11 @@ class TestFormatDataType:
 class TestGetObjectColumns:
     async def test_returns_columns_ordered_by_ordinal(self) -> None:
         target = _make_target()
-        conn = _make_conn(_ROWS_TWO_COLS, _COLUMN_COLS)
 
-        with patch("fabric_dw.services.columns.run_query", return_value=(_COLUMN_COLS, _ROWS_TWO_COLS)):
+        with patch(
+            "fabric_dw.services.columns.run_query",
+            return_value=(_COLUMN_COLS, _ROWS_TWO_COLS),
+        ):
             result = await get_object_columns(target, _SCHEMA, _TABLE)
 
         assert len(result) == 2
@@ -228,7 +234,9 @@ class TestGetObjectColumnsOrRaise:
             (1, "id", "int", 4, 10, 0, False, None, False, False),
         ]
         with patch("fabric_dw.services.columns.run_query", return_value=(_COLUMN_COLS, rows)):
-            result = await get_object_columns_or_raise(_make_target(), _SCHEMA, _TABLE, kind_label="table")
+            result = await get_object_columns_or_raise(
+                _make_target(), _SCHEMA, _TABLE, kind_label="table"
+            )
 
         assert len(result) == 1
         assert result[0]["name"] == "id"

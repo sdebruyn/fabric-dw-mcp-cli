@@ -270,32 +270,6 @@ fdw -w MyWorkspace views update SalesWH dbo.vw_recent \
 
 ## MCP tools
 
-### get_view_columns
-
-**Targets:** Data Warehouse · SQL Analytics Endpoint
-
-Return column metadata for a SQL view via `sys.columns`. Works on both Fabric Data Warehouses and SQL Analytics Endpoints.
-
-**Parameters:**
-
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `qualified_name` (`str`) — dot-separated view name, e.g. `dbo.vw_sales`.
-
-**Returns:** `list[dict]` — one dict per column, each containing:
-
-- `ordinal` (`int`) — 1-based column position (`column_id`).
-- `name` (`str`) — column name.
-- `data_type` (`str`) — formatted T-SQL type string, e.g. `INT`, `NVARCHAR(MAX)`, `DECIMAL(18,2)`.
-- `nullable` (`bool`) — whether the column allows `NULL`.
-- `collation_name` (`str | null`) — collation name, if applicable.
-- `is_identity` (`bool`) — whether the column is an identity column.
-- `is_computed` (`bool`) — whether the column is a computed column.
-
-Results are ordered by ordinal position. Returns an empty list if the view does not exist.
-
----
-
 ### count_view_rows
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -358,6 +332,32 @@ Fetch the full definition of a single SQL view.
 - `qualified_name` (`str`) — dot-separated schema and view name, e.g. `dbo.vw_sales`.
 
 **Returns:** `View` — single view object with `definition` populated from `sys.sql_modules`.
+
+---
+
+### get_view_columns
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Return column metadata for a SQL view via `sys.columns`. Works on both Fabric Data Warehouses and SQL Analytics Endpoints.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`) — dot-separated view name, e.g. `dbo.vw_sales`.
+
+**Returns:** `list[dict]` — one dict per column, each containing:
+
+- `ordinal` (`int`) — 1-based column position (`column_id`).
+- `name` (`str`) — column name.
+- `data_type` (`str`) — formatted T-SQL type string, e.g. `INT`, `NVARCHAR(MAX)`, `DECIMAL(18,2)`.
+- `nullable` (`bool`) — whether the column allows `NULL`.
+- `collation_name` (`str | null`) — collation name, if applicable.
+- `is_identity` (`bool`) — whether the column is an identity column.
+- `is_computed` (`bool`) — whether the column is a computed column.
+
+Results are ordered by ordinal position. Raises a `ToolError` if the view does not exist.
 
 ---
 
