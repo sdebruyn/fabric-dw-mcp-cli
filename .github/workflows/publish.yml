@@ -84,7 +84,7 @@ jobs:
         continue-on-error: true
         run: |
           uvx --from 'cyclonedx-bom==7.3.0' cyclonedx-py environment --of JSON -o dist/sbom.cdx.json "$(uv python find)"
-          python -c "import json,sys; d=json.load(open('dist/sbom.cdx.json')); print(f'SBOM: {len(d.get(\"components\",[]))} components')"
+          python3 -c "import json,sys; d=json.load(open('dist/sbom.cdx.json')); print(f'SBOM: {len(d.get(\"components\",[]))} components')"
 
       - name: Upload SBOM artifact
         # Only upload if the SBOM was actually generated (SBOM step may have been skipped/failed).
@@ -137,4 +137,5 @@ jobs:
             dist/sbom.cdx.json
           fail_on_unmatched_files: false
           generate_release_notes: true
-          name: ${{ github.ref_name }}
+          name: ${{ inputs.tag || github.ref_name }}
+          tag_name: ${{ inputs.tag || github.ref_name }}

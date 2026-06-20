@@ -123,11 +123,11 @@ just build
 
 The plugin version (`plugin.json`) is single-sourced from stable git tags. The flow:
 
-1. **Bump** — run `just release X.Y.Z` (e.g. `just release 2026.6.0`) to write the stable calver into `plugin.json`. Open a release-prep PR and merge it.
-2. **Tag** — after the bump PR is merged, run `just tag X.Y.Z`. This asserts `plugin.json` agrees with the version before creating and pushing the annotated tag.
+1. **Bump** — run `just release X.Y.Z` (e.g. `just release 2026.7.0`) to write the stable calver into `plugin.json`. The version must follow `YYYY.M.N` (year `20xx`, month `1–12` with no leading zero, patch `0` or a positive integer without a leading zero). Open a release-prep PR and merge it.
+2. **Tag** — after the bump PR is merged, run `just tag X.Y.Z` **from a clean, up-to-date local `main`**. This reads the committed `plugin.json` (not the working tree) and verifies the version matches before creating and pushing the annotated tag.
 3. **Publish** — the `Publish` CI workflow fires on the tag push. It enforces the same version match (failing fast before the build if they disagree), then ships the package to PyPI and creates a GitHub Release.
 
-Prerelease tags (`aN`/`bN`/`rcN`/`.devN`) skip the `plugin.json` check — plugin.json always reflects the latest stable release only.
+`just release` and `just tag` both reject out-of-range or leading-zero months/patches and any prerelease suffix (`aN`/`bN`/`rcN`/`.devN`). Prerelease builds (`.devN` suffix derived by hatch-vcs from commits since the last tag) are published automatically on every push to `main`; `plugin.json` always reflects the latest stable release only.
 
 ## Code of Conduct
 

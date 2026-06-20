@@ -34,13 +34,19 @@ integration:
 build:
     uv build
 
-# Bump plugin.json to VERSION (must be a stable calver like 2026.6.0; no prerelease suffixes).
+# Shared calver validator — used by both 'release' and 'tag'.
+# Accepts YYYY.M.N where year is 20xx, month is 1–12 (no leading zero), patch is 0 or
+# any positive integer without a leading zero.  Rejects prerelease suffixes (aN/bN/rcN/.devN).
+# Single source of truth: update this regex in one place only.
+_CALVER_RE := '^20[0-9]{2}\.([1-9]|1[0-2])\.(0|[1-9][0-9]*)$'
+
+# Bump plugin.json to VERSION (must be a stable calver like 2026.6.1; no prerelease suffixes).
 # Run: just release VERSION  →  open a release-prep PR  →  merge  →  just tag VERSION
 release VERSION:
     #!/usr/bin/env bash
     set -euo pipefail
-    if ! echo "{{ VERSION }}" | grep -qE '^[0-9]{4}\.[0-9]{1,2}\.[0-9]+$'; then
-        echo "error: '{{ VERSION }}' is not a stable calver (expected YYYY.M.N with no prerelease suffix)" >&2
+    if ! echo "{{ VERSION }}" | grep -qE '{{ _CALVER_RE }}'; then
+        echo "error: '{{ VERSION }}' is not a stable calver (expected YYYY.M.N, month 1–12, no leading zeros, no prerelease suffix)" >&2
         exit 1
     fi
     plugin_json=".claude-plugin/plugin.json"
@@ -54,18 +60,51 @@ release VERSION:
     echo "plugin.json version set to {{ VERSION }}"
     echo ""
     echo "Next steps:"
-    echo "  1. git add .claude-plugin/plugin.json && git commit -m 'build: release {{ VERSION }}'"
+    echo "  1. git add .claude-plugin/plugin.json && git commit -m 'chore: release {{ VERSION }}'"
     echo "  2. Open a release-prep PR and merge it to main."
     echo "  3. After merge: just tag {{ VERSION }}"
 
-# Assert plugin.json version matches VERSION, then create and push an annotated git tag.
+# Assert plugin.json version (from the committed tree) matches VERSION, then create and push an
+# annotated git tag.  Refuses to tag on a dirty working tree, a non-main branch, or when the
+# branch is behind origin/main.
 # Run after the release-prep PR (from 'just release VERSION') has been merged to main.
 tag VERSION:
     #!/usr/bin/env bash
     set -euo pipefail
-    plugin_version=$(python3 -c "import json; print(json.load(open('.claude-plugin/plugin.json'))['version'])")
+    # Validate VERSION with the same tightened calver check used by 'release'.
+    # Also reject any embedded newlines (multi-line input can fool line-anchored grep).
+    case "{{ VERSION }}" in
+        *$'\n'*) echo "error: VERSION contains a newline — must be a single-line value" >&2; exit 1 ;;
+    esac
+    if ! echo "{{ VERSION }}" | grep -qE '{{ _CALVER_RE }}'; then
+        echo "error: '{{ VERSION }}' is not a stable calver (expected YYYY.M.N, month 1–12, no leading zeros, no prerelease suffix)" >&2
+        exit 1
+    fi
+    # Guard: working tree must be clean (tracked and untracked files).
+    if [ -n "$(git status --porcelain)" ]; then
+        echo "error: working tree is dirty — commit or stash changes before tagging" >&2
+        exit 1
+    fi
+    # Guard: must be on main.
+    current_branch=$(git rev-parse --abbrev-ref HEAD)
+    if [ "$current_branch" != "main" ]; then
+        echo "error: must be on 'main' to tag (currently on '$current_branch')" >&2
+        exit 1
+    fi
+    # Guard: branch must be up to date with origin/main.
+    # Compare HEAD against FETCH_HEAD so the check always uses the freshly fetched SHA,
+    # regardless of whether the local remote-tracking ref (origin/main) was up to date.
+    git fetch origin main --quiet
+    local_sha=$(git rev-parse HEAD)
+    remote_sha=$(cat "$(git rev-parse --git-dir)/FETCH_HEAD" | awk '{print $1; exit}')
+    if [ "$local_sha" != "$remote_sha" ]; then
+        echo "error: local main is not up to date with origin/main — run 'git pull' first" >&2
+        exit 1
+    fi
+    # Read version from the committed tree, not the working tree.
+    plugin_version=$(git show HEAD:.claude-plugin/plugin.json | python3 -c "import json,sys; print(json.load(sys.stdin)['version'])")
     if [ "$plugin_version" != "{{ VERSION }}" ]; then
-        echo "error: plugin.json version ('$plugin_version') does not match '{{ VERSION }}'" >&2
+        echo "error: plugin.json version in HEAD ('$plugin_version') does not match '{{ VERSION }}'" >&2
         echo "       Run 'just release {{ VERSION }}', open a PR, merge it, then retry 'just tag {{ VERSION }}'." >&2
         exit 1
     fi
