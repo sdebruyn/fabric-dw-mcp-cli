@@ -157,16 +157,19 @@ async def init_cmd(
         async with build_http_client(ctx) as http:
             target_obj, _entry = await build_sql_target(http, ws, wh)
 
-            # When --with-sources, fetch schemas and tables before scaffolding.
+            # When --with-sources, fetch schemas, tables, and columns (bulk) before scaffolding.
             schemas = []
             tables = []
+            columns: dict[tuple[str, str], list[dict[str, object]]] = {}
             if with_sources:
                 from fabric_dw.services import schemas as schemas_svc  # noqa: PLC0415
                 from fabric_dw.services import tables as tables_svc  # noqa: PLC0415
+                from fabric_dw.services.columns import get_columns_for_schemas  # noqa: PLC0415
 
-                schemas, tables = await asyncio.gather(
+                schemas, tables, columns = await asyncio.gather(
                     schemas_svc.list_schemas(target_obj, mode=ctx.auth),
                     tables_svc.list_tables(target_obj, mode=ctx.auth),
+                    get_columns_for_schemas(target_obj, mode=ctx.auth),
                 )
 
             cfg = DbtScaffoldConfig(
@@ -182,6 +185,7 @@ async def init_cmd(
                 with_sources=with_sources,
                 schemas=schemas,
                 tables=tables,
+                columns=columns,
             )
 
             try:

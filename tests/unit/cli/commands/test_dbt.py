@@ -197,6 +197,10 @@ class TestDbtInitWithSources:
                 "fabric_dw.services.tables.list_tables",
                 new=AsyncMock(return_value=[]),
             ) as mock_tables,
+            patch(
+                "fabric_dw.services.columns.get_columns_for_schemas",
+                new=AsyncMock(return_value={}),
+            ) as mock_columns,
         ):
             mock_scaffold.return_value = []
             result = runner.invoke(
@@ -206,6 +210,7 @@ class TestDbtInitWithSources:
         assert result.exit_code == 0
         mock_schemas.assert_called_once()
         mock_tables.assert_called_once()
+        mock_columns.assert_called_once()
 
 
 class TestDbtInitErrors:

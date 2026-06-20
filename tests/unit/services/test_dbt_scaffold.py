@@ -341,6 +341,109 @@ class TestRenderSourcesYml:
         source = parsed["sources"][0]
         assert source["database"] == "Sales: DWH #1"
 
+    def test_with_sources_includes_columns_per_table(self) -> None:
+        """Each source table must have a ``columns:`` list with name + data_type."""
+        schemas = [_make_schema("dbo")]
+        tables = [_make_table("dbo", "orders")]
+        columns: dict[tuple[str, str], list[dict[str, object]]] = {
+            ("dbo", "orders"): [
+                {
+                    "ordinal": 1,
+                    "name": "id",
+                    "data_type": "INT",
+                    "nullable": False,
+                    "collation_name": None,
+                    "is_identity": True,
+                    "is_computed": False,
+                },
+                {
+                    "ordinal": 2,
+                    "name": "amount",
+                    "data_type": "DECIMAL(18,2)",
+                    "nullable": True,
+                    "collation_name": None,
+                    "is_identity": False,
+                    "is_computed": False,
+                },
+            ]
+        }
+        cfg = _make_cfg(with_sources=True, schemas=schemas, tables=tables, columns=columns)
+        content = render_sources_yml(cfg)
+        parsed = yaml.safe_load(content)
+        table_entry = parsed["sources"][0]["tables"][0]
+        assert table_entry["name"] == "orders"
+        assert "columns" in table_entry
+        assert table_entry["columns"][0] == {"name": "id", "data_type": "INT"}
+        assert table_entry["columns"][1] == {"name": "amount", "data_type": "DECIMAL(18,2)"}
+
+    def test_with_sources_no_columns_when_dict_empty(self) -> None:
+        """When the columns dict is empty, tables must NOT have a ``columns:`` key."""
+        schemas = [_make_schema("dbo")]
+        tables = [_make_table("dbo", "orders")]
+        cfg = _make_cfg(with_sources=True, schemas=schemas, tables=tables, columns={})
+        content = render_sources_yml(cfg)
+        parsed = yaml.safe_load(content)
+        table_entry = parsed["sources"][0]["tables"][0]
+        assert "columns" not in table_entry
+
+    def test_with_sources_columns_across_multiple_schemas(self) -> None:
+        """Columns must be scoped correctly per (schema, table)."""
+        schemas = [_make_schema("dbo"), _make_schema("finance")]
+        tables = [_make_table("dbo", "customers"), _make_table("finance", "budget")]
+        columns: dict[tuple[str, str], list[dict[str, object]]] = {
+            ("dbo", "customers"): [
+                {
+                    "ordinal": 1,
+                    "name": "customer_id",
+                    "data_type": "INT",
+                    "nullable": False,
+                    "collation_name": None,
+                    "is_identity": True,
+                    "is_computed": False,
+                },
+            ],
+            ("finance", "budget"): [
+                {
+                    "ordinal": 1,
+                    "name": "dept",
+                    "data_type": "NVARCHAR(50)",
+                    "nullable": True,
+                    "collation_name": None,
+                    "is_identity": False,
+                    "is_computed": False,
+                },
+            ],
+        }
+        cfg = _make_cfg(with_sources=True, schemas=schemas, tables=tables, columns=columns)
+        content = render_sources_yml(cfg)
+        parsed = yaml.safe_load(content)
+        dbo_source = next(s for s in parsed["sources"] if s["name"] == "dbo")
+        finance_source = next(s for s in parsed["sources"] if s["name"] == "finance")
+        assert dbo_source["tables"][0]["columns"][0]["name"] == "customer_id"
+        assert finance_source["tables"][0]["columns"][0]["name"] == "dept"
+
+    def test_with_sources_columns_valid_yaml(self) -> None:
+        """_sources.yml with columns must be valid YAML."""
+        schemas = [_make_schema("dbo")]
+        tables = [_make_table("dbo", "orders")]
+        columns: dict[tuple[str, str], list[dict[str, object]]] = {
+            ("dbo", "orders"): [
+                {
+                    "ordinal": 1,
+                    "name": "id",
+                    "data_type": "INT",
+                    "nullable": False,
+                    "collation_name": None,
+                    "is_identity": False,
+                    "is_computed": False,
+                },
+            ]
+        }
+        cfg = _make_cfg(with_sources=True, schemas=schemas, tables=tables, columns=columns)
+        content = render_sources_yml(cfg)
+        parsed = yaml.safe_load(content)
+        assert isinstance(parsed, dict)
+
 
 # ---------------------------------------------------------------------------
 # scaffold (file writing)

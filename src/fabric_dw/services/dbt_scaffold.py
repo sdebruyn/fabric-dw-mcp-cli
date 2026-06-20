@@ -158,6 +158,9 @@ class DbtScaffoldConfig:
         with_sources: Whether to generate a real ``_sources.yml`` from the DW.
         schemas: Pre-fetched schema list (used when *with_sources* is True).
         tables: Pre-fetched table list (used when *with_sources* is True).
+        columns: Pre-fetched column dict keyed by ``(schema_name, table_name)``
+            (populated by :func:`~fabric_dw.services.columns.get_columns_for_schemas`
+            when *with_sources* is True).
     """
 
     host: str
@@ -172,6 +175,7 @@ class DbtScaffoldConfig:
     with_sources: bool = False
     schemas: list[Schema] = field(default_factory=list)
     tables: list[Table] = field(default_factory=list)
+    columns: dict[tuple[str, str], list[dict[str, object]]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.profile_name:
@@ -296,11 +300,20 @@ def render_sources_yml(
     sources: list[dict[str, object]] = []
     for schema in cfg.schemas:
         schema_tables = sorted(tables_by_schema.get(schema.name, []))
+        table_entries: list[dict[str, object]] = []
+        for t in schema_tables:
+            table_entry: dict[str, object] = {"name": t}
+            table_columns = cfg.columns.get((schema.name, t), [])
+            if table_columns:
+                table_entry["columns"] = [
+                    {"name": col["name"], "data_type": col["data_type"]} for col in table_columns
+                ]
+            table_entries.append(table_entry)
         source: dict[str, object] = {
             "name": schema.name,
             "database": cfg.database,
             "schema": schema.name,
-            "tables": [{"name": t} for t in schema_tables],
+            "tables": table_entries,
         }
         sources.append(source)
 
