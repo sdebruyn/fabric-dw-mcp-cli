@@ -15,9 +15,6 @@ nav = [
   { "Home" = "index.md" },
   { "Install" = "install.md" },
   { "Concepts" = "concepts.md" },
-  { "Guides" = [
-    { "Query performance" = "guides/query-performance.md" }
-  ] },
   { "Commands" = [
     { "Overview" = "commands/index.md" },
     { "Audit" = "commands/audit.md" },
@@ -48,6 +45,9 @@ nav = [
     { "Exit codes" = "reference/exit-codes.md" },
     { "Shell Completion" = "completion.md" },
     { "Troubleshooting" = "troubleshooting.md" }
+  ] },
+  { "Guides" = [
+    { "Query performance" = "guides/query-performance.md" }
   ] },
   { "Contributing" = [
     { "Contributing" = "contributing.md" },
