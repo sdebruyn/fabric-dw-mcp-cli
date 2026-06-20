@@ -256,6 +256,42 @@ async def count_cmd(
         raise click.ClickException(str(exc)) from exc
 
 
+@tables_group.command("health-check")
+@click.argument("item", required=False, default=None)
+@click.argument("qualified_name")
+@click.pass_obj
+@coro
+async def health_check_cmd(
+    ctx: CliContext,
+    item: str | None,
+    qualified_name: str,
+) -> None:
+    """Run sp_get_table_health_metrics on QUALIFIED_NAME (schema.table) on ITEM.
+
+    Only supported on SQL Analytics Endpoints (not Data Warehouses).
+    The proc surfaces Delta/Parquet layout issues such as small files,
+    fragmentation, excessive deletes/updates, and delayed checkpoints.
+    Output columns are passed through verbatim — the proc is GA but its
+    column schema is not yet documented by Microsoft.
+    """
+    ws = resolve_workspace(ctx)
+    wh = resolve_warehouse_arg(ctx, item)
+    schema, table_name = parse_qualified_name(qualified_name, kind="table")
+    try:
+        async with build_http_client(ctx) as http:
+            target, entry = await build_sql_target(http, ws, wh)
+            columns, rows = await _tables_svc.get_table_health_metrics(
+                target, schema, table_name, kind=entry.kind, mode=ctx.auth
+            )
+            render(
+                [dict(zip(columns, row, strict=True)) for row in rows],
+                json_output=ctx.json_output,
+                table_title="Table Health Metrics",
+            )
+    except (ValueError, FabricError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
 @tables_group.command("create")
 @click.argument("item", required=False, default=None)
 @click.option("--name", "qualified_name", required=True, help="Qualified name: schema.table.")

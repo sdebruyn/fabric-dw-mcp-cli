@@ -123,6 +123,7 @@ DOMAIN_MAP: dict[str, str] = {
     "delete_schema": "schemas",
     # Tables
     "get_table_columns": "tables",
+    "get_table_health_metrics": "tables",
     "list_tables": "tables",
     "read_table": "tables",
     "count_table_rows": "tables",

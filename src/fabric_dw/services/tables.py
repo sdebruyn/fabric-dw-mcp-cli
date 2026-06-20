@@ -15,6 +15,7 @@ Public API
 - :func:`clear_table`             — ``TRUNCATE TABLE [schema].[table]``.
 - :func:`rename_table`            — ``EXEC sp_rename`` (Data-Warehouse-only).
 - :func:`recluster_table`         — transactional CTAS-swap to change (or remove) clustering.
+- :func:`get_table_health_metrics` — ``EXEC sp_get_table_health_metrics`` (SQL endpoint only).
 
 List-source note
 ----------------
@@ -51,6 +52,7 @@ __all__ = [
     "create_table_from_parquet",
     "delete_table",
     "get_cluster_columns",
+    "get_table_health_metrics",
     "infer_columns_from_csv",
     "infer_columns_from_parquet",
     "list_tables",
@@ -70,6 +72,10 @@ _SQL_ENDPOINT_READONLY_MSG = "SQL Endpoints are read-only; CREATE/DROP/TRUNCATE 
 _SQL_ENDPOINT_CLUSTERING_MSG = (
     "Data clustering is not supported on SQL Analytics Endpoints; use a Fabric Data Warehouse"
 )
+_WAREHOUSE_HEALTH_CHECK_MSG = (
+    "Table health-check (sp_get_table_health_metrics) is only "
+    "available on SQL Analytics Endpoints, not Data Warehouses."
+)
 
 
 def _assert_not_sql_endpoint(kind: WarehouseKind) -> None:
@@ -83,6 +89,22 @@ def _assert_not_sql_endpoint(kind: WarehouseKind) -> None:
     """
     if kind == WarehouseKind.SQL_ENDPOINT:
         raise ItemKindError(_SQL_ENDPOINT_READONLY_MSG)
+
+
+def _assert_sql_endpoint(kind: WarehouseKind) -> None:
+    """Raise :class:`~fabric_dw.exceptions.ItemKindError` for non-SQL-Endpoint items.
+
+    ``sp_get_table_health_metrics`` targets the SQL Analytics Endpoint over
+    lakehouse Delta tables only — it is not available on Data Warehouses.
+
+    Args:
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the resolved item.
+
+    Raises:
+        ItemKindError: If *kind* is not :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
+    """
+    if kind != WarehouseKind.SQL_ENDPOINT:
+        raise ItemKindError(_WAREHOUSE_HEALTH_CHECK_MSG)
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +150,12 @@ WHERE s.name = ? AND t.name = ?;
 # sp_rename: @objname = 'schema.oldtable', @newname = 'newtable', @objtype = 'OBJECT'
 # Names are bound as ? parameters (string args to the proc, not SQL identifiers).
 _SP_RENAME_SQL = "EXEC sp_rename ?, ?, 'OBJECT'"
+
+# sp_get_table_health_metrics: single positional arg is the two-part name as a string
+# literal.  The name is built from validated/quoted identifiers so no raw user input
+# is ever embedded.  The literal is enclosed in single quotes as T-SQL requires.
+# The output schema is GA-but-undocumented; columns are passed through generically.
+_SP_TABLE_HEALTH_METRICS_SQL = "EXEC sp_get_table_health_metrics '{schema}.{table}'"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1100,6 +1128,68 @@ async def recluster_table(
 
     await asyncio.to_thread(_run)
     return await _fetch_table(target, schema, table_name, mode=mode)
+
+
+async def get_table_health_metrics(
+    target: SqlTarget,
+    schema: str,
+    table_name: str,
+    *,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
+    mode: CredentialMode = CredentialMode.DEFAULT,
+) -> tuple[list[str], list[tuple[object, ...]]]:
+    """Return health metrics for *schema*.*table_name* via ``sp_get_table_health_metrics``.
+
+    Executes ``EXEC sp_get_table_health_metrics 'schema.table'`` against the
+    SQL Analytics Endpoint and passes the result set through generically.  The
+    stored procedure was announced as Generally Available at Build 2026 but has
+    no dedicated Microsoft Learn reference page yet, so the exact output columns
+    are undocumented — they are returned as-is (columns + rows).
+
+    The proc surfaces common Delta/Parquet layout problems — small files,
+    fragmentation, excessive deletes/updates, and delayed checkpoints — so
+    callers can decide whether maintenance is needed.
+
+    Args:
+        target: The SQL Analytics Endpoint to query.  Data Warehouses are
+            rejected with :class:`~fabric_dw.exceptions.ItemKindError`.
+        schema: The schema name.  Must pass :func:`validate_identifier`.
+        table_name: The table name.  Must pass :func:`validate_identifier`.
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
+            Only :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT` is
+            accepted; Warehouse items raise :class:`~fabric_dw.exceptions.ItemKindError`.
+        mode: The credential mode for Entra authentication.
+
+    Returns:
+        A ``(columns, rows)`` tuple where *columns* is a list of column name
+        strings and *rows* is a list of row tuples.  The exact columns are
+        determined by the proc and are passed through verbatim.
+
+    Raises:
+        ItemKindError: If *kind* is not
+            :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
+            Message: ``"Table health-check (sp_get_table_health_metrics) is
+            only available on SQL Analytics Endpoints, not Data Warehouses."``.
+        ValueError: If *schema* or *table_name* fails identifier validation.
+        PermissionDeniedError: If the driver reports a permission error.
+        FabricError: If the engine reports an error executing the proc.
+    """
+    _assert_sql_endpoint(kind)
+    validate_identifier(schema)
+    validate_identifier(table_name)
+
+    # Build the two-part name from validated identifiers.  The identifier
+    # validator already rejects characters that could escape a string literal
+    # (quotes, brackets, semicolons, etc.) so this embedding is safe.
+    # We use the plain names (not bracket-quoted) because sp_get_table_health_metrics
+    # expects a plain 'schema.table' string literal, not an ODBC-quoted name.
+    sql = _SP_TABLE_HEALTH_METRICS_SQL.format(schema=schema, table=table_name)
+
+    def _run() -> tuple[list[str], list[tuple[object, ...]]]:
+        cols, rows = run_query(target, sql, mode=mode)
+        return cols, list(rows)
+
+    return await asyncio.to_thread(_run)
 
 
 async def rename_table(

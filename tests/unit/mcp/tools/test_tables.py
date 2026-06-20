@@ -853,3 +853,124 @@ async def test_get_table_columns_works_on_sql_endpoint(mock_ctx, ctx_patch) -> N
         )
 
     assert isinstance(result, list)
+
+
+# ---------------------------------------------------------------------------
+# get_table_health_metrics — contract tests (read-only, SQL-endpoint-only)
+# ---------------------------------------------------------------------------
+
+
+async def test_get_table_health_metrics_is_registered() -> None:
+    """get_table_health_metrics is registered as an MCP tool."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    tool_names = {t.name for t in mcp._tool_manager.list_tools()}
+    assert "get_table_health_metrics" in tool_names
+
+
+async def test_get_table_health_metrics_is_not_mutating(
+    mock_ctx, ctx_patch, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """get_table_health_metrics must NOT require the FABRIC_MCP_ALLOW_MUTATING flag.
+
+    Mutating tools call ``assert_writes_allowed`` which raises ToolError when
+    ``FABRIC_MCP_ALLOW_MUTATING`` is unset.  A read-only tool must succeed
+    without that flag.
+    """
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    # Remove the mutating flag to ensure a read-only tool succeeds without it.
+    monkeypatch.delenv("FABRIC_MCP_ALLOW_MUTATING", raising=False)
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_sql_endpoint_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.tables.get_table_health_metrics",
+            new=AsyncMock(return_value=([], [])),
+        ),
+    ):
+        # Must NOT raise ToolError — read-only tools don't check writes_allowed.
+        result = await mcp._tool_manager.call_tool(
+            "get_table_health_metrics",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.FactSales"},
+        )
+    assert isinstance(result, dict)
+
+
+async def test_get_table_health_metrics_happy_path(mock_ctx, ctx_patch) -> None:
+    """get_table_health_metrics forwards args to the service and returns columns+rows."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_sql_endpoint_entry())
+
+    fake_cols = ["issue_type", "severity"]
+    fake_rows: list[tuple[object, ...]] = [("small_files", "medium")]
+    mock_svc = AsyncMock(return_value=(fake_cols, fake_rows))
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.tables.get_table_health_metrics", new=mock_svc),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "get_table_health_metrics",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.FactSales"},
+        )
+
+    assert isinstance(result, dict)
+    assert result["columns"] == fake_cols
+    assert len(result["rows"]) == 1
+
+
+async def test_get_table_health_metrics_forwards_qualified_name(mock_ctx, ctx_patch) -> None:
+    """get_table_health_metrics parses the qualified name and passes schema + table to service."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_sql_endpoint_entry())
+    mock_svc = AsyncMock(return_value=([], []))
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.tables.get_table_health_metrics", new=mock_svc),
+    ):
+        await mcp._tool_manager.call_tool(
+            "get_table_health_metrics",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "sales.Transactions"},
+        )
+
+    args, _kwargs = mock_svc.call_args
+    # service is called with positional: target, schema, table_name
+    assert args[1] == "sales"
+    assert args[2] == "Transactions"
+
+
+async def test_get_table_health_metrics_warehouse_raises_tool_error(mock_ctx, ctx_patch) -> None:
+    """get_table_health_metrics raises ToolError when service raises ItemKindError."""
+    from fabric_dw.exceptions import ItemKindError  # noqa: PLC0415
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    # Use a Warehouse entry so the service receives WarehouseKind.WAREHOUSE
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.tables.get_table_health_metrics",
+            new=AsyncMock(
+                side_effect=ItemKindError(
+                    "Table health-check (sp_get_table_health_metrics) is only "
+                    "available on SQL Analytics Endpoints, not Data Warehouses."
+                )
+            ),
+        ),
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "get_table_health_metrics",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.FactSales"},
+        )

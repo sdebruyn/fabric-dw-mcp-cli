@@ -1902,3 +1902,129 @@ class TestReclusterTable:
 
         assert call_kwargs["autocommit"] is False
         assert call_kwargs["commit_per_statement"] is False
+
+
+# ===========================================================================
+# get_table_health_metrics
+# ===========================================================================
+
+
+class TestGetTableHealthMetrics:
+    """Tests for the sp_get_table_health_metrics service function."""
+
+    async def test_emits_correct_sql(self) -> None:
+        """The exact SQL string emitted matches the expected EXEC statement."""
+        target = _make_target()
+        conn = _make_conn([], [])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await tables.get_table_health_metrics(
+                target,
+                "dbo",
+                "FactSales",
+                kind=WarehouseKind.SQL_ENDPOINT,
+            )
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert call_sql == "EXEC sp_get_table_health_metrics 'dbo.FactSales'"
+
+    async def test_emits_correct_sql_other_schema(self) -> None:
+        """SQL is built correctly for a non-dbo schema."""
+        target = _make_target()
+        conn = _make_conn([], [])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await tables.get_table_health_metrics(
+                target,
+                "sales",
+                "Transactions",
+                kind=WarehouseKind.SQL_ENDPOINT,
+            )
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert call_sql == "EXEC sp_get_table_health_metrics 'sales.Transactions'"
+
+    async def test_returns_columns_and_rows(self) -> None:
+        """Columns and rows are returned as-is (generic passthrough)."""
+        target = _make_target()
+        fake_cols = ["col_a", "col_b", "col_c"]
+        fake_rows: list[tuple[object, ...]] = [("v1", 42, True), ("v2", 0, False)]
+        conn = _make_conn(fake_rows, fake_cols)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result_cols, result_rows = await tables.get_table_health_metrics(
+                target,
+                "dbo",
+                "FactSales",
+                kind=WarehouseKind.SQL_ENDPOINT,
+            )
+        assert result_cols == fake_cols
+        assert result_rows == fake_rows
+
+    async def test_returns_empty_rows_when_proc_returns_nothing(self) -> None:
+        """An empty result set is valid (no rows, but columns may be present)."""
+        target = _make_target()
+        conn = _make_conn([], [])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            _cols, rows = await tables.get_table_health_metrics(
+                target,
+                "dbo",
+                "FactSales",
+                kind=WarehouseKind.SQL_ENDPOINT,
+            )
+        assert rows == []
+
+    async def test_warehouse_kind_raises_item_kind_error(self) -> None:
+        """Passing a Warehouse kind raises ItemKindError (inverse guard)."""
+        target = _make_target()
+        conn = _make_conn([], [])
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(ItemKindError, match="SQL Analytics Endpoints"),
+        ):
+            await tables.get_table_health_metrics(
+                target,
+                "dbo",
+                "FactSales",
+                kind=WarehouseKind.WAREHOUSE,
+            )
+
+    async def test_sql_endpoint_kind_is_allowed(self) -> None:
+        """SQL_ENDPOINT kind does not raise — the guard passes."""
+        target = _make_target()
+        conn = _make_conn([], [])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            # Must not raise:
+            await tables.get_table_health_metrics(
+                target,
+                "dbo",
+                "FactSales",
+                kind=WarehouseKind.SQL_ENDPOINT,
+            )
+
+    async def test_invalid_schema_raises_value_error(self) -> None:
+        """Invalid schema identifier is rejected before SQL is emitted."""
+        target = _make_target()
+        conn = _make_conn([], [])
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(ValueError, match="Invalid SQL identifier"),
+        ):
+            await tables.get_table_health_metrics(
+                target,
+                "bad]schema",
+                "FactSales",
+                kind=WarehouseKind.SQL_ENDPOINT,
+            )
+
+    async def test_invalid_table_name_raises_value_error(self) -> None:
+        """Invalid table name identifier is rejected before SQL is emitted."""
+        target = _make_target()
+        conn = _make_conn([], [])
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(ValueError, match="Invalid SQL identifier"),
+        ):
+            await tables.get_table_health_metrics(
+                target,
+                "dbo",
+                "bad;table",
+                kind=WarehouseKind.SQL_ENDPOINT,
+            )

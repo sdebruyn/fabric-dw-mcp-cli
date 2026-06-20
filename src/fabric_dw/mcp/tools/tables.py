@@ -455,6 +455,52 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         ctx.resolver.clear_negative_cache()
         return result.model_dump(mode="json")
 
+    @mcp.tool(name="get_table_health_metrics")
+    async def get_table_health_metrics(
+        workspace: str,
+        item: str,
+        qualified_name: str,
+    ) -> dict[str, Any]:
+        """Return health metrics for a table via ``sp_get_table_health_metrics``.
+
+        Only supported on SQL Analytics Endpoints (not Data Warehouses).  The
+        proc surfaces Delta/Parquet layout issues such as small files,
+        fragmentation, excessive deletes/updates, and delayed checkpoints.
+
+        The stored procedure is Generally Available (announced at Build 2026)
+        but its output column schema is not yet documented by Microsoft.
+        Columns and rows are passed through verbatim.
+
+        Args:
+            workspace: Workspace name or GUID.
+            item: SQL Analytics Endpoint name or GUID.  Data Warehouses are
+                rejected with a ``ToolError``.
+            qualified_name: Dot-separated qualified table name, e.g. ``dbo.sales``.
+        """
+        schema, table_name = parse_qualified_name(qualified_name, kind="table")
+        assert_workspace_allowed(workspace)
+        ctx = get_context()
+        try:
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
+            assert_workspace_allowed(workspace, str(ws_id))
+            _log.debug(
+                "get_table_health_metrics ws=%s item=%s table=%s.%s",
+                ws_id,
+                entry.id,
+                schema,
+                table_name,
+            )
+            target = make_sql_target(ws_id, entry, item)
+            columns, rows = await tables_svc.get_table_health_metrics(
+                target, schema, table_name, kind=entry.kind, mode=ctx.auth_mode
+            )
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        return {
+            "columns": columns,
+            "rows": safe_rows(rows),
+        }
+
     @mutating_tool(mcp, "rename_table")
     async def rename_table(
         workspace: str, item: str, qualified_name: str, new_name: str
