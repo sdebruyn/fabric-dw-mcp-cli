@@ -112,13 +112,25 @@ def render_plan_html(plan_xml: str) -> str:
     """
     css = _inline_css()
     js = _inline_js()
-    # Embed the raw XML as a JS string literal.  html.escape ensures angle
-    # brackets and ampersands in the XML don't break the surrounding HTML.
-    # We use a template literal delimited by backtick so that the XML content
-    # (which contains double and single quotes) is embedded without escaping
-    # those characters.  Backtick and backslash characters in the XML must
-    # still be escaped inside the template literal.
-    xml_escaped_for_js = plan_xml.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
+    # Embed the raw XML inside a JS template literal (backtick-delimited).
+    # Using a template literal avoids the need to escape single and double
+    # quotes from the XML, but requires escaping:
+    #   \      → \\     (backslash must be doubled first)
+    #   `      → \`     (would close the template literal)
+    #   ${     → \${    (would start a template expression)
+    #   </script → \x3C/script  (prevents the HTML parser from closing the
+    #              surrounding <script> block early, which could let injected
+    #              content execute — e.g. StatementText containing
+    #              "</script><img src=x onerror=...>")
+    # Note: html.escape is NOT applied here — the XML goes into a JS string,
+    # not directly into HTML text content, so HTML entity encoding would
+    # corrupt the XML.  The </script> neutralisation above is the correct fix.
+    xml_escaped_for_js = (
+        plan_xml.replace("\\", "\\\\")
+        .replace("`", "\\`")
+        .replace("${", "\\${")
+        .replace("</script", "\\x3C/script")
+    )
     title = html.escape("SQL Execution Plan")
 
     return f"""<!DOCTYPE html>

@@ -138,7 +138,7 @@ A `.html` extension is recommended for the `-o`/`--output` file.  The file can b
 
 Unknown operators degrade gracefully; the library renders what it knows and skips what it does not recognise.
 
-**Attribution:** The vendored assets (JS and CSS) are from [html-query-plan](https://github.com/JustinPealing/html-query-plan) by Justin Pealing, released under the MIT licence.  A copy of the licence is included in `src/fabric_dw/assets/html_query_plan/LICENSE.txt`.
+**Attribution:** The vendored assets (JS and CSS) are from [html-query-plan 2.6.1](https://github.com/JustinPealing/html-query-plan) by Justin Pealing, released under the MIT licence.  A copy of the licence is included in `src/fabric_dw/assets/html_query_plan/LICENSE.txt`.
 
 ---
 

@@ -124,6 +124,25 @@ class TestRenderPlanHtmlSelfContained:
         result = render_plan_html(_FIXTURE_XML)
         assert "<script>" in result
 
+    def test_script_close_tag_in_xml_does_not_break_out(self) -> None:
+        """A </script> token inside the plan XML must not close the enclosing <script> block.
+
+        If StatementText contains ``</script><img src=x onerror=alert(1)>`` the
+        HTML parser would exit the <script> block early and execute the injected
+        payload.  The renderer must neutralise the ``</script`` sequence to the
+        JS unicode escape ``\\x3C/script`` so the HTML parser never sees the
+        closing tag inside the <script> block.
+        """
+        malicious_stmt = "</script><img src=x onerror=alert(1)>"
+        xml_with_payload = _FIXTURE_XML.replace("SELECT 1", malicious_stmt)
+        result = render_plan_html(xml_with_payload)
+        # The </script token from the XML must be neutralised: the renderer
+        # must replace < with \x3C so the HTML parser cannot exit the script
+        # block at that point.
+        assert "\\x3C/script" in result
+        # The document must still be a complete, valid HTML file.
+        assert "</html>" in result
+
 
 class TestRenderPlanHtmlJsLibrary:
     """Verify the vendored html-query-plan JS library is correctly wired up."""

@@ -128,6 +128,21 @@ jobs:
       # chain will exit non-zero and fail the job.
       - run: uv run --no-dev fabric-dw --help
       - run: uv run --no-dev fabric-dw-mcp --help
+      # Verify the vendored html-query-plan assets (including dist/qp.min.js,
+      # which lives under a .gitignore-excluded path) were correctly packaged
+      # and are accessible from the installed package via importlib.resources.
+      # This would fail if the hatch artifacts= entry were removed.
+      - run: |
+          uv run --no-dev python -c "
+          from fabric_dw.cli._plan_html import render_plan_html
+          ns = 'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+          xml = f'<ShowPlanXML xmlns=\"{ns}\"><BatchSequence/></ShowPlanXML>'
+          html = render_plan_html(xml)
+          assert '<!DOCTYPE html>' in html, 'missing DOCTYPE'
+          assert 'QP.showPlan' in html, 'missing QP.showPlan call'
+          assert 'data:image/png;base64,' in html, 'sprite sheet not inlined'
+          print('html renderer smoke: OK')
+          "
 
   slow:
     name: Slow tests (wall-clock timing)
