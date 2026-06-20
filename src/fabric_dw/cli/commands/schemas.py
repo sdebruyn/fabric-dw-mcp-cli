@@ -74,7 +74,8 @@ async def create_cmd(
     is_flag=True,
     default=False,
     help=(
-        "Drop all tables and views in the schema before dropping the schema itself. "
+        "Drop all tables, views, functions, and stored procedures in the schema before "
+        "dropping the schema itself. "
         "WARNING: This permanently deletes all contained objects and their data."
     ),
 )
@@ -88,7 +89,8 @@ async def delete_cmd(
 ) -> None:
     """Drop schema NAME from ITEM.
 
-    Pass --cascade to also drop all tables and views inside the schema first.
+    Pass --cascade to also drop all tables, views, functions, and stored
+    procedures inside the schema first.
     This is a destructive, irreversible operation.
     """
     ws = resolve_workspace(ctx)
@@ -99,8 +101,8 @@ async def delete_cmd(
             prompt = f"Drop schema [{name}] from {entry.display_name!r} ({entry.id})?"
             if cascade:
                 prompt = (
-                    f"--cascade will permanently drop all tables and views "
-                    f"in schema [{name}] on {entry.display_name!r}. " + prompt
+                    f"--cascade will permanently drop all tables, views, functions, "
+                    f"and stored procedures in schema [{name}] on {entry.display_name!r}. " + prompt
                 )
             if not confirm_destructive(prompt, yes=ctx.yes):
                 click.echo("Aborted.")
