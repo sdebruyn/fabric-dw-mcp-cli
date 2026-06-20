@@ -277,7 +277,7 @@ _BULK_ROWS: list[tuple[object, ...]] = [
         2,
         "dept",
         "nvarchar",
-        100,
+        100,  # max_length=100 bytes → 50 chars (nvarchar stores 2 bytes per char)
         0,
         0,
         True,

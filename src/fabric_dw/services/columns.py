@@ -7,7 +7,7 @@ Public API
   (table or view) via ``sys.columns JOIN sys.types``, ordered by ``column_id``.
 - :func:`get_object_columns_or_raise` — same, but raises
   :class:`~fabric_dw.exceptions.NotFoundError` when the object does not exist.
-- :func:`get_columns_for_schemas`   — bulk-fetch columns for all tables in a set of schemas,
+- :func:`get_columns_for_schemas`   — bulk-fetch columns for all tables across all schemas,
   returning a dict keyed by ``(schema_name, table_name)``.  One query, no N+1.
 """
 
