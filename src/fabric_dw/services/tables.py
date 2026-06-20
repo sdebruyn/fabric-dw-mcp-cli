@@ -48,6 +48,7 @@ __all__ = [
     "create_table_from_csv",
     "create_table_from_parquet",
     "delete_table",
+    "get_cluster_columns",
     "infer_columns_from_csv",
     "infer_columns_from_parquet",
     "list_tables",
@@ -63,6 +64,9 @@ _log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _SQL_ENDPOINT_READONLY_MSG = "SQL Endpoints are read-only; CREATE/DROP/TRUNCATE not supported"
+_SQL_ENDPOINT_CLUSTERING_MSG = (
+    "Data clustering is not supported on SQL Analytics Endpoints; use a Fabric Data Warehouse"
+)
 
 
 def _assert_not_sql_endpoint(kind: WarehouseKind) -> None:
@@ -99,6 +103,16 @@ _READ_TABLE_SQL = "SELECT TOP ({count}) * FROM {schema_q}.{table_q};"
 
 # COUNT_BIG(*) is bigint-safe (avoids INT overflow on wide tables).
 _COUNT_TABLE_SQL = "SELECT COUNT_BIG(*) AS row_count FROM {schema_q}.{table_q};"
+
+_CLUSTER_COLUMNS_SQL = """\
+SELECT c.name AS column_name, ic.data_clustering_ordinal AS clustering_ordinal
+FROM sys.tables t
+JOIN sys.schemas s ON s.schema_id = t.schema_id
+JOIN sys.columns c ON t.object_id = c.object_id
+JOIN sys.index_columns ic ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+WHERE ic.data_clustering_ordinal > 0 AND s.name = ? AND t.name = ?
+ORDER BY ic.data_clustering_ordinal;
+"""
 
 _FETCH_TABLE_SQL = """\
 SELECT s.name AS schema_name, t.name, t.create_date AS created,
@@ -272,6 +286,55 @@ async def count_table_rows(
             msg = f"Table [{schema}].[{table_name}] not found"
             raise NotFoundError(msg)
         return int(rows[0][0])
+
+    return await asyncio.to_thread(_run)
+
+
+async def get_cluster_columns(
+    target: SqlTarget,
+    schema: str,
+    table_name: str,
+    *,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
+    mode: CredentialMode = CredentialMode.DEFAULT,
+) -> list[dict[str, object]]:
+    """Return the data-clustering columns of *schema*.*table_name*, ordered by ordinal.
+
+    Queries ``sys.index_columns`` filtered on ``data_clustering_ordinal > 0``.
+    Returns an empty list when no clustering is defined — this is not an error.
+
+    Args:
+        target: The warehouse to query.
+        schema: The schema name.  Must pass :func:`validate_identifier`.
+        table_name: The table name.  Must pass :func:`validate_identifier`.
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
+            SQL Endpoint items are rejected with :class:`~fabric_dw.exceptions.ItemKindError`.
+        mode: The credential mode for Entra authentication.
+
+    Returns:
+        A (possibly empty) list of ``{"column_name": str, "clustering_ordinal": int}``
+        dicts ordered by ascending *clustering_ordinal*.
+
+    Raises:
+        ItemKindError: If *kind* is :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
+            Message: ``"Data clustering is not supported on SQL Analytics Endpoints;
+            use a Fabric Data Warehouse"``.
+        ValueError: If *schema* or *table_name* fails identifier validation.
+        PermissionDeniedError: If the driver reports a permission error.
+    """
+    if kind == WarehouseKind.SQL_ENDPOINT:
+        raise ItemKindError(_SQL_ENDPOINT_CLUSTERING_MSG)
+    validate_identifier(schema)
+    validate_identifier(table_name)
+
+    def _run() -> list[dict[str, object]]:
+        _cols, rows = run_query(
+            target,
+            _CLUSTER_COLUMNS_SQL,
+            params=[schema, table_name],
+            mode=mode,
+        )
+        return [{"column_name": str(row[0]), "clustering_ordinal": int(row[1])} for row in rows]
 
     return await asyncio.to_thread(_run)
 

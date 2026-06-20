@@ -32,6 +32,33 @@ fdw -w MyWorkspace --yes tables clear SalesWH dbo.staging_load
 
 ---
 
+### tables cluster-columns
+
+**Targets:** Data Warehouse only
+
+List the data-clustering columns of a table, ordered by clustering ordinal. Returns an empty table when no clustering is defined (exit 0).
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] tables cluster-columns [WAREHOUSE] QUALIFIED_NAME
+```
+
+**Example**
+
+```shell
+fdw -w MyWorkspace tables cluster-columns SalesWH dbo.orders
+```
+
+```json
+[
+  {"column_name": "city", "clustering_ordinal": 1},
+  {"column_name": "country", "clustering_ordinal": 2}
+]
+```
+
+---
+
 ### tables clone
 
 **Targets:** Data Warehouse only
@@ -526,6 +553,22 @@ Drop a SQL table.
 - `qualified_name` (`str`) — dot-separated table name, e.g. `dbo.sales`.
 
 **Returns:** `{ "dropped": true }` — confirmation.
+
+---
+
+### get_cluster_columns
+
+**Targets:** Data Warehouse only
+
+Return the data-clustering columns of a table, ordered by clustering ordinal. Returns an empty list when no clustering is defined (not an error).
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse name or GUID. SQL Analytics Endpoints are rejected.
+- `qualified_name` (`str`) — dot-separated table name, e.g. `dbo.sales`.
+
+**Returns:** `list[{ "column_name": str, "clustering_ordinal": int }]` — ordered by ascending `clustering_ordinal`.
 
 ---
 

@@ -6,6 +6,7 @@ Coverage targets (lines from coverage report):
   163        delete_table: return {"dropped": True} (happy-path success path)
   193        clear_table: return {"truncated": True} (happy-path success path)
   224-227    clone_table: at_dt UTC normalisation (naive timestamp → UTC)
+  get_cluster_columns: happy path, empty result, SQL endpoint guard, error funnel
 
 NOTE: The SQL-endpoint guard tests for create_table / delete_table / clear_table /
 clone_table / rename_table already live in tests/unit/mcp/test_server.py —
@@ -21,13 +22,14 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 
-from fabric_dw.exceptions import NotFoundError
+from fabric_dw.exceptions import ItemKindError, NotFoundError
 from fabric_dw.models import Table
 from tests.unit.mcp.conftest import (
     WH_NAME,
     WS_ID,
     WS_NAME,
     make_item_entry,
+    make_sql_endpoint_entry,
 )
 
 # ---------------------------------------------------------------------------
@@ -649,4 +651,108 @@ async def test_count_table_rows_bad_qualified_name_raises_tool_error(ctx_patch) 
         await mcp._tool_manager.call_tool(
             "count_table_rows",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "nodot"},
+        )
+
+
+# ---------------------------------------------------------------------------
+# get_cluster_columns — happy path, empty result, SQL endpoint guard, error funnel
+# ---------------------------------------------------------------------------
+
+
+async def test_get_cluster_columns_happy_path(mock_ctx, ctx_patch) -> None:
+    """get_cluster_columns returns list of column dicts ordered by ordinal."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+    expected = [
+        {"column_name": "city", "clustering_ordinal": 1},
+        {"column_name": "country", "clustering_ordinal": 2},
+    ]
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.tables.get_cluster_columns",
+            new=AsyncMock(return_value=expected),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "get_cluster_columns",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.sales"},
+        )
+
+    assert result == expected
+
+
+async def test_get_cluster_columns_empty_result(mock_ctx, ctx_patch) -> None:
+    """get_cluster_columns returns an empty list when no clustering is defined."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.tables.get_cluster_columns",
+            new=AsyncMock(return_value=[]),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "get_cluster_columns",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.sales"},
+        )
+
+    assert result == []
+
+
+async def test_get_cluster_columns_sql_endpoint_raises_tool_error(mock_ctx, ctx_patch) -> None:
+    """get_cluster_columns raises ToolError when target is a SQL Analytics Endpoint."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    endpoint_entry = make_sql_endpoint_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=endpoint_entry)
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.tables.get_cluster_columns",
+            new=AsyncMock(
+                side_effect=ItemKindError(
+                    "Data clustering is not supported on SQL Analytics Endpoints; "
+                    "use a Fabric Data Warehouse"
+                )
+            ),
+        ),
+        pytest.raises(ToolError, match="SQL Analytics Endpoints"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "get_cluster_columns",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.sales"},
+        )
+
+
+async def test_get_cluster_columns_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
+    """get_cluster_columns wraps FabricError into ToolError."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.tables.get_cluster_columns",
+            new=AsyncMock(side_effect=NotFoundError("table not found")),
+        ),
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "get_cluster_columns",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.sales"},
         )

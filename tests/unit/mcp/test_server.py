@@ -129,6 +129,7 @@ EXPECTED_TOOL_NAMES: frozenset[str] = frozenset(
         "list_tables",
         "read_table",
         "count_table_rows",
+        "get_cluster_columns",
         "create_table",
         "create_empty_table",
         "clone_table",
