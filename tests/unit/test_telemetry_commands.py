@@ -79,29 +79,31 @@ class TestResolveDomain:
 def _collect_live_cli_group_names() -> frozenset[str]:
     """Walk the live Click command tree and return all top-level group/command names.
 
-    Hidden commands are excluded.  This mirrors what the old docgen.collect_cli_entries
-    did for validation, but without the doc-page rendering machinery.
+    Hidden commands are included deliberately: telemetry fires for all commands
+    regardless of the ``hidden`` flag, so a hidden group without a DOMAIN_MAP
+    entry would silently log ``domain="unknown"``.
     """
     from fabric_dw.cli._main import cli  # noqa: PLC0415
 
-    return frozenset(
-        name for name, cmd in cli.commands.items() if not getattr(cmd, "hidden", False)
-    )
+    return frozenset(cli.commands)
 
 
 def _collect_live_mcp_tool_names() -> frozenset[str]:
-    """Register all MCP tools against a fresh FastMCP instance and return the tool names.
+    """Register all MCP tools against a fresh InstrumentedFastMCP instance; return tool names.
 
-    Uses the same ``register_all`` path the production MCP server takes, so no
-    tool can be added to the server without appearing in this set.
+    Uses ``InstrumentedFastMCP`` (the same class the production MCP server
+    instantiates) and ``register_all()`` so that any tool added to the server
+    automatically appears here.  Tool names are enumerated via the public
+    ``asyncio.run(mcp.list_tools())`` API to avoid relying on private internals.
     """
-    from mcp.server.fastmcp import FastMCP  # noqa: PLC0415
+    import asyncio  # noqa: PLC0415
 
+    from fabric_dw.mcp._helpers import InstrumentedFastMCP  # noqa: PLC0415
     from fabric_dw.mcp.tools import register_all  # noqa: PLC0415
 
-    mcp = FastMCP("coverage-check")
+    mcp = InstrumentedFastMCP("coverage-check")
     register_all(mcp)
-    return frozenset(tool.name for tool in mcp._tool_manager.list_tools())
+    return frozenset(tool.name for tool in asyncio.run(mcp.list_tools()))
 
 
 class TestDomainCoverage:
@@ -115,6 +117,10 @@ class TestDomainCoverage:
     def test_all_mcp_tools_resolve_to_known_domain(self) -> None:
         """Every MCP tool name must resolve to a domain that is NOT 'unknown'."""
         tool_names = _collect_live_mcp_tool_names()
+        assert len(tool_names) > 0, (
+            "No MCP tools were discovered — register_all() appears to have registered nothing. "
+            "Check that fabric_dw.mcp.tools._DOMAINS is populated."
+        )
         unknown = {name for name in tool_names if resolve_domain(name) == "unknown"}
         assert unknown == set(), (
             f"MCP tools with no DOMAIN_MAP entry (would log domain='unknown'): {sorted(unknown)}. "
@@ -124,6 +130,10 @@ class TestDomainCoverage:
     def test_all_cli_groups_resolve_to_known_domain(self) -> None:
         """Every top-level CLI group name must resolve to a domain that is NOT 'unknown'."""
         group_names = _collect_live_cli_group_names()
+        assert len(group_names) > 0, (
+            "No CLI groups were discovered — cli.commands appears to be empty. "
+            "Check that fabric_dw.cli._main.cli has subcommands registered."
+        )
         unknown = {name for name in group_names if resolve_domain(name) == "unknown"}
         assert unknown == set(), (
             f"CLI groups with no DOMAIN_MAP entry (would log domain='unknown'): {sorted(unknown)}. "
