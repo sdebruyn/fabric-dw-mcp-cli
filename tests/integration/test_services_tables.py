@@ -315,6 +315,30 @@ async def test_count_table_rows_returns_nonnegative_int(
 # parent Lakehouse during fixture setup) is the probe table — it is guaranteed
 # to be visible on the endpoint before the fixture yields.
 
+# Driver message fragments that mean the proc is not yet implemented by the
+# endpoint's SQL engine version (a tenant-level GA rollout gap, not a bug).
+# Lower-cased before matching.
+_HEALTH_METRICS_UNAVAILABLE_FRAGMENTS = (
+    # SQL engine version predates the proc: "The stored procedure is not
+    # available in this version of SQL Server."
+    "is not available in this version",
+    # Defensive variants of the same condition surfaced by the engine.
+    "stored procedure is not available",
+)
+
+
+def _is_health_metrics_unavailable(exc: BaseException) -> bool:
+    """Return True when *exc* means sp_get_table_health_metrics is not yet deployed.
+
+    Catches the "not available in this version of SQL Server" condition that the
+    raw driver raises when the proc name is recognised but the endpoint's engine
+    version does not yet implement it.  ``map_driver_error`` does not classify
+    this (it is neither a not-found error number nor an auth/permission fragment),
+    so the test must string-match the driver message to skip gracefully.
+    """
+    msg = str(exc).lower()
+    return any(frag in msg for frag in _HEALTH_METRICS_UNAVAILABLE_FRAGMENTS)
+
 
 @pytest.mark.sql_endpoint
 async def test_get_table_health_metrics_on_sql_endpoint(
@@ -355,6 +379,20 @@ async def test_get_table_health_metrics_on_sql_endpoint(
         pytest.skip(
             f"sp_get_table_health_metrics is not yet available on this tenant "
             f"({exc}); skipping — re-run when the GA rollout reaches this tenant"
+        )
+    except Exception as exc:
+        # The proc exists by name but the endpoint's SQL engine version doesn't
+        # implement it yet: the driver raises "The stored procedure is not
+        # available in this version of SQL Server."  map_driver_error() does NOT
+        # map this to a typed exception (it's neither error 208/2812 nor an auth/
+        # permission fragment), so the raw driver error propagates here.  Treat it
+        # the same way as the NotFoundError path: a GA-rollout gap, not a code bug.
+        if not _is_health_metrics_unavailable(exc):
+            raise
+        pytest.skip(
+            f"sp_get_table_health_metrics is not available in this SQL Analytics "
+            f"Endpoint's engine version ({exc}); skipping — re-run when the GA "
+            f"rollout reaches this endpoint"
         )
 
     # The proc must return at least one column (output schema is undocumented
