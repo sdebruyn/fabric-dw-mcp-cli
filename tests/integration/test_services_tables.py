@@ -330,19 +330,38 @@ async def test_get_table_health_metrics_on_sql_endpoint(
     - ``columns`` is a non-empty list of strings.
     - ``rows`` is a list of tuples (may be empty if the proc yields no rows for
       a freshly-seeded table — but the result shape must be correct).
+
+    ``sp_get_table_health_metrics`` was announced as Generally Available at
+    Build 2026 but may not yet be rolled out to all Fabric tenants.  When the
+    proc is not available the test is skipped rather than failed (the proc
+    absence is a tenant-level GA rollout issue, not a code bug).
     """
     from fabric_dw.models import WarehouseKind  # noqa: PLC0415
 
     sql_target = shared_sql_endpoint.sql_target
-    columns, rows = await tables.get_table_health_metrics(
-        sql_target,
-        SEED_SCHEMA_NAME,
-        "colors",
-        kind=WarehouseKind.SQL_ENDPOINT,
-    )
+    try:
+        columns, rows = await tables.get_table_health_metrics(
+            sql_target,
+            SEED_SCHEMA_NAME,
+            "colors",
+            kind=WarehouseKind.SQL_ENDPOINT,
+        )
+    except Exception as exc:
+        # sp_get_table_health_metrics is GA-announced but may not be available
+        # on all tenants yet.  Skip if the proc itself is absent; re-raise
+        # any other error (permission issue, identifier error, etc.).
+        msg_lower = str(exc).lower()
+        if "stored procedure" in msg_lower and (
+            "not available" in msg_lower or "not found" in msg_lower
+        ):
+            pytest.skip(
+                f"sp_get_table_health_metrics is not yet available on this tenant "
+                f"({exc}); skipping — re-run when the GA rollout reaches this tenant"
+            )
+        raise
 
     # The proc must return at least one column (output schema is undocumented
-    # but the proc is GA and always yields a result set).
+    # but the proc is GA and always yields a result set when available).
     assert isinstance(columns, list), f"expected list of column names, got {type(columns)}"
     assert columns, f"expected non-empty columns list, got {columns!r}"
     for col in columns:
