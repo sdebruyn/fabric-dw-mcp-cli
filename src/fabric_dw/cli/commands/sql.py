@@ -136,8 +136,9 @@ async def sql_exec_cmd(
     help=(
         "Export format for the execution plan.  "
         "``mermaid`` emits a Mermaid flowchart TD diagram (plain text).  "
-        "Output goes to stdout or to -o/--output when given.  "
-        "Incompatible with --raw/--xml and the root --json flag."
+        "Output goes to stdout, or to -o/--output when given.  "
+        "Takes precedence over the default Rich tree; lower priority than --raw/--xml "
+        "and the root --json flag."
     ),
 )
 @click.pass_obj
@@ -157,21 +158,24 @@ async def sql_plan_cmd(
     The query is NOT executed — only the estimated execution plan is captured.
     This means DDL/DML query text is safe to plan without modifying any data.
 
-    By default the plan is rendered as a Rich terminal tree showing each
-    operator with estimated rows, cost percentage, and parallel/warning badges.
-    Use --raw/--xml to print the raw SHOWPLAN XML to stdout (e.g. for piping).
-    Use --format mermaid to emit a Mermaid flowchart TD diagram instead.
-    Use -o/--output to write the output to a file (stdout otherwise).
-    Pass the root --json flag for machine-readable JSON of the operator tree.
-
-    Output priority (first matching rule wins):
+    \b
+    Representation (what is produced):
+      --raw / --xml          raw SHOWPLAN XML  (highest priority)
+      root --json            parsed operator tree as JSON
+      --format mermaid       Mermaid flowchart TD diagram
+      (default)              Rich terminal tree
 
     \b
-    1. --raw/--xml          → raw SHOWPLAN XML to stdout (or -o file)
-    2. root --json          → parsed operator tree as JSON to stdout
-    3. --format mermaid     → Mermaid flowchart to stdout (or -o file)
-    4. default              → Rich terminal tree (always to terminal)
+    Destination (where output goes) — orthogonal to representation:
+      -o / --output FILE     write to FILE; no stdout rendering
+      (default)              stdout / terminal
+
+    When -o is given with the default (no --raw/--json/--format), the raw
+    SHOWPLAN XML is written to the file (opens in SSMS / Azure Data Studio).
     """
+    if raw and output_format is not None:
+        raise click.UsageError("--raw/--xml and --format cannot be used together.")
+
     query = load_sql_body(query_text, query_file, inline_opt="-q/--query", file_opt="-f/--file")
 
     ws = resolve_workspace(ctx)
@@ -180,37 +184,71 @@ async def sql_plan_cmd(
         async with build_http_client(ctx) as http:
             target, _entry = await build_sql_target(http, ws, wh)
             plan_xml = await _sql_exec_svc.get_plan(target, query, mode=ctx.auth)
-
-            if raw:
-                # --raw/--xml: pipe-friendly raw XML; -o writes to file.
-                if output_path is not None:
-                    with open(output_path, "w", encoding="utf-8") as fh:
-                        fh.write(plan_xml)
-                    click.echo(f"Execution plan written to {output_path}")
-                else:
-                    click.echo(plan_xml)
-            elif ctx.json_output:
-                # Global --json: emit the parsed operator tree as JSON to stdout.
-                operators = parse_showplan(plan_xml)
-                payload = [operator_to_dict(op) for op in operators]
-                click.echo(_json.dumps(payload, indent=2))
-            elif output_format == "mermaid":
-                # --format mermaid: Mermaid flowchart; -o writes to file.
-                operators = parse_showplan(plan_xml)
-                diagram = render_plan_mermaid(operators)
-                if output_path is not None:
-                    with open(output_path, "w", encoding="utf-8") as fh:
-                        fh.write(diagram)
-                    click.echo(f"Mermaid diagram written to {output_path}")
-                else:
-                    click.echo(diagram)
-            else:
-                # Default: render a Rich terminal tree (always terminal; -o saves raw XML).
-                if output_path is not None:
-                    with open(output_path, "w", encoding="utf-8") as fh:
-                        fh.write(plan_xml)
-                    click.echo(f"Execution plan written to {output_path}")
-                operators = parse_showplan(plan_xml)
-                render_plan_tree(operators)
+            _output_plan(ctx, plan_xml, output_path, raw, output_format)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
+
+
+def _output_plan(
+    ctx: CliContext,
+    plan_xml: str,
+    output_path: str | None,
+    raw: bool,
+    output_format: str | None,
+) -> None:
+    """Write or render the execution plan according to the selected mode.
+
+    Representation (what is produced — first matching rule wins):
+      raw=True          → raw SHOWPLAN XML
+      ctx.json_output   → parsed operator tree as JSON
+      format="mermaid"  → Mermaid flowchart TD diagram
+      (default)         → Rich terminal tree
+
+    Destination (where output goes):
+      output_path set   → write to file, print confirmation to stdout only
+      output_path None  → render/print to stdout / terminal
+
+    When output_path is given with the default (no --raw/--json/--format),
+    the raw SHOWPLAN XML is written to the file (opens in SSMS / ADS).
+    """
+    if raw:
+        # --raw/--xml: pipe-friendly raw XML; -o writes to file.
+        _write_or_echo(plan_xml, output_path, "Execution plan written to {path}")
+    elif ctx.json_output:
+        # Global --json: parsed operator tree as JSON; -o writes to file.
+        operators = parse_showplan(plan_xml)
+        payload = [operator_to_dict(op) for op in operators]
+        json_text = _json.dumps(payload, indent=2)
+        _write_or_echo(json_text, output_path, "Execution plan JSON written to {path}")
+    elif output_format == "mermaid":
+        # --format mermaid: Mermaid flowchart diagram; -o writes to file.
+        operators = parse_showplan(plan_xml)
+        diagram = render_plan_mermaid(operators)
+        _write_or_echo(diagram, output_path, "Mermaid diagram written to {path}")
+    elif output_path is not None:
+        # Default mode with -o: write raw XML to file, no tree rendered.
+        # (Scripts relying on file-only output get no terminal noise.)
+        with open(output_path, "w", encoding="utf-8") as fh:
+            fh.write(plan_xml)
+        click.echo(f"Execution plan written to {output_path}")
+    else:
+        # Default mode without -o: render Rich terminal tree.
+        operators = parse_showplan(plan_xml)
+        render_plan_tree(operators)
+
+
+def _write_or_echo(text: str, output_path: str | None, file_msg_template: str) -> None:
+    """Write *text* to *output_path* with a confirmation, or echo to stdout.
+
+    Args:
+        text: The content to write or echo.
+        output_path: File path to write to; when ``None``, echo to stdout.
+        file_msg_template: Message template for the confirmation echo; ``{path}``
+            is replaced with the actual path.
+    """
+    if output_path is not None:
+        with open(output_path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        click.echo(file_msg_template.format(path=output_path))
+    else:
+        click.echo(text)

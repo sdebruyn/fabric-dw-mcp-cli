@@ -83,8 +83,18 @@ class TestEscapeLabel:
     def test_hash_escaped(self) -> None:
         assert _escape_label("cost #1") == "cost #35;1"
 
-    def test_backslash_unchanged(self) -> None:
-        # backslashes are allowed in Mermaid labels
+    def test_pipe_escaped(self) -> None:
+        assert _escape_label("a | b") == "a #124; b"
+
+    def test_real_newline_stripped(self) -> None:
+        # Real \n in an op name would break the node line — must become a space.
+        assert _escape_label("line1\nline2") == "line1 line2"
+
+    def test_real_cr_stripped(self) -> None:
+        assert _escape_label("line1\rline2") == "line1 line2"
+
+    def test_backslash_n_literal_unchanged(self) -> None:
+        # The literal two-character sequence \n (used as Mermaid line-break) must survive.
         assert _escape_label("a\\nb") == "a\\nb"
 
     def test_empty_string(self) -> None:
@@ -176,8 +186,10 @@ class TestNodeId:
 
 
 class TestRenderPlanMermaid:
-    def test_empty_operators_returns_empty_string(self) -> None:
-        assert render_plan_mermaid([]) == ""
+    def test_empty_operators_returns_diagnostic_comment(self) -> None:
+        output = render_plan_mermaid([])
+        assert output.startswith("%%")
+        assert "No plan operators" in output
 
     def test_starts_with_flowchart_td(self) -> None:
         operators = parse_showplan(_FIXTURE_XML)
@@ -247,11 +259,14 @@ class TestRenderPlanMermaid:
         output = render_plan_mermaid(operators)
         # Every node definition line should have the pattern: ID["..."]
         node_lines = [
-            line for line in output.splitlines() if line.strip() and "-->" not in line and line.strip() != "flowchart TD"
+            line
+            for line in output.splitlines()
+            if line.strip() and "-->" not in line and line.strip() != "flowchart TD"
         ]
         for line in node_lines:
             stripped = line.strip()
-            assert '[' in stripped and '"]' in stripped, f"Unexpected node line: {line!r}"
+            assert "[" in stripped, f"Unexpected node line (missing [): {line!r}"
+            assert '"]' in stripped, f'Unexpected node line (missing "]): {line!r}'
 
     def test_second_statement_node_ids_prefixed_with_s1(self) -> None:
         operators = parse_showplan(_FIXTURE_XML)
@@ -290,3 +305,31 @@ class TestRenderPlanMermaid:
         output = render_plan_mermaid([node])
         assert '"Op "X""' not in output  # raw unescaped double-quote must not appear inside label
         assert "#quot;" in output
+
+    def test_pipe_in_op_name_escaped(self) -> None:
+        node = PlanOperator(
+            physical_op="Left | Right",
+            logical_op="Left | Right",
+            estimate_rows=1.0,
+            cost_pct=100.0,
+        )
+        output = render_plan_mermaid([node])
+        assert "#124;" in output
+        # Raw pipe must not appear inside the node label (between [ and ])
+        for line in output.splitlines():
+            if '["' in line:
+                label_part = line.split('["', 1)[1].rstrip('"]')
+                assert "|" not in label_part, f"Raw pipe found in label: {line!r}"
+
+    def test_real_newline_in_op_name_does_not_break_output(self) -> None:
+        node = PlanOperator(
+            physical_op="Op\nWith\nNewlines",
+            logical_op="Op\nWith\nNewlines",
+            estimate_rows=1.0,
+            cost_pct=100.0,
+        )
+        output = render_plan_mermaid([node])
+        # Every line in the output should be well-formed (node lines stay single-line).
+        for line in output.splitlines():
+            if '["' in line:
+                assert line.count('["') == 1, f"Malformed node line: {line!r}"

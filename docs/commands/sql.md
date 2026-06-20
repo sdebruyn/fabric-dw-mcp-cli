@@ -73,12 +73,16 @@ fdw [-w WORKSPACE] sql plan [OPTIONS] [ITEM]
 
 Pass the root `--json` flag to emit the parsed operator tree as machine-readable JSON instead of the Rich tree.
 
-Output priority (first matching rule wins):
+**Representation vs. destination** — these two axes are orthogonal:
 
-1. `--raw` / `--xml` → raw SHOWPLAN XML to stdout or `-o` file
-2. root `--json` → parsed operator tree as JSON to stdout
-3. `--format mermaid` → Mermaid flowchart to stdout or `-o` file
-4. default → Rich terminal tree (printed to terminal; `-o` also saves raw XML)
+| | no `-o` | `-o FILE` |
+| --- | --- | --- |
+| `--raw` / `--xml` | raw XML to stdout | raw XML to file |
+| `--json` (root flag) | JSON to stdout | JSON to file |
+| `--format mermaid` | Mermaid diagram to stdout | Mermaid diagram to file |
+| default | Rich tree to terminal | raw XML to file, no tree rendered |
+
+When `-o` is given, only a short confirmation is printed to stdout; the representation itself goes to the file only.
 
 **Example**
 
@@ -92,13 +96,16 @@ fdw -w MyWorkspace sql plan SalesWH -q "SELECT TOP 5 * FROM dbo.Sales" -o plan.s
 # Print raw SHOWPLAN XML to stdout (pipe-friendly)
 fdw -w MyWorkspace sql plan SalesWH -q "SELECT TOP 5 * FROM dbo.Sales" --raw
 
-# Emit the operator tree as JSON
+# Emit the operator tree as JSON to stdout
 fdw -w MyWorkspace --json sql plan SalesWH -q "SELECT TOP 5 * FROM dbo.Sales"
+
+# Save the operator tree as JSON to a file (no stdout output)
+fdw -w MyWorkspace --json sql plan SalesWH -q "SELECT TOP 5 * FROM dbo.Sales" -o plan.json
 
 # Emit a Mermaid flowchart diagram to stdout
 fdw -w MyWorkspace sql plan SalesWH -q "SELECT TOP 5 * FROM dbo.Sales" --format mermaid
 
-# Save a Mermaid diagram to file
+# Save a Mermaid diagram to file (no stdout output)
 fdw -w MyWorkspace sql plan SalesWH -q "SELECT TOP 5 * FROM dbo.Sales" --format mermaid -o plan.md
 ```
 

@@ -29,9 +29,12 @@ from fabric_dw.cli._plan_parse import PlanOperator, humanise_rows
 __all__ = ["render_plan_mermaid"]
 
 # Characters that need escaping inside Mermaid node labels (quoted strings).
-# Mermaid uses double-quoted labels; we need to escape double-quotes and
-# the percent sign (which Mermaid sometimes interprets as a comment marker).
-_LABEL_UNSAFE = re.compile(r'["#]')
+# Mermaid uses double-quoted labels; we escape:
+#   "   → #quot;  (raw double-quote would break the label delimiter)
+#   #   → #35;    (Mermaid treats # as the start of an HTML entity)
+#   |   → #124;   (pipe breaks some older Mermaid renderers inside labels)
+# Real newline/CR characters are stripped (they would break the node line).
+_LABEL_UNSAFE = re.compile(r'["#|]')
 
 
 def _escape_label(text: str) -> str:
@@ -40,6 +43,8 @@ def _escape_label(text: str) -> str:
     Mermaid node labels are wrapped in ``"…"``.  Inside them:
     - ``"`` must become ``#quot;`` (Mermaid HTML-entity syntax)
     - ``#`` must become ``#35;`` (otherwise Mermaid treats it as an entity prefix)
+    - ``|`` must become ``#124;`` (breaks some Mermaid renderers)
+    - Real newlines/carriage-returns are stripped (would break the node line).
 
     Args:
         text: Raw label text.
@@ -47,6 +52,8 @@ def _escape_label(text: str) -> str:
     Returns:
         Escaped string safe for embedding in ``"…"``.
     """
+    # Strip real newlines first (not the literal \n we use as line-break marker).
+    text = text.replace("\n", " ").replace("\r", " ")
 
     def _replace(m: re.Match[str]) -> str:
         ch = m.group(0)
@@ -54,6 +61,8 @@ def _escape_label(text: str) -> str:
             return "#quot;"
         if ch == "#":
             return "#35;"
+        if ch == "|":
+            return "#124;"
         return ch  # unreachable given pattern
 
     return _LABEL_UNSAFE.sub(_replace, text)
@@ -171,7 +180,7 @@ def render_plan_mermaid(operators: list[PlanOperator]) -> str:
         GitHub Markdown fenced code block (`` ```mermaid ``) to render.
     """
     if not operators:
-        return ""
+        return "%% No plan operators found in the SHOWPLAN_XML."
 
     blocks: list[str] = []
     for idx, root in enumerate(operators):
