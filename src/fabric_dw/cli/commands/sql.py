@@ -17,6 +17,7 @@ from fabric_dw.cli._plan_dot import render_plan_dot
 from fabric_dw.cli._plan_mermaid import render_plan_mermaid
 from fabric_dw.cli._plan_parse import parse_showplan
 from fabric_dw.cli._plan_render import operator_to_dict, render_plan_tree
+from fabric_dw.cli._plan_svg import render_plan_svg
 from fabric_dw.cli._render import render
 from fabric_dw.cli.commands._utils import (
     build_http_client,
@@ -133,11 +134,13 @@ async def sql_exec_cmd(
     "--format",
     "output_format",
     default=None,
-    type=click.Choice(["mermaid", "dot"], case_sensitive=False),
+    type=click.Choice(["mermaid", "dot", "svg"], case_sensitive=False),
     help=(
         "Export format for the execution plan.  "
         "``mermaid`` emits a Mermaid flowchart TD diagram (plain text).  "
         "``dot`` emits a Graphviz DOT digraph (plain text, no extra dependencies).  "
+        "``svg`` renders the plan to an SVG image via the system ``dot`` binary "
+        "(requires Graphviz installed; see https://graphviz.org/download/).  "
         "Output goes to stdout, or to -o/--output when given.  "
         "Takes precedence over the default Rich tree; lower priority than --raw/--xml "
         "and the root --json flag."
@@ -166,6 +169,7 @@ async def sql_plan_cmd(
       root --json            parsed operator tree as JSON
       --format mermaid       Mermaid flowchart TD diagram
       --format dot           Graphviz DOT digraph
+      --format svg           SVG image via system dot binary (requires Graphviz)
       (default)              Rich terminal tree
 
     \b
@@ -206,6 +210,7 @@ def _output_plan(
       ctx.json_output   → parsed operator tree as JSON
       format="mermaid"  → Mermaid flowchart TD diagram
       format="dot"      → Graphviz DOT digraph
+      format="svg"      → SVG image via system dot binary (requires Graphviz)
       (default)         → Rich terminal tree
 
     Destination (where output goes):
@@ -234,6 +239,11 @@ def _output_plan(
         operators = parse_showplan(plan_xml)
         dot_text = render_plan_dot(operators)
         _write_or_echo(dot_text, output_path, "DOT graph written to {path}")
+    elif output_format == "svg":
+        # --format svg: SVG image via system dot binary; -o writes to file.
+        operators = parse_showplan(plan_xml)
+        svg_bytes = render_plan_svg(operators)
+        _write_or_echo_bytes(svg_bytes, output_path, "SVG written to {path}")
     elif output_path is not None:
         # Default mode with -o: write raw XML to file, no tree rendered.
         # (Scripts relying on file-only output get no terminal noise.)
@@ -261,3 +271,24 @@ def _write_or_echo(text: str, output_path: str | None, file_msg_template: str) -
         click.echo(file_msg_template.format(path=output_path))
     else:
         click.echo(text)
+
+
+def _write_or_echo_bytes(data: bytes, output_path: str | None, file_msg_template: str) -> None:
+    """Write binary *data* to *output_path* with a confirmation, or echo to stdout.
+
+    Used for binary output formats such as SVG (which is technically text but
+    delivered as ``bytes`` from the subprocess).
+
+    Args:
+        data: The binary content to write or echo.
+        output_path: File path to write to; when ``None``, the raw bytes are
+            written to stdout via :func:`click.get_binary_stream`.
+        file_msg_template: Message template for the confirmation echo; ``{path}``
+            is replaced with the actual path.
+    """
+    if output_path is not None:
+        with open(output_path, "wb") as fh:
+            fh.write(data)
+        click.echo(file_msg_template.format(path=output_path))
+    else:
+        click.get_binary_stream("stdout").write(data)

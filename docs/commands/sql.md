@@ -67,9 +67,9 @@ fdw [-w WORKSPACE] sql plan [OPTIONS] [ITEM]
 | --- | --- |
 | `-q` / `--query TEXT` | SQL statement to plan. |
 | `-f` / `--file PATH` | Path to a `.sql` file to plan. |
-| `-o` / `--output PATH` | Write the output to this file (stdout otherwise). For raw XML a `.sqlplan` extension is recommended; for `--format mermaid` or `--format dot` any text extension works. |
+| `-o` / `--output PATH` | Write the output to this file (stdout otherwise). For raw XML a `.sqlplan` extension is recommended; for `--format mermaid` or `--format dot` any text extension works; for `--format svg` a `.svg` extension is recommended. |
 | `--raw` / `--xml` | Print the raw SHOWPLAN XML to stdout (or to `-o` file). Useful for piping or inspection. |
-| `--format [mermaid\|dot]` | Export format for the execution plan. See [Export formats](#export-formats) below. |
+| `--format [mermaid\|dot\|svg]` | Export format for the execution plan. See [Export formats](#export-formats) below. |
 
 Pass the root `--json` flag to emit the parsed operator tree as machine-readable JSON instead of the Rich tree.
 
@@ -81,6 +81,7 @@ Pass the root `--json` flag to emit the parsed operator tree as machine-readable
 | `--json` (root flag) | JSON to stdout | JSON to file |
 | `--format mermaid` | Mermaid diagram to stdout | Mermaid diagram to file |
 | `--format dot` | DOT digraph to stdout | DOT digraph to file |
+| `--format svg` | SVG image to stdout | SVG image to file |
 | default | Rich tree to terminal | raw XML to file, no tree rendered |
 
 When `-o` is given, only a short confirmation is printed to stdout; the representation itself goes to the file only.
@@ -114,9 +115,26 @@ fdw -w MyWorkspace sql plan SalesWH -q "SELECT TOP 5 * FROM dbo.Sales" --format 
 
 # Save a DOT graph to file and render to SVG (requires Graphviz)
 fdw -w MyWorkspace sql plan SalesWH -q "SELECT TOP 5 * FROM dbo.Sales" --format dot -o plan.dot
+
+# Render the plan directly to SVG via the system dot binary (requires Graphviz)
+fdw -w MyWorkspace sql plan SalesWH -q "SELECT TOP 5 * FROM dbo.Sales" --format svg -o plan.svg
 ```
 
 #### Export formats
+
+##### svg
+
+`--format svg` renders the execution plan to an **SVG image** by piping the generated DOT through the system `dot` binary (`dot -Tsvg`).
+
+!!! note "System dependency"
+
+    This format requires [Graphviz](https://graphviz.org/download/) to be installed on your system — it is **not** a Python package.  Install it via your package manager (e.g. `brew install graphviz` on macOS, `apt install graphviz` on Debian/Ubuntu) or download it from [graphviz.org](https://graphviz.org/download/).
+
+    When the `dot` binary is not found, the command exits with a clear error and an install hint rather than crashing.
+
+A `.svg` extension is recommended for the `-o`/`--output` file.  SVG can be opened directly in any web browser or vector graphics editor.
+
+---
 
 ##### dot
 
