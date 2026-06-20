@@ -339,16 +339,72 @@ async def get_cluster_columns(
     return await asyncio.to_thread(_run)
 
 
+def _build_cluster_by_clause(
+    cluster_by: list[str] | None,
+    known_cols: list[str] | None,
+) -> str:
+    """Build the ``WITH (CLUSTER BY ([c1], [c2], …))`` clause string.
+
+    Args:
+        cluster_by: Column names to cluster by, or ``None`` / empty list for
+            no clause.
+        known_cols: When provided, validates that every *cluster_by* name
+            appears in this list.  Pass ``None`` to skip existence validation
+            (CTAS path, where columns come from a SELECT).
+
+    Returns:
+        A string like ``" WITH (CLUSTER BY ([CustomerID], [SaleDate]))"``
+        (note the leading space), or an empty string when *cluster_by* is
+        ``None`` or empty.
+
+    Raises:
+        ValueError: If ``len(cluster_by) > 4`` (Fabric limit), or if
+            *known_cols* is provided and a column name is not found in it, or
+            if any name fails :func:`validate_identifier`.
+    """
+    if not cluster_by:
+        return ""
+
+    if len(cluster_by) > 4:  # noqa: PLR2004
+        msg = f"CLUSTER BY supports at most 4 columns; got {len(cluster_by)}"
+        raise ValueError(msg)
+
+    known_lower: set[str] = {n.casefold() for n in known_cols} if known_cols is not None else set()
+
+    quoted: list[str] = []
+    for col in cluster_by:
+        validate_identifier(col)
+        if known_cols is not None and col.casefold() not in known_lower:
+            available = ", ".join(known_cols)
+            msg = (
+                f"CLUSTER BY column {col!r} is not defined in the table schema. "
+                f"Available columns: {available}"
+            )
+            raise ValueError(msg)
+        quoted.append(quote_identifier(col))
+
+    return f" WITH (CLUSTER BY ({', '.join(quoted)}))"
+
+
 async def create_table(
     target: SqlTarget,
     schema: str,
     table_name: str,
     select_body: str,
     *,
+    cluster_by: list[str] | None = None,
     kind: WarehouseKind = WarehouseKind.WAREHOUSE,
     mode: CredentialMode = CredentialMode.DEFAULT,
 ) -> Table:
     """Create a new table via ``CREATE TABLE [schema].[table] AS <select_body>`` (CTAS).
+
+    When *cluster_by* is provided, the DDL becomes::
+
+        CREATE TABLE [schema].[table] WITH (CLUSTER BY ([c1], [c2])) AS <select_body>
+
+    Column existence is **not** validated for the CTAS path because the result
+    columns are determined by the SELECT and are not known ahead of time.  Each
+    column name is still validated via :func:`validate_identifier`.
 
     Args:
         target: The warehouse to connect to.
@@ -357,6 +413,9 @@ async def create_table(
         select_body: The SELECT statement (or CTE) used as the CTAS source.
             The first non-comment keyword **must** be ``SELECT`` or ``WITH``
             (for CTE-based queries); anything else raises :class:`ValueError`.
+        cluster_by: Optional list of column names for the ``CLUSTER BY`` clause
+            (up to 4).  For CTAS, columns come from the SELECT so existence is
+            not checked — only identifier validation is applied.
         kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
             SQL Endpoint items are rejected with :class:`~fabric_dw.exceptions.ItemKindError`.
         mode: The credential mode for Entra authentication.
@@ -367,8 +426,10 @@ async def create_table(
 
     Raises:
         ItemKindError: If *kind* is :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
-        ValueError: If *schema* or *table_name* fails identifier validation, or
-            if *select_body* does not start with SELECT or WITH (CTE).
+        ValueError: If *schema* or *table_name* fails identifier validation, if
+            *select_body* does not start with SELECT or WITH (CTE), if more
+            than 4 *cluster_by* columns are supplied, or if any *cluster_by*
+            name fails identifier validation.
         PermissionDeniedError: If the driver reports a CREATE TABLE permission error.
     """
     _assert_not_sql_endpoint(kind)
@@ -376,7 +437,12 @@ async def create_table(
     validate_identifier(table_name)
     reject_non_select(select_body)
 
-    ddl = f"CREATE TABLE {quote_identifier(schema)}.{quote_identifier(table_name)} AS {select_body}"
+    # CTAS: WITH (CLUSTER BY (...)) goes BEFORE AS SELECT.
+    cluster_clause = _build_cluster_by_clause(cluster_by, known_cols=None)
+    ddl = (
+        f"CREATE TABLE {quote_identifier(schema)}.{quote_identifier(table_name)}"
+        f"{cluster_clause} AS {select_body}"
+    )
 
     def _run_ddl() -> None:
         run_query(target, ddl, mode=mode, commit=True, fetch="none")
@@ -391,6 +457,7 @@ async def create_empty_table(
     table_name: str,
     columns: list[ColumnSpec],
     *,
+    cluster_by: list[str] | None = None,
     kind: WarehouseKind = WarehouseKind.WAREHOUSE,
     mode: CredentialMode = CredentialMode.DEFAULT,
 ) -> Table:
@@ -400,12 +467,23 @@ async def create_empty_table(
     the validated :class:`~fabric_dw.models.ColumnSpec` list.  No data is ever
     read or inserted; this is a pure DDL operation.
 
+    When *cluster_by* is provided, the DDL becomes::
+
+        CREATE TABLE [schema].[table] (
+            …
+        ) WITH (CLUSTER BY ([c1], [c2]))
+
+    Each *cluster_by* column must appear in *columns*; unknown names raise
+    :class:`ValueError`.
+
     Args:
         target: The warehouse to connect to.
         schema: The schema name.  Must pass :func:`validate_identifier`.
         table_name: The table name.  Must pass :func:`validate_identifier`.
         columns: Non-empty list of :class:`~fabric_dw.models.ColumnSpec` instances
             describing each column.
+        cluster_by: Optional list of column names for the ``CLUSTER BY`` clause
+            (up to 4).  Each name must appear in *columns*.
         kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
             SQL Endpoint items are rejected with :class:`~fabric_dw.exceptions.ItemKindError`.
         mode: The credential mode for Entra authentication.
@@ -418,7 +496,9 @@ async def create_empty_table(
         ItemKindError: If *kind* is :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
         ValueError: If *schema* or *table_name* fails identifier validation,
             if *columns* is empty, if any column name fails identifier validation,
-            or if any column ``sql_type`` is not on the Fabric DW type allowlist.
+            if any column ``sql_type`` is not on the Fabric DW type allowlist,
+            if more than 4 *cluster_by* columns are supplied, or if a
+            *cluster_by* column is not defined in *columns*.
         PermissionDeniedError: If the driver reports a CREATE TABLE permission error.
     """
     _assert_not_sql_endpoint(kind)
@@ -436,9 +516,13 @@ async def create_empty_table(
         null_clause = "NULL" if col.nullable else "NOT NULL"
         col_defs.append(f"    {quote_identifier(col.name)} {validated_type} {null_clause}")
 
+    known_col_names = [col.name for col in columns]
+    cluster_clause = _build_cluster_by_clause(cluster_by, known_cols=known_col_names)
+
     col_block = ",\n".join(col_defs)
     ddl = (
-        f"CREATE TABLE {quote_identifier(schema)}.{quote_identifier(table_name)} (\n{col_block}\n)"
+        f"CREATE TABLE {quote_identifier(schema)}.{quote_identifier(table_name)}"
+        f" (\n{col_block}\n){cluster_clause}"
     )
 
     def _run_ddl() -> None:
@@ -497,6 +581,7 @@ async def create_table_from_parquet(
     table_name: str,
     parquet_path: Path,
     *,
+    cluster_by: list[str] | None = None,
     kind: WarehouseKind = WarehouseKind.WAREHOUSE,
     mode: CredentialMode = CredentialMode.DEFAULT,
     varchar_length: int = 8000,
@@ -514,6 +599,8 @@ async def create_table_from_parquet(
         table_name: The table name.  Must pass :func:`validate_identifier`.
         parquet_path: Path to the Parquet file.  Only the file footer (schema)
             is accessed — no data rows are read.
+        cluster_by: Optional list of column names for the ``CLUSTER BY`` clause
+            (up to 4).  Each name must appear in the inferred columns.
         kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
             SQL Endpoint items are rejected with :class:`~fabric_dw.exceptions.ItemKindError`.
         mode: The credential mode for Entra authentication.
@@ -526,13 +613,16 @@ async def create_table_from_parquet(
     Raises:
         ItemKindError: If *kind* is :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
         ValueError: If any Parquet field maps to an unsupported T-SQL type,
-            or if any derived identifier fails validation.
+            or if any derived identifier fails validation, or if a *cluster_by*
+            column is not defined in the inferred schema.
         FileNotFoundError: If *parquet_path* does not exist.
     """
     _assert_not_sql_endpoint(kind)
     columns = await infer_columns_from_parquet(parquet_path, varchar_length=varchar_length)
     _log.debug("create_table_from_parquet: %d columns from %s", len(columns), parquet_path.name)
-    return await create_empty_table(target, schema, table_name, columns, kind=kind, mode=mode)
+    return await create_empty_table(
+        target, schema, table_name, columns, cluster_by=cluster_by, kind=kind, mode=mode
+    )
 
 
 async def infer_columns_from_csv(
@@ -667,6 +757,7 @@ async def create_table_from_csv(
     table_name: str,
     csv_path: Path,
     *,
+    cluster_by: list[str] | None = None,
     kind: WarehouseKind = WarehouseKind.WAREHOUSE,
     mode: CredentialMode = CredentialMode.DEFAULT,
     infer_types: bool = True,
@@ -695,6 +786,8 @@ async def create_table_from_csv(
         table_name: The table name.  Must pass :func:`validate_identifier`.
         csv_path: Path to the CSV file.  Only the header + a bounded sample of
             rows are read — this is schema inference, not data loading.
+        cluster_by: Optional list of column names for the ``CLUSTER BY`` clause
+            (up to 4).  Each name must appear in the inferred columns.
         kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
             SQL Endpoint items are rejected with :class:`~fabric_dw.exceptions.ItemKindError`.
         mode: The credential mode for Entra authentication.
@@ -713,7 +806,8 @@ async def create_table_from_csv(
     Raises:
         ItemKindError: If *kind* is :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
         ValueError: If any inferred type maps to an unsupported T-SQL type,
-            or if any column name fails identifier validation.
+            or if any column name fails identifier validation, or if a
+            *cluster_by* column is not defined in the inferred schema.
         FileNotFoundError: If *csv_path* does not exist.
     """
     _assert_not_sql_endpoint(kind)
@@ -726,7 +820,9 @@ async def create_table_from_csv(
         encoding=encoding,
     )
     _log.debug("create_table_from_csv: %d columns from %s", len(columns), csv_path.name)
-    return await create_empty_table(target, schema, table_name, columns, kind=kind, mode=mode)
+    return await create_empty_table(
+        target, schema, table_name, columns, cluster_by=cluster_by, kind=kind, mode=mode
+    )
 
 
 async def clone_table(

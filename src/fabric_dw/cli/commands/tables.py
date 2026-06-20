@@ -296,6 +296,13 @@ async def count_cmd(
         "Can be combined with --from-schema."
     ),
 )
+@click.option(
+    "--cluster-by",
+    "cluster_by",
+    multiple=True,
+    metavar="COL",
+    help="Column to use for CLUSTER BY (repeatable, up to 4).",
+)
 # CSV-specific options
 @click.option(
     "--all-varchar",
@@ -341,6 +348,7 @@ async def create_cmd(  # noqa: PLR0912
     csv_path: str | None,
     schema_file: str | None,
     column_specs: tuple[str, ...],
+    cluster_by: tuple[str, ...],
     all_varchar: bool,
     varchar_length: int,
     delimiter: str,
@@ -414,10 +422,18 @@ async def create_cmd(  # noqa: PLR0912
         async with build_http_client(ctx) as http:
             target, entry = await build_sql_target(http, ws, wh)
 
+            cluster_by_list = list(cluster_by) or None
+
             if has_ctas:
                 body = load_sql_body(select_body, from_file)
                 t = await _tables_svc.create_table(
-                    target, schema, table_name, body, kind=entry.kind, mode=ctx.auth
+                    target,
+                    schema,
+                    table_name,
+                    body,
+                    cluster_by=cluster_by_list,
+                    kind=entry.kind,
+                    mode=ctx.auth,
                 )
 
             elif has_parquet:
@@ -426,6 +442,7 @@ async def create_cmd(  # noqa: PLR0912
                     schema,
                     table_name,
                     Path(parquet_path),  # type: ignore[arg-type]
+                    cluster_by=cluster_by_list,
                     kind=entry.kind,
                     mode=ctx.auth,
                     varchar_length=varchar_length,
@@ -437,6 +454,7 @@ async def create_cmd(  # noqa: PLR0912
                     schema,
                     table_name,
                     Path(csv_path),  # type: ignore[arg-type]
+                    cluster_by=cluster_by_list,
                     kind=entry.kind,
                     mode=ctx.auth,
                     all_varchar=all_varchar,
@@ -457,7 +475,13 @@ async def create_cmd(  # noqa: PLR0912
                         "--from-schema or at least one --column is required for the DDL path."
                     )
                 t = await _tables_svc.create_empty_table(
-                    target, schema, table_name, cols, kind=entry.kind, mode=ctx.auth
+                    target,
+                    schema,
+                    table_name,
+                    cols,
+                    cluster_by=cluster_by_list,
+                    kind=entry.kind,
+                    mode=ctx.auth,
                 )
 
             render(t.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
@@ -790,6 +814,13 @@ def _resolve_url_file_type(fmt: str | None, url: str) -> str:
         "Never drops a pre-existing table."
     ),
 )
+@click.option(
+    "--cluster-by",
+    "cluster_by",
+    multiple=True,
+    metavar="COL",
+    help="Column to use for CLUSTER BY (repeatable, up to 4).",
+)
 @click.pass_obj
 @coro
 async def load_cmd(  # noqa: PLR0912
@@ -817,6 +848,7 @@ async def load_cmd(  # noqa: PLR0912
     varchar_length: int,
     sample_rows: int,
     cleanup_on_failure: bool,
+    cluster_by: tuple[str, ...],
 ) -> None:
     """Load data into QUALIFIED_NAME (schema.table) on ITEM via COPY INTO.
 
@@ -934,6 +966,7 @@ async def load_cmd(  # noqa: PLR0912
                         varchar_length,
                         sample_rows,
                         cleanup_on_failure,
+                        cluster_by=list(cluster_by) or None,
                     )
                 else:
                     result = await _load_cmd_local(
@@ -1076,6 +1109,7 @@ async def _load_cmd_create_and_load(
     varchar_length: int,
     sample_rows: int,
     cleanup_on_failure: bool,
+    cluster_by: list[str] | None = None,
 ) -> CopyIntoResult:
     """Dispatch the create-and-load sub-path (--create)."""
     from fabric_dw import auth as _auth  # noqa: PLC0415
@@ -1133,6 +1167,7 @@ async def _load_cmd_create_and_load(
         sample_rows=sample_rows,
         csv_delimiter=infer_delimiter,
         csv_encoding=infer_encoding,
+        cluster_by=cluster_by,
     )
 
 

@@ -225,7 +225,11 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
 
     @mutating_tool(mcp, "create_table")
     async def create_table(
-        workspace: str, item: str, qualified_name: str, select_body: str
+        workspace: str,
+        item: str,
+        qualified_name: str,
+        select_body: str,
+        cluster_by: list[str] | None = None,
     ) -> dict[str, Any]:
         """Create a new SQL table via CTAS (CREATE TABLE AS SELECT).
 
@@ -233,11 +237,18 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         Ensure the body matches the user's intent before calling this tool.
         The first non-comment keyword of ``select_body`` must be SELECT.
 
+        When ``cluster_by`` is supplied, the DDL becomes
+        ``CREATE TABLE … WITH (CLUSTER BY ([c1], [c2])) AS SELECT …``.
+        Column existence is not validated for CTAS because the result columns
+        come from the SELECT and are not known ahead of time.
+
         Args:
             workspace: Workspace name or GUID.
             item: Warehouse or SQL endpoint name or GUID.
             qualified_name: Dot-separated qualified table name, e.g. ``dbo.sales``.
             select_body: The SELECT statement that becomes the CTAS source.
+            cluster_by: Optional list of column names for the ``CLUSTER BY`` clause
+                (up to 4).
         """
         schema, table_name = parse_qualified_name(qualified_name, kind="table")
         assert_workspace_allowed(workspace)
@@ -250,7 +261,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             )
             target = make_sql_target(ws_id, entry, item)
             result = await tables_svc.create_table(
-                target, schema, table_name, select_body, kind=entry.kind, mode=ctx.auth_mode
+                target,
+                schema,
+                table_name,
+                select_body,
+                cluster_by=cluster_by,
+                kind=entry.kind,
+                mode=ctx.auth_mode,
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
@@ -320,6 +337,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         item: str,
         qualified_name: str,
         columns: list[dict[str, Any]],
+        cluster_by: list[str] | None = None,
     ) -> dict[str, Any]:
         """Create an empty table from an explicit column spec (DDL only, no data).
 
@@ -333,6 +351,8 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
 
         Only supported on Fabric Data Warehouses (not SQL Analytics Endpoints).
 
+        When ``cluster_by`` is supplied, each column must appear in ``columns``.
+
         Args:
             workspace: Workspace name or GUID.
             item: Warehouse name or GUID.
@@ -341,6 +361,8 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 ``name`` (str) — column identifier;
                 ``sql_type`` (str) — Fabric-DW T-SQL type, e.g. ``"INT"``, ``"VARCHAR(255)"``;
                 ``nullable`` (bool, optional, default true) — whether the column allows NULL.
+            cluster_by: Optional list of column names for the ``CLUSTER BY`` clause
+                (up to 4).  Each name must appear in ``columns``.
         """
         schema, table_name = parse_qualified_name(qualified_name, kind="table")
         assert_workspace_allowed(workspace)
@@ -359,7 +381,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             )
             target = make_sql_target(ws_id, entry, item)
             result = await tables_svc.create_empty_table(
-                target, schema, table_name, col_specs, kind=entry.kind, mode=ctx.auth_mode
+                target,
+                schema,
+                table_name,
+                col_specs,
+                cluster_by=cluster_by,
+                kind=entry.kind,
+                mode=ctx.auth_mode,
             )
         except (TypeError, ValueError, FabricError) as exc:
             raise tool_err(exc) from exc

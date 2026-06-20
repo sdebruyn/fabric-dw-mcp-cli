@@ -643,3 +643,212 @@ async def test_table_exists_returns_false_when_no_rows() -> None:
         result = await _table_exists(mock_target, "dbo", "sales")
 
     assert result is False
+
+
+# ---------------------------------------------------------------------------
+# cluster_by guard — existing table + non-recreating if_exists
+# ---------------------------------------------------------------------------
+
+
+async def test_cluster_by_raises_on_truncate_existing_table(tmp_path: Path) -> None:
+    """cluster_by with if_exists='truncate' on an existing table must raise ValueError."""
+    import uuid  # noqa: PLC0415
+
+    from fabric_dw.models import ColumnSpec  # noqa: PLC0415
+    from fabric_dw.services.load import create_and_load  # noqa: PLC0415
+
+    parquet_file = tmp_path / "data.parquet"
+    parquet_file.write_bytes(b"PAR1")
+    _columns = [ColumnSpec(name="SaleDate", sql_type="DATE", nullable=True)]
+
+    with (
+        patch(
+            "fabric_dw.services.load._infer_columns_from_local",
+            new=AsyncMock(return_value=_columns),
+        ),
+        patch("fabric_dw.services.load._table_exists", new=AsyncMock(return_value=True)),
+        patch("fabric_dw.services.load._truncate_table_sql", new=AsyncMock()),
+        patch("fabric_dw.services.load._create_table_from_columns", new=AsyncMock()),
+        patch(
+            "fabric_dw.services.load.load_local_file",
+            new=AsyncMock(return_value=_make_result()),
+        ),
+        pytest.raises(ValueError, match="CLUSTER BY can only be applied when the table is created"),
+    ):
+        await create_and_load(
+            AsyncMock(),
+            AsyncMock(),
+            uuid.UUID(_WS_ID),
+            MagicMock(),
+            _SCHEMA,
+            _TABLE,
+            parquet_file,
+            if_exists="truncate",
+            file_format="parquet",
+            cluster_by=["SaleDate"],
+        )
+
+
+async def test_cluster_by_raises_on_append_existing_table(tmp_path: Path) -> None:
+    """cluster_by with if_exists='append' on an existing table must raise ValueError."""
+    import uuid  # noqa: PLC0415
+
+    from fabric_dw.models import ColumnSpec  # noqa: PLC0415
+    from fabric_dw.services.load import create_and_load  # noqa: PLC0415
+
+    parquet_file = tmp_path / "data.parquet"
+    parquet_file.write_bytes(b"PAR1")
+    _columns = [ColumnSpec(name="SaleDate", sql_type="DATE", nullable=True)]
+
+    with (
+        patch(
+            "fabric_dw.services.load._infer_columns_from_local",
+            new=AsyncMock(return_value=_columns),
+        ),
+        patch("fabric_dw.services.load._table_exists", new=AsyncMock(return_value=True)),
+        patch("fabric_dw.services.load._create_table_from_columns", new=AsyncMock()),
+        patch(
+            "fabric_dw.services.load.load_local_file",
+            new=AsyncMock(return_value=_make_result()),
+        ),
+        pytest.raises(ValueError, match="CLUSTER BY can only be applied when the table is created"),
+    ):
+        await create_and_load(
+            AsyncMock(),
+            AsyncMock(),
+            uuid.UUID(_WS_ID),
+            MagicMock(),
+            _SCHEMA,
+            _TABLE,
+            parquet_file,
+            if_exists="append",
+            file_format="parquet",
+            cluster_by=["SaleDate"],
+        )
+
+
+async def test_cluster_by_allowed_on_replace_existing_table(tmp_path: Path) -> None:
+    """cluster_by with if_exists='replace' must succeed (table is dropped + recreated)."""
+    import uuid  # noqa: PLC0415
+
+    from fabric_dw.models import ColumnSpec  # noqa: PLC0415
+    from fabric_dw.services.load import create_and_load  # noqa: PLC0415
+
+    parquet_file = tmp_path / "data.parquet"
+    parquet_file.write_bytes(b"PAR1")
+    _columns = [ColumnSpec(name="SaleDate", sql_type="DATE", nullable=True)]
+
+    mock_create = AsyncMock()
+    with (
+        patch(
+            "fabric_dw.services.load._infer_columns_from_local",
+            new=AsyncMock(return_value=_columns),
+        ),
+        patch("fabric_dw.services.load._table_exists", new=AsyncMock(return_value=True)),
+        patch("fabric_dw.services.load._drop_table_sql", new=AsyncMock()),
+        patch("fabric_dw.services.load._truncate_table_sql", new=AsyncMock()),
+        patch("fabric_dw.services.load._create_table_from_columns", new=mock_create),
+        patch(
+            "fabric_dw.services.load.load_local_file",
+            new=AsyncMock(return_value=_make_result()),
+        ),
+    ):
+        result = await create_and_load(
+            AsyncMock(),
+            AsyncMock(),
+            uuid.UUID(_WS_ID),
+            MagicMock(),
+            _SCHEMA,
+            _TABLE,
+            parquet_file,
+            if_exists="replace",
+            file_format="parquet",
+            cluster_by=["SaleDate"],
+        )
+
+    assert result.rows_loaded == 5
+    # confirm cluster_by was passed through to create
+    _kw = mock_create.call_args.kwargs
+    assert _kw.get("cluster_by") == ["SaleDate"]
+
+
+async def test_cluster_by_allowed_on_append_new_table(tmp_path: Path) -> None:
+    """cluster_by with if_exists='append' when table does NOT exist must succeed (creates it)."""
+    import uuid  # noqa: PLC0415
+
+    from fabric_dw.models import ColumnSpec  # noqa: PLC0415
+    from fabric_dw.services.load import create_and_load  # noqa: PLC0415
+
+    parquet_file = tmp_path / "data.parquet"
+    parquet_file.write_bytes(b"PAR1")
+    _columns = [ColumnSpec(name="SaleDate", sql_type="DATE", nullable=True)]
+
+    mock_create = AsyncMock()
+    with (
+        patch(
+            "fabric_dw.services.load._infer_columns_from_local",
+            new=AsyncMock(return_value=_columns),
+        ),
+        patch("fabric_dw.services.load._table_exists", new=AsyncMock(return_value=False)),
+        patch("fabric_dw.services.load._create_table_from_columns", new=mock_create),
+        patch(
+            "fabric_dw.services.load.load_local_file",
+            new=AsyncMock(return_value=_make_result()),
+        ),
+    ):
+        result = await create_and_load(
+            AsyncMock(),
+            AsyncMock(),
+            uuid.UUID(_WS_ID),
+            MagicMock(),
+            _SCHEMA,
+            _TABLE,
+            parquet_file,
+            if_exists="append",
+            file_format="parquet",
+            cluster_by=["SaleDate"],
+        )
+
+    assert result.rows_loaded == 5
+    _kw = mock_create.call_args.kwargs
+    assert _kw.get("cluster_by") == ["SaleDate"]
+
+
+async def test_cluster_by_none_on_truncate_existing_table_allowed(tmp_path: Path) -> None:
+    """cluster_by=None with if_exists='truncate' on an existing table must NOT raise."""
+    import uuid  # noqa: PLC0415
+
+    from fabric_dw.models import ColumnSpec  # noqa: PLC0415
+    from fabric_dw.services.load import create_and_load  # noqa: PLC0415
+
+    parquet_file = tmp_path / "data.parquet"
+    parquet_file.write_bytes(b"PAR1")
+    _columns = [ColumnSpec(name="id", sql_type="INT", nullable=True)]
+
+    with (
+        patch(
+            "fabric_dw.services.load._infer_columns_from_local",
+            new=AsyncMock(return_value=_columns),
+        ),
+        patch("fabric_dw.services.load._table_exists", new=AsyncMock(return_value=True)),
+        patch("fabric_dw.services.load._truncate_table_sql", new=AsyncMock()),
+        patch("fabric_dw.services.load._create_table_from_columns", new=AsyncMock()),
+        patch(
+            "fabric_dw.services.load.load_local_file",
+            new=AsyncMock(return_value=_make_result()),
+        ),
+    ):
+        result = await create_and_load(
+            AsyncMock(),
+            AsyncMock(),
+            uuid.UUID(_WS_ID),
+            MagicMock(),
+            _SCHEMA,
+            _TABLE,
+            parquet_file,
+            if_exists="truncate",
+            file_format="parquet",
+            cluster_by=None,
+        )
+
+    assert result.rows_loaded == 5
