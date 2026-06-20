@@ -40,6 +40,7 @@ nav = [
   ] },
   { "Reference" = [
     { "Authentication" = "authentication.md" },
+    { "Agent Skills" = "skills.md" },
     { "MCP server setup" = "mcp.md" },
     { "Exit codes" = "reference/exit-codes.md" },
     { "Shell Completion" = "completion.md" },
