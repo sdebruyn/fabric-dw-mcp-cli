@@ -138,3 +138,4 @@ jobs:
           fail_on_unmatched_files: false
           generate_release_notes: true
           name: ${{ inputs.tag || github.ref_name }}
+          tag_name: ${{ inputs.tag || github.ref_name }}

@@ -72,12 +72,16 @@ tag VERSION:
     #!/usr/bin/env bash
     set -euo pipefail
     # Validate VERSION with the same tightened calver check used by 'release'.
+    # Also reject any embedded newlines (multi-line input can fool line-anchored grep).
+    case "{{ VERSION }}" in
+        *$'\n'*) echo "error: VERSION contains a newline — must be a single-line value" >&2; exit 1 ;;
+    esac
     if ! echo "{{ VERSION }}" | grep -qE '{{ _CALVER_RE }}'; then
         echo "error: '{{ VERSION }}' is not a stable calver (expected YYYY.M.N, month 1–12, no leading zeros, no prerelease suffix)" >&2
         exit 1
     fi
-    # Guard: working tree must be clean.
-    if ! git diff --quiet || ! git diff --cached --quiet; then
+    # Guard: working tree must be clean (tracked and untracked files).
+    if [ -n "$(git status --porcelain)" ]; then
         echo "error: working tree is dirty — commit or stash changes before tagging" >&2
         exit 1
     fi
@@ -88,9 +92,11 @@ tag VERSION:
         exit 1
     fi
     # Guard: branch must be up to date with origin/main.
+    # Compare HEAD against FETCH_HEAD so the check always uses the freshly fetched SHA,
+    # regardless of whether the local remote-tracking ref (origin/main) was up to date.
     git fetch origin main --quiet
     local_sha=$(git rev-parse HEAD)
-    remote_sha=$(git rev-parse origin/main)
+    remote_sha=$(cat "$(git rev-parse --git-dir)/FETCH_HEAD" | awk '{print $1; exit}')
     if [ "$local_sha" != "$remote_sha" ]; then
         echo "error: local main is not up to date with origin/main — run 'git pull' first" >&2
         exit 1
