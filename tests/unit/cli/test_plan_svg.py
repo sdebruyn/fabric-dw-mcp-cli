@@ -6,14 +6,14 @@ All tests run offline — graphviz is NOT required to be installed.  The system
 
 from __future__ import annotations
 
-from pathlib import Path
+import subprocess
 from unittest.mock import MagicMock, patch
 
 import click
 import pytest
 
 from fabric_dw.cli._plan_parse import PlanOperator, parse_showplan
-from fabric_dw.cli._plan_svg import _MISSING_BINARY_MSG, render_plan_svg
+from fabric_dw.cli._plan_svg import _DOT_TIMEOUT, _MISSING_BINARY_MSG, render_plan_svg
 
 _NS = "http://schemas.microsoft.com/sqlserver/2004/07/showplan"
 
@@ -48,33 +48,33 @@ def _make_proc(returncode: int = 0, stdout: bytes = _FAKE_SVG, stderr: bytes = b
 class TestRenderPlanSvgMissingBinary:
     """Verify actionable errors when the dot binary is absent."""
 
-    def test_raises_usage_error_when_which_returns_none(self) -> None:
-        """UsageError with install hint when shutil.which("dot") returns None."""
+    def test_raises_click_exception_when_which_returns_none(self) -> None:
+        """ClickException with install hint when shutil.which("dot") returns None."""
         with (
             patch("fabric_dw.cli._plan_svg.shutil.which", return_value=None),
-            pytest.raises(click.UsageError, match="graphviz"),
+            pytest.raises(click.ClickException, match="graphviz"),
         ):
             render_plan_svg([])
 
     def test_error_message_contains_install_hint(self) -> None:
-        """The UsageError message must include the Graphviz download URL."""
+        """The ClickException message must include the Graphviz download URL."""
         with (
             patch("fabric_dw.cli._plan_svg.shutil.which", return_value=None),
-            pytest.raises(click.UsageError) as exc_info,
+            pytest.raises(click.ClickException) as exc_info,
         ):
             render_plan_svg([])
         assert "graphviz.org" in exc_info.value.format_message()
 
     def test_error_message_matches_constant(self) -> None:
-        """The UsageError message must match the module-level constant."""
+        """The ClickException message must match the module-level constant."""
         with (
             patch("fabric_dw.cli._plan_svg.shutil.which", return_value=None),
-            pytest.raises(click.UsageError) as exc_info,
+            pytest.raises(click.ClickException) as exc_info,
         ):
             render_plan_svg([])
         assert _MISSING_BINARY_MSG in exc_info.value.format_message()
 
-    def test_raises_usage_error_on_file_not_found(self) -> None:
+    def test_raises_click_exception_on_file_not_found(self) -> None:
         """Race condition: binary disappears between which() and run()."""
         with (
             patch("fabric_dw.cli._plan_svg.shutil.which", return_value="/usr/bin/dot"),
@@ -82,13 +82,25 @@ class TestRenderPlanSvgMissingBinary:
                 "fabric_dw.cli._plan_svg.subprocess.run",
                 side_effect=FileNotFoundError("dot: not found"),
             ),
-            pytest.raises(click.UsageError, match="graphviz"),
+            pytest.raises(click.ClickException, match="graphviz"),
         ):
             render_plan_svg([PlanOperator()])
 
+    def test_missing_binary_is_not_usage_error(self) -> None:
+        """Missing binary must raise ClickException (exit 1), not UsageError (exit 2).
+
+        UsageError appends an unwanted '--help' hint and sets exit code 2.
+        """
+        with (
+            patch("fabric_dw.cli._plan_svg.shutil.which", return_value=None),
+            pytest.raises(click.ClickException) as exc_info,
+        ):
+            render_plan_svg([])
+        assert not isinstance(exc_info.value, click.UsageError)
+
 
 class TestRenderPlanSvgSubprocessError:
-    """Verify actionable errors when dot exits non-zero."""
+    """Verify actionable errors when dot exits non-zero or times out."""
 
     def test_raises_click_exception_on_nonzero_exit(self) -> None:
         """dot non-zero exit must raise ClickException with the stderr output."""
@@ -114,6 +126,30 @@ class TestRenderPlanSvgSubprocessError:
         ):
             render_plan_svg([PlanOperator()])
         assert "2" in exc_info.value.format_message()
+
+    def test_raises_click_exception_on_timeout(self) -> None:
+        """A hung dot process (TimeoutExpired) must raise a ClickException."""
+        with (
+            patch("fabric_dw.cli._plan_svg.shutil.which", return_value="/usr/bin/dot"),
+            patch(
+                "fabric_dw.cli._plan_svg.subprocess.run",
+                side_effect=subprocess.TimeoutExpired(cmd=["dot", "-Tsvg"], timeout=_DOT_TIMEOUT),
+            ),
+            pytest.raises(click.ClickException, match=str(_DOT_TIMEOUT)),
+        ):
+            render_plan_svg([PlanOperator()])
+
+    def test_raises_click_exception_on_empty_stdout(self) -> None:
+        """dot producing no output (empty stdout) must raise a ClickException."""
+        with (
+            patch("fabric_dw.cli._plan_svg.shutil.which", return_value="/usr/bin/dot"),
+            patch(
+                "fabric_dw.cli._plan_svg.subprocess.run",
+                return_value=_make_proc(stdout=b""),
+            ),
+            pytest.raises(click.ClickException, match="no output"),
+        ):
+            render_plan_svg([PlanOperator()])
 
 
 class TestRenderPlanSvgHappyPath:
@@ -151,6 +187,21 @@ class TestRenderPlanSvgHappyPath:
         # Never use shell=True with user-influenced data
         assert call_kwargs[1].get("shell") is not True
 
+    def test_dot_called_with_timeout(self) -> None:
+        """subprocess.run must be called with timeout=_DOT_TIMEOUT."""
+        operators = parse_showplan(_FIXTURE_XML)
+        with (
+            patch("fabric_dw.cli._plan_svg.shutil.which", return_value="/usr/bin/dot"),
+            patch(
+                "fabric_dw.cli._plan_svg.subprocess.run",
+                return_value=_make_proc(),
+            ) as mock_run,
+        ):
+            render_plan_svg(operators)
+
+        call_kwargs = mock_run.call_args
+        assert call_kwargs[1].get("timeout") == _DOT_TIMEOUT
+
     def test_dot_receives_dot_text_via_stdin(self) -> None:
         """The DOT text must be passed to dot via stdin (the input= kwarg)."""
         operators = parse_showplan(_FIXTURE_XML)
@@ -181,11 +232,9 @@ class TestRenderPlanSvgHappyPath:
         assert result == _FAKE_SVG
         mock_run.assert_called_once()
 
-    def test_svg_bytes_written_to_file(self, tmp_path: Path) -> None:
-        """SVG bytes are written verbatim to the output file when a path is given."""
+    def test_returns_svg_bytes_verbatim(self) -> None:
+        """render_plan_svg returns SVG bytes verbatim as received from dot stdout."""
         operators = parse_showplan(_FIXTURE_XML)
-        out_file = tmp_path / "plan.svg"
-
         with (
             patch("fabric_dw.cli._plan_svg.shutil.which", return_value="/usr/bin/dot"),
             patch(
@@ -195,5 +244,4 @@ class TestRenderPlanSvgHappyPath:
         ):
             svg_bytes = render_plan_svg(operators)
 
-        out_file.write_bytes(svg_bytes)
-        assert out_file.read_bytes() == _FAKE_SVG
+        assert svg_bytes == _FAKE_SVG

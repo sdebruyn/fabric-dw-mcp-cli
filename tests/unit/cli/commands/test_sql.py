@@ -1016,8 +1016,8 @@ class TestSqlPlanFormatSvg:
         assert out_file.exists()
         assert out_file.read_bytes() == _FAKE_SVG_BYTES
         assert "SVG written to" in result.output
-        # SVG content must NOT be echoed to stdout
-        assert b"<svg" not in result.output_bytes or "SVG written to" in result.output
+        # SVG content must NOT be echoed to stdout when -o is given
+        assert b"<svg" not in result.output_bytes
 
     def test_format_svg_file_suppresses_stdout_svg(
         self, runner: CliRunner, cache_env: Path, tmp_path: Path
@@ -1030,13 +1030,14 @@ class TestSqlPlanFormatSvg:
         # stdout should have the confirmation but not the raw SVG bytes
         assert "SVG written to" in result.output
 
-    def test_format_svg_missing_binary_exits_nonzero(
-        self, runner: CliRunner, cache_env: Path
-    ) -> None:
-        """--format svg with no graphviz installed must exit non-zero with an install hint."""
+    def test_format_svg_missing_binary_exits_one(self, runner: CliRunner, cache_env: Path) -> None:
+        """--format svg with no graphviz installed must exit 1 with an install hint.
+
+        ClickException (not UsageError) is raised so exit code is 1, not 2.
+        """
         _ = cache_env
         result = self._invoke_svg(runner, [], dot_present=False)
-        assert result.exit_code != 0
+        assert result.exit_code == 1
         assert "graphviz" in result.output.lower()
 
     def test_format_svg_dot_nonzero_exit_shows_error(
@@ -1049,7 +1050,7 @@ class TestSqlPlanFormatSvg:
             [],
             dot_proc=_make_dot_proc(returncode=1, stderr=b"syntax error"),
         )
-        assert result.exit_code != 0
+        assert result.exit_code == 1
         assert "Error:" in result.output
 
     def test_format_svg_choice_is_case_insensitive(
