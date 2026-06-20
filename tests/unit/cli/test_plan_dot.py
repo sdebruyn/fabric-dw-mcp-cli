@@ -6,7 +6,6 @@ offline, no Fabric API calls.
 
 from __future__ import annotations
 
-import re
 import tempfile
 from pathlib import Path
 
@@ -155,6 +154,7 @@ class TestNodeLabel:
         assert "33.3%" in label
 
     def test_newline_separator_present(self) -> None:
+        # _node_label returns a real newline; verify it contains one.
         node = PlanOperator(
             physical_op="Sort",
             logical_op="Sort",
@@ -162,7 +162,24 @@ class TestNodeLabel:
             cost_pct=100.0,
         )
         label = _node_label(node)
-        assert "\\n" in label
+        assert "\n" in label
+
+    def test_newline_separator_becomes_dot_escape_in_output(self) -> None:
+        # After passing through _escape_dot_label, the real newline must be
+        # rendered as the DOT line-break escape \n (single backslash + n) in
+        # the final output — NOT as a doubled \\n (which Graphviz shows as
+        # literal text) and NOT as a raw newline (which breaks the label line).
+        node = PlanOperator(
+            physical_op="Sort",
+            logical_op="Sort",
+            estimate_rows=1.0,
+            cost_pct=100.0,
+        )
+        output = render_plan_dot([node])
+        # Single \n escape must appear inside the label attribute.
+        assert r"\n" in output
+        # The doubled form must NOT appear (would be a visible \n in Graphviz).
+        assert r"\\n" not in output
 
 
 class TestNodeId:
@@ -327,13 +344,8 @@ class TestRenderPlanDot:
             cost_pct=100.0,
         )
         output = render_plan_dot([node])
-        # Raw unescaped double-quote must not appear unescaped inside label value
-        # (the outer label="..." wrapper quotes are fine)
-        label_content_match = re.search(r'label="(.*?)"\]', output)
-        assert label_content_match is not None
-        label_content = label_content_match.group(1)
-        # Unescaped double-quote inside label content would break DOT syntax
-        assert '\\"' in label_content, "Double-quote in label must be backslash-escaped"
+        # The backslash-escaped form must appear in the output.
+        assert r'\"' in output, "Double-quote in label must be backslash-escaped"
 
     def test_backslash_in_op_name_escaped(self) -> None:
         node = PlanOperator(

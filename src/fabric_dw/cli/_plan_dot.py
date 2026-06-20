@@ -49,15 +49,19 @@ def _escape_dot_label(text: str) -> str:
 def _node_label(node: PlanOperator) -> str:
     """Compose the display label for a single operator node.
 
-    Format: ``PhysicalOp [/ LogicalOp]\\nrows  XX.X%``
+    Format: ``PhysicalOp [/ LogicalOp]<newline>rows  XX.X%``
     LogicalOp is included only when it differs from PhysicalOp and is not
     the placeholder ``"Unknown"``.
+
+    The returned string contains a real newline character; callers must pass
+    it through :func:`_escape_dot_label` before embedding in DOT output
+    (which converts ``\\n`` to the DOT line-break escape ``\\n``).
 
     Args:
         node: The operator to label.
 
     Returns:
-        A plain-text label (newline uses ``\\n`` DOT literal).
+        A plain-text label (real newline between op name and stats line).
     """
     unknown = "Unknown"
     op = node.physical_op
@@ -66,7 +70,7 @@ def _node_label(node: PlanOperator) -> str:
 
     rows = humanise_rows(node.estimate_rows)
     cost = f"{node.cost_pct:.1f}%"
-    return f"{op}\\n{rows}  {cost}"
+    return f"{op}\n{rows}  {cost}"
 
 
 def _node_id(node: PlanOperator, stmt_idx: int) -> str:

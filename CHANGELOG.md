@@ -63,6 +63,7 @@ not conflict with `-A`.
 
 - Global `-w` / `--workspace <NAME-OR-ID>` option on the root `fabric-dw` command.
 - "Selecting a workspace" section in the CLI reference documenting the four-tier resolution order.
+- `sql plan --format dot` — export the execution plan as a Graphviz DOT `digraph` (plain text, no extra dependencies). Pipe the output to `dot -Tsvg` or paste into an online viewer to render the plan graph.
 
 ### Changed
 
