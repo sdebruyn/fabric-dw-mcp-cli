@@ -5,6 +5,9 @@ Run with: pytest -m integration tests/integration/test_services_statistics.py
 Fixture notes:
 - ``read_target`` (parametrized): runs list_statistics against both the shared warm
   warehouse and the shared SQL analytics endpoint.
+- ``shared_warehouse``: used for the three client-side guard tests.  The guard fires
+  before any I/O (off the hardcoded ``kind=WarehouseKind.SQL_ENDPOINT`` argument), so
+  no live SQL connection is needed and no dual-target parametrization is required.
 - ``warehouse_schema``: used for the full create/show/update/drop lifecycle because
   ``tables.create_table`` and ``statistics.create_statistics`` are DWH-only operations.
 
@@ -31,6 +34,8 @@ from fabric_dw.models import Statistic, StatisticDetails, WarehouseKind
 from fabric_dw.services import statistics, tables
 from fabric_dw.sql import SqlTarget
 
+from .conftest import SharedWarehouseTarget
+
 pytestmark = pytest.mark.integration
 
 
@@ -49,16 +54,22 @@ async def test_list_statistics_returns_a_list(
 
 # ---------------------------------------------------------------------------
 # SQL Endpoint guard rejection (client-side, no network SQL required)
+#
+# These tests pass ``kind=WarehouseKind.SQL_ENDPOINT`` explicitly.  The guard
+# fires before any I/O, so we only need a minimal SqlTarget from the shared
+# warehouse — no parametrisation over read_target is required (and would be
+# misleading: the [warehouse] leg would pass trivially without touching the
+# connection, giving false confidence that the guard was exercised live).
 # ---------------------------------------------------------------------------
 
 
 async def test_create_statistics_endpoint_guard_rejected(
-    read_target: SqlTarget,
+    shared_warehouse: SharedWarehouseTarget,
 ) -> None:
-    """create_statistics raises ItemKindError on SQL Analytics Endpoints (client-side guard)."""
+    """create_statistics raises ItemKindError when kind=SQL_ENDPOINT (client-side guard)."""
     with pytest.raises(ItemKindError, match="read-only"):
         await statistics.create_statistics(
-            read_target,
+            shared_warehouse.sql_target,
             "dbo.nonexistent_table",
             "id",
             name="should_never_be_created",
@@ -67,12 +78,12 @@ async def test_create_statistics_endpoint_guard_rejected(
 
 
 async def test_update_statistics_endpoint_guard_rejected(
-    read_target: SqlTarget,
+    shared_warehouse: SharedWarehouseTarget,
 ) -> None:
-    """update_statistics raises ItemKindError on SQL Analytics Endpoints (client-side guard)."""
+    """update_statistics raises ItemKindError when kind=SQL_ENDPOINT (client-side guard)."""
     with pytest.raises(ItemKindError, match="read-only"):
         await statistics.update_statistics(
-            read_target,
+            shared_warehouse.sql_target,
             "dbo.nonexistent_table",
             "should_not_update",
             kind=WarehouseKind.SQL_ENDPOINT,
@@ -80,12 +91,12 @@ async def test_update_statistics_endpoint_guard_rejected(
 
 
 async def test_drop_statistics_endpoint_guard_rejected(
-    read_target: SqlTarget,
+    shared_warehouse: SharedWarehouseTarget,
 ) -> None:
-    """drop_statistics raises ItemKindError on SQL Analytics Endpoints (client-side guard)."""
+    """drop_statistics raises ItemKindError when kind=SQL_ENDPOINT (client-side guard)."""
     with pytest.raises(ItemKindError, match="read-only"):
         await statistics.drop_statistics(
-            read_target,
+            shared_warehouse.sql_target,
             "dbo.nonexistent_table",
             "should_not_drop",
             kind=WarehouseKind.SQL_ENDPOINT,

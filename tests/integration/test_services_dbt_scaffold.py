@@ -16,6 +16,7 @@ Marked ``integration`` — requires FABRIC_TEST_WORKSPACE_ID in environment.
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 from collections.abc import Iterator
 from pathlib import Path
@@ -171,8 +172,6 @@ def test_scaffold_with_sources_generates_real_schemas(
     ephemeral_sql_target: SqlTarget,
 ) -> None:
     """--with-sources generates _sources.yml from actual warehouse schemas/tables."""
-    import asyncio  # noqa: PLC0415
-
     schemas, tables = asyncio.run(
         _fetch_schemas_and_tables(ephemeral_sql_target, CredentialMode.DEFAULT)
     )
@@ -213,8 +212,6 @@ def test_scaffold_with_sources_against_read_target(
       - ``[warehouse]``     — Data Warehouse (always runs)
       - ``[sql_endpoint]``  — SQL Analytics Endpoint (``pytest.mark.sql_endpoint``, CI only)
     """
-    import asyncio  # noqa: PLC0415
-
     schemas, tables = asyncio.run(_fetch_schemas_and_tables(read_target, CredentialMode.DEFAULT))
 
     cfg = DbtScaffoldConfig(
@@ -240,8 +237,6 @@ def test_scaffold_with_sources_against_read_target(
 
 async def _fetch_schemas_and_tables(target: SqlTarget, mode: CredentialMode) -> tuple:
     """Helper: fetch schemas and tables concurrently."""
-    import asyncio  # noqa: PLC0415
-
     from fabric_dw.services import schemas as schemas_svc  # noqa: PLC0415
     from fabric_dw.services import tables as tables_svc  # noqa: PLC0415
 
