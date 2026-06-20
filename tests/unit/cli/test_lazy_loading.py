@@ -11,6 +11,7 @@ Assertions:
 from __future__ import annotations
 
 import importlib
+import logging
 import sys
 import time
 from types import ModuleType
@@ -152,6 +153,31 @@ class TestBrokenImportResilience:
 
         assert result.exit_code == 0, result.output
         assert "cache" in result.output
+
+    def test_broken_import_logs_warning(
+        self,
+        clean_modules: Any,  # noqa: ARG002
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A failed module import must emit a WARNING so the user can diagnose it."""
+        original_import = importlib.import_module
+
+        def _patched_import(name: str, *args: Any, **kwargs: Any) -> ModuleType:
+            if name == "fabric_dw.cli.commands.dbt":
+                raise ImportError("simulated missing dependency")
+            return original_import(name, *args, **kwargs)
+
+        with (
+            caplog.at_level(logging.WARNING, logger="fabric_dw.cli._main"),
+            patch("fabric_dw.cli._main.importlib.import_module", side_effect=_patched_import),
+        ):
+            runner = CliRunner()
+            runner.invoke(cli, ["dbt", "--help"])
+
+        warning_msgs = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("dbt" in str(m) for m in warning_msgs), (
+            f"Expected a WARNING mentioning 'dbt' but got: {warning_msgs}"
+        )
 
 
 # ---------------------------------------------------------------------------

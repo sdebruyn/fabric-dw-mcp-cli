@@ -26,6 +26,8 @@ from fabric_dw.telemetry_commands import (
     now_ms,
 )
 
+_logger = logging.getLogger(__name__)
+
 _CLI_TELEMETRY_KEY = "fabric_dw_telemetry_command_name"
 _CLI_SEGMENTS_KEY = _CLI_TELEMETRY_KEY + "_segments"
 
@@ -429,7 +431,8 @@ class _LazyGroup(_InstrumentedGroup):
         try:
             module = importlib.import_module(module_path)
             cmd: click.Command = getattr(module, attr_name)
-        except (ImportError, AttributeError):
+        except (ImportError, AttributeError) as exc:
+            _logger.warning("Failed to load command %r: %s", cmd_name, exc)
             return None
         # Replicate what _InstrumentedGroup.add_command does so that telemetry
         # and global-options injection are applied on the lazily-loaded group.
