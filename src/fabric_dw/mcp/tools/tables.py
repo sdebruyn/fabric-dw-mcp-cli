@@ -497,3 +497,65 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             raise tool_err(exc) from exc
         ctx.resolver.clear_negative_cache()
         return result.model_dump(mode="json")
+
+    @mutating_tool(mcp, "set_cluster_columns", destructive=True)
+    async def set_cluster_columns(
+        workspace: str,
+        item: str,
+        qualified_name: str,
+        cluster_by: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Change (or remove) the data-clustering columns of an existing table.
+
+        Rebuilds the table via a transactional CTAS-swap:
+
+        1. ``CREATE TABLE [schema].[__recluster_<hex>] [WITH (CLUSTER BY (...))]
+           AS SELECT * FROM [schema].[orig]``
+        2. ``DROP TABLE [schema].[orig]``
+        3. ``EXEC sp_rename`` to restore the original name
+
+        All three steps run inside ONE transaction.  Any failure rolls back
+        automatically — no orphan temp table is left behind.
+
+        CAUTION: This operation copies the full table (runtime is proportional
+        to table size).  Dependent views and stored procedures that reference
+        this table by name are NOT automatically updated by ``sp_rename`` and
+        may need refreshing after the swap.
+
+        Only supported on Fabric Data Warehouses (not SQL Analytics Endpoints).
+
+        Args:
+            workspace: Workspace name or GUID.
+            item: Warehouse name or GUID.  SQL Analytics Endpoints are rejected.
+            qualified_name: Dot-separated qualified table name, e.g. ``dbo.sales``.
+            cluster_by: New list of column names for the ``CLUSTER BY`` clause
+                (up to 4).  Pass ``null`` or an empty list to remove clustering
+                (rebuilds table without ``CLUSTER BY``).
+        """
+        schema, table_name = parse_qualified_name(qualified_name, kind="table")
+        assert_workspace_allowed(workspace)
+        ctx = get_context()
+        try:
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
+            assert_workspace_allowed(workspace, str(ws_id))
+            _log.debug(
+                "set_cluster_columns ws=%s item=%s table=%s.%s cluster_by=%r",
+                ws_id,
+                entry.id,
+                schema,
+                table_name,
+                cluster_by,
+            )
+            target = make_sql_target(ws_id, entry, item)
+            result = await tables_svc.recluster_table(
+                target,
+                schema,
+                table_name,
+                cluster_by=cluster_by or None,
+                kind=entry.kind,
+                mode=ctx.auth_mode,
+            )
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        ctx.resolver.clear_negative_cache()
+        return result.model_dump(mode="json")

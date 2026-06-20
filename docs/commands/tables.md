@@ -82,6 +82,44 @@ fdw -w MyWorkspace --yes tables clear SalesWH dbo.staging_load
 
 ---
 
+### tables cluster-by
+
+**Targets:** Data Warehouse only
+
+Change (or remove) the data-clustering columns of an existing table via a transactional CTAS-swap.
+
+**Performance note:** This operation copies the entire table. Runtime is proportional to table size.
+
+!!! warning "Dependent views and stored procedures"
+
+    Dependent views and stored procedures that reference this table by name are **NOT** automatically updated by `sp_rename` and may need refreshing after the swap.
+
+The operation is atomic: all four steps run inside a single transaction. Any failure rolls back automatically — no orphan temp table is left behind.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] tables cluster-by [OPTIONS] [WAREHOUSE] QUALIFIED_NAME
+```
+
+| Option | Description |
+| --- | --- |
+| `--cluster-by COL` | Column name for `CLUSTER BY` (repeatable, up to 4). Omit entirely to remove clustering. |
+| `--yes` | Skip the confirmation prompt. |
+
+**Examples**
+
+```shell
+# Set new clustering columns
+fdw -w MyWorkspace --yes tables cluster-by SalesWH dbo.orders \
+  --cluster-by CustomerID --cluster-by SaleDate
+
+# Remove clustering entirely
+fdw -w MyWorkspace --yes tables cluster-by SalesWH dbo.orders
+```
+
+---
+
 ### tables cluster-columns
 
 **Targets:** Data Warehouse only
@@ -811,3 +849,26 @@ Rename a SQL table via `sp_rename`. Only supported on Fabric Data Warehouses (SQ
 - `new_name` (`str`) — new bare table name (no schema prefix), e.g. `sales_v2`.
 
 **Returns:** `Table` — the updated table record.
+
+---
+
+### set_cluster_columns
+
+**Targets:** Data Warehouse only
+
+Change (or remove) the data-clustering columns of an existing table via a transactional CTAS-swap. Requires `FABRIC_MCP_ALLOW_DESTRUCTIVE=1`.
+
+**Performance note:** This operation copies the entire table. Runtime is proportional to table size.
+
+**CAUTION:** Dependent views and stored procedures that reference this table by name are **NOT** automatically updated by `sp_rename` and may need refreshing after the swap.
+
+The operation is atomic: CTAS + DROP + sp_rename all run in one transaction. Any failure rolls back automatically — no orphan temp table is left behind.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse name or GUID. SQL Analytics Endpoints are rejected.
+- `qualified_name` (`str`) — dot-separated qualified table name, e.g. `dbo.sales`.
+- `cluster_by` (`list[str] | null`, optional) — new column names for the `CLUSTER BY` clause (up to 4). Pass `null` or an empty list to remove clustering (rebuilds table without `CLUSTER BY`).
+
+**Returns:** `Table` — the re-clustered table record.
