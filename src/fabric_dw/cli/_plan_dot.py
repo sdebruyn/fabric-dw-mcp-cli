@@ -38,12 +38,7 @@ def _escape_dot_label(text: str) -> str:
     """
     # Order matters: escape backslash first so later substitutions are not
     # double-processed.
-    return (
-        text.replace("\\", "\\\\")
-        .replace('"', '\\"')
-        .replace("\n", "\\n")
-        .replace("\r", "\\n")
-    )
+    return text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\n")
 
 
 def _node_label(node: PlanOperator) -> str:

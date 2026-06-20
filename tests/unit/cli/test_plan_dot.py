@@ -300,9 +300,7 @@ class TestRenderPlanDot:
         output = render_plan_dot(operators)
         # Node definition lines contain [label=...] — collect the defined IDs only.
         defined_ids = [
-            line.strip().split(" ")[0]
-            for line in output.splitlines()
-            if '[label="' in line
+            line.strip().split(" ")[0] for line in output.splitlines() if '[label="' in line
         ]
         # Each defined node ID must be unique — no two nodes across all statements
         # may share the same identifier.
@@ -345,7 +343,7 @@ class TestRenderPlanDot:
         )
         output = render_plan_dot([node])
         # The backslash-escaped form must appear in the output.
-        assert r'\"' in output, "Double-quote in label must be backslash-escaped"
+        assert r"\"" in output, "Double-quote in label must be backslash-escaped"
 
     def test_backslash_in_op_name_escaped(self) -> None:
         node = PlanOperator(
