@@ -418,11 +418,18 @@ def parse_duration(value: str) -> timedelta:
         )
 
     total_seconds = 0
+    seen_units: set[str] = set()
     for num_str, unit in tokens:
         if unit not in _VALID_UNITS:
             raise click.UsageError(
                 f"--ago unknown unit {unit!r} in {value!r}; use s/m/h/d/w ({_DURATION_EXAMPLES})."
             )
+        if unit in seen_units:
+            raise click.UsageError(
+                f"--ago duplicate unit {unit!r} in {value!r}; each unit may appear at most once "
+                f"({_DURATION_EXAMPLES})."
+            )
+        seen_units.add(unit)
         total_seconds += int(num_str) * _UNIT_SECONDS[unit]
 
     if total_seconds == 0:

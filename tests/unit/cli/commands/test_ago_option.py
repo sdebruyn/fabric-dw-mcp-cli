@@ -261,6 +261,26 @@ class TestParseDurationInvalid:
         with pytest.raises(click.UsageError):
             parse_duration("1h30x")
 
+    def test_duplicate_hours_raises(self) -> None:
+        with pytest.raises(click.UsageError, match="duplicate"):
+            parse_duration("1h1h")
+
+    def test_duplicate_minutes_raises(self) -> None:
+        with pytest.raises(click.UsageError, match="duplicate"):
+            parse_duration("30m30m")
+
+    def test_duplicate_hours_different_values_raises(self) -> None:
+        with pytest.raises(click.UsageError, match="duplicate"):
+            parse_duration("2h1h")
+
+    def test_duplicate_seconds_raises(self) -> None:
+        with pytest.raises(click.UsageError, match="duplicate"):
+            parse_duration("10s5s")
+
+    def test_duplicate_days_raises(self) -> None:
+        with pytest.raises(click.UsageError, match="duplicate"):
+            parse_duration("1d2d")
+
 
 # ---------------------------------------------------------------------------
 # resolve_since
