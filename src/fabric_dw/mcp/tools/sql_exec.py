@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import json
 import logging
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 from pydantic import Field
 
+from fabric_dw.cli._plan_mermaid import render_plan_mermaid
+from fabric_dw.cli._plan_parse import parse_showplan
+from fabric_dw.cli._plan_render import operator_to_dict
 from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
 from fabric_dw.mcp._guards import assert_readonly_sql, assert_workspace_allowed, env_flag
@@ -94,6 +99,7 @@ def register(mcp: FastMCP) -> None:
         workspace: str,
         item: str,
         query: str,
+        format: Literal["xml", "tree", "json", "mermaid"] = "xml",
     ) -> dict[str, Any]:
         """Capture the estimated SHOWPLAN_XML execution plan for a SQL query without executing it.
 
@@ -110,22 +116,60 @@ def register(mcp: FastMCP) -> None:
 
         Supports both Warehouse and SQL Analytics Endpoint items.
 
+        **Format options:**
+
+        - ``"xml"`` *(default, backwards-compatible)* — returns the raw SHOWPLAN_XML
+          string in ``plan_xml``.  Existing callers relying on ``{"plan_xml": str}``
+          continue to work unchanged.
+        - ``"tree"`` — parses the XML into a native nested list of dicts (one entry
+          per statement) in ``plan``.  Best for agent reasoning over the plan structure.
+        - ``"json"`` — same tree, serialised to an indented JSON string in ``plan_json``.
+          Ready to write out or pass through as compact text.
+        - ``"mermaid"`` — renders a Mermaid ``flowchart TD`` diagram string in
+          ``mermaid``.  Paste into mermaid.live or embed in GitHub Markdown.
+
+        **Artifact formats (SVG/HTML/DOT) are CLI-only.**  They write files to disk and
+        are only available via ``fdw sql plan --format <fmt> -o <file>``.  The MCP
+        server never writes files (ambiguous cwd, invisible side-effects).
+
         Args:
             workspace: Workspace name or GUID.
             item: Warehouse or SQL Analytics Endpoint name or GUID.
             query: SQL statement to generate an estimated execution plan for.
+            format: Output format — one of ``"xml"`` (default), ``"tree"``,
+                ``"json"``, or ``"mermaid"``.
 
         Returns:
-            A dict with key ``plan_xml`` (str) containing the SHOWPLAN_XML string.
+            A dict whose shape depends on *format*:
+
+            - ``xml``     → ``{"format": "xml",     "plan_xml":   str}``
+            - ``tree``    → ``{"format": "tree",    "plan":       list[dict]}``
+            - ``json``    → ``{"format": "json",    "plan_json":  str}``
+            - ``mermaid`` → ``{"format": "mermaid", "mermaid":    str}``
         """
         assert_workspace_allowed(workspace)
         ctx = get_context()
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
             assert_workspace_allowed(workspace, str(ws_id))
-            _log.debug("get_query_plan ws=%s item=%s", ws_id, entry.id)
+            _log.debug("get_query_plan ws=%s item=%s format=%s", ws_id, entry.id, format)
             target = make_sql_target(ws_id, entry, item)
             plan_xml = await _sql_exec_svc.get_plan(target, query, mode=ctx.auth_mode)
         except FabricError as exc:
             raise fabric_err(exc) from exc
-        return {"plan_xml": plan_xml}
+
+        if format == "xml":
+            return {"format": "xml", "plan_xml": plan_xml}
+        if format == "tree":
+            operators = parse_showplan(plan_xml)
+            return {"format": "tree", "plan": [operator_to_dict(op) for op in operators]}
+        if format == "json":
+            operators = parse_showplan(plan_xml)
+            payload = [operator_to_dict(op) for op in operators]
+            return {"format": "json", "plan_json": json.dumps(payload, indent=2)}
+        if format == "mermaid":
+            operators = parse_showplan(plan_xml)
+            return {"format": "mermaid", "mermaid": render_plan_mermaid(operators)}
+        raise ToolError(
+            f"invalid format {format!r}: must be one of 'xml', 'tree', 'json', 'mermaid'"
+        )
