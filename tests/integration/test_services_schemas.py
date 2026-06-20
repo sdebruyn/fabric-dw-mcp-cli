@@ -2,12 +2,12 @@
 
 Run with: pytest -m integration tests/integration/test_services_schemas.py
 
-Fixture note: uses ``shared_warehouse`` (for read-only / listing tests) and
-``warehouse_schema`` (for tests that create or delete schemas) from conftest.
-``warehouse_schema`` itself creates a uniquely-named schema in the shared warm
-warehouse and cascade-drops it on teardown, so all nested schemas created by
-the tests below are cleaned up by that outer cascade or by the test's own
-try/finally block.
+Fixture notes:
+- ``read_target`` (parametrized): runs read-only listing tests against both the shared
+  warm warehouse and the shared SQL analytics endpoint.
+- ``warehouse_schema``: creates a uniquely-named schema in the shared warm warehouse
+  and cascade-drops it on teardown.  Used for tests that create or delete schemas
+  (warehouse-only for now; dual-target schema DDL will be added in a follow-up, see #592).
 
 Design: The schema-CRUD tests below create *additional* schemas inside the
 shared warehouse (not inside ``warehouse_schema``'s isolation schema, because
@@ -27,6 +27,8 @@ from fabric_dw.models import Schema
 from fabric_dw.services import schemas, tables
 from fabric_dw.sql import SqlTarget
 
+from .conftest import SEED_SCHEMA_NAME
+
 pytestmark = pytest.mark.integration
 
 
@@ -38,6 +40,22 @@ pytestmark = pytest.mark.integration
 def _unique_schema_name() -> str:
     """Return a short, collision-resistant schema name safe for Fabric DDL."""
     return f"pytest_{uuid.uuid4().hex[:8]}"
+
+
+# ---------------------------------------------------------------------------
+# Dual-target read test — runs against both warehouse and SQL analytics endpoint
+# via the parametrized ``read_target`` fixture.
+# ---------------------------------------------------------------------------
+
+
+async def test_list_schemas_includes_seed_schema(
+    read_target: SqlTarget,
+) -> None:
+    """list_schemas must include the pre-seeded ``sample`` schema on both targets."""
+    result = await schemas.list_schemas(read_target)
+    assert isinstance(result, list)
+    schema_names = {s.name for s in result}
+    assert SEED_SCHEMA_NAME in schema_names
 
 
 # ---------------------------------------------------------------------------
