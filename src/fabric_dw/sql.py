@@ -187,8 +187,9 @@ _PERMISSION_DENIED_ERROR_NUMBERS = frozenset({229, 230, 297})
 _AUTH_FAILED_ERROR_NUMBERS = frozenset({18456})
 
 # SQL Server native error numbers that indicate a missing object.
-# 208: Invalid object name (table/view/proc not found).
-_NOT_FOUND_ERROR_NUMBERS = frozenset({208})
+# 208:  Invalid object name (table/view not found).
+# 2812: Could not find stored procedure '<name>'.
+_NOT_FOUND_ERROR_NUMBERS = frozenset({208, 2812})
 
 # Message fragments that indicate a missing database object.
 _NOT_FOUND_FRAGMENTS = (

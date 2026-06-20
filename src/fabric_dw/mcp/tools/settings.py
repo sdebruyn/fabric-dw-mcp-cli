@@ -76,12 +76,12 @@ def register(mcp: FastMCP) -> None:
         Executes ``ALTER DATABASE CURRENT SET RESULT_SET_CACHING { ON | OFF }``
         and returns the effective settings read back after the change.
 
-        Both Data Warehouses and SQL Analytics Endpoints accept the statement,
-        though the practical effect on SQL Analytics Endpoints is not guaranteed.
+        Only supported on Fabric Data Warehouses (not SQL Analytics Endpoints).
+        SQL Analytics Endpoints are rejected with a ``ToolError``.
 
         Args:
             workspace: Workspace name or GUID.
-            item: Warehouse or SQL Analytics Endpoint name or GUID.
+            item: Warehouse name or GUID.  SQL Analytics Endpoints are rejected.
             enabled: ``True`` to enable result-set caching, ``False`` to disable it.
         """
         assert_workspace_allowed(workspace)
@@ -99,6 +99,7 @@ def register(mcp: FastMCP) -> None:
             result = await settings_svc.set_result_set_caching(
                 target,
                 enabled=enabled,
+                kind=entry.kind,
                 mode=ctx.auth_mode,
             )
         except (ValueError, FabricError) as exc:
@@ -116,12 +117,12 @@ def register(mcp: FastMCP) -> None:
         Executes ``ALTER DATABASE CURRENT SET TIME_TRAVEL_RETENTION_PERIOD = <n> DAYS``
         and returns the effective settings read back after the change.
 
-        The time-travel retention feature is primarily a Data Warehouse concept.
-        Running this on a SQL Analytics Endpoint is allowed but may be a no-op.
+        Only supported on Fabric Data Warehouses (not SQL Analytics Endpoints).
+        SQL Analytics Endpoints are rejected with a ``ToolError``.
 
         Args:
             workspace: Workspace name or GUID.
-            item: Warehouse or SQL Analytics Endpoint name or GUID.
+            item: Warehouse name or GUID.  SQL Analytics Endpoints are rejected.
             days: Retention period in days. Must be in the range 1-120 (inclusive).
         """
         assert_workspace_allowed(workspace)
@@ -139,6 +140,7 @@ def register(mcp: FastMCP) -> None:
             result = await settings_svc.set_time_travel_retention(
                 target,
                 days,
+                kind=entry.kind,
                 mode=ctx.auth_mode,
             )
         except (ValueError, FabricError) as exc:

@@ -14,7 +14,7 @@ from click.testing import CliRunner
 
 from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._main import cli
-from fabric_dw.exceptions import FabricError
+from fabric_dw.exceptions import FabricError, ItemKindError
 from fabric_dw.models import WarehouseKind, WarehouseSettings
 from fabric_dw.sql import SqlTarget
 
@@ -54,6 +54,16 @@ def _make_item_entry() -> ItemEntry:
         connection_string="wh.datawarehouse.fabric.microsoft.com",
         fetched_at=datetime.now(tz=UTC),
         display_name="SalesWarehouse",
+    )
+
+
+def _make_sql_endpoint_entry() -> ItemEntry:
+    return ItemEntry(
+        id=WH_UUID,
+        kind=WarehouseKind.SQL_ENDPOINT,
+        connection_string="ep.datawarehouse.fabric.microsoft.com",
+        fetched_at=datetime.now(tz=UTC),
+        display_name="MySqlEndpoint",
     )
 
 
@@ -370,6 +380,108 @@ class TestRetention:
                 "fabric_dw.cli.commands.settings.build_sql_target",
                 new=AsyncMock(side_effect=FabricError("permission denied")),
             ),
+        ):
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "settings", "retention", WH_GUID, "--days", "7"]
+            )
+        assert result.exit_code != 0
+
+
+# ===========================================================================
+# kind=entry.kind wiring — guard fires end-to-end via real entry.kind
+# ===========================================================================
+
+
+class TestSettingsKindWiring:
+    """Verify that entry.kind is threaded through to the service call.
+
+    These tests prove the guard is NOT a NO-OP by using a SQL_ENDPOINT entry
+    and letting the real service guard fire.  A bug that always passes
+    kind=WAREHOUSE (or no kind at all) would pass the WAREHOUSE-leg tests
+    above but fail these wiring tests.
+    """
+
+    def test_result_set_caching_forwards_warehouse_kind(self, runner: CliRunner) -> None:
+        """result-set-caching passes kind=WAREHOUSE when the resolved entry is a Warehouse."""
+        mock_http = AsyncMock()
+        mock_svc = AsyncMock(return_value=_make_settings())
+        with (
+            patch(
+                "fabric_dw.cli.commands.settings.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.settings.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch("fabric_dw.services.settings.set_result_set_caching", new=mock_svc),
+        ):
+            runner.invoke(cli, ["-w", WS_GUID, "settings", "result-set-caching", WH_GUID, "on"])
+        _, kwargs = mock_svc.call_args
+        assert kwargs.get("kind") == WarehouseKind.WAREHOUSE
+
+    def test_result_set_caching_rejects_sql_endpoint_via_real_guard(
+        self, runner: CliRunner
+    ) -> None:
+        """result-set-caching surfaces ItemKindError as ClickException for SQL_ENDPOINT.
+
+        Uses the REAL service guard (no mock on set_result_set_caching) so that
+        kind=entry.kind is actually threaded and the guard fires.
+        """
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.settings.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.settings.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            # Patch only open_connection so no real TDS call is made.
+            patch("fabric_dw.sql.open_connection", side_effect=ItemKindError("guard")),
+        ):
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "settings", "result-set-caching", WH_GUID, "on"]
+            )
+        # ItemKindError is a FabricError subclass and is caught + re-raised as ClickException.
+        assert result.exit_code != 0
+
+    def test_retention_forwards_warehouse_kind(self, runner: CliRunner) -> None:
+        """retention passes kind=WAREHOUSE when the resolved entry is a Warehouse."""
+        mock_http = AsyncMock()
+        mock_svc = AsyncMock(return_value=_make_settings())
+        with (
+            patch(
+                "fabric_dw.cli.commands.settings.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.settings.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch("fabric_dw.services.settings.set_time_travel_retention", new=mock_svc),
+        ):
+            runner.invoke(cli, ["-w", WS_GUID, "settings", "retention", WH_GUID, "--days", "7"])
+        _, kwargs = mock_svc.call_args
+        assert kwargs.get("kind") == WarehouseKind.WAREHOUSE
+
+    def test_retention_rejects_sql_endpoint_via_real_guard(self, runner: CliRunner) -> None:
+        """retention surfaces ItemKindError as ClickException for SQL_ENDPOINT.
+
+        Uses the REAL service guard so that kind=entry.kind is actually threaded.
+        """
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.settings.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.settings.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch("fabric_dw.sql.open_connection", side_effect=ItemKindError("guard")),
         ):
             result = runner.invoke(
                 cli, ["-w", WS_GUID, "settings", "retention", WH_GUID, "--days", "7"]

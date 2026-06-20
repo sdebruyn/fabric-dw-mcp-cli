@@ -29,10 +29,16 @@ exactly this use case.
 
 SQL Analytics Endpoint note
 ---------------------------
-No client-side guard is applied — both Data Warehouses and SQL Analytics
-Endpoints accept the read query.  The ``ALTER DATABASE`` write operations work
-on Data Warehouses; the behaviour on a SQL Analytics Endpoint is not guaranteed
-and may be a no-op (retention in particular is primarily a Warehouse concept).
+``get_settings`` is dual-target — both Data Warehouses and SQL Analytics
+Endpoints respond to the ``sys.databases`` read query.
+
+The ``ALTER DATABASE`` write operations (``set_result_set_caching`` and
+``set_time_travel_retention``) are DWH-only.  SQL Analytics Endpoints are
+read-only at the SQL layer; ``ALTER DATABASE`` is silently rejected or
+produces unexpected results.  Both write functions guard against this via
+``_assert_not_sql_endpoint`` and accept a ``kind`` parameter (defaulting to
+:attr:`~fabric_dw.models.WarehouseKind.WAREHOUSE`) so that callers can pass
+the resolved item kind.
 """
 
 from __future__ import annotations
@@ -43,8 +49,8 @@ from datetime import date as _date
 from typing import cast
 
 from fabric_dw.auth import CredentialMode
-from fabric_dw.exceptions import FabricError
-from fabric_dw.models import WarehouseSettings
+from fabric_dw.exceptions import FabricError, ItemKindError
+from fabric_dw.models import WarehouseKind, WarehouseSettings
 from fabric_dw.sql import SqlTarget, run_query
 
 __all__ = [
@@ -67,6 +73,29 @@ RETENTION_MAX = 120
 # Backward-compatible aliases (private — kept for internal use only).
 _RETENTION_MIN = RETENTION_MIN
 _RETENTION_MAX = RETENTION_MAX
+
+# ---------------------------------------------------------------------------
+# Guard
+# ---------------------------------------------------------------------------
+
+_SQL_ENDPOINT_ALTER_MSG = (
+    "ALTER DATABASE is not supported on SQL Analytics Endpoints; "
+    "use a Fabric Data Warehouse to change settings"
+)
+
+
+def _assert_not_sql_endpoint(kind: WarehouseKind) -> None:
+    """Raise :class:`~fabric_dw.exceptions.ItemKindError` for SQL Endpoint items.
+
+    Args:
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the resolved item.
+
+    Raises:
+        ItemKindError: If *kind* is :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
+    """
+    if kind == WarehouseKind.SQL_ENDPOINT:
+        raise ItemKindError(_SQL_ENDPOINT_ALTER_MSG)
+
 
 # ---------------------------------------------------------------------------
 # SQL templates
@@ -166,6 +195,7 @@ async def set_result_set_caching(
     target: SqlTarget,
     *,
     enabled: bool,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
     mode: CredentialMode = CredentialMode.DEFAULT,
 ) -> WarehouseSettings:
     """Enable or disable result-set caching on *target*.
@@ -173,9 +203,15 @@ async def set_result_set_caching(
     Executes ``ALTER DATABASE CURRENT SET RESULT_SET_CACHING { ON | OFF }``
     with autocommit (required for ``ALTER DATABASE`` statements).
 
+    Only supported on Fabric Data Warehouses (not SQL Analytics Endpoints).
+    SQL Analytics Endpoints are rejected with
+    :class:`~fabric_dw.exceptions.ItemKindError`.
+
     Args:
         target: The Data Warehouse to alter.
         enabled: ``True`` to enable result-set caching, ``False`` to disable it.
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the resolved item.
+            SQL Analytics Endpoints are rejected.
         mode: The credential mode for Entra authentication.
 
     Returns:
@@ -183,9 +219,12 @@ async def set_result_set_caching(
         *after* the change (fetched via a follow-up ``get_settings`` call).
 
     Raises:
+        ItemKindError: If *kind* is
+            :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
         PermissionDeniedError: If the driver reports a permission error.
         AuthError: If the driver reports an authentication failure.
     """
+    _assert_not_sql_endpoint(kind)
     ddl = _SET_RSC_SQL_ON if enabled else _SET_RSC_SQL_OFF
 
     def _run() -> None:
@@ -199,6 +238,7 @@ async def set_time_travel_retention(
     target: SqlTarget,
     days: int,
     *,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
     mode: CredentialMode = CredentialMode.DEFAULT,
 ) -> WarehouseSettings:
     """Set the time-travel retention period on *target*.
@@ -206,12 +246,15 @@ async def set_time_travel_retention(
     Executes ``ALTER DATABASE CURRENT SET TIME_TRAVEL_RETENTION_PERIOD = <n> DAYS``
     with autocommit (required for ``ALTER DATABASE`` statements).
 
-    The time-travel retention feature is primarily a Data Warehouse concept.
-    Running this on a SQL Analytics Endpoint is allowed but may be a no-op.
+    Only supported on Fabric Data Warehouses (not SQL Analytics Endpoints).
+    SQL Analytics Endpoints are rejected with
+    :class:`~fabric_dw.exceptions.ItemKindError`.
 
     Args:
-        target: The Data Warehouse (or SQL Analytics Endpoint) to alter.
+        target: The Data Warehouse to alter.
         days: Retention period in days.  Must be in the range 1-120 (inclusive).
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the resolved item.
+            SQL Analytics Endpoints are rejected.
         mode: The credential mode for Entra authentication.
 
     Returns:
@@ -219,10 +262,13 @@ async def set_time_travel_retention(
         *after* the change (fetched via a follow-up ``get_settings`` call).
 
     Raises:
+        ItemKindError: If *kind* is
+            :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
         ValueError: If *days* is outside the valid range 1-120.
         PermissionDeniedError: If the driver reports a permission error.
         AuthError: If the driver reports an authentication failure.
     """
+    _assert_not_sql_endpoint(kind)
     days_int = int(days)
     if not _RETENTION_MIN <= days_int <= _RETENTION_MAX:
         msg = (

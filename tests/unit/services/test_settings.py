@@ -7,8 +7,8 @@ from unittest.mock import patch
 
 import pytest
 
-from fabric_dw.exceptions import FabricError
-from fabric_dw.models import WarehouseSettings
+from fabric_dw.exceptions import FabricError, ItemKindError
+from fabric_dw.models import WarehouseKind, WarehouseSettings
 from fabric_dw.services import settings
 from tests.unit.services._helpers import _make_conn, _make_conn_for_ddl, _make_target
 
@@ -268,3 +268,51 @@ class TestPublicConstants:
     def test_retention_constants_in_all(self) -> None:
         assert "RETENTION_MIN" in settings.__all__
         assert "RETENTION_MAX" in settings.__all__
+
+
+# ===========================================================================
+# SQL Analytics Endpoint guard — write ops must reject SQL_ENDPOINT
+# ===========================================================================
+
+
+class TestSqlEndpointGuard:
+    """set_result_set_caching and set_time_travel_retention are DWH-only."""
+
+    async def test_set_result_set_caching_rejects_sql_endpoint(self) -> None:
+        """set_result_set_caching must raise ItemKindError for SQL_ENDPOINT."""
+        target = _make_target()
+        with pytest.raises(ItemKindError, match="ALTER DATABASE"):
+            await settings.set_result_set_caching(
+                target, enabled=True, kind=WarehouseKind.SQL_ENDPOINT
+            )
+
+    async def test_set_time_travel_retention_rejects_sql_endpoint(self) -> None:
+        """set_time_travel_retention must raise ItemKindError for SQL_ENDPOINT."""
+        target = _make_target()
+        with pytest.raises(ItemKindError, match="ALTER DATABASE"):
+            await settings.set_time_travel_retention(
+                target, days=7, kind=WarehouseKind.SQL_ENDPOINT
+            )
+
+    async def test_set_result_set_caching_warehouse_allowed(self) -> None:
+        """set_result_set_caching must not raise for WAREHOUSE (the default)."""
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        read_conn = _make_conn([_SETTINGS_ROW], _SETTINGS_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, read_conn]):
+            result = await settings.set_result_set_caching(
+                target, enabled=True, kind=WarehouseKind.WAREHOUSE
+            )
+        assert isinstance(result, WarehouseSettings)
+
+    async def test_set_time_travel_retention_warehouse_allowed(self) -> None:
+        """set_time_travel_retention must not raise for WAREHOUSE (the default)."""
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        row: tuple[object, ...] = ("SalesWarehouse", True, 7, None)
+        read_conn = _make_conn([row], _SETTINGS_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, read_conn]):
+            result = await settings.set_time_travel_retention(
+                target, days=7, kind=WarehouseKind.WAREHOUSE
+            )
+        assert isinstance(result, WarehouseSettings)

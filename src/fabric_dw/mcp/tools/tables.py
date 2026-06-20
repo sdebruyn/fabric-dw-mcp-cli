@@ -233,6 +233,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
     ) -> dict[str, Any]:
         """Create a new SQL table via CTAS (CREATE TABLE AS SELECT).
 
+        Only supported on Fabric Data Warehouses (not SQL Analytics Endpoints).
+        The service rejects SQL Analytics Endpoints with a ``ToolError``.
+
         CAUTION: ``select_body`` is executed verbatim as DDL on the warehouse.
         Ensure the body matches the user's intent before calling this tool.
         The first non-comment keyword of ``select_body`` must be SELECT.
@@ -244,7 +247,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
 
         Args:
             workspace: Workspace name or GUID.
-            item: Warehouse or SQL endpoint name or GUID.
+            item: Warehouse name or GUID.  SQL Analytics Endpoints are rejected.
             qualified_name: Dot-separated qualified table name, e.g. ``dbo.sales``.
             select_body: The SELECT statement that becomes the CTAS source.
             cluster_by: Optional list of column names for the ``CLUSTER BY`` clause
@@ -278,12 +281,15 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
     async def delete_table(workspace: str, item: str, qualified_name: str) -> dict[str, Any]:
         """Drop a SQL table.
 
+        Only supported on Fabric Data Warehouses (not SQL Analytics Endpoints).
+        The service rejects SQL Analytics Endpoints with a ``ToolError``.
+
         CAUTION: This is a destructive, irreversible operation.  The table and all
         its data will be permanently deleted.  Confirm with the user before calling.
 
         Args:
             workspace: Workspace name or GUID.
-            item: Warehouse or SQL endpoint name or GUID.
+            item: Warehouse name or GUID.  SQL Analytics Endpoints are rejected.
             qualified_name: Dot-separated qualified table name, e.g. ``dbo.sales``.
         """
         schema, table_name = parse_qualified_name(qualified_name, kind="table")
@@ -307,13 +313,16 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
     async def clear_table(workspace: str, item: str, qualified_name: str) -> dict[str, Any]:
         """Truncate a SQL table (remove all rows, keep structure).
 
+        Only supported on Fabric Data Warehouses (not SQL Analytics Endpoints).
+        The service rejects SQL Analytics Endpoints with a ``ToolError``.
+
         CAUTION: This is a destructive, irreversible operation.  All rows will be
         permanently deleted.  The table structure and schema are preserved.
         Confirm with the user before calling.
 
         Args:
             workspace: Workspace name or GUID.
-            item: Warehouse or SQL endpoint name or GUID.
+            item: Warehouse name or GUID.  SQL Analytics Endpoints are rejected.
             qualified_name: Dot-separated qualified table name, e.g. ``dbo.sales``.
         """
         schema, table_name = parse_qualified_name(qualified_name, kind="table")

@@ -7,9 +7,11 @@ Fixture notes:
   warehouse and the shared SQL analytics endpoint.  Tests use the pre-seeded
   ``sample`` schema (``sample.colors`` / ``sample.numbers``).
 - ``warehouse_schema``: creates a uniquely-named schema inside the session-shared
-  warm warehouse and cascade-drops it on teardown.  Used exclusively for mutating
-  tests (CREATE / DROP / CLEAR / RENAME / CLONE — warehouse-only for now; dual-target
-  mutating tests will follow in a later PR, see #592).
+  warm warehouse and cascade-drops it on teardown.  Used exclusively for DWH-only
+  mutating tests (CREATE / DROP / CLEAR / RENAME / CLONE).
+- ``shared_sql_endpoint``: used for the SQL-endpoint-only ``get_table_health_metrics``
+  test (``sp_get_table_health_metrics`` targets lakehouse Delta tables and is only
+  available on SQL Analytics Endpoints, not on Data Warehouses).
 """
 
 from __future__ import annotations
@@ -26,7 +28,7 @@ from fabric_dw.services import columns as columns_svc
 from fabric_dw.services import tables
 from fabric_dw.sql import SqlTarget, run_query
 
-from .conftest import SEED_SCHEMA_NAME
+from .conftest import SEED_SCHEMA_NAME, SharedSqlEndpointTarget
 
 pytestmark = pytest.mark.integration
 
@@ -297,3 +299,72 @@ async def test_count_table_rows_returns_nonnegative_int(
     finally:
         with contextlib.suppress(Exception):
             await tables.delete_table(sql_target, schema, table_name)
+
+
+# ---------------------------------------------------------------------------
+# SQL-endpoint-only: get_table_health_metrics (sp_get_table_health_metrics)
+# ---------------------------------------------------------------------------
+#
+# sp_get_table_health_metrics is only available on SQL Analytics Endpoints
+# (not on Data Warehouses).  The proc surfaces Delta/Parquet layout metrics
+# for lakehouse tables.  Its output column schema is not yet documented by
+# Microsoft, so assertions are intentionally generic (columns non-empty,
+# list of row tuples returned).
+#
+# The seeded ``sample.colors`` table (written as a Delta Lake layout into the
+# parent Lakehouse during fixture setup) is the probe table — it is guaranteed
+# to be visible on the endpoint before the fixture yields.
+
+
+@pytest.mark.sql_endpoint
+async def test_get_table_health_metrics_on_sql_endpoint(
+    shared_sql_endpoint: SharedSqlEndpointTarget,
+) -> None:
+    """get_table_health_metrics against a seeded endpoint table returns columns + rows.
+
+    Uses ``sample.colors`` (seeded via the parent Lakehouse during fixture setup)
+    as the probe table.  The stored procedure output schema is undocumented
+    (#594 mandated a generic passthrough), so assertions are coarse:
+
+    - The call succeeds (no exception).
+    - ``columns`` is a non-empty list of strings.
+    - ``rows`` is a list of tuples (may be empty if the proc yields no rows for
+      a freshly-seeded table — but the result shape must be correct).
+
+    ``sp_get_table_health_metrics`` was announced as Generally Available at
+    Build 2026 but may not yet be rolled out to all Fabric tenants.  When the
+    proc is not available the test is skipped rather than failed (the proc
+    absence is a tenant-level GA rollout issue, not a code bug).
+    """
+    from fabric_dw.models import WarehouseKind  # noqa: PLC0415
+
+    sql_target = shared_sql_endpoint.sql_target
+    try:
+        columns, rows = await tables.get_table_health_metrics(
+            sql_target,
+            SEED_SCHEMA_NAME,
+            "colors",
+            kind=WarehouseKind.SQL_ENDPOINT,
+        )
+    except NotFoundError as exc:
+        # sp_get_table_health_metrics is GA-announced at Build 2026 but may not
+        # yet be deployed on all tenants.  SQL Server error 2812 ("Could not find
+        # stored procedure") is mapped to NotFoundError by map_driver_error()
+        # (see sql.py _NOT_FOUND_ERROR_NUMBERS), so we catch the typed exception
+        # rather than string-matching the raw driver message.
+        pytest.skip(
+            f"sp_get_table_health_metrics is not yet available on this tenant "
+            f"({exc}); skipping — re-run when the GA rollout reaches this tenant"
+        )
+
+    # The proc must return at least one column (output schema is undocumented
+    # but the proc is GA and always yields a result set when available).
+    assert isinstance(columns, list), f"expected list of column names, got {type(columns)}"
+    assert columns, f"expected non-empty columns list, got {columns!r}"
+    for col in columns:
+        assert isinstance(col, str), f"column name must be str, got {type(col)}: {col!r}"
+
+    # rows is a list of tuples; may be empty for a freshly-seeded table.
+    assert isinstance(rows, list), f"expected list of row tuples, got {type(rows)}"
+    for row in rows:
+        assert isinstance(row, tuple), f"each row must be a tuple, got {type(row)}: {row!r}"
