@@ -28,4 +28,8 @@ Both the CLI and the MCP server surfaces are built from a single Python package 
 
     MCP server tools for AI assistant integration.
 
+- :material-puzzle: **[Agent Skills](skills.md)**
+
+    Multi-step admin workflows for AI assistants.
+
 </div>
