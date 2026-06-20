@@ -29,4 +29,4 @@ Each page below covers one command domain: CLI synopsis, options, and examples a
 - **[Tables](tables.md)** — Manage SQL tables, including CTAS, clone, load, and clustering.
 - **[Views](views.md)** — Manage SQL views.
 - **[Warehouses](warehouses.md)** — Manage Data Warehouses and SQL Analytics Endpoints.
-- **[Workspaces](workspaces.md)** — List and inspect workspaces.
+- **[Workspaces](workspaces.md)** — List, inspect, and manage workspaces — capacity assignment, collation, and more.
