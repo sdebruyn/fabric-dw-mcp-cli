@@ -15,9 +15,6 @@ nav = [
   { "Home" = "index.md" },
   { "Install" = "install.md" },
   { "Concepts" = "concepts.md" },
-  { "Guides" = [
-    { "Ingesting data" = "guides/ingesting-data.md" }
-  ] },
   { "Commands" = [
     { "Overview" = "commands/index.md" },
     { "Audit" = "commands/audit.md" },
@@ -50,6 +47,7 @@ nav = [
     { "Troubleshooting" = "troubleshooting.md" }
   ] },
   { "Guides" = [
+    { "Ingesting data" = "guides/ingesting-data.md" },
     { "Query performance" = "guides/query-performance.md" }
   ] },
   { "Contributing" = [
