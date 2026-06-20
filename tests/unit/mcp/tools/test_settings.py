@@ -368,3 +368,105 @@ def test_settings_tools_are_registered() -> None:
     assert "get_warehouse_settings" in tool_names
     assert "set_result_set_caching" in tool_names
     assert "set_time_travel_retention" in tool_names
+
+
+# ---------------------------------------------------------------------------
+# kind=entry.kind wiring — guard fires end-to-end via real entry.kind
+# ---------------------------------------------------------------------------
+
+
+async def test_set_result_set_caching_forwards_kind_to_service(mock_ctx, ctx_patch) -> None:
+    """set_result_set_caching passes kind=entry.kind to the service call."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+    from tests.unit.mcp.conftest import make_item_entry  # noqa: PLC0415
+
+    settings = _make_settings()
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+    mock_set = AsyncMock(return_value=settings)
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.settings.set_result_set_caching", new=mock_set),
+    ):
+        await mcp._tool_manager.call_tool(
+            "set_result_set_caching",
+            {"workspace": WS_NAME, "item": WH_NAME, "enabled": True},
+        )
+
+    _, kwargs = mock_set.call_args
+    # The WAREHOUSE entry must produce kind=WAREHOUSE — not the guard-bypassing default.
+    from fabric_dw.models import WarehouseKind  # noqa: PLC0415
+
+    assert kwargs.get("kind") == WarehouseKind.WAREHOUSE
+
+
+async def test_set_result_set_caching_rejects_sql_endpoint_via_real_guard(
+    mock_ctx, ctx_patch
+) -> None:
+    """set_result_set_caching raises ToolError when entry.kind is SQL_ENDPOINT.
+
+    Uses the REAL service guard (no mock on set_result_set_caching) and a
+    SQL_ENDPOINT entry to prove kind=entry.kind is actually forwarded.
+    """
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+    from tests.unit.mcp.conftest import make_sql_endpoint_entry  # noqa: PLC0415
+
+    mock_ctx.resolver.item = AsyncMock(return_value=make_sql_endpoint_entry())
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.sql.open_connection", side_effect=Exception("should not connect")),
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "set_result_set_caching",
+            {"workspace": WS_NAME, "item": "MySqlEndpoint", "enabled": True},
+        )
+
+
+async def test_set_time_travel_retention_forwards_kind_to_service(mock_ctx, ctx_patch) -> None:
+    """set_time_travel_retention passes kind=entry.kind to the service call."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+    from tests.unit.mcp.conftest import make_item_entry  # noqa: PLC0415
+
+    settings = _make_settings(time_travel_retention_days=14)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+    mock_set = AsyncMock(return_value=settings)
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.settings.set_time_travel_retention", new=mock_set),
+    ):
+        await mcp._tool_manager.call_tool(
+            "set_time_travel_retention",
+            {"workspace": WS_NAME, "item": WH_NAME, "days": 14},
+        )
+
+    _, kwargs = mock_set.call_args
+    from fabric_dw.models import WarehouseKind  # noqa: PLC0415
+
+    assert kwargs.get("kind") == WarehouseKind.WAREHOUSE
+
+
+async def test_set_time_travel_retention_rejects_sql_endpoint_via_real_guard(
+    mock_ctx, ctx_patch
+) -> None:
+    """set_time_travel_retention raises ToolError when entry.kind is SQL_ENDPOINT.
+
+    Uses the REAL service guard (no mock on set_time_travel_retention) and a
+    SQL_ENDPOINT entry to prove kind=entry.kind is actually forwarded.
+    """
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+    from tests.unit.mcp.conftest import make_sql_endpoint_entry  # noqa: PLC0415
+
+    mock_ctx.resolver.item = AsyncMock(return_value=make_sql_endpoint_entry())
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.sql.open_connection", side_effect=Exception("should not connect")),
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "set_time_travel_retention",
+            {"workspace": WS_NAME, "item": "MySqlEndpoint", "days": 14},
+        )
