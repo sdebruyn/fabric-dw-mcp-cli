@@ -15,8 +15,9 @@ import logging
 
 from fabric_dw.exceptions import PermissionDeniedError
 from fabric_dw.http_client import FabricHttpClient, HttpBase
+from fabric_dw.models import Capacity
 
-__all__ = ["get_capacity_states"]
+__all__ = ["get_capacity_states", "list_all"]
 
 _logger = logging.getLogger("fabric_dw.capacities")
 
@@ -58,3 +59,27 @@ async def get_capacity_states(http: FabricHttpClient) -> dict[str, str] | None:
         return None
     _logger.debug("fetched capacity states for %d capacities", len(result))
     return result
+
+
+async def list_all(http: FabricHttpClient) -> list[Capacity]:
+    """Return all capacities the caller has access to, following pagination.
+
+    Fetches ``GET /v1/capacities`` and returns a list of :class:`~fabric_dw.models.Capacity`
+    instances.  Raises :class:`~fabric_dw.exceptions.PermissionDeniedError` when the caller
+    lacks the ``Capacity.Read.All`` permission (HTTP 403).
+
+    Args:
+        http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
+
+    Returns:
+        A list of :class:`~fabric_dw.models.Capacity` instances.
+
+    Raises:
+        PermissionDeniedError: When the caller lacks ``Capacity.Read.All`` (HTTP 403).
+    """
+    items: list[Capacity] = [
+        Capacity.model_validate(item)
+        async for item in http.iter_paginated(HttpBase.FABRIC, "/capacities")
+    ]
+    _logger.debug("fetched %d capacities", len(items))
+    return items

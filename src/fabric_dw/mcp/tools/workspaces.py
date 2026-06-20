@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from typing import Any
+from uuid import UUID
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
@@ -14,7 +15,7 @@ from fabric_dw.mcp._context import get_context
 from fabric_dw.mcp._guards import assert_workspace_allowed
 from fabric_dw.mcp._helpers import fabric_err, mutating_tool
 from fabric_dw.models import Workspace
-from fabric_dw.services import workspaces
+from fabric_dw.services import capacities, workspaces
 
 __all__ = ["register"]
 
@@ -26,8 +27,46 @@ def _workspace_in_allowlist(ws: Workspace, allowed: frozenset[str]) -> bool:
     return ws.name.strip().lower() in allowed or str(ws.id).strip().lower() in allowed
 
 
-def register(mcp: FastMCP) -> None:
+def register(mcp: FastMCP) -> None:  # noqa: PLR0915
     """Register workspace tools against *mcp*."""
+
+    @mutating_tool(mcp, "assign_workspace_to_capacity")
+    async def assign_workspace_to_capacity(workspace: str, capacity_id: str) -> dict[str, Any]:
+        """Assign a workspace to a Fabric capacity.
+
+        Args:
+            workspace: Workspace name or GUID.
+            capacity_id: UUID of the capacity to assign the workspace to.
+        """
+        assert_workspace_allowed(workspace)
+        try:
+            cap_uuid = UUID(capacity_id)
+        except ValueError as exc:
+            raise ToolError(f"Invalid capacity_id {capacity_id!r}: must be a UUID.") from exc
+        ctx = get_context()
+        try:
+            ws_id = await ctx.resolver.workspace_id(workspace)
+            assert_workspace_allowed(workspace, str(ws_id))
+            _log.debug("assign_workspace_to_capacity ws=%s capacity=%s", ws_id, cap_uuid)
+            await workspaces.assign_to_capacity(ctx.http, ws_id, cap_uuid)
+        except FabricError as exc:
+            raise fabric_err(exc) from exc
+        return {"workspace_id": str(ws_id), "capacity_id": str(cap_uuid)}
+
+    @mcp.tool(name="list_capacities")
+    async def list_capacities() -> list[dict[str, Any]]:
+        """List all Fabric capacities the caller has access to.
+
+        Requires the ``Capacity.Read.All`` permission.  Returns a 403
+        ToolError when the caller lacks that permission.
+        """
+        _log.debug("list_capacities called")
+        ctx = get_context()
+        try:
+            result = await capacities.list_all(ctx.http)
+        except FabricError as exc:
+            raise fabric_err(exc) from exc
+        return [c.model_dump(by_alias=True, mode="json") for c in result]
 
     @mcp.tool(name="list_workspaces")
     async def list_workspaces() -> list[dict[str, Any]]:

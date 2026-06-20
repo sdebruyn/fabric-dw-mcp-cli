@@ -10,6 +10,7 @@ from fabric_dw.models import Workspace
 
 __all__ = [
     "SUPPORTED_COLLATIONS",
+    "assign_to_capacity",
     "get",
     "list_all",
     "set_collation",
@@ -101,3 +102,30 @@ async def set_collation(
         # The v1 API may not expose defaultDataWarehouseCollation on all tenants yet.
         # Surface a portal link so the user knows the manual fallback path.
         raise FabricError(portal_msg) from exc
+
+
+async def assign_to_capacity(
+    http: FabricHttpClient,
+    workspace_id: UUID,
+    capacity_id: UUID,
+) -> None:
+    """Assign a workspace to a capacity.
+
+    Performs ``POST /v1/workspaces/{workspaceId}/assignToCapacity`` with the
+    given *capacity_id*.  The endpoint returns 202 Accepted (fire-and-forget);
+    no polling is required — 202 is treated as success.
+
+    Args:
+        http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
+        workspace_id: The UUID of the workspace to update.
+        capacity_id: The UUID of the capacity to assign to.
+
+    Raises:
+        FabricError: If the API returns a non-2xx status code.
+    """
+    await http.request(
+        "POST",
+        HttpBase.FABRIC,
+        f"/workspaces/{workspace_id}/assignToCapacity",
+        json={"capacityId": str(capacity_id)},
+    )

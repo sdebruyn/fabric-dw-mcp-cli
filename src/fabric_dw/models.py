@@ -43,6 +43,16 @@ class _FabricBase(BaseModel):
     model_config = ConfigDict(extra="ignore", frozen=True, populate_by_name=True)
 
 
+class Capacity(_FabricBase):
+    """A Microsoft Fabric capacity."""
+
+    id: UUID
+    name: str = Field(alias="displayName")
+    sku: str
+    region: str
+    state: str
+
+
 class Workspace(_FabricBase):
     """A Microsoft Fabric workspace."""
 
