@@ -103,19 +103,22 @@ def register(mcp: FastMCP) -> None:
         if dbt_auth not in (DbtAuthMode.AUTO, DbtAuthMode.CLI, DbtAuthMode.SERVICE_PRINCIPAL):
             dbt_auth = DbtAuthMode.AUTO
 
-        # Fetch schemas/tables when with_sources requested.
+        # Fetch schemas, tables, and columns (bulk) when with_sources requested.
         schemas = []
         tables = []
+        columns: dict[tuple[str, str], list[dict[str, object]]] = {}
         if with_sources:
             import asyncio  # noqa: PLC0415
 
             from fabric_dw.services import schemas as schemas_svc  # noqa: PLC0415
             from fabric_dw.services import tables as tables_svc  # noqa: PLC0415
+            from fabric_dw.services.columns import get_columns_for_schemas  # noqa: PLC0415
 
             try:
-                schemas, tables = await asyncio.gather(
+                schemas, tables, columns = await asyncio.gather(
                     schemas_svc.list_schemas(sql_target, mode=ctx.auth_mode),
                     tables_svc.list_tables(sql_target, mode=ctx.auth_mode),
+                    get_columns_for_schemas(sql_target, mode=ctx.auth_mode),
                 )
             except (ValueError, FabricError) as exc:
                 raise tool_err(exc) from exc
@@ -132,6 +135,7 @@ def register(mcp: FastMCP) -> None:
             with_sources=with_sources,
             schemas=schemas,
             tables=tables,
+            columns=columns,
         )
 
         from fabric_dw.services.dbt_scaffold import (  # noqa: PLC0415

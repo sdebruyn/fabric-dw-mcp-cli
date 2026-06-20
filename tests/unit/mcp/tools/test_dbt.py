@@ -172,7 +172,7 @@ async def test_generate_dbt_profile_with_sources_calls_list_schemas(
     mock_ctx,  # noqa: ARG001
     ctx_patch,
 ) -> None:
-    """with_sources=True triggers schema and table listing."""
+    """with_sources=True triggers schema, table, and column listing."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     with (
@@ -185,6 +185,10 @@ async def test_generate_dbt_profile_with_sources_calls_list_schemas(
             "fabric_dw.services.tables.list_tables",
             new=AsyncMock(return_value=[]),
         ) as mock_tables,
+        patch(
+            "fabric_dw.services.columns.get_columns_for_schemas",
+            new=AsyncMock(return_value={}),
+        ) as mock_columns,
     ):
         result = await mcp._tool_manager.call_tool(
             "generate_dbt_profile",
@@ -193,6 +197,7 @@ async def test_generate_dbt_profile_with_sources_calls_list_schemas(
 
     mock_schemas.assert_called_once()
     mock_tables.assert_called_once()
+    mock_columns.assert_called_once()
     assert "sources_yml" in result
 
 

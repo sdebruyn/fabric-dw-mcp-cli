@@ -1,4 +1,8 @@
-"""Unit tests for services.columns — format_data_type and get_object_columns."""
+"""Unit tests for services.columns.
+
+Covers: format_data_type, get_object_columns, get_object_columns_or_raise,
+get_columns_for_schemas.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +13,7 @@ import pytest
 from fabric_dw.exceptions import NotFoundError
 from fabric_dw.services.columns import (
     format_data_type,
+    get_columns_for_schemas,
     get_object_columns,
     get_object_columns_or_raise,
 )
@@ -240,3 +245,99 @@ class TestGetObjectColumnsOrRaise:
 
         assert len(result) == 1
         assert result[0]["name"] == "id"
+
+
+# ---------------------------------------------------------------------------
+# get_columns_for_schemas — bulk fetch
+# ---------------------------------------------------------------------------
+
+# Bulk query columns include schema_name and object_name as first two fields.
+_BULK_COLS = [
+    "schema_name",
+    "object_name",
+    "ordinal",
+    "name",
+    "type_name",
+    "max_length",
+    "precision",
+    "scale",
+    "nullable",
+    "collation_name",
+    "is_identity",
+    "is_computed",
+]
+
+# Two tables across two schemas: dbo.Orders (id INT), finance.Budget (amount DECIMAL(18,2))
+_BULK_ROWS: list[tuple[object, ...]] = [
+    ("dbo", "Orders", 1, "id", "int", 4, 10, 0, False, None, False, False),
+    ("finance", "Budget", 1, "amount", "decimal", 9, 18, 2, False, None, False, False),
+    (
+        "finance",
+        "Budget",
+        2,
+        "dept",
+        "nvarchar",
+        100,
+        0,
+        0,
+        True,
+        "Latin1_General_CI_AS",
+        False,
+        False,
+    ),
+]
+
+
+class TestGetColumnsForSchemas:
+    async def test_returns_empty_dict_for_no_tables(self) -> None:
+        with patch("fabric_dw.services.columns.run_query", return_value=(_BULK_COLS, [])):
+            result = await get_columns_for_schemas(_make_target())
+
+        assert result == {}
+
+    async def test_keys_by_schema_and_table(self) -> None:
+        with patch("fabric_dw.services.columns.run_query", return_value=(_BULK_COLS, _BULK_ROWS)):
+            result = await get_columns_for_schemas(_make_target())
+
+        assert ("dbo", "Orders") in result
+        assert ("finance", "Budget") in result
+
+    async def test_single_table_single_column(self) -> None:
+        with patch("fabric_dw.services.columns.run_query", return_value=(_BULK_COLS, _BULK_ROWS)):
+            result = await get_columns_for_schemas(_make_target())
+
+        orders_cols = result[("dbo", "Orders")]
+        assert len(orders_cols) == 1
+        assert orders_cols[0]["name"] == "id"
+        assert orders_cols[0]["data_type"] == "INT"
+        assert orders_cols[0]["nullable"] is False
+
+    async def test_multi_column_table_preserves_order(self) -> None:
+        with patch("fabric_dw.services.columns.run_query", return_value=(_BULK_COLS, _BULK_ROWS)):
+            result = await get_columns_for_schemas(_make_target())
+
+        budget_cols = result[("finance", "Budget")]
+        assert len(budget_cols) == 2
+        assert budget_cols[0]["name"] == "amount"
+        assert budget_cols[0]["data_type"] == "DECIMAL(18,2)"
+        assert budget_cols[1]["name"] == "dept"
+        assert budget_cols[1]["data_type"] == "NVARCHAR(50)"
+
+    async def test_formats_type_correctly(self) -> None:
+        """Ensure format_data_type is applied through the bulk path."""
+        rows: list[tuple[object, ...]] = [
+            ("dbo", "T", 1, "col", "nvarchar", 200, 0, 0, True, None, False, False),
+        ]
+        with patch("fabric_dw.services.columns.run_query", return_value=(_BULK_COLS, rows)):
+            result = await get_columns_for_schemas(_make_target())
+
+        assert result[("dbo", "T")][0]["data_type"] == "NVARCHAR(100)"
+
+    async def test_issues_single_query(self) -> None:
+        """Verify only one run_query call is made — no N+1."""
+        with patch(
+            "fabric_dw.services.columns.run_query", return_value=(_BULK_COLS, _BULK_ROWS)
+        ) as mock_rq:
+            await get_columns_for_schemas(_make_target())
+
+        assert mock_rq.call_count == 1
