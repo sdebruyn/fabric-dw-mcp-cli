@@ -8,22 +8,6 @@ Manage SQL audit settings for Microsoft Fabric Data Warehouses and SQL Analytics
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
-Per Microsoft Learn, SQL auditing applies to both item types
-("Applies to: ✅ SQL analytics endpoint and Warehouse in Microsoft Fabric").
-
-!!! note "SQL Analytics Endpoint limitations"
-    When auditing a SQL analytics endpoint, the following limitations apply:
-
-    - **DML operations are not captured.** `INSERT`, `UPDATE`, `DELETE`, and `MERGE` are not
-      recorded because data manipulation for Lakehouse tables occurs through the Lakehouse runtime,
-      not through the SQL analytics endpoint.
-    - **Direct access to the audit folder is not currently supported.** Users cannot browse or
-      download the underlying `.XEL` audit files from the Lakehouse audit folder.
-    - Audit events can still be queried via the T-SQL function `sys.fn_get_audit_file_v2`.
-
-    Source: [SQL audit logs in Fabric Data Warehouse — SQL analytics endpoint limitations](
-    https://learn.microsoft.com/fabric/data-warehouse/sql-audit-logs#limitations)
-
 ---
 
 ## CLI
