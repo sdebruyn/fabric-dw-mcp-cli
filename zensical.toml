@@ -40,7 +40,6 @@ nav = [
   { "Reference" = [
     { "Authentication" = "authentication.md" },
     { "MCP server setup" = "mcp.md" },
-    { "CLI & MCP by domain" = "reference/command-tool-reference.md" },
     { "Exit codes" = "reference/exit-codes.md" },
     { "Shell Completion" = "completion.md" },
     { "Troubleshooting" = "troubleshooting.md" }

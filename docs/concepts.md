@@ -4,7 +4,7 @@ title: Concepts
 
 # Concepts
 
-The sections below describe cross-cutting concepts that apply to all `fdw`/`fabric-dw` commands: how the CLI distinguishes between item kinds, which global flags are available on every invocation, and how the target workspace is resolved. Understanding these concepts first makes the rest of the [command & tool reference](reference/command-tool-reference.md) easier to follow.
+The sections below describe cross-cutting concepts that apply to all `fdw`/`fabric-dw` commands: how the CLI distinguishes between item kinds, which global flags are available on every invocation, and how the target workspace is resolved. Understanding these concepts first makes the rest of the documentation easier to follow.
 
 ---
 
