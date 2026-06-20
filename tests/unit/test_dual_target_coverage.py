@@ -61,6 +61,10 @@ _DUAL_TARGET_DOMAINS: dict[str, str] = {
     "statistics (list)": "test_services_statistics.py",
     "sql_exec (execute/plan)": "test_services_sql_exec.py",
     "dbt (generate_dbt_profile)": "test_services_dbt_scaffold.py",
+    # settings.get_settings is dual-target (sys.databases read works on both).
+    # set_result_set_caching / set_time_travel_retention are DWH-only (they call
+    # _assert_not_sql_endpoint); only the read leg needs endpoint coverage here.
+    "settings (get_settings)": "test_services_settings.py",
 }
 
 # The two fixture names that signal dual-target parametrization.

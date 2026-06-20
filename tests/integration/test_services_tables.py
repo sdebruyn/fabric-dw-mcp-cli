@@ -346,19 +346,16 @@ async def test_get_table_health_metrics_on_sql_endpoint(
             "colors",
             kind=WarehouseKind.SQL_ENDPOINT,
         )
-    except Exception as exc:
-        # sp_get_table_health_metrics is GA-announced but may not be available
-        # on all tenants yet.  Skip if the proc itself is absent; re-raise
-        # any other error (permission issue, identifier error, etc.).
-        msg_lower = str(exc).lower()
-        if "stored procedure" in msg_lower and (
-            "not available" in msg_lower or "not found" in msg_lower
-        ):
-            pytest.skip(
-                f"sp_get_table_health_metrics is not yet available on this tenant "
-                f"({exc}); skipping — re-run when the GA rollout reaches this tenant"
-            )
-        raise
+    except NotFoundError as exc:
+        # sp_get_table_health_metrics is GA-announced at Build 2026 but may not
+        # yet be deployed on all tenants.  SQL Server error 2812 ("Could not find
+        # stored procedure") is mapped to NotFoundError by map_driver_error()
+        # (see sql.py _NOT_FOUND_ERROR_NUMBERS), so we catch the typed exception
+        # rather than string-matching the raw driver message.
+        pytest.skip(
+            f"sp_get_table_health_metrics is not yet available on this tenant "
+            f"({exc}); skipping — re-run when the GA rollout reaches this tenant"
+        )
 
     # The proc must return at least one column (output schema is undocumented
     # but the proc is GA and always yields a result set when available).
