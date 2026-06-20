@@ -1076,7 +1076,7 @@ async def recluster_table(
     # All identifiers in the DDL below are bracket-quoted via quote_identifier and
     # validated via validate_identifier before being embedded.  The tmp_name is
     # purely lowercase hex (uuid4().hex[:12]) — no user input reaches these strings.
-    # noqa: S608  nosec B608 — all embedded values are safe; no user input is interpolated.
+    # nosec B608 — all embedded values are safe; no user input is interpolated.
     ctas_ddl = f"CREATE TABLE {tmp_q}{cluster_clause} AS SELECT * FROM {orig_q}"  # noqa: S608 # nosec B608
     drop_ddl = f"DROP TABLE {orig_q}"
     # sp_rename @objname = 'schema.tmp', @newname = 'orig', @objtype = 'OBJECT'
