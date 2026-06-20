@@ -1010,3 +1010,102 @@ class TestViewsRename:
                 ],
             )
         assert result.exit_code != 0
+
+
+# ===========================================================================
+# views columns
+# ===========================================================================
+
+_VIEW_COLUMNS_RESULT = [
+    {
+        "ordinal": 1,
+        "name": "id",
+        "data_type": "INT",
+        "nullable": False,
+        "collation_name": None,
+        "is_identity": False,
+        "is_computed": False,
+    },
+    {
+        "ordinal": 2,
+        "name": "label",
+        "data_type": "NVARCHAR(200)",
+        "nullable": True,
+        "collation_name": "Latin1_General_CI_AS",
+        "is_identity": False,
+        "is_computed": False,
+    },
+]
+
+
+class TestViewsColumns:
+    def test_columns_happy_path(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.views.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.cli.commands.views._get_columns",
+                new=AsyncMock(return_value=_VIEW_COLUMNS_RESULT),
+            ),
+        ):
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "views", "columns", WH_GUID, "dbo.vw_sales"]
+            )
+        assert result.exit_code == 0, result.output
+
+    def test_columns_json_output(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.views.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.cli.commands.views._get_columns",
+                new=AsyncMock(return_value=_VIEW_COLUMNS_RESULT),
+            ),
+        ):
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "--json", "views", "columns", WH_GUID, "dbo.vw_sales"]
+            )
+        assert result.exit_code == 0, result.output
+        parsed = json.loads(result.output)
+        assert isinstance(parsed, list)
+        assert parsed[0]["name"] == "id"
+        assert parsed[1]["data_type"] == "NVARCHAR(200)"
+
+    def test_columns_not_found(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.views.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.cli.commands.views._get_columns",
+                new=AsyncMock(side_effect=NotFoundError("View [dbo].[ghost] not found")),
+            ),
+        ):
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "views", "columns", WH_GUID, "dbo.ghost"]
+            )
+        assert result.exit_code != 0
+        assert "not found" in result.output.lower()

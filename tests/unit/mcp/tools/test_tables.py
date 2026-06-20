@@ -23,7 +23,7 @@ import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw.exceptions import ItemKindError, NotFoundError
-from fabric_dw.models import Table
+from fabric_dw.models import Table, WarehouseKind
 from tests.unit.mcp.conftest import (
     WH_NAME,
     WS_ID,
@@ -756,3 +756,100 @@ async def test_get_cluster_columns_fabric_error_becomes_tool_error(mock_ctx, ctx
             "get_cluster_columns",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.sales"},
         )
+
+
+# ---------------------------------------------------------------------------
+# get_table_columns — happy path + not found
+# ---------------------------------------------------------------------------
+
+_TABLE_COLUMNS = [
+    {
+        "ordinal": 1,
+        "name": "id",
+        "data_type": "INT",
+        "nullable": False,
+        "collation_name": None,
+        "is_identity": True,
+        "is_computed": False,
+    },
+    {
+        "ordinal": 2,
+        "name": "amount",
+        "data_type": "DECIMAL(18,2)",
+        "nullable": True,
+        "collation_name": None,
+        "is_identity": False,
+        "is_computed": False,
+    },
+]
+
+
+async def test_get_table_columns_happy_path(mock_ctx, ctx_patch) -> None:
+    """get_table_columns resolves workspace/item, calls service, returns list."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.mcp.tools.tables._get_columns",
+            new=AsyncMock(return_value=_TABLE_COLUMNS),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "get_table_columns",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.sales"},
+        )
+
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert result[0]["name"] == "id"
+    assert result[0]["data_type"] == "INT"
+    assert result[1]["data_type"] == "DECIMAL(18,2)"
+
+
+async def test_get_table_columns_not_found_raises_tool_error(mock_ctx, ctx_patch) -> None:
+    """get_table_columns raises ToolError when the table does not exist."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.mcp.tools.tables._get_columns",
+            new=AsyncMock(side_effect=NotFoundError("Table [dbo].[ghost] not found")),
+        ),
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "get_table_columns",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.ghost"},
+        )
+
+
+async def test_get_table_columns_works_on_sql_endpoint(mock_ctx, ctx_patch) -> None:
+    """get_table_columns has no SQL-endpoint guard — works on both targets."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(
+        return_value=make_item_entry(kind=WarehouseKind.SQL_ENDPOINT)
+    )
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.mcp.tools.tables._get_columns",
+            new=AsyncMock(return_value=_TABLE_COLUMNS),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "get_table_columns",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.sales"},
+        )
+
+    assert isinstance(result, list)

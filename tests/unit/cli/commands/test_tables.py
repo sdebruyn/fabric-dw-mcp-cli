@@ -2075,3 +2075,126 @@ class TestLoadCmdLocalStorageCredential:
             )
 
         close_spy.assert_awaited_once()
+
+
+# ===========================================================================
+# tables columns
+# ===========================================================================
+
+_COLUMNS_RESULT = [
+    {
+        "ordinal": 1,
+        "name": "id",
+        "data_type": "INT",
+        "nullable": False,
+        "collation_name": None,
+        "is_identity": True,
+        "is_computed": False,
+    },
+    {
+        "ordinal": 2,
+        "name": "amount",
+        "data_type": "DECIMAL(18,2)",
+        "nullable": True,
+        "collation_name": None,
+        "is_identity": False,
+        "is_computed": False,
+    },
+]
+
+
+class TestTablesColumns:
+    def test_columns_happy_path(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables._get_columns",
+                new=AsyncMock(return_value=_COLUMNS_RESULT),
+            ),
+        ):
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "tables", "columns", WH_GUID, "dbo.sales"]
+            )
+        assert result.exit_code == 0, result.output
+
+    def test_columns_json_output(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables._get_columns",
+                new=AsyncMock(return_value=_COLUMNS_RESULT),
+            ),
+        ):
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "--json", "tables", "columns", WH_GUID, "dbo.sales"]
+            )
+        assert result.exit_code == 0, result.output
+        parsed = json.loads(result.output)
+        assert isinstance(parsed, list)
+        assert parsed[0]["name"] == "id"
+        assert parsed[0]["data_type"] == "INT"
+        assert parsed[1]["data_type"] == "DECIMAL(18,2)"
+
+    def test_columns_not_found(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables._get_columns",
+                new=AsyncMock(side_effect=NotFoundError("Table [dbo].[ghost] not found")),
+            ),
+        ):
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "tables", "columns", WH_GUID, "dbo.ghost"]
+            )
+        assert result.exit_code != 0
+        assert "not found" in result.output.lower()
+
+    def test_columns_on_sql_endpoint(self, runner: CliRunner, cache_env: Path) -> None:
+        """columns works on SQL Analytics Endpoints (no endpoint guard)."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables._get_columns",
+                new=AsyncMock(return_value=_COLUMNS_RESULT),
+            ),
+        ):
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "--json", "tables", "columns", SE_GUID, "dbo.sales"]
+            )
+        assert result.exit_code == 0, result.output

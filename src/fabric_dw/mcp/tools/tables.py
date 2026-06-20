@@ -25,6 +25,7 @@ from fabric_dw.mcp._helpers import (
 )
 from fabric_dw.models import ColumnSpec
 from fabric_dw.services import tables as tables_svc
+from fabric_dw.services.columns import get_object_columns_or_raise as _get_columns
 
 __all__ = ["register"]
 
@@ -185,6 +186,42 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
+
+    @mcp.tool(name="get_table_columns")
+    async def get_table_columns(
+        workspace: str,
+        item: str,
+        qualified_name: str,
+    ) -> list[dict[str, Any]]:
+        """Return column metadata for a SQL table via ``sys.columns``.
+
+        Works on both Fabric Data Warehouses and SQL Analytics Endpoints.
+
+        Args:
+            workspace: Workspace name or GUID.
+            item: Warehouse or SQL endpoint name or GUID.
+            qualified_name: Dot-separated qualified table name, e.g. ``dbo.sales``.
+        """
+        schema, table_name = parse_qualified_name(qualified_name, kind="table")
+        assert_workspace_allowed(workspace)
+        ctx = get_context()
+        try:
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
+            assert_workspace_allowed(workspace, str(ws_id))
+            _log.debug(
+                "get_table_columns ws=%s item=%s table=%s.%s",
+                ws_id,
+                entry.id,
+                schema,
+                table_name,
+            )
+            target = make_sql_target(ws_id, entry, item)
+            result = await _get_columns(
+                target, schema, table_name, kind_label="table", mode=ctx.auth_mode
+            )
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        return result  # type: ignore[return-value]
 
     @mutating_tool(mcp, "create_table")
     async def create_table(

@@ -22,6 +22,7 @@ from fabric_dw.mcp._helpers import (
     tool_err,
 )
 from fabric_dw.services import views as views_svc
+from fabric_dw.services.columns import get_object_columns_or_raise as _get_columns
 
 __all__ = ["register"]
 
@@ -129,6 +130,42 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
         return {"schema": schema, "name": view_name, "row_count": row_count}
+
+    @mcp.tool(name="get_view_columns")
+    async def get_view_columns(
+        workspace: str,
+        item: str,
+        qualified_name: str,
+    ) -> list[dict[str, Any]]:
+        """Return column metadata for a SQL view via ``sys.columns``.
+
+        Works on both Fabric Data Warehouses and SQL Analytics Endpoints.
+
+        Args:
+            workspace: Workspace name or GUID.
+            item: Warehouse or SQL endpoint name or GUID.
+            qualified_name: Dot-separated qualified view name, e.g. ``dbo.vw_sales``.
+        """
+        schema, view_name = parse_qualified_name(qualified_name, kind="view")
+        assert_workspace_allowed(workspace)
+        ctx = get_context()
+        try:
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
+            assert_workspace_allowed(workspace, str(ws_id))
+            _log.debug(
+                "get_view_columns ws=%s item=%s view=%s.%s",
+                ws_id,
+                entry.id,
+                schema,
+                view_name,
+            )
+            target = make_sql_target(ws_id, entry, item)
+            result = await _get_columns(
+                target, schema, view_name, kind_label="view", mode=ctx.auth_mode
+            )
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        return result  # type: ignore[return-value]
 
     @mcp.tool(name="get_view")
     async def get_view(workspace: str, item: str, qualified_name: str) -> dict[str, Any]:

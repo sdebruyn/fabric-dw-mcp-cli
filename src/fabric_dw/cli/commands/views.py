@@ -20,6 +20,7 @@ from fabric_dw.cli.commands._utils import (
 )
 from fabric_dw.exceptions import FabricError
 from fabric_dw.services import views as _views_svc
+from fabric_dw.services.columns import get_object_columns_or_raise as _get_columns
 from fabric_dw.sql_io import OutputFormat, columns_rows_to_arrow, write_arrow
 
 
@@ -95,6 +96,35 @@ async def read_cmd(
             )
             arrow_table = columns_rows_to_arrow(columns, rows)
             write_arrow(arrow_table, effective_fmt, output_path)
+    except (ValueError, FabricError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+@views_group.command("columns")
+@click.argument("item", required=False, default=None)
+@click.argument("qualified_name")
+@click.pass_obj
+@coro
+async def columns_cmd(
+    ctx: CliContext,
+    item: str | None,
+    qualified_name: str,
+) -> None:
+    """List columns of QUALIFIED_NAME (schema.view) on ITEM."""
+    ws = resolve_workspace(ctx)
+    wh = resolve_warehouse_arg(ctx, item)
+    schema, view_name = parse_qualified_name(qualified_name, kind="view")
+    try:
+        async with build_http_client(ctx) as http:
+            target, _entry = await build_sql_target(http, ws, wh)
+            cols = await _get_columns(
+                target, schema, view_name, kind_label="view", mode=ctx.auth
+            )
+            render(
+                cols,
+                json_output=ctx.json_output,
+                table_title="Columns",
+            )
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 

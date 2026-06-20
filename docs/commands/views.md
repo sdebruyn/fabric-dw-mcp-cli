@@ -12,6 +12,35 @@ Manage SQL views on Microsoft Fabric Data Warehouses and SQL Analytics Endpoints
 
 ## CLI
 
+### views columns
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+List the columns of a view, including name, formatted data type, nullability, ordinal position, collation, identity, and computed flags.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] views columns [WAREHOUSE] QUALIFIED_NAME
+```
+
+`QUALIFIED_NAME` must be a dot-separated `schema.view_name` string, e.g. `dbo.vw_sales`.
+
+**Example**
+
+```shell
+fdw -w MyWorkspace views columns SalesWH dbo.vw_sales
+```
+
+```
+ ordinal  name    data_type     nullable  is_identity  is_computed  collation_name
+ -------  ------  ------------  --------  -----------  -----------  ----------------------------
+ 1        id      INT           False     False        False
+ 2        amount  DECIMAL(18,2) True      False        False
+```
+
+---
+
 ### views count
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -240,6 +269,32 @@ fdw -w MyWorkspace views update SalesWH dbo.vw_recent \
 ---
 
 ## MCP tools
+
+### get_view_columns
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Return column metadata for a SQL view via `sys.columns`. Works on both Fabric Data Warehouses and SQL Analytics Endpoints.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`) — dot-separated view name, e.g. `dbo.vw_sales`.
+
+**Returns:** `list[dict]` — one dict per column, each containing:
+
+- `ordinal` (`int`) — 1-based column position (`column_id`).
+- `name` (`str`) — column name.
+- `data_type` (`str`) — formatted T-SQL type string, e.g. `INT`, `NVARCHAR(MAX)`, `DECIMAL(18,2)`.
+- `nullable` (`bool`) — whether the column allows `NULL`.
+- `collation_name` (`str | null`) — collation name, if applicable.
+- `is_identity` (`bool`) — whether the column is an identity column.
+- `is_computed` (`bool`) — whether the column is a computed column.
+
+Results are ordered by ordinal position. Returns an empty list if the view does not exist.
+
+---
 
 ### count_view_rows
 
