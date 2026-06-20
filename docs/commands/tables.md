@@ -97,7 +97,7 @@ fdw [-w WORKSPACE] tables cluster-columns [WAREHOUSE] QUALIFIED_NAME
 **Example**
 
 ```shell
-fdw -w MyWorkspace tables cluster-columns SalesWH dbo.orders
+fdw -w MyWorkspace --json tables cluster-columns SalesWH dbo.orders
 ```
 
 ```json
@@ -160,7 +160,7 @@ fdw [-w WORKSPACE] tables count [WAREHOUSE] QUALIFIED_NAME
 **Example**
 
 ```shell
-fdw -w MyWorkspace tables count SalesWH dbo.orders
+fdw -w MyWorkspace --json tables count SalesWH dbo.orders
 ```
 
 ```json

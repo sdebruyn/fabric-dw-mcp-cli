@@ -56,7 +56,7 @@ fdw [-w WORKSPACE] views count [WAREHOUSE] QUALIFIED_NAME
 **Example**
 
 ```shell
-fdw -w MyWorkspace views count SalesWH dbo.vw_sales
+fdw -w MyWorkspace --json views count SalesWH dbo.vw_sales
 ```
 
 ```json

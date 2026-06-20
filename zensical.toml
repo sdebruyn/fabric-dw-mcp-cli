@@ -16,6 +16,7 @@ nav = [
   { "Install" = "install.md" },
   { "Concepts" = "concepts.md" },
   { "Commands" = [
+    { "Overview" = "commands/index.md" },
     { "Audit" = "commands/audit.md" },
     { "Cache" = "commands/cache.md" },
     { "Completion" = "commands/completion.md" },

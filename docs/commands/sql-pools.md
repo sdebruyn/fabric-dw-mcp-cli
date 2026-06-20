@@ -182,7 +182,7 @@ fdw [-w WORKSPACE] sql-pools list
 **Example**
 
 ```shell
-fdw -w MyWorkspace sql-pools list
+fdw -w MyWorkspace --json sql-pools list
 ```
 
 **Output**
