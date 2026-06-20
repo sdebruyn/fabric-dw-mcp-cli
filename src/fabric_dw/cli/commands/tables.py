@@ -378,6 +378,10 @@ async def create_cmd(  # noqa: PLR0912
     if all_varchar and not has_csv:
         raise click.UsageError("--all-varchar requires --from-csv.")
 
+    # --select and --from-file are mutually exclusive.
+    if select_body and from_file:
+        raise click.UsageError("Provide either --select or --from-file, not both.")
+
     try:
         async with build_http_client(ctx) as http:
             target, entry = await build_sql_target(http, ws, wh)
