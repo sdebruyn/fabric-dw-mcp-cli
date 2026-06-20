@@ -16,7 +16,15 @@ from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import SqlPool, SqlPoolsConfiguration
 from fabric_dw.services import sql_pools
 
-pytestmark = pytest.mark.integration
+# ``maxResourcePercentage`` is a single global budget per workspace (sum ≤ 100),
+# and every test here mutates the one shared ``FABRIC_TEST_WORKSPACE_ID`` config.
+# ``xdist_group`` pins the whole module onto a single xdist worker so these
+# config-mutating tests never run concurrently and cannot push the sum over 100
+# (e.g. a 100% default pool from one test coexisting with another's 10% create).
+# Requires ``--dist loadgroup`` for xdist to honour the group; the integration
+# workflow runs with that dist mode.  The ``_clean_stale_pools`` autouse sweep
+# below remains the safety net for pools left behind by an interrupted prior run.
+pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("sql_pools")]
 
 # Prefix used to identify pools created by test runs so stale pools can be
 # cleaned up before a new run tries to create pools with the same names or

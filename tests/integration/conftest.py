@@ -1141,15 +1141,51 @@ def read_target(
 # ---------------------------------------------------------------------------
 
 
-@pytest_asyncio.fixture(
+@pytest.fixture(
     params=[
         pytest.param(_PARAM_WAREHOUSE),
         pytest.param(_PARAM_SQL_ENDPOINT, marks=pytest.mark.sql_endpoint),
     ]
 )
-async def mutable_schema_target(
+def _mutable_schema_sql_target(
     request: pytest.FixtureRequest,
     shared_warehouse: SharedWarehouseTarget,
+) -> SqlTarget:
+    """Sync indirection that routes ``mutable_schema_target`` to the right SQL target.
+
+    Carries the ``[warehouse]`` / ``[sql_endpoint]`` parametrisation (and the
+    ``pytest.mark.sql_endpoint`` mark on the endpoint leg) and resolves the
+    ``shared_sql_endpoint`` session fixture LAZILY via ``request.getfixturevalue``
+    — mirroring the ``read_target`` path exactly.
+
+    Why this exists as a separate **sync** fixture
+    ----------------------------------------------
+    ``mutable_schema_target`` is an ``async`` fixture, so its setup runs inside a
+    running event loop.  Calling ``request.getfixturevalue("shared_sql_endpoint")``
+    (itself an async fixture) from there makes pytest-asyncio call ``runner.run()``
+    nested inside that loop, raising
+    ``RuntimeError: Runner.run() cannot be called from a running event loop``.
+    Resolving the endpoint here, in a **sync** fixture that the async fixture
+    depends on, materialises it OUTSIDE the loop and avoids the nesting.
+
+    The lazy-provisioning optimisation is preserved: ``shared_sql_endpoint`` is
+    intentionally NOT a signature parameter, so the ~6-min endpoint provisioning
+    never runs on the ``[warehouse]`` leg or during local ``-m "not sql_endpoint"``
+    runs.  The parametrisation marks propagate to the requesting test through the
+    fixture dependency closure.
+    """
+    if request.param == _PARAM_WAREHOUSE:
+        return shared_warehouse.sql_target
+    if request.param == _PARAM_SQL_ENDPOINT:
+        ep: SharedSqlEndpointTarget = request.getfixturevalue("shared_sql_endpoint")
+        return ep.sql_target
+    msg = f"Unknown mutable_schema_target param: {request.param!r}"
+    raise ValueError(msg)
+
+
+@pytest_asyncio.fixture
+async def mutable_schema_target(
+    _mutable_schema_sql_target: SqlTarget,
 ) -> AsyncIterator[tuple[SqlTarget, str]]:
     """Parametrized fixture that creates an isolated schema on each SQL target.
 
@@ -1166,24 +1202,18 @@ async def mutable_schema_target(
 
     Implementation note
     -------------------
-    ``shared_sql_endpoint`` is resolved LAZILY via ``request.getfixturevalue``
-    only on the ``sql_endpoint`` leg — identical pattern to ``read_target``.  It
-    is intentionally NOT declared as a signature parameter to avoid provisioning
-    the SQL analytics endpoint during local runs or the ``[warehouse]`` leg.
+    The parametrisation and lazy ``shared_sql_endpoint`` resolution live on the
+    sync :func:`_mutable_schema_sql_target` indirection fixture this depends on.
+    That keeps the async setup from resolving another async fixture from inside
+    the running event loop (which raised ``RuntimeError: Runner.run() cannot be
+    called from a running event loop``) while preserving the lazy-provisioning
+    optimisation.
 
     Both ``create_schema`` and ``delete_schema(cascade=True)`` are themselves
     dual-target (no ``_assert_not_sql_endpoint`` guard), so the isolation and
     teardown mechanism works identically on both targets.
     """
-    if request.param == _PARAM_WAREHOUSE:
-        sql_target = shared_warehouse.sql_target
-    elif request.param == _PARAM_SQL_ENDPOINT:
-        ep: SharedSqlEndpointTarget = request.getfixturevalue("shared_sql_endpoint")
-        sql_target = ep.sql_target
-    else:
-        msg = f"Unknown mutable_schema_target param: {request.param!r}"
-        raise ValueError(msg)
-
+    sql_target = _mutable_schema_sql_target
     schema_name = f"pytest_{uuid.uuid4().hex[:8]}"
     await schemas.create_schema(sql_target, schema_name)
     try:

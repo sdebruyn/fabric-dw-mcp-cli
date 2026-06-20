@@ -90,6 +90,34 @@ leg.  This prevents pytest from provisioning the SQL analytics endpoint
 `[warehouse]` leg — provisioning is paid only when the endpoint leg actually
 runs.
 
+`read_target` is a sync fixture, so its `getfixturevalue` runs outside any
+event loop.  `mutable_schema_target` is async, so it **must not** call
+`getfixturevalue` on the async `shared_sql_endpoint` itself — doing so makes
+pytest-asyncio call `runner.run()` nested inside the running loop and raises
+`RuntimeError: Runner.run() cannot be called from a running event loop`.
+Instead, the parametrisation and the lazy resolution live on a **sync**
+indirection fixture (`_mutable_schema_sql_target`) that the async fixture
+depends on, so the endpoint is materialised outside the loop while the marks
+still propagate through the dependency closure.
+
+**Rule of thumb:** never lazily resolve an async session fixture from inside an
+`async def` fixture.  Put the `getfixturevalue` call on a sync fixture and
+depend on it.
+
+## Parallelism and shared-budget tests
+
+The integration suite runs under `pytest-xdist` with `--dist loadgroup` (see
+`.github/workflows/integration.yml`).  `loadgroup` keeps xdist's work-stealing
+scheduler but guarantees that tests sharing an `xdist_group` mark run on the
+**same** worker.
+
+`test_services_sql_pools.py` carries `pytest.mark.xdist_group("sql_pools")` at
+module scope because every test there mutates the single shared workspace's
+`maxResourcePercentage` budget (a global per-workspace quota that must sum to
+≤ 100).  Pinning the module to one worker serialises those tests so a 100%
+default pool from one test can never coexist with another test's pool and push
+the sum over 100.
+
 ## Meta-guard
 
 `tests/unit/test_dual_target_coverage.py` contains a unit test

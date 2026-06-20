@@ -218,18 +218,23 @@ jobs:
             exit 1
           }
 
-          # Default dist mode is "load" (xdist default): work-stealing scheduler
-          # that keeps all workers busy.  This is the right choice here because
-          # test durations vary widely (snapshot/restore tests are 10x slower than
-          # query/schema tests).  "loadscope" would bin by module, which could
-          # serialise the slow tests onto one worker and starve the rest.
+          # Dist mode is "loadgroup": a work-stealing scheduler (like the default
+          # "load") that keeps all workers busy, with the one extra guarantee that
+          # tests sharing an xdist_group mark run on the SAME worker.  We need this
+          # for the sql_pools tests, which all mutate the single shared workspace's
+          # maxResourcePercentage budget (sum ≤ 100) and would collide if run
+          # concurrently; they carry @pytest.mark.xdist_group("sql_pools").
+          # "loadgroup" keeps the work-stealing behaviour the suite relies on
+          # (test durations vary widely — snapshot/restore tests are 10x slower
+          # than query/schema tests), unlike "loadscope" which would bin every
+          # module onto one worker and starve the rest.
 
           if [ -n "${PYTEST_K_INPUT}" ]; then
             echo "Running subset: -k '${PYTEST_K_INPUT}' with ${WORKERS} worker(s)"
-            uv run pytest tests/integration -m integration -v -n "${WORKERS}" -k "${PYTEST_K_INPUT}" --cov --cov-report=xml --cov-report=term --junitxml=junit.xml -o junit_family=legacy
+            uv run pytest tests/integration -m integration -v -n "${WORKERS}" --dist loadgroup -k "${PYTEST_K_INPUT}" --cov --cov-report=xml --cov-report=term --junitxml=junit.xml -o junit_family=legacy
           else
             echo "Running full integration suite with ${WORKERS} worker(s)"
-            uv run pytest tests/integration -m integration -v -n "${WORKERS}" --cov --cov-report=xml --cov-report=term --junitxml=junit.xml -o junit_family=legacy
+            uv run pytest tests/integration -m integration -v -n "${WORKERS}" --dist loadgroup --cov --cov-report=xml --cov-report=term --junitxml=junit.xml -o junit_family=legacy
           fi
 
       - name: Upload coverage reports to Codecov
