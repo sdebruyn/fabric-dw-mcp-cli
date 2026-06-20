@@ -23,7 +23,7 @@ import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw.exceptions import ItemKindError, NotFoundError
-from fabric_dw.models import Table, WarehouseKind
+from fabric_dw.models import Table
 from tests.unit.mcp.conftest import (
     WH_NAME,
     WS_ID,

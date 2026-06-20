@@ -65,8 +65,7 @@ _log = logging.getLogger(__name__)
 
 _SQL_ENDPOINT_READONLY_MSG = "SQL Endpoints are read-only; CREATE/DROP/TRUNCATE not supported"
 _SQL_ENDPOINT_CLUSTERING_MSG = (
-    "Data clustering is not supported on SQL Analytics Endpoints; "
-    "use a Fabric Data Warehouse"
+    "Data clustering is not supported on SQL Analytics Endpoints; use a Fabric Data Warehouse"
 )
 
 
@@ -335,9 +334,7 @@ async def get_cluster_columns(
             params=[schema, table_name],
             mode=mode,
         )
-        return [
-            {"column_name": str(row[0]), "clustering_ordinal": int(row[1])} for row in rows
-        ]
+        return [{"column_name": str(row[0]), "clustering_ordinal": int(row[1])} for row in rows]
 
     return await asyncio.to_thread(_run)
 
