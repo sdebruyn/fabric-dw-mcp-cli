@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -1725,3 +1726,179 @@ class TestCreateTableFromCsvClusterBy:
             await tables.create_table_from_csv(
                 target, "dbo", "sales", csv_file, cluster_by=["MissingCol"]
             )
+
+
+# ===========================================================================
+# recluster_table
+# ===========================================================================
+
+
+class TestReclusterTable:
+    async def test_happy_path_sql_order(self) -> None:
+        """CTAS → DROP → sp_rename in order; autocommit and commit_per_statement are False."""
+        target = _make_target()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        captured: list[list[str]] = []
+        captured_kwargs: list[dict[str, object]] = []
+
+        def _fake_run_statements(
+            _tgt: object,
+            stmts: list[str],
+            *,
+            mode: object = None,  # noqa: ARG001
+            autocommit: bool = False,
+            commit_per_statement: bool = True,
+        ) -> None:
+            captured.append(list(stmts))
+            captured_kwargs.append(
+                {"autocommit": autocommit, "commit_per_statement": commit_per_statement}
+            )
+
+        with (
+            patch("fabric_dw.services.tables.run_statements", side_effect=_fake_run_statements),
+            patch("fabric_dw.sql.open_connection", return_value=fetch_conn),
+        ):
+            await tables.recluster_table(
+                target, "dbo", "sales", cluster_by=["CustomerID", "SaleDate"]
+            )
+
+        assert len(captured) == 1
+        # Transactional guarantee: must use autocommit=False + commit_per_statement=False
+        assert captured_kwargs[0]["autocommit"] is False
+        assert captured_kwargs[0]["commit_per_statement"] is False
+        stmts = captured[0]
+        assert len(stmts) == 3
+
+        ctas, drop, rename = stmts
+
+        # CTAS: CREATE TABLE [dbo].[__recluster_<hex>] WITH (CLUSTER BY ...) AS SELECT *
+        assert ctas.startswith("CREATE TABLE [dbo].[__recluster_")
+        assert "WITH (CLUSTER BY ([CustomerID], [SaleDate]))" in ctas
+        assert "AS SELECT * FROM [dbo].[sales]" in ctas
+
+        # DROP: DROP TABLE [dbo].[sales]
+        assert drop == "DROP TABLE [dbo].[sales]"
+
+        # RENAME: sp_rename 'dbo.__recluster_<hex>', 'sales', 'OBJECT'
+        assert rename.startswith("EXEC sp_rename 'dbo.__recluster_")
+        assert rename.endswith(f"', '{tables.validate_identifier('sales')}', 'OBJECT'")
+
+        # Temp name in CTAS and sp_rename must match
+        tmp_in_ctas = re.search(r"\[(__recluster_[a-f0-9]{12})\]", ctas)
+        assert tmp_in_ctas is not None
+        assert tmp_in_ctas.group(1) in rename
+
+    async def test_remove_clustering_ctas_without_with(self) -> None:
+        """Called with no cluster_by → CTAS has no WITH (CLUSTER BY ...) clause."""
+        target = _make_target()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        captured: list[list[str]] = []
+
+        def _fake_run_statements(
+            _tgt: object,
+            stmts: list[str],
+            **_kwargs: object,
+        ) -> None:
+            captured.append(list(stmts))
+
+        with (
+            patch("fabric_dw.services.tables.run_statements", side_effect=_fake_run_statements),
+            patch("fabric_dw.sql.open_connection", return_value=fetch_conn),
+        ):
+            await tables.recluster_table(target, "dbo", "sales")
+
+        ctas = captured[0][0]
+        assert "WITH (CLUSTER BY" not in ctas
+        assert "AS SELECT * FROM [dbo].[sales]" in ctas
+
+    async def test_rollback_on_ctas_failure_drop_and_rename_not_run(self) -> None:
+        """When CTAS fails, run_statements raises before DROP/rename — no orphan table.
+
+        Asserts a single run_statements call (atomicity): all three DDL statements
+        are issued as ONE batch.  A split-into-3-calls impl would still pass the
+        error propagation check but break the transaction guarantee.
+        """
+        target = _make_target()
+        call_count = 0
+
+        def _fake_run_statements(
+            _tgt: object,
+            _stmts: list[str],
+            **_kwargs: object,
+        ) -> None:
+            nonlocal call_count
+            call_count += 1
+            raise RuntimeError("CTAS failed: syntax error")
+
+        with (
+            patch("fabric_dw.services.tables.run_statements", side_effect=_fake_run_statements),
+            pytest.raises(RuntimeError, match="CTAS failed"),
+        ):
+            await tables.recluster_table(target, "dbo", "sales")
+
+        # All three statements must have been submitted as a single batch
+        assert call_count == 1
+
+    async def test_rejects_sql_endpoint(self) -> None:
+        target = _make_target()
+        with pytest.raises(ItemKindError):
+            await tables.recluster_table(target, "dbo", "sales", kind=WarehouseKind.SQL_ENDPOINT)
+
+    async def test_more_than_four_cols_raises_before_ddl(self) -> None:
+        target = _make_target()
+        with (
+            patch("fabric_dw.services.tables.run_statements") as mock_rs,
+            pytest.raises(ValueError, match="at most 4"),
+        ):
+            await tables.recluster_table(
+                target, "dbo", "sales", cluster_by=["a", "b", "c", "d", "e"]
+            )
+        mock_rs.assert_not_called()
+
+    async def test_temp_name_matches_hex_pattern(self) -> None:
+        target = _make_target()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        captured: list[list[str]] = []
+
+        def _fake_run_statements(
+            _tgt: object,
+            stmts: list[str],
+            **_kwargs: object,
+        ) -> None:
+            captured.append(list(stmts))
+
+        with (
+            patch("fabric_dw.services.tables.run_statements", side_effect=_fake_run_statements),
+            patch("fabric_dw.sql.open_connection", return_value=fetch_conn),
+        ):
+            await tables.recluster_table(target, "dbo", "sales")
+
+        ctas = captured[0][0]
+        match = re.search(r"\[(__recluster_([a-f0-9]{12}))\]", ctas)
+        assert match is not None, f"temp name not found in CTAS: {ctas}"
+
+    async def test_uses_commit_per_statement_false(self) -> None:
+        """run_statements must be called with commit_per_statement=False."""
+        target = _make_target()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        call_kwargs: dict[str, object] = {}
+
+        def _fake_run_statements(
+            _tgt: object,
+            _stmts: list[str],
+            *,
+            mode: object = None,  # noqa: ARG001
+            autocommit: bool = False,
+            commit_per_statement: bool = True,
+        ) -> None:
+            call_kwargs["autocommit"] = autocommit
+            call_kwargs["commit_per_statement"] = commit_per_statement
+
+        with (
+            patch("fabric_dw.services.tables.run_statements", side_effect=_fake_run_statements),
+            patch("fabric_dw.sql.open_connection", return_value=fetch_conn),
+        ):
+            await tables.recluster_table(target, "dbo", "sales")
+
+        assert call_kwargs["autocommit"] is False
+        assert call_kwargs["commit_per_statement"] is False

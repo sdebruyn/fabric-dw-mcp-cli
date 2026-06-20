@@ -1999,3 +1999,107 @@ async def test_get_query_plan_no_connection_string_raises_tool_error(mock_ctx, c
             "get_query_plan",
             {"workspace": _WS_NAME, "item": _WH_NAME, "query": "SELECT 1"},
         )
+
+
+# ===========================================================================
+# set_cluster_columns
+# ===========================================================================
+
+
+def _make_reclustered_table() -> Table:
+    _now = datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC)
+    return Table(
+        schema_name="dbo",
+        name="sales",
+        qualified_name="dbo.sales",
+        created=_now,
+        modified=_now,
+    )
+
+
+async def test_set_cluster_columns_requires_destructive_flag() -> None:
+    """set_cluster_columns raises ToolError without FABRIC_MCP_ALLOW_DESTRUCTIVE=1."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    env_copy = {k: v for k, v in os.environ.items() if k != "FABRIC_MCP_ALLOW_DESTRUCTIVE"}
+    with (
+        patch.dict(os.environ, env_copy, clear=True),
+        pytest.raises(ToolError, match="FABRIC_MCP_ALLOW_DESTRUCTIVE"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "set_cluster_columns",
+            {
+                "workspace": _WS_NAME,
+                "item": _WH_NAME,
+                "qualified_name": "dbo.sales",
+                "cluster_by": ["CustomerID"],
+            },
+        )
+
+
+async def test_set_cluster_columns_happy_path(mock_ctx, ctx_patch) -> None:
+    """set_cluster_columns resolves workspace + item and returns a Table dict."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=_make_item_entry())
+    mock_recluster = AsyncMock(return_value=_make_reclustered_table())
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
+        patch("fabric_dw.services.tables.recluster_table", new=mock_recluster),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "set_cluster_columns",
+            {
+                "workspace": _WS_NAME,
+                "item": _WH_NAME,
+                "qualified_name": "dbo.sales",
+                "cluster_by": ["CustomerID", "SaleDate"],
+            },
+        )
+
+    assert isinstance(result, dict)
+    assert result["name"] == "sales"
+    mock_recluster.assert_called_once()
+    args, kwargs = mock_recluster.call_args
+    # schema and table_name must be forwarded as positional args (wiring check)
+    assert args[1] == "dbo"
+    assert args[2] == "sales"
+    assert kwargs.get("cluster_by") == ["CustomerID", "SaleDate"]
+
+
+async def test_set_cluster_columns_sql_endpoint_raises_tool_error(mock_ctx, ctx_patch) -> None:
+    """set_cluster_columns raises ToolError when the item is a SQL Endpoint.
+
+    FABRIC_MCP_ALLOW_DESTRUCTIVE=1 is set so the destructive guard passes and
+    the SQL-endpoint clustering guard fires instead.
+    """
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(
+        return_value=_make_sql_endpoint_entry(item_id=_WH_ID, display_name="SalesLakehouse")
+    )
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "set_cluster_columns",
+            {
+                "workspace": _WS_NAME,
+                "item": "SalesLakehouse",
+                "qualified_name": "dbo.sales",
+            },
+        )
+
+    err_str = str(exc_info.value).lower()
+    assert "sql endpoint" in err_str or "itemkinderror" in err_str

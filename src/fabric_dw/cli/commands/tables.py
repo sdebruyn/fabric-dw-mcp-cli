@@ -563,6 +563,78 @@ async def clear_cmd(
         raise click.ClickException(str(exc)) from exc
 
 
+@tables_group.command("cluster-by")
+@click.argument("item", required=False, default=None)
+@click.argument("qualified_name")
+@click.option(
+    "--cluster-by",
+    "cluster_by",
+    multiple=True,
+    metavar="COL",
+    help=("Column name for CLUSTER BY (repeatable, up to 4). Omit entirely to remove clustering."),
+)
+@click.pass_obj
+@coro
+async def cluster_by_cmd(
+    ctx: CliContext,
+    item: str | None,
+    qualified_name: str,
+    cluster_by: tuple[str, ...],
+) -> None:
+    """Change the data-clustering of QUALIFIED_NAME (schema.table) on ITEM.
+
+    Re-builds the table via a transactional CTAS-swap:
+
+    \b
+    1. CREATE TABLE [schema].[__recluster_<hex>] [WITH (CLUSTER BY (...))] AS SELECT * FROM orig
+    2. DROP TABLE [schema].[orig]
+    3. EXEC sp_rename to restore the original name
+
+    All three steps run inside ONE transaction.  Any failure rolls back
+    automatically — no orphan temp table is left behind.
+
+    Pass one or more --cluster-by COL flags to set new clustering columns.
+    Omit --cluster-by entirely to remove clustering (rebuilds without CLUSTER BY).
+
+    \b
+    WARNING: Dependent views and stored procedures that reference this table by
+    name are NOT automatically updated by sp_rename and may need refreshing.
+
+    Only supported on Fabric Data Warehouses (not SQL Analytics Endpoints).
+    This operation copies the full table — runtime is proportional to table size.
+    """
+    ws = resolve_workspace(ctx)
+    wh = resolve_warehouse_arg(ctx, item)
+    schema, table_name = parse_qualified_name(qualified_name, kind="table")
+    cluster_by_list: list[str] | None = list(cluster_by) or None
+    try:
+        async with build_http_client(ctx) as http:
+            target, entry = await build_sql_target(http, ws, wh)
+            if not confirm_destructive(
+                f"Re-cluster [{schema}].[{table_name}] on {entry.display_name!r}? "
+                "This copies the full table.",
+                yes=ctx.yes,
+            ):
+                click.echo("Aborted.")
+                return
+            click.echo(
+                "WARNING: Dependent views and stored procedures referencing this table "
+                "are NOT updated by sp_rename and may need refreshing.",
+                err=True,
+            )
+            t = await _tables_svc.recluster_table(
+                target,
+                schema,
+                table_name,
+                cluster_by=cluster_by_list,
+                kind=entry.kind,
+                mode=ctx.auth,
+            )
+            render(t.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
+    except (ValueError, FabricError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
 @tables_group.command("cluster-columns")
 @click.argument("item", required=False, default=None)
 @click.argument("qualified_name")

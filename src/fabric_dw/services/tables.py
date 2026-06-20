@@ -14,6 +14,7 @@ Public API
 - :func:`delete_table`            — ``DROP TABLE [schema].[table]``.
 - :func:`clear_table`             — ``TRUNCATE TABLE [schema].[table]``.
 - :func:`rename_table`            — ``EXEC sp_rename`` (Data-Warehouse-only).
+- :func:`recluster_table`         — transactional CTAS-swap to change (or remove) clustering.
 
 List-source note
 ----------------
@@ -30,13 +31,14 @@ import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import cast
+from uuid import uuid4
 
 from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import ItemKindError, NotFoundError
 from fabric_dw.identifiers import parse_qualified_name, quote_identifier, validate_identifier
 from fabric_dw.models import ColumnSpec, Table, WarehouseKind
 from fabric_dw.services._helpers import reject_non_select
-from fabric_dw.sql import SqlTarget, run_query
+from fabric_dw.sql import SqlTarget, run_query, run_statements
 from fabric_dw.types import arrow_type_to_tsql, validate_tsql_type
 
 __all__ = [
@@ -53,6 +55,7 @@ __all__ = [
     "infer_columns_from_parquet",
     "list_tables",
     "read_table",
+    "recluster_table",
     "rename_table",
     "validate_identifier",
 ]
@@ -990,6 +993,113 @@ async def clear_table(
         run_query(target, ddl, mode=mode, commit=True, fetch="none")
 
     await asyncio.to_thread(_run)
+
+
+async def recluster_table(
+    target: SqlTarget,
+    schema: str,
+    table_name: str,
+    *,
+    cluster_by: list[str] | None = None,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
+    mode: CredentialMode = CredentialMode.DEFAULT,
+) -> Table:
+    """Re-cluster an existing table via a transactional CTAS-swap.
+
+    Rebuilds *schema*.*table_name* with a new ``CLUSTER BY`` column set (or
+    removes clustering entirely when *cluster_by* is ``None`` or empty).  The
+    operation is atomic: all three DDL steps execute inside a single implicit
+    transaction on ONE connection with ``autocommit=False``.  Any failure before
+    the final ``COMMIT`` automatically rolls back, leaving no orphan temp table.
+
+    The three steps issued in order::
+
+        CREATE TABLE [schema].[__recluster_<12hex>]
+            [WITH (CLUSTER BY ([c1],[c2]))]
+            AS SELECT * FROM [schema].[orig];
+        DROP TABLE [schema].[orig];
+        EXEC sp_rename 'schema.__recluster_<12hex>', 'orig', 'OBJECT';
+        -- driver commits here (commit_per_statement=False)
+
+    The temp name is ``__recluster_<uuid4().hex[:12]>`` — a 12-character hex
+    suffix that makes collisions practically impossible.
+
+    .. warning::
+
+        Dependent views and stored procedures that reference *schema*.*table_name*
+        by name are NOT automatically updated by ``sp_rename``.  After
+        re-clustering you may need to refresh them manually.
+
+    Args:
+        target: The warehouse to connect to.
+        schema: The schema name.  Must pass :func:`validate_identifier`.
+        table_name: The table name.  Must pass :func:`validate_identifier`.
+        cluster_by: New list of column names for the ``CLUSTER BY`` clause
+            (up to 4).  Pass ``None`` or an empty list to remove clustering
+            (CTAS without ``WITH (CLUSTER BY …)``).  Column existence is
+            NOT validated — columns come from ``SELECT *``.
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
+            SQL Endpoint items are rejected.
+        mode: The credential mode for Entra authentication.
+
+    Returns:
+        A :class:`~fabric_dw.models.Table` reflecting the re-clustered table
+        (fetched via ``sys.tables`` after the swap).
+
+    Raises:
+        ItemKindError: If *kind* is :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
+        ValueError: If *schema* or *table_name* fails identifier validation, or
+            if more than 4 *cluster_by* columns are supplied, or if any
+            *cluster_by* name fails identifier validation.
+        PermissionDeniedError: If the driver reports a permission error.
+    """
+    _assert_not_sql_endpoint(kind)
+
+    validate_identifier(schema)
+    validate_identifier(table_name)
+
+    # Validate cluster_by up-front (before any DDL) — raises ValueError if >4 cols.
+    # Pass known_cols=None: column existence is not validated for CTAS (columns come
+    # from SELECT * on the original table, which is not known at call time).
+    cluster_clause = _build_cluster_by_clause(cluster_by, known_cols=None)
+
+    schema_q = quote_identifier(schema)
+    orig_q = f"{schema_q}.{quote_identifier(table_name)}"
+
+    # Generate a unique temporary table name.  12 hex characters = 48 bits of
+    # randomness, negligible collision probability within one warehouse.
+    tmp_name = f"__recluster_{uuid4().hex[:12]}"
+    tmp_q = f"{schema_q}.{quote_identifier(tmp_name)}"
+    tmp_objname = f"{schema}.{tmp_name}"  # unquoted, for sp_rename @objname param
+
+    # All identifiers in the DDL below are bracket-quoted via quote_identifier and
+    # validated via validate_identifier before being embedded.  The tmp_name is
+    # purely lowercase hex (uuid4().hex[:12]) — no user input reaches these strings.
+    # nosec B608 — all embedded values are safe; no user input is interpolated.
+    ctas_ddl = f"CREATE TABLE {tmp_q}{cluster_clause} AS SELECT * FROM {orig_q}"  # noqa: S608 # nosec B608
+    drop_ddl = f"DROP TABLE {orig_q}"
+    # Use _SP_RENAME_SQL as a template: replace the two ? placeholders with the
+    # SQL-string-literal form of each argument.  Both values are validated
+    # identifiers (or a hex-only tmp_name), so single-quote escaping is a
+    # no-op in practice — it is kept for defense-in-depth consistency with the
+    # parameterised path used by rename_table.
+    _obj_escaped = tmp_objname.replace("'", "''")
+    _new_escaped = table_name.replace("'", "''")
+    rename_ddl = _SP_RENAME_SQL.replace("?", f"'{_obj_escaped}'", 1).replace(
+        "?", f"'{_new_escaped}'", 1
+    )
+
+    def _run() -> None:
+        run_statements(
+            target,
+            [ctas_ddl, drop_ddl, rename_ddl],
+            mode=mode,
+            autocommit=False,
+            commit_per_statement=False,
+        )
+
+    await asyncio.to_thread(_run)
+    return await _fetch_table(target, schema, table_name, mode=mode)
 
 
 async def rename_table(

@@ -2194,3 +2194,182 @@ class TestTablesColumns:
                 cli, ["-w", WS_GUID, "--json", "tables", "columns", SE_GUID, "dbo.sales"]
             )
         assert result.exit_code == 0, result.output
+
+
+# ===========================================================================
+# tables cluster-by
+# ===========================================================================
+
+
+class TestTablesClusterBy:
+    def test_requires_confirmation_without_yes(self, runner: CliRunner, cache_env: Path) -> None:
+        """Without --yes, the user is prompted; declining aborts cleanly (exit 0)."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", WS_GUID, "tables", "cluster-by", WH_GUID, "dbo.sales"],
+                input="n\n",
+            )
+        assert result.exit_code == 0
+        assert "Aborted." in result.output
+        # The dependent-views warning (sp_rename caveat) must NOT appear on abort —
+        # it is only emitted when the swap actually proceeds.
+        # Note: confirm_destructive itself prints "WARNING: <prompt>" — that is distinct
+        # from the sp_rename caveat and is expected to appear on every invocation.
+        assert "sp_rename" not in result.output
+
+    def test_yes_flag_skips_confirmation(self, runner: CliRunner, cache_env: Path) -> None:
+        """--yes bypasses the prompt and calls recluster_table."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_recluster = AsyncMock(return_value=_make_table())
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch("fabric_dw.services.tables.recluster_table", new=mock_recluster),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "--yes",
+                    "tables",
+                    "cluster-by",
+                    WH_GUID,
+                    "dbo.sales",
+                    "--cluster-by",
+                    "CustomerID",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        mock_recluster.assert_awaited_once()
+
+    def test_happy_path_passes_cluster_by_cols(self, runner: CliRunner, cache_env: Path) -> None:
+        """cluster_by columns are passed correctly to the service."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_recluster = AsyncMock(return_value=_make_table())
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch("fabric_dw.services.tables.recluster_table", new=mock_recluster),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "--yes",
+                    "tables",
+                    "cluster-by",
+                    WH_GUID,
+                    "dbo.sales",
+                    "--cluster-by",
+                    "CustomerID",
+                    "--cluster-by",
+                    "SaleDate",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        _tgt, schema, table_name = mock_recluster.call_args.args
+        assert schema == "dbo"
+        assert table_name == "sales"
+        assert mock_recluster.call_args.kwargs["cluster_by"] == ["CustomerID", "SaleDate"]
+
+    def test_no_cluster_by_passes_none(self, runner: CliRunner, cache_env: Path) -> None:
+        """Omitting --cluster-by passes None (remove clustering)."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_recluster = AsyncMock(return_value=_make_table())
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch("fabric_dw.services.tables.recluster_table", new=mock_recluster),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", WS_GUID, "--yes", "tables", "cluster-by", WH_GUID, "dbo.sales"],
+            )
+        assert result.exit_code == 0, result.output
+        assert mock_recluster.call_args.kwargs.get("cluster_by") is None
+
+    def test_sql_endpoint_rejected(self, runner: CliRunner, cache_env: Path) -> None:
+        """SQL Analytics Endpoints are rejected (ItemKindError from service)."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.recluster_table",
+                new=AsyncMock(side_effect=ItemKindError("clustering")),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", WS_GUID, "--yes", "tables", "cluster-by", SE_GUID, "dbo.sales"],
+            )
+        assert result.exit_code != 0
+
+    def test_always_prints_warning(self, runner: CliRunner, cache_env: Path) -> None:
+        """The dependent-views warning is emitted when the swap proceeds; not --verbose gated."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_recluster = AsyncMock(return_value=_make_table())
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch("fabric_dw.services.tables.recluster_table", new=mock_recluster),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", WS_GUID, "--yes", "tables", "cluster-by", WH_GUID, "dbo.sales"],
+            )
+        assert result.exit_code == 0, result.output
+        # The warning is emitted via click.echo(..., err=True); CliRunner captures
+        # both stdout and stderr in result.output by default (mix_stderr=True is the
+        # default on the runner fixture).
+        assert "WARNING" in result.output
+        assert "sp_rename" in result.output
