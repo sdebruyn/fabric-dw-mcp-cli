@@ -67,9 +67,9 @@ fdw [-w WORKSPACE] sql plan [OPTIONS] [ITEM]
 | --- | --- |
 | `-q` / `--query TEXT` | SQL statement to plan. |
 | `-f` / `--file PATH` | Path to a `.sql` file to plan. |
-| `-o` / `--output PATH` | Write the output to this file (stdout otherwise). For raw XML a `.sqlplan` extension is recommended; for `--format mermaid` any text extension works. |
+| `-o` / `--output PATH` | Write the output to this file (stdout otherwise). For raw XML a `.sqlplan` extension is recommended; for `--format mermaid` or `--format dot` any text extension works. |
 | `--raw` / `--xml` | Print the raw SHOWPLAN XML to stdout (or to `-o` file). Useful for piping or inspection. |
-| `--format [mermaid]` | Export format for the execution plan. See [Export formats](#export-formats) below. |
+| `--format [mermaid\|dot]` | Export format for the execution plan. See [Export formats](#export-formats) below. |
 
 Pass the root `--json` flag to emit the parsed operator tree as machine-readable JSON instead of the Rich tree.
 
@@ -80,6 +80,7 @@ Pass the root `--json` flag to emit the parsed operator tree as machine-readable
 | `--raw` / `--xml` | raw XML to stdout | raw XML to file |
 | `--json` (root flag) | JSON to stdout | JSON to file |
 | `--format mermaid` | Mermaid diagram to stdout | Mermaid diagram to file |
+| `--format dot` | DOT digraph to stdout | DOT digraph to file |
 | default | Rich tree to terminal | raw XML to file, no tree rendered |
 
 When `-o` is given, only a short confirmation is printed to stdout; the representation itself goes to the file only.
@@ -107,9 +108,40 @@ fdw -w MyWorkspace sql plan SalesWH -q "SELECT TOP 5 * FROM dbo.Sales" --format 
 
 # Save a Mermaid diagram to file (no stdout output)
 fdw -w MyWorkspace sql plan SalesWH -q "SELECT TOP 5 * FROM dbo.Sales" --format mermaid -o plan.md
+
+# Emit a Graphviz DOT digraph to stdout
+fdw -w MyWorkspace sql plan SalesWH -q "SELECT TOP 5 * FROM dbo.Sales" --format dot
+
+# Save a DOT graph to file and render to SVG (requires Graphviz)
+fdw -w MyWorkspace sql plan SalesWH -q "SELECT TOP 5 * FROM dbo.Sales" --format dot -o plan.dot
 ```
 
 #### Export formats
+
+##### dot
+
+`--format dot` renders the execution plan as a [Graphviz](https://graphviz.org/) `digraph` (plain text, no extra Python dependencies).
+
+Each operator appears as a node labelled with its physical op name (and logical op when different), the humanised estimated row count, and the cost percentage.  Parent→child edges show the data flow.  One `digraph` block is emitted per statement in the batch, separated by a blank line.
+
+**Viewing the output**
+
+- Pipe the output to `dot -Tsvg -o plan.svg` (requires [Graphviz](https://graphviz.org/) installed locally).
+- Paste into an online viewer such as [Graphviz Online](https://dreampuf.github.io/GraphvizOnline/) for an interactive preview.
+
+**Example output**
+
+```dot
+digraph stmt0 {
+    S0N0 [label="Hash Match / Inner Join\n5.0K  6.7%"];
+    S0N1 [label="Clustered Index Scan\n10.0K  60.0%"];
+    S0N2 [label="Clustered Index Scan\n3.0K  33.3%"];
+    S0N0 -> S0N1;
+    S0N0 -> S0N2;
+}
+```
+
+---
 
 ##### mermaid
 
