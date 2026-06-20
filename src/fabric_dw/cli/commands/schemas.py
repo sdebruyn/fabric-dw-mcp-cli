@@ -102,8 +102,7 @@ async def delete_cmd(
             if cascade:
                 prompt = (
                     f"--cascade will permanently drop all tables, views, functions, "
-                    f"and stored procedures in schema [{name}] on {entry.display_name!r}. "
-                    + prompt
+                    f"and stored procedures in schema [{name}] on {entry.display_name!r}. " + prompt
                 )
             if not confirm_destructive(prompt, yes=ctx.yes):
                 click.echo("Aborted.")
