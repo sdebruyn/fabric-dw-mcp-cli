@@ -200,7 +200,7 @@ async def test_delete_schema_cascade_drops_table(
         with contextlib.suppress(Exception):
             await tables.delete_table(sql_target, schema_name, table_name)
         with contextlib.suppress(Exception):
-            await schemas.delete_schema(sql_target, schema_name)
+            await schemas.delete_schema(sql_target, schema_name, cascade=True)
 
 
 async def test_delete_schema_cascade_drops_view_on_endpoint(
@@ -234,7 +234,7 @@ async def test_delete_schema_cascade_drops_view_on_endpoint(
         with contextlib.suppress(Exception):
             await views.drop_view(sql_target, schema_name, view_name)
         with contextlib.suppress(Exception):
-            await schemas.delete_schema(sql_target, schema_name)
+            await schemas.delete_schema(sql_target, schema_name, cascade=True)
 
 
 async def test_delete_plain_schema_no_cascade(

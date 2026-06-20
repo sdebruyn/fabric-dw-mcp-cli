@@ -28,11 +28,10 @@ pytestmark = pytest.mark.integration
 
 
 async def test_list_views_returns_list(
-    mutable_schema_target: tuple[SqlTarget, str],
+    read_target: SqlTarget,
 ) -> None:
     """list_views on either target must return a list (may be non-empty)."""
-    sql_target, _schema = mutable_schema_target
-    result = await views.list_views(sql_target)
+    result = await views.list_views(read_target)
     assert isinstance(result, list)
 
 

@@ -32,11 +32,10 @@ pytestmark = pytest.mark.integration
 
 
 async def test_list_procedures_returns_list(
-    mutable_schema_target: tuple[SqlTarget, str],
+    read_target: SqlTarget,
 ) -> None:
-    """list_procedures on the shared warehouse must return a list."""
-    sql_target, _schema = mutable_schema_target
-    result = await procedures.list_procedures(sql_target)
+    """list_procedures on either target must return a list."""
+    result = await procedures.list_procedures(read_target)
     assert isinstance(result, list)
 
 

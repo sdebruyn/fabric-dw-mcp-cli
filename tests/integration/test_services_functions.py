@@ -64,11 +64,10 @@ RETURN (SELECT 1 AS id WHERE 1 >= @min_val)
 
 
 async def test_list_functions_returns_list(
-    mutable_schema_target: tuple[SqlTarget, str],
+    read_target: SqlTarget,
 ) -> None:
-    """list_functions on the shared warehouse must return a (possibly empty) list."""
-    sql_target, _schema = mutable_schema_target
-    result = await functions.list_functions(sql_target)
+    """list_functions on either target must return a (possibly empty) list."""
+    result = await functions.list_functions(read_target)
     assert isinstance(result, list)
 
 

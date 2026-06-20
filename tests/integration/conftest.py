@@ -72,7 +72,8 @@ _SNAP_SQL_READINESS_POLL_S = 5.0
 
 # Name of the read-only seed schema pre-populated in the shared warehouse.
 # Tests that only READ data (list / get / query) may use this schema directly.
-# Tests that mutate state MUST use the ``warehouse_schema`` fixture instead.
+# Dual-target mutating tests MUST use the ``mutable_schema_target`` fixture;
+# ``warehouse_schema`` is for DWH-only DDL (e.g. tables) only.
 SEED_SCHEMA_NAME = "sample"
 
 
@@ -1115,7 +1116,7 @@ def read_target(
     to refer to it in assertions.
 
     **Tests that request this fixture MUST NOT mutate the seed schema.**
-    Mutating dual-target tests will use a future fixture (see #592).
+    Mutating dual-target tests use the ``mutable_schema_target`` fixture instead.
 
     Implementation note
     -------------------
