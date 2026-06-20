@@ -1482,9 +1482,7 @@ class TestBuildClusterByClause:
     def test_four_cols_allowed(self) -> None:
         cols = ["a", "b", "c", "d"]
         result = tables._build_cluster_by_clause(cols, None)
-        assert "CLUSTER BY" in result
-        assert "[a]" in result
-        assert "[d]" in result
+        assert result == " WITH (CLUSTER BY ([a], [b], [c], [d]))"
 
     def test_five_cols_raises(self) -> None:
         with pytest.raises(ValueError, match="at most 4 columns"):
@@ -1505,6 +1503,21 @@ class TestBuildClusterByClause:
     def test_clause_has_leading_space(self) -> None:
         result = tables._build_cluster_by_clause(["col"], None)
         assert result.startswith(" ")
+
+    def test_case_insensitive_match_accepted(self) -> None:
+        """'customerid' must match a known column 'CustomerID' (T-SQL is case-insensitive)."""
+        result = tables._build_cluster_by_clause(["customerid"], ["CustomerID", "SaleDate"])
+        # User's original casing is preserved in the quoted DDL.
+        assert result == " WITH (CLUSTER BY ([customerid]))"
+
+    def test_case_insensitive_uppercase_accepted(self) -> None:
+        result = tables._build_cluster_by_clause(["SALEDATE"], ["CustomerID", "SaleDate"])
+        assert result == " WITH (CLUSTER BY ([SALEDATE]))"
+
+    def test_case_mismatch_raises_when_truly_missing(self) -> None:
+        """A column that genuinely doesn't exist must still raise."""
+        with pytest.raises(ValueError, match="not defined in the table schema"):
+            tables._build_cluster_by_clause(["TotallyMissing"], ["id", "name"])
 
 
 # ===========================================================================

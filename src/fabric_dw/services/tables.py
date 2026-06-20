@@ -369,10 +369,12 @@ def _build_cluster_by_clause(
         msg = f"CLUSTER BY supports at most 4 columns; got {len(cluster_by)}"
         raise ValueError(msg)
 
+    known_lower: set[str] = {n.casefold() for n in known_cols} if known_cols is not None else set()
+
     quoted: list[str] = []
     for col in cluster_by:
         validate_identifier(col)
-        if known_cols is not None and col not in known_cols:
+        if known_cols is not None and col.casefold() not in known_lower:
             available = ", ".join(known_cols)
             msg = (
                 f"CLUSTER BY column {col!r} is not defined in the table schema. "

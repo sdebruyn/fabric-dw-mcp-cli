@@ -966,7 +966,7 @@ async def load_cmd(  # noqa: PLR0912
                         varchar_length,
                         sample_rows,
                         cleanup_on_failure,
-                        list(cluster_by) or None,
+                        cluster_by=list(cluster_by) or None,
                     )
                 else:
                     result = await _load_cmd_local(

@@ -1284,6 +1284,16 @@ async def create_and_load(
                 "Use --if-exists append/truncate/replace to handle existing tables."
             )
             raise ValueError(msg)
+        # Guard: CLUSTER BY can only be applied when a table is (re)created.
+        # truncate keeps the existing schema; append leaves the table as-is.
+        # Neither recreates the table, so cluster_by would be silently ignored.
+        if cluster_by and if_exists in ("truncate", "append"):
+            msg = (
+                "CLUSTER BY can only be applied when the table is created; "
+                f"it cannot be combined with --if-exists {if_exists!r} on an existing table. "
+                "Use --if-exists replace (or drop the table first)."
+            )
+            raise ValueError(msg)
         if if_exists == "truncate":
             _logger.info("create_and_load: TRUNCATE TABLE [%s].[%s]", schema, table)
             await _truncate_table_sql(target, schema, table, mode=mode)
