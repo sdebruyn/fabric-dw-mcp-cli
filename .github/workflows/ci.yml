@@ -128,12 +128,23 @@ jobs:
       # chain will exit non-zero and fail the job.
       - run: uv run --no-dev fabric-dw --help
       - run: uv run --no-dev fabric-dw-mcp --help
-      # Verify the vendored html-query-plan assets (including dist/qp.min.js,
-      # which lives under a .gitignore-excluded path) were correctly packaged
-      # and are accessible from the installed package via importlib.resources.
-      # This would fail if the hatch artifacts= entry were removed.
-      - run: |
-          uv run --no-dev python -c "
+      # Verify that the vendored html-query-plan assets (including dist/qp.min.js,
+      # which lives under a .gitignore-excluded path) are correctly packaged in the
+      # wheel and accessible via importlib.resources from an INSTALLED copy.
+      #
+      # IMPORTANT: uv sync --no-dev installs the project in editable mode (src/
+      # mounted), so it reads assets straight from the working tree and cannot
+      # detect packaging gaps.  We must build the wheel and install it into a
+      # CLEAN throwaway environment that has no reference to the source tree.
+      # Only then does a missing artifact (e.g. qp.min.js pruned by .gitignore)
+      # cause a FileNotFoundError that fails CI.
+      - name: Build wheel
+        run: uv build --wheel --out-dir /tmp/fabric-dw-wheel
+      - name: Install wheel into clean venv and smoke-test html renderer
+        run: |
+          python -m venv /tmp/smoke-venv
+          /tmp/smoke-venv/bin/pip install --quiet /tmp/fabric-dw-wheel/*.whl
+          /tmp/smoke-venv/bin/python -c "
           from fabric_dw.cli._plan_html import render_plan_html
           ns = 'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
           xml = f'<ShowPlanXML xmlns=\"{ns}\"><BatchSequence/></ShowPlanXML>'
@@ -141,7 +152,7 @@ jobs:
           assert '<!DOCTYPE html>' in html, 'missing DOCTYPE'
           assert 'QP.showPlan' in html, 'missing QP.showPlan call'
           assert 'data:image/png;base64,' in html, 'sprite sheet not inlined'
-          print('html renderer smoke: OK')
+          print('html renderer wheel smoke: OK')
           "
 
   slow:

@@ -124,24 +124,46 @@ class TestRenderPlanHtmlSelfContained:
         result = render_plan_html(_FIXTURE_XML)
         assert "<script>" in result
 
-    def test_script_close_tag_in_xml_does_not_break_out(self) -> None:
-        """A </script> token inside the plan XML must not close the enclosing <script> block.
+    def _assert_script_breakout_neutralised(self, stmt_suffix: str) -> None:
+        """Assert that *stmt_suffix* appended to StatementText does not break out.
 
-        If StatementText contains ``</script><img src=x onerror=alert(1)>`` the
-        HTML parser would exit the <script> block early and execute the injected
-        payload.  The renderer must neutralise the ``</script`` sequence to the
-        JS unicode escape ``\\x3C/script`` so the HTML parser never sees the
-        closing tag inside the <script> block.
+        Extracts the content of the plan-XML template literal from the rendered
+        HTML and asserts that no literal ``</script`` sequence (case-insensitive)
+        appears inside it — which is the exact condition the HTML parser uses to
+        close a ``<script>`` element.
         """
-        malicious_stmt = "</script><img src=x onerror=alert(1)>"
-        xml_with_payload = _FIXTURE_XML.replace("SELECT 1", malicious_stmt)
+        xml_with_payload = _FIXTURE_XML.replace("SELECT 1", stmt_suffix)
         result = render_plan_html(xml_with_payload)
-        # The </script token from the XML must be neutralised: the renderer
-        # must replace < with \x3C so the HTML parser cannot exit the script
-        # block at that point.
-        assert "\\x3C/script" in result
-        # The document must still be a complete, valid HTML file.
+        # Isolate the JS template literal that holds the plan XML.
+        start = result.find("var planXml = `")
+        end = result.find("`;", start)
+        literal_content = result[start:end]
+        # No literal </script (case-insensitive) may appear inside the literal.
+        assert not re.search(r"</script", literal_content, re.IGNORECASE), (
+            f"Literal </script found in template literal for stmt {stmt_suffix!r}"
+        )
+        # The neutralised form (escaped slash) must be present.
+        assert re.search(r"<\\/script", literal_content, re.IGNORECASE), (
+            f"Expected <\\/script not found in template literal for stmt {stmt_suffix!r}"
+        )
+        # The document must still be a complete HTML file.
         assert "</html>" in result
+
+    def test_script_close_tag_lowercase_does_not_break_out(self) -> None:
+        """``</script>`` (lowercase) in plan XML must be neutralised."""
+        self._assert_script_breakout_neutralised("</script><img src=x onerror=alert(1)>")
+
+    def test_script_close_tag_uppercase_does_not_break_out(self) -> None:
+        """``</SCRIPT>`` (uppercase) in plan XML must be neutralised.
+
+        The HTML parser closes a <script> element case-insensitively, so
+        ``</SCRIPT>`` is equally dangerous and must be handled.
+        """
+        self._assert_script_breakout_neutralised("</SCRIPT><img src=x onerror=alert(1)>")
+
+    def test_script_close_tag_mixed_case_does_not_break_out(self) -> None:
+        """``</ScRiPt>`` (mixed case) in plan XML must be neutralised."""
+        self._assert_script_breakout_neutralised("</ScRiPt><img src=x onerror=alert(1)>")
 
 
 class TestRenderPlanHtmlJsLibrary:

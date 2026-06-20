@@ -25,6 +25,7 @@ from __future__ import annotations
 import base64
 import html
 import importlib.resources
+import re
 
 __all__ = ["render_plan_html"]
 
@@ -115,21 +116,26 @@ def render_plan_html(plan_xml: str) -> str:
     # Embed the raw XML inside a JS template literal (backtick-delimited).
     # Using a template literal avoids the need to escape single and double
     # quotes from the XML, but requires escaping:
-    #   \      → \\     (backslash must be doubled first)
-    #   `      → \`     (would close the template literal)
-    #   ${     → \${    (would start a template expression)
-    #   </script → \x3C/script  (prevents the HTML parser from closing the
-    #              surrounding <script> block early, which could let injected
-    #              content execute — e.g. StatementText containing
-    #              "</script><img src=x onerror=...>")
+    #   \      → \\      (backslash must be doubled first)
+    #   `      → \`      (would close the template literal)
+    #   ${     → \${     (would start a template expression)
+    #   </script (any case) → <\/script
+    #              The HTML spec closes a <script> element at the FIRST
+    #              case-insensitive match of </script, regardless of JS
+    #              string/template-literal context.  A StatementText like
+    #              "</SCRIPT><img src=x onerror=...>" would break out and
+    #              execute injected markup when the shared .html file is opened.
+    #              Neutralise by escaping the slash: <\/ is not a valid script
+    #              close token, keeps the XML valid inside the JS literal, and
+    #              the JS runtime reconstructs the original string at runtime.
+    #              re.IGNORECASE covers </script, </SCRIPT, </Script, etc.
     # Note: html.escape is NOT applied here — the XML goes into a JS string,
-    # not directly into HTML text content, so HTML entity encoding would
-    # corrupt the XML.  The </script> neutralisation above is the correct fix.
-    xml_escaped_for_js = (
-        plan_xml.replace("\\", "\\\\")
-        .replace("`", "\\`")
-        .replace("${", "\\${")
-        .replace("</script", "\\x3C/script")
+    # not directly into HTML text content; entity-encoding would corrupt the XML.
+    xml_escaped_for_js = re.sub(
+        r"</(script)",
+        r"<\\/\1",
+        plan_xml.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${"),
+        flags=re.IGNORECASE,
     )
     title = html.escape("SQL Execution Plan")
 
