@@ -52,19 +52,20 @@ jobs:
         # Run only for tag/dispatch releases; skip for dev builds pushed to main.
         # Prerelease tags (aN/bN/rcN/.devN) are exempt — plugin.json tracks stable only.
         # Fails fast before uv build if the version bump was not merged before tagging.
+        # The context value is passed via env: to avoid ${{ }} script-injection into the run body.
         if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+        env:
+          EFFECTIVE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          # Determine the effective tag: prefer the workflow_dispatch input, fall back to ref name.
-          effective_tag="${{ inputs.tag || github.ref_name }}"
-          # Strip a leading 'v'.
-          version="${effective_tag#v}"
+          # Strip a leading 'v' from the env-provided tag value.
+          version="${EFFECTIVE_TAG#v}"
           # Skip prerelease tags (aN/bN/rcN suffixes or .dev in the version string).
           if echo "$version" | grep -qE '(a|b|rc)[0-9]*$|\.dev'; then
             echo "Prerelease tag '$version' detected — plugin.json tracks stable only; skipping version check."
             exit 0
           fi
           # Stable tag: read plugin.json version and compare.
-          plugin_version=$(python -c "import json; print(json.load(open('.claude-plugin/plugin.json'))['version'])")
+          plugin_version=$(python3 -c "import json; print(json.load(open('.claude-plugin/plugin.json'))['version'])")
           if [ "$plugin_version" != "$version" ]; then
             echo "::error::plugin.json version ('$plugin_version') does not match tag '$version'. Run 'just release $version', open a release-prep PR, merge it, then retag."
             exit 1
