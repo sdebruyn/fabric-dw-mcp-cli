@@ -20,9 +20,9 @@ Both the CLI and the MCP server surfaces are built from a single Python package 
 
     Get the package installed and verify your setup.
 
-- :material-console: **[Commands](commands/audit.md)**
+- :material-console: **[Commands](concepts.md)**
 
-    Per-domain CLI commands and MCP tools for DW administration tasks.
+    Cross-cutting concepts plus per-domain CLI commands and MCP tools.
 
 - :material-server: **[MCP Reference](mcp.md)**
 
