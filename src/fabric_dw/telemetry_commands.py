@@ -67,6 +67,8 @@ DOMAIN_MAP: dict[str, str] = {
     "completion": "completion",
     # ── MCP tool names (explicit overrides / multi-domain tools) ─────────────
     # Workspaces
+    "assign_workspace_to_capacity": "workspaces",
+    "list_capacities": "workspaces",
     "list_workspaces": "workspaces",
     "get_workspace": "workspaces",
     "set_workspace_collation": "workspaces",

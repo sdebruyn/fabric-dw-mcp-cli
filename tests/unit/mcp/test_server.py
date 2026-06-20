@@ -53,6 +53,8 @@ from tests.unit.mcp.conftest import (
 EXPECTED_TOOL_NAMES: frozenset[str] = frozenset(
     {
         # Workspaces
+        "assign_workspace_to_capacity",
+        "list_capacities",
         "list_workspaces",
         "get_workspace",
         "set_workspace_collation",

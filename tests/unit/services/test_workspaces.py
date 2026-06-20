@@ -182,3 +182,58 @@ def test_supported_collations_constant() -> None:
     assert "Latin1_General_100_BIN2_UTF8" in workspaces.SUPPORTED_COLLATIONS
     assert "Latin1_General_100_CI_AS_KS_WS_SC_UTF8" in workspaces.SUPPORTED_COLLATIONS
     assert len(workspaces.SUPPORTED_COLLATIONS) == 2
+
+
+# ---------------------------------------------------------------------------
+# assign_to_capacity
+# ---------------------------------------------------------------------------
+
+_CAPACITY_ID = UUID("deadbeef-dead-beef-dead-beef00000001")
+_ASSIGN_URL = f"https://api.fabric.microsoft.com/v1/workspaces/{_WORKSPACE_ID}/assignToCapacity"
+
+
+async def test_assign_to_capacity_202_returns_none() -> None:
+    """assign_to_capacity must return None on a 202 Accepted response."""
+    with respx.mock:
+        respx.post(_ASSIGN_URL).mock(return_value=httpx.Response(202))
+
+        client = await _make_client()
+        async with client:
+            result = await workspaces.assign_to_capacity(client, _WORKSPACE_ID, _CAPACITY_ID)
+
+    assert result is None
+
+
+async def test_assign_to_capacity_sends_correct_body() -> None:
+    """assign_to_capacity must POST capacityId as a string UUID in the request body."""
+    captured: list[httpx.Request] = []
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(202)
+
+    with respx.mock:
+        respx.post(_ASSIGN_URL).mock(side_effect=capture)
+
+        client = await _make_client()
+        async with client:
+            await workspaces.assign_to_capacity(client, _WORKSPACE_ID, _CAPACITY_ID)
+
+    assert len(captured) == 1
+    body = json.loads(captured[0].content)
+    assert body == {"capacityId": str(_CAPACITY_ID)}
+
+
+async def test_assign_to_capacity_4xx_raises_fabric_error() -> None:
+    """assign_to_capacity must raise FabricError on a 4xx response."""
+    with respx.mock:
+        respx.post(_ASSIGN_URL).mock(
+            return_value=httpx.Response(
+                404, json={"error": {"code": "WorkspaceNotFound", "message": "not found"}}
+            )
+        )
+
+        client = await _make_client()
+        async with client:
+            with pytest.raises(FabricError):
+                await workspaces.assign_to_capacity(client, _WORKSPACE_ID, _CAPACITY_ID)

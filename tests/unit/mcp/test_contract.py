@@ -49,7 +49,8 @@ from tests.unit.mcp.conftest import WS_ID, WS_NAME, make_item_entry
 # 77 baseline + 5 statistics + 1 dbt + 3 table-create + 6 functions
 # + 1 load_table_from_url + 1 import_table_from_url + 3 settings
 # + 2 count_table_rows / count_view_rows + 1 get_query_plan + 1 get_cluster_columns
-_EXPECTED_TOOL_COUNT = 94
+# + 2 capacity tools (list_capacities + assign_workspace_to_capacity)
+_EXPECTED_TOOL_COUNT = 96
 
 
 # ---------------------------------------------------------------------------
