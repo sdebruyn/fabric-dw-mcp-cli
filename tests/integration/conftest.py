@@ -5,8 +5,11 @@ import os
 import time
 import uuid
 from collections.abc import AsyncIterator
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 from uuid import UUID
+
+if TYPE_CHECKING:
+    import httpx as _httpx
 
 import pytest
 import pytest_asyncio
@@ -24,6 +27,19 @@ from fabric_dw.sql import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Maximum time (seconds) to wait for seeded lakehouse tables to become queryable
+# via TDS on the SQL analytics endpoint after refresh_metadata completes.
+# Metadata propagation typically takes a few seconds; 120s is a generous margin.
+_SQL_ENDPOINT_SEED_VISIBLE_TIMEOUT_S = 120  # 2 min — seed-tables TDS visibility lag
+
+# Polling interval for seed-table visibility checks.
+_SQL_ENDPOINT_SEED_POLL_INTERVAL_S = 5
+
+# OneLake DFS endpoint for file uploads.
+_ONELAKE_DFS_BASE = "https://onelake.dfs.fabric.microsoft.com"
+# ADLS Gen2 DFS API version used for OneLake file uploads.
+_DFS_API_VERSION = "2021-06-08"
 
 # Maximum time to wait for a SQL analytics endpoint to provision on a new lakehouse.
 # Provisioning is variable (observed as low as ~18s but can run longer); 240s gives
@@ -72,6 +88,22 @@ class SharedWarehouseTarget(NamedTuple):
     warehouse: Warehouse
     sql_target: SqlTarget
     workspace_id: UUID
+
+
+class SharedSqlEndpointTarget(NamedTuple):
+    """Container yielded by ``shared_sql_endpoint``.
+
+    Attributes:
+        endpoint: The live :class:`~fabric_dw.models.Warehouse` item (kind=SQL_ENDPOINT).
+        sql_target: A :class:`~fabric_dw.sql.SqlTarget` pointing at the endpoint.
+        workspace_id: The workspace UUID.
+        lakehouse_id: The UUID string of the parent Lakehouse.
+    """
+
+    endpoint: Warehouse
+    sql_target: SqlTarget
+    workspace_id: UUID
+    lakehouse_id: str
 
 
 async def _wait_for_sql_readiness(
@@ -408,6 +440,610 @@ async def _seed_sample_data(target: SqlTarget) -> None:
         "numbers",
         "SELECT 1 AS id, 10 AS value UNION ALL SELECT 2, 20 UNION ALL SELECT 3, 30",
     )
+
+
+def _build_delta_log_entry(table_name: str, parquet_size: int, row_count: int) -> str:
+    """Return the content of the initial Delta log commit file (JSON lines).
+
+    A minimal Delta Lake log commit contains four action entries in a single
+    ``00000000000000000000.json`` file (one JSON object per line):
+
+    - ``protocol``  — minimum reader/writer version requirements.
+    - ``metaData`` — table schema (Arrow schema serialised as Delta string) and format.
+    - ``commitInfo`` — operation provenance (not required by readers but conventional).
+    - ``add``       — one entry per Parquet data file in this commit.
+
+    OneLake / Fabric honours this layout and projects the table into the SQL
+    analytics endpoint's metadata catalog after a ``refresh_metadata`` call.
+
+    Args:
+        table_name: Name of the table (used only in schema string for reference).
+        parquet_size: Byte size of the single Parquet data file.
+        row_count: Number of rows in the data file (encoded in ``stats``).
+
+    Returns:
+        A newline-separated string of JSON objects forming the commit file.
+    """
+    import json  # noqa: PLC0415
+
+    # Schema strings vary per table; both tables use INT32 + STRING/INT32.
+    _schema_strings: dict[str, str] = {
+        "colors": (
+            '{"type":"struct","fields":['
+            '{"name":"id","type":"integer","nullable":true,"metadata":{}},'
+            '{"name":"name","type":"string","nullable":true,"metadata":{}}'
+            "]}"
+        ),
+        "numbers": (
+            '{"type":"struct","fields":['
+            '{"name":"id","type":"integer","nullable":true,"metadata":{}},'
+            '{"name":"value","type":"integer","nullable":true,"metadata":{}}'
+            "]}"
+        ),
+    }
+    if table_name not in _schema_strings:
+        msg = f"unknown seed table: {table_name!r} — add a schema string entry to _schema_strings"
+        raise ValueError(msg)
+    schema_string = _schema_strings[table_name]
+
+    # Fabric validates that metaData.id is a canonical UUID (Guid) string.
+    # Use uuid5 seeded from the table name so the value is deterministic and
+    # stable across fixture re-runs while still satisfying the GUID constraint.
+    import uuid as _uuid  # noqa: PLC0415
+
+    table_uuid = str(_uuid.uuid5(_uuid.NAMESPACE_DNS, f"pytest-seed-{table_name}"))
+
+    protocol = {"protocol": {"minReaderVersion": 1, "minWriterVersion": 2}}
+    metadata = {
+        "metaData": {
+            "id": table_uuid,
+            "format": {"provider": "parquet", "options": {}},
+            "schemaString": schema_string,
+            "partitionColumns": [],
+            "configuration": {},
+            "createdTime": 1700000000000,
+        }
+    }
+    commit_info = {
+        "commitInfo": {
+            "timestamp": 1700000000000,
+            "operation": "CREATE TABLE",
+            "operationParameters": {},
+        }
+    }
+    add = {
+        "add": {
+            "path": "part-00000.parquet",
+            "partitionValues": {},
+            "size": parquet_size,
+            "dataChange": True,
+            "stats": json.dumps({"numRecords": row_count}),
+            "modificationTime": 1700000000000,
+        }
+    }
+    return "\n".join(json.dumps(entry) for entry in [protocol, metadata, commit_info, add])
+
+
+async def _dfs_upload_bytes(
+    client: "_httpx.AsyncClient",
+    dfs_url: str,
+    data: bytes,
+    headers: dict[str, str],
+) -> None:
+    """Upload *data* to *dfs_url* via ADLS Gen2 DFS create/append/flush.
+
+    Creates the file resource at 0 bytes, appends the full content in a single
+    patch, then flushes.  Designed for small payloads (a few KiB) where a
+    single append chunk is sufficient.
+
+    Args:
+        client: An open :class:`httpx.AsyncClient`.
+        dfs_url: Full DFS endpoint URL for the file.
+        data: Raw bytes to write.
+        headers: Base DFS headers (Authorization + x-ms-version).
+    """
+    size = len(data)
+
+    create_resp = await client.put(
+        dfs_url,
+        params={"resource": "file"},
+        headers={**headers, "Content-Length": "0"},
+        content=b"",
+    )
+    create_resp.raise_for_status()
+
+    append_resp = await client.patch(
+        dfs_url,
+        params={"action": "append", "position": 0},
+        content=data,
+        headers={
+            **headers,
+            "Content-Type": "application/octet-stream",
+            "Content-Length": str(size),
+        },
+    )
+    append_resp.raise_for_status()
+
+    flush_resp = await client.patch(
+        dfs_url,
+        params={"action": "flush", "position": size},
+        headers={**headers, "Content-Length": "0"},
+        content=b"",
+    )
+    flush_resp.raise_for_status()
+
+
+async def _seed_lakehouse_sample_data(
+    http: FabricHttpClient,
+    workspace_id: UUID,
+    lakehouse_id: str,
+    endpoint_id: UUID,
+) -> None:
+    """Write ``sample.colors`` and ``sample.numbers`` into a schema-enabled Lakehouse.
+
+    Strategy
+    --------
+    For a schema-enabled Lakehouse the Fabric Tables Load API rejects Parquet
+    ingestion (``UnsupportedOperationForSchemasEnabledLakehouse``).  Instead,
+    we write a minimal Delta Lake layout directly to the ``Tables/`` area of the
+    Lakehouse via the OneLake ADLS Gen2 DFS API:
+
+    1. Build small :class:`pyarrow.Table` objects in memory.
+    2. Write each table as a single Parquet data file locally.
+    3. Build a minimal Delta log commit file (protocol + metadata + add action).
+    4. Upload both the Parquet file and the ``_delta_log/`` commit to the path
+       ``Tables/<schema>/<table>/`` using the DFS create/append/flush flow.
+    5. Call :func:`~fabric_dw.services.sql_endpoints.refresh_metadata` on the
+       paired SQL analytics endpoint so the Delta tables are projected onto the
+       endpoint's TDS surface.
+
+    No third-party Delta library (``deltalake``, ``adlfs``, etc.) is required;
+    only ``pyarrow`` (already a runtime dependency) and ``httpx`` (already in the
+    virtual environment) are used.
+
+    Args:
+        http: Authenticated Fabric HTTP client.
+        workspace_id: Workspace UUID.
+        lakehouse_id: UUID string of the parent Lakehouse.
+        endpoint_id: UUID of the SQL analytics endpoint (for refresh_metadata).
+    """
+    import tempfile  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    import httpx  # noqa: PLC0415
+    import pyarrow as pa  # noqa: PLC0415 — runtime dep, always available
+    import pyarrow.parquet as pq  # noqa: PLC0415
+
+    from fabric_dw.auth import STORAGE_SCOPE  # noqa: PLC0415
+    from fabric_dw.services.sql_endpoints import refresh_metadata  # noqa: PLC0415
+
+    # Acquire a storage-scoped token once for all DFS uploads.
+    cred = get_credential()
+    token_obj = await cred.get_token(STORAGE_SCOPE)
+    token = token_obj.token
+    dfs_base_headers: dict[str, str] = {
+        "Authorization": f"Bearer {token}",
+        "x-ms-version": _DFS_API_VERSION,
+    }
+
+    # Build the seed tables — same shape as the warehouse seed.
+    seed_tables: dict[str, pa.Table] = {
+        "colors": pa.table(
+            {
+                "id": pa.array([1, 2, 3], type=pa.int32()),
+                "name": pa.array(["red", "green", "blue"], type=pa.string()),
+            }
+        ),
+        "numbers": pa.table(
+            {
+                "id": pa.array([1, 2, 3], type=pa.int32()),
+                "value": pa.array([10, 20, 30], type=pa.int32()),
+            }
+        ),
+    }
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            for table_name, pa_table in seed_tables.items():
+                # Write Parquet locally.
+                parquet_file = tmp_path / f"{table_name}.parquet"
+                pq.write_table(pa_table, parquet_file)
+                parquet_bytes = parquet_file.read_bytes()
+                parquet_size = len(parquet_bytes)
+                row_count = pa_table.num_rows
+
+                # Delta table path inside the schema-enabled Lakehouse:
+                # Tables/<schema>/<table>/
+                table_prefix = (
+                    f"{_ONELAKE_DFS_BASE}/{workspace_id}/{lakehouse_id}"
+                    f"/Tables/{SEED_SCHEMA_NAME}/{table_name}"
+                )
+
+                # Upload the Parquet data file.
+                parquet_dfs_url = f"{table_prefix}/part-00000.parquet"
+                await _dfs_upload_bytes(client, parquet_dfs_url, parquet_bytes, dfs_base_headers)
+                logger.debug(
+                    "_seed_lakehouse_sample_data: uploaded %s data file (%d bytes)",
+                    table_name,
+                    parquet_size,
+                )
+
+                # Ensure the _delta_log/ directory exists before writing the
+                # commit file.  OneLake's auto-create of parent directories is
+                # undocumented; an explicit PUT ?resource=directory guarantees it.
+                delta_log_dir_url = f"{table_prefix}/_delta_log"
+                dir_resp = await client.put(
+                    delta_log_dir_url,
+                    params={"resource": "directory"},
+                    headers={**dfs_base_headers, "Content-Length": "0"},
+                    content=b"",
+                )
+                dir_resp.raise_for_status()
+
+                # Upload the Delta log commit file.
+                delta_log_content = _build_delta_log_entry(table_name, parquet_size, row_count)
+                delta_log_bytes = delta_log_content.encode()
+                delta_log_dfs_url = f"{table_prefix}/_delta_log/00000000000000000000.json"
+                await _dfs_upload_bytes(
+                    client, delta_log_dfs_url, delta_log_bytes, dfs_base_headers
+                )
+                logger.debug(
+                    "_seed_lakehouse_sample_data: uploaded %s delta log (%d bytes)",
+                    table_name,
+                    len(delta_log_bytes),
+                )
+
+    # Refresh SQL endpoint metadata so the Delta tables are projected onto TDS.
+    await refresh_metadata(http, workspace_id, endpoint_id, recreate_tables=False)
+    logger.info(
+        "_seed_lakehouse_sample_data: metadata refreshed for endpoint %s",
+        endpoint_id,
+    )
+
+
+async def _create_schema_enabled_lakehouse(
+    http: FabricHttpClient,
+    workspace_id: UUID,
+    name: str,
+) -> str:
+    """Create a schema-enabled Lakehouse and return its ID string.
+
+    Handles both the synchronous 201 path and the asynchronous 202 LRO path.
+
+    Args:
+        http: Authenticated Fabric HTTP client.
+        workspace_id: Target workspace UUID.
+        name: Display name for the new Lakehouse.
+
+    Returns:
+        The Lakehouse item ID as a string.
+
+    Raises:
+        pytest.skip.Exception: If the LRO completes without a usable item ID.
+    """
+    body: dict[str, object] = {
+        "displayName": name,
+        "description": "shared integration-test lakehouse (sql_endpoint fixture)",
+        "creationPayload": {"enableSchemas": True},
+    }
+    resp = await http.request(
+        "POST",
+        HttpBase.FABRIC,
+        f"/workspaces/{workspace_id}/lakehouses",
+        json=body,
+    )
+
+    location = resp.headers.get("Location")
+    if location:
+        lro_result = await http.poll_operation(location)
+        resource_location = lro_result.get("resourceLocation")
+        if isinstance(resource_location, str) and resource_location:
+            return resource_location.rsplit("/", 1)[-1]
+        # Fall back: GET /operations/{id}/result
+        op_id = location.rsplit("/", 1)[-1]
+        result_resp = await http.request("GET", HttpBase.FABRIC, f"/operations/{op_id}/result")
+        result_body = result_resp.json()
+        raw_id = result_body.get("id")
+        fallback = result_body.get("resourceLocation", "").rsplit("/", 1)[-1]
+        lakehouse_id: str | None = raw_id or fallback or None
+        if not lakehouse_id:
+            pytest.skip(f"create lakehouse LRO completed but could not resolve id: {lro_result}")
+        return lakehouse_id  # type: ignore[return-value]  # pytest.skip() above is an exit
+
+    lh_dict = resp.json()
+    item_id: str | None = lh_dict.get("id") or None
+    if not item_id:
+        pytest.skip(f"create lakehouse returned 201 but no id in body: {lh_dict}")
+    return item_id  # type: ignore[return-value]
+
+
+async def _poll_endpoint_until_provisioned(
+    http: FabricHttpClient,
+    workspace_id: UUID,
+    lakehouse_id: str,
+    *,
+    deadline: float,
+) -> tuple[str, str, str]:
+    """Poll the Lakehouse until its SQL endpoint reaches ``provisioningStatus=Success``.
+
+    Returns ``(ep_id_raw, ep_conn, ep_name)`` once successful.  Calls
+    ``pytest.skip`` if the deadline is reached or provisioning fails.
+
+    Args:
+        http: Authenticated Fabric HTTP client.
+        workspace_id: Workspace UUID.
+        lakehouse_id: Lakehouse item ID string to poll.
+        deadline: Monotonic time deadline (``time.monotonic()`` value).
+
+    Returns:
+        Tuple of (endpoint_id_str, connection_string, display_name).
+    """
+    while True:
+        if time.monotonic() >= deadline:
+            pytest.skip(
+                f"SQL analytics endpoint for lakehouse {lakehouse_id} did not provision "
+                f"within {_SQL_ENDPOINT_PROVISION_TIMEOUT_S}s — skipping sql_endpoint tests"
+            )
+
+        get_resp = await http.request(
+            "GET",
+            HttpBase.FABRIC,
+            f"/workspaces/{workspace_id}/lakehouses/{lakehouse_id}",
+        )
+        lh_body = get_resp.json()
+        props = lh_body.get("properties") or {}
+        sql_ep_props = props.get("sqlEndpointProperties") or {}
+        status = sql_ep_props.get("provisioningStatus", "")
+
+        if status == "Success":
+            return (
+                str(sql_ep_props.get("id", "")),
+                str(sql_ep_props.get("connectionString", "")),
+                str(lh_body.get("displayName", "")),
+            )
+
+        if status == "Failed":
+            pytest.skip(f"SQL analytics endpoint provisioning failed for lakehouse {lakehouse_id}")
+
+        await asyncio.sleep(_SQL_ENDPOINT_POLL_INTERVAL_S)
+
+
+async def _wait_for_seeded_tables_visible(
+    sql_target: SqlTarget,
+    *,
+    timeout_s: float = _SQL_ENDPOINT_SEED_VISIBLE_TIMEOUT_S,
+) -> None:
+    """Poll the SQL endpoint via TDS until ``sample.colors`` and ``sample.numbers`` are visible.
+
+    After :func:`_seed_lakehouse_sample_data` uploads the Parquet files and
+    calls ``refresh_metadata``, the tables may not be immediately queryable via
+    TDS.  This function polls until a ``SELECT TOP 1 1 FROM [sample].[colors]``
+    succeeds, or skips the session if the window is exceeded.
+
+    Args:
+        sql_target: The SQL analytics endpoint target to probe.
+        timeout_s: Maximum seconds to wait before skipping.
+
+    Raises:
+        pytest.skip.Exception: If the seed tables do not become visible within *timeout_s*.
+    """
+
+    def _probe() -> None:
+        # A successful SELECT proves the table is visible via TDS.
+        run_query(sql_target, "SELECT TOP 1 1 FROM [sample].[colors]", fetch="none")
+
+    deadline = time.monotonic() + timeout_s
+    delay = _SQL_READINESS_BACKOFF_INITIAL_S
+    while True:
+        try:
+            await asyncio.to_thread(_probe)
+        except Exception as exc:
+            msg_lower = str(exc).lower()
+            logger.debug(
+                "_wait_for_seeded_tables_visible: probe failed on %r: %s",
+                sql_target.database,
+                exc,
+            )
+            # Retry on transient connection errors and the specific "object not
+            # found" messages that appear while Delta metadata is still
+            # propagating to the SQL analytics endpoint after refresh_metadata.
+            # Keep the match narrow: broad strings like "schema" would also
+            # swallow genuine permission/config errors and retry them for 120s
+            # before a misleading skip.
+            is_transient = is_transient_connection_error(exc)
+            is_not_found = any(
+                kw in msg_lower
+                for kw in (
+                    # TDS "Invalid object name 'sample.colors'" — table not yet visible.
+                    "invalid object name 'sample.",
+                    # Fabric DB warm-up: database itself not yet reachable.
+                    "database was not found",
+                )
+            )
+            is_warmup = is_auth_failed_message(str(exc))
+            if not (is_transient or is_not_found or is_warmup):
+                raise
+        else:
+            logger.info(
+                "_wait_for_seeded_tables_visible: sample.colors visible on %s",
+                sql_target.database,
+            )
+            return
+
+        if time.monotonic() >= deadline:
+            pytest.skip(
+                f"seeded tables (sample.colors / sample.numbers) did not become visible "
+                f"via TDS on {sql_target.database!r} within {timeout_s:.0f}s after "
+                "refresh_metadata — Fabric metadata propagation exceeded the CI window"
+            )
+
+        await asyncio.sleep(delay)
+        delay = min(delay * 1.5, _SQL_READINESS_BACKOFF_MAX_S)
+
+
+# ---------------------------------------------------------------------------
+# Shared warm SQL analytics endpoint (session-scoped, one per xdist worker)
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture(loop_scope="session", scope="session")
+async def shared_sql_endpoint(
+    _session_http: FabricHttpClient,
+    _session_workspace_id: UUID,
+) -> AsyncIterator[SharedSqlEndpointTarget]:
+    """Create ONE warm, seeded SQL analytics endpoint per session (per xdist worker).
+
+    Mirrors ``shared_warehouse`` but provisions a schema-enabled Lakehouse,
+    seeds ``sample.colors`` and ``sample.numbers`` through the parent Lakehouse
+    via a direct Delta Lake layout upload, and derives the paired SQL analytics
+    endpoint.  The endpoint is reused for all ``sql_endpoint``-marked tests in
+    the session.
+
+    Seed schema
+    -----------
+    The Lakehouse has ``enableSchemas=true``.  Seed data is written directly to
+    ``Tables/sample/<table>/`` as a minimal Delta Lake layout (Parquet data file
+    + ``_delta_log/00000000000000000000.json``) via the OneLake ADLS Gen2 DFS
+    API.  The Fabric Tables Load API is intentionally not used here — it rejects
+    Parquet ingestion for schema-enabled lakehouses with
+    ``UnsupportedOperationForSchemasEnabledLakehouse``.  After the DFS uploads,
+    ``refresh_metadata`` is called on the SQL endpoint, and this fixture polls
+    until both tables are visible via TDS before yielding.
+
+    **Tests MUST NOT mutate the seed schema.**  Mutating tests must use the
+    ``mutable_schema_target`` fixture (added in PR 3) which creates a uniquely-named
+    schema per test on the endpoint and cascade-drops it on teardown.
+
+    xdist compatibility
+    -------------------
+    Session-scoped, one per xdist worker — exactly like ``shared_warehouse``.
+    The ``loop_scope="session"`` argument aligns the asyncio event loop lifetime
+    with the session scope.
+
+    Cost
+    ----
+    Endpoint provisioning is slow and 429-sensitive.  By session-scoping it here,
+    provisioning cost is O(workers), independent of test count.  The ``sql_endpoint``
+    marker gates this fixture on CI only (local runs deselect it by default).
+    """
+    worker = os.environ.get("PYTEST_XDIST_WORKER", "master")
+    uid = uuid.uuid4().hex[:8]
+    lh_name = f"pytest_{worker}_{uid}_lh"
+
+    # ``lakehouse_id`` is set as soon as we know the id so teardown can always
+    # clean up, even if a pytest.skip() fires before the yield.
+    lakehouse_id: str | None = None
+
+    try:
+        # 1. Create a schema-enabled Lakehouse.
+        lakehouse_id = await _create_schema_enabled_lakehouse(
+            _session_http, _session_workspace_id, lh_name
+        )
+
+        # 2. Poll until the SQL analytics endpoint provisions.
+        deadline = time.monotonic() + _SQL_ENDPOINT_PROVISION_TIMEOUT_S
+        ep_id_raw, ep_conn, ep_name = await _poll_endpoint_until_provisioned(
+            _session_http, _session_workspace_id, lakehouse_id, deadline=deadline
+        )
+
+        if not ep_id_raw:
+            pytest.skip(f"SQL endpoint provisioned but id is missing for lakehouse {lakehouse_id}")
+
+        try:
+            ep_uuid = UUID(ep_id_raw)
+        except ValueError:
+            pytest.skip(
+                f"SQL endpoint id is not a valid UUID for lakehouse {lakehouse_id}: {ep_id_raw!r}"
+            )
+
+        # Resolve connection string via the endpoint API if not yet populated.
+        if not ep_conn:
+            from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
+                get_endpoint_connection_string,
+            )
+
+            try:
+                ep_conn = await get_endpoint_connection_string(
+                    _session_http,
+                    _session_workspace_id,
+                    ep_uuid,
+                    poll_interval=_SQL_ENDPOINT_POLL_INTERVAL_S,
+                    timeout=max(1.0, deadline - time.monotonic()),
+                )
+            except Exception as exc:
+                pytest.skip(f"SQL endpoint {ep_uuid} connection_string did not populate: {exc}")
+
+        wh = Warehouse.model_validate(
+            {
+                "id": ep_id_raw,
+                "displayName": ep_name,
+                "workspaceId": str(_session_workspace_id),
+                "kind": WarehouseKind.SQL_ENDPOINT,
+                "connectionString": ep_conn,
+            }
+        )
+
+        sql_target = SqlTarget(
+            workspace_id=str(_session_workspace_id),
+            database=ep_name,
+            connection_string=ep_conn,
+        )
+
+        # 3. Wait for TDS connectivity before seeding.
+        await _wait_for_sql_readiness(sql_target)
+
+        # 4. Wait for the endpoint item to be visible via the product API.
+        from fabric_dw.services.sql_endpoints import get_endpoint  # noqa: PLC0415
+
+        item_visible_deadline = time.monotonic() + _SQL_ENDPOINT_ITEM_VISIBLE_TIMEOUT_S
+        while True:
+            try:
+                await get_endpoint(_session_http, _session_workspace_id, ep_uuid)
+                break
+            except NotFoundError:
+                if time.monotonic() >= item_visible_deadline:
+                    pytest.skip(
+                        f"SQL endpoint item {ep_uuid} was not visible via the product API "
+                        f"within {_SQL_ENDPOINT_ITEM_VISIBLE_TIMEOUT_S}s after provisioning"
+                    )
+                await asyncio.sleep(_SQL_ENDPOINT_POLL_INTERVAL_S)
+
+        # 5. Seed sample data into the Lakehouse (and refresh endpoint metadata).
+        await _seed_lakehouse_sample_data(
+            _session_http,
+            _session_workspace_id,
+            lakehouse_id,
+            ep_uuid,
+        )
+
+        # 6. Poll until seed tables are visible via TDS on the endpoint.
+        await _wait_for_seeded_tables_visible(sql_target)
+
+        logger.info(
+            "shared_sql_endpoint %r ready for worker %r (workspace %s, lakehouse %s)",
+            ep_name,
+            worker,
+            _session_workspace_id,
+            lakehouse_id,
+        )
+
+        yield SharedSqlEndpointTarget(
+            endpoint=wh,
+            sql_target=sql_target,
+            workspace_id=_session_workspace_id,
+            lakehouse_id=lakehouse_id,
+        )
+
+    finally:
+        if lakehouse_id:
+            with contextlib.suppress(Exception):
+                await _session_http.request(
+                    "DELETE",
+                    HttpBase.FABRIC,
+                    f"/workspaces/{_session_workspace_id}/lakehouses/{lakehouse_id}",
+                )
 
 
 # ---------------------------------------------------------------------------

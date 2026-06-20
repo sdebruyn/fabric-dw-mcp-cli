@@ -29,7 +29,7 @@ slow:
     uv run pytest tests/unit -m slow -v
 
 integration:
-    uv run pytest tests/integration -q -m integration
+    uv run pytest tests/integration -q -m "integration and not sql_endpoint"
 
 build:
     uv build
