@@ -6,3 +6,8 @@
 # or management access and is safe to embed in open-source code.
 # Original commit before the gitleaks:allow inline annotation was added.
 b91534a490a27f3dfdb0907c214ba901e06ff974:src/fabric_dw/telemetry.py:generic-api-key:52
+
+# config.py set_default key comparisons for retry_deadline_s / combined_deadline_s —
+# string literals used as config-key identifiers, not secrets.
+f949307560771b1c6e019fd8750c30341d305d08:src/fabric_dw/config.py:generic-api-key:247
+f949307560771b1c6e019fd8750c30341d305d08:src/fabric_dw/config.py:generic-api-key:260
