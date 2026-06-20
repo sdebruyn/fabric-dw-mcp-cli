@@ -123,6 +123,7 @@ DOMAIN_MAP: dict[str, str] = {
     "list_tables": "tables",
     "read_table": "tables",
     "count_table_rows": "tables",
+    "get_cluster_columns": "tables",
     "create_table": "tables",
     "create_empty_table": "tables",
     "clone_table": "tables",

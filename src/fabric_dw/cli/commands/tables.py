@@ -27,7 +27,7 @@ from fabric_dw.cli.commands._utils import (
     resolve_warehouse_arg,
     resolve_workspace,
 )
-from fabric_dw.exceptions import FabricError
+from fabric_dw.exceptions import FabricError, ItemKindError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import ColumnSpec, CopyIntoResult
 from fabric_dw.services import tables as _tables_svc
@@ -503,6 +503,41 @@ async def clear_cmd(
                 )
             else:
                 click.echo(f"Table [{schema}].[{table_name}] truncated.")
+    except (ValueError, FabricError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+@tables_group.command("cluster-columns")
+@click.argument("item", required=False, default=None)
+@click.argument("qualified_name")
+@click.pass_obj
+@coro
+async def cluster_columns_cmd(
+    ctx: CliContext,
+    item: str | None,
+    qualified_name: str,
+) -> None:
+    """List the data-clustering columns of QUALIFIED_NAME (schema.table) on ITEM.
+
+    Only supported on Fabric Data Warehouses (not SQL Analytics Endpoints).
+    Returns an empty table when no clustering is defined.
+    """
+    ws = resolve_workspace(ctx)
+    wh = resolve_warehouse_arg(ctx, item)
+    schema, table_name = parse_qualified_name(qualified_name, kind="table")
+    try:
+        async with build_http_client(ctx) as http:
+            target, entry = await build_sql_target(http, ws, wh)
+            rows = await _tables_svc.get_cluster_columns(
+                target, schema, table_name, kind=entry.kind, mode=ctx.auth
+            )
+            render(
+                rows,
+                json_output=ctx.json_output,
+                table_title="Cluster Columns",
+            )
+    except ItemKindError as exc:
+        raise click.ClickException(str(exc)) from exc
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 

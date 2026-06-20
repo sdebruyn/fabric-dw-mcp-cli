@@ -428,6 +428,87 @@ class TestCountTableRows:
 
 
 # ===========================================================================
+# get_cluster_columns
+# ===========================================================================
+
+
+class TestGetClusterColumns:
+    async def test_returns_columns_ordered_by_ordinal(self) -> None:
+        target = _make_target()
+        rows: list[tuple[object, ...]] = [("city", 1), ("country", 2)]
+        conn = _make_conn(rows, ["column_name", "clustering_ordinal"])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await tables.get_cluster_columns(target, "dbo", "sales")
+        assert result == [
+            {"column_name": "city", "clustering_ordinal": 1},
+            {"column_name": "country", "clustering_ordinal": 2},
+        ]
+
+    async def test_returns_empty_list_when_no_clustering(self) -> None:
+        target = _make_target()
+        conn = _make_conn([], ["column_name", "clustering_ordinal"])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await tables.get_cluster_columns(target, "dbo", "sales")
+        assert result == []
+
+    async def test_sql_references_sys_index_columns(self) -> None:
+        target = _make_target()
+        conn = _make_conn([], ["column_name", "clustering_ordinal"])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await tables.get_cluster_columns(target, "dbo", "sales")
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert "sys.index_columns" in call_sql
+        assert "data_clustering_ordinal" in call_sql
+
+    async def test_sql_uses_bound_params(self) -> None:
+        target = _make_target()
+        conn = _make_conn([], ["column_name", "clustering_ordinal"])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await tables.get_cluster_columns(target, "myschema", "mytable")
+        cursor = conn.cursor.return_value
+        call_args = cursor.execute.call_args
+        params = call_args[0][1] if len(call_args[0]) > 1 else (call_args[1] or {}).get("params")
+        assert params is not None
+        param_list = list(params)
+        assert "myschema" in param_list
+        assert "mytable" in param_list
+
+    async def test_validates_schema_identifier(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await tables.get_cluster_columns(target, "bad;schema", "sales")
+
+    async def test_validates_table_name_identifier(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await tables.get_cluster_columns(target, "dbo", "bad--table")
+
+    async def test_rejects_sql_endpoint(self) -> None:
+        target = _make_target()
+        conn = _make_conn([], ["column_name", "clustering_ordinal"])
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(ItemKindError, match="SQL Analytics Endpoints"),
+        ):
+            await tables.get_cluster_columns(
+                target, "dbo", "sales", kind=WarehouseKind.SQL_ENDPOINT
+            )
+
+    async def test_permission_denied_propagates(self) -> None:
+        target = _make_target()
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.execute.side_effect = Exception("permission was denied on object sys.index_columns")
+        conn.cursor.return_value = cursor
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(PermissionDeniedError),
+        ):
+            await tables.get_cluster_columns(target, "dbo", "sales")
+
+
+# ===========================================================================
 # create_table
 # ===========================================================================
 

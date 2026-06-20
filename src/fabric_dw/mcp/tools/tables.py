@@ -9,7 +9,7 @@ from typing import Annotated, Any
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
-from fabric_dw.exceptions import FabricError
+from fabric_dw.exceptions import FabricError, ItemKindError
 from fabric_dw.mcp._context import get_context
 from fabric_dw.mcp._guards import (
     assert_workspace_allowed,
@@ -149,6 +149,44 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
         return {"schema": schema, "name": table_name, "row_count": row_count}
+
+    @mcp.tool(name="get_cluster_columns")
+    async def get_cluster_columns(
+        workspace: str,
+        item: str,
+        qualified_name: str,
+    ) -> list[dict[str, object]]:
+        """Return the data-clustering columns of a table, ordered by clustering ordinal.
+
+        Only supported on Fabric Data Warehouses.  SQL Analytics Endpoints raise a
+        ``ToolError``.  Returns an empty list when no clustering columns are defined.
+
+        Args:
+            workspace: Workspace name or GUID.
+            item: Warehouse name or GUID.
+            qualified_name: Dot-separated qualified table name, e.g. ``dbo.sales``.
+        """
+        schema, table_name = parse_qualified_name(qualified_name, kind="table")
+        assert_workspace_allowed(workspace)
+        ctx = get_context()
+        try:
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
+            assert_workspace_allowed(workspace, str(ws_id))
+            _log.debug(
+                "get_cluster_columns ws=%s item=%s table=%s.%s",
+                ws_id,
+                entry.id,
+                schema,
+                table_name,
+            )
+            target = make_sql_target(ws_id, entry, item)
+            return await tables_svc.get_cluster_columns(
+                target, schema, table_name, kind=entry.kind, mode=ctx.auth_mode
+            )
+        except ItemKindError as exc:
+            raise tool_err(exc) from exc
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
 
     @mutating_tool(mcp, "create_table")
     async def create_table(
