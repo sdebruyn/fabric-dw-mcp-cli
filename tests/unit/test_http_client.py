@@ -28,7 +28,14 @@ from fabric_dw.exceptions import (
     PermissionDeniedError,
     RateLimitedError,
 )
-from fabric_dw.http_client import _DEFAULT_TIMEOUT, FabricHttpClient, HttpBase, _parse_retry_after
+from fabric_dw.http_client import (
+    _DEFAULT_COMBINED_DEADLINE_S,
+    _DEFAULT_TIMEOUT,
+    _MAX_429_RETRIES,
+    FabricHttpClient,
+    HttpBase,
+    _parse_retry_after,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -186,11 +193,11 @@ async def test_429_retry_after_honored() -> None:
     )
 
 
-async def test_429_raises_after_five_in_a_row() -> None:
-    """Exactly 5 consecutive 429 responses must trigger RateLimitedError (_MAX_429_RETRIES = 5).
+async def test_429_raises_after_ten_in_a_row() -> None:
+    """Exactly 10 consecutive 429 responses must trigger RateLimitedError (_MAX_429_RETRIES = 10).
 
-    The implementation raises when consecutive_429 >= 5, so the 5th 429 response
-    is the one that causes the exception — meaning exactly 5 mocked 429s are consumed.
+    The implementation raises when consecutive_429 >= 10, so the 10th 429 response
+    is the one that causes the exception — meaning exactly 10 mocked 429s are consumed.
     """
     call_count = 0
 
@@ -207,7 +214,7 @@ async def test_429_raises_after_five_in_a_row() -> None:
             with pytest.raises(RateLimitedError):
                 await client.request("GET", HttpBase.FABRIC, "/items")
 
-    assert call_count == 5, f"Expected exactly 5 429 responses before raising; got {call_count}"
+    assert call_count == 10, f"Expected exactly 10 429 responses before raising; got {call_count}"
 
 
 # ---------------------------------------------------------------------------
@@ -1024,6 +1031,22 @@ def test_constructor_parameters_are_stored() -> None:
     assert client._max_429_retries == 3
     assert client._poll_interval == 5.0
     assert client._token_refresh_buffer == 600.0
+
+
+def test_default_429_budget_constants() -> None:
+    """Module constants and FabricHttpClient defaults must reflect the raised budget.
+
+    _MAX_429_RETRIES == 10 and _DEFAULT_COMBINED_DEADLINE_S == 300.0 ensure
+    that transient Fabric throttling under parallel load is absorbed instead of
+    raising RateLimitedError prematurely.
+    """
+    assert _MAX_429_RETRIES == 10
+    assert _DEFAULT_COMBINED_DEADLINE_S == 300.0
+
+    # A client built without explicit overrides must inherit both defaults.
+    client = FabricHttpClient(credential=_make_credential())
+    assert client._max_429_retries == 10
+    assert client._combined_deadline_s == 300.0
 
 
 async def test_timeout_wired_into_http_client() -> None:
