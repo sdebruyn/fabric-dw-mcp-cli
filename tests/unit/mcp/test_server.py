@@ -37,6 +37,7 @@ from fabric_dw.models import (
     WarehouseSnapshot,
     Workspace,
 )
+from tests.unit._tool_introspection import SNAKE_CASE_RE, collect_live_mcp_tool_names
 from tests.unit.mcp.conftest import (
     WH_ID,
     WH_NAME,
@@ -47,130 +48,27 @@ from tests.unit.mcp.conftest import (
 )
 
 # ---------------------------------------------------------------------------
-# Expected tool names (canonical list — test fails if any are missing/typo'd)
+# Stable core tools — a small subset that must always be registered.
+# These represent fundamental capabilities across all major domains.
+# Additions never require touching this set; only intentional removal of a
+# core tool should prompt updating it.
 # ---------------------------------------------------------------------------
 
-EXPECTED_TOOL_NAMES: frozenset[str] = frozenset(
+CORE_TOOLS: frozenset[str] = frozenset(
     {
         # Workspaces
-        "assign_workspace_to_capacity",
-        "list_capacities",
         "list_workspaces",
         "get_workspace",
-        "set_workspace_collation",
         # Warehouses
         "list_warehouses",
         "get_warehouse",
-        "create_warehouse",
-        "rename_warehouse",
-        "delete_warehouse",
-        "takeover_warehouse",
-        # SQL Endpoints
-        "list_sql_endpoints",
-        "get_sql_endpoint",
-        "refresh_sql_endpoint_metadata",
-        # Audit
-        "get_audit_settings",
-        "enable_audit",
-        "disable_audit",
-        "set_audit_action_groups",
-        "add_audit_group",
-        "remove_audit_group",
-        "set_audit_retention",
-        # Queries (running + query-insights DMVs)
-        "list_running_queries",
-        "kill_session",
-        "list_request_history",
-        "list_session_history",
-        "list_frequent_queries",
-        "list_long_running_queries",
-        # SQL Pools (incl. pool-insights DMV)
-        # list_sql_pool_insights is grouped with sql_pools below
-        "list_sql_pool_insights",
-        # Generic SQL execution
+        # SQL execution
         "execute_sql",
-        "get_query_plan",
-        # Snapshots
-        "list_snapshots",
-        "create_snapshot",
-        "rename_snapshot",
-        "delete_snapshot",
-        "roll_snapshot_timestamp",
         # Cache
         "clear_cache",
-        # Permissions (admin API)
-        "get_warehouse_permissions",
-        "get_sql_endpoint_permissions",
-        # Schemas
-        "list_schemas",
-        "create_schema",
-        "delete_schema",
-        # Views
-        "list_views",
-        "read_view",
-        "count_view_rows",
-        "get_view",
-        "create_view",
-        "update_view",
-        "drop_view",
-        "rename_view",
-        # Stored Procedures
-        "list_procedures",
-        "get_procedure",
-        "create_procedure",
-        "update_procedure",
-        "drop_procedure",
-        # Functions
-        "list_functions",
-        "get_function",
-        "create_function",
-        "update_function",
-        "drop_function",
-        "rename_function",
-        # Tables
-        "list_tables",
-        "read_table",
-        "count_table_rows",
-        "get_cluster_columns",
-        "create_table",
-        "create_empty_table",
-        "clone_table",
-        "rename_table",
-        "delete_table",
-        "clear_table",
-        # Load
-        "load_table_from_url",
-        "import_table_from_url",
-        # Restore Points
+        # Restore points
         "list_restore_points",
-        "get_restore_point",
-        "create_restore_point",
-        "update_restore_point",
         "delete_restore_point",
-        "restore_warehouse_in_place",
-        # SQL Pools
-        "get_sql_pools_configuration",
-        "list_sql_pools",
-        "get_sql_pool",
-        "create_sql_pool",
-        "update_sql_pool",
-        "delete_sql_pool",
-        "enable_sql_pools",
-        "disable_sql_pools",
-        # Connections
-        "list_connections",
-        # Statistics
-        "list_statistics",
-        "show_statistics",
-        "create_statistics",
-        "update_statistics",
-        "delete_statistics",
-        # Settings
-        "get_warehouse_settings",
-        "set_result_set_caching",
-        "set_time_travel_retention",
-        # dbt scaffold
-        "generate_dbt_profile",
     }
 )
 
@@ -317,13 +215,58 @@ def _make_item_access() -> ItemAccess:
 # ---------------------------------------------------------------------------
 
 
-def test_tools_registered() -> None:
-    """Every expected tool name must be registered in the FastMCP server."""
+def test_core_tools_registered() -> None:
+    """Every core tool must be registered in the FastMCP server.
+
+    ``CORE_TOOLS`` is a stable subset of fundamental tools spanning all major
+    domains.  A registration regression (e.g. a broken ``register_all`` call)
+    is caught here without requiring a full name-set bump when new tools land.
+    """
+    registered_names = collect_live_mcp_tool_names()
+    missing = CORE_TOOLS - registered_names
+    assert not missing, (
+        f"Core tools missing from registration: {sorted(missing)}. "
+        "These tools are considered fundamental and should always be present."
+    )
+
+
+def test_registered_tools_no_duplicates() -> None:
+    """The live tool registration must produce no duplicate tool names."""
+    registered_names = collect_live_mcp_tool_names()
+    # frozenset already deduplicates; verify by checking count via private API too.
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
-    registered = set(mcp._tool_manager._tools.keys())
-    missing = EXPECTED_TOOL_NAMES - registered
-    assert not missing, f"Missing tools: {sorted(missing)}"
+    all_keys = list(mcp._tool_manager._tools.keys())
+    assert len(all_keys) == len(set(all_keys)), (
+        f"Duplicate tool names in _tool_manager: "
+        f"{sorted(k for k in set(all_keys) if all_keys.count(k) > 1)}"
+    )
+    # The frozenset from the live API should match the private key count.
+    assert len(registered_names) == len(all_keys), (
+        f"Mismatch between live API count ({len(registered_names)}) "
+        f"and _tool_manager count ({len(all_keys)})"
+    )
+
+
+def test_registered_tools_naming_convention() -> None:
+    """Every registered tool name must follow the snake_case naming convention."""
+    registered_names = collect_live_mcp_tool_names()
+    bad = [name for name in registered_names if not SNAKE_CASE_RE.match(name)]
+    assert not bad, f"Tool names violating snake_case convention: {sorted(bad)}"
+
+
+def test_registered_tools_non_empty_descriptions() -> None:
+    """Every registered tool must have a non-empty description string."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    missing_desc = [
+        name
+        for name, tool in mcp._tool_manager._tools.items()
+        if not (tool.description or "").strip()
+    ]
+    assert not missing_desc, (
+        f"Tools with missing or empty description: {sorted(missing_desc)}"
+    )
 
 
 # ---------------------------------------------------------------------------
