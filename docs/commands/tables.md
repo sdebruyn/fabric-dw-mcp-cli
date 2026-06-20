@@ -32,6 +32,56 @@ fdw -w MyWorkspace --yes tables clear SalesWH dbo.staging_load
 
 ---
 
+### tables columns
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+List the columns of a table, including name, formatted data type, nullability, ordinal position, collation, identity, and computed flags.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] tables columns [WAREHOUSE] QUALIFIED_NAME
+```
+
+`QUALIFIED_NAME` must be a dot-separated `schema.table_name` string, e.g. `dbo.Sales`.
+
+**Example**
+
+```shell
+fdw -w MyWorkspace tables columns SalesWH dbo.Sales
+```
+
+```
+ ordinal  name    data_type     nullable  is_identity  is_computed  collation_name
+ -------  ------  ------------  --------  -----------  -----------  ----------------------------
+ 1        id      INT           False     True         False
+ 2        amount  DECIMAL(18,2) True      False        False
+ 3        label   NVARCHAR(100) True      False        False        Latin1_General_CI_AS
+```
+
+---
+
+### tables clear
+
+**Targets:** Data Warehouse only
+
+Truncate a table (delete all rows, keep structure). You will be asked to confirm unless `--yes` is passed.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] tables clear [OPTIONS] [WAREHOUSE] QUALIFIED_NAME
+```
+
+**Example**
+
+```shell
+fdw -w MyWorkspace --yes tables clear SalesWH dbo.staging_load
+```
+
+---
+
 ### tables cluster-columns
 
 **Targets:** Data Warehouse only
@@ -58,6 +108,7 @@ fdw -w MyWorkspace tables cluster-columns SalesWH dbo.orders
 ```
 
 ---
+
 
 ### tables clone
 
@@ -463,6 +514,32 @@ Create a zero-copy clone of a table using `CREATE TABLE … AS CLONE OF …`. On
 - `at` (`str | null`, optional) — ISO-8601 UTC timestamp for a point-in-time clone (e.g. `2024-05-20T14:00:00`). Must be within the data-retention window. When omitted, the clone reflects the current state of the source table.
 
 **Returns:** `Table` — the newly-created cloned table record.
+
+---
+
+### get_table_columns
+
+**Targets:** Data Warehouse · SQL Analytics Endpoint
+
+Return column metadata for a SQL table via `sys.columns`. Works on both Fabric Data Warehouses and SQL Analytics Endpoints.
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`) — dot-separated table name, e.g. `dbo.Sales`.
+
+**Returns:** `list[dict]` — one dict per column, each containing:
+
+- `ordinal` (`int`) — 1-based column position (`column_id`).
+- `name` (`str`) — column name.
+- `data_type` (`str`) — formatted T-SQL type string, e.g. `INT`, `VARCHAR(50)`, `NVARCHAR(MAX)`, `DECIMAL(18,2)`, `DATETIME2(7)`.
+- `nullable` (`bool`) — whether the column allows `NULL`.
+- `collation_name` (`str | null`) — collation name, if applicable.
+- `is_identity` (`bool`) — whether the column is an identity column.
+- `is_computed` (`bool`) — whether the column is a computed column.
+
+Results are ordered by ordinal position. Raises a `ToolError` if the table does not exist.
 
 ---
 

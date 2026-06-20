@@ -31,6 +31,7 @@ from fabric_dw.exceptions import FabricError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import ColumnSpec, CopyIntoResult
 from fabric_dw.services import tables as _tables_svc
+from fabric_dw.services.columns import get_object_columns_or_raise as _get_columns
 from fabric_dw.services.load import (
     CopyIntoCsvOptions,
     IfExistsPolicy,
@@ -197,6 +198,33 @@ def _parse_schema_file(path: str) -> list[ColumnSpec]:
     if not specs:
         raise click.UsageError(f"--from-schema {path!r}: schema file contains no columns")
     return specs
+
+
+@tables_group.command("columns")
+@click.argument("item", required=False, default=None)
+@click.argument("qualified_name")
+@click.pass_obj
+@coro
+async def columns_cmd(
+    ctx: CliContext,
+    item: str | None,
+    qualified_name: str,
+) -> None:
+    """List columns of QUALIFIED_NAME (schema.table) on ITEM."""
+    ws = resolve_workspace(ctx)
+    wh = resolve_warehouse_arg(ctx, item)
+    schema, table_name = parse_qualified_name(qualified_name, kind="table")
+    try:
+        async with build_http_client(ctx) as http:
+            target, _entry = await build_sql_target(http, ws, wh)
+            cols = await _get_columns(target, schema, table_name, kind_label="table", mode=ctx.auth)
+            render(
+                cols,
+                json_output=ctx.json_output,
+                table_title="Columns",
+            )
+    except (ValueError, FabricError) as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 @tables_group.command("count")

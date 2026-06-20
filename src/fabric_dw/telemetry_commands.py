@@ -122,6 +122,7 @@ DOMAIN_MAP: dict[str, str] = {
     "create_schema": "schemas",
     "delete_schema": "schemas",
     # Tables
+    "get_table_columns": "tables",
     "list_tables": "tables",
     "read_table": "tables",
     "count_table_rows": "tables",
@@ -134,6 +135,7 @@ DOMAIN_MAP: dict[str, str] = {
     "clear_table": "tables",
     "load_table_from_url": "tables",
     # Views
+    "get_view_columns": "views",
     "list_views": "views",
     "read_view": "views",
     "count_view_rows": "views",

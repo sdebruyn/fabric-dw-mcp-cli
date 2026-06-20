@@ -1146,3 +1146,101 @@ async def test_count_view_rows_bad_qualified_name_raises_tool_error(ctx_patch) -
             "count_view_rows",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "nodot"},
         )
+
+
+# ---------------------------------------------------------------------------
+# get_view_columns — happy path + not found
+# ---------------------------------------------------------------------------
+
+_VIEW_COLUMNS = [
+    {
+        "ordinal": 1,
+        "name": "id",
+        "data_type": "INT",
+        "nullable": False,
+        "collation_name": None,
+        "is_identity": False,
+        "is_computed": False,
+    },
+    {
+        "ordinal": 2,
+        "name": "label",
+        "data_type": "NVARCHAR(200)",
+        "nullable": True,
+        "collation_name": "Latin1_General_CI_AS",
+        "is_identity": False,
+        "is_computed": False,
+    },
+]
+
+
+async def test_get_view_columns_happy_path(mock_ctx, ctx_patch) -> None:
+    """get_view_columns resolves workspace/item, calls service, returns list."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: F401, PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.mcp.tools.views._get_columns",
+            new=AsyncMock(return_value=_VIEW_COLUMNS),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "get_view_columns",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.vw_sales"},
+        )
+
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert result[0]["name"] == "id"
+    assert result[1]["data_type"] == "NVARCHAR(200)"
+
+
+async def test_get_view_columns_not_found_raises_tool_error(mock_ctx, ctx_patch) -> None:
+    """get_view_columns raises ToolError when the view does not exist."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.mcp.tools.views._get_columns",
+            new=AsyncMock(side_effect=NotFoundError("View [dbo].[ghost] not found")),
+        ),
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "get_view_columns",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.ghost"},
+        )
+
+
+async def test_get_view_columns_works_on_sql_endpoint(mock_ctx, ctx_patch) -> None:
+    """get_view_columns has no SQL-endpoint guard — works on both targets."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_sql_endpoint_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.mcp.tools.views._get_columns",
+            new=AsyncMock(return_value=_VIEW_COLUMNS),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "get_view_columns",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.vw_sales"},
+        )
+
+    assert isinstance(result, list)
