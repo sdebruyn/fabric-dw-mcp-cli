@@ -8,6 +8,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -1064,3 +1065,159 @@ class TestSqlPlanFormatSvg:
         # The actual lowercase-vs-uppercase is tested via the Choice parameter;
         # here we simply confirm the happy path works.
         assert result.exit_code == 0
+
+
+class TestSqlPlanFormatHtml:
+    """sql plan --format html — output routing and self-contained HTML generation."""
+
+    def _invoke_html(
+        self,
+        runner: CliRunner,
+        extra_args: list[str],
+    ) -> Result:
+        """Invoke sql plan --format html with patched services."""
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.sql_exec.get_plan",
+                new=AsyncMock(return_value=_RICH_PLAN_XML),
+            ),
+        ):
+            return runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "sql",
+                    "plan",
+                    WH_GUID,
+                    "-q",
+                    "SELECT 1",
+                    "--format",
+                    "html",
+                    *extra_args,
+                ],
+            )
+
+    def test_format_html_requires_output_file(self, runner: CliRunner, cache_env: Path) -> None:
+        """--format html without -o must exit with a usage error (HTML not useful on stdout)."""
+        _ = cache_env
+        result = self._invoke_html(runner, [])
+        assert result.exit_code != 0
+        assert "html" in result.output.lower() or "output" in result.output.lower()
+
+    def test_format_html_output_file_written(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        """--format html -o FILE writes a self-contained HTML file."""
+        _ = cache_env
+        out_file = tmp_path / "plan.html"
+        result = self._invoke_html(runner, ["-o", str(out_file)])
+        assert result.exit_code == 0
+        assert out_file.exists()
+
+    def test_format_html_output_contains_doctype(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        """The written HTML file must begin with <!DOCTYPE html>."""
+        _ = cache_env
+        out_file = tmp_path / "plan.html"
+        result = self._invoke_html(runner, ["-o", str(out_file)])
+        assert result.exit_code == 0
+        content = out_file.read_text(encoding="utf-8")
+        assert "<!DOCTYPE html>" in content
+
+    def test_format_html_output_embeds_plan_xml(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        """The written HTML must embed the raw SHOWPLAN_XML."""
+        _ = cache_env
+        out_file = tmp_path / "plan.html"
+        result = self._invoke_html(runner, ["-o", str(out_file)])
+        assert result.exit_code == 0
+        content = out_file.read_text(encoding="utf-8")
+        assert "ShowPlanXML" in content
+
+    def test_format_html_output_is_self_contained(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        """The written HTML must embed CSS and JS inline (no external URLs)."""
+        _ = cache_env
+        out_file = tmp_path / "plan.html"
+        result = self._invoke_html(runner, ["-o", str(out_file)])
+        assert result.exit_code == 0
+        content = out_file.read_text(encoding="utf-8")
+        # No external <script src="http..."> or <link href="http...">
+        assert not re.search(r'<script[^>]+src=["\']https?://', content)
+        assert not re.search(r'<link[^>]+href=["\']https?://', content)
+        # Sprite sheet must be inlined as a data URI
+        assert "data:image/png;base64," in content
+
+    def test_format_html_confirmation_printed_to_stdout(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        """Writing HTML to file must print a confirmation message to stdout."""
+        _ = cache_env
+        out_file = tmp_path / "plan.html"
+        result = self._invoke_html(runner, ["-o", str(out_file)])
+        assert result.exit_code == 0
+        assert "HTML plan written to" in result.output
+
+    def test_format_html_html_not_echoed_to_stdout(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        """When -o is given, the HTML document must not be printed to stdout."""
+        _ = cache_env
+        out_file = tmp_path / "plan.html"
+        result = self._invoke_html(runner, ["-o", str(out_file)])
+        assert result.exit_code == 0
+        # The confirmation message is on stdout, not the full HTML document
+        assert "<!DOCTYPE html>" not in result.output
+
+    def test_format_html_and_raw_together_is_error(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        """--raw and --format html cannot be combined; must produce a usage error."""
+        _ = cache_env
+        out_file = tmp_path / "plan.html"
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.sql_exec.get_plan",
+                new=AsyncMock(return_value=_RICH_PLAN_XML),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "sql",
+                    "plan",
+                    WH_GUID,
+                    "-q",
+                    "SELECT 1",
+                    "--raw",
+                    "--format",
+                    "html",
+                    "-o",
+                    str(out_file),
+                ],
+            )
+        assert result.exit_code != 0

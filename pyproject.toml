@@ -102,6 +102,14 @@ raw-options = { local_scheme = "no-local-version" }
 [tool.hatch.build.hooks.vcs]
 version-file = "src/fabric_dw/_version.py"
 
+[tool.hatch.build]
+# Force-tracked files whose paths match a .gitignore rule (e.g. dist/) are
+# excluded from hatchling builds even when `git add -f` was used.  The
+# artifacts list overrides that exclusion so vendored assets like
+# qp.min.js (inside assets/html_query_plan/dist/) are shipped in both the
+# wheel and the sdist.
+artifacts = ["src/fabric_dw/assets/**/*"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/fabric_dw"]
 
