@@ -14,6 +14,7 @@ import click
 
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._plan_dot import render_plan_dot
+from fabric_dw.cli._plan_html import render_plan_html
 from fabric_dw.cli._plan_mermaid import render_plan_mermaid
 from fabric_dw.cli._plan_parse import parse_showplan
 from fabric_dw.cli._plan_render import operator_to_dict, render_plan_tree
@@ -119,7 +120,9 @@ async def sql_exec_cmd(
     help=(
         "Write the rendered output to this file.  For --raw/--xml and the default "
         "behaviour (no --format), a .sqlplan extension is recommended — the file opens "
-        "in SSMS or Azure Data Studio.  For --format mermaid, any text extension works."
+        "in SSMS or Azure Data Studio.  For --format mermaid, any text extension works.  "
+        "For --format html, a .html extension is recommended; -o/--output is required "
+        "for --format html."
     ),
 )
 @click.option(
@@ -134,13 +137,15 @@ async def sql_exec_cmd(
     "--format",
     "output_format",
     default=None,
-    type=click.Choice(["mermaid", "dot", "svg"], case_sensitive=False),
+    type=click.Choice(["mermaid", "dot", "svg", "html"], case_sensitive=False),
     help=(
         "Export format for the execution plan.  "
         "``mermaid`` emits a Mermaid flowchart TD diagram (plain text).  "
         "``dot`` emits a Graphviz DOT digraph (plain text, no extra dependencies).  "
         "``svg`` renders the plan to an SVG image via the system ``dot`` binary "
         "(requires Graphviz installed; see https://graphviz.org/download/).  "
+        "``html`` writes a self-contained HTML file that renders the plan graphically "
+        "in any browser (offline, no CDN); requires -o/--output.  "
         "Output goes to stdout, or to -o/--output when given.  "
         "Takes precedence over the default Rich tree; lower priority than --raw/--xml "
         "and the root --json flag."
@@ -170,6 +175,7 @@ async def sql_plan_cmd(
       --format mermaid       Mermaid flowchart TD diagram
       --format dot           Graphviz DOT digraph
       --format svg           SVG image via system dot binary (requires Graphviz)
+      --format html          self-contained HTML file (requires -o/--output)
       (default)              Rich terminal tree
 
     \b
@@ -182,6 +188,10 @@ async def sql_plan_cmd(
     """
     if raw and output_format is not None:
         raise click.UsageError("--raw/--xml and --format cannot be used together.")
+    if output_format == "html" and output_path is None:
+        raise click.UsageError(
+            "--format html requires -o/--output FILE (HTML is not useful on stdout)."
+        )
 
     query = load_sql_body(query_text, query_file, inline_opt="-q/--query", file_opt="-f/--file")
 
@@ -211,6 +221,7 @@ def _output_plan(
       format="mermaid"  → Mermaid flowchart TD diagram
       format="dot"      → Graphviz DOT digraph
       format="svg"      → SVG image via system dot binary (requires Graphviz)
+      format="html"     → self-contained HTML file (output_path required)
       (default)         → Rich terminal tree
 
     Destination (where output goes):
@@ -244,6 +255,10 @@ def _output_plan(
         operators = parse_showplan(plan_xml)
         svg_bytes = render_plan_svg(operators)
         _write_or_echo_bytes(svg_bytes, output_path, "SVG written to {path}")
+    elif output_format == "html":
+        # --format html: self-contained HTML file; -o is required (validated upstream).
+        html_text = render_plan_html(plan_xml)
+        _write_or_echo(html_text, output_path, "HTML plan written to {path}")
     elif output_path is not None:
         # Default mode with -o: write raw XML to file, no tree rendered.
         # (Scripts relying on file-only output get no terminal noise.)

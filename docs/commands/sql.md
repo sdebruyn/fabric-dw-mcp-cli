@@ -67,9 +67,9 @@ fdw [-w WORKSPACE] sql plan [OPTIONS] [ITEM]
 | --- | --- |
 | `-q` / `--query TEXT` | SQL statement to plan. |
 | `-f` / `--file PATH` | Path to a `.sql` file to plan. |
-| `-o` / `--output PATH` | Write the output to this file (stdout otherwise). For raw XML a `.sqlplan` extension is recommended; for `--format mermaid` or `--format dot` any text extension works; for `--format svg` a `.svg` extension is recommended. |
+| `-o` / `--output PATH` | Write the output to this file (stdout otherwise). For raw XML a `.sqlplan` extension is recommended; for `--format mermaid` or `--format dot` any text extension works; for `--format svg` a `.svg` extension is recommended; for `--format html` a `.html` extension is recommended and `-o` is required. |
 | `--raw` / `--xml` | Print the raw SHOWPLAN XML to stdout (or to `-o` file). Useful for piping or inspection. |
-| `--format [mermaid\|dot\|svg]` | Export format for the execution plan. See [Export formats](#export-formats) below. |
+| `--format [mermaid\|dot\|svg\|html]` | Export format for the execution plan. See [Export formats](#export-formats) below. |
 
 Pass the root `--json` flag to emit the parsed operator tree as machine-readable JSON instead of the Rich tree.
 
@@ -82,6 +82,7 @@ Pass the root `--json` flag to emit the parsed operator tree as machine-readable
 | `--format mermaid` | Mermaid diagram to stdout | Mermaid diagram to file |
 | `--format dot` | DOT digraph to stdout | DOT digraph to file |
 | `--format svg` | SVG image to stdout | SVG image to file |
+| `--format html` | _(requires `-o FILE`)_ | self-contained HTML to file |
 | default | Rich tree to terminal | raw XML to file, no tree rendered |
 
 When `-o` is given, only a short confirmation is printed to stdout; the representation itself goes to the file only.
@@ -118,9 +119,28 @@ fdw -w MyWorkspace sql plan SalesWH -q "SELECT TOP 5 * FROM dbo.Sales" --format 
 
 # Render the plan directly to SVG via the system dot binary (requires Graphviz)
 fdw -w MyWorkspace sql plan SalesWH -q "SELECT TOP 5 * FROM dbo.Sales" --format svg -o plan.svg
+
+# Write a self-contained HTML file that renders the plan in any browser (offline)
+fdw -w MyWorkspace sql plan SalesWH -q "SELECT TOP 5 * FROM dbo.Sales" --format html -o plan.html
 ```
 
 #### Export formats
+
+##### html
+
+`--format html` writes a **self-contained, offline HTML file** that renders the execution plan graphically in any web browser.
+
+The output embeds the raw SHOWPLAN_XML together with the vendored [html-query-plan](https://github.com/JustinPealing/html-query-plan) JavaScript library (Justin Pealing, MIT licence) and its sprite-sheet CSS, all base64-inlined.  No CDN or internet connection is required to open the file.
+
+Because an HTML document is not meaningful as raw terminal output, **`-o`/`--output FILE` is required** when using `--format html`.
+
+A `.html` extension is recommended for the `-o`/`--output` file.  The file can be shared with colleagues and opened offline in any modern web browser.
+
+Unknown operators degrade gracefully; the library renders what it knows and skips what it does not recognise.
+
+**Attribution:** The vendored assets (JS and CSS) are from [html-query-plan](https://github.com/JustinPealing/html-query-plan) by Justin Pealing, released under the MIT licence.  A copy of the licence is included in `src/fabric_dw/assets/html_query_plan/LICENSE.txt`.
+
+---
 
 ##### svg
 
