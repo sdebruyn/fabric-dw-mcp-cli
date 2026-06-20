@@ -165,10 +165,10 @@ def _make_ctx_with_config(
     cfg_deadline: float | None = None,
 ) -> CliContext:
     """Build a CliContext with the given CLI-option and config-file values."""
-    defaults = Defaults(max_429_retries=cfg_retries, combined_deadline_s=cfg_deadline)
+    defaults = Defaults(max_429_retries=cfg_retries, retry_deadline_s=cfg_deadline)
     return CliContext(
         max_429_retries=cli_retries,
-        combined_deadline_s=cli_deadline,
+        retry_deadline_s=cli_deadline,
         _config=UserConfig(defaults=defaults),
     )
 
@@ -218,51 +218,75 @@ class TestResolveMax429Retries:
 
         assert _resolve_max_429_retries(ctx) == 9
 
+    def test_float_formatted_int_env_accepted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """FABRIC_DW_MAX_429_RETRIES='20.0' is accepted as 20 (Docker float-int)."""
+        monkeypatch.setenv("FABRIC_DW_MAX_429_RETRIES", "20.0")
+        ctx = _make_ctx_with_config()
+        from fabric_dw.cli.commands._utils import _resolve_max_429_retries  # noqa: PLC0415
 
-class TestResolveCombinedDeadlineS:
+        assert _resolve_max_429_retries(ctx) == 20
+
+
+class TestResolveRetryDeadlineS:
     """Precedence: CLI > env > config > None."""
 
     def test_cli_wins_over_env_and_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("FABRIC_DW_COMBINED_DEADLINE_S", "60.0")
+        monkeypatch.setenv("FABRIC_DW_RETRY_DEADLINE_S", "60.0")
         ctx = _make_ctx_with_config(cli_deadline=500.0, cfg_deadline=120.0)
-        from fabric_dw.cli.commands._utils import _resolve_combined_deadline_s  # noqa: PLC0415
+        from fabric_dw.cli.commands._utils import _resolve_retry_deadline_s  # noqa: PLC0415
 
-        assert _resolve_combined_deadline_s(ctx) == 500.0
+        assert _resolve_retry_deadline_s(ctx) == 500.0
 
     def test_env_wins_over_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("FABRIC_DW_COMBINED_DEADLINE_S", "250.0")
+        monkeypatch.setenv("FABRIC_DW_RETRY_DEADLINE_S", "250.0")
         ctx = _make_ctx_with_config(cfg_deadline=120.0)
-        from fabric_dw.cli.commands._utils import _resolve_combined_deadline_s  # noqa: PLC0415
+        from fabric_dw.cli.commands._utils import _resolve_retry_deadline_s  # noqa: PLC0415
 
-        assert _resolve_combined_deadline_s(ctx) == 250.0
+        assert _resolve_retry_deadline_s(ctx) == 250.0
 
     def test_config_wins_when_no_cli_no_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("FABRIC_DW_COMBINED_DEADLINE_S", raising=False)
+        monkeypatch.delenv("FABRIC_DW_RETRY_DEADLINE_S", raising=False)
         ctx = _make_ctx_with_config(cfg_deadline=180.0)
-        from fabric_dw.cli.commands._utils import _resolve_combined_deadline_s  # noqa: PLC0415
+        from fabric_dw.cli.commands._utils import _resolve_retry_deadline_s  # noqa: PLC0415
 
-        assert _resolve_combined_deadline_s(ctx) == 180.0
+        assert _resolve_retry_deadline_s(ctx) == 180.0
 
     def test_all_absent_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("FABRIC_DW_COMBINED_DEADLINE_S", raising=False)
+        monkeypatch.delenv("FABRIC_DW_RETRY_DEADLINE_S", raising=False)
         ctx = _make_ctx_with_config()
-        from fabric_dw.cli.commands._utils import _resolve_combined_deadline_s  # noqa: PLC0415
+        from fabric_dw.cli.commands._utils import _resolve_retry_deadline_s  # noqa: PLC0415
 
-        assert _resolve_combined_deadline_s(ctx) is None
+        assert _resolve_retry_deadline_s(ctx) is None
 
     def test_malformed_env_falls_through_to_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("FABRIC_DW_COMBINED_DEADLINE_S", "not-a-float")
+        monkeypatch.setenv("FABRIC_DW_RETRY_DEADLINE_S", "not-a-float")
         ctx = _make_ctx_with_config(cfg_deadline=240.0)
-        from fabric_dw.cli.commands._utils import _resolve_combined_deadline_s  # noqa: PLC0415
+        from fabric_dw.cli.commands._utils import _resolve_retry_deadline_s  # noqa: PLC0415
 
-        assert _resolve_combined_deadline_s(ctx) == 240.0
+        assert _resolve_retry_deadline_s(ctx) == 240.0
 
     def test_below_min_env_falls_through_to_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("FABRIC_DW_COMBINED_DEADLINE_S", "0.0")
+        monkeypatch.setenv("FABRIC_DW_RETRY_DEADLINE_S", "0.0")
         ctx = _make_ctx_with_config(cfg_deadline=300.0)
-        from fabric_dw.cli.commands._utils import _resolve_combined_deadline_s  # noqa: PLC0415
+        from fabric_dw.cli.commands._utils import _resolve_retry_deadline_s  # noqa: PLC0415
 
-        assert _resolve_combined_deadline_s(ctx) == 300.0
+        assert _resolve_retry_deadline_s(ctx) == 300.0
+
+    def test_inf_env_falls_through_to_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """inf in env var is rejected (non-finite); config value is used instead."""
+        monkeypatch.setenv("FABRIC_DW_RETRY_DEADLINE_S", "inf")
+        ctx = _make_ctx_with_config(cfg_deadline=120.0)
+        from fabric_dw.cli.commands._utils import _resolve_retry_deadline_s  # noqa: PLC0415
+
+        assert _resolve_retry_deadline_s(ctx) == 120.0
+
+    def test_inf_cli_option_ignored(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """inf passed as CLI value is also rejected; falls through to config."""
+        monkeypatch.delenv("FABRIC_DW_RETRY_DEADLINE_S", raising=False)
+        ctx = _make_ctx_with_config(cli_deadline=float("inf"), cfg_deadline=150.0)
+        from fabric_dw.cli.commands._utils import _resolve_retry_deadline_s  # noqa: PLC0415
+
+        assert _resolve_retry_deadline_s(ctx) == 150.0
 
 
 # ---------------------------------------------------------------------------

@@ -64,10 +64,6 @@ DOMAIN_MAP: dict[str, str] = {
     "dbt": "dbt",
     "cache": "cache",
     "config": "config",
-    "config.set.max-429-retries": "config",
-    "config.set.combined-deadline": "config",
-    "config.unset.max-429-retries": "config",
-    "config.unset.combined-deadline": "config",
     "completion": "completion",
     # ── MCP tool names (explicit overrides / multi-domain tools) ─────────────
     # Workspaces

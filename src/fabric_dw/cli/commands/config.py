@@ -5,16 +5,16 @@ workspace / warehouse on every command.
 
 Commands
 --------
-config show                    — print current defaults (JSON or table)
-config set workspace           — persist a workspace default
-config set warehouse           — persist a warehouse default
-config set max-429-retries     — persist the max consecutive 429 retry count
-config set combined-deadline   — persist the combined 429+5xx wall-clock deadline
-config unset workspace         — clear the workspace default
-config unset warehouse         — clear the warehouse default
-config unset max-429-retries   — clear the max consecutive 429 retry count
-config unset combined-deadline — clear the combined deadline default
-config clear                   — wipe the entire config file
+config show                  — print current defaults (JSON or table)
+config set workspace         — persist a workspace default
+config set warehouse         — persist a warehouse default
+config set max-429-retries   — persist the max consecutive 429 retry count
+config set retry-deadline    — persist the combined 429+5xx wall-clock deadline
+config unset workspace       — clear the workspace default
+config unset warehouse       — clear the warehouse default
+config unset max-429-retries — clear the max consecutive 429 retry count
+config unset retry-deadline  — clear the deadline default
+config clear                 — wipe the entire config file
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ def show_cmd(ctx: CliContext) -> None:
             "workspace": cfg.defaults.workspace,
             "warehouse": cfg.defaults.warehouse,
             "max_429_retries": cfg.defaults.max_429_retries,
-            "combined_deadline_s": cfg.defaults.combined_deadline_s,
+            "retry_deadline_s": cfg.defaults.retry_deadline_s,
         }
     }
     render(data, json_output=ctx.json_output)
@@ -86,12 +86,12 @@ def set_max_429_retries_cmd(value: int) -> None:
     click.echo(f"Default max_429_retries set to {value}.")
 
 
-@set_group.command("combined-deadline")
+@set_group.command("retry-deadline")
 @click.argument("value", type=click.FloatRange(min=0.1))
-def set_combined_deadline_cmd(value: float) -> None:
+def set_retry_deadline_cmd(value: float) -> None:
     """Set the combined 429+5xx retry wall-clock deadline in seconds."""
-    set_default("combined_deadline_s", str(value))
-    click.echo(f"Default combined_deadline_s set to {value}.")
+    set_default("retry_deadline_s", str(value))
+    click.echo(f"Default retry_deadline_s set to {value}.")
 
 
 # ---------------------------------------------------------------------------
@@ -125,11 +125,11 @@ def unset_max_429_retries_cmd() -> None:
     click.echo("Default max_429_retries cleared.")
 
 
-@unset_group.command("combined-deadline")
-def unset_combined_deadline_cmd() -> None:
-    """Clear the combined_deadline_s default (revert to built-in 300.0)."""
-    set_default("combined_deadline_s", None)
-    click.echo("Default combined_deadline_s cleared.")
+@unset_group.command("retry-deadline")
+def unset_retry_deadline_cmd() -> None:
+    """Clear the retry_deadline_s default (revert to built-in 300.0)."""
+    set_default("retry_deadline_s", None)
+    click.echo("Default retry_deadline_s cleared.")
 
 
 # ---------------------------------------------------------------------------

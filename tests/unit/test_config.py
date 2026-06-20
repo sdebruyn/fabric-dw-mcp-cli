@@ -327,16 +327,16 @@ def test_round_trip_max_429_retries(tmp_path: Path) -> None:
     save_config(cfg, path)
     loaded = load_config(path)
     assert loaded.defaults.max_429_retries == 15
-    assert loaded.defaults.combined_deadline_s is None
+    assert loaded.defaults.retry_deadline_s is None
 
 
-def test_round_trip_combined_deadline_s(tmp_path: Path) -> None:
-    """combined_deadline_s is saved and loaded as a float."""
+def test_round_trip_retry_deadline_s(tmp_path: Path) -> None:
+    """retry_deadline_s is saved and loaded as a float."""
     path = tmp_path / "config.toml"
-    cfg = UserConfig(defaults=Defaults(combined_deadline_s=600.0))
+    cfg = UserConfig(defaults=Defaults(retry_deadline_s=600.0))
     save_config(cfg, path)
     loaded = load_config(path)
-    assert loaded.defaults.combined_deadline_s == 600.0
+    assert loaded.defaults.retry_deadline_s == 600.0
     assert loaded.defaults.max_429_retries is None
 
 
@@ -348,7 +348,7 @@ def test_round_trip_all_four_defaults(tmp_path: Path) -> None:
             workspace="SalesWS",
             warehouse="SalesDW",
             max_429_retries=7,
-            combined_deadline_s=180.0,
+            retry_deadline_s=180.0,
         )
     )
     save_config(cfg, path)
@@ -356,7 +356,7 @@ def test_round_trip_all_four_defaults(tmp_path: Path) -> None:
     assert loaded.defaults.workspace == "SalesWS"
     assert loaded.defaults.warehouse == "SalesDW"
     assert loaded.defaults.max_429_retries == 7
-    assert loaded.defaults.combined_deadline_s == 180.0
+    assert loaded.defaults.retry_deadline_s == 180.0
 
 
 def test_set_default_max_429_retries_persists(tmp_path: Path) -> None:
@@ -369,43 +369,108 @@ def test_set_default_max_429_retries_persists(tmp_path: Path) -> None:
     assert loaded.defaults.workspace == "WS"  # preserved
 
 
-def test_set_default_combined_deadline_s_persists(tmp_path: Path) -> None:
-    """set_default('combined_deadline_s', '450.0') stores 450.0 as float."""
+def test_set_default_retry_deadline_s_persists(tmp_path: Path) -> None:
+    """set_default('retry_deadline_s', '450.0') stores 450.0 as float."""
     path = tmp_path / "config.toml"
-    set_default("combined_deadline_s", "450.0", path)
+    set_default("retry_deadline_s", "450.0", path)
     loaded = load_config(path)
-    assert loaded.defaults.combined_deadline_s == 450.0
+    assert loaded.defaults.retry_deadline_s == 450.0
 
 
 def test_set_default_max_429_retries_none_clears(tmp_path: Path) -> None:
     """set_default('max_429_retries', None) clears the key."""
     path = tmp_path / "config.toml"
-    save_config(UserConfig(defaults=Defaults(max_429_retries=5, combined_deadline_s=120.0)), path)
+    save_config(UserConfig(defaults=Defaults(max_429_retries=5, retry_deadline_s=120.0)), path)
     set_default("max_429_retries", None, path)
     loaded = load_config(path)
     assert loaded.defaults.max_429_retries is None
-    assert loaded.defaults.combined_deadline_s == 120.0  # preserved
+    assert loaded.defaults.retry_deadline_s == 120.0  # preserved
 
 
-def test_set_default_combined_deadline_s_none_clears(tmp_path: Path) -> None:
-    """set_default('combined_deadline_s', None) clears the key."""
+def test_set_default_retry_deadline_s_none_clears(tmp_path: Path) -> None:
+    """set_default('retry_deadline_s', None) clears the key."""
     path = tmp_path / "config.toml"
-    save_config(UserConfig(defaults=Defaults(max_429_retries=8, combined_deadline_s=200.0)), path)
-    set_default("combined_deadline_s", None, path)
+    save_config(UserConfig(defaults=Defaults(max_429_retries=8, retry_deadline_s=200.0)), path)
+    set_default("retry_deadline_s", None, path)
     loaded = load_config(path)
-    assert loaded.defaults.combined_deadline_s is None
+    assert loaded.defaults.retry_deadline_s is None
     assert loaded.defaults.max_429_retries == 8  # preserved
 
 
 def test_set_default_max_429_retries_bad_value_raises(tmp_path: Path) -> None:
     """set_default('max_429_retries', 'not-a-number') raises ValueError."""
     path = tmp_path / "config.toml"
-    with pytest.raises(ValueError, match="invalid literal"):
+    with pytest.raises(ValueError, match="cannot be converted"):
         set_default("max_429_retries", "not-a-number", path)
 
 
-def test_set_default_combined_deadline_s_bad_value_raises(tmp_path: Path) -> None:
-    """set_default('combined_deadline_s', 'bad') raises ValueError."""
+def test_set_default_retry_deadline_s_bad_value_raises(tmp_path: Path) -> None:
+    """set_default('retry_deadline_s', 'bad') raises ValueError."""
     path = tmp_path / "config.toml"
-    with pytest.raises(ValueError, match="could not convert"):
-        set_default("combined_deadline_s", "bad", path)
+    with pytest.raises(ValueError, match="cannot be converted"):
+        set_default("retry_deadline_s", "bad", path)
+
+
+# ---------------------------------------------------------------------------
+# Blocker 1: set_default must not clobber config on read error
+# ---------------------------------------------------------------------------
+
+
+def test_set_default_read_error_does_not_clobber_existing_config(tmp_path: Path) -> None:
+    """set_default must raise (not silently clobber) when the existing file cannot be read."""
+    path = tmp_path / "config.toml"
+    save_config(UserConfig(defaults=Defaults(workspace="WS", warehouse="WH")), path)
+    with (
+        patch.object(Path, "read_text", side_effect=OSError("permission denied")),
+        pytest.raises(OSError, match="permission denied"),
+    ):
+        set_default("max_429_retries", "5", path)
+    # File must be intact — we did NOT overwrite it.
+    loaded = load_config(path)
+    assert loaded.defaults.workspace == "WS"
+    assert loaded.defaults.warehouse == "WH"
+
+
+# ---------------------------------------------------------------------------
+# Blocker 2: non-finite values must be rejected
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("val", ["inf", "-inf", "nan"])
+def test_set_default_retry_deadline_s_non_finite_raises(tmp_path: Path, val: str) -> None:
+    """Non-finite values for retry_deadline_s must raise ValueError."""
+    path = tmp_path / "config.toml"
+    with pytest.raises(ValueError, match="finite"):
+        set_default("retry_deadline_s", val, path)
+
+
+# ---------------------------------------------------------------------------
+# Should-fix 3: int("5.0") — float-formatted int env var accepted
+# ---------------------------------------------------------------------------
+
+
+def test_set_default_max_429_retries_float_string_accepted(tmp_path: Path) -> None:
+    """'20.0' is a valid value for max_429_retries (Docker YAML float-formatted int)."""
+    path = tmp_path / "config.toml"
+    set_default("max_429_retries", "20.0", path)
+    loaded = load_config(path)
+    assert loaded.defaults.max_429_retries == 20
+
+
+# ---------------------------------------------------------------------------
+# Should-fix 4: range validation in set_default
+# ---------------------------------------------------------------------------
+
+
+def test_set_default_max_429_retries_below_minimum_raises(tmp_path: Path) -> None:
+    """max_429_retries must be >= 1; 0 raises ValueError."""
+    path = tmp_path / "config.toml"
+    with pytest.raises(ValueError, match=">= 1"):
+        set_default("max_429_retries", "0", path)
+
+
+def test_set_default_retry_deadline_s_below_minimum_raises(tmp_path: Path) -> None:
+    """retry_deadline_s must be >= 0.1; 0.0 raises ValueError."""
+    path = tmp_path / "config.toml"
+    with pytest.raises(ValueError, match=r">= 0\.1"):
+        set_default("retry_deadline_s", "0.0", path)

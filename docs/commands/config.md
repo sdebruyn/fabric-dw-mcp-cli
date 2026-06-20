@@ -28,20 +28,20 @@ The 429 retry budget (consecutive retries and combined wall-clock deadline) can 
 | Knob | CLI option | Env var | Config key | Built-in default |
 |---|---|---|---|---|
 | Max consecutive 429 retries | `--max-429-retries N` | `FABRIC_DW_MAX_429_RETRIES` | `max_429_retries` | 10 |
-| Combined deadline (s) | `--retry-deadline SECONDS` | `FABRIC_DW_COMBINED_DEADLINE_S` | `combined_deadline_s` | 300.0 |
+| Combined deadline (s) | `--retry-deadline SECONDS` | `FABRIC_DW_RETRY_DEADLINE_S` | `retry_deadline_s` | 300.0 |
 
 To persist a higher retry budget for all invocations:
 
 ```shell
 fdw config set max-429-retries 20
-fdw config set combined-deadline 600.0
+fdw config set retry-deadline 600.0
 ```
 
 To revert to the built-in defaults:
 
 ```shell
 fdw config unset max-429-retries
-fdw config unset combined-deadline
+fdw config unset retry-deadline
 ```
 
 For authentication configuration, see [Authentication](../install.md#authentication).
@@ -64,7 +64,7 @@ fdw config clear
 
 ### config set
 
-Set a default value. Accepts `workspace`, `warehouse`, `max-429-retries`, or `combined-deadline` as the key.
+Set a default value. Accepts `workspace`, `warehouse`, `max-429-retries`, or `retry-deadline` as the key.
 
 **Synopsis**
 
@@ -72,7 +72,7 @@ Set a default value. Accepts `workspace`, `warehouse`, `max-429-retries`, or `co
 fdw config set workspace VALUE
 fdw config set warehouse VALUE
 fdw config set max-429-retries N
-fdw config set combined-deadline SECONDS
+fdw config set retry-deadline SECONDS
 ```
 
 **Example**
@@ -81,7 +81,7 @@ fdw config set combined-deadline SECONDS
 fdw config set workspace MyWorkspace
 fdw config set warehouse MyWarehouse
 fdw config set max-429-retries 20
-fdw config set combined-deadline 600.0
+fdw config set retry-deadline 600.0
 ```
 
 ---
@@ -112,7 +112,7 @@ warehouse  MyWarehouse
 
 ### config unset
 
-Clear a single default value. Accepts `workspace`, `warehouse`, `max-429-retries`, or `combined-deadline` as the key.
+Clear a single default value. Accepts `workspace`, `warehouse`, `max-429-retries`, or `retry-deadline` as the key.
 
 **Synopsis**
 
@@ -120,5 +120,5 @@ Clear a single default value. Accepts `workspace`, `warehouse`, `max-429-retries
 fdw config unset workspace
 fdw config unset warehouse
 fdw config unset max-429-retries
-fdw config unset combined-deadline
+fdw config unset retry-deadline
 ```

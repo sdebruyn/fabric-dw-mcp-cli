@@ -542,7 +542,7 @@ class _LazyGroup(_InstrumentedGroup):
     metavar="SECONDS",
     help=(
         "Combined wall-clock deadline in seconds for the 429-loop and 5xx-retry budget "
-        "(default: 300.0, or as configured by FABRIC_DW_COMBINED_DEADLINE_S / config file)."
+        "(default: 300.0, or as configured by FABRIC_DW_RETRY_DEADLINE_S / config file)."
     ),
 )
 @click.pass_context
@@ -565,7 +565,7 @@ def cli(
         auth=CredentialMode(auth_mode),
         workspace=workspace,
         max_429_retries=max_429_retries,
-        combined_deadline_s=retry_deadline,
+        retry_deadline_s=retry_deadline,
     )
 
     maybe_print_first_run_notice()

@@ -20,7 +20,7 @@ class CliContext:
     auth: CredentialMode = field(default_factory=lambda: CredentialMode.DEFAULT)
     workspace: str | None = None
     max_429_retries: int | None = None
-    combined_deadline_s: float | None = None
+    retry_deadline_s: float | None = None
     _config: UserConfig | None = field(default=None, repr=False, compare=False)
 
     @property

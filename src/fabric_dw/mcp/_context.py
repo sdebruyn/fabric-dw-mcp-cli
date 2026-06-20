@@ -25,6 +25,7 @@ exit, SIGTERM, or CTRL-C.
 from __future__ import annotations
 
 import logging
+import math
 import os
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
@@ -96,27 +97,38 @@ _logger = logging.getLogger(__name__)
 
 
 def _parse_mcp_int_env(env: Mapping[str, str], key: str, *, min_val: int) -> int | None:
-    """Parse an integer env var for the MCP context; warn and return None on failure."""
+    """Parse an integer env var for the MCP context; warn and return None on failure.
+
+    Accepts float-formatted ints (e.g. ``"20.0"``) for compatibility with
+    Docker-composed environments that serialise YAML integers as floats.
+    """
     raw = env.get(key)
     if raw is None:
         return None
     try:
-        v = int(raw)
+        v = int(float(raw))
         if v >= min_val:
             return v
         _logger.warning("%s=%r is less than %d; ignoring", key, raw, min_val)
-    except ValueError:
+    except (ValueError, OverflowError):
         _logger.warning("%s=%r is not a valid integer; ignoring", key, raw)
     return None
 
 
 def _parse_mcp_float_env(env: Mapping[str, str], key: str, *, min_val: float) -> float | None:
-    """Parse a float env var for the MCP context; warn and return None on failure."""
+    """Parse a float env var for the MCP context; warn and return None on failure.
+
+    Non-finite values (``inf``, ``nan``) are rejected with a warning because
+    passing them to the HTTP client would disable the retry deadline silently.
+    """
     raw = env.get(key)
     if raw is None:
         return None
     try:
         v = float(raw)
+        if not math.isfinite(v):
+            _logger.warning("%s=%r is not finite; ignoring", key, raw)
+            return None
         if v >= min_val:
             return v
         _logger.warning("%s=%r is less than %s; ignoring", key, raw, min_val)
@@ -129,7 +141,7 @@ def build_context(environ: Mapping[str, str] | None = None) -> ServerContext:
     """Construct a fresh :class:`ServerContext` from the environment.
 
     The 429 retry budget is read from ``FABRIC_DW_MAX_429_RETRIES`` and
-    ``FABRIC_DW_COMBINED_DEADLINE_S``.  When absent or malformed the HTTP
+    ``FABRIC_DW_RETRY_DEADLINE_S``.  When absent or malformed the HTTP
     client's built-in defaults (10 / 300.0) apply.
 
     Args:
@@ -156,7 +168,7 @@ def build_context(environ: Mapping[str, str] | None = None) -> ServerContext:
     credential = _auth.get_credential(mode)
 
     retries = _parse_mcp_int_env(env, "FABRIC_DW_MAX_429_RETRIES", min_val=1)
-    deadline = _parse_mcp_float_env(env, "FABRIC_DW_COMBINED_DEADLINE_S", min_val=0.1)
+    deadline = _parse_mcp_float_env(env, "FABRIC_DW_RETRY_DEADLINE_S", min_val=0.1)
 
     http = FabricHttpClient(
         credential=credential,

@@ -12,7 +12,7 @@ The TOML shape is intentionally tiny:
     workspace = "Sales Workspace"
     warehouse = "Sales-DW"
     max_429_retries = 10
-    combined_deadline_s = 300.0
+    retry_deadline_s = 300.0
 
 Reads are done with :mod:`tomllib` (stdlib, Python 3.11+).
 Writes use :mod:`tomli_w` for spec-compliant serialisation (handles newlines,
@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import math
 import os
 import tempfile
 import tomllib
@@ -62,7 +63,7 @@ class Defaults:
     workspace: str | None = None
     warehouse: str | None = None
     max_429_retries: int | None = None
-    combined_deadline_s: float | None = None
+    retry_deadline_s: float | None = None
 
 
 @dataclass(frozen=True)
@@ -146,14 +147,14 @@ def load_config(path: Path | None = None) -> UserConfig:
     workspace = defaults_raw.get("workspace")
     warehouse = defaults_raw.get("warehouse")
     raw_retries = defaults_raw.get("max_429_retries")
-    raw_deadline = defaults_raw.get("combined_deadline_s")
+    raw_deadline = defaults_raw.get("retry_deadline_s")
     return UserConfig(
         defaults=Defaults(
             workspace=workspace if isinstance(workspace, str) else None,
             warehouse=warehouse if isinstance(warehouse, str) else None,
             max_429_retries=int(raw_retries) if isinstance(raw_retries, int) else None,
-            combined_deadline_s=float(raw_deadline)
-            if isinstance(raw_deadline, (int, float))
+            retry_deadline_s=float(raw_deadline)
+            if isinstance(raw_deadline, (int, float)) and math.isfinite(raw_deadline)
             else None,
         )
     )
@@ -185,33 +186,41 @@ def _defaults_to_dict(d: Defaults) -> dict[str, object]:
         out["warehouse"] = d.warehouse
     if d.max_429_retries is not None:
         out["max_429_retries"] = d.max_429_retries
-    if d.combined_deadline_s is not None:
-        out["combined_deadline_s"] = d.combined_deadline_s
+    if d.retry_deadline_s is not None:
+        out["retry_deadline_s"] = d.retry_deadline_s
     return out
 
 
 def _read_defaults_locked(resolved: Path) -> Defaults:
-    """Read :class:`Defaults` from *resolved* — must be called inside a FileLock."""
+    """Read :class:`Defaults` from *resolved* — must be called inside a FileLock.
+
+    Raises:
+        OSError: When the file exists but cannot be read (e.g. permission denied).
+            Re-raised so that :func:`set_default` can abort rather than silently
+            clobber the existing config with an empty object.
+        tomllib.TOMLDecodeError: When the file exists but contains invalid TOML.
+            Also re-raised so :func:`set_default` can surface a clear error.
+    """
     if not resolved.exists():
         return Defaults()
-    try:
-        raw = resolved.read_text(encoding="utf-8")
-        data = tomllib.loads(raw)
-        defaults_raw = data.get("defaults", {})
-        if not isinstance(defaults_raw, dict):
-            return Defaults()
-        ws = defaults_raw.get("workspace")
-        wh = defaults_raw.get("warehouse")
-        rr = defaults_raw.get("max_429_retries")
-        rd = defaults_raw.get("combined_deadline_s")
-        return Defaults(
-            workspace=ws if isinstance(ws, str) else None,
-            warehouse=wh if isinstance(wh, str) else None,
-            max_429_retries=int(rr) if isinstance(rr, int) else None,
-            combined_deadline_s=float(rd) if isinstance(rd, (int, float)) else None,
-        )
-    except (OSError, tomllib.TOMLDecodeError):
+    raw = resolved.read_text(encoding="utf-8")
+    data = tomllib.loads(raw)
+    defaults_raw = data.get("defaults", {})
+    if not isinstance(defaults_raw, dict):
         return Defaults()
+    ws = defaults_raw.get("workspace")
+    wh = defaults_raw.get("warehouse")
+    rr = defaults_raw.get("max_429_retries")
+    rd = defaults_raw.get("retry_deadline_s")
+    return Defaults(
+        workspace=ws if isinstance(ws, str) else None,
+        warehouse=wh if isinstance(wh, str) else None,
+        max_429_retries=int(rr) if isinstance(rr, int) else None,
+        retry_deadline_s=float(rd) if isinstance(rd, (int, float)) and math.isfinite(rd) else None,
+    )
+
+
+_MIN_RETRY_DEADLINE_S: float = 0.1
 
 
 def set_default(key: str, value: str | None, path: Path | None = None) -> None:
@@ -223,16 +232,20 @@ def set_default(key: str, value: str | None, path: Path | None = None) -> None:
 
     Args:
         key: One of ``"workspace"``, ``"warehouse"``, ``"max_429_retries"``,
-             or ``"combined_deadline_s"``.
+             or ``"retry_deadline_s"``.
         value: The new value (as a string for numeric keys it is coerced), or
                *None* to clear (unset) the key.
         path: Optional override for the config file path.
 
     Raises:
         ValueError: If *key* is not a recognised defaults field.
-        ValueError: If a numeric key receives a value that cannot be coerced.
+        ValueError: If a numeric key receives a value that cannot be coerced,
+            is out of the valid range, or is non-finite.
+        OSError: If the existing config file cannot be read (re-raised to prevent
+            silent data loss — set_default will never overwrite a file it could
+            not read).
     """
-    allowed = {"workspace", "warehouse", "max_429_retries", "combined_deadline_s"}
+    allowed = {"workspace", "warehouse", "max_429_retries", "retry_deadline_s"}
     if key not in allowed:
         raise ValueError(f"Unknown config key {key!r}; must be one of {sorted(allowed)}")
 
@@ -240,18 +253,40 @@ def set_default(key: str, value: str | None, path: Path | None = None) -> None:
     resolved.parent.mkdir(parents=True, exist_ok=True)
     lock = filelock.FileLock(str(resolved) + ".lock", timeout=_LOCK_TIMEOUT)
 
-    # Coerce numeric keys before acquiring the lock so ValueError surfaces early.
+    # Coerce and validate numeric keys before acquiring the lock so errors
+    # surface early without any lock or I/O.
     coerced_int: int | None = None
     coerced_float: float | None = None
     if value is not None:
         if key == "max_429_retries":
-            coerced_int = int(value)
-        elif key == "combined_deadline_s":
-            coerced_float = float(value)
+            try:
+                coerced_int = int(float(value))
+            except (ValueError, OverflowError) as exc:
+                raise ValueError(
+                    f"max_429_retries {value!r} cannot be converted to an integer: {exc}"
+                ) from exc
+            if coerced_int < 1:
+                raise ValueError(f"max_429_retries must be >= 1, got {coerced_int}")
+        elif key == "retry_deadline_s":
+            try:
+                coerced_float = float(value)
+            except (ValueError, OverflowError) as exc:
+                raise ValueError(
+                    f"retry_deadline_s {value!r} cannot be converted to a float: {exc}"
+                ) from exc
+            if not math.isfinite(coerced_float):
+                raise ValueError(f"retry_deadline_s must be a finite number, got {coerced_float!r}")
+            if coerced_float < _MIN_RETRY_DEADLINE_S:
+                raise ValueError(
+                    f"retry_deadline_s must be >= {_MIN_RETRY_DEADLINE_S}, got {coerced_float}"
+                )
 
     try:
         with lock:
             # Read inside the lock so the full read-modify-write is atomic.
+            # OSError is intentionally NOT caught here: if the file exists but
+            # cannot be read, we must not proceed to write an empty config and
+            # silently erase the user's existing workspace/warehouse defaults.
             current = _read_defaults_locked(resolved)
             new_defaults = Defaults(
                 workspace=value if key == "workspace" else current.workspace,
@@ -259,9 +294,9 @@ def set_default(key: str, value: str | None, path: Path | None = None) -> None:
                 max_429_retries=coerced_int
                 if key == "max_429_retries"
                 else current.max_429_retries,
-                combined_deadline_s=coerced_float
-                if key == "combined_deadline_s"
-                else current.combined_deadline_s,
+                retry_deadline_s=coerced_float
+                if key == "retry_deadline_s"
+                else current.retry_deadline_s,
             )
             # _write_config_unlocked is called inside the lock so the full
             # read-modify-write stays within a single lock cycle (C20).

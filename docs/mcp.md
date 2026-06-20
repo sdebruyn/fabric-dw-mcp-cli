@@ -27,7 +27,7 @@ Two optional environment variables tune the HTTP retry budget:
 | Variable | Description | Default |
 |---|---|---|
 | `FABRIC_DW_MAX_429_RETRIES` | Maximum consecutive 429 responses before raising `RateLimitedError` | 10 |
-| `FABRIC_DW_COMBINED_DEADLINE_S` | Combined wall-clock deadline (seconds) for 429-loop + 5xx retries | 300.0 |
+| `FABRIC_DW_RETRY_DEADLINE_S` | Combined wall-clock deadline (seconds) for 429-loop + 5xx retries | 300.0 |
 
 ## Claude Code
 
