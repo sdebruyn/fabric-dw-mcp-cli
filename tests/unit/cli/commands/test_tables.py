@@ -2373,3 +2373,123 @@ class TestTablesClusterBy:
         # default on the runner fixture).
         assert "WARNING" in result.output
         assert "sp_rename" in result.output
+
+
+# ===========================================================================
+# tables health-check
+# ===========================================================================
+
+
+class TestTablesHealthCheck:
+    def test_health_check_exits_zero_on_endpoint(self, runner: CliRunner, cache_env: Path) -> None:
+        """health-check succeeds on a SQL Analytics Endpoint and renders table output."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        fake_cols = ["issue", "severity"]
+        fake_rows: list[tuple[object, ...]] = [("small files", "medium")]
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.get_table_health_metrics",
+                new=AsyncMock(return_value=(fake_cols, fake_rows)),
+            ),
+        ):
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "tables", "health-check", SE_GUID, "dbo.FactSales"]
+            )
+        assert result.exit_code == 0, result.output
+
+    def test_health_check_json_output(self, runner: CliRunner, cache_env: Path) -> None:
+        """health-check with --json returns a list of dicts."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        fake_cols = ["issue", "severity"]
+        fake_rows: list[tuple[object, ...]] = [("fragmentation", "high")]
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.get_table_health_metrics",
+                new=AsyncMock(return_value=(fake_cols, fake_rows)),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", WS_GUID, "--json", "tables", "health-check", SE_GUID, "dbo.FactSales"],
+            )
+        assert result.exit_code == 0, result.output
+        parsed = json.loads(result.output)
+        assert isinstance(parsed, list)
+        assert parsed[0]["issue"] == "fragmentation"
+        assert parsed[0]["severity"] == "high"
+
+    def test_health_check_warehouse_raises_click_exception(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """health-check on a Warehouse raises via the real _assert_sql_endpoint guard.
+
+        The test passes a Warehouse-kind entry so that health_check_cmd forwards
+        kind=WarehouseKind.WAREHOUSE to the real service function, which calls
+        _assert_sql_endpoint and raises ItemKindError.  This verifies the CLI
+        wiring (kind=entry.kind) rather than just patching the service.
+        """
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                # Warehouse entry — kind=WarehouseKind.WAREHOUSE
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            # Do NOT mock the service — let _assert_sql_endpoint fire for real.
+            # Patch open_connection so no real DB call is attempted.
+            patch("fabric_dw.sql.open_connection", return_value=MagicMock()),
+        ):
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "tables", "health-check", WH_GUID, "dbo.FactSales"]
+            )
+        assert result.exit_code != 0
+        assert "SQL Analytics Endpoints" in result.output
+
+    def test_health_check_empty_result(self, runner: CliRunner, cache_env: Path) -> None:
+        """health-check with an empty result set exits zero."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.get_table_health_metrics",
+                new=AsyncMock(return_value=([], [])),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", WS_GUID, "--json", "tables", "health-check", SE_GUID, "dbo.FactSales"],
+            )
+        assert result.exit_code == 0, result.output
+        parsed = json.loads(result.output)
+        assert parsed == []
