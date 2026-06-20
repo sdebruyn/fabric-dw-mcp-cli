@@ -1,0 +1,38 @@
+# Codecov configuration
+# https://docs.codecov.com/docs/codecovyml-reference
+#
+# Two flags are used to separate unit and integration coverage:
+#   unit        — uploaded by ci.yml on every PR/push
+#   integration — uploaded by integration.yml (push/workflow_dispatch/`integration`-labelled PRs)
+#
+# carry_forward: true ensures that a PR which does not trigger the integration
+# workflow (the common case) still benefits from the most-recent integration
+# coverage on main, so the combined project total reflects reality.
+
+coverage:
+  status:
+    # Project gate: evaluated against the combined coverage of all flags.
+    project:
+      default:
+        target: auto
+        threshold: 1%
+    # Patch gate: lines touched by the PR, combined across flags.
+    patch:
+      default:
+        target: auto
+        threshold: 1%
+
+flags:
+  unit:
+    carry_forward: true
+    paths:
+      - src/
+  integration:
+    carry_forward: true
+    paths:
+      - src/
+
+comment:
+  layout: "reach,diff,flags,files"
+  behavior: default
+  require_changes: false

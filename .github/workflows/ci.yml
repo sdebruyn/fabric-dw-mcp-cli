@@ -80,13 +80,13 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          flags: python-${{ matrix.python-version }}
+          flags: unit
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
         uses: codecov/test-results-action@v1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          flags: python-${{ matrix.python-version }}
+          flags: unit
       # Upload coverage to GitHub Code Quality (public preview).
       # Only runs on Python 3.13 to avoid duplicate uploads across matrix entries.
       # Fork-PR guard: skip on PRs from forks (they lack write permissions).
