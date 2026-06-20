@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from uuid import UUID
+
 import click
 
 from fabric_dw.cli._context import CliContext
@@ -67,18 +69,16 @@ async def list_cmd(ctx: CliContext) -> None:
 )
 @click.pass_obj
 @coro
-async def assign_capacity_cmd(ctx: CliContext, workspace: str | None, capacity_id: object) -> None:
+async def assign_capacity_cmd(ctx: CliContext, workspace: str | None, capacity_id: UUID) -> None:
     """Assign WORKSPACE (name or GUID) to a capacity.
 
     WORKSPACE is the workspace name or GUID.  --capacity-id must be a valid UUID.
     """
-    from uuid import UUID  # noqa: PLC0415
-
     ws = resolve_workspace_arg(ctx, workspace)
     try:
         async with build_http_client(ctx) as http:
             ws_id = await resolve_workspace_id(http, ws)
-            await _workspaces_svc.assign_to_capacity(http, ws_id, UUID(str(capacity_id)))
+            await _workspaces_svc.assign_to_capacity(http, ws_id, capacity_id)
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc
     if ctx.json_output:
