@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import httpx
 import pytest
@@ -221,8 +221,6 @@ class TestInferFileFormat:
 
 class TestJsonToParquet:
     def test_converts_json_to_parquet(self, tmp_path: Path) -> None:
-        pytest.importorskip("pyarrow")
-
         json_file = tmp_path / "data.json"
         json_file.write_text(
             '{"id": 1, "name": "Alice"}\n{"id": 2, "name": "Bob"}\n',
@@ -576,8 +574,6 @@ class TestLoadLocalFile:
 
     async def test_json_converted_to_parquet(self, tmp_path: Path) -> None:
         """JSON local files are converted to Parquet before upload."""
-        pytest.importorskip("pyarrow")
-
         json_file = tmp_path / "data.json"
         json_file.write_text('{"id": 1}\n{"id": 2}\n', encoding="utf-8")
 
@@ -773,8 +769,6 @@ class TestTempFileCleanup:
         self, tmp_path: Path
     ) -> None:
         """B2: temp Parquet file must be deleted even if create_staging_lakehouse raises."""
-        pytest.importorskip("pyarrow")
-
         json_file = tmp_path / "data.json"
         json_file.write_text('{"id": 1}\n', encoding="utf-8")
 
@@ -1059,8 +1053,6 @@ class TestOneLakeUploadFile:
 
     def _make_credential(self) -> AsyncTokenCredential:
         """Return a minimal async credential stub that returns a fake token."""
-        from unittest.mock import AsyncMock, MagicMock  # noqa: PLC0415
-
         token = MagicMock()
         token.token = "fake-bearer-token"  # noqa: S105
         cred = AsyncMock(spec=AsyncTokenCredential)
@@ -1773,8 +1765,6 @@ class TestOnelakeUploadFileAuthError:
     _LH_ID = "ffffffff-0000-1111-2222-333333333333"
 
     def _make_failing_credential(self, exc: Exception) -> AsyncTokenCredential:
-        from unittest.mock import AsyncMock, MagicMock  # noqa: PLC0415
-
         cred = MagicMock(spec=AsyncTokenCredential)
         cred.get_token = AsyncMock(side_effect=exc)
         return cred  # type: ignore[return-value]
@@ -1834,3 +1824,1005 @@ class TestOnelakeUploadFileAuthError:
         assert "Azure authentication failed" in msg
         assert "az login" in msg
         assert exc_info.value.__cause__ is not None
+
+
+# ---------------------------------------------------------------------------
+# _build_credential_clause — edge cases (None return paths)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildCredentialClause:
+    """Directly test _build_credential_clause for the None-return branches."""
+
+    def test_sas_without_secret_returns_none(self) -> None:
+        from fabric_dw.services.load import _build_credential_clause  # noqa: PLC0415
+
+        result = _build_credential_clause("sas", None, None)
+        assert result is None
+
+    def test_service_principal_without_identity_returns_none(self) -> None:
+        from fabric_dw.services.load import _build_credential_clause  # noqa: PLC0415
+
+        result = _build_credential_clause("service-principal", "secret", None)
+        assert result is None
+
+    def test_account_key_without_secret_returns_none(self) -> None:
+        from fabric_dw.services.load import _build_credential_clause  # noqa: PLC0415
+
+        result = _build_credential_clause("account-key", None, None)
+        assert result is None
+
+    def test_none_credential_type_returns_none(self) -> None:
+        from fabric_dw.services.load import _build_credential_clause  # noqa: PLC0415
+
+        result = _build_credential_clause("none", "secret", "identity")
+        assert result is None
+
+    def test_sas_with_secret_returns_clause(self) -> None:
+        from fabric_dw.services.load import _build_credential_clause  # noqa: PLC0415
+
+        result = _build_credential_clause("sas", "my-token", None)
+        assert result is not None
+        assert "Shared Access Signature" in result
+        assert "my-token" in result
+
+    def test_service_principal_with_both_returns_clause(self) -> None:
+        from fabric_dw.services.load import _build_credential_clause  # noqa: PLC0415
+
+        result = _build_credential_clause("service-principal", "my-secret", "client-id")
+        assert result is not None
+        assert "client-id" in result
+        assert "my-secret" in result
+
+
+# ---------------------------------------------------------------------------
+# _build_copy_into_sql: credential clause with cred=None (sas without secret)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildCopyIntoSqlCredNone:
+    """When _build_credential_clause returns None the WITH clause must not include CREDENTIAL."""
+
+    def test_sas_without_secret_no_credential_in_sql(self) -> None:
+        sql = _build_copy_into_sql(
+            "dbo",
+            "t",
+            "https://example.com/f.parquet",
+            "PARQUET",
+            credential_type="sas",
+            secret=None,  # no secret → credential clause returns None
+        )
+        assert "CREDENTIAL" not in sql
+
+    def test_parquet_csv_options_ignored(self) -> None:
+        """CSV options must NOT appear in PARQUET SQL (only applied when file_type='CSV')."""
+        csv_opts = CopyIntoCsvOptions(delimiter=",", first_row=2)
+        sql = _build_copy_into_sql(
+            "dbo", "t", "https://example.com/f.parquet", "PARQUET", csv_options=csv_opts
+        )
+        assert "FIELDTERMINATOR" not in sql
+        assert "FIRSTROW" not in sql
+
+
+# ---------------------------------------------------------------------------
+# _assert_not_sql_endpoint
+# ---------------------------------------------------------------------------
+
+
+class TestAssertNotSqlEndpoint:
+    def test_warehouse_not_rejected(self) -> None:
+        from fabric_dw.services.load import _assert_not_sql_endpoint  # noqa: PLC0415
+
+        # Should not raise
+        _assert_not_sql_endpoint(WarehouseKind.WAREHOUSE)
+
+    def test_sql_endpoint_rejected(self) -> None:
+        from fabric_dw.services.load import _assert_not_sql_endpoint  # noqa: PLC0415
+
+        with pytest.raises(ItemKindError):
+            _assert_not_sql_endpoint(WarehouseKind.SQL_ENDPOINT)
+
+
+# ---------------------------------------------------------------------------
+# _log_dfs_error: unreadable body (exception in resp.text)
+# ---------------------------------------------------------------------------
+
+
+class TestLogDfsErrorUnreadableBody:
+    def test_unreadable_body_logs_warning_and_continues(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """_log_dfs_error must handle resp.text raising an exception gracefully."""
+        resp = httpx.Response(
+            500,
+            headers={"x-ms-error-code": "InternalError", "x-ms-request-id": "req-999"},
+        )
+        # Make .text raise an exception to exercise the except branch.
+        decode_error = RuntimeError("cannot decode")
+        with (
+            patch.object(type(resp), "text", new_callable=PropertyMock, side_effect=decode_error),
+            caplog.at_level(logging.WARNING, logger="fabric_dw"),
+        ):
+            _log_dfs_error(resp, "DFS flush")
+
+        warning_logs = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert warning_logs, "Expected a WARNING log when body is unreadable"
+        assert "could not read response body" in warning_logs[0].getMessage()
+
+
+# ---------------------------------------------------------------------------
+# create_staging_lakehouse — 201 path and LRO paths
+# ---------------------------------------------------------------------------
+
+
+class TestCreateStagingLakehouse:
+    def _make_sync_resp(self, headers: dict, body: dict) -> object:
+        """Return a sync-style mock response (json() is NOT async in FabricHttpClient)."""
+        resp = MagicMock()
+        resp.headers = headers
+        resp.json.return_value = body
+        return resp
+
+    async def test_201_path_returns_item_id(self) -> None:
+        """When the API responds 201 with id in body, return that id directly."""
+        from fabric_dw.services.load import create_staging_lakehouse  # noqa: PLC0415
+
+        item_id = "aabbccdd-1234-5678-abcd-ef0123456789"
+        mock_resp = self._make_sync_resp(headers={}, body={"id": item_id})
+
+        mock_http = AsyncMock()
+        mock_http.request.return_value = mock_resp
+
+        ws_id = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+        result = await create_staging_lakehouse(mock_http, ws_id, "my_staging")
+
+        assert result == item_id
+
+    async def test_201_path_no_id_raises_server_error(self) -> None:
+        """When the 201 body lacks 'id', FabricServerError must be raised."""
+        from fabric_dw.exceptions import FabricServerError  # noqa: PLC0415
+        from fabric_dw.services.load import create_staging_lakehouse  # noqa: PLC0415
+
+        mock_resp = self._make_sync_resp(headers={}, body={"displayName": "staging"})
+
+        mock_http = AsyncMock()
+        mock_http.request.return_value = mock_resp
+
+        ws_id = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+        with pytest.raises(FabricServerError, match="no id in body"):
+            await create_staging_lakehouse(mock_http, ws_id, "my_staging")
+
+    async def test_202_lro_path_a_resourceid(self) -> None:
+        """202 LRO with resourceId key in result must return that id."""
+        from fabric_dw.services.load import create_staging_lakehouse  # noqa: PLC0415
+
+        item_id = "res-id-uuid-1234"
+        location = "https://api.fabric.microsoft.com/v1/operations/op-abc"
+
+        mock_resp = self._make_sync_resp(headers={"Location": location}, body={})
+
+        mock_http = AsyncMock()
+        mock_http.request.return_value = mock_resp
+        mock_http.poll_operation.return_value = {"resourceId": item_id}
+
+        ws_id = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+        result = await create_staging_lakehouse(mock_http, ws_id, "my_staging")
+
+        assert result == item_id
+        mock_http.poll_operation.assert_called_once_with(location)
+
+    async def test_202_lro_path_a_created_item_id(self) -> None:
+        """202 LRO with createdItemId key in result must return that id."""
+        from fabric_dw.services.load import create_staging_lakehouse  # noqa: PLC0415
+
+        item_id = "created-item-uuid-5678"
+        location = "https://api.fabric.microsoft.com/v1/operations/op-xyz"
+
+        mock_resp = self._make_sync_resp(headers={"Location": location}, body={})
+
+        mock_http = AsyncMock()
+        mock_http.request.return_value = mock_resp
+        mock_http.poll_operation.return_value = {"createdItemId": item_id}
+
+        ws_id = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+        result = await create_staging_lakehouse(mock_http, ws_id, "my_staging")
+
+        assert result == item_id
+
+    async def test_202_lro_path_b_operations_result(self) -> None:
+        """202 LRO Path B: no resource key → GET /operations/{id}/result with 'id' field."""
+        from fabric_dw.services.load import create_staging_lakehouse  # noqa: PLC0415
+
+        item_id = "path-b-item-id-9999"
+        op_id = "op-path-b"
+        location = f"https://api.fabric.microsoft.com/v1/operations/{op_id}"
+
+        # First request returns a response with a Location header (202 LRO).
+        first_resp = self._make_sync_resp(headers={"Location": location}, body={})
+        # Second request returns the operations result body.
+        second_resp = self._make_sync_resp(headers={}, body={"id": item_id})
+
+        # LRO result has no resource keys.
+        lro_result = {"status": "Succeeded", "something": "else"}
+
+        mock_http = AsyncMock()
+        mock_http.request.side_effect = [first_resp, second_resp]
+        mock_http.poll_operation.return_value = lro_result
+
+        ws_id = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+        result = await create_staging_lakehouse(mock_http, ws_id, "my_staging")
+
+        assert result == item_id
+
+    async def test_202_lro_no_id_raises_server_error(self) -> None:
+        """202 LRO with no usable id in either path must raise FabricServerError."""
+        from fabric_dw.exceptions import FabricServerError  # noqa: PLC0415
+        from fabric_dw.services.load import create_staging_lakehouse  # noqa: PLC0415
+
+        op_id = "op-no-id"
+        location = f"https://api.fabric.microsoft.com/v1/operations/{op_id}"
+
+        first_resp = self._make_sync_resp(headers={"Location": location}, body={})
+        # Path B result also has no 'id'.
+        second_resp = self._make_sync_resp(headers={}, body={"status": "Succeeded"})
+
+        lro_result = {"status": "Succeeded"}
+
+        mock_http = AsyncMock()
+        mock_http.request.side_effect = [first_resp, second_resp]
+        mock_http.poll_operation.return_value = lro_result
+
+        ws_id = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+        with pytest.raises(FabricServerError, match="no item ID"):
+            await create_staging_lakehouse(mock_http, ws_id, "my_staging")
+
+
+# ---------------------------------------------------------------------------
+# delete_lakehouse — 404 suppression
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteLakehouse:
+    async def test_successful_delete(self) -> None:
+        from fabric_dw.services.load import delete_lakehouse  # noqa: PLC0415
+
+        mock_http = AsyncMock()
+        ws_id = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+
+        await delete_lakehouse(mock_http, ws_id, "lh-id-xyz")
+
+        mock_http.request.assert_called_once()
+        call_args = mock_http.request.call_args
+        assert call_args[0][0] == "DELETE"
+        assert "lh-id-xyz" in call_args[0][2]
+
+    async def test_404_suppressed(self) -> None:
+        """delete_lakehouse must silently swallow NotFoundError (already deleted)."""
+        from fabric_dw.exceptions import NotFoundError  # noqa: PLC0415
+        from fabric_dw.services.load import delete_lakehouse  # noqa: PLC0415
+
+        mock_http = AsyncMock()
+        mock_http.request.side_effect = NotFoundError("lakehouse not found")
+
+        ws_id = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+        # Must not raise
+        await delete_lakehouse(mock_http, ws_id, "already-gone-lh")
+
+
+# ---------------------------------------------------------------------------
+# copy_into_from_url — rejected_row_location HTTPS validation
+# ---------------------------------------------------------------------------
+
+
+class TestCopyIntoFromUrlRejectedRowValidation:
+    async def test_http_rejected_row_location_raises(self) -> None:
+        """rejected_row_location with http:// must raise ValueError before executing SQL."""
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+        with (
+            patch("fabric_dw.services.load.run_query") as mock_rq,
+            pytest.raises(ValueError, match="only HTTPS"),
+        ):
+            await copy_into_from_url(
+                target,
+                "dbo",
+                "t",
+                "https://example.com/f.parquet",
+                file_type="PARQUET",
+                rejected_row_location="http://example.com/rejected/",
+            )
+        # Validation fires before SQL execution — run_query must not be called.
+        mock_rq.assert_not_called()
+
+    async def test_fabric_error_reraised_as_is(self) -> None:
+        """FabricError from run_query must be re-raised as-is (not wrapped)."""
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+        orig_error = FabricError("already mapped server error")
+
+        with (
+            patch("fabric_dw.services.load.run_query", side_effect=orig_error),
+            pytest.raises(FabricError) as exc_info,
+        ):
+            await copy_into_from_url(
+                target,
+                "dbo",
+                "t",
+                "https://example.com/f.parquet",
+                file_type="PARQUET",
+            )
+
+        assert exc_info.value is orig_error
+
+
+# ---------------------------------------------------------------------------
+# load_local_file — parquet path (no JSON conversion)
+# ---------------------------------------------------------------------------
+
+
+class TestLoadLocalFileParquetPath:
+    async def test_parquet_file_not_converted(self, tmp_path: Path) -> None:
+        """Parquet local files must be uploaded directly without JSON→Parquet conversion."""
+        pq_file = tmp_path / "data.parquet"
+        pq_file.write_bytes(b"PARQUETDATA")
+
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+        ws_id = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+        mock_http = AsyncMock()
+        mock_credential = AsyncMock()
+
+        with (
+            patch("fabric_dw.services.load.create_staging_lakehouse", return_value="lh-id"),
+            patch("fabric_dw.services.load.onelake_upload_file", return_value=None) as mock_upload,
+            patch(
+                "fabric_dw.services.load.copy_into_from_url",
+                return_value=CopyIntoResult(rows_loaded=3, rows_rejected=0, target="dbo.t"),
+            ) as mock_copy,
+            patch("fabric_dw.services.load.delete_lakehouse"),
+            patch("fabric_dw.services.load._json_to_parquet") as mock_convert,
+        ):
+            result = await load_local_file(
+                mock_http,
+                mock_credential,
+                ws_id,
+                target,
+                "dbo",
+                "t",
+                pq_file,
+                file_format="parquet",
+            )
+
+        # No JSON conversion should occur for parquet input.
+        mock_convert.assert_not_called()
+        assert result.rows_loaded == 3
+
+        # COPY INTO should use PARQUET file_type.
+        _, call_kwargs = mock_copy.call_args
+        assert call_kwargs.get("file_type") == "PARQUET"
+
+        # Uploaded path must be the original parquet file, not a converted temp file.
+        upload_call = mock_upload.call_args
+        uploaded_path: Path = upload_call[0][4]
+        assert uploaded_path == pq_file
+
+
+# ---------------------------------------------------------------------------
+# load_local_file — OSError on converted_path.unlink (warning logged)
+# ---------------------------------------------------------------------------
+
+
+class TestLoadLocalFileUnlinkError:
+    async def test_oserror_on_unlink_logs_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """OSError from unlink of converted temp file must be logged as WARNING, not raised."""
+        json_file = tmp_path / "data.json"
+        json_file.write_text('{"id": 1}\n', encoding="utf-8")
+
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+        ws_id = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+        mock_http = AsyncMock()
+        mock_credential = AsyncMock()
+
+        original_json_to_parquet = _json_to_parquet
+
+        def _capture_and_return(path: Path) -> Path:
+            return original_json_to_parquet(path)
+
+        with (
+            patch("fabric_dw.services.load._json_to_parquet", side_effect=_capture_and_return),
+            patch("fabric_dw.services.load.create_staging_lakehouse", return_value="lh-id"),
+            patch("fabric_dw.services.load.onelake_upload_file", return_value=None),
+            patch(
+                "fabric_dw.services.load.copy_into_from_url",
+                return_value=CopyIntoResult(rows_loaded=1, rows_rejected=0, target="dbo.t"),
+            ),
+            patch("fabric_dw.services.load.delete_lakehouse"),
+            patch.object(Path, "unlink", side_effect=OSError("permission denied")),
+            caplog.at_level(logging.WARNING, logger="fabric_dw"),
+        ):
+            # Should NOT raise even though unlink fails.
+            result = await load_local_file(
+                mock_http,
+                mock_credential,
+                ws_id,
+                target,
+                "dbo",
+                "t",
+                json_file,
+                file_format="json",
+            )
+
+        assert result.rows_loaded == 1
+        warning_logs = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert warning_logs, "Expected WARNING log for failed unlink"
+        assert "failed to delete converted file" in warning_logs[0].getMessage()
+
+
+# ---------------------------------------------------------------------------
+# table_exists and truncate_table — public wrapper functions
+# ---------------------------------------------------------------------------
+
+
+class TestTableExistsPublicApi:
+    async def test_table_exists_delegates(self) -> None:
+        """table_exists must delegate to _table_exists with the same arguments."""
+        from fabric_dw.services.load import table_exists  # noqa: PLC0415
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+        with patch("fabric_dw.services.load._table_exists", return_value=True) as mock_inner:
+            result = await table_exists(target, "dbo", "my_table")
+
+        assert result is True
+        mock_inner.assert_called_once_with(target, "dbo", "my_table", mode=None)
+
+    async def test_table_not_exists(self) -> None:
+        from fabric_dw.services.load import table_exists  # noqa: PLC0415
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+        with patch("fabric_dw.services.load._table_exists", return_value=False):
+            result = await table_exists(target, "dbo", "nonexistent_table")
+
+        assert result is False
+
+
+class TestTruncateTablePublicApi:
+    async def test_truncate_table_delegates(self) -> None:
+        """truncate_table must delegate to _truncate_table_sql."""
+        from fabric_dw.services.load import truncate_table  # noqa: PLC0415
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+        with patch("fabric_dw.services.load._truncate_table_sql") as mock_inner:
+            await truncate_table(target, "dbo", "my_table")
+
+        mock_inner.assert_called_once_with(target, "dbo", "my_table", mode=None)
+
+
+# ---------------------------------------------------------------------------
+# _table_exists — internal implementation
+# ---------------------------------------------------------------------------
+
+
+class TestTableExistsInternal:
+    async def test_returns_true_when_row_found(self) -> None:
+        from fabric_dw.services.load import _table_exists  # noqa: PLC0415
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+        with patch("fabric_dw.services.load.run_query", return_value=(["col"], [(1,)])):
+            result = await _table_exists(target, "dbo", "my_table")
+
+        assert result is True
+
+    async def test_returns_false_when_no_rows(self) -> None:
+        from fabric_dw.services.load import _table_exists  # noqa: PLC0415
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+        with patch("fabric_dw.services.load.run_query", return_value=(["col"], [])):
+            result = await _table_exists(target, "dbo", "ghost_table")
+
+        assert result is False
+
+
+# ---------------------------------------------------------------------------
+# _drop_table_sql — internal implementation
+# ---------------------------------------------------------------------------
+
+
+class TestDropTableSql:
+    async def test_drop_issues_correct_ddl(self) -> None:
+        from fabric_dw.services.load import _drop_table_sql  # noqa: PLC0415
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+        with patch("fabric_dw.services.load.run_query") as mock_rq:
+            await _drop_table_sql(target, "dbo", "old_table")
+
+        mock_rq.assert_called_once()
+        sql_arg: str = mock_rq.call_args[0][1]
+        assert "DROP TABLE" in sql_arg
+        assert "[dbo]" in sql_arg
+        assert "[old_table]" in sql_arg
+        call_kwargs = mock_rq.call_args[1]
+        assert call_kwargs.get("commit") is True
+        assert call_kwargs.get("fetch") == "none"
+
+
+# ---------------------------------------------------------------------------
+# _truncate_table_sql — internal implementation
+# ---------------------------------------------------------------------------
+
+
+class TestTruncateTableSql:
+    async def test_truncate_issues_correct_ddl(self) -> None:
+        from fabric_dw.services.load import _truncate_table_sql  # noqa: PLC0415
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+        with patch("fabric_dw.services.load.run_query") as mock_rq:
+            await _truncate_table_sql(target, "dbo", "my_table")
+
+        mock_rq.assert_called_once()
+        sql_arg: str = mock_rq.call_args[0][1]
+        assert "TRUNCATE TABLE" in sql_arg
+        assert "[dbo]" in sql_arg
+        assert "[my_table]" in sql_arg
+        call_kwargs = mock_rq.call_args[1]
+        assert call_kwargs.get("commit") is True
+        assert call_kwargs.get("fetch") == "none"
+
+
+# ---------------------------------------------------------------------------
+# _infer_columns_from_local — parquet, csv, json paths
+# ---------------------------------------------------------------------------
+
+
+class TestInferColumnsFromLocal:
+    async def test_parquet_path_delegates(self) -> None:
+        from fabric_dw.services.load import _infer_columns_from_local  # noqa: PLC0415
+
+        mock_columns = [object()]
+        with patch(
+            "fabric_dw.services.tables.infer_columns_from_parquet",
+            return_value=mock_columns,
+        ) as mock_fn:
+            result = await _infer_columns_from_local(Path("data.parquet"), "parquet")
+
+        assert result is mock_columns
+        mock_fn.assert_called_once()
+
+    async def test_csv_path_delegates(self) -> None:
+        from fabric_dw.services.load import _infer_columns_from_local  # noqa: PLC0415
+
+        mock_columns = [object()]
+        with patch(
+            "fabric_dw.services.tables.infer_columns_from_csv",
+            return_value=mock_columns,
+        ) as mock_fn:
+            result = await _infer_columns_from_local(Path("data.csv"), "csv")
+
+        assert result is mock_columns
+        mock_fn.assert_called_once()
+
+    async def test_json_path_converts_then_infers(self, tmp_path: Path) -> None:
+        """JSON format must convert to Parquet, infer columns, then clean up the temp file."""
+        from fabric_dw.services.load import _infer_columns_from_local  # noqa: PLC0415
+
+        json_file = tmp_path / "data.json"
+        json_file.write_text('{"id": 1}\n', encoding="utf-8")
+
+        mock_columns = [object()]
+        converted_path: list[Path] = []
+
+        original_json_to_parquet = _json_to_parquet
+
+        def _capture(path: Path) -> Path:
+            result = original_json_to_parquet(path)
+            converted_path.append(result)
+            return result
+
+        with (
+            patch("fabric_dw.services.load._json_to_parquet", side_effect=_capture),
+            patch(
+                "fabric_dw.services.tables.infer_columns_from_parquet",
+                return_value=mock_columns,
+            ),
+        ):
+            result = await _infer_columns_from_local(json_file, "json")
+
+        assert result is mock_columns
+        # Temp file must be cleaned up.
+        assert len(converted_path) == 1
+        assert not converted_path[0].exists()
+
+
+# ---------------------------------------------------------------------------
+# create_and_load — all if_exists branches and cleanup_on_failure
+# ---------------------------------------------------------------------------
+
+
+class TestCreateAndLoad:
+    """Tests for the create_and_load orchestration function."""
+
+    def _make_target(self):  # type: ignore[return]  # SqlTarget imported locally to avoid top-level import
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        return SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+
+    async def test_sql_endpoint_rejected(self, tmp_path: Path) -> None:
+        from fabric_dw.services.load import create_and_load  # noqa: PLC0415
+
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("id\n1\n", encoding="utf-8")
+
+        mock_http = AsyncMock()
+        mock_credential = AsyncMock()
+        ws_id = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+
+        with pytest.raises(ItemKindError):
+            await create_and_load(
+                mock_http,
+                mock_credential,
+                ws_id,
+                self._make_target(),
+                "dbo",
+                "t",
+                csv_file,
+                kind=WarehouseKind.SQL_ENDPOINT,
+            )
+
+    async def test_file_not_found_raises(self, tmp_path: Path) -> None:
+        from fabric_dw.services.load import create_and_load  # noqa: PLC0415
+
+        mock_http = AsyncMock()
+        mock_credential = AsyncMock()
+        ws_id = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+
+        with pytest.raises(FileNotFoundError):
+            await create_and_load(
+                mock_http,
+                mock_credential,
+                ws_id,
+                self._make_target(),
+                "dbo",
+                "t",
+                tmp_path / "nonexistent.csv",
+            )
+
+    async def test_if_exists_fail_raises_when_table_exists(self, tmp_path: Path) -> None:
+        from fabric_dw.services.load import create_and_load  # noqa: PLC0415
+
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("id\n1\n", encoding="utf-8")
+
+        mock_http = AsyncMock()
+        mock_credential = AsyncMock()
+        ws_id = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+
+        with (
+            patch(
+                "fabric_dw.services.load._infer_columns_from_local",
+                return_value=[],
+            ),
+            patch("fabric_dw.services.load._table_exists", return_value=True),
+            pytest.raises(ValueError, match="already exists"),
+        ):
+            await create_and_load(
+                mock_http,
+                mock_credential,
+                ws_id,
+                self._make_target(),
+                "dbo",
+                "t",
+                csv_file,
+                if_exists="fail",
+            )
+
+    async def test_if_exists_append_skips_create(self, tmp_path: Path) -> None:
+        from fabric_dw.services.load import create_and_load  # noqa: PLC0415
+
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("id\n1\n", encoding="utf-8")
+
+        mock_http = AsyncMock()
+        mock_credential = AsyncMock()
+        ws_id = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+
+        expected_result = CopyIntoResult(rows_loaded=5, rows_rejected=0, target="dbo.t")
+
+        with (
+            patch("fabric_dw.services.load._infer_columns_from_local", return_value=[]),
+            patch("fabric_dw.services.load._table_exists", return_value=True),
+            patch("fabric_dw.services.load._create_table_from_columns") as mock_create,
+            patch("fabric_dw.services.load.load_local_file", return_value=expected_result),
+        ):
+            result = await create_and_load(
+                mock_http,
+                mock_credential,
+                ws_id,
+                self._make_target(),
+                "dbo",
+                "t",
+                csv_file,
+                if_exists="append",
+            )
+
+        # With append and existing table, CREATE must NOT be called.
+        mock_create.assert_not_called()
+        assert result.rows_loaded == 5
+
+    async def test_if_exists_truncate_truncates_then_loads(self, tmp_path: Path) -> None:
+        from fabric_dw.services.load import create_and_load  # noqa: PLC0415
+
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("id\n1\n", encoding="utf-8")
+
+        mock_http = AsyncMock()
+        mock_credential = AsyncMock()
+        ws_id = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+
+        expected_result = CopyIntoResult(rows_loaded=2, rows_rejected=0, target="dbo.t")
+
+        with (
+            patch("fabric_dw.services.load._infer_columns_from_local", return_value=[]),
+            patch("fabric_dw.services.load._table_exists", return_value=True),
+            patch("fabric_dw.services.load._truncate_table_sql") as mock_truncate,
+            patch("fabric_dw.services.load._create_table_from_columns") as mock_create,
+            patch("fabric_dw.services.load.load_local_file", return_value=expected_result),
+        ):
+            result = await create_and_load(
+                mock_http,
+                mock_credential,
+                ws_id,
+                self._make_target(),
+                "dbo",
+                "t",
+                csv_file,
+                if_exists="truncate",
+            )
+
+        mock_truncate.assert_called_once()
+        mock_create.assert_not_called()
+        assert result.rows_loaded == 2
+
+    async def test_if_exists_replace_drops_and_recreates(self, tmp_path: Path) -> None:
+        from fabric_dw.services.load import create_and_load  # noqa: PLC0415
+
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("id\n1\n", encoding="utf-8")
+
+        mock_http = AsyncMock()
+        mock_credential = AsyncMock()
+        ws_id = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+
+        columns = [object()]
+        expected_result = CopyIntoResult(rows_loaded=3, rows_rejected=0, target="dbo.t")
+
+        with (
+            patch("fabric_dw.services.load._infer_columns_from_local", return_value=columns),
+            patch("fabric_dw.services.load._table_exists", return_value=True),
+            patch("fabric_dw.services.load._drop_table_sql") as mock_drop,
+            patch("fabric_dw.services.load._create_table_from_columns") as mock_create,
+            patch("fabric_dw.services.load.load_local_file", return_value=expected_result),
+        ):
+            result = await create_and_load(
+                mock_http,
+                mock_credential,
+                ws_id,
+                self._make_target(),
+                "dbo",
+                "t",
+                csv_file,
+                if_exists="replace",
+            )
+
+        mock_drop.assert_called_once()
+        mock_create.assert_called_once()
+        assert result.rows_loaded == 3
+
+    async def test_table_does_not_exist_creates_and_loads(self, tmp_path: Path) -> None:
+        from fabric_dw.services.load import create_and_load  # noqa: PLC0415
+
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("id\n1\n", encoding="utf-8")
+
+        mock_http = AsyncMock()
+        mock_credential = AsyncMock()
+        ws_id = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+
+        columns = [object()]
+        expected_result = CopyIntoResult(rows_loaded=1, rows_rejected=0, target="dbo.t")
+
+        with (
+            patch("fabric_dw.services.load._infer_columns_from_local", return_value=columns),
+            patch("fabric_dw.services.load._table_exists", return_value=False),
+            patch("fabric_dw.services.load._create_table_from_columns") as mock_create,
+            patch("fabric_dw.services.load.load_local_file", return_value=expected_result),
+        ):
+            result = await create_and_load(
+                mock_http,
+                mock_credential,
+                ws_id,
+                self._make_target(),
+                "dbo",
+                "t",
+                csv_file,
+                if_exists="fail",
+            )
+
+        mock_create.assert_called_once()
+        assert result.rows_loaded == 1
+
+    async def test_cleanup_on_failure_drops_new_table(self, tmp_path: Path) -> None:
+        """cleanup_on_failure=True: drop the newly-created table if load_local_file fails."""
+        from fabric_dw.services.load import create_and_load  # noqa: PLC0415
+
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("id\n1\n", encoding="utf-8")
+
+        mock_http = AsyncMock()
+        mock_credential = AsyncMock()
+        ws_id = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+
+        with (
+            patch("fabric_dw.services.load._infer_columns_from_local", return_value=[]),
+            patch("fabric_dw.services.load._table_exists", return_value=False),
+            patch("fabric_dw.services.load._create_table_from_columns"),
+            patch(
+                "fabric_dw.services.load.load_local_file",
+                side_effect=RuntimeError("upload failed"),
+            ),
+            patch("fabric_dw.services.load._drop_table_sql") as mock_drop,
+            pytest.raises(RuntimeError, match="upload failed"),
+        ):
+            await create_and_load(
+                mock_http,
+                mock_credential,
+                ws_id,
+                self._make_target(),
+                "dbo",
+                "t",
+                csv_file,
+                cleanup_on_failure=True,
+            )
+
+        # The table WE created must be dropped.
+        mock_drop.assert_called_once()
+
+    async def test_cleanup_on_failure_false_does_not_drop(self, tmp_path: Path) -> None:
+        """cleanup_on_failure=False (default): do NOT drop the table on load failure."""
+        from fabric_dw.services.load import create_and_load  # noqa: PLC0415
+
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("id\n1\n", encoding="utf-8")
+
+        mock_http = AsyncMock()
+        mock_credential = AsyncMock()
+        ws_id = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+
+        with (
+            patch("fabric_dw.services.load._infer_columns_from_local", return_value=[]),
+            patch("fabric_dw.services.load._table_exists", return_value=False),
+            patch("fabric_dw.services.load._create_table_from_columns"),
+            patch(
+                "fabric_dw.services.load.load_local_file",
+                side_effect=RuntimeError("upload failed"),
+            ),
+            patch("fabric_dw.services.load._drop_table_sql") as mock_drop,
+            pytest.raises(RuntimeError),
+        ):
+            await create_and_load(
+                mock_http,
+                mock_credential,
+                ws_id,
+                self._make_target(),
+                "dbo",
+                "t",
+                csv_file,
+                cleanup_on_failure=False,
+            )
+
+        mock_drop.assert_not_called()
+
+    async def test_cleanup_on_failure_drop_error_logged(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """When cleanup drop fails, the error is logged as WARNING and original error re-raised."""
+        from fabric_dw.services.load import create_and_load  # noqa: PLC0415
+
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("id\n1\n", encoding="utf-8")
+
+        mock_http = AsyncMock()
+        mock_credential = AsyncMock()
+        ws_id = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+
+        with (
+            patch("fabric_dw.services.load._infer_columns_from_local", return_value=[]),
+            patch("fabric_dw.services.load._table_exists", return_value=False),
+            patch("fabric_dw.services.load._create_table_from_columns"),
+            patch(
+                "fabric_dw.services.load.load_local_file",
+                side_effect=RuntimeError("original error"),
+            ),
+            patch(
+                "fabric_dw.services.load._drop_table_sql",
+                side_effect=RuntimeError("drop failed too"),
+            ),
+            caplog.at_level(logging.WARNING, logger="fabric_dw"),
+            pytest.raises(RuntimeError, match="original error"),
+        ):
+            await create_and_load(
+                mock_http,
+                mock_credential,
+                ws_id,
+                self._make_target(),
+                "dbo",
+                "t",
+                csv_file,
+                cleanup_on_failure=True,
+            )
+
+        warning_logs = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert warning_logs, "Expected WARNING when cleanup drop fails"
+        assert "cleanup_on_failure drop failed" in warning_logs[0].getMessage()
+
+
+# ---------------------------------------------------------------------------
+# _create_table_from_columns — thin wrapper
+# ---------------------------------------------------------------------------
+
+
+class TestCreateTableFromColumns:
+    async def test_delegates_to_create_empty_table(self) -> None:
+        from fabric_dw.services.load import _create_table_from_columns  # noqa: PLC0415
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+        columns = [object()]
+
+        with patch("fabric_dw.services.tables.create_empty_table") as mock_cet:
+            await _create_table_from_columns(target, "dbo", "new_table", columns)
+
+        mock_cet.assert_called_once()
+        call_args = mock_cet.call_args
+        assert call_args[0][0] is target
+        assert call_args[0][1] == "dbo"
+        assert call_args[0][2] == "new_table"
+        assert call_args[0][3] is columns
