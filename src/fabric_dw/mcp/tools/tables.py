@@ -9,7 +9,7 @@ from typing import Annotated, Any
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
-from fabric_dw.exceptions import FabricError, ItemKindError
+from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
 from fabric_dw.mcp._guards import (
     assert_workspace_allowed,
@@ -183,8 +183,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             return await tables_svc.get_cluster_columns(
                 target, schema, table_name, kind=entry.kind, mode=ctx.auth_mode
             )
-        except ItemKindError as exc:
-            raise tool_err(exc) from exc
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
 

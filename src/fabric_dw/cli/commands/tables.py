@@ -27,7 +27,7 @@ from fabric_dw.cli.commands._utils import (
     resolve_warehouse_arg,
     resolve_workspace,
 )
-from fabric_dw.exceptions import FabricError, ItemKindError
+from fabric_dw.exceptions import FabricError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import ColumnSpec, CopyIntoResult
 from fabric_dw.services import tables as _tables_svc
@@ -536,8 +536,6 @@ async def cluster_columns_cmd(
                 json_output=ctx.json_output,
                 table_title="Cluster Columns",
             )
-    except ItemKindError as exc:
-        raise click.ClickException(str(exc)) from exc
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 

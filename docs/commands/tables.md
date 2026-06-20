@@ -482,22 +482,6 @@ Return the total row count of a table via `SELECT COUNT_BIG(*)`.
 
 ---
 
-### get_cluster_columns
-
-**Targets:** Data Warehouse only
-
-Return the data-clustering columns of a table, ordered by clustering ordinal. Returns an empty list when no clustering is defined (not an error).
-
-**Parameters:**
-
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse name or GUID. SQL Analytics Endpoints are rejected.
-- `qualified_name` (`str`) — dot-separated table name, e.g. `dbo.sales`.
-
-**Returns:** `list[{ "column_name": str, "clustering_ordinal": int }]` — ordered by ascending `clustering_ordinal`.
-
----
-
 ### create_empty_table
 
 **Targets:** Data Warehouse only
@@ -569,6 +553,22 @@ Drop a SQL table.
 - `qualified_name` (`str`) — dot-separated table name, e.g. `dbo.sales`.
 
 **Returns:** `{ "dropped": true }` — confirmation.
+
+---
+
+### get_cluster_columns
+
+**Targets:** Data Warehouse only
+
+Return the data-clustering columns of a table, ordered by clustering ordinal. Returns an empty list when no clustering is defined (not an error).
+
+**Parameters:**
+
+- `workspace` (`str`) — workspace name or GUID.
+- `item` (`str`) — warehouse name or GUID. SQL Analytics Endpoints are rejected.
+- `qualified_name` (`str`) — dot-separated table name, e.g. `dbo.sales`.
+
+**Returns:** `list[{ "column_name": str, "clustering_ordinal": int }]` — ordered by ascending `clustering_ordinal`.
 
 ---
 

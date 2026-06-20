@@ -64,6 +64,10 @@ _log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _SQL_ENDPOINT_READONLY_MSG = "SQL Endpoints are read-only; CREATE/DROP/TRUNCATE not supported"
+_SQL_ENDPOINT_CLUSTERING_MSG = (
+    "Data clustering is not supported on SQL Analytics Endpoints; "
+    "use a Fabric Data Warehouse"
+)
 
 
 def _assert_not_sql_endpoint(kind: WarehouseKind) -> None:
@@ -320,10 +324,7 @@ async def get_cluster_columns(
         PermissionDeniedError: If the driver reports a permission error.
     """
     if kind == WarehouseKind.SQL_ENDPOINT:
-        raise ItemKindError(
-            "Data clustering is not supported on SQL Analytics Endpoints; "
-            "use a Fabric Data Warehouse"
-        )
+        raise ItemKindError(_SQL_ENDPOINT_CLUSTERING_MSG)
     validate_identifier(schema)
     validate_identifier(table_name)
 
