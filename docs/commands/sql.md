@@ -55,7 +55,7 @@ Capture the **estimated** SHOWPLAN_XML execution plan for a SQL statement withou
 
 By default the plan is rendered as a **Rich terminal tree**: each operator is shown with its physical/logical op name, estimated row count, cost percentage (colour-coded), and badges for parallel execution or warnings. For multi-statement batches, one tree is printed per statement.
 
-The plan XML uses the standard namespace `http://schemas.microsoft.com/sqlserver/2004/07/showplan` and can be opened in SSMS, Azure Data Studio, or uploaded to [pastetheplan.com](https://www.pastetheplan.com) for visual analysis.
+The plan XML uses the standard namespace `http://schemas.microsoft.com/sqlserver/2004/07/showplan` and can be opened in SSMS or Azure Data Studio.
 
 **Synopsis**
 
@@ -67,10 +67,18 @@ fdw [-w WORKSPACE] sql plan [OPTIONS] [ITEM]
 | --- | --- |
 | `-q` / `--query TEXT` | SQL statement to plan. |
 | `-f` / `--file PATH` | Path to a `.sql` file to plan. |
-| `-o` / `--output PATH` | Write the raw plan XML to this file (recommended extension: `.sqlplan`). Opens in SSMS / Azure Data Studio. |
-| `--raw` / `--xml` | Print the raw SHOWPLAN XML to stdout instead of the Rich terminal tree. Useful for piping or inspection. |
+| `-o` / `--output PATH` | Write the output to this file (stdout otherwise). For raw XML a `.sqlplan` extension is recommended; for `--format mermaid` any text extension works. |
+| `--raw` / `--xml` | Print the raw SHOWPLAN XML to stdout (or to `-o` file). Useful for piping or inspection. |
+| `--format [mermaid]` | Export format for the execution plan. See [Export formats](#export-formats) below. |
 
 Pass the root `--json` flag to emit the parsed operator tree as machine-readable JSON instead of the Rich tree.
+
+Output priority (first matching rule wins):
+
+1. `--raw` / `--xml` → raw SHOWPLAN XML to stdout or `-o` file
+2. root `--json` → parsed operator tree as JSON to stdout
+3. `--format mermaid` → Mermaid flowchart to stdout or `-o` file
+4. default → Rich terminal tree (printed to terminal; `-o` also saves raw XML)
 
 **Example**
 
@@ -86,7 +94,37 @@ fdw -w MyWorkspace sql plan SalesWH -q "SELECT TOP 5 * FROM dbo.Sales" --raw
 
 # Emit the operator tree as JSON
 fdw -w MyWorkspace --json sql plan SalesWH -q "SELECT TOP 5 * FROM dbo.Sales"
+
+# Emit a Mermaid flowchart diagram to stdout
+fdw -w MyWorkspace sql plan SalesWH -q "SELECT TOP 5 * FROM dbo.Sales" --format mermaid
+
+# Save a Mermaid diagram to file
+fdw -w MyWorkspace sql plan SalesWH -q "SELECT TOP 5 * FROM dbo.Sales" --format mermaid -o plan.md
 ```
+
+#### Export formats
+
+##### mermaid
+
+`--format mermaid` renders the execution plan as a [Mermaid](https://mermaid.js.org/) `flowchart TD` diagram (plain text, no extra dependencies).
+
+Each operator appears as a node labelled with its physical op name (and logical op when different), the humanised estimated row count, and the cost percentage.  Parent→child edges show the data flow.  One `flowchart TD` block is emitted per statement in the batch, separated by a blank line.
+
+**Viewing the output**
+
+- Paste the diagram text into [mermaid.live](https://mermaid.live) for an interactive preview.
+- GitHub Markdown renders Mermaid natively inside a fenced code block:
+
+  ````markdown
+  ```mermaid
+  flowchart TD
+      S0N0["Hash Match / Inner Join\n5.0K  6.7%"]
+      S0N1["Clustered Index Scan\n10.0K  60.0%"]
+      S0N2["Clustered Index Scan\n3.0K  33.3%"]
+      S0N0 --> S0N1
+      S0N0 --> S0N2
+  ```
+  ````
 
 ---
 
@@ -124,7 +162,7 @@ Capture the **estimated** SHOWPLAN_XML execution plan for a SQL query without ex
 
 This tool does **not** execute the query — it only retrieves the estimated plan. Because no data is modified, this tool is permitted even when `FABRIC_MCP_READONLY=1`. DDL/DML query text is safe to plan without modifying any data.
 
-The plan XML uses the standard namespace `http://schemas.microsoft.com/sqlserver/2004/07/showplan` and can be opened in SSMS, Azure Data Studio, or uploaded to [pastetheplan.com](https://www.pastetheplan.com) for visual analysis.
+The plan XML uses the standard namespace `http://schemas.microsoft.com/sqlserver/2004/07/showplan` and can be opened in SSMS or Azure Data Studio.
 
 **Parameters:**
 
