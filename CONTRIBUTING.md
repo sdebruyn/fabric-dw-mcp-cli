@@ -84,6 +84,19 @@ just cov
 just cov-html
 ```
 
+**Unit test network policy:** unit tests must not make real network calls.
+`tests/unit/conftest.py` installs an autouse fixture (`_block_real_sockets`) that uses
+[`pytest-socket`](https://github.com/miketheman/pytest-socket) to replace
+`socket.socket` with a stub that raises `SocketBlockedError` immediately.
+Any unit test that accidentally reaches a real HTTP client will fail loudly.
+
+- Mock HTTP calls with [`respx`](https://lundberg.github.io/respx/) (preferred) or
+  patch `build_http_client` / `open_connection` at the service boundary.
+- Unix-domain sockets (AF_UNIX) are permitted because asyncio's event loop requires
+  them internally; they cannot reach the internet.
+- Integration tests (`tests/integration/`) are exempt — they legitimately call
+  real Fabric APIs and are not subject to this fixture.
+
 ### Integration tests
 
 Requires a valid `az login` session and a reachable Fabric workspace.
