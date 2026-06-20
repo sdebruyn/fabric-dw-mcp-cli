@@ -226,19 +226,21 @@ jobs:
 
           if [ -n "${PYTEST_K_INPUT}" ]; then
             echo "Running subset: -k '${PYTEST_K_INPUT}' with ${WORKERS} worker(s)"
-            uv run pytest tests/integration -m integration -v -n "${WORKERS}" -k "${PYTEST_K_INPUT}" --cov --cov-branch --cov-report=xml --junitxml=junit.xml -o junit_family=legacy
+            uv run pytest tests/integration -m integration -v -n "${WORKERS}" -k "${PYTEST_K_INPUT}" --cov --cov-report=xml --cov-report=term --junitxml=junit.xml -o junit_family=legacy
           else
             echo "Running full integration suite with ${WORKERS} worker(s)"
-            uv run pytest tests/integration -m integration -v -n "${WORKERS}" --cov --cov-branch --cov-report=xml --junitxml=junit.xml -o junit_family=legacy
+            uv run pytest tests/integration -m integration -v -n "${WORKERS}" --cov --cov-report=xml --cov-report=term --junitxml=junit.xml -o junit_family=legacy
           fi
 
       - name: Upload coverage reports to Codecov
-        if: ${{ !cancelled() }}
+        # success() only: do not propagate partial coverage from a failed run via carry_forward
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           flags: integration
+          files: coverage.xml
       - name: Upload test results to Codecov
+        # !cancelled(): always upload test results so failures appear in Test Analytics
         if: ${{ !cancelled() }}
         uses: codecov/test-results-action@v1
         with:
