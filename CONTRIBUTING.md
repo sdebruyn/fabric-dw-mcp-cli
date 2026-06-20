@@ -119,6 +119,16 @@ just audit
 just build
 ```
 
+## Releasing
+
+The plugin version (`plugin.json`) is single-sourced from stable git tags. The flow:
+
+1. **Bump** — run `just release X.Y.Z` (e.g. `just release 2026.6.0`) to write the stable calver into `plugin.json`. Open a release-prep PR and merge it.
+2. **Tag** — after the bump PR is merged, run `just tag X.Y.Z`. This asserts `plugin.json` agrees with the version before creating and pushing the annotated tag.
+3. **Publish** — the `Publish` CI workflow fires on the tag push. It enforces the same version match (failing fast before the build if they disagree), then ships the package to PyPI and creates a GitHub Release.
+
+Prerelease tags (`aN`/`bN`/`rcN`/`.devN`) skip the `plugin.json` check — plugin.json always reflects the latest stable release only.
+
 ## Code of Conduct
 
 By participating in this project you agree to abide by the [Code of Conduct](CODE_OF_CONDUCT.md).
