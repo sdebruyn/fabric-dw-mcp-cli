@@ -42,7 +42,7 @@ fdw -w MyWorkspace schemas create SalesWH reporting
 
 Drop a schema from a warehouse. You will be asked to confirm unless `--yes` is passed.
 
-Pass `--cascade` to also drop all tables and views inside the schema before dropping the schema itself. **This is a destructive, irreversible operation.**
+Pass `--cascade` to also drop all tables, views, functions, and stored procedures inside the schema before dropping the schema itself. **This is a destructive, irreversible operation.**
 
 **Usage**
 
@@ -52,7 +52,7 @@ fdw [-w WORKSPACE] schemas delete [OPTIONS] [WAREHOUSE] NAME
 
 | Option | Description |
 | --- | --- |
-| `--cascade` | Drop all tables and views in the schema first. **WARNING: permanently deletes all contained objects and data.** |
+| `--cascade` | Drop all tables, views, functions, and stored procedures in the schema first. **WARNING: permanently deletes all contained objects and data.** |
 
 **Example**
 
@@ -60,7 +60,7 @@ fdw [-w WORKSPACE] schemas delete [OPTIONS] [WAREHOUSE] NAME
 # Drop an empty schema
 fdw -w MyWorkspace --yes schemas delete SalesWH staging
 
-# Drop a schema and all its tables/views
+# Drop a schema and all its tables, views, functions, and stored procedures
 fdw -w MyWorkspace --yes schemas delete SalesWH staging --cascade
 ```
 
@@ -120,14 +120,14 @@ Drop a SQL schema from a Fabric Data Warehouse or SQL Analytics Endpoint.
 
 **CAUTION**: This is a destructive, irreversible operation. The schema will be permanently deleted. If the schema still contains tables or views the operation will fail unless `cascade=True`.
 
-**CAUTION**: When `cascade=True`, **all tables and views in the schema are permanently deleted along with their data**. Confirm explicitly with the user before calling with `cascade=True`.
+**CAUTION**: When `cascade=True`, **all tables, views, functions, and stored procedures in the schema are permanently deleted along with their data**. Confirm explicitly with the user before calling with `cascade=True`.
 
 **Parameters:**
 
 - `workspace` (`str`) — workspace name or GUID.
 - `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
 - `name` (`str`) — the schema name to drop.
-- `cascade` (`bool`, default `False`) — when `True`, drop all tables and views in the schema first.
+- `cascade` (`bool`, default `False`) — when `True`, drop all tables, views, functions, and stored procedures in the schema first.
 
 **Returns:** `{ "deleted": true }` — confirmation.
 
