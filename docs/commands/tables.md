@@ -207,29 +207,6 @@ fdw -w MyWorkspace --json tables count SalesWH dbo.orders
 
 ---
 
-### tables health-check
-
-**Targets:** SQL Analytics Endpoint
-
-Run `sp_get_table_health_metrics` against a single table to surface Delta/Parquet layout issues (small files, fragmentation, excessive deletes/updates, delayed checkpoints) and decide whether maintenance is needed.
-
-The proc is Generally Available (announced at Build 2026) but Microsoft Learn has no dedicated reference page yet. Output columns are passed through verbatim — the exact column names and types are determined by the proc and may change across Fabric releases.
-
-**Synopsis**
-
-```
-fdw [-w WORKSPACE] tables health-check [ENDPOINT] QUALIFIED_NAME
-```
-
-**Example**
-
-```shell
-fdw -w MyWorkspace tables health-check MySqlEndpoint dbo.FactSales
-fdw -w MyWorkspace --json tables health-check MySqlEndpoint dbo.FactSales
-```
-
----
-
 ### tables create
 
 **Targets:** Data Warehouse only
@@ -356,6 +333,29 @@ fdw [-w WORKSPACE] tables delete [OPTIONS] [WAREHOUSE] QUALIFIED_NAME
 
 ```shell
 fdw -w MyWorkspace --yes tables delete SalesWH dbo.orders_2026
+```
+
+---
+
+### tables health-check
+
+**Targets:** SQL Analytics Endpoint
+
+Run `sp_get_table_health_metrics` against a single table to surface Delta/Parquet layout issues (small files, fragmentation, excessive deletes/updates, delayed checkpoints) and decide whether maintenance is needed.
+
+The proc is Generally Available (announced at Build 2026) but Microsoft Learn has no dedicated reference page yet. Output columns are passed through verbatim — the exact column names and types are determined by the proc and may change across Fabric releases.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] tables health-check [ENDPOINT] QUALIFIED_NAME
+```
+
+**Example**
+
+```shell
+fdw -w MyWorkspace tables health-check MySqlEndpoint dbo.FactSales
+fdw -w MyWorkspace --json tables health-check MySqlEndpoint dbo.FactSales
 ```
 
 ---

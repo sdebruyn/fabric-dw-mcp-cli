@@ -2439,7 +2439,13 @@ class TestTablesHealthCheck:
     def test_health_check_warehouse_raises_click_exception(
         self, runner: CliRunner, cache_env: Path
     ) -> None:
-        """health-check on a Warehouse surfaces the ItemKindError as a ClickException."""
+        """health-check on a Warehouse raises via the real _assert_sql_endpoint guard.
+
+        The test passes a Warehouse-kind entry so that health_check_cmd forwards
+        kind=WarehouseKind.WAREHOUSE to the real service function, which calls
+        _assert_sql_endpoint and raises ItemKindError.  This verifies the CLI
+        wiring (kind=entry.kind) rather than just patching the service.
+        """
         _ = cache_env
         mock_http = AsyncMock()
         with (
@@ -2449,17 +2455,12 @@ class TestTablesHealthCheck:
             ),
             patch(
                 "fabric_dw.cli.commands.tables.build_sql_target",
+                # Warehouse entry — kind=WarehouseKind.WAREHOUSE
                 new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
-            patch(
-                "fabric_dw.services.tables.get_table_health_metrics",
-                new=AsyncMock(
-                    side_effect=ItemKindError(
-                        "Table health-check (sp_get_table_health_metrics) is only "
-                        "available on SQL Analytics Endpoints, not Data Warehouses."
-                    )
-                ),
-            ),
+            # Do NOT mock the service — let _assert_sql_endpoint fire for real.
+            # Patch open_connection so no real DB call is attempted.
+            patch("fabric_dw.sql.open_connection", return_value=MagicMock()),
         ):
             result = runner.invoke(
                 cli, ["-w", WS_GUID, "tables", "health-check", WH_GUID, "dbo.FactSales"]
