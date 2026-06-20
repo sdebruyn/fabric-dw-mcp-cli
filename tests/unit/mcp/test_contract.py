@@ -40,17 +40,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from fabric_dw.models import Workspace
+from tests.unit._tool_introspection import SNAKE_CASE_RE
 from tests.unit.mcp.conftest import WS_ID, WS_NAME, make_item_entry
 
 # ---------------------------------------------------------------------------
-# Expected tool count (sync with test_server.EXPECTED_TOOL_NAMES)
+# Minimum tool count — guards against catastrophic registration drops.
+# Set just below the current count (~96) so adding tools never requires a
+# bump, while a whole-domain disappearance (≥6 tools) is still caught.
 # ---------------------------------------------------------------------------
 
-# 77 baseline + 5 statistics + 1 dbt + 3 table-create + 6 functions
-# + 1 load_table_from_url + 1 import_table_from_url + 3 settings
-# + 2 count_table_rows / count_view_rows + 1 get_query_plan + 1 get_cluster_columns
-# + 2 capacity tools (list_capacities + assign_workspace_to_capacity)
-_EXPECTED_TOOL_COUNT = 96
+MIN_TOOL_COUNT = 90
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +87,30 @@ def contract_ctx():
 
 
 # ---------------------------------------------------------------------------
+# Fixture: live tool list via the full MCP protocol round-trip
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def live_tools(contract_ctx):
+    """Return the list of Tool objects enumerated via the MCP protocol.
+
+    Wires a real FastMCP server to a real ClientSession through in-memory
+    streams (no TCP), so this exercises the same JSON-RPC ``tools/list``
+    handshake the production server uses.
+    """
+    from mcp.shared.memory import create_connected_server_and_client_session  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with patch("fabric_dw.mcp._context.build_context", return_value=contract_ctx):
+        async with create_connected_server_and_client_session(mcp) as client:
+            result = await client.list_tools()
+
+    return result.tools
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -108,53 +131,66 @@ def _make_workspace() -> Workspace:
 # ---------------------------------------------------------------------------
 
 
-async def test_list_tools_returns_expected_count(contract_ctx) -> None:
-    """list_tools() via the MCP protocol returns all 67 registered tools.
+async def test_list_tools_minimum_count(live_tools) -> None:
+    """list_tools() via the MCP protocol returns at least MIN_TOOL_COUNT tools.
 
-    This exercises the JSON-RPC ``tools/list`` handshake end-to-end and
-    verifies that registration (``register_all``) did not silently drop or
-    duplicate any tool.
+    The minimum threshold catches catastrophic registration regressions while
+    allowing tools to be added without bumping a hardcoded number.
     """
-    from mcp.shared.memory import create_connected_server_and_client_session  # noqa: PLC0415
-
-    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
-
-    with patch("fabric_dw.mcp._context.build_context", return_value=contract_ctx):
-        async with create_connected_server_and_client_session(mcp) as client:
-            result = await client.list_tools()
-
-    tool_names = {t.name for t in result.tools}
-    assert len(tool_names) == _EXPECTED_TOOL_COUNT, (
-        f"Expected {_EXPECTED_TOOL_COUNT} tools; got {len(tool_names)}. "
-        f"Diff: {tool_names.symmetric_difference(_expected_tool_names())}"
+    tool_names = {t.name for t in live_tools}
+    assert len(tool_names) >= MIN_TOOL_COUNT, (
+        f"Expected at least {MIN_TOOL_COUNT} tools via MCP protocol; got {len(tool_names)}. "
+        "Registration may have silently dropped tools."
     )
 
 
-async def test_list_tools_contains_read_tool(contract_ctx) -> None:
+async def test_list_tools_no_duplicates(live_tools) -> None:
+    """list_tools() must return no duplicate tool names."""
+    all_names = [t.name for t in live_tools]
+    unique_names = set(all_names)
+    assert len(all_names) == len(unique_names), (
+        f"Duplicate tool names detected: "
+        f"{sorted(n for n in unique_names if all_names.count(n) > 1)}"
+    )
+
+
+async def test_list_tools_naming_convention(live_tools) -> None:
+    """Every tool name must follow the snake_case naming convention."""
+    bad = [t.name for t in live_tools if not SNAKE_CASE_RE.match(t.name)]
+    assert not bad, f"Tool names violating snake_case convention: {sorted(bad)}"
+
+
+async def test_list_tools_non_empty_descriptions(live_tools) -> None:
+    """Every tool must have a non-empty description string."""
+    missing = [t.name for t in live_tools if not (t.description or "").strip()]
+    assert not missing, f"Tools with missing or empty description: {sorted(missing)}"
+
+
+async def test_list_tools_all_resolve_to_domain(live_tools) -> None:
+    """Every tool registered via MCP must resolve to a known telemetry domain.
+
+    This replicates the invariant enforced by test_telemetry_commands, but
+    exercises it through the full MCP protocol round-trip so contract tests
+    are self-contained.
+    """
+    from fabric_dw.telemetry_commands import resolve_domain  # noqa: PLC0415
+
+    unknown = [t.name for t in live_tools if resolve_domain(t.name) == "unknown"]
+    assert not unknown, (
+        f"MCP tools with no DOMAIN_MAP entry (would log domain='unknown'): {sorted(unknown)}. "
+        "Add each missing name to DOMAIN_MAP in fabric_dw.telemetry_commands."
+    )
+
+
+async def test_list_tools_contains_read_tool(live_tools) -> None:
     """The tool roster must include the 'list_workspaces' read tool."""
-    from mcp.shared.memory import create_connected_server_and_client_session  # noqa: PLC0415
-
-    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
-
-    with patch("fabric_dw.mcp._context.build_context", return_value=contract_ctx):
-        async with create_connected_server_and_client_session(mcp) as client:
-            result = await client.list_tools()
-
-    tool_names = {t.name for t in result.tools}
+    tool_names = {t.name for t in live_tools}
     assert "list_workspaces" in tool_names
 
 
-async def test_list_tools_contains_destructive_tool(contract_ctx) -> None:
+async def test_list_tools_contains_destructive_tool(live_tools) -> None:
     """The tool roster must include the guarded 'delete_restore_point' tool."""
-    from mcp.shared.memory import create_connected_server_and_client_session  # noqa: PLC0415
-
-    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
-
-    with patch("fabric_dw.mcp._context.build_context", return_value=contract_ctx):
-        async with create_connected_server_and_client_session(mcp) as client:
-            result = await client.list_tools()
-
-    tool_names = {t.name for t in result.tools}
+    tool_names = {t.name for t in live_tools}
     assert "delete_restore_point" in tool_names
 
 
@@ -297,15 +333,3 @@ async def test_destructive_tool_allowed_with_env_flag(
             )
 
     assert not result.isError, f"Expected success; got error: {result!r}"
-
-
-# ---------------------------------------------------------------------------
-# Helper: reproduce expected tool names for diff output
-# ---------------------------------------------------------------------------
-
-
-def _expected_tool_names() -> frozenset[str]:
-    """Mirror of EXPECTED_TOOL_NAMES from test_server.py (for diff output only)."""
-    from tests.unit.mcp.test_server import EXPECTED_TOOL_NAMES  # noqa: PLC0415
-
-    return EXPECTED_TOOL_NAMES

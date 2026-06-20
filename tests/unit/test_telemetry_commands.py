@@ -21,6 +21,7 @@ from fabric_dw.telemetry_commands import (
     now_ms,
     resolve_domain,
 )
+from tests.unit._tool_introspection import collect_live_mcp_tool_names
 
 # Telemetry patch targets (lazily imported inside emit_command_invoked).
 _TELEMETRY_ENABLED = "fabric_dw.telemetry.telemetry_enabled"
@@ -88,24 +89,6 @@ def _collect_live_cli_group_names() -> frozenset[str]:
     return frozenset(cli.commands)
 
 
-def _collect_live_mcp_tool_names() -> frozenset[str]:
-    """Register all MCP tools against a fresh InstrumentedFastMCP instance; return tool names.
-
-    Uses ``InstrumentedFastMCP`` (the same class the production MCP server
-    instantiates) and ``register_all()`` so that any tool added to the server
-    automatically appears here.  Tool names are enumerated via the public
-    ``asyncio.run(mcp.list_tools())`` API to avoid relying on private internals.
-    """
-    import asyncio  # noqa: PLC0415
-
-    from fabric_dw.mcp._helpers import InstrumentedFastMCP  # noqa: PLC0415
-    from fabric_dw.mcp.tools import register_all  # noqa: PLC0415
-
-    mcp = InstrumentedFastMCP("coverage-check")
-    register_all(mcp)
-    return frozenset(tool.name for tool in asyncio.run(mcp.list_tools()))
-
-
 class TestDomainCoverage:
     """Every registered MCP tool and every CLI command must resolve to a known domain.
 
@@ -116,7 +99,7 @@ class TestDomainCoverage:
 
     def test_all_mcp_tools_resolve_to_known_domain(self) -> None:
         """Every MCP tool name must resolve to a domain that is NOT 'unknown'."""
-        tool_names = _collect_live_mcp_tool_names()
+        tool_names = collect_live_mcp_tool_names()
         assert len(tool_names) > 0, (
             "No MCP tools were discovered — register_all() appears to have registered nothing. "
             "Check that fabric_dw.mcp.tools._DOMAINS is populated."
