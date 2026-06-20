@@ -1183,6 +1183,7 @@ async def create_and_load(
     sample_rows: int = 1000,
     csv_delimiter: str = ",",
     csv_encoding: str = "utf-8-sig",
+    cluster_by: list[str] | None = None,
 ) -> CopyIntoResult:
     """Create the target table from the source schema and load data into it.
 
@@ -1233,6 +1234,9 @@ async def create_and_load(
         sample_rows: Maximum rows to sample for CSV type inference.
         csv_delimiter: CSV field delimiter (used for schema inference only).
         csv_encoding: CSV encoding for schema inference.
+        cluster_by: Optional list of column names for the ``CLUSTER BY`` clause
+            (up to 4).  Passed through to :func:`~fabric_dw.services.tables.create_empty_table`
+            when a table is created.  Each name must appear in the inferred schema.
 
     Returns:
         A :class:`~fabric_dw.models.CopyIntoResult`.
@@ -1240,7 +1244,9 @@ async def create_and_load(
     Raises:
         ItemKindError: If *kind* is SQL_ENDPOINT.
         ValueError: If the table exists and *if_exists* is ``"fail"``, or if
-            the file format is unrecognised or unsupported.
+            the file format is unrecognised or unsupported, or if a *cluster_by*
+            column is not in the inferred schema, or if more than 4 *cluster_by*
+            columns are supplied.
         FileNotFoundError: If *local_path* does not exist.
     """
     _assert_not_sql_endpoint(kind)
@@ -1284,13 +1290,17 @@ async def create_and_load(
         elif if_exists == "replace":
             _logger.info("create_and_load: DROP + recreate TABLE [%s].[%s]", schema, table)
             await _drop_table_sql(target, schema, table, mode=mode)
-            await _create_table_from_columns(target, schema, table, columns, kind=kind, mode=mode)
+            await _create_table_from_columns(
+                target, schema, table, columns, kind=kind, mode=mode, cluster_by=cluster_by
+            )
             we_created = True
         # "append": do nothing — COPY INTO will add rows to the existing table.
     else:
         # Table does not exist — create it (for "fail", "replace", "append" with no table).
         _logger.info("create_and_load: CREATE TABLE [%s].[%s]", schema, table)
-        await _create_table_from_columns(target, schema, table, columns, kind=kind, mode=mode)
+        await _create_table_from_columns(
+            target, schema, table, columns, kind=kind, mode=mode, cluster_by=cluster_by
+        )
         we_created = True
 
     # Step 3: load data.
@@ -1339,6 +1349,7 @@ async def _create_table_from_columns(
     *,
     kind: WarehouseKind = WarehouseKind.WAREHOUSE,
     mode: object = None,
+    cluster_by: list[str] | None = None,
 ) -> None:
     """Create an empty table from an inferred column list.
 
@@ -1349,4 +1360,6 @@ async def _create_table_from_columns(
     from fabric_dw.services.tables import create_empty_table  # noqa: PLC0415
 
     _mode = mode if isinstance(mode, CredentialMode) else CredentialMode.DEFAULT
-    await create_empty_table(target, schema, table, columns, kind=kind, mode=_mode)
+    await create_empty_table(
+        target, schema, table, columns, cluster_by=cluster_by, kind=kind, mode=_mode
+    )

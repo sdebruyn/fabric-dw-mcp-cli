@@ -191,6 +191,7 @@ fdw [-w WORKSPACE] tables create [OPTIONS] [WAREHOUSE]
 | `--name SCHEMA.TABLE` | **Required.** Qualified table name. |
 | `--select TEXT` | Inline SELECT statement for CTAS. |
 | `--from-file PATH` | Path to a `.sql` file containing the SELECT body (UTF-8/UTF-8-sig). |
+| `--cluster-by COL` | Column name for `CLUSTER BY` (repeatable, up to 4). Column existence is not validated on the CTAS path because result columns come from the SELECT. |
 
 Exactly one of `--select` or `--from-file` must be provided for the CTAS path. Cannot be combined with empty-DDL options.
 
@@ -203,6 +204,7 @@ Exactly one of `--select` or `--from-file` must be provided for the CTAS path. C
 | `--from-csv PATH` | Derive schema from a CSV header + bounded sample (no data loaded). |
 | `--from-schema PATH` | JSON file with column specs: `[{"name": "…", "type": "…", "nullable": true}]`. |
 | `--column NAME:TYPE[:null\|notnull]` | Inline column definition (repeatable). Can be combined with `--from-schema`. |
+| `--cluster-by COL` | Column name for `CLUSTER BY` (repeatable, up to 4). Each name must appear in the table schema. |
 | `--all-varchar` | (CSV) Force all columns to `VARCHAR`; skip type inference. |
 | `--varchar-length N` | Default VARCHAR/VARBINARY length for string/binary columns (1–8000, default `8000`). |
 | `--delimiter CHAR` | (CSV) Field delimiter (default `,`). |
@@ -259,6 +261,20 @@ fdw -w MyWorkspace tables create SalesWH \
   --name dbo.audit_log \
   --from-schema ./schemas/audit_log.json \
   --column "inserted_at:DATETIME2(7):notnull"
+
+# CTAS with CLUSTER BY (column existence not validated on CTAS path)
+fdw -w MyWorkspace tables create SalesWH \
+  --name dbo.orders_2026 \
+  --select "SELECT CustomerID, SaleDate, Amount FROM dbo.orders WHERE YEAR(SaleDate) = 2026" \
+  --cluster-by CustomerID --cluster-by SaleDate
+
+# Empty table with explicit columns and CLUSTER BY
+fdw -w MyWorkspace tables create SalesWH \
+  --name dbo.events \
+  --column "CustomerID:INT:notnull" \
+  --column "SaleDate:DATE:notnull" \
+  --column "Amount:DECIMAL(18,2)" \
+  --cluster-by CustomerID --cluster-by SaleDate
 ```
 
 ---
@@ -378,6 +394,7 @@ fdw [-w WORKSPACE] tables load [OPTIONS] [ITEM] QUALIFIED_NAME
 | `--varchar-length INT` | `8000` | (`--create`) Default VARCHAR/VARBINARY length for inferred columns. |
 | `--sample-rows INT` | `1000` | (CSV, `--create`) Maximum rows to sample for type inference. |
 | `--cleanup-on-failure` | off | Drop the table if WE created it and the load fails. Never drops a pre-existing table. |
+| `--cluster-by COL` | — | (`--create`) Column name for `CLUSTER BY` (repeatable, up to 4). Each name must appear in the inferred schema. |
 
 **Examples**
 
@@ -404,6 +421,10 @@ fdw -w MyWorkspace tables load SalesWH dbo.sales --file data.parquet --create \
 # Auto-create; drop the table if the load fails (cleanup_on_failure)
 fdw -w MyWorkspace tables load SalesWH dbo.sales --file data.parquet --create \
     --cleanup-on-failure
+
+# Auto-create with CLUSTER BY (columns must exist in the inferred schema)
+fdw -w MyWorkspace tables load SalesWH dbo.sales --file data.parquet --create \
+    --cluster-by SaleDate --cluster-by CustomerID
 
 # Load from a remote OneLake URL (no credential needed)
 fdw -w MyWorkspace tables load SalesWH dbo.orders \
@@ -576,6 +597,7 @@ Server-side file access is unreliable in MCP deployments, so CSV/Parquet schema 
   - `name` (`str`) — column identifier (must be a valid SQL identifier).
   - `sql_type` (`str`) — Fabric-DW-supported T-SQL type, e.g. `"INT"`, `"VARCHAR(255)"`, `"DECIMAL(18,2)"`.
   - `nullable` (`bool`, optional, default `true`) — whether the column allows `NULL`.
+- `cluster_by` (`list[str]`, optional) — column names for the `CLUSTER BY` clause (up to 4). Each name must appear in `columns`.
 
 **Returns:** `Table` — the newly-created table record.
 
@@ -604,12 +626,15 @@ Create a new SQL table via CTAS (`CREATE TABLE … AS SELECT`).
 
 **CAUTION**: `select_body` is executed verbatim as DDL. Confirm intent before calling. The first non-comment keyword must be `SELECT`.
 
+When `cluster_by` is supplied the DDL becomes `CREATE TABLE … WITH (CLUSTER BY ([c1], [c2])) AS SELECT …`. Column existence is not validated on the CTAS path because result columns come from the SELECT and are not known ahead of time.
+
 **Parameters:**
 
 - `workspace` (`str`) — workspace name or GUID.
 - `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
 - `qualified_name` (`str`) — dot-separated table name, e.g. `dbo.sales`.
 - `select_body` (`str`) — the SELECT statement for the CTAS source.
+- `cluster_by` (`list[str]`, optional) — column names for the `CLUSTER BY` clause (up to 4). Column existence is not validated on the CTAS path.
 
 **Returns:** `Table` — the newly-created table record.
 

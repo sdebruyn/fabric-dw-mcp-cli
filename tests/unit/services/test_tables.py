@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
 import pyarrow as pa
@@ -1454,3 +1455,260 @@ class TestCreateTableFromCsv:
         sql: str = ddl_cursor.execute.call_args[0][0]
         assert "[col_a]" in sql
         assert "[col_b]" in sql
+
+
+# ===========================================================================
+# _build_cluster_by_clause
+# ===========================================================================
+
+
+class TestBuildClusterByClause:
+    def test_none_returns_empty(self) -> None:
+        assert tables._build_cluster_by_clause(None, None) == ""
+
+    def test_empty_list_returns_empty(self) -> None:
+        assert tables._build_cluster_by_clause([], None) == ""
+
+    def test_single_col_no_known(self) -> None:
+        result = tables._build_cluster_by_clause(["SaleDate"], None)
+        assert result == " WITH (CLUSTER BY ([SaleDate]))"
+
+    def test_two_cols_with_known(self) -> None:
+        result = tables._build_cluster_by_clause(
+            ["CustomerID", "SaleDate"], ["CustomerID", "SaleDate", "Amount"]
+        )
+        assert result == " WITH (CLUSTER BY ([CustomerID], [SaleDate]))"
+
+    def test_four_cols_allowed(self) -> None:
+        cols = ["a", "b", "c", "d"]
+        result = tables._build_cluster_by_clause(cols, None)
+        assert "CLUSTER BY" in result
+        assert "[a]" in result
+        assert "[d]" in result
+
+    def test_five_cols_raises(self) -> None:
+        with pytest.raises(ValueError, match="at most 4 columns"):
+            tables._build_cluster_by_clause(["a", "b", "c", "d", "e"], None)
+
+    def test_unknown_column_raises_with_known(self) -> None:
+        with pytest.raises(ValueError, match="not defined in the table schema"):
+            tables._build_cluster_by_clause(["Missing"], ["id", "name"])
+
+    def test_unknown_column_error_lists_available(self) -> None:
+        with pytest.raises(ValueError, match="id, name"):
+            tables._build_cluster_by_clause(["Missing"], ["id", "name"])
+
+    def test_invalid_identifier_raises(self) -> None:
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            tables._build_cluster_by_clause(["bad--col"], None)
+
+    def test_clause_has_leading_space(self) -> None:
+        result = tables._build_cluster_by_clause(["col"], None)
+        assert result.startswith(" ")
+
+
+# ===========================================================================
+# create_table (CTAS) — cluster_by tests
+# ===========================================================================
+
+
+class TestCreateTableClusterBy:
+    async def test_ctas_without_cluster_by_unchanged(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await tables.create_table(target, "dbo", "sales", "SELECT 1 AS id")
+        cursor = ddl_conn.cursor.return_value
+        sql: str = cursor.execute.call_args[0][0]
+        assert "WITH" not in sql
+        assert "CLUSTER BY" not in sql
+
+    async def test_ctas_single_cluster_col(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await tables.create_table(
+                target, "dbo", "sales", "SELECT 1 AS SaleDate", cluster_by=["SaleDate"]
+            )
+        cursor = ddl_conn.cursor.return_value
+        sql: str = cursor.execute.call_args[0][0]
+        assert "WITH (CLUSTER BY ([SaleDate]))" in sql
+        # WITH clause comes BEFORE AS SELECT
+        assert sql.index("WITH (CLUSTER BY") < sql.index("AS SELECT")
+
+    async def test_ctas_multiple_cluster_cols(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await tables.create_table(
+                target,
+                "dbo",
+                "sales",
+                "SELECT 1",
+                cluster_by=["CustomerID", "SaleDate"],
+            )
+        cursor = ddl_conn.cursor.return_value
+        sql: str = cursor.execute.call_args[0][0]
+        assert "[CustomerID]" in sql
+        assert "[SaleDate]" in sql
+
+    async def test_ctas_too_many_cluster_cols_raises(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="at most 4 columns"):
+            await tables.create_table(
+                target, "dbo", "sales", "SELECT 1", cluster_by=["a", "b", "c", "d", "e"]
+            )
+
+    async def test_ctas_no_existence_check(self) -> None:
+        """CTAS cluster_by does NOT validate column existence — columns come from SELECT."""
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        # No known_cols provided — should not raise even for an arbitrary name.
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            result = await tables.create_table(
+                target, "dbo", "sales", "SELECT 1", cluster_by=["AnyColumnFromSelect"]
+            )
+        assert isinstance(result, Table)
+
+
+# ===========================================================================
+# create_empty_table — cluster_by tests
+# ===========================================================================
+
+
+class TestCreateEmptyTableClusterBy:
+    _COLS: ClassVar[list[ColumnSpec]] = [
+        ColumnSpec(name="CustomerID", sql_type="INT", nullable=False),
+        ColumnSpec(name="SaleDate", sql_type="DATE", nullable=True),
+    ]
+
+    async def test_without_cluster_by_unchanged(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await tables.create_empty_table(target, "dbo", "orders", self._COLS)
+        cursor = ddl_conn.cursor.return_value
+        sql: str = cursor.execute.call_args[0][0]
+        assert "CLUSTER BY" not in sql
+
+    async def test_ddl_contains_cluster_by(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await tables.create_empty_table(
+                target, "dbo", "orders", self._COLS, cluster_by=["CustomerID", "SaleDate"]
+            )
+        cursor = ddl_conn.cursor.return_value
+        sql: str = cursor.execute.call_args[0][0]
+        assert "WITH (CLUSTER BY ([CustomerID], [SaleDate]))" in sql
+
+    async def test_cluster_by_after_closing_paren(self) -> None:
+        """WITH clause must appear after the column-list closing parenthesis."""
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await tables.create_empty_table(
+                target, "dbo", "orders", self._COLS, cluster_by=["CustomerID"]
+            )
+        cursor = ddl_conn.cursor.return_value
+        sql: str = cursor.execute.call_args[0][0]
+        # The column-list ends with \n) followed by " WITH (CLUSTER BY ...)".
+        # Confirm the overall structure: col-list block ends before CLUSTER BY.
+        cluster_idx = sql.index("CLUSTER BY")
+        # The ") WITH" pattern marks where the column-list block closes.
+        col_block_end = sql.index(") WITH")
+        assert col_block_end < cluster_idx
+
+    async def test_unknown_cluster_col_raises(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="not defined in the table schema"):
+            await tables.create_empty_table(
+                target, "dbo", "orders", self._COLS, cluster_by=["UnknownCol"]
+            )
+
+    async def test_too_many_cluster_cols_raises(self) -> None:
+        target = _make_target()
+        cols = [ColumnSpec(name=f"c{i}", sql_type="INT", nullable=True) for i in range(5)]
+        with pytest.raises(ValueError, match="at most 4 columns"):
+            await tables.create_empty_table(
+                target, "dbo", "orders", cols, cluster_by=["c0", "c1", "c2", "c3", "c4"]
+            )
+
+    async def test_returns_table_with_cluster_by(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            result = await tables.create_empty_table(
+                target, "dbo", "orders", self._COLS, cluster_by=["CustomerID"]
+            )
+        assert isinstance(result, Table)
+
+
+# ===========================================================================
+# create_table_from_parquet — cluster_by tests
+# ===========================================================================
+
+
+class TestCreateTableFromParquetClusterBy:
+    async def test_passes_cluster_by_to_create_empty(self, tmp_path: Path) -> None:
+        parquet_file = tmp_path / "data.parquet"
+        pq.write_table(pa.table({"SaleDate": pa.array([], type=pa.date32())}), parquet_file)
+
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await tables.create_table_from_parquet(
+                target, "dbo", "sales", parquet_file, cluster_by=["SaleDate"]
+            )
+        cursor = ddl_conn.cursor.return_value
+        sql: str = cursor.execute.call_args[0][0]
+        assert "CLUSTER BY ([SaleDate])" in sql
+
+    async def test_unknown_cluster_col_raises(self, tmp_path: Path) -> None:
+        parquet_file = tmp_path / "data.parquet"
+        pq.write_table(pa.table({"id": pa.array([], type=pa.int32())}), parquet_file)
+        target = _make_target()
+        with pytest.raises(ValueError, match="not defined in the table schema"):
+            await tables.create_table_from_parquet(
+                target, "dbo", "sales", parquet_file, cluster_by=["MissingCol"]
+            )
+
+
+# ===========================================================================
+# create_table_from_csv — cluster_by tests
+# ===========================================================================
+
+
+class TestCreateTableFromCsvClusterBy:
+    async def test_passes_cluster_by_to_create_empty(self, tmp_path: Path) -> None:
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("CustomerID,SaleDate\n1,2024-01-01\n")
+
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await tables.create_table_from_csv(
+                target, "dbo", "sales", csv_file, cluster_by=["CustomerID"]
+            )
+        cursor = ddl_conn.cursor.return_value
+        sql: str = cursor.execute.call_args[0][0]
+        assert "CLUSTER BY ([CustomerID])" in sql
+
+    async def test_unknown_cluster_col_raises(self, tmp_path: Path) -> None:
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("id,name\n1,foo\n")
+        target = _make_target()
+        with pytest.raises(ValueError, match="not defined in the table schema"):
+            await tables.create_table_from_csv(
+                target, "dbo", "sales", csv_file, cluster_by=["MissingCol"]
+            )
