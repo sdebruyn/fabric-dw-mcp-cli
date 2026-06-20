@@ -2,7 +2,9 @@
 
 Verifies that the session-scoped ``shared_sql_endpoint`` fixture:
 - provisions a SQL analytics endpoint backed by a schema-enabled Lakehouse,
-- seeds ``sample.colors`` and ``sample.numbers`` via the Fabric Tables Load API,
+- seeds ``sample.colors`` and ``sample.numbers`` by writing minimal Delta Lake
+  layouts (Parquet data file + ``_delta_log/`` commit) directly to
+  ``Tables/sample/<table>/`` via the OneLake ADLS Gen2 DFS API,
 - refreshes metadata on the endpoint,
 - and yields a :class:`~fabric_dw.sql.SqlTarget` on which the seeded tables are
   immediately queryable via TDS.

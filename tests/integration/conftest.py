@@ -2,11 +2,9 @@ import asyncio
 import contextlib
 import logging
 import os
-import tempfile
 import time
 import uuid
 from collections.abc import AsyncIterator
-from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 from uuid import UUID
 
@@ -16,12 +14,11 @@ if TYPE_CHECKING:
 import pytest
 import pytest_asyncio
 
-from fabric_dw.auth import STORAGE_SCOPE, get_credential
+from fabric_dw.auth import get_credential
 from fabric_dw.exceptions import NotFoundError
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import Warehouse, WarehouseKind, WarehouseSnapshot
 from fabric_dw.services import schemas, snapshots, warehouses
-from fabric_dw.services.sql_endpoints import refresh_metadata
 from fabric_dw.sql import (
     SqlTarget,
     is_auth_failed_message,
@@ -470,7 +467,7 @@ def _build_delta_log_entry(table_name: str, parquet_size: int, row_count: int) -
     import json  # noqa: PLC0415
 
     # Schema strings vary per table; both tables use INT32 + STRING/INT32.
-    schemas: dict[str, str] = {
+    _schema_strings: dict[str, str] = {
         "colors": (
             '{"type":"struct","fields":['
             '{"name":"id","type":"integer","nullable":true,"metadata":{}},'
@@ -484,7 +481,10 @@ def _build_delta_log_entry(table_name: str, parquet_size: int, row_count: int) -
             "]}"
         ),
     }
-    schema_string = schemas.get(table_name, "")
+    if table_name not in _schema_strings:
+        msg = f"unknown seed table: {table_name!r} — add a schema string entry to _schema_strings"
+        raise ValueError(msg)
+    schema_string = _schema_strings[table_name]
 
     # Fabric validates that metaData.id is a canonical UUID (Guid) string.
     # Use uuid5 seeded from the table name so the value is deterministic and
@@ -514,6 +514,7 @@ def _build_delta_log_entry(table_name: str, parquet_size: int, row_count: int) -
     add = {
         "add": {
             "path": "part-00000.parquet",
+            "partitionValues": {},
             "size": parquet_size,
             "dataChange": True,
             "stats": json.dumps({"numRecords": row_count}),
@@ -606,9 +607,15 @@ async def _seed_lakehouse_sample_data(
         lakehouse_id: UUID string of the parent Lakehouse.
         endpoint_id: UUID of the SQL analytics endpoint (for refresh_metadata).
     """
+    import tempfile  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
     import httpx  # noqa: PLC0415
     import pyarrow as pa  # noqa: PLC0415 — runtime dep, always available
     import pyarrow.parquet as pq  # noqa: PLC0415
+
+    from fabric_dw.auth import STORAGE_SCOPE  # noqa: PLC0415
+    from fabric_dw.services.sql_endpoints import refresh_metadata  # noqa: PLC0415
 
     # Acquire a storage-scoped token once for all DFS uploads.
     cred = get_credential()
@@ -662,6 +669,18 @@ async def _seed_lakehouse_sample_data(
                     table_name,
                     parquet_size,
                 )
+
+                # Ensure the _delta_log/ directory exists before writing the
+                # commit file.  OneLake's auto-create of parent directories is
+                # undocumented; an explicit PUT ?resource=directory guarantees it.
+                delta_log_dir_url = f"{table_prefix}/_delta_log"
+                dir_resp = await client.put(
+                    delta_log_dir_url,
+                    params={"resource": "directory"},
+                    headers={**dfs_base_headers, "Content-Length": "0"},
+                    content=b"",
+                )
+                dir_resp.raise_for_status()
 
                 # Upload the Delta log commit file.
                 delta_log_content = _build_delta_log_entry(table_name, parquet_size, row_count)
@@ -827,17 +846,20 @@ async def _wait_for_seeded_tables_visible(
                 sql_target.database,
                 exc,
             )
-            # Retry on transient connection errors and the "object not found"
-            # variants that appear while metadata is still propagating.
+            # Retry on transient connection errors and the specific "object not
+            # found" messages that appear while Delta metadata is still
+            # propagating to the SQL analytics endpoint after refresh_metadata.
+            # Keep the match narrow: broad strings like "schema" would also
+            # swallow genuine permission/config errors and retry them for 120s
+            # before a misleading skip.
             is_transient = is_transient_connection_error(exc)
             is_not_found = any(
                 kw in msg_lower
                 for kw in (
-                    "invalid object name",
-                    "does not exist",
-                    "not found",
+                    # TDS "Invalid object name 'sample.colors'" — table not yet visible.
+                    "invalid object name 'sample.",
+                    # Fabric DB warm-up: database itself not yet reachable.
                     "database was not found",
-                    "schema",
                 )
             )
             is_warmup = is_auth_failed_message(str(exc))
@@ -875,18 +897,20 @@ async def shared_sql_endpoint(
 
     Mirrors ``shared_warehouse`` but provisions a schema-enabled Lakehouse,
     seeds ``sample.colors`` and ``sample.numbers`` through the parent Lakehouse
-    (delta tables loaded via the Fabric Tables Load API), and derives the paired
-    SQL analytics endpoint.  The endpoint is reused for all ``sql_endpoint``-marked
-    tests in the session.
+    via a direct Delta Lake layout upload, and derives the paired SQL analytics
+    endpoint.  The endpoint is reused for all ``sql_endpoint``-marked tests in
+    the session.
 
     Seed schema
     -----------
-    The Lakehouse has ``enableSchemas=true``.  Data is written to
-    ``Files/seed/<tableName>.parquet`` via the OneLake DFS API and then ingested
-    as a managed Delta table under the ``sample`` schema using the Fabric
-    Lakehouse Tables Load API.  After seeding, ``refresh_metadata`` is called on
-    the SQL endpoint, and this fixture polls until both tables are visible via TDS
-    before yielding.
+    The Lakehouse has ``enableSchemas=true``.  Seed data is written directly to
+    ``Tables/sample/<table>/`` as a minimal Delta Lake layout (Parquet data file
+    + ``_delta_log/00000000000000000000.json``) via the OneLake ADLS Gen2 DFS
+    API.  The Fabric Tables Load API is intentionally not used here — it rejects
+    Parquet ingestion for schema-enabled lakehouses with
+    ``UnsupportedOperationForSchemasEnabledLakehouse``.  After the DFS uploads,
+    ``refresh_metadata`` is called on the SQL endpoint, and this fixture polls
+    until both tables are visible via TDS before yielding.
 
     **Tests MUST NOT mutate the seed schema.**  Mutating tests must use the
     ``mutable_schema_target`` fixture (added in PR 3) which creates a uniquely-named
