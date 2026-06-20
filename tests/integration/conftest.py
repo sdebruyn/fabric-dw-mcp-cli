@@ -1082,6 +1082,43 @@ async def warehouse_schema(
 
 
 # ---------------------------------------------------------------------------
+# Dual-target read fixture (warehouse + SQL analytics endpoint)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(
+    params=[
+        pytest.param("warehouse"),
+        pytest.param("sql_endpoint", marks=pytest.mark.sql_endpoint),
+    ]
+)
+def read_target(
+    request: pytest.FixtureRequest,
+    shared_warehouse: SharedWarehouseTarget,
+    shared_sql_endpoint: SharedSqlEndpointTarget,
+) -> SqlTarget:
+    """Parametrized fixture that yields the read :class:`~fabric_dw.sql.SqlTarget`.
+
+    Runs each requesting test TWICE: once against the shared warm warehouse and
+    once against the shared SQL analytics endpoint.  The endpoint leg carries
+    ``pytest.mark.sql_endpoint`` so it is excluded from local runs (via
+    ``addopts = "-m 'not … sql_endpoint'"`` in pyproject.toml) and opted-in
+    explicitly on CI.
+
+    Both targets expose the same read-only seed schema (``sample``) with
+    ``sample.colors`` and ``sample.numbers`` — use :data:`SEED_SCHEMA_NAME`
+    to refer to it in assertions.
+
+    **Tests that request this fixture MUST NOT mutate the seed schema.**
+    For mutating (DDL) tests on both targets, use the ``mutable_schema_target``
+    fixture (added in PR 3).
+    """
+    if request.param == "warehouse":
+        return shared_warehouse.sql_target
+    return shared_sql_endpoint.sql_target
+
+
+# ---------------------------------------------------------------------------
 # Legacy function-scoped fixtures (kept for tests that need a dedicated item)
 # ---------------------------------------------------------------------------
 

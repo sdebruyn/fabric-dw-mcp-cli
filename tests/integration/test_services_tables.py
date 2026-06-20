@@ -2,9 +2,13 @@
 
 Run with: pytest -m integration tests/integration/test_services_tables.py
 
-Fixture note: uses ``warehouse_schema`` from conftest, which creates a uniquely-named
-schema inside the session-shared warm warehouse and cascade-drops it on teardown.
-All tables are created inside that schema so tests are fully isolated from one another.
+Fixture notes:
+- ``read_target`` (parametrized): runs read-only tests against both the shared warm
+  warehouse and the shared SQL analytics endpoint.  Tests use the pre-seeded
+  ``sample`` schema (``sample.colors`` / ``sample.numbers``).
+- ``warehouse_schema``: creates a uniquely-named schema inside the session-shared
+  warm warehouse and cascade-drops it on teardown.  Used exclusively for mutating
+  tests (CREATE / DROP / CLEAR / RENAME / CLONE).
 """
 
 from __future__ import annotations
@@ -17,11 +21,52 @@ import pytest
 
 from fabric_dw.exceptions import FabricError, NotFoundError
 from fabric_dw.models import Table
+from fabric_dw.services import columns as columns_svc
 from fabric_dw.services import tables
 from fabric_dw.sql import SqlTarget, run_query
 
+from .conftest import SEED_SCHEMA_NAME
+
 pytestmark = pytest.mark.integration
 
+# ---------------------------------------------------------------------------
+# Dual-target read tests — run against both warehouse and SQL analytics endpoint
+# via the parametrized ``read_target`` fixture.  All assertions are made against
+# the pre-seeded ``sample`` schema (sample.colors / sample.numbers).
+# ---------------------------------------------------------------------------
+
+
+async def test_read_table_returns_seeded_rows(
+    read_target: SqlTarget,
+) -> None:
+    """read_table against sample.colors must return the three seeded rows."""
+    cols, rows = await tables.read_table(read_target, SEED_SCHEMA_NAME, "colors", count=10)
+    assert "id" in cols
+    assert "name" in cols
+    # Exactly three rows were seeded (red / green / blue).
+    assert len(rows) == 3
+
+
+async def test_count_table_rows_on_seeded_table(
+    read_target: SqlTarget,
+) -> None:
+    """count_table_rows on sample.colors must return 3 (the seeded row count)."""
+    count = await tables.count_table_rows(read_target, SEED_SCHEMA_NAME, "colors")
+    assert isinstance(count, int)
+    assert count == 3
+
+
+async def test_get_table_columns_on_seeded_table(
+    read_target: SqlTarget,
+) -> None:
+    """get_object_columns on sample.colors must return id and name columns."""
+    result = await columns_svc.get_object_columns(read_target, SEED_SCHEMA_NAME, "colors")
+    assert len(result) == 2
+    col_names = {c["name"] for c in result}
+    assert col_names == {"id", "name"}
+
+
+# ---------------------------------------------------------------------------
 # Fragments that indicate the SQL engine rejected an AT timestamp because the
 # table has no committed history at the requested point in time.  These are
 # expected and trigger a pytest.skip rather than a test failure.
