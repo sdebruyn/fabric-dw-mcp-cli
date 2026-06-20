@@ -246,5 +246,31 @@ The plan XML uses the standard namespace `http://schemas.microsoft.com/sqlserver
 - `workspace` (`str`) — workspace name or GUID.
 - `item` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
 - `query` (`str`) — SQL statement to generate an estimated execution plan for.
+- `format` (`"xml" | "tree" | "json" | "mermaid"`, default `"xml"`) — output format. See [Format options](#format-options) below.
 
-**Returns:** `{ "plan_xml": str }` — the SHOWPLAN_XML string.
+**Format options**
+
+| `format` | Return key | Value type | Description |
+| --- | --- | --- | --- |
+| `"xml"` *(default)* | `plan_xml` | `str` | Raw SHOWPLAN_XML string. Backwards-compatible — existing callers relying on `{"plan_xml": str}` continue to work unchanged. |
+| `"tree"` | `plan` | `list[dict]` | Native nested list of dicts, one entry per statement. Best for agent reasoning over the plan structure. |
+| `"json"` | `plan_json` | `str` | Same tree as `"tree"`, serialised to an indented JSON string. Ready to write out or pass through as compact text. |
+| `"mermaid"` | `mermaid` | `str` | Mermaid `flowchart TD` diagram. Paste into [mermaid.live](https://mermaid.live) or embed in GitHub Markdown. |
+
+**Artifact formats (SVG/HTML/DOT) are CLI-only.** They write files to disk and are only available via `fdw sql plan --format <fmt> -o <file>`. The MCP server never writes files (ambiguous cwd, invisible side-effects).
+
+**Returns:** A dict whose shape depends on `format`:
+
+```json
+// format="xml" (default)
+{"format": "xml", "plan_xml": "<ShowPlanXML .../>"}
+
+// format="tree"
+{"format": "tree", "plan": [{"physicalOp": "Hash Match", "children": [...], ...}]}
+
+// format="json"
+{"format": "json", "plan_json": "[{\"physicalOp\": \"Hash Match\", ...}]"}
+
+// format="mermaid"
+{"format": "mermaid", "mermaid": "flowchart TD\n  S0N0[\"Hash Match / Inner Join\"] ..."}
+```
