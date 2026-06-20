@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
 import shutil
 import sys
@@ -12,26 +13,6 @@ import click
 
 from fabric_dw.auth import CredentialMode
 from fabric_dw.cli._context import CliContext
-from fabric_dw.cli.commands.audit import audit_group
-from fabric_dw.cli.commands.cache import cache_group
-from fabric_dw.cli.commands.completion import completion_group
-from fabric_dw.cli.commands.config import config_group
-from fabric_dw.cli.commands.dbt import dbt_group
-from fabric_dw.cli.commands.functions import functions_group
-from fabric_dw.cli.commands.procedures import procedures_group
-from fabric_dw.cli.commands.queries import queries_group
-from fabric_dw.cli.commands.restore_points import restore_points_group
-from fabric_dw.cli.commands.schemas import schemas_group
-from fabric_dw.cli.commands.settings import settings_group
-from fabric_dw.cli.commands.snapshots import snapshots_group
-from fabric_dw.cli.commands.sql import sql_group
-from fabric_dw.cli.commands.sql_endpoints import sql_endpoints_group
-from fabric_dw.cli.commands.sql_pools import sql_pools_group
-from fabric_dw.cli.commands.statistics import statistics_group
-from fabric_dw.cli.commands.tables import tables_group
-from fabric_dw.cli.commands.views import views_group
-from fabric_dw.cli.commands.warehouses import warehouses_group
-from fabric_dw.cli.commands.workspaces import workspaces_group
 from fabric_dw.logging import setup_logging
 from fabric_dw.telemetry import (
     maybe_print_first_run_notice,
@@ -44,6 +25,8 @@ from fabric_dw.telemetry_commands import (
     map_status,
     now_ms,
 )
+
+_logger = logging.getLogger(__name__)
 
 _CLI_TELEMETRY_KEY = "fabric_dw_telemetry_command_name"
 _CLI_SEGMENTS_KEY = _CLI_TELEMETRY_KEY + "_segments"
@@ -196,6 +179,83 @@ def _patch_command_for_global_options(cmd: click.Command) -> None:
             _patch_command_for_global_options(sub)
 
 
+# ---------------------------------------------------------------------------
+# Lazy command registry
+# ---------------------------------------------------------------------------
+# Maps the CLI name of each command group to the module and group-object name
+# where it lives.  Format: "module.path:group_object_name".
+# No module is imported at startup; _LazyGroup does it on demand.
+# ---------------------------------------------------------------------------
+
+_COMMAND_MAP: dict[str, str] = {
+    "audit": "fabric_dw.cli.commands.audit:audit_group",
+    "cache": "fabric_dw.cli.commands.cache:cache_group",
+    "completion": "fabric_dw.cli.commands.completion:completion_group",
+    "config": "fabric_dw.cli.commands.config:config_group",
+    "dbt": "fabric_dw.cli.commands.dbt:dbt_group",
+    "functions": "fabric_dw.cli.commands.functions:functions_group",
+    "procedures": "fabric_dw.cli.commands.procedures:procedures_group",
+    "queries": "fabric_dw.cli.commands.queries:queries_group",
+    "restore-points": "fabric_dw.cli.commands.restore_points:restore_points_group",
+    "schemas": "fabric_dw.cli.commands.schemas:schemas_group",
+    "settings": "fabric_dw.cli.commands.settings:settings_group",
+    "snapshots": "fabric_dw.cli.commands.snapshots:snapshots_group",
+    "sql": "fabric_dw.cli.commands.sql:sql_group",
+    "sql-endpoints": "fabric_dw.cli.commands.sql_endpoints:sql_endpoints_group",
+    "sql-pools": "fabric_dw.cli.commands.sql_pools:sql_pools_group",
+    "statistics": "fabric_dw.cli.commands.statistics:statistics_group",
+    "tables": "fabric_dw.cli.commands.tables:tables_group",
+    "views": "fabric_dw.cli.commands.views:views_group",
+    "warehouses": "fabric_dw.cli.commands.warehouses:warehouses_group",
+    "workspaces": "fabric_dw.cli.commands.workspaces:workspaces_group",
+}
+
+# One-line help text per group — shown in root --help WITHOUT importing modules.
+_SHORT_HELP_MAP: dict[str, str] = {
+    "audit": "Manage SQL audit settings for Data Warehouses and SQL Analytics Endpoints.",
+    "cache": "Manage the local name-to-UUID lookup cache.",
+    "completion": "Manage shell completion scripts.",
+    "config": "Manage fabric-dw CLI configuration defaults.",
+    "dbt": "Scaffold and manage dbt projects for Fabric Data Warehouses.",
+    "functions": (
+        "Manage T-SQL user-defined functions on Fabric warehouses and SQL Analytics Endpoints."
+    ),
+    "procedures": "Manage stored procedures on Fabric warehouses and SQL Analytics Endpoints.",
+    "queries": (
+        "Inspect and manage running queries on Fabric warehouses and SQL Analytics Endpoints."
+    ),
+    "restore-points": "Manage Microsoft Fabric Warehouse restore points.",
+    "schemas": "Manage SQL schemas on Fabric warehouses.",
+    "settings": "Manage server-side database settings on Fabric Data Warehouses.",
+    "snapshots": "Manage Microsoft Fabric Data Warehouse snapshots.",
+    "sql": (
+        "SQL execution and query-plan capture for Fabric warehouses and SQL Analytics Endpoints."
+    ),
+    "sql-endpoints": "Manage Microsoft Fabric SQL Analytics Endpoints.",
+    "sql-pools": "Manage workspace SQL Pools configuration (beta API).",
+    "statistics": (
+        "Manage user-defined statistics on Fabric Data Warehouses and SQL Analytics Endpoints."
+    ),
+    "tables": "Manage SQL tables on Fabric warehouses and SQL Analytics Endpoints.",
+    "views": "Manage SQL views on Fabric warehouses and SQL Analytics Endpoints.",
+    "warehouses": "Manage Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.",
+    "workspaces": "Manage Microsoft Fabric workspaces.",
+}
+
+# Guard: both maps must cover exactly the same set of command names.  A command
+# added to _COMMAND_MAP but not _SHORT_HELP_MAP (or vice-versa) would silently
+# show an empty description or fail to load.  This check fires at import time
+# so the mistake is caught by the first test run, not at runtime.
+if _COMMAND_MAP.keys() != _SHORT_HELP_MAP.keys():
+    _missing_help = _COMMAND_MAP.keys() - _SHORT_HELP_MAP.keys()
+    _missing_cmd = _SHORT_HELP_MAP.keys() - _COMMAND_MAP.keys()
+    raise ValueError(
+        f"_COMMAND_MAP and _SHORT_HELP_MAP must cover the same commands.  "
+        f"Missing from _SHORT_HELP_MAP: {_missing_help!r}.  "
+        f"Missing from _COMMAND_MAP: {_missing_cmd!r}."
+    )
+
+
 class _InstrumentedGroup(click.Group):
     """A :class:`click.Group` subclass that emits one ``command_invoked``
     telemetry event per leaf command invocation.
@@ -306,7 +366,14 @@ def _patch_group_for_telemetry(group: click.Group) -> None:
 
     Recursive patching ensures that sub-groups added before this function
     is called (e.g. ``config.set``) are also patched.
+
+    Idempotent: the ``_telemetry_patched`` sentinel prevents double-patching
+    when a lazily-loaded group is resolved more than once via :meth:`get_command`.
     """
+    if getattr(group, "_telemetry_patched", False):
+        return
+    group._telemetry_patched = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
     # Recursively patch any sub-groups already registered.
     for sub_cmd in group.commands.values():  # type: ignore[attr-defined]
         if isinstance(sub_cmd, click.Group):
@@ -337,9 +404,84 @@ def _patch_group_for_telemetry(group: click.Group) -> None:
     group.invoke = _patched_invoke  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
 
 
+class _LazyGroup(_InstrumentedGroup):
+    """A lazy-loading :class:`_InstrumentedGroup` that defers command module imports.
+
+    Command groups are registered as strings in :data:`_COMMAND_MAP` (CLI name
+    → ``"module.path:group_object"``).  The module is only imported when the
+    group is actually invoked or its own ``--help`` is requested — never on
+    startup or for the root ``--help``.
+
+    Root ``--help`` is rendered from :data:`_SHORT_HELP_MAP` so no modules are
+    imported at all.  The full telemetry/global-options patching that
+    :class:`_InstrumentedGroup` performs via :meth:`add_command` is replicated
+    in :meth:`get_command` after the lazy import.
+    """
+
+    def list_commands(self, ctx: click.Context) -> list[str]:  # type: ignore[override]  # noqa: ARG002
+        """Return all registered command names in alphabetical order."""
+        return sorted(_COMMAND_MAP)
+
+    def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:  # noqa: ARG002
+        """Import and return the command group for *cmd_name*, or ``None``."""
+        spec = _COMMAND_MAP.get(cmd_name)
+        if spec is None:
+            return None
+        module_path, attr_name = spec.rsplit(":", 1)
+        try:
+            module = importlib.import_module(module_path)
+            cmd: click.Command = getattr(module, attr_name)
+        except (ImportError, AttributeError) as exc:
+            _logger.warning("Failed to load command %r: %s", cmd_name, exc)
+            return None
+        # Replicate what _InstrumentedGroup.add_command does so that telemetry
+        # and global-options injection are applied on the lazily-loaded group.
+        if isinstance(cmd, click.Group):
+            _patch_group_for_telemetry(cmd)
+        _patch_command_for_global_options(cmd)
+        return cmd
+
+    def resolve_command(
+        self, ctx: click.Context, args: list[str]
+    ) -> tuple[str | None, click.Command | None, list[str]]:
+        """Resolve a command name, supplying the lazy command list for suggestions.
+
+        Click's base :meth:`resolve_command` passes ``self.commands`` (the
+        eagerly-registered dict) to the "Did you mean?" resolver.  Since this
+        group never calls :meth:`add_command`, that dict is always empty and
+        typo suggestions are permanently suppressed.  Override to pass the
+        lazy command names instead.
+        """
+        # Temporarily populate self.commands with stubs so Click's resolver can
+        # compute "Did you mean?" possibilities without triggering real imports.
+        # We restore the empty dict immediately after resolution.
+        dummy_cmds = {name: click.Command(name) for name in _COMMAND_MAP}
+        original_commands = self.commands  # type: ignore[attr-defined]
+        self.commands = dummy_cmds  # type: ignore[attr-defined]
+        try:
+            return super().resolve_command(ctx, args)
+        finally:
+            self.commands = original_commands  # type: ignore[attr-defined]
+
+    def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        """Render the command list from :data:`_SHORT_HELP_MAP` without importing modules."""
+        commands: list[tuple[str, str]] = []
+        max_name_len = max(len(n) for n in _COMMAND_MAP)
+        for name in self.list_commands(ctx):
+            help_text = _SHORT_HELP_MAP.get(name, "")
+            # Truncate to the available width.  Clamp to 0 to prevent negative
+            # slice indices (which slice from the tail) on very narrow terminals.
+            limit = max(0, formatter.width - 6 - max_name_len) if formatter.width else 45
+            short_help = help_text[:limit] if limit and len(help_text) > limit else help_text
+            commands.append((name, short_help))
+        if commands:
+            with formatter.section("Commands"):
+                formatter.write_dl(commands)
+
+
 @click.group(
     invoke_without_command=False,
-    cls=_InstrumentedGroup,
+    cls=_LazyGroup,
     context_settings={"help_option_names": ["-h", "--help"], "max_content_width": _HELP_MAX_WIDTH},
 )
 @click.option(
@@ -435,25 +577,3 @@ def cli(
         # before the finally block in _InstrumentedGroup.invoke() executes.)
 
     ctx.call_on_close(_on_close)
-
-
-cli.add_command(cache_group)
-cli.add_command(completion_group)
-cli.add_command(config_group)
-cli.add_command(dbt_group)
-cli.add_command(workspaces_group)
-cli.add_command(warehouses_group)
-cli.add_command(sql_endpoints_group)
-cli.add_command(audit_group)
-cli.add_command(queries_group)
-cli.add_command(restore_points_group)
-cli.add_command(snapshots_group)
-cli.add_command(sql_group)
-cli.add_command(sql_pools_group)
-cli.add_command(schemas_group)
-cli.add_command(tables_group)
-cli.add_command(views_group)
-cli.add_command(procedures_group)
-cli.add_command(statistics_group)
-cli.add_command(settings_group)
-cli.add_command(functions_group)
