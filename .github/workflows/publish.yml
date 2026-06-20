@@ -48,6 +48,29 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Verify plugin.json version matches tag (stable releases only)
+        # Run only for tag/dispatch releases; skip for dev builds pushed to main.
+        # Prerelease tags (aN/bN/rcN/.devN) are exempt — plugin.json tracks stable only.
+        # Fails fast before uv build if the version bump was not merged before tagging.
+        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+        run: |
+          # Determine the effective tag: prefer the workflow_dispatch input, fall back to ref name.
+          effective_tag="${{ inputs.tag || github.ref_name }}"
+          # Strip a leading 'v'.
+          version="${effective_tag#v}"
+          # Skip prerelease tags (aN/bN/rcN suffixes or .dev in the version string).
+          if echo "$version" | grep -qE '(a|b|rc)[0-9]*$|\.dev'; then
+            echo "Prerelease tag '$version' detected — plugin.json tracks stable only; skipping version check."
+            exit 0
+          fi
+          # Stable tag: read plugin.json version and compare.
+          plugin_version=$(python -c "import json; print(json.load(open('.claude-plugin/plugin.json'))['version'])")
+          if [ "$plugin_version" != "$version" ]; then
+            echo "::error::plugin.json version ('$plugin_version') does not match tag '$version'. Run 'just release $version', open a release-prep PR, merge it, then retag."
+            exit 1
+          fi
+          echo "plugin.json version '$plugin_version' matches tag '$version' — OK."
+
       - run: uv sync --frozen --no-dev
 
       - run: uv build
