@@ -64,11 +64,27 @@ CORE_TOOLS: frozenset[str] = frozenset(
         "get_warehouse",
         # SQL execution
         "execute_sql",
-        # Cache
-        "clear_cache",
+        # Audit
+        "get_audit_settings",
+        # Snapshots
+        "list_snapshots",
         # Restore points
         "list_restore_points",
         "delete_restore_point",
+        # Tables
+        "list_tables",
+        # Views
+        "list_views",
+        # Stored procedures
+        "list_procedures",
+        # Functions
+        "list_functions",
+        # Statistics
+        "list_statistics",
+        # Queries
+        "list_running_queries",
+        # Cache
+        "clear_cache",
     }
 )
 
@@ -231,20 +247,24 @@ def test_core_tools_registered() -> None:
 
 
 def test_registered_tools_no_duplicates() -> None:
-    """The live tool registration must produce no duplicate tool names."""
-    registered_names = collect_live_mcp_tool_names()
-    # frozenset already deduplicates; verify by checking count via private API too.
-    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+    """The live tool registration must produce no duplicate tool names.
 
-    all_keys = list(mcp._tool_manager._tools.keys())
-    assert len(all_keys) == len(set(all_keys)), (
-        f"Duplicate tool names in _tool_manager: "
-        f"{sorted(k for k in set(all_keys) if all_keys.count(k) > 1)}"
-    )
-    # The frozenset from the live API should match the private key count.
-    assert len(registered_names) == len(all_keys), (
-        f"Mismatch between live API count ({len(registered_names)}) "
-        f"and _tool_manager count ({len(all_keys)})"
+    ``list_tools()`` is the public API — a duplicate registration would appear
+    as two entries with the same name in the returned list.
+    """
+    import asyncio  # noqa: PLC0415
+
+    from fabric_dw.mcp._helpers import InstrumentedFastMCP  # noqa: PLC0415
+    from fabric_dw.mcp.tools import register_all  # noqa: PLC0415
+
+    mcp = InstrumentedFastMCP("dup-check")
+    register_all(mcp)
+    all_tools = asyncio.run(mcp.list_tools())
+    all_names = [t.name for t in all_tools]
+    unique_names = set(all_names)
+    assert len(all_names) == len(unique_names), (
+        f"Duplicate tool names detected via list_tools(): "
+        f"{sorted(n for n in unique_names if all_names.count(n) > 1)}"
     )
 
 
@@ -256,14 +276,20 @@ def test_registered_tools_naming_convention() -> None:
 
 
 def test_registered_tools_non_empty_descriptions() -> None:
-    """Every registered tool must have a non-empty description string."""
-    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+    """Every registered tool must have a non-empty description string.
 
-    missing_desc = [
-        name
-        for name, tool in mcp._tool_manager._tools.items()
-        if not (tool.description or "").strip()
-    ]
+    Uses the public ``list_tools()`` API so the check mirrors what an MCP
+    client actually receives rather than reading internal state.
+    """
+    import asyncio  # noqa: PLC0415
+
+    from fabric_dw.mcp._helpers import InstrumentedFastMCP  # noqa: PLC0415
+    from fabric_dw.mcp.tools import register_all  # noqa: PLC0415
+
+    mcp = InstrumentedFastMCP("desc-check")
+    register_all(mcp)
+    all_tools = asyncio.run(mcp.list_tools())
+    missing_desc = [t.name for t in all_tools if not (t.description or "").strip()]
     assert not missing_desc, (
         f"Tools with missing or empty description: {sorted(missing_desc)}"
     )

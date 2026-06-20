@@ -89,15 +89,6 @@ def _collect_live_cli_group_names() -> frozenset[str]:
     return frozenset(cli.commands)
 
 
-def _collect_live_mcp_tool_names() -> frozenset[str]:
-    """Thin alias kept for backwards compatibility; delegates to the shared helper.
-
-    Use ``tests.unit._tool_introspection.collect_live_mcp_tool_names`` directly
-    in new code.
-    """
-    return collect_live_mcp_tool_names()
-
-
 class TestDomainCoverage:
     """Every registered MCP tool and every CLI command must resolve to a known domain.
 
@@ -108,7 +99,7 @@ class TestDomainCoverage:
 
     def test_all_mcp_tools_resolve_to_known_domain(self) -> None:
         """Every MCP tool name must resolve to a domain that is NOT 'unknown'."""
-        tool_names = _collect_live_mcp_tool_names()
+        tool_names = collect_live_mcp_tool_names()
         assert len(tool_names) > 0, (
             "No MCP tools were discovered — register_all() appears to have registered nothing. "
             "Check that fabric_dw.mcp.tools._DOMAINS is populated."
