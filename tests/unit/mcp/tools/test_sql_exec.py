@@ -262,7 +262,12 @@ async def test_get_query_plan_mermaid_no_xml_key(mock_ctx, ctx_patch) -> None:
 
 
 async def test_get_query_plan_invalid_format_raises_tool_error(mock_ctx, ctx_patch) -> None:
-    """An unsupported format value raises ToolError (FastMCP validates Literal at schema level)."""
+    """An unsupported format value raises ToolError.
+
+    This exercises FastMCP's *schema-validation* layer (Pydantic rejects the
+    Literal before the function body runs), not the in-body ``assert_never``.
+    Removing the ``assert_never`` would not make this test pass through the body.
+    """
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415

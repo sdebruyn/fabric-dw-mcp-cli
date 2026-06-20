@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, assert_never
 
 from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
 from pydantic import Field
 
 from fabric_dw.cli._plan_mermaid import render_plan_mermaid
@@ -160,16 +159,13 @@ def register(mcp: FastMCP) -> None:
 
         if format == "xml":
             return {"format": "xml", "plan_xml": plan_xml}
+        # Parse once; all non-xml formats share the same operator tree.
+        operators = parse_showplan(plan_xml)
         if format == "tree":
-            operators = parse_showplan(plan_xml)
             return {"format": "tree", "plan": [operator_to_dict(op) for op in operators]}
         if format == "json":
-            operators = parse_showplan(plan_xml)
             payload = [operator_to_dict(op) for op in operators]
             return {"format": "json", "plan_json": json.dumps(payload, indent=2)}
         if format == "mermaid":
-            operators = parse_showplan(plan_xml)
             return {"format": "mermaid", "mermaid": render_plan_mermaid(operators)}
-        raise ToolError(
-            f"invalid format {format!r}: must be one of 'xml', 'tree', 'json', 'mermaid'"
-        )
+        assert_never(format)
