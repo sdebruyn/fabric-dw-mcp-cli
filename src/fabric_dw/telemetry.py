@@ -501,11 +501,6 @@ _INSTRUMENTATION_OPTIONS: dict[str, dict[str, bool]] = {
 }
 
 
-def _get_connection_string() -> str:
-    """Return the active App Insights connection string."""
-    return os.environ.get("FABRIC_TELEMETRY_CONNECTION_STRING", _DEFAULT_CONNECTION_STRING)
-
-
 def _harden_azure_sdk_logging() -> None:
     """Raise the level of noisy Azure SDK loggers to CRITICAL and detach them from root.
 
@@ -628,7 +623,7 @@ def _get_tracer() -> object | None:
         resource = _build_otel_resource(_current_surface)
 
         configure_kwargs: dict[str, object] = {
-            "connection_string": _get_connection_string(),
+            "connection_string": _DEFAULT_CONNECTION_STRING,
             "logger_name": "fabric_dw.telemetry",
             # disable_logging=False (default) is intentional: the log/event
             # exporter must be active so customEvents land in the customEvents

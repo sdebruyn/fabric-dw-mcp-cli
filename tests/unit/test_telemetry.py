@@ -19,8 +19,6 @@ from unittest.mock import patch
 
 import pytest
 
-from tests.conftest import TELEMETRY_FAKE_CONNECTION_STRING
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -693,30 +691,6 @@ def test_default_connection_string_is_set(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert "InstrumentationKey" in mod._DEFAULT_CONNECTION_STRING  # type: ignore[attr-defined]
 
 
-def test_connection_string_overridable_via_env(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """FABRIC_TELEMETRY_CONNECTION_STRING must override the default."""
-    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", "InstrumentationKey=custom-key")
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-
-    mod = _reload_telemetry()
-    conn_str = mod._get_connection_string()  # type: ignore[attr-defined]
-    assert conn_str == "InstrumentationKey=custom-key"
-
-
-def test_connection_string_default_when_env_not_set(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """_get_connection_string returns the default when env var is absent."""
-    monkeypatch.delenv("FABRIC_TELEMETRY_CONNECTION_STRING", raising=False)
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-
-    mod = _reload_telemetry()
-    conn_str = mod._get_connection_string()  # type: ignore[attr-defined]
-    assert conn_str == mod._DEFAULT_CONNECTION_STRING  # type: ignore[attr-defined]
-
-
 # ---------------------------------------------------------------------------
 # B1: privacy — auto-HTTP instrumentation is disabled
 # ---------------------------------------------------------------------------
@@ -1041,14 +1015,10 @@ def test_set_tenant_id_takes_precedence_over_env(
 # Persistent tenant store (#652)
 # ---------------------------------------------------------------------------
 
-# Single source of truth lives in tests/conftest.py; imported above.
-_DUMMY_CONN_STR = TELEMETRY_FAKE_CONNECTION_STRING
-
 
 def test_tenant_id_unknown_on_first_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """With no known tenant, _build_envelope must return tenant_id == 'unknown' (#652)."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", _DUMMY_CONN_STR)
     monkeypatch.delenv("AZURE_TENANT_ID", raising=False)
     monkeypatch.delenv("FABRIC_INTERACTIVE_TENANT_ID", raising=False)
 
@@ -1064,7 +1034,6 @@ def test_set_tenant_id_writes_file_when_enabled(
 ) -> None:
     """set_tenant_id must persist to disk when telemetry is enabled (#652)."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", _DUMMY_CONN_STR)
     monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
     monkeypatch.delenv("DO_NOT_TRACK", raising=False)
 
@@ -1083,7 +1052,6 @@ def test_set_tenant_id_no_write_when_disabled(
 ) -> None:
     """set_tenant_id must NOT write to disk when telemetry is disabled (#652)."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", _DUMMY_CONN_STR)
     monkeypatch.setenv("FABRIC_DW_TELEMETRY_OPT_OUT", "1")
 
     mod = _reload_telemetry()
@@ -1104,7 +1072,6 @@ def test_cached_tenant_read_back_on_new_process(
     _tenant_id_override = None to check the cache is the fallback.
     """
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", _DUMMY_CONN_STR)
     monkeypatch.delenv("AZURE_TENANT_ID", raising=False)
     monkeypatch.delenv("FABRIC_INTERACTIVE_TENANT_ID", raising=False)
     monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
@@ -1129,7 +1096,6 @@ def test_missing_tenant_file_falls_back_to_unknown(
 ) -> None:
     """A missing tenant cache file must not raise and must fall back to 'unknown' (#652)."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", _DUMMY_CONN_STR)
     monkeypatch.delenv("AZURE_TENANT_ID", raising=False)
     monkeypatch.delenv("FABRIC_INTERACTIVE_TENANT_ID", raising=False)
 
@@ -1149,7 +1115,6 @@ def test_garbage_tenant_file_falls_back_to_unknown(
 ) -> None:
     """A malformed/empty tenant cache file must not raise and must return None (#652)."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", _DUMMY_CONN_STR)
     monkeypatch.delenv("AZURE_TENANT_ID", raising=False)
     monkeypatch.delenv("FABRIC_INTERACTIVE_TENANT_ID", raising=False)
 
@@ -1169,7 +1134,6 @@ def test_live_override_takes_precedence_over_cache(
 ) -> None:
     """Live _tenant_id_override must win over persisted cache (#652)."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", _DUMMY_CONN_STR)
     monkeypatch.delenv("AZURE_TENANT_ID", raising=False)
     monkeypatch.delenv("FABRIC_INTERACTIVE_TENANT_ID", raising=False)
 
@@ -1191,7 +1155,6 @@ def test_env_var_takes_precedence_over_cache(
 ) -> None:
     """AZURE_TENANT_ID env var must take precedence over persisted cache (#652)."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", _DUMMY_CONN_STR)
     monkeypatch.setenv("AZURE_TENANT_ID", "env-tenant-wins")
     monkeypatch.delenv("FABRIC_INTERACTIVE_TENANT_ID", raising=False)
 
@@ -1223,7 +1186,6 @@ def test_stale_cache_corrected_by_set_tenant_id(
     the intentional, bounded trade-off documented in _build_envelope.
     """
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", _DUMMY_CONN_STR)
     monkeypatch.delenv("AZURE_TENANT_ID", raising=False)
     monkeypatch.delenv("FABRIC_INTERACTIVE_TENANT_ID", raising=False)
     monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
