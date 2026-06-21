@@ -51,6 +51,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
+import fabric_dw.auth as _auth
 from fabric_dw.auth import CredentialMode, get_sql_token_struct
 from fabric_dw.exceptions import AuthError, NotFoundError, PermissionDeniedError
 
@@ -690,6 +691,13 @@ def open_connection(
     # consulted on pool-hit paths.
     token_struct = get_sql_token_struct(mode)
     use_token = token_struct is not None
+    # On the non-OIDC path (token_struct is None), try to decode the tid claim
+    # from a SQL-scope token and forward it to the telemetry layer.
+    # get_sql_token_struct already covers the OIDC path.
+    # cache_tenant_id_from_token is a no-op when telemetry is disabled or the
+    # tenant override is already set, so this is safe to call unconditionally.
+    if not use_token:
+        _auth.try_cache_sql_tenant_for_telemetry(_auth._cached_sync_credential)
     cs = build_connection_string(target, mode=mode, use_access_token=use_token)
     attrs = {SQL_COPT_SS_ACCESS_TOKEN: token_struct} if use_token else None
     raw_conn = _get_mssql().connect(cs, attrs_before=attrs, timeout=SQL_LOGIN_TIMEOUT_S)

@@ -84,6 +84,7 @@ __all__ = [
     "SyncCredentialAdapter",
     "get_credential",
     "get_sql_token_struct",
+    "try_cache_sql_tenant_for_telemetry",
 ]
 
 
@@ -312,6 +313,12 @@ def _make_github_oidc_credential() -> AsyncTokenCredential:
 _sql_oidc_credential: SyncClientAssertionCredential | None = None
 _sql_oidc_credential_lock = threading.Lock()
 
+# Module-level cached synchronous credential for non-OIDC SQL tenant telemetry.
+# Set by _make_interactive_credential when the interactive path is used.
+# Used by try_cache_sql_tenant_for_telemetry to decode the tid claim from a
+# SQL-scope token without requiring an event loop.
+_cached_sync_credential: _CloseableTokenCredential | None = None
+
 
 def _get_sql_oidc_credential() -> SyncClientAssertionCredential:
     """Return (creating once) the sync OIDC credential used for SQL token injection.
@@ -417,12 +424,15 @@ def _make_service_principal_credential() -> AsyncTokenCredential:
 def _make_interactive_credential() -> AsyncTokenCredential:
     # InteractiveBrowserCredential has no aio variant in this release of
     # azure-identity; wrap in an adapter that offloads to a worker thread.
-    return SyncCredentialAdapter(
-        InteractiveBrowserCredential(
-            cache_persistence_options=_build_cache_options(),
-            **_resolve_interactive_kwargs(),
-        )
+    global _cached_sync_credential  # noqa: PLW0603
+    inner = InteractiveBrowserCredential(
+        cache_persistence_options=_build_cache_options(),
+        **_resolve_interactive_kwargs(),
     )
+    # Cache the sync inner credential so that try_cache_sql_tenant_for_telemetry
+    # can acquire a SQL-scope token synchronously without requiring an event loop.
+    _cached_sync_credential = inner
+    return SyncCredentialAdapter(inner)
 
 
 #: Registry mapping each CredentialMode to a factory that produces the
@@ -453,3 +463,42 @@ def get_credential(mode: CredentialMode = CredentialMode.DEFAULT) -> AsyncTokenC
     if factory is None:
         raise ConfigError.unknown_credential_mode(mode)
     return factory()
+
+
+def try_cache_sql_tenant_for_telemetry(sync_credential: _CloseableTokenCredential | None) -> None:
+    """Decode the ``tid`` claim from a SQL-scope token and forward it to telemetry.
+
+    Called from :func:`~fabric_dw.sql.open_connection` on the normal (non-OIDC)
+    pool-miss path, where the mssql driver acquires the SQL access token
+    internally and our code has no other opportunity to inspect it.  This
+    function acquires a SQL-scope token from the provided synchronous credential,
+    decodes the ``tid`` claim from the resulting JWT, and writes it to the
+    telemetry layer via :func:`~fabric_dw.telemetry.cache_tenant_id_from_token`.
+
+    Always fail-safe — never raises.  Designed to be called with a synchronous
+    credential so the call can be made from ``open_connection`` without
+    requiring an event loop.
+
+    No-ops when:
+    - *sync_credential* is ``None``
+    - :func:`~fabric_dw.telemetry.telemetry_enabled` returns ``False``
+    - The tenant ID is already known (idempotent)
+
+    Args:
+        sync_credential: A synchronous credential whose ``get_token`` method
+            accepts ``SQL_SCOPE``.  Pass ``None`` to skip silently.
+    """
+    try:
+        if sync_credential is None:
+            return
+        from fabric_dw import telemetry as _telemetry  # noqa: PLC0415
+
+        if _telemetry._tenant_id_override is not None:
+            return
+        if not _telemetry.telemetry_enabled():
+            return
+        token = sync_credential.get_token(SQL_SCOPE).token
+        _telemetry.cache_tenant_id_from_token(token)
+    except Exception:  # noqa: S110
+        # Telemetry must never break the SQL connection path.
+        pass
