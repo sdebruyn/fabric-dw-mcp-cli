@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import click
 
 from fabric_dw.cli._context import CliContext
+from fabric_dw.cli._main import _CLI_CONDITIONAL_DESTRUCTIVE_KEY
 from fabric_dw.cli._render import (
     render,
     render_permissions_table,
@@ -188,6 +189,12 @@ async def refresh_cmd(ctx: CliContext, item: str | None, recreate_tables: bool) 
     By default, results are shown as a Rich table.  Pass --json (on the root
     command) to emit raw JSON instead.
     """
+    # Stash the conditional destructive flag before any API call or prompt so
+    # the finally block in _InstrumentedGroup.invoke picks it up regardless of
+    # outcome (abort, error, or success).
+    if recreate_tables:
+        click.get_current_context().meta[_CLI_CONDITIONAL_DESTRUCTIVE_KEY] = True
+
     ws = resolve_workspace(ctx)
     endpoint_explicit = item is not None
     ep = resolve_warehouse_arg(ctx, item)

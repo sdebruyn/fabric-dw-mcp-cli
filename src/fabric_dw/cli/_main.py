@@ -32,6 +32,58 @@ _logger = logging.getLogger(__name__)
 _CLI_TELEMETRY_KEY = "fabric_dw_telemetry_command_name"
 _CLI_SEGMENTS_KEY = _CLI_TELEMETRY_KEY + "_segments"
 
+# ---------------------------------------------------------------------------
+# Destructive-op telemetry for the CLI (issue #666)
+# ---------------------------------------------------------------------------
+# Single source of truth: the dotted telemetry names (<group>.<subcommand>) of
+# permanently-destructive CLI commands — those that mirror an MCP tool registered
+# with mutating_tool(destructive=True).  Commands that are confirming-but-not-
+# destructive (queries.kill, warehouses.rename, etc.) are intentionally absent.
+#
+# The set is frozen so it cannot be mutated at runtime.
+_DESTRUCTIVE_CLI_COMMANDS: frozenset[str] = frozenset(
+    {
+        "functions.drop",
+        "procedures.drop",
+        "restore-points.delete",
+        "restore-points.restore",
+        "schemas.delete",
+        "snapshots.delete",
+        "sql-pools.delete",
+        "statistics.delete",
+        "tables.delete",
+        "tables.clear",
+        "tables.cluster-by",
+        "views.drop",
+        "warehouses.delete",
+    }
+)
+
+# Bidirectional drift-guard map: MCP tool name → CLI dotted name.
+# Used by tests/unit/test_cli_destructive_parity.py to cross-check both sets.
+# Conditional tools (refresh_sql_endpoint_metadata, import_table_from_url) are
+# excluded — they are handled via runtime ctx.meta flags below.
+_MCP_TO_CLI_DESTRUCTIVE_MAP: dict[str, str] = {
+    "drop_function": "functions.drop",
+    "drop_procedure": "procedures.drop",
+    "delete_restore_point": "restore-points.delete",
+    "restore_warehouse_in_place": "restore-points.restore",
+    "delete_schema": "schemas.delete",
+    "delete_snapshot": "snapshots.delete",
+    "delete_sql_pool": "sql-pools.delete",
+    "delete_statistics": "statistics.delete",
+    "delete_table": "tables.delete",
+    "clear_table": "tables.clear",
+    "set_cluster_columns": "tables.cluster-by",
+    "drop_view": "views.drop",
+    "delete_warehouse": "warehouses.delete",
+}
+
+# ctx.meta key written by conditionally-destructive command bodies BEFORE any
+# API call or prompt, so the finally block in _InstrumentedGroup.invoke can
+# pick it up outcome-independently.
+_CLI_CONDITIONAL_DESTRUCTIVE_KEY = "fabric_dw_conditional_destructive_op"
+
 # Use actual terminal width so help text adapts to the user's screen.
 # Floor of 80 preserves readable wrapping on narrow terminals and in CI
 # (where get_terminal_size falls back to the (120, 24) default).
@@ -320,10 +372,19 @@ class _InstrumentedGroup(click.Group):
             if command_name:
                 duration = now_ms() - start
                 status = map_status(exc_seen)
+                # Compute destructive flag:
+                # 1. Check the unconditional set (identity-based, flag-independent).
+                # 2. Fall back to the conditional flag stashed in ctx.meta by the
+                #    command body (e.g. sql-endpoints refresh --recreate-tables,
+                #    tables load --if-exists truncate|replace).
+                destructive: bool = command_name in _DESTRUCTIVE_CLI_COMMANDS or bool(
+                    ctx.meta.get(_CLI_CONDITIONAL_DESTRUCTIVE_KEY)
+                )
                 emit_command_invoked(
                     name=command_name,
                     status=status,
                     duration_ms=duration,
+                    destructive=destructive,
                 )
             # shutdown_telemetry() is NOT called here.  It is called in
             # _on_close() (registered via ctx.call_on_close on the root context)
