@@ -14,9 +14,22 @@ This conftest also disables anonymous telemetry for the whole test run
 (``_disable_telemetry_globally``) so that no test — in-process or subprocess —
 ever performs a real telemetry send to the production Application Insights
 resource.
+
+For the self-managed telemetry modules (``test_telemetry.py`` and
+``test_telemetry_commands.py``) two additional defence-in-depth fixtures are
+applied:
+
+- ``_isolate_telemetry_endpoint`` — points the SDK at a localhost dummy
+  endpoint so nothing can reach the production Application Insights resource
+  even when telemetry is intentionally enabled.
+- ``_reset_telemetry_module_globals`` — resets ``_tenant_id_override`` and the
+  ``_tenant_id_cache`` sentinel between tests so values cannot bleed across tests
+  in the same process.
 """
 
 from __future__ import annotations
+
+from collections.abc import Generator
 
 import pytest
 
@@ -36,6 +49,15 @@ _TELEMETRY_SELF_MANAGED_MODULES = frozenset(
         "test_telemetry.py",
         "test_telemetry_commands.py",
     }
+)
+
+# Dummy connection string used by self-managed telemetry tests.  Instructs the
+# SDK to target a localhost endpoint so that even if configure_azure_monitor is
+# initialised, no traffic can reach the production App Insights resource.
+# Individual tests may override this with monkeypatch.setenv; this fixture only
+# installs it as a safe default.
+_FAKE_CONNECTION_STRING = (
+    "InstrumentationKey=00000000-0000-0000-0000-000000000000;IngestionEndpoint=https://localhost/"
 )
 
 
@@ -87,3 +109,83 @@ def _disable_telemetry_globally(
     if request.path is not None and request.path.name in _TELEMETRY_SELF_MANAGED_MODULES:
         return
     monkeypatch.setenv("FABRIC_DISABLE_TELEMETRY", "1")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_telemetry_endpoint(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Point the telemetry SDK at a localhost dummy endpoint in self-managed modules.
+
+    Applied only to ``test_telemetry.py`` and ``test_telemetry_commands.py``
+    (the ``_TELEMETRY_SELF_MANAGED_MODULES``).  Those modules deliberately exercise
+    the enabled-telemetry code path and are exempt from ``_disable_telemetry_globally``,
+    so without this fixture the real production App Insights connection string would
+    be used whenever ``configure_azure_monitor`` is initialised.
+
+    ``monkeypatch.setenv`` is used rather than a direct dict mutation so:
+    - Individual tests that want a specific connection string can override it with
+      their own ``monkeypatch.setenv(...)`` call — pytest runs fixture setup before
+      the test body and test-body monkeypatches win.
+    - The env var is automatically restored after each test.
+
+    The instrumentation key ``00000000-0000-0000-0000-000000000000`` is a
+    well-known null GUID and the endpoint is ``https://localhost/`` — traffic to
+    this address is refused immediately by the OS, guaranteeing no egress to the
+    real resource even if the SDK is initialised.
+    """
+    if request.path is None or request.path.name not in _TELEMETRY_SELF_MANAGED_MODULES:
+        return
+    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", _FAKE_CONNECTION_STRING)
+
+
+@pytest.fixture(autouse=True)
+def _reset_telemetry_module_globals(
+    request: pytest.FixtureRequest,
+) -> Generator[None, None, None]:
+    """Reset telemetry module globals before and after each self-managed test.
+
+    Applied only to ``test_telemetry.py`` and ``test_telemetry_commands.py``.
+    Without this fixture, a test that calls ``set_tenant_id("runtime-tenant-xyz")``
+    leaves ``_tenant_id_override`` set in the live module for subsequent tests in the
+    same process.  If those tests then trigger ``emit_event`` with a real SDK
+    initialisation, the dummy tenant bleeds into the exported envelope — which was
+    confirmed to reach the production App Insights resource.
+
+    This fixture resets both:
+    - ``_tenant_id_override`` → ``None``
+    - ``_tenant_id_cache`` → the ``_UNSET`` sentinel (forces re-read from disk,
+      which is isolated by ``XDG_CONFIG_HOME``/``tmp_path`` in individual tests)
+
+    Both resets are applied *before* and *after* each test (yield fixture), so state
+    never leaks from a previous test even if it raised.
+
+    Tests that manipulate these globals directly via ``mod._tenant_id_override = ...``
+    on a reloaded module are unaffected because ``_reload_telemetry()`` produces a
+    fresh module object with its own namespace.  This fixture guards the *shared*
+    module instance that lives in ``sys.modules["fabric_dw.telemetry"]``.
+    """
+    if request.path is None or request.path.name not in _TELEMETRY_SELF_MANAGED_MODULES:
+        yield
+        return
+
+    import sys  # noqa: PLC0415
+
+    def _reset() -> None:
+        mod = sys.modules.get("fabric_dw.telemetry")
+        if mod is None:
+            return
+        # Reset the runtime tenant override so a previous test's set_tenant_id()
+        # call cannot bleed into the next test's emit_event envelope.
+        # setattr avoids unresolved-attribute errors on the opaque ModuleType.
+        setattr(mod, "_tenant_id_override", None)
+        # Reset the in-memory tenant cache to the _UNSET sentinel so that
+        # _get_cached_tenant_id() re-reads from disk on next access.  The on-disk
+        # file is isolated per-test via XDG_CONFIG_HOME / tmp_path.
+        unset = getattr(mod, "_UNSET", None)
+        if unset is not None:
+            setattr(mod, "_tenant_id_cache", unset)
+
+    _reset()
+    yield
+    _reset()
