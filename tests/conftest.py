@@ -175,16 +175,20 @@ def _reset_telemetry_module_globals(
         mod = sys.modules.get("fabric_dw.telemetry")
         if mod is None:
             return
+        # Mutate the module namespace dict directly to avoid both B010 (setattr
+        # with a constant name) and unresolved-attribute errors from ty on the
+        # opaque ModuleType.  vars() returns the live __dict__ so changes are
+        # immediately visible via the module object.
+        ns = vars(mod)
         # Reset the runtime tenant override so a previous test's set_tenant_id()
         # call cannot bleed into the next test's emit_event envelope.
-        # setattr avoids unresolved-attribute errors on the opaque ModuleType.
-        setattr(mod, "_tenant_id_override", None)
+        ns["_tenant_id_override"] = None
         # Reset the in-memory tenant cache to the _UNSET sentinel so that
         # _get_cached_tenant_id() re-reads from disk on next access.  The on-disk
         # file is isolated per-test via XDG_CONFIG_HOME / tmp_path.
-        unset = getattr(mod, "_UNSET", None)
+        unset = ns.get("_UNSET")
         if unset is not None:
-            setattr(mod, "_tenant_id_cache", unset)
+            ns["_tenant_id_cache"] = unset
 
     _reset()
     yield
