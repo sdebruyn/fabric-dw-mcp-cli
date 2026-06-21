@@ -65,9 +65,12 @@ from fabric_dw.mcp._helpers import InstrumentedFastMCP
 from fabric_dw.mcp.tools import register_all
 from fabric_dw.telemetry import (
     maybe_print_first_run_notice,
+    record_app_exited,
     record_app_started,
     record_mcp_server_started,
+    shutdown_telemetry,
 )
+from fabric_dw.telemetry_commands import now_ms
 
 __all__ = ["mcp", "run"]
 
@@ -175,4 +178,42 @@ def run(argv: Sequence[str] | None = None) -> None:
     maybe_print_first_run_notice()
     record_app_started("mcp")
     record_mcp_server_started()
-    mcp.run(transport=transport)
+
+    start_ms = now_ms()
+    exc_seen: BaseException | None = None
+    try:
+        mcp.run(transport=transport)
+    except BaseException as exc:
+        exc_seen = exc
+        raise
+    finally:
+        duration_ms = now_ms() - start_ms
+        # Map exit status: graceful stops (KeyboardInterrupt, SIGTERM-driven
+        # SystemExit with code 0 or None, or normal return) → "ok".
+        # Unexpected exceptions → "api_error".
+        # "user_error" is not applicable for the MCP server surface.
+        if exc_seen is None or isinstance(exc_seen, KeyboardInterrupt):
+            exit_status = "ok"
+        elif isinstance(exc_seen, SystemExit):
+            code = getattr(exc_seen, "code", None)
+            exit_status = "ok" if (code is None or code == 0) else "api_error"
+        else:
+            exit_status = "api_error"
+
+        # Emit the session-end lifecycle event then flush/shut down the provider.
+        # Telemetry teardown is fail-safe: errors here must NEVER mask the real
+        # server exit exception (exc_seen, re-raised by the except block above).
+        # shutdown_telemetry() must run even if record_app_exited() raises, so it
+        # is guarded by its own try/finally.  The outer except swallows any
+        # exception from the telemetry teardown path.
+        try:
+            try:
+                record_app_exited(
+                    duration_ms=duration_ms,
+                    exit_status=exit_status,
+                    error_category=None,
+                )
+            finally:
+                shutdown_telemetry()
+        except BaseException:  # noqa: S110
+            pass  # telemetry teardown errors must never propagate
