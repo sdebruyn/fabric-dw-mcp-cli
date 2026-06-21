@@ -48,10 +48,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           REPO: ${{ github.repository }}
         run: |
           gh workflow run integration.yml \
             --repo "$REPO" \
             --ref "$PR_HEAD_REF" \
-            -f pytest_k="" \
-            -f xdist_workers="8"
+            -f pr_number="$PR_NUMBER" \
+            -f head_sha="$PR_HEAD_SHA"

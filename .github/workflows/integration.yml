@@ -1,5 +1,7 @@
 name: Integration tests
 
+run-name: ${{ inputs.pr_number != '' && format('Integration tests - PR {0} @ {1}', inputs.pr_number, inputs.head_sha) || 'Integration tests' }}
+
 on:
   push:
     branches: [main]
@@ -13,6 +15,14 @@ on:
         description: "Number of parallel pytest-xdist workers (1 = serial, default 8)"
         required: false
         default: "8"
+      pr_number:
+        description: "PR number this run was dispatched for (set by dispatcher; leave empty for manual runs)"
+        required: false
+        default: ""
+      head_sha:
+        description: "HEAD SHA of the PR branch at dispatch time (set by dispatcher; for identification only)"
+        required: false
+        default: ""
 
 permissions:
   id-token: write
@@ -32,6 +42,26 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
+      - name: Stale-SHA guard
+        # When this run was dispatched from a PR, check that the checked-out
+        # HEAD still matches the SHA recorded at dispatch time.  A near-
+        # simultaneous push can cause the dispatcher's cancel-in-progress to
+        # kill the newer dispatcher run while the earlier gh-workflow-run call
+        # has already been issued, queueing a run on a stale SHA.  Skipping
+        # early here avoids wasting capacity-resume time on outdated code.
+        # (The condition is skipped entirely for push/manual runs where
+        # inputs.head_sha is empty.)
+        if: ${{ inputs.head_sha != '' }}
+        env:
+          EXPECTED_SHA: ${{ inputs.head_sha }}
+        run: |
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          if [[ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]]; then
+            echo "Stale run detected: dispatched for $EXPECTED_SHA but HEAD is $ACTUAL_SHA — skipping." >&2
+            exit 0
+          fi
+          echo "SHA matches ($ACTUAL_SHA) — proceeding."
 
       - uses: azure/login@v3
         with:
