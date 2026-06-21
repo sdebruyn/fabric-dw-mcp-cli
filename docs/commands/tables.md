@@ -214,7 +214,7 @@ fdw -w MyWorkspace --json tables count SalesWH dbo.orders
 Create a new table on a Fabric Data Warehouse. Two modes are available:
 
 - **CTAS** (`CREATE TABLE … AS SELECT`) — supply `--select` or `--from-file`. The body must start with `SELECT` (leading block/line comments are allowed).
-- **Empty DDL** (`CREATE TABLE … (col TYPE, …)`) — supply one or more of `--from-parquet`, `--from-csv`, `--from-schema`, or `--column`. No data is ever read or inserted; this scaffolds the table structure only.
+- **Empty DDL** (`CREATE TABLE … (col TYPE, …)`) — supply exactly one of `--from-parquet`, `--from-csv`, `--from-json`, or one-or-more `--column`. The schema is derived (Parquet/CSV/JSON inference) or listed explicitly; no data is ever read or inserted — this scaffolds the table structure only. To load data afterwards, use [`tables load`](#tables-load).
 
 **Synopsis**
 
@@ -240,18 +240,18 @@ Exactly one of `--select` or `--from-file` must be provided for the CTAS path. C
 | `--name SCHEMA.TABLE` | **Required.** Qualified table name. |
 | `--from-parquet PATH` | Derive schema from a Parquet file (reads footer only — no data loaded). |
 | `--from-csv PATH` | Derive schema from a CSV header + bounded sample (no data loaded). |
-| `--from-schema PATH` | JSON file with column specs: `[{"name": "…", "type": "…", "nullable": true}]`. |
-| `--column NAME:TYPE[:null\|notnull]` | Inline column definition (repeatable). Can be combined with `--from-schema`. |
+| `--from-json PATH` | Derive schema from JSON **data** — a JSONL file or a JSON file containing an array of objects; types are inferred from a bounded sample (no data loaded). JSONL streams; a JSON array is fully loaded into memory — for very large data prefer JSONL. |
+| `--column NAME:TYPE[:null\|notnull]` | Inline column definition (repeatable). |
 | `--cluster-by COL` | Column name for `CLUSTER BY` (repeatable, up to 4). Each name must appear in the table schema. |
-| `--all-varchar` | (CSV) Force all columns to `VARCHAR`; skip type inference. |
-| `--varchar-length N` | Default VARCHAR/VARBINARY length for string/binary columns (1–8000, default `8000`). |
+| `--all-varchar` | (CSV/JSON) Force all columns to `VARCHAR`; skip type inference. |
+| `--varchar-length N` | (CSV/JSON) Default VARCHAR/VARBINARY length for string/binary columns (1–8000, default `8000`). |
 | `--delimiter CHAR` | (CSV) Field delimiter (default `,`). |
 | `--encoding ENC` | (CSV) File encoding (default `utf-8-sig`). |
-| `--sample-rows N` | (CSV) Rows to sample for type inference (1–100 000, default `1000`). |
+| `--sample-rows N` | (CSV/JSON) Rows/records to sample for type inference (1–100 000, default `1000`). |
 
-`--from-parquet`, `--from-csv`, and `--from-schema`/`--column` are mutually exclusive with each other and with the CTAS path. For the explicit-schema path at least one `--from-schema` or `--column` must be provided.
+`--from-parquet`, `--from-csv`, `--from-json`, and `--column` are mutually exclusive with each other and with the CTAS path. For the explicit path at least one `--column` must be provided.
 
-**Arrow → T-SQL type mapping (Parquet / CSV inference)**
+**Arrow → T-SQL type mapping (Parquet / CSV / JSON inference)**
 
 | Arrow type | T-SQL type |
 | --- | --- |
@@ -267,7 +267,7 @@ Exactly one of `--select` or `--from-file` must be provided for the CTAS path. C
 | `timestamp*` | `DATETIME2(7)` |
 | `string`, `large_string` | `VARCHAR(n)` |
 | `binary`, `large_binary` | `VARBINARY(n)` |
-| nested / list / struct | **Error** — use `--all-varchar` or `--from-schema` to override |
+| nested / list / struct | CSV/JSON: falls back to `VARCHAR(n)` with a warning (or use `--all-varchar`). Parquet: **Error** — define the column explicitly with `--column` instead. |
 
 **Examples**
 
@@ -294,11 +294,15 @@ fdw -w MyWorkspace tables create SalesWH \
   --column "event_type:VARCHAR(100)" \
   --column "occurred_at:DATETIME2(7)"
 
-# Explicit schema from JSON file + extra columns
+# Empty table from JSON data — JSONL (schema inferred from the data)
+fdw -w MyWorkspace tables create SalesWH \
+  --name staging.events \
+  --from-json ./data/events.jsonl
+
+# Empty table from JSON data — a JSON array of objects
 fdw -w MyWorkspace tables create SalesWH \
   --name dbo.audit_log \
-  --from-schema ./schemas/audit_log.json \
-  --column "inserted_at:DATETIME2(7):notnull"
+  --from-json ./data/audit_log.json --varchar-length 500
 
 # CTAS with CLUSTER BY (column existence not validated on CTAS path)
 fdw -w MyWorkspace tables create SalesWH \
