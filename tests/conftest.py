@@ -51,6 +51,7 @@ _TELEMETRY_SELF_MANAGED_MODULES = frozenset(
     {
         "test_telemetry.py",
         "test_telemetry_commands.py",
+        "test_app_exited_emission.py",
     }
 )
 

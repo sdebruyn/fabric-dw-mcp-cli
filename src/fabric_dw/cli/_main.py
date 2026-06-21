@@ -273,14 +273,23 @@ class _InstrumentedGroup(click.Group):
 
     Shutdown ordering
     -----------------
-    ``shutdown_telemetry()`` must run AFTER ``emit_command_invoked`` so that the
-    ``command_invoked`` event is enqueued in the ``BatchLogRecordProcessor`` queue
-    before shutdown starts.  ``shutdown_telemetry()`` calls ``force_flush`` on the
-    log provider first (to export queued records) then ``shutdown()`` (to release
-    the connection pool).  Click's ``call_on_close`` callbacks run INSIDE
-    ``super().invoke()``, completing before this ``finally`` block executes.  For
-    this reason the ``_on_close`` callback does NOT call ``shutdown_telemetry()`` —
-    the teardown is performed here, after emission, by the root group only.
+    ``emit_command_invoked`` is called in :meth:`invoke`'s ``finally`` block so
+    that the ``command_invoked`` event is enqueued before teardown begins.
+
+    ``shutdown_telemetry()`` is called from the root ``_on_close`` callback
+    (registered via ``ctx.call_on_close``) AFTER ``record_app_exited()``.
+    Click's ``main()`` closes the root context (running ``call_on_close``
+    callbacks) only after :meth:`invoke` (and therefore its ``finally`` block)
+    returns.  This means the sequence is:
+
+    1. ``command_invoked`` enqueued in ``invoke`` ``finally``
+    2. Root context closes → ``_on_close`` runs:
+       a. ``record_app_exited`` enqueued
+       b. ``shutdown_telemetry()`` force-flushes all three events and shuts down
+
+    This ordering guarantees that ``app_exited`` is in the queue before the
+    ``BatchLogRecordProcessor`` is force-flushed, fixing the silent drop that
+    occurred when ``shutdown_telemetry`` was called here (before ``_on_close``).
     """
 
     def add_command(self, cmd: click.Command, name: str | None = None) -> None:
@@ -291,7 +300,14 @@ class _InstrumentedGroup(click.Group):
         super().add_command(cmd, name)
 
     def invoke(self, ctx: click.Context) -> object:
-        """Invoke the root group, emit ``command_invoked``, then shut down telemetry."""
+        """Invoke the root group and emit ``command_invoked``.
+
+        Telemetry shutdown is performed by the root ``_on_close`` callback
+        (registered in the root ``cli`` callback via ``ctx.call_on_close``).
+        That callback runs after this method returns, ensuring the sequence:
+        ``command_invoked`` enqueued here → ``_on_close`` enqueues
+        ``app_exited`` → ``shutdown_telemetry()`` force-flushes all events.
+        """
         start = now_ms()
         exc_seen: BaseException | None = None
         try:
@@ -309,15 +325,13 @@ class _InstrumentedGroup(click.Group):
                     status=status,
                     duration_ms=duration,
                 )
-            # Shut down the provider AFTER emission so the command_invoked event
-            # is enqueued before teardown begins.  shutdown_telemetry() calls
-            # force_flush on the log provider first (ensuring command_invoked and
-            # app_exited records are exported to App Insights) then shuts down the
-            # provider (releases the urllib3 connection pool, preventing the GC
-            # finaliser from triggering "AttributeError: 'NoneType' object has no
-            # attribute 'Empty'" at interpreter exit).  Runs in a daemon thread
-            # with a ≤8 s join so it cannot hang the process indefinitely (B2).
-            shutdown_telemetry()
+            # shutdown_telemetry() is NOT called here.  It is called in
+            # _on_close() (registered via ctx.call_on_close on the root context)
+            # AFTER record_app_exited() enqueues the app_exited event.  Click's
+            # main() closes the root context after this invoke() returns, which
+            # triggers _on_close.  Calling shutdown_telemetry() here would shut
+            # down the BatchLogRecordProcessor before app_exited is enqueued,
+            # causing it to be silently dropped (issue #664).
 
 
 def _build_command_name(root_ctx: click.Context) -> str | None:
@@ -583,9 +597,16 @@ def cli(
 
     def _on_close() -> None:
         duration_ms = time.monotonic() * 1000 - start_ms
-        # Map the active exception (if any) to a categorical exit status (B3).
-        # call_on_close callbacks run inside Click's ExitStack __exit__, so
-        # sys.exc_info() reflects the exception that triggered teardown.
+        # Map the active exception (if any) to a categorical exit status.
+        # call_on_close callbacks run inside Click's root context __exit__,
+        # which fires after _InstrumentedGroup.invoke() returns (and after its
+        # finally block has already enqueued command_invoked).  sys.exc_info()
+        # here reflects the exception that triggered context teardown.
+        #
+        # Vocabulary (distinct from command_invoked's "success/user_error/api_error"):
+        #   "ok"         — clean exit or zero-code SystemExit / click.Exit
+        #   "user_error" — usage/validation problems: non-zero SystemExit/Exit, Abort, UsageError
+        #   "api_error"  — genuine/unexpected exceptions (mirrors map_status() semantics)
         exc_type, exc_value, _ = sys.exc_info()
         if exc_type is None:
             exit_status = "ok"
@@ -598,16 +619,28 @@ def cli(
         elif issubclass(exc_type, (click.exceptions.Abort, click.exceptions.UsageError)):
             exit_status = "user_error"
         else:
-            exit_status = "user_error"
-        record_app_exited(
-            duration_ms=duration_ms,
-            exit_status=exit_status,
-            error_category=None,
-        )
-        # NOTE: shutdown_telemetry() is NOT called here.  It is called in
-        # _InstrumentedGroup.invoke() AFTER emit_command_invoked() so that
-        # the command_invoked span is enqueued before teardown begins.
-        # (call_on_close callbacks run inside super().invoke(), which returns
-        # before the finally block in _InstrumentedGroup.invoke() executes.)
+            # Genuine/unexpected exception — api_error mirrors map_status() semantics so
+            # app_exited.exit_status is consistent with command_invoked.status.
+            exit_status = "api_error"
+        # Enqueue app_exited BEFORE calling shutdown_telemetry().  At this
+        # point command_invoked is already in the BatchLogRecordProcessor queue
+        # (enqueued in _InstrumentedGroup.invoke's finally block, which ran
+        # before Click closed the root context and triggered this callback).
+        # shutdown_telemetry() is guarded by try/finally so it always runs even
+        # if record_app_exited raises a BaseException (e.g. KeyboardInterrupt),
+        # preventing the urllib3 pool from being leaked to the GC finaliser.
+        try:
+            record_app_exited(
+                duration_ms=duration_ms,
+                exit_status=exit_status,
+                error_category=None,
+            )
+        finally:
+            # Always flush and release the provider — even if record_app_exited
+            # raises.  shutdown_telemetry() is idempotent (_sdk_shutdown guard)
+            # so a double-call is safe; in practice only one call ever reaches
+            # the daemon-thread work because the flag is set on the calling thread
+            # before the thread is started.
+            shutdown_telemetry()
 
     ctx.call_on_close(_on_close)
