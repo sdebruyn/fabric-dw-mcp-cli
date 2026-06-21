@@ -1181,6 +1181,253 @@ def test_set_tenant_id_takes_precedence_over_env(
 
 
 # ---------------------------------------------------------------------------
+# Persistent tenant store (#652)
+# ---------------------------------------------------------------------------
+
+_DUMMY_CONN_STR = (
+    "InstrumentationKey=00000000-0000-0000-0000-000000000000;IngestionEndpoint=https://localhost/"
+)
+
+
+def test_tenant_id_unknown_on_first_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """With no known tenant, _build_envelope must return tenant_id == 'unknown' (#652)."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", _DUMMY_CONN_STR)
+    monkeypatch.delenv("AZURE_TENANT_ID", raising=False)
+    monkeypatch.delenv("FABRIC_INTERACTIVE_TENANT_ID", raising=False)
+
+    mod = _reload_telemetry()
+    mod._tenant_id_override = None  # type: ignore[attr-defined]
+
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
+    assert envelope["tenant_id"] == "unknown"
+
+
+def test_set_tenant_id_writes_file_when_enabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """set_tenant_id must persist to disk when telemetry is enabled (#652)."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", _DUMMY_CONN_STR)
+    monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.delenv("JENKINS_URL", raising=False)
+    monkeypatch.delenv("TRAVIS", raising=False)
+    monkeypatch.delenv("CIRCLECI", raising=False)
+    monkeypatch.delenv("GITLAB_CI", raising=False)
+    monkeypatch.delenv("TF_BUILD", raising=False)
+    monkeypatch.delenv("FABRIC_TELEMETRY", raising=False)
+
+    mod = _reload_telemetry()
+    assert mod.telemetry_enabled() is True  # type: ignore[attr-defined]
+
+    mod.set_tenant_id("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")  # type: ignore[attr-defined]
+
+    tenant_file = tmp_path / "fabric-dw" / "tenant_id"
+    assert tenant_file.exists(), "tenant_id file must be written on disk when telemetry is enabled"
+    assert tenant_file.read_text(encoding="utf-8").strip() == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+
+def test_set_tenant_id_no_write_when_disabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """set_tenant_id must NOT write to disk when telemetry is disabled (#652)."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", _DUMMY_CONN_STR)
+    monkeypatch.setenv("FABRIC_DISABLE_TELEMETRY", "1")
+
+    mod = _reload_telemetry()
+    assert mod.telemetry_enabled() is False  # type: ignore[attr-defined]
+
+    mod.set_tenant_id("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")  # type: ignore[attr-defined]
+
+    tenant_file = tmp_path / "fabric-dw" / "tenant_id"
+    assert not tenant_file.exists(), "tenant_id file must NOT be written when telemetry is disabled"
+
+
+def test_cached_tenant_read_back_on_new_process(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """After set_tenant_id, a fresh module load must read the persisted tenant (#652).
+
+    Simulates process restart: write on first run, then reload (new process) with
+    _tenant_id_override = None to check the cache is the fallback.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", _DUMMY_CONN_STR)
+    monkeypatch.delenv("AZURE_TENANT_ID", raising=False)
+    monkeypatch.delenv("FABRIC_INTERACTIVE_TENANT_ID", raising=False)
+    monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.delenv("JENKINS_URL", raising=False)
+    monkeypatch.delenv("TRAVIS", raising=False)
+    monkeypatch.delenv("CIRCLECI", raising=False)
+    monkeypatch.delenv("GITLAB_CI", raising=False)
+    monkeypatch.delenv("TF_BUILD", raising=False)
+    monkeypatch.delenv("FABRIC_TELEMETRY", raising=False)
+
+    # First run: set the tenant (writes file)
+    mod = _reload_telemetry()
+    mod.set_tenant_id("1111aaaa-2222-bbbb-3333-cccc44445555")  # type: ignore[attr-defined]
+
+    # New process: reload module so in-memory state is gone, simulate no live override
+    mod2 = _reload_telemetry()
+    mod2._tenant_id_override = None  # type: ignore[attr-defined]
+
+    envelope = mod2._build_envelope()  # type: ignore[attr-defined]
+    assert envelope["tenant_id"] == "1111aaaa-2222-bbbb-3333-cccc44445555", (
+        "Persisted tenant must be read back in a fresh process (app_started scenario)"
+    )
+
+
+def test_missing_tenant_file_falls_back_to_unknown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A missing tenant cache file must not raise and must fall back to 'unknown' (#652)."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", _DUMMY_CONN_STR)
+    monkeypatch.delenv("AZURE_TENANT_ID", raising=False)
+    monkeypatch.delenv("FABRIC_INTERACTIVE_TENANT_ID", raising=False)
+
+    # Ensure no tenant file exists
+    tenant_file = tmp_path / "fabric-dw" / "tenant_id"
+    assert not tenant_file.exists()
+
+    mod = _reload_telemetry()
+    mod._tenant_id_override = None  # type: ignore[attr-defined]
+
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
+    assert envelope["tenant_id"] == "unknown"
+
+
+def test_garbage_tenant_file_falls_back_to_unknown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A malformed/empty tenant cache file must not raise and must return None (#652)."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", _DUMMY_CONN_STR)
+    monkeypatch.delenv("AZURE_TENANT_ID", raising=False)
+    monkeypatch.delenv("FABRIC_INTERACTIVE_TENANT_ID", raising=False)
+
+    config_dir = tmp_path / "fabric-dw"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "tenant_id").write_text("   \n", encoding="utf-8")  # whitespace only
+
+    mod = _reload_telemetry()
+    mod._tenant_id_override = None  # type: ignore[attr-defined]
+
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
+    assert envelope["tenant_id"] == "unknown"
+
+
+def test_live_override_takes_precedence_over_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Live _tenant_id_override must win over persisted cache (#652)."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", _DUMMY_CONN_STR)
+    monkeypatch.delenv("AZURE_TENANT_ID", raising=False)
+    monkeypatch.delenv("FABRIC_INTERACTIVE_TENANT_ID", raising=False)
+
+    # Write a stale tenant to cache
+    config_dir = tmp_path / "fabric-dw"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "tenant_id").write_text("stale-tenant-from-cache", encoding="utf-8")
+
+    mod = _reload_telemetry()
+    # Set a live override (different tenant)
+    mod._tenant_id_override = "live-override-tenant"  # type: ignore[attr-defined]
+
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
+    assert envelope["tenant_id"] == "live-override-tenant"
+
+
+def test_env_var_takes_precedence_over_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """AZURE_TENANT_ID env var must take precedence over persisted cache (#652)."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", _DUMMY_CONN_STR)
+    monkeypatch.setenv("AZURE_TENANT_ID", "env-tenant-wins")
+    monkeypatch.delenv("FABRIC_INTERACTIVE_TENANT_ID", raising=False)
+
+    # Write a different tenant to cache
+    config_dir = tmp_path / "fabric-dw"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "tenant_id").write_text("cached-tenant-should-lose", encoding="utf-8")
+
+    mod = _reload_telemetry()
+    mod._tenant_id_override = None  # type: ignore[attr-defined]
+
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
+    assert envelope["tenant_id"] == "env-tenant-wins"
+
+
+def test_stale_cache_corrected_by_set_tenant_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Document the accepted bounded-staleness behaviour (#652, C5).
+
+    Sequence:
+      run1  telemetry ON  → set_tenant_id("tenant-A") persists to cache
+      run2  telemetry OFF → set_tenant_id("tenant-B") does NOT update cache
+      run3  telemetry ON  → app_started fires BEFORE auth (reads stale "tenant-A")
+                          → set_tenant_id("tenant-B") corrects it for every
+                            subsequent event in the same process
+
+    At most one lifecycle event (app_started) is misattributed per run — this is
+    the intentional, bounded trade-off documented in _build_envelope.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", _DUMMY_CONN_STR)
+    monkeypatch.delenv("AZURE_TENANT_ID", raising=False)
+    monkeypatch.delenv("FABRIC_INTERACTIVE_TENANT_ID", raising=False)
+    monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.delenv("JENKINS_URL", raising=False)
+    monkeypatch.delenv("TRAVIS", raising=False)
+    monkeypatch.delenv("CIRCLECI", raising=False)
+    monkeypatch.delenv("GITLAB_CI", raising=False)
+    monkeypatch.delenv("TF_BUILD", raising=False)
+    monkeypatch.delenv("FABRIC_TELEMETRY", raising=False)
+
+    # run1: telemetry ON → tenant-A written to cache
+    mod = _reload_telemetry()
+    assert mod.telemetry_enabled() is True  # type: ignore[attr-defined]
+    mod.set_tenant_id("tenant-A")  # type: ignore[attr-defined]
+
+    # run2: telemetry OFF → tenant-B NOT written to cache
+    monkeypatch.setenv("FABRIC_DISABLE_TELEMETRY", "1")
+    mod2 = _reload_telemetry()
+    assert mod2.telemetry_enabled() is False  # type: ignore[attr-defined]
+    mod2.set_tenant_id("tenant-B")  # type: ignore[attr-defined]
+    # Cache file still holds tenant-A
+    assert (tmp_path / "fabric-dw" / "tenant_id").read_text(encoding="utf-8").strip() == "tenant-A"
+
+    # run3: telemetry re-enabled; app_started fires before auth (no live override)
+    monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
+    mod3 = _reload_telemetry()
+    mod3._tenant_id_override = None  # type: ignore[attr-defined]
+
+    pre_auth_envelope = mod3._build_envelope()  # type: ignore[attr-defined]
+    # Stale cache value is used for the pre-auth event (bounded misattribution)
+    assert pre_auth_envelope["tenant_id"] == "tenant-A"
+
+    # After authentication, set_tenant_id corrects the override for this process
+    mod3.set_tenant_id("tenant-B")  # type: ignore[attr-defined]
+    post_auth_envelope = mod3._build_envelope()  # type: ignore[attr-defined]
+    assert post_auth_envelope["tenant_id"] == "tenant-B"
+    # And the cache is now updated with the correct tenant for future runs
+    assert (tmp_path / "fabric-dw" / "tenant_id").read_text(encoding="utf-8").strip() == "tenant-B"
+
+
+# ---------------------------------------------------------------------------
 # A3: marker file written AFTER notice is printed
 # ---------------------------------------------------------------------------
 
