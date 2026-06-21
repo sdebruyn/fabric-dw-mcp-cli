@@ -782,7 +782,10 @@ class TestCliShutdownOrdering:
         call_order: list[str] = []
 
         def _track_emit(
-            event_name: str, _attrs: dict, *, omit_keys: set[str] | None = None  # noqa: ARG001
+            event_name: str,
+            _attrs: dict,
+            *,
+            omit_keys: set[str] | None = None,  # noqa: ARG001
         ) -> None:
             call_order.append(f"emit:{event_name}")
 
