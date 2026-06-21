@@ -43,7 +43,8 @@ nav = [
     { "Agent Skills" = "skills.md" },
     { "Exit codes" = "reference/exit-codes.md" },
     { "Shell Completion" = "completion.md" },
-    { "Troubleshooting" = "troubleshooting.md" }
+    { "Troubleshooting" = "troubleshooting.md" },
+    { "Telemetry" = "telemetry.md" }
   ] },
   { "Guides" = [
     { "Overview" = "guides/index.md" },
