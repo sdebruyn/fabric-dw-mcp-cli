@@ -303,15 +303,15 @@ Statistics are **not** updated automatically after a load. Create or update sing
 === "CLI"
 
     ```shell
-    # Create a statistic on a column (full scan; --name optional, auto-generated when omitted)
+    # Create a single-column statistic (full scan; --name is required)
     fdw statistics create \
-      --table dbo.sales --column SaleDate
+      --table dbo.sales --column SaleDate --name stat_sales_saledate
 
     # Update an existing statistic after a subsequent load (warehouse positional kept — names follow)
-    fdw statistics update SalesWH dbo.sales _stat_sales_saledate
+    fdw statistics update SalesWH dbo.sales stat_sales_saledate
 
     # Inspect a statistic (header, density vector, histogram)
-    fdw statistics show SalesWH dbo.sales _stat_sales_saledate
+    fdw statistics show SalesWH dbo.sales stat_sales_saledate
     ```
 
 === "MCP"
