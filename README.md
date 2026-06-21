@@ -143,7 +143,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, branch flow, and how to ru
 
 ## Telemetry
 
-`fabric-dw` collects anonymous, opt-out usage telemetry (install counts, surface usage, Python/OS version). No SQL, identifiers, or credentials are ever sent. To opt out, set `FABRIC_DISABLE_TELEMETRY=1`. See the [Telemetry docs](https://fdw.debruyn.dev/telemetry/) for the full list of collected fields and all opt-out methods. Telemetry is automatically disabled in CI environments.
+`fabric-dw` collects anonymous, opt-out usage telemetry (install counts, surface usage, Python/OS version). No SQL, identifiers, or credentials are ever sent. To opt out, set `FABRIC_DW_TELEMETRY_OPT_OUT=1`. See the [Telemetry docs](https://fdw.debruyn.dev/telemetry/) for the full list of collected fields and all opt-out methods.
 
 ## Security
 

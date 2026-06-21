@@ -17,7 +17,7 @@ Every telemetry event includes a shared envelope of anonymous fields:
 | `install_method` | Best-effort detection: `pip`, `uv`, `pipx`, or `source`. |
 | `surface` | `cli` or `mcp` — which interface was used. |
 | `auth_mode` | Categorical authentication mode: `service_principal`, `github_oidc`, `azure_cli`, or `interactive`. **Never credentials.** |
-| `tenant_id` | Your Azure tenant ID, read from `AZURE_TENANT_ID` or `FABRIC_INTERACTIVE_TENANT_ID` **only when telemetry is enabled**. This identifies the organisation (not an individual). |
+| `tenant_id` | Your Azure (Entra) tenant ID. |
 
 ### Lifecycle events
 
@@ -72,11 +72,9 @@ One `command_invoked` event is emitted after every CLI command and every MCP too
 - File paths or environment variable values
 - Any other personally-identifiable information
 
-`tenant_id` is the only organisation-identifying field and is only emitted when telemetry is enabled (it is omitted when you opt out).
-
 ## Where telemetry data goes
 
-Events are sent to **Azure Application Insights** (`appi-fabric-dw-mcp-cli`, `westeurope`), owned and operated by the `fabric-dw` maintainers. Data is ingested via a write-only connection string embedded in the package. The backing Log Analytics workspace has a daily ingestion cap to control costs.
+Events are sent to a private Azure Application Insights resource operated by the `fabric-dw` maintainers, via a write-only connection string embedded in the package. The backing Log Analytics workspace has a daily ingestion cap to control costs.
 
 ## How to opt out
 
@@ -84,10 +82,6 @@ Any of the following fully disables telemetry — no events are emitted and the 
 
 | Method | How |
 |---|---|
-| Environment variable | `FABRIC_DISABLE_TELEMETRY=1` |
-| Environment variable | `FABRIC_TELEMETRY=0` (also accepts `false`, `no`, `off`) |
-| Do Not Track | `DO_NOT_TRACK=1` |
-| CI detection | Automatic when `CI`, `GITHUB_ACTIONS`, `TRAVIS`, `CIRCLECI`, `GITLAB_CI`, `JENKINS_URL`, or `TF_BUILD` is set |
+| Environment variable | Set `FABRIC_DW_TELEMETRY_OPT_OUT` to any value except the falsy set (`""`, `0`, `false`, `no`, `off`, case-insensitive). Setting it to `0` or `false` does **not** opt out. |
+| Do Not Track | Set `DO_NOT_TRACK` to any value except the falsy set (same rules as above). |
 | Config file | Add `disabled = true` under a `[telemetry]` section in `$XDG_CONFIG_HOME/fabric-dw/config.toml` |
-
-Telemetry is **always off in CI environments** — no action needed for automated pipelines.

@@ -19,8 +19,6 @@ from unittest.mock import patch
 
 import pytest
 
-from tests.conftest import TELEMETRY_FAKE_CONNECTION_STRING
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -40,116 +38,47 @@ def _reload_telemetry() -> Any:
 
 def test_telemetry_enabled_by_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Telemetry is ON by default when no opt-out signal is present."""
-    monkeypatch.delenv("FABRIC_TELEMETRY", raising=False)
-    monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
     monkeypatch.delenv("DO_NOT_TRACK", raising=False)
-    monkeypatch.delenv("CI", raising=False)
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-    monkeypatch.delenv("JENKINS_URL", raising=False)
-    monkeypatch.delenv("TRAVIS", raising=False)
-    monkeypatch.delenv("CIRCLECI", raising=False)
-    monkeypatch.delenv("GITLAB_CI", raising=False)
-    monkeypatch.delenv("TF_BUILD", raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     mod = _reload_telemetry()
     assert mod.telemetry_enabled() is True  # type: ignore[attr-defined]
 
 
-@pytest.mark.parametrize("value", ["0", "false", "FALSE", "no", "NO", "off", "OFF"])
-def test_telemetry_disabled_by_fabric_telemetry_falsy(
+@pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "YES", "on", "ON", "anything"])
+def test_telemetry_disabled_by_fabric_dw_telemetry_opt_out_truthy(
     value: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """FABRIC_TELEMETRY in {0, false, no, off} disables telemetry."""
-    monkeypatch.setenv("FABRIC_TELEMETRY", value)
-    monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
+    """FABRIC_DW_TELEMETRY_OPT_OUT set to a truthy value disables telemetry."""
+    monkeypatch.setenv("FABRIC_DW_TELEMETRY_OPT_OUT", value)
     monkeypatch.delenv("DO_NOT_TRACK", raising=False)
-    monkeypatch.delenv("CI", raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     mod = _reload_telemetry()
     assert mod.telemetry_enabled() is False  # type: ignore[attr-defined]
 
 
-def test_telemetry_not_disabled_by_fabric_telemetry_truthy(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize("value", ["0", "false", "FALSE", "no", "NO", "off", "OFF", ""])
+def test_telemetry_enabled_when_fabric_dw_telemetry_opt_out_falsy(
+    value: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """FABRIC_TELEMETRY=1 does NOT disable telemetry (opt-in is a no-op; it is on by default)."""
-    monkeypatch.setenv("FABRIC_TELEMETRY", "1")
-    monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
+    """FABRIC_DW_TELEMETRY_OPT_OUT set to a falsy value does NOT disable telemetry."""
+    monkeypatch.setenv("FABRIC_DW_TELEMETRY_OPT_OUT", value)
     monkeypatch.delenv("DO_NOT_TRACK", raising=False)
-    monkeypatch.delenv("CI", raising=False)
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-    monkeypatch.delenv("JENKINS_URL", raising=False)
-    monkeypatch.delenv("TRAVIS", raising=False)
-    monkeypatch.delenv("CIRCLECI", raising=False)
-    monkeypatch.delenv("GITLAB_CI", raising=False)
-    monkeypatch.delenv("TF_BUILD", raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     mod = _reload_telemetry()
     assert mod.telemetry_enabled() is True  # type: ignore[attr-defined]
 
 
-@pytest.mark.parametrize("value", ["1", "true", "yes", "TRUE"])
-def test_telemetry_disabled_by_fabric_disable_telemetry(
-    value: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """FABRIC_DISABLE_TELEMETRY set to a truthy value disables telemetry."""
-    monkeypatch.delenv("FABRIC_TELEMETRY", raising=False)
-    monkeypatch.setenv("FABRIC_DISABLE_TELEMETRY", value)
-    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
-    monkeypatch.delenv("CI", raising=False)
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-
-    mod = _reload_telemetry()
-    assert mod.telemetry_enabled() is False  # type: ignore[attr-defined]
-
-
-@pytest.mark.parametrize("value", ["1", "true", "yes", "TRUE"])
+@pytest.mark.parametrize("value", ["1", "true", "yes", "TRUE", "anything"])
 def test_telemetry_disabled_by_do_not_track(
     value: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """DO_NOT_TRACK truthy disables telemetry (consoledonottrack.com standard)."""
-    monkeypatch.delenv("FABRIC_TELEMETRY", raising=False)
-    monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
     monkeypatch.setenv("DO_NOT_TRACK", value)
-    monkeypatch.delenv("CI", raising=False)
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-
-    mod = _reload_telemetry()
-    assert mod.telemetry_enabled() is False  # type: ignore[attr-defined]
-
-
-def test_telemetry_disabled_when_ci_set(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """CI=true disables telemetry."""
-    monkeypatch.delenv("FABRIC_TELEMETRY", raising=False)
-    monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
-    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
-    monkeypatch.setenv("CI", "true")
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-
-    mod = _reload_telemetry()
-    assert mod.telemetry_enabled() is False  # type: ignore[attr-defined]
-
-
-@pytest.mark.parametrize(
-    "var",
-    ["GITHUB_ACTIONS", "JENKINS_URL", "TRAVIS", "CIRCLECI", "GITLAB_CI", "TF_BUILD"],
-)
-def test_telemetry_disabled_by_ci_marker(
-    var: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Common CI marker env vars disable telemetry."""
-    monkeypatch.delenv("FABRIC_TELEMETRY", raising=False)
-    monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
-    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
-    monkeypatch.delenv("CI", raising=False)
-    # Clear other CI markers
-    for other in ["GITHUB_ACTIONS", "JENKINS_URL", "TRAVIS", "CIRCLECI", "GITLAB_CI", "TF_BUILD"]:
-        if other != var:
-            monkeypatch.delenv(other, raising=False)
-    monkeypatch.setenv(var, "true")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     mod = _reload_telemetry()
@@ -167,16 +96,8 @@ def test_telemetry_disabled_by_config_setting(
     """telemetry_enabled() returns False when config file has telemetry_disabled=true."""
     import tomli_w  # noqa: PLC0415
 
-    monkeypatch.delenv("FABRIC_TELEMETRY", raising=False)
-    monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
     monkeypatch.delenv("DO_NOT_TRACK", raising=False)
-    monkeypatch.delenv("CI", raising=False)
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-    monkeypatch.delenv("JENKINS_URL", raising=False)
-    monkeypatch.delenv("TRAVIS", raising=False)
-    monkeypatch.delenv("CIRCLECI", raising=False)
-    monkeypatch.delenv("GITLAB_CI", raising=False)
-    monkeypatch.delenv("TF_BUILD", raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     config_dir = tmp_path / "fabric-dw"
@@ -197,7 +118,7 @@ def test_azure_monitor_sdk_not_imported_when_disabled(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """When telemetry is disabled, azure.monitor.opentelemetry must never be imported."""
-    monkeypatch.setenv("FABRIC_DISABLE_TELEMETRY", "1")
+    monkeypatch.setenv("FABRIC_DW_TELEMETRY_OPT_OUT", "1")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     # Remove SDK from sys.modules to detect a fresh import
@@ -221,16 +142,8 @@ def test_emit_event_never_raises_on_sdk_error(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """emit_event must swallow all exceptions and never propagate them."""
-    monkeypatch.delenv("FABRIC_TELEMETRY", raising=False)
-    monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
     monkeypatch.delenv("DO_NOT_TRACK", raising=False)
-    monkeypatch.delenv("CI", raising=False)
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-    monkeypatch.delenv("JENKINS_URL", raising=False)
-    monkeypatch.delenv("TRAVIS", raising=False)
-    monkeypatch.delenv("CIRCLECI", raising=False)
-    monkeypatch.delenv("GITLAB_CI", raising=False)
-    monkeypatch.delenv("TF_BUILD", raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     mod = _reload_telemetry()
@@ -243,7 +156,7 @@ def test_emit_event_never_raises_on_sdk_error(
 
 def test_emit_event_no_op_when_disabled(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """emit_event is a no-op (does not import SDK) when telemetry is disabled."""
-    monkeypatch.setenv("FABRIC_DISABLE_TELEMETRY", "1")
+    monkeypatch.setenv("FABRIC_DW_TELEMETRY_OPT_OUT", "1")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     mod = _reload_telemetry()
@@ -267,19 +180,11 @@ def test_envelope_contains_required_fields(monkeypatch: pytest.MonkeyPatch, tmp_
     Fields moved to native Part A via the OTel Resource (#477) are NOT present
     here: ``app_version`` (→ application_Version), ``surface`` (→ cloud_RoleName).
     Fields dropped entirely (#477): ``anonymous_install_id`` (duplicate of user_Id),
-    ``is_ci`` (always False — telemetry is disabled in CI).
+    ``is_ci`` (no useful signal).
     ``tenant_id`` is now always present (``"unknown"`` when unresolved).
     """
-    monkeypatch.delenv("FABRIC_TELEMETRY", raising=False)
-    monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
     monkeypatch.delenv("DO_NOT_TRACK", raising=False)
-    monkeypatch.delenv("CI", raising=False)
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-    monkeypatch.delenv("JENKINS_URL", raising=False)
-    monkeypatch.delenv("TRAVIS", raising=False)
-    monkeypatch.delenv("CIRCLECI", raising=False)
-    monkeypatch.delenv("GITLAB_CI", raising=False)
-    monkeypatch.delenv("TF_BUILD", raising=False)
     monkeypatch.delenv("AZURE_TENANT_ID", raising=False)
     monkeypatch.delenv("FABRIC_INTERACTIVE_TENANT_ID", raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
@@ -315,14 +220,7 @@ def test_envelope_surface_not_in_custom_dimensions(
     maps to ``cloud_RoleName``.  Emitting it again as a custom dimension would be
     redundant.
     """
-    monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
-    monkeypatch.delenv("CI", raising=False)
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-    monkeypatch.delenv("JENKINS_URL", raising=False)
-    monkeypatch.delenv("TRAVIS", raising=False)
-    monkeypatch.delenv("CIRCLECI", raising=False)
-    monkeypatch.delenv("GITLAB_CI", raising=False)
-    monkeypatch.delenv("TF_BUILD", raising=False)
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     mod = _reload_telemetry()
@@ -333,8 +231,7 @@ def test_envelope_surface_not_in_custom_dimensions(
 def test_envelope_is_ci_not_in_custom_dimensions(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """is_ci must NOT be in the envelope — telemetry is disabled in CI so it was always False."""
-    monkeypatch.setenv("CI", "true")
+    """is_ci must NOT be in the envelope — it carries no useful signal (#477)."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     mod = _reload_telemetry()
@@ -577,16 +474,8 @@ def test_first_run_notice_printed_to_stderr(
 ) -> None:
     """First-run notice must be printed to stderr the first time."""
     for var in [
-        "FABRIC_TELEMETRY",
-        "FABRIC_DISABLE_TELEMETRY",
+        "FABRIC_DW_TELEMETRY_OPT_OUT",
         "DO_NOT_TRACK",
-        "CI",
-        "GITHUB_ACTIONS",
-        "JENKINS_URL",
-        "TRAVIS",
-        "CIRCLECI",
-        "GITLAB_CI",
-        "TF_BUILD",
     ]:
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
@@ -604,16 +493,8 @@ def test_first_run_notice_printed_only_once(
 ) -> None:
     """First-run notice must not be repeated after the marker file is written."""
     for var in [
-        "FABRIC_TELEMETRY",
-        "FABRIC_DISABLE_TELEMETRY",
+        "FABRIC_DW_TELEMETRY_OPT_OUT",
         "DO_NOT_TRACK",
-        "CI",
-        "GITHUB_ACTIONS",
-        "JENKINS_URL",
-        "TRAVIS",
-        "CIRCLECI",
-        "GITLAB_CI",
-        "TF_BUILD",
     ]:
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
@@ -632,7 +513,7 @@ def test_first_run_notice_not_printed_when_disabled(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """No first-run notice when telemetry is disabled."""
-    monkeypatch.setenv("FABRIC_DISABLE_TELEMETRY", "1")
+    monkeypatch.setenv("FABRIC_DW_TELEMETRY_OPT_OUT", "1")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     mod = _reload_telemetry()
@@ -642,20 +523,18 @@ def test_first_run_notice_not_printed_when_disabled(
     assert captured.err == "", "No notice should be printed when telemetry is disabled"
 
 
-def test_first_run_notice_not_printed_in_ci(
+def test_first_run_notice_not_printed_when_opt_out(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """No first-run notice when running in CI."""
-    for var in ["FABRIC_TELEMETRY", "FABRIC_DISABLE_TELEMETRY", "DO_NOT_TRACK"]:
-        monkeypatch.delenv(var, raising=False)
-    monkeypatch.setenv("CI", "true")
+    """No first-run notice when FABRIC_DW_TELEMETRY_OPT_OUT=1."""
+    monkeypatch.setenv("FABRIC_DW_TELEMETRY_OPT_OUT", "1")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     mod = _reload_telemetry()
     mod.maybe_print_first_run_notice()  # type: ignore[attr-defined]
 
     captured = capsys.readouterr()
-    assert captured.err == "", "No notice should be printed in CI"
+    assert captured.err == "", "No notice should be printed when telemetry is opted out"
 
 
 # ---------------------------------------------------------------------------
@@ -665,7 +544,7 @@ def test_first_run_notice_not_printed_in_ci(
 
 def test_record_app_started_does_not_raise(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """record_app_started must not raise even when telemetry is disabled."""
-    monkeypatch.setenv("FABRIC_DISABLE_TELEMETRY", "1")
+    monkeypatch.setenv("FABRIC_DW_TELEMETRY_OPT_OUT", "1")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     mod = _reload_telemetry()
@@ -674,7 +553,7 @@ def test_record_app_started_does_not_raise(monkeypatch: pytest.MonkeyPatch, tmp_
 
 def test_record_app_exited_does_not_raise(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """record_app_exited must not raise even when telemetry is disabled."""
-    monkeypatch.setenv("FABRIC_DISABLE_TELEMETRY", "1")
+    monkeypatch.setenv("FABRIC_DW_TELEMETRY_OPT_OUT", "1")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     mod = _reload_telemetry()
@@ -685,7 +564,7 @@ def test_record_mcp_server_started_does_not_raise(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """record_mcp_server_started must not raise even when telemetry is disabled."""
-    monkeypatch.setenv("FABRIC_DISABLE_TELEMETRY", "1")
+    monkeypatch.setenv("FABRIC_DW_TELEMETRY_OPT_OUT", "1")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     mod = _reload_telemetry()
@@ -697,16 +576,8 @@ def test_record_app_started_enabled_calls_emit(
 ) -> None:
     """When telemetry is enabled, record_app_started must call emit_event."""
     for var in [
-        "FABRIC_TELEMETRY",
-        "FABRIC_DISABLE_TELEMETRY",
+        "FABRIC_DW_TELEMETRY_OPT_OUT",
         "DO_NOT_TRACK",
-        "CI",
-        "GITHUB_ACTIONS",
-        "JENKINS_URL",
-        "TRAVIS",
-        "CIRCLECI",
-        "GITLAB_CI",
-        "TF_BUILD",
     ]:
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
@@ -730,16 +601,8 @@ def test_record_app_exited_enabled_calls_emit(
 ) -> None:
     """When telemetry is enabled, record_app_exited must call emit_event."""
     for var in [
-        "FABRIC_TELEMETRY",
-        "FABRIC_DISABLE_TELEMETRY",
+        "FABRIC_DW_TELEMETRY_OPT_OUT",
         "DO_NOT_TRACK",
-        "CI",
-        "GITHUB_ACTIONS",
-        "JENKINS_URL",
-        "TRAVIS",
-        "CIRCLECI",
-        "GITLAB_CI",
-        "TF_BUILD",
     ]:
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
@@ -764,16 +627,8 @@ def test_record_mcp_server_started_enabled_calls_emit(
 ) -> None:
     """When telemetry is enabled, record_mcp_server_started must call emit_event."""
     for var in [
-        "FABRIC_TELEMETRY",
-        "FABRIC_DISABLE_TELEMETRY",
+        "FABRIC_DW_TELEMETRY_OPT_OUT",
         "DO_NOT_TRACK",
-        "CI",
-        "GITHUB_ACTIONS",
-        "JENKINS_URL",
-        "TRAVIS",
-        "CIRCLECI",
-        "GITLAB_CI",
-        "TF_BUILD",
     ]:
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
@@ -836,30 +691,6 @@ def test_default_connection_string_is_set(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert "InstrumentationKey" in mod._DEFAULT_CONNECTION_STRING  # type: ignore[attr-defined]
 
 
-def test_connection_string_overridable_via_env(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """FABRIC_TELEMETRY_CONNECTION_STRING must override the default."""
-    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", "InstrumentationKey=custom-key")
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-
-    mod = _reload_telemetry()
-    conn_str = mod._get_connection_string()  # type: ignore[attr-defined]
-    assert conn_str == "InstrumentationKey=custom-key"
-
-
-def test_connection_string_default_when_env_not_set(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """_get_connection_string returns the default when env var is absent."""
-    monkeypatch.delenv("FABRIC_TELEMETRY_CONNECTION_STRING", raising=False)
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-
-    mod = _reload_telemetry()
-    conn_str = mod._get_connection_string()  # type: ignore[attr-defined]
-    assert conn_str == mod._DEFAULT_CONNECTION_STRING  # type: ignore[attr-defined]
-
-
 # ---------------------------------------------------------------------------
 # B1: privacy — auto-HTTP instrumentation is disabled
 # ---------------------------------------------------------------------------
@@ -877,10 +708,7 @@ def test_get_tracer_passes_instrumentation_options_to_configure(
     reference to avoid corrupting sys.modules for other tests.
     """
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
-    monkeypatch.delenv("CI", raising=False)
-    for ci_var in ("GITHUB_ACTIONS", "JENKINS_URL", "TRAVIS", "CIRCLECI", "GITLAB_CI", "TF_BUILD"):
-        monkeypatch.delenv(ci_var, raising=False)
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
 
     mod = _reload_telemetry()
 
@@ -940,10 +768,7 @@ def test_get_tracer_passes_enable_performance_counters_false(
     and writes a full traceback to stderr (#399).
     """
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
-    monkeypatch.delenv("CI", raising=False)
-    for ci_var in ("GITHUB_ACTIONS", "JENKINS_URL", "TRAVIS", "CIRCLECI", "GITLAB_CI", "TF_BUILD"):
-        monkeypatch.delenv(ci_var, raising=False)
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
 
     mod = _reload_telemetry()
 
@@ -1186,14 +1011,10 @@ def test_set_tenant_id_takes_precedence_over_env(
 # Persistent tenant store (#652)
 # ---------------------------------------------------------------------------
 
-# Single source of truth lives in tests/conftest.py; imported above.
-_DUMMY_CONN_STR = TELEMETRY_FAKE_CONNECTION_STRING
-
 
 def test_tenant_id_unknown_on_first_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """With no known tenant, _build_envelope must return tenant_id == 'unknown' (#652)."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", _DUMMY_CONN_STR)
     monkeypatch.delenv("AZURE_TENANT_ID", raising=False)
     monkeypatch.delenv("FABRIC_INTERACTIVE_TENANT_ID", raising=False)
 
@@ -1209,17 +1030,8 @@ def test_set_tenant_id_writes_file_when_enabled(
 ) -> None:
     """set_tenant_id must persist to disk when telemetry is enabled (#652)."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", _DUMMY_CONN_STR)
-    monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
     monkeypatch.delenv("DO_NOT_TRACK", raising=False)
-    monkeypatch.delenv("CI", raising=False)
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-    monkeypatch.delenv("JENKINS_URL", raising=False)
-    monkeypatch.delenv("TRAVIS", raising=False)
-    monkeypatch.delenv("CIRCLECI", raising=False)
-    monkeypatch.delenv("GITLAB_CI", raising=False)
-    monkeypatch.delenv("TF_BUILD", raising=False)
-    monkeypatch.delenv("FABRIC_TELEMETRY", raising=False)
 
     mod = _reload_telemetry()
     assert mod.telemetry_enabled() is True  # type: ignore[attr-defined]
@@ -1236,8 +1048,7 @@ def test_set_tenant_id_no_write_when_disabled(
 ) -> None:
     """set_tenant_id must NOT write to disk when telemetry is disabled (#652)."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", _DUMMY_CONN_STR)
-    monkeypatch.setenv("FABRIC_DISABLE_TELEMETRY", "1")
+    monkeypatch.setenv("FABRIC_DW_TELEMETRY_OPT_OUT", "1")
 
     mod = _reload_telemetry()
     assert mod.telemetry_enabled() is False  # type: ignore[attr-defined]
@@ -1257,19 +1068,10 @@ def test_cached_tenant_read_back_on_new_process(
     _tenant_id_override = None to check the cache is the fallback.
     """
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", _DUMMY_CONN_STR)
     monkeypatch.delenv("AZURE_TENANT_ID", raising=False)
     monkeypatch.delenv("FABRIC_INTERACTIVE_TENANT_ID", raising=False)
-    monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
     monkeypatch.delenv("DO_NOT_TRACK", raising=False)
-    monkeypatch.delenv("CI", raising=False)
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-    monkeypatch.delenv("JENKINS_URL", raising=False)
-    monkeypatch.delenv("TRAVIS", raising=False)
-    monkeypatch.delenv("CIRCLECI", raising=False)
-    monkeypatch.delenv("GITLAB_CI", raising=False)
-    monkeypatch.delenv("TF_BUILD", raising=False)
-    monkeypatch.delenv("FABRIC_TELEMETRY", raising=False)
 
     # First run: set the tenant (writes file)
     mod = _reload_telemetry()
@@ -1290,7 +1092,6 @@ def test_missing_tenant_file_falls_back_to_unknown(
 ) -> None:
     """A missing tenant cache file must not raise and must fall back to 'unknown' (#652)."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", _DUMMY_CONN_STR)
     monkeypatch.delenv("AZURE_TENANT_ID", raising=False)
     monkeypatch.delenv("FABRIC_INTERACTIVE_TENANT_ID", raising=False)
 
@@ -1310,7 +1111,6 @@ def test_garbage_tenant_file_falls_back_to_unknown(
 ) -> None:
     """A malformed/empty tenant cache file must not raise and must return None (#652)."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", _DUMMY_CONN_STR)
     monkeypatch.delenv("AZURE_TENANT_ID", raising=False)
     monkeypatch.delenv("FABRIC_INTERACTIVE_TENANT_ID", raising=False)
 
@@ -1330,7 +1130,6 @@ def test_live_override_takes_precedence_over_cache(
 ) -> None:
     """Live _tenant_id_override must win over persisted cache (#652)."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", _DUMMY_CONN_STR)
     monkeypatch.delenv("AZURE_TENANT_ID", raising=False)
     monkeypatch.delenv("FABRIC_INTERACTIVE_TENANT_ID", raising=False)
 
@@ -1352,7 +1151,6 @@ def test_env_var_takes_precedence_over_cache(
 ) -> None:
     """AZURE_TENANT_ID env var must take precedence over persisted cache (#652)."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", _DUMMY_CONN_STR)
     monkeypatch.setenv("AZURE_TENANT_ID", "env-tenant-wins")
     monkeypatch.delenv("FABRIC_INTERACTIVE_TENANT_ID", raising=False)
 
@@ -1384,19 +1182,10 @@ def test_stale_cache_corrected_by_set_tenant_id(
     the intentional, bounded trade-off documented in _build_envelope.
     """
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", _DUMMY_CONN_STR)
     monkeypatch.delenv("AZURE_TENANT_ID", raising=False)
     monkeypatch.delenv("FABRIC_INTERACTIVE_TENANT_ID", raising=False)
-    monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
     monkeypatch.delenv("DO_NOT_TRACK", raising=False)
-    monkeypatch.delenv("CI", raising=False)
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-    monkeypatch.delenv("JENKINS_URL", raising=False)
-    monkeypatch.delenv("TRAVIS", raising=False)
-    monkeypatch.delenv("CIRCLECI", raising=False)
-    monkeypatch.delenv("GITLAB_CI", raising=False)
-    monkeypatch.delenv("TF_BUILD", raising=False)
-    monkeypatch.delenv("FABRIC_TELEMETRY", raising=False)
 
     # run1: telemetry ON → tenant-A written to cache
     mod = _reload_telemetry()
@@ -1404,7 +1193,7 @@ def test_stale_cache_corrected_by_set_tenant_id(
     mod.set_tenant_id("tenant-A")  # type: ignore[attr-defined]
 
     # run2: telemetry OFF → tenant-B NOT written to cache
-    monkeypatch.setenv("FABRIC_DISABLE_TELEMETRY", "1")
+    monkeypatch.setenv("FABRIC_DW_TELEMETRY_OPT_OUT", "1")
     mod2 = _reload_telemetry()
     assert mod2.telemetry_enabled() is False  # type: ignore[attr-defined]
     mod2.set_tenant_id("tenant-B")  # type: ignore[attr-defined]
@@ -1412,7 +1201,7 @@ def test_stale_cache_corrected_by_set_tenant_id(
     assert (tmp_path / "fabric-dw" / "tenant_id").read_text(encoding="utf-8").strip() == "tenant-A"
 
     # run3: telemetry re-enabled; app_started fires before auth (no live override)
-    monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
     mod3 = _reload_telemetry()
     mod3._tenant_id_override = None  # type: ignore[attr-defined]
 
@@ -1443,16 +1232,8 @@ def test_first_run_notice_marker_written_after_print(
     future notices.
     """
     for var in [
-        "FABRIC_TELEMETRY",
-        "FABRIC_DISABLE_TELEMETRY",
+        "FABRIC_DW_TELEMETRY_OPT_OUT",
         "DO_NOT_TRACK",
-        "CI",
-        "GITHUB_ACTIONS",
-        "JENKINS_URL",
-        "TRAVIS",
-        "CIRCLECI",
-        "GITLAB_CI",
-        "TF_BUILD",
     ]:
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
@@ -1623,16 +1404,8 @@ def test_cache_tenant_id_sets_override_when_enabled(
 ) -> None:
     """cache_tenant_id_from_token sets _tenant_id_override when telemetry is on."""
     for var in [
-        "FABRIC_TELEMETRY",
-        "FABRIC_DISABLE_TELEMETRY",
+        "FABRIC_DW_TELEMETRY_OPT_OUT",
         "DO_NOT_TRACK",
-        "CI",
-        "GITHUB_ACTIONS",
-        "JENKINS_URL",
-        "TRAVIS",
-        "CIRCLECI",
-        "GITLAB_CI",
-        "TF_BUILD",
     ]:
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
@@ -1649,7 +1422,7 @@ def test_cache_tenant_id_does_not_decode_when_telemetry_disabled(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """cache_tenant_id_from_token is a no-op (no decode) when telemetry is disabled."""
-    monkeypatch.setenv("FABRIC_DISABLE_TELEMETRY", "1")
+    monkeypatch.setenv("FABRIC_DW_TELEMETRY_OPT_OUT", "1")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     mod = _reload_telemetry()
@@ -1676,16 +1449,8 @@ def test_cache_tenant_id_is_idempotent_skips_decode_when_override_set(
 ) -> None:
     """cache_tenant_id_from_token skips decode when _tenant_id_override is already set."""
     for var in [
-        "FABRIC_TELEMETRY",
-        "FABRIC_DISABLE_TELEMETRY",
+        "FABRIC_DW_TELEMETRY_OPT_OUT",
         "DO_NOT_TRACK",
-        "CI",
-        "GITHUB_ACTIONS",
-        "JENKINS_URL",
-        "TRAVIS",
-        "CIRCLECI",
-        "GITLAB_CI",
-        "TF_BUILD",
     ]:
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
@@ -1723,16 +1488,8 @@ def test_envelope_uses_token_tid_over_env_var(
     wins over the env-var fallback in _build_envelope.
     """
     for var in [
-        "FABRIC_TELEMETRY",
-        "FABRIC_DISABLE_TELEMETRY",
+        "FABRIC_DW_TELEMETRY_OPT_OUT",
         "DO_NOT_TRACK",
-        "CI",
-        "GITHUB_ACTIONS",
-        "JENKINS_URL",
-        "TRAVIS",
-        "CIRCLECI",
-        "GITLAB_CI",
-        "TF_BUILD",
     ]:
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
@@ -1751,16 +1508,8 @@ def test_envelope_falls_back_to_azure_tenant_id_env_when_no_override(
 ) -> None:
     """_build_envelope falls back to AZURE_TENANT_ID when no token override is set."""
     for var in [
-        "FABRIC_TELEMETRY",
-        "FABRIC_DISABLE_TELEMETRY",
+        "FABRIC_DW_TELEMETRY_OPT_OUT",
         "DO_NOT_TRACK",
-        "CI",
-        "GITHUB_ACTIONS",
-        "JENKINS_URL",
-        "TRAVIS",
-        "CIRCLECI",
-        "GITLAB_CI",
-        "TF_BUILD",
         "FABRIC_INTERACTIVE_TENANT_ID",
     ]:
         monkeypatch.delenv(var, raising=False)
@@ -1783,16 +1532,8 @@ def test_envelope_tenant_id_unknown_when_no_source(
     tenant_id is always present (#477 Finding 2) so it is reliably queryable on every event.
     """
     for var in [
-        "FABRIC_TELEMETRY",
-        "FABRIC_DISABLE_TELEMETRY",
+        "FABRIC_DW_TELEMETRY_OPT_OUT",
         "DO_NOT_TRACK",
-        "CI",
-        "GITHUB_ACTIONS",
-        "JENKINS_URL",
-        "TRAVIS",
-        "CIRCLECI",
-        "GITLAB_CI",
-        "TF_BUILD",
         "AZURE_TENANT_ID",
         "FABRIC_INTERACTIVE_TENANT_ID",
     ]:
@@ -2135,16 +1876,8 @@ def _clear_statsbeat_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def _enable_telemetry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Remove all opt-out signals so telemetry_enabled() returns True."""
     for var in (
-        "FABRIC_TELEMETRY",
-        "FABRIC_DISABLE_TELEMETRY",
+        "FABRIC_DW_TELEMETRY_OPT_OUT",
         "DO_NOT_TRACK",
-        "CI",
-        "GITHUB_ACTIONS",
-        "JENKINS_URL",
-        "TRAVIS",
-        "CIRCLECI",
-        "GITLAB_CI",
-        "TF_BUILD",
     ):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
@@ -2264,16 +1997,8 @@ def test_suppress_telemetry_makes_telemetry_enabled_return_false(
     """suppress_telemetry() must cause telemetry_enabled() to return False."""
     # Start with telemetry ON (all opt-out signals absent).
     for var in [
-        "FABRIC_TELEMETRY",
-        "FABRIC_DISABLE_TELEMETRY",
+        "FABRIC_DW_TELEMETRY_OPT_OUT",
         "DO_NOT_TRACK",
-        "CI",
-        "GITHUB_ACTIONS",
-        "JENKINS_URL",
-        "TRAVIS",
-        "CIRCLECI",
-        "GITLAB_CI",
-        "TF_BUILD",
     ]:
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
@@ -2290,16 +2015,8 @@ def test_suppress_telemetry_makes_telemetry_enabled_return_false(
 def test_suppress_telemetry_is_resettable(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """suppress_telemetry(False) must restore normal enable/disable evaluation."""
     for var in [
-        "FABRIC_TELEMETRY",
-        "FABRIC_DISABLE_TELEMETRY",
+        "FABRIC_DW_TELEMETRY_OPT_OUT",
         "DO_NOT_TRACK",
-        "CI",
-        "GITHUB_ACTIONS",
-        "JENKINS_URL",
-        "TRAVIS",
-        "CIRCLECI",
-        "GITLAB_CI",
-        "TF_BUILD",
     ]:
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
@@ -2317,16 +2034,8 @@ def test_suppress_telemetry_prevents_get_tracer_call(
 ) -> None:
     """When suppressed, emit_event must not call _get_tracer (no SDK init)."""
     for var in [
-        "FABRIC_TELEMETRY",
-        "FABRIC_DISABLE_TELEMETRY",
+        "FABRIC_DW_TELEMETRY_OPT_OUT",
         "DO_NOT_TRACK",
-        "CI",
-        "GITHUB_ACTIONS",
-        "JENKINS_URL",
-        "TRAVIS",
-        "CIRCLECI",
-        "GITLAB_CI",
-        "TF_BUILD",
     ]:
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
@@ -2346,16 +2055,8 @@ def test_suppress_telemetry_prevents_configure_azure_monitor(
 ) -> None:
     """When suppressed, _get_tracer must not call configure_azure_monitor."""
     for var in [
-        "FABRIC_TELEMETRY",
-        "FABRIC_DISABLE_TELEMETRY",
+        "FABRIC_DW_TELEMETRY_OPT_OUT",
         "DO_NOT_TRACK",
-        "CI",
-        "GITHUB_ACTIONS",
-        "JENKINS_URL",
-        "TRAVIS",
-        "CIRCLECI",
-        "GITLAB_CI",
-        "TF_BUILD",
     ]:
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
@@ -2394,16 +2095,8 @@ def test_suppress_telemetry_prevents_first_run_notice(
 ) -> None:
     """maybe_print_first_run_notice must be a no-op when telemetry is suppressed."""
     for var in [
-        "FABRIC_TELEMETRY",
-        "FABRIC_DISABLE_TELEMETRY",
+        "FABRIC_DW_TELEMETRY_OPT_OUT",
         "DO_NOT_TRACK",
-        "CI",
-        "GITHUB_ACTIONS",
-        "JENKINS_URL",
-        "TRAVIS",
-        "CIRCLECI",
-        "GITLAB_CI",
-        "TF_BUILD",
     ]:
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
@@ -2424,16 +2117,8 @@ def test_suppress_telemetry_shutdown_is_noop(
 ) -> None:
     """shutdown_telemetry must be a no-op when suppressed (SDK was never initialised)."""
     for var in [
-        "FABRIC_TELEMETRY",
-        "FABRIC_DISABLE_TELEMETRY",
+        "FABRIC_DW_TELEMETRY_OPT_OUT",
         "DO_NOT_TRACK",
-        "CI",
-        "GITHUB_ACTIONS",
-        "JENKINS_URL",
-        "TRAVIS",
-        "CIRCLECI",
-        "GITLAB_CI",
-        "TF_BUILD",
     ]:
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
@@ -2460,7 +2145,7 @@ def test_emit_event_noop_when_telemetry_disabled(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """emit_event is a no-op when telemetry is disabled — _get_tracer is never called."""
-    monkeypatch.setenv("FABRIC_DISABLE_TELEMETRY", "1")
+    monkeypatch.setenv("FABRIC_DW_TELEMETRY_OPT_OUT", "1")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     mod = _reload_telemetry()
@@ -2494,16 +2179,8 @@ def _build_test_envelope(
     from opentelemetry.sdk.resources import Resource  # noqa: PLC0415
 
     for var in (
-        "FABRIC_TELEMETRY",
-        "FABRIC_DISABLE_TELEMETRY",
+        "FABRIC_DW_TELEMETRY_OPT_OUT",
         "DO_NOT_TRACK",
-        "CI",
-        "GITHUB_ACTIONS",
-        "JENKINS_URL",
-        "TRAVIS",
-        "CIRCLECI",
-        "GITLAB_CI",
-        "TF_BUILD",
         "AZURE_TENANT_ID",
         "FABRIC_INTERACTIVE_TENANT_ID",
     ):
@@ -2790,10 +2467,7 @@ def test_get_tracer_passes_resource_to_configure_azure_monitor(
     application_Version, ai.device.id) and prevents the hostname fallback.
     """
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
-    monkeypatch.delenv("CI", raising=False)
-    for ci_var in ("GITHUB_ACTIONS", "JENKINS_URL", "TRAVIS", "CIRCLECI", "GITLAB_CI", "TF_BUILD"):
-        monkeypatch.delenv(ci_var, raising=False)
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
 
     mod = _reload_telemetry()
 

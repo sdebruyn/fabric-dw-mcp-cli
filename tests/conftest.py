@@ -19,9 +19,10 @@ For the self-managed telemetry modules (``test_telemetry.py`` and
 ``test_telemetry_commands.py``) two additional defence-in-depth fixtures are
 applied:
 
-- ``_isolate_telemetry_endpoint`` — points the SDK at a localhost dummy
-  endpoint so nothing can reach the production Application Insights resource
-  even when telemetry is intentionally enabled.
+- ``_mock_configure_azure_monitor`` — patches ``configure_azure_monitor``
+  (the function imported inside ``telemetry.py``'s SDK-init path) to a no-op
+  so no real connection to the production App Insights resource is ever
+  attempted, even when telemetry is intentionally enabled in a test.
 - ``_reset_telemetry_module_globals`` — resets ``_tenant_id_override`` and the
   ``_tenant_id_cache`` sentinel between tests so values cannot bleed across tests
   in the same process.
@@ -31,6 +32,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Generator
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -43,25 +45,13 @@ _FABRIC_MCP_VARS = (
 )
 
 # Test modules that exercise telemetry behaviour directly and therefore manage
-# their own FABRIC_DISABLE_TELEMETRY / FABRIC_TELEMETRY env state.  They are
-# exempt from the global telemetry-disable fixture below.
+# their own FABRIC_DW_TELEMETRY_OPT_OUT env state.  They are exempt from the
+# global telemetry-disable fixture below.
 _TELEMETRY_SELF_MANAGED_MODULES = frozenset(
     {
         "test_telemetry.py",
         "test_telemetry_commands.py",
     }
-)
-
-# Dummy connection string used by self-managed telemetry tests.  Instructs the
-# SDK to target a localhost endpoint so that even if configure_azure_monitor is
-# initialised, no traffic can reach the production App Insights resource.
-# Individual tests may override this with monkeypatch.setenv; this fixture only
-# installs it as a safe default.
-#
-# Single source of truth: ``test_telemetry.py`` imports this as ``_DUMMY_CONN_STR``
-# so both files always use the same value.
-TELEMETRY_FAKE_CONNECTION_STRING = (
-    "InstrumentationKey=00000000-0000-0000-0000-000000000000;IngestionEndpoint=https://localhost/"
 )
 
 
@@ -85,23 +75,19 @@ def _disable_telemetry_globally(
 ) -> None:
     """Disable anonymous telemetry for the entire test run — no real network sends.
 
-    On a typical developer machine ``telemetry_enabled()`` returns ``True`` (not
-    CI, no opt-out env var, no config opt-out), so without this fixture every
-    in-process ``CliRunner`` test — and every integration smoke test that spawns
-    the real ``fdw`` binary as a subprocess — would emit **real** telemetry to the
+    On a typical developer machine ``telemetry_enabled()`` returns ``True`` (no
+    opt-out env var, no config opt-out), so without this fixture every in-process
+    ``CliRunner`` test — and every integration smoke test that spawns the real
+    ``fdw`` binary as a subprocess — would emit **real** telemetry to the
     **production** Application Insights resource, drowning genuine usage in test
     noise (see issue tracking this).
 
-    Setting ``FABRIC_DISABLE_TELEMETRY=1`` via ``monkeypatch.setenv`` makes
+    Setting ``FABRIC_DW_TELEMETRY_OPT_OUT=1`` via ``monkeypatch.setenv`` makes
     :func:`fabric_dw.telemetry.telemetry_enabled` return ``False``, so
-    ``emit_event`` / provider init / flush all become no-ops:
-
-    - The truthy ``FABRIC_DISABLE_TELEMETRY`` check wins even over the forced
-      ``FABRIC_TELEMETRY=1`` that ``tests/integration/test_cli_smoke.py`` injects
-      into its child env, because it is evaluated first in ``telemetry_enabled``.
-    - ``monkeypatch`` mutates ``os.environ`` in place, so subprocess tests that do
-      ``os.environ.copy()`` inherit the disable; ``monkeypatch`` auto-restores it
-      after each test.
+    ``emit_event`` / provider init / flush all become no-ops.
+    ``monkeypatch`` mutates ``os.environ`` in place, so subprocess tests that do
+    ``os.environ.copy()`` inherit the disable; ``monkeypatch`` auto-restores it
+    after each test.
 
     ``tests/unit/test_telemetry.py`` and ``tests/unit/test_telemetry_commands.py``
     are exempt: they exercise telemetry behaviour directly and manage their own env
@@ -112,35 +98,33 @@ def _disable_telemetry_globally(
     """
     if request.path is not None and request.path.name in _TELEMETRY_SELF_MANAGED_MODULES:
         return
-    monkeypatch.setenv("FABRIC_DISABLE_TELEMETRY", "1")
+    monkeypatch.setenv("FABRIC_DW_TELEMETRY_OPT_OUT", "1")
 
 
 @pytest.fixture(autouse=True)
-def _isolate_telemetry_endpoint(
-    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Point the telemetry SDK at a localhost dummy endpoint in self-managed modules.
+def _mock_configure_azure_monitor(
+    request: pytest.FixtureRequest,
+) -> Generator[MagicMock, None, None]:
+    """Patch configure_azure_monitor to a no-op in self-managed telemetry modules.
 
     Applied only to ``test_telemetry.py`` and ``test_telemetry_commands.py``
     (the ``_TELEMETRY_SELF_MANAGED_MODULES``).  Those modules deliberately exercise
     the enabled-telemetry code path and are exempt from ``_disable_telemetry_globally``,
-    so without this fixture the real production App Insights connection string would
-    be used whenever ``configure_azure_monitor`` is initialised.
+    so without this fixture a real call to ``configure_azure_monitor`` inside
+    ``_get_tracer`` would attempt to connect to the production App Insights resource.
 
-    ``monkeypatch.setenv`` is used rather than a direct dict mutation so:
-    - Individual tests that want a specific connection string can override it with
-      their own ``monkeypatch.setenv(...)`` call — pytest runs fixture setup before
-      the test body and test-body monkeypatches win.
-    - The env var is automatically restored after each test.
-
-    The instrumentation key ``00000000-0000-0000-0000-000000000000`` is a
-    well-known null GUID and the endpoint is ``https://localhost/`` — traffic to
-    this address is refused immediately by the OS, guaranteeing no egress to the
-    real resource even if the SDK is initialised.
+    The patch targets the import site inside ``telemetry.py``'s local import
+    (``from azure.monitor.opentelemetry import configure_azure_monitor``), so only
+    the telemetry module's SDK-init path is affected; the real SDK is never reached.
+    Individual tests that need to inspect the mock can access it via the fixture
+    value; tests that patch ``_get_tracer`` or ``emit_event`` directly are
+    unaffected because those patches take effect before the SDK init path is reached.
     """
     if request.path is None or request.path.name not in _TELEMETRY_SELF_MANAGED_MODULES:
+        yield MagicMock()
         return
-    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", TELEMETRY_FAKE_CONNECTION_STRING)
+    with patch("azure.monitor.opentelemetry.configure_azure_monitor") as mock_configure:
+        yield mock_configure
 
 
 @pytest.fixture(autouse=True)

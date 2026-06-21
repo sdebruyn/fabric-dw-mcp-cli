@@ -151,16 +151,8 @@ async def test_resolver_feeds_tenant_to_telemetry(
     tel = _live_tel()
 
     # Safe telemetry setup: dummy instrumentation key, isolated XDG dir, reset override
-    monkeypatch.setenv(
-        "FABRIC_TELEMETRY_CONNECTION_STRING",
-        "InstrumentationKey=00000000-0000-0000-0000-000000000000;"
-        "IngestionEndpoint=https://localhost/",
-    )
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    monkeypatch.delenv("FABRIC_TELEMETRY", raising=False)
-    monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
-    monkeypatch.delenv("CI", raising=False)
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
     monkeypatch.setattr(tel, "_tenant_id_override", None)
     # Reset the warm in-memory cache sentinel so XDG redirection takes full effect.
     monkeypatch.setattr(tel, "_tenant_id_cache", tel._UNSET)
@@ -224,10 +216,7 @@ async def test_resolver_does_not_override_token_tenant(
     tel = _live_tel()
 
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    monkeypatch.delenv("FABRIC_TELEMETRY", raising=False)
-    monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
-    monkeypatch.delenv("CI", raising=False)
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
     # Baseline: reset override first, then set it to the simulated token value.
     monkeypatch.setattr(tel, "_tenant_id_override", None)
     monkeypatch.setattr(tel, "_tenant_id_cache", tel._UNSET)

@@ -36,7 +36,7 @@ _EMIT_EVENT = "fabric_dw.telemetry.emit_event"
 @pytest.fixture(autouse=True)
 def disable_telemetry(monkeypatch: pytest.MonkeyPatch) -> None:
     """Disable real telemetry by default (safe tests, no network)."""
-    monkeypatch.setenv("FABRIC_DISABLE_TELEMETRY", "1")
+    monkeypatch.setenv("FABRIC_DW_TELEMETRY_OPT_OUT", "1")
 
 
 # ---------------------------------------------------------------------------
@@ -254,7 +254,7 @@ class TestNowMs:
 class TestEmitCommandInvokedDisabled:
     def test_disabled_emits_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """When telemetry is disabled, emit_event must never be called."""
-        monkeypatch.setenv("FABRIC_DISABLE_TELEMETRY", "1")
+        monkeypatch.setenv("FABRIC_DW_TELEMETRY_OPT_OUT", "1")
 
         with patch(_EMIT_EVENT) as mock_emit, patch(_TELEMETRY_ENABLED, return_value=False):
             emit_command_invoked(
@@ -273,16 +273,8 @@ class TestEmitCommandInvokedDisabled:
 class TestEmitCommandInvokedEnabled:
     @pytest.fixture(autouse=True)
     def enable_telemetry(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
-        monkeypatch.delenv("FABRIC_TELEMETRY", raising=False)
+        monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
         monkeypatch.delenv("DO_NOT_TRACK", raising=False)
-        monkeypatch.delenv("CI", raising=False)
-        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-        monkeypatch.delenv("JENKINS_URL", raising=False)
-        monkeypatch.delenv("TRAVIS", raising=False)
-        monkeypatch.delenv("CIRCLECI", raising=False)
-        monkeypatch.delenv("GITLAB_CI", raising=False)
-        monkeypatch.delenv("TF_BUILD", raising=False)
 
     def _run(self, **kwargs):  # type: ignore[no-untyped-def]
         """Call emit_command_invoked with telemetry_enabled patched to True."""
@@ -434,14 +426,7 @@ class TestCliCommandInvokedInstrumentation:
         from fabric_dw.cli._main import cli  # noqa: PLC0415
 
         # Enable telemetry for these tests.
-        monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
-        monkeypatch.delenv("CI", raising=False)
-        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-        monkeypatch.delenv("JENKINS_URL", raising=False)
-        monkeypatch.delenv("TRAVIS", raising=False)
-        monkeypatch.delenv("CIRCLECI", raising=False)
-        monkeypatch.delenv("GITLAB_CI", raising=False)
-        monkeypatch.delenv("TF_BUILD", raising=False)
+        monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
 
         runner = CliRunner()
         # Patch telemetry_enabled at the source (fabric_dw.telemetry) so both
@@ -485,7 +470,7 @@ class TestCliCommandInvokedInstrumentation:
         """When telemetry is disabled, no command_invoked event is emitted."""
         from fabric_dw.cli._main import cli  # noqa: PLC0415
 
-        monkeypatch.setenv("FABRIC_DISABLE_TELEMETRY", "1")
+        monkeypatch.setenv("FABRIC_DW_TELEMETRY_OPT_OUT", "1")
         runner = CliRunner()
         with patch(_EMIT_EVENT) as mock_emit, patch(_TELEMETRY_ENABLED, return_value=False):
             runner.invoke(cli, ["cache", "clear"], catch_exceptions=True)
@@ -539,14 +524,7 @@ class TestMcpCommandInvokedInstrumentation:
 
     @pytest.fixture(autouse=True)
     def enable_telemetry(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
-        monkeypatch.delenv("CI", raising=False)
-        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-        monkeypatch.delenv("JENKINS_URL", raising=False)
-        monkeypatch.delenv("TRAVIS", raising=False)
-        monkeypatch.delenv("CIRCLECI", raising=False)
-        monkeypatch.delenv("GITLAB_CI", raising=False)
-        monkeypatch.delenv("TF_BUILD", raising=False)
+        monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
 
     def _make_spy(self) -> MagicMock:
         return MagicMock()
@@ -799,14 +777,7 @@ class TestCliShutdownOrdering:
         """Run CLI and return the sequence of telemetry calls in invocation order."""
         from fabric_dw.cli._main import cli  # noqa: PLC0415
 
-        monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
-        monkeypatch.delenv("CI", raising=False)
-        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-        monkeypatch.delenv("JENKINS_URL", raising=False)
-        monkeypatch.delenv("TRAVIS", raising=False)
-        monkeypatch.delenv("CIRCLECI", raising=False)
-        monkeypatch.delenv("GITLAB_CI", raising=False)
-        monkeypatch.delenv("TF_BUILD", raising=False)
+        monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
 
         call_order: list[str] = []
 

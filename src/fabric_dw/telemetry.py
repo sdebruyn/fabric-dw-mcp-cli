@@ -2,10 +2,8 @@
 
 Telemetry is **on by default** but can be disabled via:
 
-- ``FABRIC_TELEMETRY=0`` (or ``false``, ``no``, ``off``)
-- ``FABRIC_DISABLE_TELEMETRY=1`` (or any truthy value)
+- ``FABRIC_DW_TELEMETRY_OPT_OUT=1`` (or any truthy value)
 - ``DO_NOT_TRACK=1`` (consoledonottrack.com standard)
-- Any CI environment (``CI``, ``GITHUB_ACTIONS``, ``JENKINS_URL``, etc.)
 - Config file: ``[telemetry] disabled = true`` in
   ``$XDG_CONFIG_HOME/fabric-dw/config.toml``
 
@@ -19,7 +17,10 @@ Architecture notes
   never propagate errors to the caller.
 - No network calls are made when telemetry is disabled.
 - ``tenant_id`` is always present in the envelope (``"unknown"`` when unresolved)
-  so it is reliably queryable on every event.  Token-claim extraction is via
+  so it is reliably queryable on every event.  The tenant is resolved from the
+  access-token ``tid`` claim, the Fabric connection-string hostname,
+  ``AZURE_TENANT_ID``/``FABRIC_INTERACTIVE_TENANT_ID``, and a locally-cached
+  value (persisted under the config dir).  Token-claim extraction is via
   ``cache_tenant_id_from_token()`` (#366).
 - Auto-HTTP instrumentation is explicitly disabled to prevent MSAL OAuth
   request URLs (containing tenant IDs) from leaking as span attributes.
@@ -121,28 +122,6 @@ _DEFAULT_CONNECTION_STRING = (
 _SESSION_ID: str = str(uuid.uuid4())
 
 # ---------------------------------------------------------------------------
-# CI environment variable markers
-# ---------------------------------------------------------------------------
-
-_CI_VARS = frozenset(
-    {
-        "CI",
-        "GITHUB_ACTIONS",
-        "JENKINS_URL",
-        "TRAVIS",
-        "CIRCLECI",
-        "GITLAB_CI",
-        "TF_BUILD",
-    }
-)
-
-
-def _is_ci() -> bool:
-    """Return True when any known CI marker is present in the environment."""
-    return any(os.environ.get(var) for var in _CI_VARS)
-
-
-# ---------------------------------------------------------------------------
 # Process-level suppression (used for --help/-h invocations)
 # ---------------------------------------------------------------------------
 
@@ -172,12 +151,18 @@ def suppress_telemetry(value: bool = True) -> None:  # noqa: FBT001, FBT002
 # Opt-out helpers
 # ---------------------------------------------------------------------------
 
-_FALSY_VALUES = frozenset({"0", "false", "no", "off"})
+_FALSY_VALUES = frozenset({"", "0", "false", "no", "off"})
 
 
 def _is_truthy(value: str) -> bool:
-    """Return True when *value* looks like an affirmative string."""
-    return value.strip().lower() in {"1", "true", "yes", "on"}
+    """Return True when *value* is set and not in the falsy set.
+
+    A value is truthy when it is non-empty and not one of ``""``, ``"0"``,
+    ``"false"``, ``"no"``, or ``"off"`` (case-insensitive).  This matches the
+    consoledonottrack.com convention and avoids the surprising case where an
+    empty string is treated as truthy.
+    """
+    return value.strip().lower() not in _FALSY_VALUES
 
 
 def _config_dir() -> Path:
@@ -209,31 +194,21 @@ def telemetry_enabled() -> bool:
     - :func:`suppress_telemetry` has been called (process-level suppression,
       checked first — used by ``--help``/``-h`` invocations to skip all
       telemetry init and network I/O)
-    - ``FABRIC_TELEMETRY`` in ``{"0", "false", "no", "off"}``
-    - ``FABRIC_DISABLE_TELEMETRY`` is truthy
-    - ``DO_NOT_TRACK`` is truthy
-    - A CI environment is detected (``CI``, ``GITHUB_ACTIONS``, etc.)
+    - ``FABRIC_DW_TELEMETRY_OPT_OUT`` is truthy (set and not in
+      ``{"", "0", "false", "no", "off"}``, case-insensitive)
+    - ``DO_NOT_TRACK`` is truthy (same definition)
     - The config file has ``[telemetry] disabled = true``
     """
     # Process-level suppression (e.g. --help/-h) — checked first, always wins.
     if _SUPPRESSED:
         return False
 
-    # Explicit opt-out via FABRIC_TELEMETRY=<falsy>
-    fabric_tel = os.environ.get("FABRIC_TELEMETRY", "").strip().lower()
-    if fabric_tel in _FALSY_VALUES:
-        return False
-
-    # FABRIC_DISABLE_TELEMETRY truthy → disabled
-    if _is_truthy(os.environ.get("FABRIC_DISABLE_TELEMETRY", "")):
+    # FABRIC_DW_TELEMETRY_OPT_OUT truthy → disabled
+    if _is_truthy(os.environ.get("FABRIC_DW_TELEMETRY_OPT_OUT", "")):
         return False
 
     # DO_NOT_TRACK standard (consoledonottrack.com)
     if _is_truthy(os.environ.get("DO_NOT_TRACK", "")):
-        return False
-
-    # CI detection
-    if _is_ci():
         return False
 
     # Config-file opt-out
@@ -333,9 +308,12 @@ def _detect_install_method() -> str:
     Detection priority:
     1. ``UV`` / ``UV_VIRTUAL_ENV`` env vars → ``"uv"`` (set by uv runner).
     2. ``PIPX_HOME`` or ``"pipx"`` in ``sys.executable`` → ``"pipx"``.
-    3. Editable / source checkout (no dist-info or ``.egg-link``) → ``"source"``.
-    4. ``importlib.metadata`` resolves the package version → ``"pip"``.
-    5. Fallback → ``"unknown"``.
+    3. ``importlib.metadata`` resolves the package dist-info and the install
+       was editable (``"editable": true`` in ``direct_url.json``) → ``"source"``.
+    4. ``importlib.metadata`` resolves the package version without an editable
+       marker → ``"pip"``.
+    5. ``importlib.metadata`` raises ``PackageNotFoundError`` (running from
+       source tree, no dist-info installed) → ``"source"``.
 
     Note: a plain ``.venv`` in ``sys.executable`` is NOT used to infer ``"uv"``
     because pip can also install into a ``.venv``; that would be a false positive.
@@ -411,9 +389,7 @@ def _build_envelope() -> dict[str, object]:
 
     Fields omitted entirely (dropped in #477):
     - ``anonymous_install_id`` — already shipped natively as ``user_Id`` (← ``enduser.pseudo.id``)
-    - ``is_ci``                — ``is_ci=True`` never reached the backend (telemetry is suppressed
-                                 in CI); ``is_ci=False`` carries no signal.  The dimension was
-                                 always either absent or constant, so it was dropped.
+    - ``is_ci``                — dropped; carries no useful signal.
 
     ``tenant_id`` is always present (``"unknown"`` when unresolved) so it is
     reliably queryable on every event.  No native Part A slot is reachable for
@@ -523,11 +499,6 @@ _INSTRUMENTATION_OPTIONS: dict[str, dict[str, bool]] = {
     "urllib": {"enabled": False},
     "urllib3": {"enabled": False},
 }
-
-
-def _get_connection_string() -> str:
-    """Return the active App Insights connection string."""
-    return os.environ.get("FABRIC_TELEMETRY_CONNECTION_STRING", _DEFAULT_CONNECTION_STRING)
 
 
 def _harden_azure_sdk_logging() -> None:
@@ -652,7 +623,7 @@ def _get_tracer() -> object | None:
         resource = _build_otel_resource(_current_surface)
 
         configure_kwargs: dict[str, object] = {
-            "connection_string": _get_connection_string(),
+            "connection_string": _DEFAULT_CONNECTION_STRING,
             "logger_name": "fabric_dw.telemetry",
             # disable_logging=False (default) is intentional: the log/event
             # exporter must be active so customEvents land in the customEvents
@@ -960,8 +931,7 @@ def maybe_print_first_run_notice() -> None:
     """Print a one-line telemetry notice to stderr on first invocation.
 
     The notice is suppressed when:
-    - Telemetry is disabled.
-    - Running in a CI environment.
+    - Telemetry is disabled (via env var, DO_NOT_TRACK, or config file).
     - The marker file already exists (notice was already shown).
 
     The marker file is written **after** the notice is successfully printed
@@ -970,8 +940,6 @@ def maybe_print_first_run_notice() -> None:
     The output always goes to stderr so it can never pollute MCP stdio output.
     """
     if not telemetry_enabled():
-        return
-    if _is_ci():
         return
 
     marker_file = _config_dir() / ".telemetry_notice_shown"
@@ -983,7 +951,7 @@ def maybe_print_first_run_notice() -> None:
     # Print the notice first; only write the marker if this succeeds (A3).
     print(  # noqa: T201
         "fabric-dw collects anonymous usage telemetry to improve the tool. "
-        "To opt out: set FABRIC_DISABLE_TELEMETRY=1. "
+        "To opt out: set FABRIC_DW_TELEMETRY_OPT_OUT=1. "
         "See https://fdw.debruyn.dev/telemetry/ for details.",
         file=sys.stderr,
     )
