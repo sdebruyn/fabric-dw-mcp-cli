@@ -31,7 +31,7 @@ jobs:
     environment: integration
     timeout-minutes: 150
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -241,7 +241,7 @@ jobs:
 
       - name: Upload coverage reports to Codecov
         # success() only: do not propagate partial coverage from a failed run via carry_forward
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           flags: integration
