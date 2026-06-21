@@ -96,6 +96,7 @@ __all__ = [
     "record_app_exited",
     "record_app_started",
     "record_mcp_server_started",
+    "set_auth_mode",
     "set_tenant_id",
     "shutdown_telemetry",
     "suppress_telemetry",
@@ -349,8 +350,16 @@ def _detect_install_method() -> str:
 def _detect_auth_mode() -> str:
     """Return a categorical auth mode string based on environment signals.
 
+    This is the *fallback* heuristic used when no authoritative override has
+    been provided via :func:`set_auth_mode`.  It inspects environment variables
+    rather than the credential the auth layer actually resolved, so it can
+    mis-classify the ``DEFAULT`` path (e.g. ``AZURE_CONFIG_DIR`` is NOT set by a
+    plain ``az login``, causing real Azure CLI sessions to fall through to
+    ``"interactive"``).  Prefer calling :func:`set_auth_mode` from the auth
+    layer for an accurate value.
+
     Returns one of: ``service_principal``, ``github_oidc``, ``azure_cli``,
-    ``interactive``.
+    ``interactive``, ``managed_identity``.
     """
     # GitHub Actions OIDC
     if os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL") and os.environ.get(
@@ -362,7 +371,11 @@ def _detect_auth_mode() -> str:
     if os.environ.get("AZURE_CLIENT_SECRET"):
         return "service_principal"
 
-    # Azure CLI hint
+    # Azure CLI hint — AZURE_CONFIG_DIR is only set when the caller explicitly
+    # customises the Azure CLI config directory; a standard ``az login`` does NOT
+    # set it.  This check therefore catches only a narrow subset of real CLI
+    # sessions.  The authoritative path is via set_auth_mode() after token
+    # acquisition (see http_client._get_token).
     if os.environ.get("AZURE_CONFIG_DIR"):
         return "azure_cli"
 
@@ -375,6 +388,37 @@ def _detect_auth_mode() -> str:
 # ---------------------------------------------------------------------------
 
 _tenant_id_override: str | None = None
+
+# ---------------------------------------------------------------------------
+# Auth-mode override (set_auth_mode / #665 hook)
+# ---------------------------------------------------------------------------
+
+# Set once per process by the auth layer after the credential is resolved.
+# None means "not yet set" — _build_envelope falls back to _detect_auth_mode().
+_auth_mode_override: str | None = None
+
+
+def set_auth_mode(mode: str) -> None:
+    """Record the auth mode derived from the credential the auth layer resolved.
+
+    Call this once after it is known which credential successfully acquired a
+    token.  Subsequent calls are silently ignored (idempotent: the first
+    resolved credential wins, matching the ``cache_tenant_id_from_token``
+    pattern).
+
+    This is a no-op when telemetry is disabled so that the overhead of
+    inspecting credentials is skipped on opt-out paths.
+
+    Args:
+        mode: One of ``"service_principal"``, ``"github_oidc"``, ``"azure_cli"``,
+            ``"interactive"``, or ``"managed_identity"``.
+    """
+    global _auth_mode_override  # noqa: PLW0603
+    if _auth_mode_override is not None:
+        return
+    if not telemetry_enabled():
+        return
+    _auth_mode_override = mode
 
 
 def _build_envelope() -> dict[str, object]:
@@ -422,7 +466,11 @@ def _build_envelope() -> dict[str, object]:
         "os": _platform.system().lower(),
         "arch": _platform.machine().lower(),
         "install_method": _detect_install_method(),
-        "auth_mode": _detect_auth_mode(),
+        # Prefer the runtime-set override populated by set_auth_mode() (the
+        # auth layer records the credential that actually resolved); fall back
+        # to the env-var heuristic for processes that never reach token
+        # acquisition (e.g. --help invocations, pre-auth failures).
+        "auth_mode": _auth_mode_override or _detect_auth_mode(),
         "tenant_id": tenant_id,
     }
 

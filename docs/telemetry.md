@@ -16,7 +16,7 @@ Every telemetry event includes a shared envelope of anonymous fields:
 | `arch` | CPU architecture (e.g. `arm64`, `x86_64`). |
 | `install_method` | Best-effort detection: `pip`, `uv`, `pipx`, or `source`. |
 | `surface` | `cli` or `mcp` — which interface was used. |
-| `auth_mode` | Categorical authentication mode: `service_principal`, `github_oidc`, `azure_cli`, or `interactive`. **Never credentials.** |
+| `auth_mode` | Categorical authentication mode: `service_principal`, `github_oidc`, `azure_cli`, `interactive`, or `managed_identity`. **Never credentials.** |
 | `tenant_id` | Your Azure (Entra) tenant ID. |
 
 ### Lifecycle events
