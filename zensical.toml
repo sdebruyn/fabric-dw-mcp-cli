@@ -47,6 +47,7 @@ nav = [
     { "Troubleshooting" = "troubleshooting.md" }
   ] },
   { "Guides" = [
+    { "dbt setup" = "guides/dbt-setup.md" },
     { "Ingesting data" = "guides/ingesting-data.md" },
     { "Query performance" = "guides/query-performance.md" }
   ] },

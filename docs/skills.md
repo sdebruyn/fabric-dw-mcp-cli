@@ -104,7 +104,7 @@ Every mutating action (result-set-caching toggle, statistics DDL, `sql-pools cre
 
 ### dbt-setup
 
-Bootstraps a dbt-fabric project for a Fabric Data Warehouse:
+Bootstraps a dbt-fabric project for a Fabric Data Warehouse. For the human, copy-pasteable CLI walkthrough of the same provision → inspect → scaffold → verify flow, see the [Set up a dbt environment](guides/dbt-setup.md) guide — this skill is the AI-assistant-driven equivalent.
 
 1. Resolves the warehouse connection string via `get_warehouse`
 2. Lists schemas and tables with `list_schemas` and `list_tables` to confirm connectivity
