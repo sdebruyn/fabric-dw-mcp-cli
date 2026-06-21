@@ -50,16 +50,29 @@ The `queryinsights` views are documented in [Query insights in Fabric Data Wareh
 
 ---
 
+## Set your defaults
+
+Store the workspace and warehouse once so you do not repeat them on every command:
+
+```shell
+fdw config set workspace MyWorkspace
+fdw config set warehouse SalesWH
+```
+
+The rest of this guide assumes these defaults are set, so the examples omit `-w MyWorkspace` and the warehouse positional. Any command still accepts an explicit `-w`/`--workspace` or a positional `[WAREHOUSE]`/`[ITEM]` to override them. See [Configuration & defaults](../commands/config.md).
+
+---
+
 ## Step 1 — Investigate live activity
 
 Start with what is happening **right now**.
 
 ```shell
 # Queries executing this instant (live DMVs — Admin)
-fdw -w MyWorkspace queries running SalesWH
+fdw queries running
 
 # Active SQL connections/sessions, including idle ones not shown above
-fdw -w MyWorkspace queries connections SalesWH
+fdw queries connections
 ```
 
 `queries running` (MCP [`list_running_queries`](../commands/queries.md#list_running_queries)) returns each in-flight query with its `session_id`, `start_time`, `total_elapsed_time`, `login_name`, and `query_text` — enough to spot a single session that is dominating the warehouse. `queries connections` (MCP [`list_connections`](../commands/queries.md#list_connections)) reads `sys.dm_exec_connections` and surfaces lower-level connection detail (including idle connections) that the running view omits.
@@ -74,10 +87,10 @@ Live DMVs only show the present moment. To see what *happened*, read the per-req
 
 ```shell
 # Completed requests in a time window (queryinsights.exec_requests_history)
-fdw -w MyWorkspace queries history SalesWH --limit 50 --since 2026-06-01T00:00:00
+fdw queries history --limit 50 --since 2026-06-01T00:00:00
 
 # Completed sessions (queryinsights.exec_sessions_history)
-fdw -w MyWorkspace queries sessions SalesWH --since 2026-06-01T00:00:00 --until 2026-06-08T00:00:00
+fdw queries sessions --since 2026-06-01T00:00:00 --until 2026-06-08T00:00:00
 ```
 
 Both commands accept `--limit` (1–10 000, default 100), `--since`, and `--until` (ISO-8601). `queries history` (MCP [`list_request_history`](../commands/queries.md#list_request_history)) is the raw per-request feed — one row per execution — carrying the columns you will lean on for diagnosis: `total_elapsed_time_ms`, `data_scanned_remote_storage_mb`, `data_scanned_memory_mb`, `data_scanned_disk_mb`, `result_cache_hit`, `query_hash`, and `label`. `queries sessions` (MCP [`list_session_history`](../commands/queries.md#list_session_history)) rolls the same activity up per session.
@@ -92,13 +105,13 @@ Rather than eyeballing raw history, let Fabric rank the queries for you.
 
 ```shell
 # Ranked by median total elapsed time DESC
-fdw -w MyWorkspace queries long-running SalesWH
+fdw queries long-running
 
 # High-frequency queries (biggest aggregate cost), ranked by run count DESC
-fdw -w MyWorkspace queries frequent SalesWH --limit 20
+fdw queries frequent --limit 20
 
 # Capacity-pressure / read-optimization signals (beta/preview)
-fdw -w MyWorkspace sql-pools insights SalesWH
+fdw sql-pools insights
 ```
 
 - `queries long-running` (MCP [`list_long_running_queries`](../commands/queries.md#list_long_running_queries)) reads `queryinsights.long_running_queries`, ordered server-side by `median_total_elapsed_time_ms` DESC. "Top N" is simply `--limit N`.
@@ -117,21 +130,21 @@ With a specific slow query in hand, capture its **estimated** execution plan. `s
 
 ```shell
 # Default: a colour-coded Rich operator tree in the terminal
-fdw -w MyWorkspace sql plan SalesWH -q "SELECT * FROM dbo.Sales s JOIN dbo.Customer c ON s.cust_id = c.id WHERE c.region = 'EU'"
+fdw sql plan -q "SELECT * FROM dbo.Sales s JOIN dbo.Customer c ON s.cust_id = c.id WHERE c.region = 'EU'"
 
 # Raw SHOWPLAN_XML to stdout (pipe-friendly)
-fdw -w MyWorkspace sql plan SalesWH -q "..." --raw
+fdw sql plan -q "..." --raw
 
 # Save a .sqlplan that opens graphically in SSMS / Azure Data Studio
-fdw -w MyWorkspace sql plan SalesWH -q "..." -o plan.sqlplan
+fdw sql plan -q "..." -o plan.sqlplan
 
 # Parsed operator tree as JSON (root --json flag)
-fdw -w MyWorkspace --json sql plan SalesWH -q "..."
+fdw --json sql plan -q "..."
 
 # Diagram exports
-fdw -w MyWorkspace sql plan SalesWH -q "..." --format mermaid          # paste into mermaid.live or GitHub Markdown
-fdw -w MyWorkspace sql plan SalesWH -q "..." --format svg  -o plan.svg  # requires Graphviz
-fdw -w MyWorkspace sql plan SalesWH -q "..." --format html -o plan.html # self-contained, offline-viewable
+fdw sql plan -q "..." --format mermaid          # paste into mermaid.live or GitHub Markdown
+fdw sql plan -q "..." --format svg  -o plan.svg  # requires Graphviz
+fdw sql plan -q "..." --format html -o plan.html # self-contained, offline-viewable
 ```
 
 Representation (`--raw`/`--xml`, root `--json`, `--format mermaid|dot|svg|html`) and destination (`-o FILE`) are orthogonal — see [`sql plan`](../commands/sql.md#sql-plan) for the full matrix. Via MCP, `get_query_plan` takes a `format` parameter (`xml` | `tree` | `json` | `mermaid`); the artifact formats **SVG, HTML, and DOT are CLI-only** because the MCP server never writes files.
@@ -169,7 +182,7 @@ Caching in Fabric is **automatic and not user-clearable** — the in-memory and 
 To drill into a specific shape, run ad-hoc T-SQL with `sql exec` (MCP [`execute_sql`](../commands/sql.md#execute_sql)) and filter `exec_requests_history` by `query_hash` or `label`:
 
 ```shell
-fdw -w MyWorkspace sql exec SalesWH -q "SELECT TOP 20 submit_time, total_elapsed_time_ms, data_scanned_remote_storage_mb, result_cache_hit FROM queryinsights.exec_requests_history WHERE label = 'sales-eu-report' ORDER BY submit_time DESC"
+fdw sql exec -q "SELECT TOP 20 submit_time, total_elapsed_time_ms, data_scanned_remote_storage_mb, result_cache_hit FROM queryinsights.exec_requests_history WHERE label = 'sales-eu-report' ORDER BY submit_time DESC"
 ```
 
 Using a **query label** to track and compare one query across executions is a first-class Microsoft pattern — see [Query labeling](https://learn.microsoft.com/fabric/data-warehouse/query-label?WT.mc_id=MVP_310840).
@@ -182,10 +195,10 @@ Bad row estimates in the plan (Step 4) almost always trace back to missing or st
 
 ```shell
 # List statistics on the referenced tables (spot missing ones)
-fdw -w MyWorkspace statistics list SalesWH --schema dbo --table Customer
+fdw statistics list --schema dbo --table Customer
 
-# Inspect a statistic's histogram and staleness
-fdw -w MyWorkspace statistics show SalesWH dbo.Customer _WA_Sys_00000003_12345678 --histogram
+# Inspect a statistic's histogram and staleness (warehouse positional kept — names follow)
+fdw statistics show SalesWH dbo.Customer _WA_Sys_00000003_12345678 --histogram
 ```
 
 `statistics list` (MCP [`list_statistics`](../commands/statistics.md#list_statistics)) shows both user-created and Fabric's automatic `_WA_Sys_*` statistics; `statistics show` (MCP [`show_statistics`](../commands/statistics.md#show_statistics)) runs `DBCC SHOW_STATISTICS` to return the header, density vector, and histogram so you can judge staleness. Verifying the auto-created stats and inspecting them via `DBCC SHOW_STATISTICS` is the documented diagnostic — see [Automatic statistics at query time](https://learn.microsoft.com/fabric/data-warehouse/statistics?WT.mc_id=MVP_310840#automatic-statistics-at-query).
@@ -194,13 +207,13 @@ When a column in a `GROUP BY` / `ORDER BY` / `WHERE` / `JOIN` lacks a good stati
 
 ```shell
 # Create a single-column histogram statistic (--name is required)
-fdw -w MyWorkspace statistics create SalesWH --table dbo.Customer --column region --name stat_customer_region --fullscan
+fdw statistics create --table dbo.Customer --column region --name stat_customer_region --fullscan
 
-# Refresh after a large data change
-fdw -w MyWorkspace statistics update SalesWH dbo.Customer stat_customer_region --fullscan
+# Refresh after a large data change (warehouse positional kept — table/stat names follow)
+fdw statistics update SalesWH dbo.Customer stat_customer_region --fullscan
 
-# Drop a redundant user statistic (prompts unless -y)
-fdw -w MyWorkspace statistics delete SalesWH dbo.Customer stat_customer_region
+# Drop a redundant user statistic (prompts unless -y; warehouse positional kept)
+fdw statistics delete SalesWH dbo.Customer stat_customer_region
 ```
 
 These map to MCP [`create_statistics`](../commands/statistics.md#create_statistics), [`update_statistics`](../commands/statistics.md#update_statistics), and [`delete_statistics`](../commands/statistics.md#delete_statistics). All three are **mutating** MCP tools gated behind the write-guard (`delete_statistics` is additionally destructive-gated via `FABRIC_MCP_ALLOW_DESTRUCTIVE`); they do **not** pop a confirmation dialog, so an AI assistant must ask before calling them.
@@ -220,7 +233,7 @@ With statistics healthy, turn to the query text itself. Common, high-leverage re
 Re-run the improved query through `sql exec` with a label (and any hint):
 
 ```shell
-fdw -w MyWorkspace sql exec SalesWH -q "SELECT s.id, s.amount FROM dbo.Sales s JOIN dbo.Customer c ON s.cust_id = c.id WHERE c.region = 'EU' OPTION (LABEL='sales-eu-report')"
+fdw sql exec -q "SELECT s.id, s.amount FROM dbo.Sales s JOIN dbo.Customer c ON s.cust_id = c.id WHERE c.region = 'EU' OPTION (LABEL='sales-eu-report')"
 ```
 
 ---
@@ -233,15 +246,15 @@ Confirm the fix actually helped, on the **warm** path.
 2. Pull the history filtered by your label and compare `total_elapsed_time_ms` against the original:
 
    ```shell
-   fdw -w MyWorkspace queries history SalesWH --limit 10 --since 2026-06-08T00:00:00
+   fdw queries history --limit 10 --since 2026-06-08T00:00:00
    ```
 
    Or filter precisely with `sql exec` on `label` / `query_hash` as in Step 5.
 3. If the query (or an identical one) is run repeatedly, consider enabling **result-set caching** so identical re-runs skip compute entirely:
 
    ```shell
-   fdw -w MyWorkspace settings show SalesWH                      # check current state
-   fdw -w MyWorkspace settings result-set-caching SalesWH on     # enable (DW only)
+   fdw settings show                                # check current state
+   fdw settings result-set-caching SalesWH on       # enable (DW only; on/off follows, so warehouse positional kept)
    ```
 
    `settings result-set-caching` maps to MCP [`set_result_set_caching`](../commands/settings.md#set_result_set_caching); `settings show` maps to [`get_warehouse_settings`](../commands/settings.md#get_warehouse_settings).
@@ -260,10 +273,10 @@ When a live query is clearly out of control and you have Admin rights, terminate
 
 ```shell
 # Find the runaway session
-fdw -w MyWorkspace queries running SalesWH
+fdw queries running
 
-# Terminate it (prompts unless -y)
-fdw -w MyWorkspace --yes queries kill SalesWH 42
+# Terminate it (prompts unless -y; warehouse positional kept — SESSION_ID follows)
+fdw --yes queries kill SalesWH 42
 ```
 
 `queries kill` maps to MCP [`kill_session`](../commands/queries.md#kill_session), which is write-gated. Identifying and killing a long-running query via DMVs is the documented incident path — see [Monitor using DMVs](https://learn.microsoft.com/fabric/data-warehouse/monitor-using-dmv?WT.mc_id=MVP_310840).
@@ -276,29 +289,29 @@ A nightly EU sales report is slow. The full loop:
 
 ```shell
 # 1. INVESTIGATE — confirm it is not a one-off live spike
-fdw -w MyWorkspace queries running SalesWH
+fdw queries running
 
 # 2. DIAGNOSE — it tops the long-running list
-fdw -w MyWorkspace queries long-running SalesWH --limit 10
+fdw queries long-running --limit 10
 
 # 3. CAPTURE THE PLAN — a Hash Join with a huge estimated row count on Customer,
 #    plus CONVERT_IMPLICIT on c.region
-fdw -w MyWorkspace sql plan SalesWH -q "SELECT * FROM dbo.Sales s JOIN dbo.Customer c ON s.cust_id = c.id WHERE c.region = N'EU'"
+fdw sql plan -q "SELECT * FROM dbo.Sales s JOIN dbo.Customer c ON s.cust_id = c.id WHERE c.region = N'EU'"
 
 # 4. READ HISTORY — the slow runs all show non-zero data_scanned_remote_storage_mb
 #    on the first execution only (cold start); warm runs are still slow
-fdw -w MyWorkspace queries history SalesWH --limit 20 --since 2026-06-01T00:00:00
+fdw queries history --limit 20 --since 2026-06-01T00:00:00
 
 # 5. CHECK STATISTICS — no user statistic on Customer.region
-fdw -w MyWorkspace statistics list SalesWH --schema dbo --table Customer
+fdw statistics list --schema dbo --table Customer
 
 # 6. IMPROVE — create the missing statistic, and fix the type mismatch (region is varchar, not nvarchar)
-fdw -w MyWorkspace statistics create SalesWH --table dbo.Customer --column region --name stat_customer_region --fullscan
-fdw -w MyWorkspace sql exec SalesWH -q "SELECT s.id, s.amount FROM dbo.Sales s JOIN dbo.Customer c ON s.cust_id = c.id WHERE c.region = 'EU' OPTION (LABEL='sales-eu-report')"
+fdw statistics create --table dbo.Customer --column region --name stat_customer_region --fullscan
+fdw sql exec -q "SELECT s.id, s.amount FROM dbo.Sales s JOIN dbo.Customer c ON s.cust_id = c.id WHERE c.region = 'EU' OPTION (LABEL='sales-eu-report')"
 
 # 7. VERIFY — run twice (discard the cold-start run), then compare warm runs by label
-fdw -w MyWorkspace sql exec SalesWH -q "SELECT s.id, s.amount FROM dbo.Sales s JOIN dbo.Customer c ON s.cust_id = c.id WHERE c.region = 'EU' OPTION (LABEL='sales-eu-report')"
-fdw -w MyWorkspace sql exec SalesWH -q "SELECT TOP 10 submit_time, total_elapsed_time_ms, data_scanned_remote_storage_mb, result_cache_hit FROM queryinsights.exec_requests_history WHERE label = 'sales-eu-report' ORDER BY submit_time DESC"
+fdw sql exec -q "SELECT s.id, s.amount FROM dbo.Sales s JOIN dbo.Customer c ON s.cust_id = c.id WHERE c.region = 'EU' OPTION (LABEL='sales-eu-report')"
+fdw sql exec -q "SELECT TOP 10 submit_time, total_elapsed_time_ms, data_scanned_remote_storage_mb, result_cache_hit FROM queryinsights.exec_requests_history WHERE label = 'sales-eu-report' ORDER BY submit_time DESC"
 ```
 
 Median elapsed time on the warm runs drops once the statistic gives the optimizer an accurate estimate and the implicit conversion is gone. Because the report runs identically every night, enabling `settings result-set-caching SalesWH on` lets unchanged re-runs return instantly.

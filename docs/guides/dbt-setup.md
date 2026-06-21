@@ -64,16 +64,18 @@ Microsoft recommends interactive (`CLI`) auth for working on a warehouse by hand
 
 See the [Authentication reference](../authentication.md) for the full credential chain and every environment variable.
 
-!!! info "Set a default workspace to type less"
+---
 
-    Every command below takes its target workspace from the global `-w/--workspace NAME|GUID` option. To avoid repeating it, set a default once:
+## Set your defaults
 
-    ```shell
-    fdw config set workspace "Sales Workspace"
-    fdw config set warehouse SalesWH        # optional: a default warehouse too
-    ```
+Once you are signed in, store the workspace so you do not repeat it on every command:
 
-    The examples below show the explicit `-w` form so they are self-contained.
+```shell
+fdw config set workspace "Sales Workspace"
+fdw config set warehouse SalesWH        # optional — once the warehouse exists (Step 2)
+```
+
+The rest of this guide assumes the workspace default is set, so the examples omit `-w "Sales Workspace"`. Any command still accepts an explicit `-w`/`--workspace NAME|GUID` to override it. The warehouse default fills optional `[ITEM]` positionals once the warehouse has been provisioned; commands here that take a required name (`warehouses create NAME`, `dbt init … FOLDER`, `sql-endpoints get ENDPOINT`) still spell out the warehouse. See [Configuration & defaults](../commands/config.md).
 
 ---
 
@@ -82,7 +84,7 @@ See the [Authentication reference](../authentication.md) for the full credential
 Create a new warehouse with [`fdw warehouses create`](../commands/warehouses.md#warehouses-create). `NAME` is positional; the workspace comes from the global `-w` option.
 
 ```shell
-fdw -w "Sales Workspace" warehouses create SalesWH --description "dbt target warehouse"
+fdw warehouses create SalesWH --description "dbt target warehouse"
 ```
 
 `fabric-dw` issues the create request, **polls the create operation to completion**, and re-reads the warehouse so the returned object is fully populated — when the command returns, the warehouse is ready to connect to.
@@ -108,7 +110,7 @@ dbt's `profiles.yml` needs two values, and Fabric maps them like this:
 You can read the host with [`fdw sql-endpoints get`](../commands/sql-endpoints.md#sql-endpoints-get):
 
 ```shell
-fdw -w "Sales Workspace" sql-endpoints get SalesWH
+fdw sql-endpoints get SalesWH
 ```
 
 !!! note "Eventual consistency right after `create`"
@@ -124,7 +126,7 @@ You **do not** have to copy this value anywhere: `fdw dbt init` in the next step
 [`fdw dbt init`](../commands/dbt.md#dbt-init) creates the whole project directory pre-wired to the warehouse. `ITEM` (the warehouse name or GUID) is optional if you set a default warehouse; `FOLDER` is the target directory.
 
 ```shell
-fdw -w "Sales Workspace" dbt init SalesWH ./sales_dbt
+fdw dbt init SalesWH ./sales_dbt
 ```
 
 This writes `dbt_project.yml`, `profiles.yml`, `requirements.txt`, `.gitignore`, the standard dbt directories, a sample model, a `README.md`, and (with `--with-sources`) a real `models/staging/_sources.yml` introspected from the warehouse. If `git` is on your PATH and the folder is not already a repository, `git init` runs automatically. No dbt installation is required to scaffold — `fabric-dw` writes every file itself.
@@ -240,11 +242,11 @@ A passing `dbt debug` confirms the host, database, ODBC driver, and authenticati
 You can cross-check from `fabric-dw` itself that the model landed:
 
 ```shell
-# Confirm the warehouse answers SQL
-fdw -w "Sales Workspace" sql exec SalesWH -q "select 1"
+# Confirm the warehouse answers SQL (warehouse positional spelled out — the warehouse default is optional in this guide)
+fdw sql exec SalesWH -q "select 1"
 
 # List the tables/views the run produced
-fdw -w "Sales Workspace" tables list SalesWH
+fdw tables list SalesWH
 ```
 
 !!! warning "Use `sql exec`, not `sql query`"

@@ -110,6 +110,19 @@ If instead a *specific* query regressed, start with the [`query-optimizer` skill
 
 ---
 
+## Set your defaults
+
+Store the workspace and warehouse once so you do not repeat them on every command:
+
+```shell
+fdw config set workspace MyWorkspace
+fdw config set warehouse SalesWH
+```
+
+The rest of this guide assumes these defaults are set, so the examples omit `-w MyWorkspace` and drop the warehouse positional where it is optional. Any command still accepts an explicit `-w`/`--workspace` or a positional `[WAREHOUSE]`/`[ITEM]` to override them. Commands that take a trailing required argument (such as `queries kill … SESSION_ID` or `settings result-set-caching … on|off`) keep the warehouse positional so the remaining arguments stay unambiguous. The workspace-wide commands (`warehouses list`, `workspaces list-capacities`) take no per-warehouse target. See [Configuration & defaults](../commands/config.md).
+
+---
+
 ## Step 1 — Monitor: is there a problem, and where?
 
 Establish what exists, what is running right now, and whether the capacity itself is the constraint.
@@ -139,8 +152,8 @@ What is executing right now, and how many connections are open?
 | Active SQL connections (incl. idle) | [`fdw queries connections`](../commands/queries.md#queries-connections) | `list_connections` |
 
 ```shell
-fdw -w MyWorkspace queries running SalesWH
-fdw -w MyWorkspace queries connections SalesWH
+fdw queries running
+fdw queries connections
 ```
 
 !!! note "CLI vs MCP names diverge here"
@@ -160,7 +173,7 @@ direct *"is compute the bottleneck?"* read.
 | SQL pool insight events | [`fdw sql-pools insights`](../commands/sql-pools.md#sql-pools-insights) | `list_sql_pool_insights` |
 
 ```shell
-fdw -w MyWorkspace sql-pools insights SalesWH --since 2026-06-13T00:00:00
+fdw sql-pools insights --since 2026-06-13T00:00:00
 ```
 
 !!! warning "Preview feature"
@@ -214,10 +227,10 @@ and [Monitor Fabric Data Warehouse](https://learn.microsoft.com/fabric/data-ware
 
 ```shell
 # Top 20 slowest queries over the last week
-fdw -w MyWorkspace queries long-running SalesWH --limit 20
+fdw queries long-running --limit 20
 
 # Top 20 most-frequently-run queries — a cheap query run 100k times is also a cost driver
-fdw -w MyWorkspace queries frequent SalesWH --limit 20
+fdw queries frequent --limit 20
 ```
 
 A query that is individually fast but runs *constantly* can dominate CU usage just as much as one
@@ -235,7 +248,7 @@ whether the result-set cache helped.
 | Completed sessions (`exec_sessions_history`) | [`fdw queries sessions`](../commands/queries.md#queries-sessions) | `list_session_history` |
 
 ```shell
-fdw -w MyWorkspace queries history SalesWH --limit 50 --since 2026-06-13T00:00:00
+fdw queries history --limit 50 --since 2026-06-13T00:00:00
 ```
 
 Useful fields in `queries history` include `allocated_cpu_time_ms`,
@@ -268,8 +281,8 @@ warehouse-wide. Audit whether the optimizer has good statistics on hot columns. 
 | Show one statistic's histogram | [`fdw statistics show … [--histogram]`](../commands/statistics.md#statistics-show) | `show_statistics` |
 
 ```shell
-fdw -w MyWorkspace statistics list SalesWH --table dbo.sales --user-only
-fdw -w MyWorkspace statistics show SalesWH dbo.sales _stat_order_date --histogram
+fdw statistics list --table dbo.sales --user-only
+fdw statistics show SalesWH dbo.sales _stat_order_date --histogram   # warehouse positional kept — names follow
 ```
 
 See [Statistics in Fabric Data Warehouse](https://learn.microsoft.com/fabric/data-warehouse/statistics?WT.mc_id=MVP_310840)
@@ -300,8 +313,8 @@ result-set caching can cut elapsed time for repeated identical queries dramatica
 | Toggle result-set caching on/off | [`fdw settings result-set-caching … on\|off`](../commands/settings.md#settings-result-set-caching) | `set_result_set_caching` |
 
 ```shell
-fdw -w MyWorkspace settings show SalesWH
-fdw -w MyWorkspace settings result-set-caching SalesWH on
+fdw settings show
+fdw settings result-set-caching SalesWH on   # warehouse positional kept — on|off follows
 ```
 
 `settings result-set-caching` runs `ALTER DATABASE CURRENT SET RESULT_SET_CACHING { ON | OFF }`.
@@ -326,7 +339,7 @@ refresh them. Fabric supports **single-column, histogram-based** statistics only
 | Drop a statistic | [`fdw statistics delete …`](../commands/statistics.md#statistics-delete) | `delete_statistics` | **destructive** |
 
 ```shell
-fdw -w MyWorkspace statistics create SalesWH \
+fdw statistics create \
   --table dbo.sales --column order_date --name _stat_order_date --fullscan
 ```
 
@@ -354,7 +367,7 @@ workspace-scoped and require the **workspace admin** role.
 
 ```shell
 # Carve out an isolated ETL pool capped at 30% so it can't starve interactive reads
-fdw -w MyWorkspace sql-pools create \
+fdw sql-pools create \
   --name ETL \
   --max-percent 30 \
   --no-optimize-for-reads \
@@ -381,7 +394,7 @@ If a single runaway session is blocking everything else, terminate it.
 | Kill a session | [`fdw queries kill … <session_id>`](../commands/queries.md#queries-kill) | `kill_session` |
 
 ```shell
-fdw -w MyWorkspace --yes queries kill SalesWH 42
+fdw --yes queries kill SalesWH 42   # warehouse positional kept — SESSION_ID follows
 ```
 
 ---
@@ -433,28 +446,28 @@ A copy-pasteable session that walks the whole loop on a warehouse that "feels sl
 
 ```shell
 # 1. MONITOR — confirm the warehouse exists, check live load and pool pressure, check the SKU
-fdw -w MyWorkspace warehouses get SalesWH
-fdw -w MyWorkspace queries running SalesWH
-fdw -w MyWorkspace sql-pools insights SalesWH --since 2026-06-13T00:00:00
+fdw warehouses get
+fdw queries running
+fdw sql-pools insights --since 2026-06-13T00:00:00
 fdw workspaces list-capacities
 
 # 2. DIAGNOSE — find the worst offenders and inspect their CPU / data-scanned / cache hits
-fdw -w MyWorkspace queries long-running SalesWH --limit 20
-fdw -w MyWorkspace queries frequent SalesWH --limit 20
-fdw -w MyWorkspace queries history SalesWH --limit 50 --since 2026-06-13T00:00:00
-fdw -w MyWorkspace statistics list SalesWH --table dbo.sales --user-only
+fdw queries long-running --limit 20
+fdw queries frequent --limit 20
+fdw queries history --limit 50 --since 2026-06-13T00:00:00
+fdw statistics list --table dbo.sales --user-only
 
 # 3. TUNE — apply the cheapest effective lever(s) for what you found
-fdw -w MyWorkspace settings result-set-caching SalesWH on          # repeated identical queries
-fdw -w MyWorkspace statistics create SalesWH \
+fdw settings result-set-caching SalesWH on          # repeated identical queries (on|off follows, so warehouse positional kept)
+fdw statistics create \
   --table dbo.sales --column order_date --name _stat_order_date --fullscan   # stale/missing stats
-fdw -w MyWorkspace sql-pools create \
+fdw sql-pools create \
   --name ETL --max-percent 30 --no-optimize-for-reads \
   --classifier-type "Application Name" --classifier-value "ETL"     # ETL starving reads
 
 # 4. RE-MEASURE — confirm the change helped before reaching for a capacity change
-fdw -w MyWorkspace queries long-running SalesWH --limit 20
-fdw -w MyWorkspace sql-pools insights SalesWH --since 2026-06-13T00:00:00
+fdw queries long-running --limit 20
+fdw sql-pools insights --since 2026-06-13T00:00:00
 ```
 
 Only if throttling persists after re-measuring should you consider
