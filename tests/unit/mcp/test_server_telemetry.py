@@ -43,16 +43,41 @@ def _patch_azure_monitor() -> Generator[None, None, None]:
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Helpers shared across tests
 # ---------------------------------------------------------------------------
 
-# Captured record_app_exited call kwargs.
+# Type alias for captured record_app_exited kwargs.
 _AppExitedCall = dict[str, object]
 
 
 def _run(transport: str = "stdio") -> None:
     """Call ``fabric_dw.mcp.server.run`` with a minimal argv."""
     _srv.run(["--transport", transport])
+
+
+def _make_record_spy(
+    calls: list[_AppExitedCall],
+) -> object:
+    """Return a ``record_app_exited`` side_effect that captures kwargs."""
+
+    def _spy(
+        *,
+        duration_ms: float,  # noqa: ARG001
+        exit_status: str,
+        error_category: str | None,
+    ) -> None:
+        calls.append({"exit_status": exit_status, "error_category": error_category})
+
+    return _spy
+
+
+def _make_shutdown_counter(shutdown_calls: list[None]) -> object:
+    """Return a ``shutdown_telemetry`` side_effect that counts invocations."""
+
+    def _counter(**kwargs: object) -> None:  # noqa: ARG001
+        shutdown_calls.append(None)
+
+    return _counter
 
 
 # ---------------------------------------------------------------------------
@@ -66,34 +91,23 @@ def test_normal_return_emits_ok_and_shuts_down() -> None:
     calls: list[_AppExitedCall] = []
     shutdown_calls: list[None] = []
 
-    def fake_record_app_exited(
-        *,
-        duration_ms: float,  # noqa: ARG001
-        exit_status: str,
-        error_category: str | None,
-    ) -> None:
-        calls.append({"exit_status": exit_status, "error_category": error_category})
-
-    def fake_shutdown(**kwargs: object) -> None:  # noqa: ARG001
-        shutdown_calls.append(None)
-
     with (
         patch("fabric_dw.mcp.server.mcp") as mock_mcp,
         patch("fabric_dw.mcp.server.record_app_started"),
         patch("fabric_dw.mcp.server.record_mcp_server_started"),
         patch("fabric_dw.mcp.server.maybe_print_first_run_notice"),
-        patch("fabric_dw.mcp.server.record_app_exited", side_effect=fake_record_app_exited),
-        patch("fabric_dw.mcp.server.shutdown_telemetry", side_effect=fake_shutdown),
+        patch("fabric_dw.mcp.server.record_app_exited", side_effect=_make_record_spy(calls)),
+        patch(
+            "fabric_dw.mcp.server.shutdown_telemetry",
+            side_effect=_make_shutdown_counter(shutdown_calls),
+        ),
     ):
         mock_mcp.run.return_value = None
         mock_mcp.settings = MagicMock()
         _run()
 
-    # record_app_exited should be called exactly once with exit_status="ok"
     assert len(calls) == 1
     assert calls[0]["exit_status"] == "ok"
-
-    # shutdown_telemetry must be called exactly once
     assert len(shutdown_calls) == 1
 
 
@@ -108,24 +122,16 @@ def test_keyboard_interrupt_emits_ok_and_shuts_down_and_reraises() -> None:
     calls: list[_AppExitedCall] = []
     shutdown_calls: list[None] = []
 
-    def fake_record_app_exited(
-        *,
-        duration_ms: float,  # noqa: ARG001
-        exit_status: str,
-        error_category: str | None,
-    ) -> None:
-        calls.append({"exit_status": exit_status, "error_category": error_category})
-
-    def fake_shutdown(**kwargs: object) -> None:  # noqa: ARG001
-        shutdown_calls.append(None)
-
     with (
         patch("fabric_dw.mcp.server.mcp") as mock_mcp,
         patch("fabric_dw.mcp.server.record_app_started"),
         patch("fabric_dw.mcp.server.record_mcp_server_started"),
         patch("fabric_dw.mcp.server.maybe_print_first_run_notice"),
-        patch("fabric_dw.mcp.server.record_app_exited", side_effect=fake_record_app_exited),
-        patch("fabric_dw.mcp.server.shutdown_telemetry", side_effect=fake_shutdown),
+        patch("fabric_dw.mcp.server.record_app_exited", side_effect=_make_record_spy(calls)),
+        patch(
+            "fabric_dw.mcp.server.shutdown_telemetry",
+            side_effect=_make_shutdown_counter(shutdown_calls),
+        ),
     ):
         mock_mcp.run.side_effect = KeyboardInterrupt()
         mock_mcp.settings = MagicMock()
@@ -135,7 +141,6 @@ def test_keyboard_interrupt_emits_ok_and_shuts_down_and_reraises() -> None:
 
     assert len(calls) == 1
     assert calls[0]["exit_status"] == "ok"
-
     assert len(shutdown_calls) == 1
 
 
@@ -150,24 +155,16 @@ def test_unexpected_exception_emits_api_error_and_shuts_down_and_reraises() -> N
     calls: list[_AppExitedCall] = []
     shutdown_calls: list[None] = []
 
-    def fake_record_app_exited(
-        *,
-        duration_ms: float,  # noqa: ARG001
-        exit_status: str,
-        error_category: str | None,
-    ) -> None:
-        calls.append({"exit_status": exit_status, "error_category": error_category})
-
-    def fake_shutdown(**kwargs: object) -> None:  # noqa: ARG001
-        shutdown_calls.append(None)
-
     with (
         patch("fabric_dw.mcp.server.mcp") as mock_mcp,
         patch("fabric_dw.mcp.server.record_app_started"),
         patch("fabric_dw.mcp.server.record_mcp_server_started"),
         patch("fabric_dw.mcp.server.maybe_print_first_run_notice"),
-        patch("fabric_dw.mcp.server.record_app_exited", side_effect=fake_record_app_exited),
-        patch("fabric_dw.mcp.server.shutdown_telemetry", side_effect=fake_shutdown),
+        patch("fabric_dw.mcp.server.record_app_exited", side_effect=_make_record_spy(calls)),
+        patch(
+            "fabric_dw.mcp.server.shutdown_telemetry",
+            side_effect=_make_shutdown_counter(shutdown_calls),
+        ),
     ):
         mock_mcp.run.side_effect = RuntimeError("boom")
         mock_mcp.settings = MagicMock()
@@ -177,7 +174,6 @@ def test_unexpected_exception_emits_api_error_and_shuts_down_and_reraises() -> N
 
     assert len(calls) == 1
     assert calls[0]["exit_status"] == "api_error"
-
     assert len(shutdown_calls) == 1
 
 
@@ -192,20 +188,12 @@ def test_system_exit_zero_emits_ok(code: int | None) -> None:
     """SystemExit(0) / SystemExit(None) from mcp.run → exit_status 'ok'."""
     calls: list[_AppExitedCall] = []
 
-    def fake_record_app_exited(
-        *,
-        duration_ms: float,  # noqa: ARG001
-        exit_status: str,
-        error_category: str | None,
-    ) -> None:
-        calls.append({"exit_status": exit_status, "error_category": error_category})
-
     with (
         patch("fabric_dw.mcp.server.mcp") as mock_mcp,
         patch("fabric_dw.mcp.server.record_app_started"),
         patch("fabric_dw.mcp.server.record_mcp_server_started"),
         patch("fabric_dw.mcp.server.maybe_print_first_run_notice"),
-        patch("fabric_dw.mcp.server.record_app_exited", side_effect=fake_record_app_exited),
+        patch("fabric_dw.mcp.server.record_app_exited", side_effect=_make_record_spy(calls)),
         patch("fabric_dw.mcp.server.shutdown_telemetry"),
     ):
         mock_mcp.run.side_effect = SystemExit(code)
@@ -223,20 +211,12 @@ def test_system_exit_nonzero_emits_api_error() -> None:
     """SystemExit(1) from mcp.run → exit_status 'api_error'."""
     calls: list[_AppExitedCall] = []
 
-    def fake_record_app_exited(
-        *,
-        duration_ms: float,  # noqa: ARG001
-        exit_status: str,
-        error_category: str | None,
-    ) -> None:
-        calls.append({"exit_status": exit_status, "error_category": error_category})
-
     with (
         patch("fabric_dw.mcp.server.mcp") as mock_mcp,
         patch("fabric_dw.mcp.server.record_app_started"),
         patch("fabric_dw.mcp.server.record_mcp_server_started"),
         patch("fabric_dw.mcp.server.maybe_print_first_run_notice"),
-        patch("fabric_dw.mcp.server.record_app_exited", side_effect=fake_record_app_exited),
+        patch("fabric_dw.mcp.server.record_app_exited", side_effect=_make_record_spy(calls)),
         patch("fabric_dw.mcp.server.shutdown_telemetry"),
     ):
         mock_mcp.run.side_effect = SystemExit(1)
@@ -256,22 +236,20 @@ def test_system_exit_nonzero_emits_api_error() -> None:
 
 @pytest.mark.usefixtures("_enable_telemetry", "_patch_azure_monitor")
 def test_shutdown_runs_even_if_record_app_exited_raises() -> None:
-    """shutdown_telemetry() is called exactly once even if record_app_exited raises."""
+    """shutdown_telemetry() is called even if record_app_exited raises; error swallowed."""
     shutdown_calls: list[None] = []
-
-    def fake_shutdown(**kwargs: object) -> None:  # noqa: ARG001
-        shutdown_calls.append(None)
+    mock_record = MagicMock(side_effect=RuntimeError("telemetry failure"))
 
     with (
         patch("fabric_dw.mcp.server.mcp") as mock_mcp,
         patch("fabric_dw.mcp.server.record_app_started"),
         patch("fabric_dw.mcp.server.record_mcp_server_started"),
         patch("fabric_dw.mcp.server.maybe_print_first_run_notice"),
+        patch("fabric_dw.mcp.server.record_app_exited", new=mock_record),
         patch(
-            "fabric_dw.mcp.server.record_app_exited",
-            side_effect=RuntimeError("telemetry failure"),
+            "fabric_dw.mcp.server.shutdown_telemetry",
+            side_effect=_make_shutdown_counter(shutdown_calls),
         ),
-        patch("fabric_dw.mcp.server.shutdown_telemetry", side_effect=fake_shutdown),
     ):
         mock_mcp.run.return_value = None
         mock_mcp.settings = MagicMock()
@@ -279,6 +257,8 @@ def test_shutdown_runs_even_if_record_app_exited_raises() -> None:
         _run()
 
     assert len(shutdown_calls) == 1
+    # The exit_status passed before the raise must be "ok" (normal return).
+    assert mock_record.call_args.kwargs["exit_status"] == "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -312,23 +292,28 @@ def test_call_order_record_before_shutdown() -> None:
 
 
 # ---------------------------------------------------------------------------
-# No hang: shutdown_telemetry is not called multiple times
+# KeyboardInterrupt during teardown (second SIGINT) is swallowed
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.usefixtures("_enable_telemetry", "_patch_azure_monitor")
-def test_shutdown_called_exactly_once_on_normal_return() -> None:
-    """shutdown_telemetry() is called exactly once — idempotency guard check."""
+def test_keyboard_interrupt_during_teardown_is_swallowed() -> None:
+    """A second KeyboardInterrupt raised by shutdown_telemetry must not escape run().
+
+    shutdown_telemetry() does t.join(timeout=8.5) on the main thread, which is
+    interruptible.  The teardown guard uses ``except BaseException`` so that a
+    Ctrl-C arriving during the flush window is swallowed and does not replace
+    the original (already re-raised) server exit exception.
+    """
     with (
         patch("fabric_dw.mcp.server.mcp") as mock_mcp,
         patch("fabric_dw.mcp.server.record_app_started"),
         patch("fabric_dw.mcp.server.record_mcp_server_started"),
         patch("fabric_dw.mcp.server.maybe_print_first_run_notice"),
         patch("fabric_dw.mcp.server.record_app_exited"),
-        patch("fabric_dw.mcp.server.shutdown_telemetry") as mock_shutdown,
+        patch("fabric_dw.mcp.server.shutdown_telemetry", side_effect=KeyboardInterrupt()),
     ):
         mock_mcp.run.return_value = None
         mock_mcp.settings = MagicMock()
-        _run()
-
-    mock_shutdown.assert_called_once()
+        # The KeyboardInterrupt from shutdown_telemetry must NOT escape run().
+        _run()  # must return normally without raising

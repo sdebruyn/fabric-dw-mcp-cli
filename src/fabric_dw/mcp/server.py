@@ -215,5 +215,5 @@ def run(argv: Sequence[str] | None = None) -> None:
                 )
             finally:
                 shutdown_telemetry()
-        except Exception:  # noqa: S110
+        except BaseException:  # noqa: S110
             pass  # telemetry teardown errors must never propagate
