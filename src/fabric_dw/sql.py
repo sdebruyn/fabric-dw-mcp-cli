@@ -366,9 +366,10 @@ def tenant_from_connection_string_host(host: object) -> str | None:
             return None
 
         # Strip an optional "Server=" prefix that the raw API value may carry.
+        # Also strip any whitespace between '=' and the hostname (e.g. "Server= host").
         raw = host.strip()
         if raw.lower().startswith("server="):
-            raw = raw[len("server=") :]
+            raw = raw[len("server=") :].strip()
 
         # Validate the *.datawarehouse.fabric.microsoft.com suffix.
         if not raw.lower().endswith(_FABRIC_DW_SUFFIX):
@@ -398,7 +399,12 @@ def tenant_from_connection_string_host(host: object) -> str | None:
 
         tenant_id = _b32_to_uuid(tenant_b32)
 
-        # Round-trip validate: the decoded value must parse as a UUID.
+        # Validate the workspace segment decodes to a well-formed UUID too.
+        # A 26-char segment with garbage content would otherwise let a host with
+        # a valid tenant prefix but garbage workspace slip through as a match.
+        _b32_to_uuid(workspace_b32)
+
+        # Round-trip validate: the decoded tenant must parse as a UUID.
         # uuid.UUID() above already does this, but be explicit.
         uuid.UUID(tenant_id)
     except Exception:

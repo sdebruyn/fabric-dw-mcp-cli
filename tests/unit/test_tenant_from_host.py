@@ -48,10 +48,13 @@ class TestTenantFromConnectionStringHost:
         """The verified host decodes to the expected tenant GUID."""
         assert tenant_from_connection_string_host(_VERIFIED_HOST) == _VERIFIED_TENANT
 
-    def test_full_connection_string_also_works(self) -> None:
-        """The helper accepts a full ODBC connection string, not just the bare host."""
-        # Fabric API returns the host as the connection string (no Server= prefix yet)
-        assert tenant_from_connection_string_host(_VERIFIED_HOST) == _VERIFIED_TENANT
+    def test_server_prefix_stripped(self) -> None:
+        """A bare 'Server=<host>' prefix is stripped before decoding."""
+        assert tenant_from_connection_string_host(f"Server={_VERIFIED_HOST}") == _VERIFIED_TENANT
+
+    def test_server_prefix_with_space_stripped(self) -> None:
+        """'Server= <host>' (space after '=') is also stripped correctly."""
+        assert tenant_from_connection_string_host(f"Server= {_VERIFIED_HOST}") == _VERIFIED_TENANT
 
     def test_garbage_host_returns_none(self) -> None:
         """A completely garbage input returns None and never raises."""
@@ -140,6 +143,8 @@ async def test_resolver_feeds_tenant_to_telemetry(
     monkeypatch.delenv("CI", raising=False)
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     monkeypatch.setattr(_tel, "_tenant_id_override", None)
+    # Reset the warm in-memory cache sentinel so XDG redirection takes full effect.
+    monkeypatch.setattr(_tel, "_tenant_id_cache", _tel._UNSET)
 
     resolver, client, _cache = _make_resolver(tmp_path)
 
@@ -186,4 +191,67 @@ async def test_resolver_feeds_tenant_to_telemetry(
     assert entry.connection_string == _VERIFIED_HOST
     assert recorded_tenant == [_VERIFIED_TENANT], (
         f"Expected set_tenant_id({_VERIFIED_TENANT!r}), got {recorded_tenant!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolver_does_not_override_token_tenant(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When _tenant_id_override is already set (e.g. from a JWT tid), the
+    host-derived tenant must NOT overwrite it — token tid (identity) takes precedence."""
+    existing_token_tenant = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"  # noqa: S105
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv("FABRIC_TELEMETRY", raising=False)
+    monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    # Simulate a token tid that was already captured before connection-string resolution.
+    monkeypatch.setattr(_tel, "_tenant_id_override", existing_token_tenant)
+    monkeypatch.setattr(_tel, "_tenant_id_cache", _tel._UNSET)
+
+    resolver, client, _cache = _make_resolver(tmp_path)
+
+    recorded_tenant: list[str] = []
+
+    def _capture_set_tenant(tid: str) -> None:
+        recorded_tenant.append(tid)
+
+    with (
+        respx.mock(assert_all_called=False) as mock,
+        patch.object(_tel, "set_tenant_id", side_effect=_capture_set_tenant),
+    ):
+        mock.get(_FABRIC_ITEM_GENERIC_URL).mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "id": _ITEM_GUID,
+                    "displayName": "MyWarehouse",
+                    "type": "Warehouse",
+                    "workspaceId": _WS_GUID,
+                },
+            )
+        )
+        mock.get(_FABRIC_WAREHOUSE_URL).mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "id": _ITEM_GUID,
+                    "displayName": "MyWarehouse",
+                    "type": "Warehouse",
+                    "workspaceId": _WS_GUID,
+                    "properties": {
+                        "connectionString": _VERIFIED_HOST,
+                    },
+                },
+            )
+        )
+
+        async with client:
+            await resolver._fetch_item_detail(UUID(_WS_GUID), UUID(_ITEM_GUID))
+
+    # set_tenant_id must NOT have been called — the existing token override must remain.
+    assert recorded_tenant == [], (
+        f"set_tenant_id should not be called when override is already set; got {recorded_tenant!r}"
     )
