@@ -48,6 +48,14 @@ def test_sql_smoke_subprocess_timeout_exceeds_connect_retry_budget() -> None:
     Without this headroom, a cold-start Fabric capacity can legitimately exhaust the
     full retry budget, and the subprocess is killed before the CLI even gets a chance
     to surface an error — resulting in a spurious TimeoutExpired failure.
+
+    NOTE: this test is NOT algebraically redundant with
+    ``test_sql_smoke_startup_margin_is_generous``.  The margin test checks the
+    *addend* (_SQL_STARTUP_MARGIN_S) in isolation; this test checks the *computed
+    sum* (_SQL_SMOKE_SUBPROCESS_TIMEOUT_S) against the *live production constant*
+    (_CONNECT_RETRY_TIMEOUT_S).  If someone changes the derivation formula (e.g.
+    switches from ``math.ceil + margin`` to ``max(…)``) the margin test alone would
+    not catch a resulting sum that still violated the invariant.  Keep both.
     """
     assert _SQL_SMOKE_SUBPROCESS_TIMEOUT_S > _CONNECT_RETRY_TIMEOUT_S, (
         f"Smoke-test subprocess timeout ({_SQL_SMOKE_SUBPROCESS_TIMEOUT_S}s) must be strictly "
