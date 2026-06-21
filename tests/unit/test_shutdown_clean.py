@@ -1,9 +1,9 @@
 """End-to-end subprocess test: verify clean stderr at CLI shutdown.
 
 Runs the real ``fabric-dw`` entry point as a child process with telemetry
-**enabled** (but pointing at a bogus, non-routable exporter endpoint) and
-asserts that the process exits without printing any of the shutdown-noise
-signatures that indicate leaked connection pools or unclosed sessions:
+**enabled** and asserts that the process exits without printing any of the
+shutdown-noise signatures that indicate leaked connection pools or unclosed
+sessions:
 
 - ``Unclosed client session``          ← aiohttp ResourceWarning (#385/#387)
 - ``Exception ignored in``             ← GC finalizer crash
@@ -17,16 +17,23 @@ Design notes
 ------------
 - ``FABRIC_DW_TELEMETRY_OPT_OUT`` is removed so ``telemetry_enabled()`` returns
   True and the real SDK code path (SDK init, urllib3 pool creation, bounded
-  flush + shutdown) is exercised.  The exporter targets the hardcoded production
-  endpoint; the bounded shutdown (≤8 s) caps any HTTP attempt, and
-  ``_harden_azure_sdk_logging`` prevents retry/timeout noise on stderr.
+  flush + shutdown) is exercised.
+- Egress is blocked at the network layer: ``HTTPS_PROXY`` and ``HTTP_PROXY``
+  are set to ``http://127.0.0.1:1`` (a port that is always refused) and
+  ``NO_PROXY`` is cleared.  The Azure Monitor exporter uses
+  ``RequestsTransport`` (``azure-core``), which reads ``HTTPS_PROXY`` from the
+  environment by default.  The exporter therefore initialises and tears down
+  normally, but its POST is refused immediately — no real telemetry reaches
+  production, and the bounded shutdown (≤8 s) caps any retry wait.
+  ``_harden_azure_sdk_logging`` silences the resulting retry-error noise on
+  stderr.
 - ``PYTHONWARNINGS=error`` is **not** set here because the subprocess has
   its own warning filters; the test relies on observing stderr text rather
   than exit code.
 - The ``--help`` variant runs in the default ``not slow`` suite because
   ``--help`` exits immediately without any auth or Fabric network call and
-  the bogus exporter connection is refused instantly.  Total wall-clock time
-  is typically < 5 s.
+  the proxy connection is refused instantly.  Total wall-clock time is
+  typically < 5 s.
 """
 
 from __future__ import annotations
@@ -72,12 +79,26 @@ _CLI_RUNNER = [
 
 
 def _build_subprocess_env() -> dict[str, str]:
-    """Build an environment dict that forces telemetry on for shutdown testing."""
+    """Build an environment dict that forces telemetry on for shutdown testing.
+
+    Egress is blocked at the network layer via ``HTTPS_PROXY``/``HTTP_PROXY``
+    pointing at ``http://127.0.0.1:1`` (always refused).  ``RequestsTransport``
+    in ``azure-core`` honours these env vars by default, so the exporter
+    initialises and tears down normally but cannot reach production.
+    """
     env = dict(os.environ)
 
     # Remove opt-out vars so telemetry_enabled() returns True.
     env.pop("FABRIC_DW_TELEMETRY_OPT_OUT", None)
     env.pop("DO_NOT_TRACK", None)
+
+    # Block telemetry egress at the network layer: point the proxy at a port
+    # that is always refused.  azure-core's RequestsTransport reads HTTPS_PROXY
+    # from the environment (use_env_settings=True by default), so the exporter
+    # POST is refused immediately instead of reaching production.
+    env["HTTPS_PROXY"] = "http://127.0.0.1:1"
+    env["HTTP_PROXY"] = "http://127.0.0.1:1"
+    env["NO_PROXY"] = ""
 
     # Strip any caller-side statsbeat override so our setdefault in _get_tracer
     # is always exercised — a runner env with this set to "false" would otherwise
@@ -103,8 +124,9 @@ def test_cli_exits_without_shutdown_noise_on_help() -> None:
     via the teardown path (shutdown_telemetry, which flushes internally).
 
     ``--help`` exits without any auth/network call to Fabric.  The telemetry
-    exporter targets the hardcoded endpoint; the bounded shutdown caps any
-    HTTP attempt so the test completes quickly even without a refused port.
+    exporter targets the hardcoded endpoint via the proxy set in
+    ``_build_subprocess_env``; the proxy is refused immediately so the test
+    completes quickly.
 
     Note on the ``Unclosed client session`` assertion: ``--help`` does not
     create a credential and therefore never opens an aiohttp session, so this

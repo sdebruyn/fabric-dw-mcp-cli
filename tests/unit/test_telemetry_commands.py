@@ -274,7 +274,6 @@ class TestEmitCommandInvokedEnabled:
     @pytest.fixture(autouse=True)
     def enable_telemetry(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
-        monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
         monkeypatch.delenv("DO_NOT_TRACK", raising=False)
 
     def _run(self, **kwargs):  # type: ignore[no-untyped-def]

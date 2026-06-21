@@ -72,7 +72,7 @@ def test_telemetry_enabled_when_fabric_dw_telemetry_opt_out_falsy(
     assert mod.telemetry_enabled() is True  # type: ignore[attr-defined]
 
 
-@pytest.mark.parametrize("value", ["1", "true", "yes", "TRUE"])
+@pytest.mark.parametrize("value", ["1", "true", "yes", "TRUE", "anything"])
 def test_telemetry_disabled_by_do_not_track(
     value: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -709,8 +709,6 @@ def test_get_tracer_passes_instrumentation_options_to_configure(
     """
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
-    for ci_var in ("GITHUB_ACTIONS", "JENKINS_URL", "TRAVIS", "CIRCLECI", "GITLAB_CI", "TF_BUILD"):
-        monkeypatch.delenv(ci_var, raising=False)
 
     mod = _reload_telemetry()
 
@@ -771,8 +769,6 @@ def test_get_tracer_passes_enable_performance_counters_false(
     """
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
-    for ci_var in ("GITHUB_ACTIONS", "JENKINS_URL", "TRAVIS", "CIRCLECI", "GITLAB_CI", "TF_BUILD"):
-        monkeypatch.delenv(ci_var, raising=False)
 
     mod = _reload_telemetry()
 
@@ -2472,8 +2468,6 @@ def test_get_tracer_passes_resource_to_configure_azure_monitor(
     """
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
-    for ci_var in ("GITHUB_ACTIONS", "JENKINS_URL", "TRAVIS", "CIRCLECI", "GITLAB_CI", "TF_BUILD"):
-        monkeypatch.delenv(ci_var, raising=False)
 
     mod = _reload_telemetry()
 
