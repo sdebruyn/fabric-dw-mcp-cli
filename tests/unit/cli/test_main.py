@@ -10,6 +10,7 @@ from unittest.mock import patch
 import pytest
 from click.testing import CliRunner
 
+import fabric_dw
 import fabric_dw.cli as _cli_pkg
 import fabric_dw.cli._main as _main_mod
 import fabric_dw.telemetry as _tel
@@ -102,13 +103,70 @@ class TestCliUnknownCommand:
 
 
 class TestCliVersion:
-    """CLI version option (smoke test — just checks it runs)."""
+    """--version / -V flag: output, exit code, and telemetry suppression."""
 
     def test_no_args_shows_help_or_usage(self) -> None:
         runner = CliRunner()
         result = runner.invoke(cli, [])
         # With invoke_without_command=False, missing subcommand should show usage
         assert result.exit_code != 0 or "Usage" in result.output or "cache" in result.output
+
+    def test_version_flag_exits_zero(self) -> None:
+        """--version must exit 0."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--version"])
+        assert result.exit_code == 0
+
+    def test_version_flag_prints_version(self) -> None:
+        """--version output must contain the version from fabric_dw.__version__."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--version"])
+        assert fabric_dw.__version__ in result.output
+
+    def test_version_flag_output_format(self) -> None:
+        """--version output must be in the form 'fabric-dw <version>'."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--version"])
+        assert result.output.strip() == f"fabric-dw {fabric_dw.__version__}"
+
+    def test_short_version_flag_exits_zero(self) -> None:
+        """-V must exit 0."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["-V"])
+        assert result.exit_code == 0
+
+    def test_short_version_flag_prints_version(self) -> None:
+        """-V must print the same output as --version."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["-V"])
+        assert fabric_dw.__version__ in result.output
+
+    def test_version_flag_works_without_subcommand(self) -> None:
+        """--version must work without providing any subcommand."""
+        runner = CliRunner()
+        # No subcommand — eager option must short-circuit before the group body.
+        result = runner.invoke(cli, ["--version"])
+        assert result.exit_code == 0
+
+    def test_version_flag_emits_no_telemetry(self) -> None:
+        """--version must not trigger any telemetry (app_started, command_invoked, app_exited)."""
+        runner = CliRunner()
+        with (
+            patch("fabric_dw.cli._main.record_app_started") as mock_started,
+            patch("fabric_dw.cli._main.emit_command_invoked") as mock_invoked,
+            patch("fabric_dw.cli._main.record_app_exited") as mock_exited,
+        ):
+            result = runner.invoke(cli, ["--version"])
+        assert result.exit_code == 0
+        mock_started.assert_not_called()
+        mock_invoked.assert_not_called()
+        mock_exited.assert_not_called()
+
+    def test_version_flag_listed_in_help(self) -> None:
+        """--version must appear in the root --help output."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--help"])
+        assert "--version" in result.output
 
 
 class TestCliVerboseFlag:
