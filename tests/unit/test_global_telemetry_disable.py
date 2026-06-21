@@ -18,8 +18,8 @@ from fabric_dw.telemetry import telemetry_enabled
 
 
 def test_disable_telemetry_env_is_set_by_global_fixture() -> None:
-    """The global autouse fixture exports FABRIC_DISABLE_TELEMETRY=1."""
-    assert os.environ.get("FABRIC_DISABLE_TELEMETRY") == "1"
+    """The global autouse fixture exports FABRIC_DW_TELEMETRY_OPT_OUT=1."""
+    assert os.environ.get("FABRIC_DW_TELEMETRY_OPT_OUT") == "1"
 
 
 def test_telemetry_is_disabled_inside_a_test() -> None:

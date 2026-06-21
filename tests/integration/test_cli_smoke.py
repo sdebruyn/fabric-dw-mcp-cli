@@ -26,8 +26,7 @@ silently swallowed.
 
 Telemetry
 ---------
-CI environments (``GITHUB_ACTIONS=true``) disable telemetry in the subprocess.  The
-child env deliberately unsets the CI marker and injects ``FABRIC_TELEMETRY=1`` so the
+The child env deliberately removes ``FABRIC_DW_TELEMETRY_OPT_OUT`` so the
 telemetry init → flush → shutdown path is exercised for every command.
 """
 
@@ -63,18 +62,6 @@ _STDERR_FORBIDDEN = (
     # unless enable_performance_counters=False is passed at SDK init time.
     "Error getting processor time",
     "_get_processor_time",
-)
-
-# Known CI environment variable names that disable telemetry; unset in child env
-# so that the telemetry init / flush / shutdown code path is exercised.
-_CI_ENV_VARS = (
-    "CI",
-    "GITHUB_ACTIONS",
-    "JENKINS_URL",
-    "TRAVIS",
-    "CIRCLECI",
-    "GITLAB_CI",
-    "TF_BUILD",
 )
 
 # ---------------------------------------------------------------------------
@@ -146,8 +133,8 @@ def _child_env(extra: dict[str, str] | None = None) -> dict[str, str]:
 
     - Inherits the current process environment so credentials pass through.
     - Promotes ResourceWarnings to errors via PYTHONWARNINGS + PYTHONDEVMODE.
-    - Unsets CI detection vars and forces ``FABRIC_TELEMETRY=1`` so the
-      telemetry init / flush / shutdown path is exercised even in CI.
+    - Removes ``FABRIC_DW_TELEMETRY_OPT_OUT`` so the telemetry init / flush /
+      shutdown path is exercised even when the caller has opted out.
     """
     env = os.environ.copy()
 
@@ -155,10 +142,9 @@ def _child_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     env["PYTHONWARNINGS"] = "error::ResourceWarning"
     env["PYTHONDEVMODE"] = "1"
 
-    # Unset CI markers so the child process activates telemetry, then force it on.
-    for ci_var in _CI_ENV_VARS:
-        env.pop(ci_var, None)
-    env["FABRIC_TELEMETRY"] = "1"
+    # Ensure the child process exercises the telemetry path regardless of caller opt-out.
+    env.pop("FABRIC_DW_TELEMETRY_OPT_OUT", None)
+    env.pop("DO_NOT_TRACK", None)
 
     if extra:
         env.update(extra)

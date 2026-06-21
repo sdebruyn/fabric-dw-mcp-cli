@@ -19,7 +19,7 @@ Design notes
   App Insights connection string pointing at a non-routable / refused endpoint
   so the exporter is fully initialised (SDK + urllib3 pool created) but the
   HTTP flush is a no-op (connection refused, quickly discarded).
-- All CI detection env vars are removed so ``telemetry_enabled()`` returns
+- ``FABRIC_DW_TELEMETRY_OPT_OUT`` is removed so ``telemetry_enabled()`` returns
   True and the real SDK code path is exercised.
 - ``PYTHONWARNINGS=error`` is **not** set here because the subprocess has
   its own warning filters; the test relies on observing stderr text rather
@@ -87,21 +87,8 @@ def _build_subprocess_env() -> dict[str, str]:
     # Point telemetry at the non-routable bogus endpoint.
     env["FABRIC_TELEMETRY_CONNECTION_STRING"] = _BOGUS_CONNECTION_STRING
 
-    # Remove all CI detection vars so telemetry_enabled() returns True.
-    for ci_var in (
-        "CI",
-        "GITHUB_ACTIONS",
-        "JENKINS_URL",
-        "TRAVIS",
-        "CIRCLECI",
-        "GITLAB_CI",
-        "TF_BUILD",
-    ):
-        env.pop(ci_var, None)
-
-    # Remove opt-out vars.
-    env.pop("FABRIC_TELEMETRY", None)
-    env.pop("FABRIC_DISABLE_TELEMETRY", None)
+    # Remove opt-out vars so telemetry_enabled() returns True.
+    env.pop("FABRIC_DW_TELEMETRY_OPT_OUT", None)
     env.pop("DO_NOT_TRACK", None)
 
     # Strip any caller-side statsbeat override so our setdefault in _get_tracer
