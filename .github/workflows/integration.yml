@@ -1,8 +1,8 @@
 name: Integration tests
 
+run-name: ${{ inputs.pr_number != '' && format('Integration tests - PR {0} @ {1}', inputs.pr_number, inputs.head_sha) || 'Integration tests' }}
+
 on:
-  pull_request:
-    types: [labeled, synchronize]
   push:
     branches: [main]
   workflow_dispatch:
@@ -15,6 +15,14 @@ on:
         description: "Number of parallel pytest-xdist workers (1 = serial, default 8)"
         required: false
         default: "8"
+      pr_number:
+        description: "PR number this run was dispatched for (set by dispatcher; leave empty for manual runs)"
+        required: false
+        default: ""
+      head_sha:
+        description: "HEAD SHA of the PR branch at dispatch time (set by dispatcher; for identification only)"
+        required: false
+        default: ""
 
 permissions:
   id-token: write
@@ -26,7 +34,7 @@ concurrency:
 
 jobs:
   integration:
-    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'integration') }}
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     environment: integration
     timeout-minutes: 150

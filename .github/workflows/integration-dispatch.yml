@@ -1,0 +1,59 @@
+# Lightweight dispatcher for integration tests on labeled pull requests.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# integration.yml guards a shared Fabric test capacity with a global
+# concurrency group (integration-tests, cancel-in-progress: false) that
+# serialises real runs. Before this split, integration.yml also triggered
+# on pull_request [labeled, synchronize], so every push to any open PR
+# created a no-op "Integration tests" run that still entered that concurrency
+# group — churning the queue and occasionally cancelling real runs that had
+# been waiting.
+#
+# This dispatcher is cheap: its own per-PR concurrency group is separate from
+# integration-tests, so skipped runs here never affect the real queue.  When
+# the integration label IS present, it issues a workflow_dispatch to the real
+# workflow against the PR head branch, which then enters integration-tests as
+# usual.
+#
+# NOTE: dispatcher-triggered runs appear as workflow_dispatch in the Actions
+# tab, not as PR status checks.  The integration job is not a required check,
+# so merges are unaffected.
+
+name: Integration test dispatcher
+
+on:
+  pull_request:
+    types: [labeled, synchronize]
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: integration-dispatch-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  dispatch:
+    # Only dispatch for labeled PRs from within this repository.
+    # Fork PRs are excluded: their head branch lives in a different repo and
+    # cannot be dispatched with GITHUB_TOKEN from this repo.
+    if: >
+      contains(github.event.pull_request.labels.*.name, 'integration') &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch integration workflow against PR head
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh workflow run integration.yml \
+            --repo "$REPO" \
+            --ref "$PR_HEAD_REF" \
+            -f pr_number="$PR_NUMBER" \
+            -f head_sha="$PR_HEAD_SHA"
