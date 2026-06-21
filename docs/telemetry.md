@@ -23,9 +23,11 @@ Every telemetry event includes a shared envelope of anonymous fields:
 
 | Event | When | Extra fields |
 |---|---|---|
-| `app_started` | Once per process | — |
-| `mcp_server_started` | When the MCP server boots | — |
+| `app_started` | Once per process | — (`auth_mode` omitted — see note below) |
+| `mcp_server_started` | When the MCP server boots | — (`auth_mode` omitted — see note below) |
 | `app_exited` | On process exit | `duration_ms`, `exit_status` (ok / user_error / api_error), `error_category` |
+
+> **Note on `auth_mode` in lifecycle-start events:** `app_started` and `mcp_server_started` fire at process start, before any token is acquired. Emitting `auth_mode` at that point would produce a possibly-wrong value derived from environment-variable heuristics (e.g. `interactive` for a plain `az login`). The accurate value is only available after the first token acquisition and is emitted on `command_invoked` and `app_exited`.
 
 ### `command_invoked` — per-command usage
 

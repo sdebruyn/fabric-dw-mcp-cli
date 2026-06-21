@@ -585,7 +585,12 @@ def test_record_app_started_enabled_calls_emit(
     mod = _reload_telemetry()
     emitted: list[tuple[str, dict[str, object]]] = []
 
-    def fake_emit(name: str, attrs: dict[str, object]) -> None:
+    def fake_emit(
+        name: str,
+        attrs: dict[str, object],
+        *,
+        omit_keys: set[str] | None = None,  # noqa: ARG001
+    ) -> None:
         emitted.append((name, attrs))
 
     with patch.object(mod, "emit_event", side_effect=fake_emit):  # type: ignore[attr-defined]
@@ -610,7 +615,12 @@ def test_record_app_exited_enabled_calls_emit(
     mod = _reload_telemetry()
     emitted: list[tuple[str, dict[str, object]]] = []
 
-    def fake_emit(name: str, attrs: dict[str, object]) -> None:
+    def fake_emit(
+        name: str,
+        attrs: dict[str, object],
+        *,
+        omit_keys: set[str] | None = None,  # noqa: ARG001
+    ) -> None:
         emitted.append((name, attrs))
 
     with patch.object(mod, "emit_event", side_effect=fake_emit):  # type: ignore[attr-defined]
@@ -636,13 +646,158 @@ def test_record_mcp_server_started_enabled_calls_emit(
     mod = _reload_telemetry()
     emitted: list[tuple[str, dict[str, object]]] = []
 
-    def fake_emit(name: str, attrs: dict[str, object]) -> None:
+    def fake_emit(
+        name: str,
+        attrs: dict[str, object],
+        *,
+        omit_keys: set[str] | None = None,  # noqa: ARG001
+    ) -> None:
         emitted.append((name, attrs))
 
     with patch.object(mod, "emit_event", side_effect=fake_emit):  # type: ignore[attr-defined]
         mod.record_mcp_server_started()  # type: ignore[attr-defined]
 
     assert len(emitted) == 1
+
+
+# ---------------------------------------------------------------------------
+# auth_mode omission on lifecycle-start events (#677)
+# ---------------------------------------------------------------------------
+
+
+def _setup_telemetry_with_fake_logger(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> tuple[Any, list[dict[str, object]]]:
+    """Set up a reloaded telemetry module with a fake OTel logger that captures emissions.
+
+    Returns ``(mod, captured)`` where *captured* is the list that grows as
+    events are emitted.  Egress is blocked — no real Azure Monitor calls occur.
+    """
+    for var in ("FABRIC_DW_TELEMETRY_OPT_OUT", "DO_NOT_TRACK"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    mod = _reload_telemetry()
+
+    captured: list[dict[str, object]] = []
+
+    # A minimal stand-in for OTel LogRecord: just holds its attributes.
+    class _FakeLogRecord:
+        def __init__(self, **kwargs: object) -> None:
+            self.attributes: dict[str, object] = dict(kwargs.get("attributes") or {})  # type: ignore[arg-type]  # ty: ignore[no-matching-overload]
+
+    class _FakeLogger:
+        def emit(self, record: _FakeLogRecord) -> None:
+            captured.append(dict(record.attributes))
+
+    fake_logger = _FakeLogger()
+
+    # Inject our fake logger so _get_tracer() returns it without real SDK init.
+    mod._otel_logger = fake_logger  # type: ignore[attr-defined]
+    mod._tracer = fake_logger  # type: ignore[attr-defined]
+    mod._sdk_initialised = True  # type: ignore[attr-defined]
+
+    # Inject the fake LogRecord class into sys.modules so the `from … import`
+    # inside emit_event picks it up instead of the real OTel class.
+    fake_logs_mod: Any = types.ModuleType("opentelemetry._logs")
+    fake_logs_mod.LogRecord = _FakeLogRecord
+    monkeypatch.setitem(sys.modules, "opentelemetry._logs", fake_logs_mod)
+
+    return mod, captured
+
+
+def test_app_started_omits_auth_mode(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """app_started events must NOT carry auth_mode (fired before auth is resolved).
+
+    Lifecycle-start events fire before any token is acquired, so _auth_mode_override
+    is still None and _detect_auth_mode() falls back to env heuristics that can
+    mis-classify the session.  Omitting the field is safer than emitting a wrong value.
+    """
+    mod, captured = _setup_telemetry_with_fake_logger(monkeypatch, tmp_path)
+    mod.record_app_started("cli")  # type: ignore[attr-defined]
+
+    assert len(captured) == 1
+    assert "auth_mode" not in captured[0], (
+        "app_started must NOT include auth_mode — it fires before auth is resolved and "
+        "_detect_auth_mode() can mis-classify the session (#677)."
+    )
+
+
+def test_mcp_server_started_omits_auth_mode(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """mcp_server_started events must NOT carry auth_mode (fired before auth is resolved).
+
+    Same rationale as app_started: the MCP server boots before any token is acquired.
+    """
+    mod, captured = _setup_telemetry_with_fake_logger(monkeypatch, tmp_path)
+    mod.record_mcp_server_started()  # type: ignore[attr-defined]
+
+    assert len(captured) == 1
+    assert "auth_mode" not in captured[0], (
+        "mcp_server_started must NOT include auth_mode — it fires before auth is resolved "
+        "and _detect_auth_mode() can mis-classify the session (#677)."
+    )
+
+
+def test_app_exited_includes_auth_mode(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """app_exited events MUST carry auth_mode (emitted after the first token acquisition)."""
+    mod, captured = _setup_telemetry_with_fake_logger(monkeypatch, tmp_path)
+    mod.record_app_exited(duration_ms=10.0, exit_status="ok", error_category=None)  # type: ignore[attr-defined]
+
+    assert len(captured) == 1
+    assert "auth_mode" in captured[0], (
+        "app_exited must include auth_mode — it is emitted after auth is resolved and "
+        "the value is accurate by that point (#677)."
+    )
+
+
+def test_command_invoked_includes_auth_mode(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """command_invoked events MUST carry auth_mode (emitted after the first token acquisition).
+
+    Unlike lifecycle-start events (app_started, mcp_server_started), command_invoked
+    fires after the auth layer has called set_auth_mode(), so the value is accurate
+    and should always be present in the emitted envelope.
+    """
+    mod, captured = _setup_telemetry_with_fake_logger(monkeypatch, tmp_path)
+    mod.emit_event("command_invoked", {"name": "workspace.list", "status": "success"})  # type: ignore[attr-defined]
+
+    assert len(captured) == 1
+    assert "auth_mode" in captured[0], (
+        "command_invoked must include auth_mode — it fires after auth is resolved and "
+        "the value is accurate by that point (#677)."
+    )
+
+
+def test_emit_event_omit_keys_removes_from_merged(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """emit_event(omit_keys=...) must drop the listed keys from the merged envelope."""
+    mod, captured = _setup_telemetry_with_fake_logger(monkeypatch, tmp_path)
+    mod.emit_event("test_event", {}, omit_keys={"auth_mode", "session_id"})  # type: ignore[attr-defined]
+
+    assert len(captured) == 1
+    merged = captured[0]
+    assert "auth_mode" not in merged, "omit_keys must remove 'auth_mode' from the emitted record"
+    assert "session_id" not in merged, "omit_keys must remove 'session_id' from the emitted record"
+    # Other envelope keys must still be present.
+    assert "python_version" in merged, "Other envelope keys must remain after omit_keys filter"
+
+
+def test_emit_event_omit_keys_none_is_no_op(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """emit_event with omit_keys=None (default) must include all envelope keys."""
+    mod, captured = _setup_telemetry_with_fake_logger(monkeypatch, tmp_path)
+    mod.emit_event("test_event", {})  # type: ignore[attr-defined]
+
+    assert len(captured) == 1
+    assert "auth_mode" in captured[0], (
+        "When omit_keys is not provided (default None), auth_mode must be present in the envelope."
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -381,9 +381,11 @@ def get_sql_token_struct(mode: CredentialMode = CredentialMode.DEFAULT) -> bytes
 
 def _make_default_credential() -> AsyncTokenCredential:
     if _is_github_actions_oidc():
-        # Auth mode is recorded lazily on first token acquisition via
-        # _record_auth_mode_from_default_credential in http_client._get_token.
-        # The OIDC path is handled there by inspecting _successful_credential.
+        # Auth mode for the OIDC path is NOT recorded via
+        # record_auth_mode_from_default_credential (ClientAssertionCredential
+        # has no _successful_credential attribute and the function early-returns).
+        # Instead, _detect_auth_mode() picks up the GitHub Actions env-var
+        # signals and returns "github_oidc" automatically.
         return _make_github_oidc_credential()
 
     interactive_kwargs = _resolve_interactive_kwargs()
@@ -431,6 +433,13 @@ def _make_interactive_credential() -> AsyncTokenCredential:
 # Mapping from DefaultAzureCredential sub-credential class names to telemetry
 # auth_mode strings.  Read defensively via getattr(_successful_credential, None)
 # so any future azure-identity refactor does not break the call site.
+#
+# NOTE: AzurePowerShellCredential is intentionally grouped under "azure_cli".
+# All local developer-tool auth methods (Azure CLI, Azure Developer CLI, and
+# Azure PowerShell) are treated as a single category because they represent the
+# same usage pattern: a developer who has authenticated locally with a Microsoft
+# tool.  Do NOT add a separate "azure_powershell" category — the intent is to
+# distinguish interactive-browser from local-tool auth, not to enumerate tools.
 _DAC_CLASS_TO_AUTH_MODE: dict[str, str] = {
     "AzureCliCredential": "azure_cli",
     "AzureDeveloperCliCredential": "azure_cli",
