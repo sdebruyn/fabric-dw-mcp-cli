@@ -229,12 +229,14 @@ jobs:
           # than query/schema tests), unlike "loadscope" which would bin every
           # module onto one worker and starve the rest.
 
+          # --cov-fail-under=0: the 80% fail_under in pyproject.toml is a unit-suite gate;
+          # integration coverage is informational/codecov-only and must not block this run.
           if [ -n "${PYTEST_K_INPUT}" ]; then
             echo "Running subset: -k '${PYTEST_K_INPUT}' with ${WORKERS} worker(s)"
-            uv run pytest tests/integration -m integration -v -n "${WORKERS}" --dist loadgroup -k "${PYTEST_K_INPUT}" --cov --cov-report=xml --cov-report=term --junitxml=junit.xml -o junit_family=legacy
+            uv run pytest tests/integration -m integration -v -n "${WORKERS}" --dist loadgroup -k "${PYTEST_K_INPUT}" --cov --cov-report=xml --cov-report=term --cov-fail-under=0 --junitxml=junit.xml -o junit_family=legacy
           else
             echo "Running full integration suite with ${WORKERS} worker(s)"
-            uv run pytest tests/integration -m integration -v -n "${WORKERS}" --dist loadgroup --cov --cov-report=xml --cov-report=term --junitxml=junit.xml -o junit_family=legacy
+            uv run pytest tests/integration -m integration -v -n "${WORKERS}" --dist loadgroup --cov --cov-report=xml --cov-report=term --cov-fail-under=0 --junitxml=junit.xml -o junit_family=legacy
           fi
 
       - name: Upload coverage reports to Codecov
