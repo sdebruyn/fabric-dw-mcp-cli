@@ -247,6 +247,46 @@ def telemetry_enabled() -> bool:
 _INSTALL_ID_FILE = "install_id"
 _install_id_cache: str | None = None
 
+# ---------------------------------------------------------------------------
+# Tenant-ID persistence (#652)
+# ---------------------------------------------------------------------------
+
+_TENANT_ID_FILE = "tenant_id"
+_tenant_id_cache: str | None = None
+_tenant_id_cache_loaded: bool = False
+
+
+def _get_cached_tenant_id() -> str | None:
+    """Return the persisted tenant UUID, or None if missing/empty/unreadable.
+
+    In-memory cached after the first read.  Never raises.
+    """
+    global _tenant_id_cache, _tenant_id_cache_loaded  # noqa: PLW0603
+    if _tenant_id_cache_loaded:
+        return _tenant_id_cache
+
+    with contextlib.suppress(Exception):
+        id_file = _config_dir() / _TENANT_ID_FILE
+        if id_file.exists():
+            value = id_file.read_text(encoding="utf-8").strip()
+            if value:
+                _tenant_id_cache = value
+
+    _tenant_id_cache_loaded = True
+    return _tenant_id_cache
+
+
+def _persist_tenant_id(tid: str) -> None:
+    """Write the tenant UUID to the config directory.  Fail-safe: never raises."""
+    global _tenant_id_cache, _tenant_id_cache_loaded  # noqa: PLW0603
+    with contextlib.suppress(Exception):
+        config_dir = _config_dir()
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / _TENANT_ID_FILE).write_text(tid, encoding="utf-8")
+    # Keep in-memory cache in sync even if the write silently failed.
+    _tenant_id_cache = tid
+    _tenant_id_cache_loaded = True
+
 
 def _get_install_id() -> str:
     """Return the anonymous install UUID, generating and persisting it on first call."""
@@ -378,12 +418,13 @@ def _build_envelope() -> dict[str, object]:
     python_version = f"{python_info.major}.{python_info.minor}"
 
     # Prefer the runtime-set override (populated by #366 token-claim hook),
-    # then fall back to environment variables, then "unknown" so the key is
-    # always present on every event (Finding 2 / #477).
+    # then fall back to environment variables, then the persisted cache (#652),
+    # then "unknown" so the key is always present on every event (Finding 2 / #477).
     tenant_id: str = (
         _tenant_id_override
         or os.environ.get("AZURE_TENANT_ID")
         or os.environ.get("FABRIC_INTERACTIVE_TENANT_ID")
+        or _get_cached_tenant_id()
         or "unknown"
     )
 
@@ -954,6 +995,8 @@ def set_tenant_id(tenant_id: str) -> None:
     """
     global _tenant_id_override  # noqa: PLW0603
     _tenant_id_override = tenant_id
+    if telemetry_enabled():
+        _persist_tenant_id(tenant_id)
 
 
 def decode_tid_from_token(token: str) -> str | None:
