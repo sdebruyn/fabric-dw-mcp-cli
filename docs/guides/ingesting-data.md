@@ -102,7 +102,7 @@ Skip this step if you plan to auto-create with `tables load --create` (see [Step
 
 `tables create` (Data Warehouse only) has two modes:
 
-- **Empty DDL** — scaffold the structure only; no data is read or inserted. Supply one of `--from-parquet`, `--from-csv`, or `--from-schema` / `--column`.
+- **Empty DDL** — scaffold the structure only; no data is read or inserted. Supply one of `--from-parquet`, `--from-csv`, `--from-json`, or `--column`.
 - **CTAS** (`CREATE TABLE … AS SELECT`) — populate the table from a query. Supply `--select` or `--from-file`.
 
 === "CLI"
@@ -125,11 +125,10 @@ Skip this step if you plan to auto-create with `tables load --create` (see [Step
       --column "event_type:VARCHAR(100)" \
       --column "occurred_at:DATETIME2(7)"
 
-    # Explicit schema from JSON, plus an extra column
+    # Empty table, schema inferred from JSON data (JSONL or a JSON array of records)
     fdw tables create \
       --name dbo.audit_log \
-      --from-schema ./schemas/audit_log.json \
-      --column "inserted_at:DATETIME2(7):notnull"
+      --from-json ./data/audit_log.jsonl --varchar-length 500
 
     # CTAS — populate from a query
     fdw tables create \
@@ -137,11 +136,11 @@ Skip this step if you plan to auto-create with `tables load --create` (see [Step
       --select "SELECT * FROM dbo.orders WHERE YEAR(sale_date) = 2026"
     ```
 
-    `--from-schema` and `--column` can be **combined** (schema columns first, then the extras). Add `--cluster-by COL` (repeatable, up to 4) to any create mode. See [tables create](../commands/tables.md#tables-create) for the full option table and the Arrow → T-SQL type mapping.
+    `--from-parquet`, `--from-csv`, `--from-json`, and `--column` are **mutually exclusive** — pick exactly one column source. `--from-json` infers the schema from a JSONL file or a JSON array of records (no rows are loaded into the table; use `tables load --format json` to load data afterwards). Add `--cluster-by COL` (repeatable, up to 4) to any create mode. See [tables create](../commands/tables.md#tables-create) for the full option table and the Arrow → T-SQL type mapping.
 
 === "MCP"
 
-    - **`create_empty_table`** — explicit column list only: `columns: [{name, sql_type, nullable?}]`, optional `cluster_by`. Server-side CSV/Parquet inference is intentionally **not** exposed; for file-based inference use the CLI `tables create --from-parquet` / `--from-csv`.
+    - **`create_empty_table`** — explicit column list only: `columns: [{name, sql_type, nullable?}]`, optional `cluster_by`. Server-side file inference is intentionally **not** exposed; for file-based inference use the CLI `tables create --from-parquet` / `--from-csv` / `--from-json`.
     - **`create_table`** — CTAS: takes a `select_body`, optional `cluster_by`.
 
     See [create_empty_table](../commands/tables.md#create_empty_table) and [create_table](../commands/tables.md#create_table).

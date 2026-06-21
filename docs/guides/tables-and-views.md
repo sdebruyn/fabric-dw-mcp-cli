@@ -24,7 +24,7 @@ You'll then maintain and iterate on the model — clone, rename, re-cluster, cle
 
 ### CLI vs MCP — when to use which
 
-- **CLI** (`fdw …`) is the full surface. File-based schema inference (`--from-parquet` / `--from-csv`), `tables load`, and `if-exists replace` are **CLI-only** because they need reliable local file access.
+- **CLI** (`fdw …`) is the full surface. File-based schema inference (`--from-parquet` / `--from-csv` / `--from-json`), `tables load`, and `if-exists replace` are **CLI-only** because they need reliable local file access.
 - **MCP tools** mirror the CLI for everything that doesn't depend on server-side file access, so an AI assistant can author and inspect the same objects. Where an MCP equivalent exists it's named in each step; where it doesn't (notably `tables load`), the gap is called out.
 
 ---
@@ -111,22 +111,21 @@ fdw tables create \
 }
 ```
 
-### Empty table from a JSON schema spec
+### Infer a table from a JSON data file
 
-Keep a column spec under version control as a JSON array of `{name, type, nullable?}` and pass it with `--from-schema`. You can layer extra inline `--column` definitions on top.
+Point `--from-json` at a JSONL file or a JSON file containing an array of objects and `fabric-dw` reads a bounded sample of records to infer the column schema — **no rows are loaded**. The usual inference options apply: `--all-varchar` to force every column to `VARCHAR`, `--varchar-length` to set the default string length, and `--sample-rows` to cap how many records are sampled. Load data afterwards with `tables load --format json`.
 
 ```shell
-# schemas/audit_log.json:
-# [{"name": "id", "type": "BIGINT", "nullable": false},
-#  {"name": "action", "type": "VARCHAR(100)"}]
+# data/audit_log.jsonl: one JSON object per line
+# {"id": 1, "action": "login", "occurred_at": "2026-01-01T00:00:00"}
+# ...
 
 fdw tables create \
   --name sales.audit_log \
-  --from-schema ./schemas/audit_log.json \
-  --column "inserted_at:DATETIME2(7):notnull"
+  --from-json ./data/audit_log.jsonl --varchar-length 500
 ```
 
-`--from-schema` + `--column` has no MCP equivalent for the file part; pass the merged column list to `create_empty_table` instead.
+`--from-json` is **mutually exclusive** with `--column`, `--from-csv`, `--from-parquet`, and `--select`/`--from-file` (CTAS) — pick exactly one column source. It is **CLI-only**: the MCP `create_empty_table` tool takes an explicit `columns` list and does not do file-based inference; pass the resolved column list to `create_empty_table` instead.
 
 ### Infer an empty table from a Parquet or CSV file
 
@@ -146,7 +145,7 @@ fdw tables create \
 
 !!! note "File inference is CLI-only"
 
-    The MCP `create_empty_table` tool deliberately takes an explicit `columns` list and does **not** do CSV/Parquet inference — server-side file access is unreliable in MCP deployments. Use the CLI for file-based inference, or pass the resolved columns to `create_empty_table`.
+    The MCP `create_empty_table` tool deliberately takes an explicit `columns` list and does **not** do Parquet/CSV/JSON inference — server-side file access is unreliable in MCP deployments. Use the CLI for file-based inference, or pass the resolved columns to `create_empty_table`.
 
 ### CTAS — create a table from a query
 
@@ -401,7 +400,7 @@ For the schema model itself, follow the [dimensional-modeling](https://learn.mic
 
 ## The same workflow via MCP
 
-Every authoring and inspection step above maps to an MCP tool. The exceptions are file-dependent operations (local-file load and CSV/Parquet inference), which stay CLI-only.
+Every authoring and inspection step above maps to an MCP tool. The exceptions are file-dependent operations (local-file load and Parquet/CSV/JSON inference), which stay CLI-only.
 
 | Workflow step | CLI | MCP tool |
 | --- | --- | --- |
@@ -409,8 +408,8 @@ Every authoring and inspection step above maps to an MCP tool. The exceptions ar
 | List schemas | `schemas list` | `list_schemas` |
 | Delete schema (cascade) | `schemas delete --cascade` | `delete_schema(..., cascade=True)` |
 | Create table (CTAS) | `tables create --select` / `--from-file` | `create_table` |
-| Create empty table | `tables create --column` / `--from-schema` | `create_empty_table` |
-| Create empty table (file inference) | `tables create --from-parquet` / `--from-csv` | *(CLI only)* |
+| Create empty table | `tables create --column` | `create_empty_table` |
+| Create empty table (file inference) | `tables create --from-parquet` / `--from-csv` / `--from-json` | *(CLI only)* |
 | List tables | `tables list` | `list_tables` |
 | Read rows | `tables read` | `read_table` |
 | Column metadata | `tables columns` | `get_table_columns` |
