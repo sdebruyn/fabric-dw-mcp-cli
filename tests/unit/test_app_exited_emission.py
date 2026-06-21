@@ -410,7 +410,12 @@ class TestAppExitedDelivery:
         """emit_event is called with 'app_exited' and exit_status='ok' on clean exit."""
         emitted: list[tuple[str, dict]] = []
 
-        def _spy(name: str, attributes: dict) -> None:
+        def _spy(
+            name: str,
+            attributes: dict,
+            *,
+            omit_keys: set[str] | None = None,  # noqa: ARG001
+        ) -> None:
             emitted.append((name, dict(attributes)))
 
         tel_globals = _telemetry_globals()
@@ -440,7 +445,12 @@ class TestAppExitedDelivery:
         """emit_event is called with 'app_exited' and exit_status='api_error' on error."""
         emitted: list[tuple[str, dict]] = []
 
-        def _spy(name: str, attributes: dict) -> None:
+        def _spy(
+            name: str,
+            attributes: dict,
+            *,
+            omit_keys: set[str] | None = None,  # noqa: ARG001
+        ) -> None:
             emitted.append((name, dict(attributes)))
 
         ws_group = _workspaces_group()
