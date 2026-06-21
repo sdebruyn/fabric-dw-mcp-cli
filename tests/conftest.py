@@ -29,6 +29,7 @@ applied:
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Generator
 
 import pytest
@@ -56,7 +57,10 @@ _TELEMETRY_SELF_MANAGED_MODULES = frozenset(
 # initialised, no traffic can reach the production App Insights resource.
 # Individual tests may override this with monkeypatch.setenv; this fixture only
 # installs it as a safe default.
-_FAKE_CONNECTION_STRING = (
+#
+# Single source of truth: ``test_telemetry.py`` imports this as ``_DUMMY_CONN_STR``
+# so both files always use the same value.
+TELEMETRY_FAKE_CONNECTION_STRING = (
     "InstrumentationKey=00000000-0000-0000-0000-000000000000;IngestionEndpoint=https://localhost/"
 )
 
@@ -136,7 +140,7 @@ def _isolate_telemetry_endpoint(
     """
     if request.path is None or request.path.name not in _TELEMETRY_SELF_MANAGED_MODULES:
         return
-    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", _FAKE_CONNECTION_STRING)
+    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", TELEMETRY_FAKE_CONNECTION_STRING)
 
 
 @pytest.fixture(autouse=True)
@@ -169,8 +173,6 @@ def _reset_telemetry_module_globals(
         yield
         return
 
-    import sys  # noqa: PLC0415
-
     def _reset() -> None:
         mod = sys.modules.get("fabric_dw.telemetry")
         if mod is None:
@@ -186,9 +188,8 @@ def _reset_telemetry_module_globals(
         # Reset the in-memory tenant cache to the _UNSET sentinel so that
         # _get_cached_tenant_id() re-reads from disk on next access.  The on-disk
         # file is isolated per-test via XDG_CONFIG_HOME / tmp_path.
-        unset = ns.get("_UNSET")
-        if unset is not None:
-            ns["_tenant_id_cache"] = unset
+        # KeyError here means _UNSET was renamed in telemetry.py — update both files.
+        ns["_tenant_id_cache"] = ns["_UNSET"]
 
     _reset()
     yield
