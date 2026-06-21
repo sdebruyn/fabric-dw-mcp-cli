@@ -188,7 +188,7 @@ The client automatically retries on each 429 and waits exactly as long as the se
 
    If this fails with `command not found`, re-run `pip install fabric-dw` and make sure the install target's `bin/` directory is on your `PATH`.
 
-2. **Check environment variables:** The MCP server requires the same Azure CLI credentials as the CLI. Make sure the process launched by your AI tool inherits the correct environment. See the [MCP reference](mcp.md) for the full list of required variables.
+2. **Check environment variables:** The MCP server requires the same Azure CLI credentials as the CLI. Make sure the process launched by your AI tool inherits the correct environment. See the [MCP server install](install.md#mcp) for the full list of required variables.
 
 3. **Restart the MCP client:** Most AI tools (Claude Desktop, Cursor, VS Code) cache the tool list at startup. After updating the config or reinstalling the package, fully quit and reopen the application.
 

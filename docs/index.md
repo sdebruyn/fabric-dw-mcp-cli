@@ -24,9 +24,9 @@ Both the CLI and the MCP server surfaces are built from a single Python package 
 
     Per-domain CLI commands and MCP tools.
 
-- :material-server: **[MCP Reference](mcp.md)**
+- :material-book-open-variant: **[Guides](guides/index.md)**
 
-    MCP server tools for AI assistant integration.
+    Task-oriented, end-to-end admin walkthroughs.
 
 - :material-puzzle: **[Agent Skills](skills.md)**
 
