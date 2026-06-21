@@ -359,7 +359,7 @@ def _detect_auth_mode() -> str:
     layer for an accurate value.
 
     Returns one of: ``service_principal``, ``github_oidc``, ``azure_cli``,
-    ``interactive``, ``managed_identity``.
+    ``interactive``.
     """
     # GitHub Actions OIDC
     if os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL") and os.environ.get(
@@ -869,7 +869,12 @@ def shutdown_telemetry(timeout_ms: int = 8000) -> None:
 # ---------------------------------------------------------------------------
 
 
-def emit_event(name: str, attributes: dict[str, object]) -> None:
+def emit_event(
+    name: str,
+    attributes: dict[str, object],
+    *,
+    omit_keys: set[str] | None = None,
+) -> None:
     """Emit a telemetry event as an Application Insights customEvent.
 
     The event is emitted via the OpenTelemetry logs API as a log record
@@ -893,6 +898,16 @@ def emit_event(name: str, attributes: dict[str, object]) -> None:
 
     Fire-and-forget: never raises, never blocks the caller noticeably.
     When telemetry is disabled, this is a guaranteed no-op.
+
+    Args:
+        name: The event name (e.g. ``"app_started"``).
+        attributes: Extra per-event dimensions merged on top of the shared
+            envelope.  Caller-supplied keys win over envelope keys of the
+            same name.
+        omit_keys: Optional set of envelope keys to drop from the merged
+            record before emission.  Use this for lifecycle-start events that
+            fire before auth is resolved so that a potentially-wrong
+            ``auth_mode`` value is never emitted (e.g. ``omit_keys={"auth_mode"}``).
     """
     if not telemetry_enabled():
         return
@@ -906,6 +921,14 @@ def emit_event(name: str, attributes: dict[str, object]) -> None:
 
         envelope = _build_envelope()
         merged: dict[str, object] = {**envelope, **attributes}
+
+        # Drop any keys the caller asked to exclude.  This is used by
+        # lifecycle-start events (app_started, mcp_server_started) that fire
+        # before auth is resolved — omitting auth_mode avoids emitting a
+        # possibly-wrong value derived from _detect_auth_mode()'s env heuristic.
+        if omit_keys:
+            for key in omit_keys:
+                merged.pop(key, None)
 
         # Add the special attributes that drive native App Insights mapping:
         #   microsoft.custom_event.name → EventData.name (customEvents table)
@@ -938,6 +961,13 @@ def emit_event(name: str, attributes: dict[str, object]) -> None:
 def record_app_started(surface: str) -> None:
     """Emit an ``app_started`` lifecycle event.
 
+    ``auth_mode`` is intentionally omitted from this event: it fires at process
+    start before any token is acquired, so ``_auth_mode_override`` is still
+    ``None`` and the env-heuristic fallback (``_detect_auth_mode()``) can
+    mis-classify the session (e.g. ``interactive`` for a plain ``az login``).
+    The accurate value is emitted on ``command_invoked`` and ``app_exited``
+    after the auth layer calls :func:`set_auth_mode`.
+
     Args:
         surface: Either ``"cli"`` or ``"mcp"``.
     """
@@ -945,7 +975,7 @@ def record_app_started(surface: str) -> None:
     _current_surface = surface
     # ``surface`` is no longer sent as a custom dimension: it is shipped natively
     # as ``cloud_RoleName`` via the OTel Resource (``service.name`` = surface).
-    emit_event("app_started", {})
+    emit_event("app_started", {}, omit_keys={"auth_mode"})
 
 
 def record_app_exited(
@@ -971,8 +1001,14 @@ def record_app_exited(
 
 
 def record_mcp_server_started() -> None:
-    """Emit an ``mcp_server_started`` lifecycle event."""
-    emit_event("mcp_server_started", {})
+    """Emit an ``mcp_server_started`` lifecycle event.
+
+    ``auth_mode`` is omitted for the same reason as :func:`record_app_started`:
+    the MCP server boots before any token is acquired and the env-heuristic can
+    mis-classify the session.  The accurate value is emitted on subsequent
+    ``command_invoked`` events after the auth layer calls :func:`set_auth_mode`.
+    """
+    emit_event("mcp_server_started", {}, omit_keys={"auth_mode"})
 
 
 def maybe_print_first_run_notice() -> None:
