@@ -86,8 +86,8 @@ Any of the following fully disables telemetry — no events are emitted and the 
 |---|---|
 | Environment variable | `FABRIC_DISABLE_TELEMETRY=1` |
 | Environment variable | `FABRIC_TELEMETRY=0` (also accepts `false`, `no`, `off`) |
-| Console Do Not Track | `DO_NOT_TRACK=1` ([consoledonottrack.com](https://consoledonottrack.com)) |
+| Do Not Track | `DO_NOT_TRACK=1` |
 | CI detection | Automatic when `CI`, `GITHUB_ACTIONS`, `TRAVIS`, `CIRCLECI`, `GITLAB_CI`, `JENKINS_URL`, or `TF_BUILD` is set |
-| Config file | Add `[telemetry]\ndisabled = true` to `$XDG_CONFIG_HOME/fabric-dw/config.toml` |
+| Config file | Add `disabled = true` under a `[telemetry]` section in `$XDG_CONFIG_HOME/fabric-dw/config.toml` |
 
 Telemetry is **always off in CI environments** — no action needed for automated pipelines.
