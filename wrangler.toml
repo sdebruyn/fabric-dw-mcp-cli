@@ -1,3 +1,7 @@
 name = "fabric-dw"
 pages_build_output_dir = "docs_build/site"
 compatibility_date = "2026-06-07"
+
+[vars]
+SKIP_DEPENDENCY_INSTALL = "1"
+PYTHON_VERSION = "3.13.3"
