@@ -70,6 +70,7 @@ __all__ = [
     "reset_pool",
     "run_query",
     "run_statements",
+    "tenant_from_connection_string_host",
 ]
 
 # ---------------------------------------------------------------------------
@@ -314,6 +315,96 @@ class SqlTarget:
     workspace_id: str
     database: str
     connection_string: str
+
+
+# ---------------------------------------------------------------------------
+# Fabric host → tenant GUID helper
+# ---------------------------------------------------------------------------
+
+# The Fabric DW / SQL-analytics-endpoint connection-string hostname encodes
+# both the tenant and workspace IDs in its first label:
+#
+#   <b32(tenantId)>-<b32(workspaceId)>.datawarehouse.fabric.microsoft.com
+#
+# where b32(guid) = RFC-4648 base32 (lowercase, no padding) of the GUID's
+# .NET little-endian byte order (Python: uuid.UUID(...).bytes_le).
+#
+# Each encoded GUID is exactly 26 base32 characters (128 bits / 5 bits per
+# char = 25.6 → rounded up to 26 with one trailing padding position stripped).
+_FABRIC_DW_SUFFIX = ".datawarehouse.fabric.microsoft.com"
+_B32_GUID_LEN = 26
+
+
+def tenant_from_connection_string_host(host: object) -> str | None:
+    """Decode the tenant GUID from a Fabric DW connection-string hostname.
+
+    The Fabric connection-string hostname encodes both the tenant and workspace
+    IDs in its first DNS label:
+
+        <b32(tenantId)>-<b32(workspaceId)>.datawarehouse.fabric.microsoft.com
+
+    Each encoded GUID is exactly 26 base32 characters.  This function decodes
+    the first segment (tenant) and returns it as a UUID string.
+
+    The function is entirely fail-safe: any non-matching or garbage input
+    returns ``None`` and never raises.
+
+    Args:
+        host: A Fabric connection-string hostname, or any other string/value.
+            A full ODBC connection string (``Server=<host>``) is also accepted;
+            the host is extracted from it first.
+
+    Returns:
+        The tenant UUID string (e.g. ``"9064c167-4885-40ef-9f34-1853218aea86"``),
+        or ``None`` if *host* does not match the expected Fabric DW shape.
+    """
+    import base64  # noqa: PLC0415 (stdlib, always available)
+    import uuid  # noqa: PLC0415
+
+    try:
+        if not isinstance(host, str):
+            return None
+
+        # Strip an optional "Server=" prefix that the raw API value may carry.
+        raw = host.strip()
+        if raw.lower().startswith("server="):
+            raw = raw[len("server="):]
+
+        # Validate the *.datawarehouse.fabric.microsoft.com suffix.
+        if not raw.lower().endswith(_FABRIC_DW_SUFFIX):
+            return None
+
+        # The first DNS label is everything before the first '.'.
+        first_label = raw[: raw.index(".")]
+
+        # The label has the form "<tenant_b32>-<workspace_b32>".
+        # Split on the last '-' separator between the two 26-char segments.
+        sep_pos = first_label.find("-")
+        if sep_pos < 0:
+            return None
+
+        tenant_b32 = first_label[:sep_pos]
+        workspace_b32 = first_label[sep_pos + 1 :]
+
+        # Both segments must be exactly 26 characters.
+        if len(tenant_b32) != _B32_GUID_LEN or len(workspace_b32) != _B32_GUID_LEN:
+            return None
+
+        # Pad to a multiple of 8 and base32-decode (RFC 4648; uppercase alphabet).
+        def _b32_to_uuid(segment: str) -> str:
+            padded = segment.upper() + "=" * ((8 - len(segment) % 8) % 8)
+            raw_bytes = base64.b32decode(padded)
+            return str(uuid.UUID(bytes_le=raw_bytes))
+
+        tenant_id = _b32_to_uuid(tenant_b32)
+
+        # Round-trip validate: the decoded value must parse as a UUID.
+        # uuid.UUID() above already does this, but be explicit.
+        uuid.UUID(tenant_id)
+    except Exception:
+        return None
+    else:
+        return tenant_id
 
 
 # ---------------------------------------------------------------------------
