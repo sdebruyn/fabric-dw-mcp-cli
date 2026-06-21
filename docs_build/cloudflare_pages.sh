@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Required CF dashboard env vars (Settings → Environment variables):
+# Build environment variables are set in wrangler.toml [vars]:
 #   SKIP_DEPENDENCY_INSTALL=1   — prevents CF from running `pip install .`,
 #                                 which would pull in all runtime deps the docs
 #                                 build doesn't need (~17 s saved).
