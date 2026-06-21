@@ -147,13 +147,15 @@ fdw [-w WORKSPACE] sql-pools insights [OPTIONS] [WAREHOUSE]
 | Option | Description | Default |
 | --- | --- | --- |
 | `--limit INTEGER` | Maximum rows to return (1–10 000). | `100` |
-| `--since ISO8601` | Return rows with timestamp >= this value. | — |
+| `--since ISO8601` | Return rows with timestamp >= this value. Mutually exclusive with `--ago`. | — |
 | `--until ISO8601` | Return rows with timestamp <= this value. | — |
+| `--ago DURATION` | Relative alternative to `--since`: rows newer than now minus this duration (e.g. `1h`, `90m`, `3600s`, `2d`). Mutually exclusive with `--since`. | — |
 
 **Example**
 
 ```shell
 fdw -w MyWorkspace sql-pools insights SalesWH
+fdw -w MyWorkspace sql-pools insights SalesWH --ago 1h
 ```
 
 ---
