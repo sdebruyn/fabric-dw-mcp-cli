@@ -31,8 +31,7 @@ from fabric_dw.sql import tenant_from_connection_string_host
 # tenant  → 9064c167-4885-40ef-9f34-1853218aea86
 # workspace → 78b883eb-50f8-4ca3-8732-e4043dffb635
 _VERIFIED_HOST = (
-    "m7awjeefjdxubhzudbjsdcxkqy-5ob3q6hykcruzbzs4qcd375wgu"
-    ".datawarehouse.fabric.microsoft.com"
+    "m7awjeefjdxubhzudbjsdcxkqy-5ob3q6hykcruzbzs4qcd375wgu.datawarehouse.fabric.microsoft.com"
 )
 _VERIFIED_TENANT = "9064c167-4885-40ef-9f34-1853218aea86"
 _VERIFIED_WORKSPACE = "78b883eb-50f8-4ca3-8732-e4043dffb635"

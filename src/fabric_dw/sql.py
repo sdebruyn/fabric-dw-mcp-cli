@@ -368,7 +368,7 @@ def tenant_from_connection_string_host(host: object) -> str | None:
         # Strip an optional "Server=" prefix that the raw API value may carry.
         raw = host.strip()
         if raw.lower().startswith("server="):
-            raw = raw[len("server="):]
+            raw = raw[len("server=") :]
 
         # Validate the *.datawarehouse.fabric.microsoft.com suffix.
         if not raw.lower().endswith(_FABRIC_DW_SUFFIX):
