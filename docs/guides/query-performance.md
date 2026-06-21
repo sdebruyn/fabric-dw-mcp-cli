@@ -10,7 +10,7 @@ A task-oriented walkthrough for using `fabric-dw` (binary alias **`fdw`**) to fi
 
 !!! tip "Driving `fabric-dw` from an AI assistant?"
 
-    The [`query-optimizer`](../skills.md#query-optimizer) Agent Skill automates exactly this single-query workflow — capture the plan, pull history, audit statistics, inspect clustering, then propose or apply fixes. This page is the human-facing version of the same loop, followed by hand at the terminal. For the **warehouse-wide** angle (hotspots across every query, SQL-pool pressure, caching health) see the [`warehouse-performance`](../skills.md#warehouse-performance) skill and its companion human guide tracked in [#433](https://github.com/sdebruyn/fabric-dw-mcp-cli/issues/433).
+    The [`query-optimizer`](../skills.md#query-optimizer) Agent Skill automates exactly this single-query workflow — capture the plan, pull history, audit statistics, inspect clustering, then propose or apply fixes. This page is the human-facing version of the same loop, followed by hand at the terminal. For the **warehouse-wide** angle (hotspots across every query, SQL-pool pressure, caching health) see the [`warehouse-performance`](../skills.md#warehouse-performance) skill and its companion [Warehouse performance guide](warehouse-performance.md).
 
 ---
 

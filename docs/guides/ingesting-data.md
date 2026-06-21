@@ -37,7 +37,7 @@ Fabric offers several ingestion mechanisms. `COPY INTO` — what this tool uses 
     fdw [-w <workspace>] <group> <command> [ITEM] …
     ```
 
-    not `<command> <workspace> <item> …`. Once the [defaults](#set-your-defaults) are set, both `-w <workspace>` and the optional `[ITEM]` positional can be omitted (the examples below do). `fdw` is the short alias for `fabric-dw`.
+    not `<command> <workspace> <item> …`. Once the [defaults](#set-your-defaults) are set, both `-w <workspace>` and the optional `[ITEM]` positional can be omitted (the examples below do).
 
 ---
 

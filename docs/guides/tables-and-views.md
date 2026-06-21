@@ -8,10 +8,6 @@ This guide walks through building out a schema model on a Microsoft Fabric Data 
 
 The flat per-command references stay the source of truth for every flag and parameter: [Schemas](../commands/schemas.md), [Tables](../commands/tables.md), [Views](../commands/views.md), and [Statistics](../commands/statistics.md). This guide ties them together as a single narrative.
 
-!!! note "`fdw` is the short alias"
-
-    `fdw` is the short alias for the `fabric-dw` binary. Both invoke the same program; this guide uses `fdw` throughout.
-
 ---
 
 ## What you'll build
