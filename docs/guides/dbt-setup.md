@@ -15,7 +15,7 @@ Microsoft's own [tutorial](https://learn.microsoft.com/fabric/data-warehouse/tut
 
 !!! tip "Using an AI assistant? The `dbt-setup` skill does all of this for you"
 
-    Everything below is the **human, copy-pasteable narrative** for someone driving `fabric-dw` from a terminal. If you drive an AI assistant (Claude) against the [MCP server](../mcp.md), the shipped [`dbt-setup` Agent Skill](../skills.md#dbt-setup) automates the same provision → scaffold → sources → verify flow through the MCP tools. The CLI commands here and the skill are two front-ends to the same logic — pick whichever fits your workflow.
+    Everything below is the **human, copy-pasteable narrative** for someone driving `fabric-dw` from a terminal. If you drive an AI assistant (Claude) against the [MCP server](../install.md#mcp), the shipped [`dbt-setup` Agent Skill](../skills.md#dbt-setup) automates the same provision → scaffold → sources → verify flow through the MCP tools. The CLI commands here and the skill are two front-ends to the same logic — pick whichever fits your workflow.
 
 ---
 
@@ -224,7 +224,7 @@ fdw tables list SalesWH
 
 ## Doing it from an AI assistant
 
-If you drive an AI client over the [MCP server](../mcp.md), the same scaffold is available as the [`generate_dbt_profile`](../commands/dbt.md#generate_dbt_profile) tool. Unlike the CLI, it does **not** write files — the MCP server cannot touch the caller's filesystem, so it returns each file's contents as a string:
+If you drive an AI client over the [MCP server](../install.md#mcp), the same scaffold is available as the [`generate_dbt_profile`](../commands/dbt.md#generate_dbt_profile) tool. Unlike the CLI, it does **not** write files — the MCP server cannot touch the caller's filesystem, so it returns each file's contents as a string:
 
 - `profiles_yml`
 - `dbt_project_yml`
@@ -250,7 +250,7 @@ The AI agent writes those strings to disk itself. The shipped [`dbt-setup` Agent
 
 - [dbt command reference](../commands/dbt.md) — every `fdw dbt init` option and the `generate_dbt_profile` MCP tool.
 - [Authentication reference](../authentication.md) — the full credential chain and environment variables.
-- [MCP server setup](../mcp.md) — configure the MCP server in your AI client.
+- [MCP server install](../install.md#mcp) — configure the MCP server in your AI client.
 - [Agent Skills](../skills.md) — including the [`dbt-setup` skill](../skills.md#dbt-setup) that automates this guide.
 - [Set up dbt for Fabric Data Warehouse](https://learn.microsoft.com/fabric/data-warehouse/tutorial-setup-dbt?WT.mc_id=MVP_310840) — Microsoft's canonical tutorial.
 - [Microsoft Entra authentication for the warehouse](https://learn.microsoft.com/fabric/data-warehouse/entra-id-authentication?WT.mc_id=MVP_310840) — Entra modes and the `<guid>.datawarehouse.fabric.microsoft.com` server format.

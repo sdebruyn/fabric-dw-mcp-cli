@@ -6,7 +6,7 @@ title: Ingesting data
 
 This guide walks through getting file-based data — CSV, Parquet, or JSON — into a Microsoft Fabric Data Warehouse table with `fabric-dw`, end to end: create the schema, create the destination table, stage and load the data via `COPY INTO`, verify the result, and refresh statistics. It covers both the CLI (`fdw …`) and the MCP server (for AI assistants).
 
-It is task-oriented. For the full option reference of each command and tool, see the per-domain pages it links to: [Tables](../commands/tables.md), [Schemas](../commands/schemas.md), [Statistics](../commands/statistics.md), [Running SQL](../commands/sql.md), and the [MCP server](../mcp.md).
+It is task-oriented. For the full option reference of each command and tool, see the per-domain pages it links to: [Tables](../commands/tables.md), [Schemas](../commands/schemas.md), [Statistics](../commands/statistics.md), [Running SQL](../commands/sql.md), and the [MCP server](../install.md#mcp).
 
 ---
 
@@ -353,7 +353,7 @@ The same end-to-end flow is available to an AI assistant through the MCP server,
 | `truncate` ⚠️ | `TRUNCATE`, then load. Requires `FABRIC_MCP_ALLOW_DESTRUCTIVE=1`. |
 | `replace` ⚠️ | **Not supported for remote URLs** — it cannot infer the schema without downloading. Use the CLI `tables load --file --create --if-exists replace`. |
 
-Destructive `if_exists` policies (and `delete_schema` / `delete_statistics`) require the server to run with `FABRIC_MCP_ALLOW_DESTRUCTIVE=1` — see the [MCP security environment variables](../mcp.md#security-environment-variables).
+Destructive `if_exists` policies (and `delete_schema` / `delete_statistics`) require the server to run with `FABRIC_MCP_ALLOW_DESTRUCTIVE=1` — see the [MCP security environment variables](../install.md#security-environment-variables).
 
 ---
 

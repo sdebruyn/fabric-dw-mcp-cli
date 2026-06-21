@@ -41,12 +41,12 @@ nav = [
   { "Reference" = [
     { "Authentication" = "authentication.md" },
     { "Agent Skills" = "skills.md" },
-    { "MCP server setup" = "mcp.md" },
     { "Exit codes" = "reference/exit-codes.md" },
     { "Shell Completion" = "completion.md" },
     { "Troubleshooting" = "troubleshooting.md" }
   ] },
   { "Guides" = [
+    { "Overview" = "guides/index.md" },
     { "dbt setup" = "guides/dbt-setup.md" },
     { "Ingesting data" = "guides/ingesting-data.md" },
     { "Query performance" = "guides/query-performance.md" },

@@ -4,7 +4,7 @@ title: Tables & views
 
 # Creating & managing tables and views
 
-This guide walks through building out a schema model on a Microsoft Fabric Data Warehouse with `fabric-dw` — from an empty schema, through populated tables, to reporting views and the statistics that keep the optimizer honest. Every step shows a runnable CLI example (`fdw …`) and names the equivalent MCP tool, so the same workflow applies whether you drive it from a terminal or from an AI assistant wired to the [MCP server](../mcp.md).
+This guide walks through building out a schema model on a Microsoft Fabric Data Warehouse with `fabric-dw` — from an empty schema, through populated tables, to reporting views and the statistics that keep the optimizer honest. Every step shows a runnable CLI example (`fdw …`) and names the equivalent MCP tool, so the same workflow applies whether you drive it from a terminal or from an AI assistant wired to the [MCP server](../install.md#mcp).
 
 The flat per-command references stay the source of truth for every flag and parameter: [Schemas](../commands/schemas.md), [Tables](../commands/tables.md), [Views](../commands/views.md), and [Statistics](../commands/statistics.md). This guide ties them together as a single narrative.
 
@@ -33,7 +33,7 @@ You'll then maintain and iterate on the model — clone, rename, re-cluster, cle
 
 - `fabric-dw` [installed](../install.md) and [authenticated](../authentication.md) (the Azure credential chain — Azure CLI, managed identity, service principal, and more).
 - A target warehouse you can write to. The examples use a workspace `MyWorkspace` and a warehouse `SalesWH`; substitute your own (both are resolvable by **name or GUID**, and both default from your [configuration](../commands/config.md), so `-w`/the item argument can be omitted once defaults are set).
-- For MCP usage, the [MCP server](../mcp.md) registered with your assistant. Mutating and destructive tools have their own opt-in guards (see [Destructive operations](#destructive-operations-and-the-yes-flag) below).
+- For MCP usage, the [MCP server](../install.md#mcp) registered with your assistant. Mutating and destructive tools have their own opt-in guards (see [Destructive operations](#destructive-operations-and-the-yes-flag) below).
 
 !!! warning "Data Warehouse vs SQL Analytics Endpoint"
 
@@ -344,7 +344,7 @@ These commands prompt for confirmation before they run; pass `--yes` / `-y` to s
 
 `tables clear`, `tables delete`, `tables cluster-by`, `views drop`, `views update`, `schemas delete`, `statistics delete`, and `tables load --if-exists truncate|replace`.
 
-The matching MCP tools are marked `destructive=True`. An assistant must satisfy the server's destructive-operations guard before they execute — see the [MCP server setup](../mcp.md) page.
+The matching MCP tools are marked `destructive=True`. An assistant must satisfy the server's destructive-operations guard before they execute — see the [MCP server install](../install.md#mcp) page.
 
 ### The SQL Analytics Endpoint read-only guard
 
@@ -440,4 +440,4 @@ Every authoring and inspection step above maps to an MCP tool. The exceptions ar
 | Show statistic | `statistics show` | `show_statistics` |
 | Run arbitrary SQL (constraints, etc.) | `sql` / `queries` | `execute_sql` |
 
-For the MCP server setup, destructive-operation guards, and per-tool parameters, see the [MCP server setup](../mcp.md) page and the per-domain command references.
+For the MCP server setup, destructive-operation guards, and per-tool parameters, see the [MCP server install](../install.md#mcp) page and the per-domain command references.
