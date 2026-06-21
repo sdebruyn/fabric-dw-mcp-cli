@@ -248,7 +248,7 @@ The plan XML uses the standard namespace `http://schemas.microsoft.com/sqlserver
 - `query` (`str`) — SQL statement to generate an estimated execution plan for.
 - `format` (`"xml" | "tree" | "json" | "mermaid"`, default `"xml"`) — output format. See [Format options](#format-options) below.
 
-**Format options**
+#### Format options
 
 | `format` | Return key | Value type | Description |
 | --- | --- | --- | --- |
