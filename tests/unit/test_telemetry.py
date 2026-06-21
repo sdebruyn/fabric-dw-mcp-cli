@@ -19,6 +19,8 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.conftest import TELEMETRY_FAKE_CONNECTION_STRING
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -1184,9 +1186,8 @@ def test_set_tenant_id_takes_precedence_over_env(
 # Persistent tenant store (#652)
 # ---------------------------------------------------------------------------
 
-_DUMMY_CONN_STR = (
-    "InstrumentationKey=00000000-0000-0000-0000-000000000000;IngestionEndpoint=https://localhost/"
-)
+# Single source of truth lives in tests/conftest.py; imported above.
+_DUMMY_CONN_STR = TELEMETRY_FAKE_CONNECTION_STRING
 
 
 def test_tenant_id_unknown_on_first_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
