@@ -2678,3 +2678,349 @@ def test_ai_device_id_from_resource_not_hostname(
         f"got {device_id!r}.  "
         "Set via resource attribute device.id (#477)."
     )
+
+
+# ---------------------------------------------------------------------------
+# set_auth_mode / _auth_mode_override (#665)
+# ---------------------------------------------------------------------------
+
+
+def test_set_auth_mode_stores_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """set_auth_mode stores the value in _auth_mode_override when telemetry is enabled."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+
+    mod = _reload_telemetry()
+    assert mod._auth_mode_override is None  # type: ignore[attr-defined]
+
+    mod.set_auth_mode("azure_cli")  # type: ignore[attr-defined]
+
+    assert mod._auth_mode_override == "azure_cli"  # type: ignore[attr-defined]
+
+
+def test_set_auth_mode_reflected_in_envelope(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """After set_auth_mode, _build_envelope uses the override rather than _detect_auth_mode."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    # Clear env vars so _detect_auth_mode would return "interactive" without the override.
+    monkeypatch.delenv("AZURE_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_URL", raising=False)
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", raising=False)
+    monkeypatch.delenv("AZURE_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+
+    mod = _reload_telemetry()
+    mod.set_auth_mode("azure_cli")  # type: ignore[attr-defined]
+
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
+    assert envelope["auth_mode"] == "azure_cli"
+
+
+def test_set_auth_mode_is_idempotent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The first set_auth_mode call wins; subsequent calls are no-ops."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+
+    mod = _reload_telemetry()
+    mod.set_auth_mode("azure_cli")  # type: ignore[attr-defined]
+    mod.set_auth_mode("interactive")  # subsequent call — must be ignored
+
+    assert mod._auth_mode_override == "azure_cli"  # type: ignore[attr-defined]
+
+
+def test_set_auth_mode_noop_when_telemetry_disabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """set_auth_mode is a no-op when telemetry is disabled (mirrors set_tenant_id behaviour)."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("FABRIC_DW_TELEMETRY_OPT_OUT", "1")
+
+    mod = _reload_telemetry()
+    assert mod.telemetry_enabled() is False  # type: ignore[attr-defined]
+
+    mod.set_auth_mode("azure_cli")  # type: ignore[attr-defined]
+
+    # Override must NOT be set when telemetry is disabled.
+    assert mod._auth_mode_override is None  # type: ignore[attr-defined]
+
+
+def test_auth_mode_override_beats_detect(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """_auth_mode_override takes precedence over _detect_auth_mode env heuristic."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    # AZURE_CLIENT_SECRET would make _detect_auth_mode return "service_principal".
+    monkeypatch.setenv("AZURE_CLIENT_SECRET", "some-secret")
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+
+    mod = _reload_telemetry()
+    mod.set_auth_mode("azure_cli")  # type: ignore[attr-defined]
+
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
+    assert envelope["auth_mode"] == "azure_cli", (
+        "set_auth_mode override must beat the AZURE_CLIENT_SECRET heuristic"
+    )
+
+
+def test_envelope_falls_back_to_detect_when_no_override(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """When set_auth_mode has not been called, _build_envelope uses _detect_auth_mode."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("AZURE_CLIENT_SECRET", "some-secret")
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_URL", raising=False)
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", raising=False)
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+
+    mod = _reload_telemetry()
+    # No set_auth_mode call — override stays None.
+
+    envelope = mod._build_envelope()  # type: ignore[attr-defined]
+    assert envelope["auth_mode"] == "service_principal"
+
+
+def test_set_auth_mode_is_exported(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """set_auth_mode must be in __all__ and callable on the module."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    mod = _reload_telemetry()
+    assert "set_auth_mode" in mod.__all__  # type: ignore[attr-defined]
+    assert callable(mod.set_auth_mode)  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# record_auth_mode_from_default_credential (#665)
+# ---------------------------------------------------------------------------
+
+
+def _make_fake_dac_credential(sub_class_name: str | None) -> object:
+    """Return a fake DefaultAzureCredential-like object with _successful_credential set.
+
+    Creates an instance whose ``type().__name__`` matches *sub_class_name* so
+    that :func:`~fabric_dw.auth.record_auth_mode_from_default_credential` can
+    map it to a telemetry mode via :data:`~fabric_dw.auth._DAC_CLASS_TO_AUTH_MODE`.
+
+    When *sub_class_name* is ``None`` the inner object has no
+    ``_successful_credential`` attribute, simulating a DAC that has not yet
+    resolved to a sub-credential.
+    """
+    if sub_class_name is None:
+        fake_inner = types.SimpleNamespace()
+        # No _successful_credential attribute on the inner object.
+        return types.SimpleNamespace(_inner=fake_inner)
+
+    # Create an instance of a dynamically named class so type().__name__ returns
+    # sub_class_name.  SimpleNamespace.__class__ assignment is not supported for
+    # immutable types, so we build the class explicitly.
+    FakeSubClass = type(sub_class_name, (), {})  # noqa: N806
+    fake_sub = FakeSubClass()
+    fake_inner = types.SimpleNamespace(_successful_credential=fake_sub)
+    return types.SimpleNamespace(_inner=fake_inner)
+
+
+def test_record_auth_mode_azure_cli_credential(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """AzureCliCredential sub-credential → azure_cli auth mode."""
+    import importlib  # noqa: PLC0415
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+
+    _reload_telemetry()
+    import fabric_dw.auth as auth_mod  # noqa: PLC0415
+    import fabric_dw.telemetry as telemetry_mod  # noqa: PLC0415
+
+    importlib.reload(telemetry_mod)
+    # Reset auth module state as well so we get a fresh override slot.
+    telemetry_mod._auth_mode_override = None  # type: ignore[attr-defined]
+
+    fake_cred = _make_fake_dac_credential("AzureCliCredential")
+    auth_mod.record_auth_mode_from_default_credential(fake_cred)
+
+    assert telemetry_mod._auth_mode_override == "azure_cli"  # type: ignore[attr-defined]
+
+
+def test_record_auth_mode_azure_developer_cli_credential(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """AzureDeveloperCliCredential sub-credential → azure_cli auth mode."""
+    import importlib  # noqa: PLC0415
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+
+    _reload_telemetry()
+    import fabric_dw.auth as auth_mod  # noqa: PLC0415
+    import fabric_dw.telemetry as telemetry_mod  # noqa: PLC0415
+
+    importlib.reload(telemetry_mod)
+    telemetry_mod._auth_mode_override = None  # type: ignore[attr-defined]
+
+    fake_cred = _make_fake_dac_credential("AzureDeveloperCliCredential")
+    auth_mod.record_auth_mode_from_default_credential(fake_cred)
+
+    assert telemetry_mod._auth_mode_override == "azure_cli"  # type: ignore[attr-defined]
+
+
+def test_record_auth_mode_interactive_browser_credential(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """InteractiveBrowserCredential sub-credential → interactive auth mode."""
+    import importlib  # noqa: PLC0415
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+
+    _reload_telemetry()
+    import fabric_dw.auth as auth_mod  # noqa: PLC0415
+    import fabric_dw.telemetry as telemetry_mod  # noqa: PLC0415
+
+    importlib.reload(telemetry_mod)
+    telemetry_mod._auth_mode_override = None  # type: ignore[attr-defined]
+
+    fake_cred = _make_fake_dac_credential("InteractiveBrowserCredential")
+    auth_mod.record_auth_mode_from_default_credential(fake_cred)
+
+    assert telemetry_mod._auth_mode_override == "interactive"  # type: ignore[attr-defined]
+
+
+def test_record_auth_mode_managed_identity_credential(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ManagedIdentityCredential sub-credential → managed_identity auth mode."""
+    import importlib  # noqa: PLC0415
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+
+    _reload_telemetry()
+    import fabric_dw.auth as auth_mod  # noqa: PLC0415
+    import fabric_dw.telemetry as telemetry_mod  # noqa: PLC0415
+
+    importlib.reload(telemetry_mod)
+    telemetry_mod._auth_mode_override = None  # type: ignore[attr-defined]
+
+    fake_cred = _make_fake_dac_credential("ManagedIdentityCredential")
+    auth_mod.record_auth_mode_from_default_credential(fake_cred)
+
+    assert telemetry_mod._auth_mode_override == "managed_identity"  # type: ignore[attr-defined]
+
+
+def test_record_auth_mode_environment_credential(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """EnvironmentCredential sub-credential → service_principal auth mode."""
+    import importlib  # noqa: PLC0415
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+
+    _reload_telemetry()
+    import fabric_dw.auth as auth_mod  # noqa: PLC0415
+    import fabric_dw.telemetry as telemetry_mod  # noqa: PLC0415
+
+    importlib.reload(telemetry_mod)
+    telemetry_mod._auth_mode_override = None  # type: ignore[attr-defined]
+
+    fake_cred = _make_fake_dac_credential("EnvironmentCredential")
+    auth_mod.record_auth_mode_from_default_credential(fake_cred)
+
+    assert telemetry_mod._auth_mode_override == "service_principal"  # type: ignore[attr-defined]
+
+
+def test_record_auth_mode_unknown_credential_leaves_override_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An unknown sub-credential class name must not set the override (falls back to heuristic)."""
+    import importlib  # noqa: PLC0415
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+
+    _reload_telemetry()
+    import fabric_dw.auth as auth_mod  # noqa: PLC0415
+    import fabric_dw.telemetry as telemetry_mod  # noqa: PLC0415
+
+    importlib.reload(telemetry_mod)
+    telemetry_mod._auth_mode_override = None  # type: ignore[attr-defined]
+
+    fake_cred = _make_fake_dac_credential("SomeNewFutureCredential")
+    auth_mod.record_auth_mode_from_default_credential(fake_cred)
+
+    assert telemetry_mod._auth_mode_override is None  # type: ignore[attr-defined]
+
+
+def test_record_auth_mode_no_successful_credential_leaves_override_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """When _successful_credential is absent (not yet resolved), override stays None."""
+    import importlib  # noqa: PLC0415
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+
+    _reload_telemetry()
+    import fabric_dw.auth as auth_mod  # noqa: PLC0415
+    import fabric_dw.telemetry as telemetry_mod  # noqa: PLC0415
+
+    importlib.reload(telemetry_mod)
+    telemetry_mod._auth_mode_override = None  # type: ignore[attr-defined]
+
+    fake_cred = _make_fake_dac_credential(None)
+    auth_mod.record_auth_mode_from_default_credential(fake_cred)
+
+    assert telemetry_mod._auth_mode_override is None  # type: ignore[attr-defined]
+
+
+def test_record_auth_mode_is_failsafe(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """record_auth_mode_from_default_credential must never raise even if telemetry throws."""
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    _reload_telemetry()
+    import fabric_dw.auth as auth_mod  # noqa: PLC0415
+
+    # A plain object with no useful attributes: exercises the early-return paths
+    # and ensures no exception propagates.
+    auth_mod.record_auth_mode_from_default_credential(object())  # must not raise
+
+
+def test_azure_cli_without_azure_config_dir_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Regression test for #665: Azure CLI session without AZURE_CONFIG_DIR env var.
+
+    Without the set_auth_mode override the heuristic incorrectly returns
+    'interactive'.  With the override (populated by record_auth_mode_from_default_credential),
+    the envelope correctly reports 'azure_cli'.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    # Simulate a plain 'az login' — AZURE_CONFIG_DIR is NOT set.
+    monkeypatch.delenv("AZURE_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("AZURE_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_URL", raising=False)
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", raising=False)
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+
+    mod = _reload_telemetry()
+
+    # Before override: heuristic returns "interactive" (the bug).
+    assert mod._detect_auth_mode() == "interactive"  # type: ignore[attr-defined]
+    assert mod._build_envelope()["auth_mode"] == "interactive"
+
+    # After override (simulating what record_auth_mode_from_default_credential does):
+    mod.set_auth_mode("azure_cli")  # type: ignore[attr-defined]
+    assert mod._build_envelope()["auth_mode"] == "azure_cli"

@@ -345,6 +345,15 @@ class FabricHttpClient:
                 # telemetry layer (no-op when telemetry is disabled or tid is
                 # already known).  Never raises — fail-safe wrapper.
                 telemetry.cache_tenant_id_from_token(token.token)
+                # Derive and record the resolved auth mode from the credential
+                # that produced this token.  For DefaultAzureCredential, this
+                # inspects _successful_credential (set after the first get_token
+                # succeeds) and maps its class name to a telemetry mode string.
+                # No-op for non-DAC credentials (SyncCredentialAdapter wrapping
+                # InteractiveBrowserCredential / ClientSecretCredential) because
+                # get_credential() already called set_auth_mode for those modes.
+                # Always fail-safe: never raises.
+                auth.record_auth_mode_from_default_credential(self._credential)
         return token.token
 
     # ------------------------------------------------------------------
