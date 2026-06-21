@@ -8,10 +8,6 @@ This guide walks through building out a schema model on a Microsoft Fabric Data 
 
 The flat per-command references stay the source of truth for every flag and parameter: [Schemas](../commands/schemas.md), [Tables](../commands/tables.md), [Views](../commands/views.md), and [Statistics](../commands/statistics.md). This guide ties them together as a single narrative.
 
-!!! note "`fdw` is the short alias"
-
-    `fdw` is the short alias for the `fabric-dw` binary. Both invoke the same program; this guide uses `fdw` throughout.
-
 ---
 
 ## What you'll build
@@ -45,6 +41,19 @@ You'll then maintain and iterate on the model — clone, rename, re-cluster, cle
 
 ---
 
+## Set your defaults
+
+Store the workspace and warehouse once so you do not repeat them on every command:
+
+```shell
+fdw config set workspace MyWorkspace
+fdw config set warehouse SalesWH
+```
+
+The rest of this guide assumes these defaults are set, so the examples omit `-w MyWorkspace` and drop the warehouse positional where it is optional. Any command still accepts an explicit `-w`/`--workspace` or a positional `[WAREHOUSE]`/`[ITEM]` to override them. Commands that take a trailing required argument (such as `tables clear … QUALIFIED_NAME` or `schemas create … NAME`) keep the warehouse positional so the remaining arguments stay unambiguous. See [Configuration & defaults](../commands/config.md).
+
+---
+
 ## Step 1 — Create a schema
 
 Schemas are the namespace for your tables and views. `dbo` always exists; create custom schemas to group related objects.
@@ -52,11 +61,11 @@ Schemas are the namespace for your tables and views. `dbo` always exists; create
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
 ```shell
-# Create the schema
-fdw -w MyWorkspace schemas create SalesWH sales
+# Create the schema (warehouse positional kept — schema NAME follows)
+fdw schemas create SalesWH sales
 
 # Confirm it exists (system schemas like sys / INFORMATION_SCHEMA are excluded; dbo is shown)
-fdw -w MyWorkspace schemas list SalesWH
+fdw schemas list
 ```
 
 **MCP:** `create_schema`, `list_schemas`.
@@ -78,7 +87,7 @@ fdw -w MyWorkspace schemas list SalesWH
 The most direct way to scaffold a dimension table. `--column NAME:TYPE[:null|notnull]` is repeatable; columns are nullable unless you append `:notnull`.
 
 ```shell
-fdw -w MyWorkspace tables create SalesWH \
+fdw tables create \
   --name sales.customer \
   --column "customer_id:BIGINT:notnull" \
   --column "name:VARCHAR(200):notnull" \
@@ -111,7 +120,7 @@ Keep a column spec under version control as a JSON array of `{name, type, nullab
 # [{"name": "id", "type": "BIGINT", "nullable": false},
 #  {"name": "action", "type": "VARCHAR(100)"}]
 
-fdw -w MyWorkspace tables create SalesWH \
+fdw tables create \
   --name sales.audit_log \
   --from-schema ./schemas/audit_log.json \
   --column "inserted_at:DATETIME2(7):notnull"
@@ -125,12 +134,12 @@ Point `--from-parquet` / `--from-csv` at a file and `fabric-dw` reads only the s
 
 ```shell
 # From a Parquet footer (exact types)
-fdw -w MyWorkspace tables create SalesWH \
+fdw tables create \
   --name sales.orders \
   --from-parquet ./exports/orders.parquet
 
 # From a CSV header with type inference
-fdw -w MyWorkspace tables create SalesWH \
+fdw tables create \
   --name staging.raw_products \
   --from-csv ./data/products.csv --varchar-length 500
 ```
@@ -145,12 +154,12 @@ fdw -w MyWorkspace tables create SalesWH \
 
 ```shell
 # Inline SELECT
-fdw -w MyWorkspace tables create SalesWH \
+fdw tables create \
   --name sales.orders_2026 \
   --select "SELECT * FROM sales.orders WHERE YEAR(sale_date) = 2026"
 
 # Body from a versioned .sql file, with CLUSTER BY
-fdw -w MyWorkspace tables create SalesWH \
+fdw tables create \
   --name sales.orders_2026 \
   --from-file ./sql/orders_2026.sql \
   --cluster-by customer_id --cluster-by sale_date
@@ -166,13 +175,13 @@ fdw -w MyWorkspace tables create SalesWH \
 
 ```shell
 # Column metadata (name, type, nullability, ordinal, collation, identity/computed)
-fdw -w MyWorkspace tables columns SalesWH sales.customer
+fdw tables columns SalesWH sales.customer
 
 # Row count via COUNT_BIG(*)
-fdw -w MyWorkspace --json tables count SalesWH sales.orders
+fdw --json tables count SalesWH sales.orders
 
 # List tables in a schema
-fdw -w MyWorkspace tables list SalesWH --schema sales
+fdw tables list --schema sales
 ```
 
 ---
@@ -182,7 +191,7 @@ fdw -w MyWorkspace tables list SalesWH --schema sales
 Loading data is its own topic. The bridge from "empty table" to "populated table" is **`tables load`**, which issues `COPY INTO` from a local file or a remote URL (and can auto-create the table from the source schema with `--create`):
 
 ```shell
-fdw -w MyWorkspace tables load SalesWH sales.orders --file ./data/orders.parquet
+fdw tables load SalesWH sales.orders --file ./data/orders.parquet
 ```
 
 **Targets:** Data Warehouse only. There is **no MCP `load` tool for local files**; the MCP server exposes `load_table_from_url` / `import_table_from_url` for remote URLs only (local staging needs reliable file access). For the full loading surface — `--create`, `--if-exists`, credentials for secured external URLs, CSV options — see the [`tables load`](../commands/tables.md#tables-load) reference rather than this guide.
@@ -208,7 +217,7 @@ Keeping the view body in a `.sql` file (rather than inlining SQL) makes it revie
 # FROM sales.orders
 # GROUP BY region, DATETRUNC(month, sale_date)
 
-fdw -w MyWorkspace views create SalesWH \
+fdw views create \
   --name sales.vw_orders_by_month \
   --from-file ./sql/vw_orders_by_month.sql
 ```
@@ -218,14 +227,14 @@ You can also create inline with `--select "<SELECT>"`. **MCP:** `create_view` (p
 ### Inspect and update a view
 
 ```shell
-# Full definition (from sys.sql_modules)
-fdw -w MyWorkspace views get SalesWH sales.vw_orders_by_month
+# Full definition (from sys.sql_modules) — warehouse positional kept, view name follows
+fdw views get SalesWH sales.vw_orders_by_month
 
 # Column metadata
-fdw -w MyWorkspace views columns SalesWH sales.vw_orders_by_month
+fdw views columns SalesWH sales.vw_orders_by_month
 
 # Redefine in place via CREATE OR ALTER VIEW (prompts for confirmation)
-fdw -w MyWorkspace views update SalesWH sales.vw_orders_by_month \
+fdw views update SalesWH sales.vw_orders_by_month \
   --from-file ./sql/vw_orders_by_month.sql
 ```
 
@@ -245,15 +254,15 @@ After you load data, give the query optimizer the statistics it needs. `fabric-d
 
 ```shell
 # Create a single-column statistic
-fdw -w MyWorkspace statistics create SalesWH \
+fdw statistics create \
   --table sales.orders --column region --name stat_orders_region
 
-# Refresh it after a load
-fdw -w MyWorkspace statistics update SalesWH sales.orders stat_orders_region
+# Refresh it after a load (warehouse positional kept — table/stat names follow)
+fdw statistics update SalesWH sales.orders stat_orders_region
 
 # List / inspect
-fdw -w MyWorkspace statistics list SalesWH --table orders
-fdw -w MyWorkspace statistics show SalesWH sales.orders stat_orders_region
+fdw statistics list --table orders
+fdw statistics show SalesWH sales.orders stat_orders_region
 ```
 
 **MCP:** `create_statistics`, `update_statistics`, `list_statistics`, `show_statistics`. The mutating statistics tools are DW-only; `list_statistics` / `show_statistics` also work on a SQL Analytics Endpoint.
@@ -264,14 +273,14 @@ Beyond statistics, `CLUSTER BY` controls physical data layout. You set clusterin
 
 ```shell
 # Re-cluster an existing table (transactional CTAS-swap; copies the whole table)
-fdw -w MyWorkspace --yes tables cluster-by SalesWH sales.orders \
+fdw --yes tables cluster-by SalesWH sales.orders \
   --cluster-by customer_id --cluster-by sale_date
 
 # Remove clustering (omit --cluster-by entirely)
-fdw -w MyWorkspace --yes tables cluster-by SalesWH sales.orders
+fdw --yes tables cluster-by SalesWH sales.orders
 
 # Inspect current clustering columns
-fdw -w MyWorkspace tables cluster-columns SalesWH sales.orders
+fdw tables cluster-columns SalesWH sales.orders
 ```
 
 **Targets:** Data Warehouse only · **MCP:** `set_cluster_columns` (destructive — copies the full table), `get_cluster_columns`.
@@ -288,10 +297,10 @@ fdw -w MyWorkspace tables cluster-columns SalesWH sales.orders
 
 ```shell
 # Current-state clone
-fdw -w MyWorkspace tables clone SalesWH --source sales.orders --name sales.orders_backup
+fdw tables clone --source sales.orders --name sales.orders_backup
 
 # Point-in-time clone (UTC, within retention)
-fdw -w MyWorkspace tables clone SalesWH \
+fdw tables clone \
   --source sales.orders --name sales.orders_may_snapshot \
   --at 2026-05-20T14:00:00
 ```
@@ -299,28 +308,28 @@ fdw -w MyWorkspace tables clone SalesWH \
 **Rename** a table or view (`sp_rename`; the new name must be **unqualified** — you can't move objects across schemas):
 
 ```shell
-fdw -w MyWorkspace tables rename SalesWH sales.orders_2025 --new-name orders_archive_2025
-fdw -w MyWorkspace views rename SalesWH sales.vw_recent --new-name vw_revenue
+fdw tables rename SalesWH sales.orders_2025 --new-name orders_archive_2025
+fdw views rename SalesWH sales.vw_recent --new-name vw_revenue
 ```
 
 **Clear** a table (`TRUNCATE TABLE` — removes all rows, keeps the structure):
 
 ```shell
-fdw -w MyWorkspace --yes tables clear SalesWH staging.raw_products
+fdw --yes tables clear SalesWH staging.raw_products
 ```
 
 **Health-check** a table on a **SQL Analytics Endpoint** — this is the inverse of the usual guard: `tables health-check` runs `sp_get_table_health_metrics` (Delta/Parquet layout diagnostics) and is **rejected on a Data Warehouse**:
 
 ```shell
-fdw -w MyWorkspace tables health-check MySqlEndpoint dbo.FactSales
+fdw tables health-check MySqlEndpoint dbo.FactSales
 ```
 
 **Tear down** when you're done:
 
 ```shell
-fdw -w MyWorkspace --yes views drop SalesWH sales.vw_orders_by_month
-fdw -w MyWorkspace --yes tables delete SalesWH sales.orders
-fdw -w MyWorkspace --yes schemas delete SalesWH sales --cascade
+fdw --yes views drop SalesWH sales.vw_orders_by_month
+fdw --yes tables delete SalesWH sales.orders
+fdw --yes schemas delete SalesWH sales --cascade
 ```
 
 `schemas delete --cascade` first drops **all tables, views, functions, and stored procedures** in the schema. Without `--cascade`, the engine rejects `DROP SCHEMA` on a non-empty schema. On a SQL Analytics Endpoint, cascade can't drop tables (no `DROP TABLE` there), so a schema still holding tables won't drop — remove them from the warehouse first.

@@ -34,10 +34,10 @@ Fabric offers several ingestion mechanisms. `COPY INTO` — what this tool uses 
     The target workspace is a **global** option: `fdw -w <workspace> …`, falling back to your configured default. The warehouse is a positional `[ITEM]`. So every command below has the shape:
 
     ```
-    fdw -w <workspace> <group> <command> [ITEM] …
+    fdw [-w <workspace>] <group> <command> [ITEM] …
     ```
 
-    not `<command> <workspace> <item> …`. `fdw` is the short alias for `fabric-dw`.
+    not `<command> <workspace> <item> …`. Once the [defaults](#set-your-defaults) are set, both `-w <workspace>` and the optional `[ITEM]` positional can be omitted (the examples below do).
 
 ---
 
@@ -65,6 +65,19 @@ Two decisions shape the whole workflow:
 
 ---
 
+## Set your defaults
+
+Store the workspace and warehouse once so you do not repeat them on every command:
+
+```shell
+fdw config set workspace MyWorkspace
+fdw config set warehouse SalesWH
+```
+
+The rest of this guide assumes these defaults are set, so the examples omit `-w MyWorkspace` and drop the warehouse positional where it is optional. Any command still accepts an explicit `-w`/`--workspace` or a positional `[ITEM]` to override them. Commands that take a trailing required argument (such as `tables load … QUALIFIED_NAME`) keep the warehouse positional so the remaining arguments stay unambiguous. See [Configuration & defaults](../commands/config.md).
+
+---
+
 ## Step 1 — (optional) create the schema
 
 If your destination schema does not exist yet, create it. `dbo` always exists, so this step is only needed for custom schemas such as `staging` or `reporting`.
@@ -72,7 +85,7 @@ If your destination schema does not exist yet, create it. `dbo` always exists, s
 === "CLI"
 
     ```shell
-    fdw -w MyWorkspace schemas create SalesWH staging
+    fdw schemas create SalesWH staging
     ```
 
 === "MCP"
@@ -96,30 +109,30 @@ Skip this step if you plan to auto-create with `tables load --create` (see [Step
 
     ```shell
     # Empty table, schema from a Parquet footer (no rows read)
-    fdw -w MyWorkspace tables create SalesWH \
+    fdw tables create \
       --name dbo.sales \
       --from-parquet ./exports/sales.parquet
 
     # Empty table, schema inferred from a CSV header + sample
-    fdw -w MyWorkspace tables create SalesWH \
+    fdw tables create \
       --name staging.raw_products \
       --from-csv ./data/products.csv --varchar-length 500
 
     # Empty table from explicit inline columns
-    fdw -w MyWorkspace tables create SalesWH \
+    fdw tables create \
       --name dbo.events \
       --column "event_id:BIGINT:notnull" \
       --column "event_type:VARCHAR(100)" \
       --column "occurred_at:DATETIME2(7)"
 
     # Explicit schema from JSON, plus an extra column
-    fdw -w MyWorkspace tables create SalesWH \
+    fdw tables create \
       --name dbo.audit_log \
       --from-schema ./schemas/audit_log.json \
       --column "inserted_at:DATETIME2(7):notnull"
 
     # CTAS — populate from a query
-    fdw -w MyWorkspace tables create SalesWH \
+    fdw tables create \
       --name dbo.orders_2026 \
       --select "SELECT * FROM dbo.orders WHERE YEAR(sale_date) = 2026"
     ```
@@ -169,13 +182,13 @@ Supported formats:
 
 ```shell
 # Load a local CSV into an existing table (header row present)
-fdw -w MyWorkspace tables load SalesWH dbo.sales --file data.csv
+fdw tables load SalesWH dbo.sales --file data.csv
 
 # Load a local Parquet file
-fdw -w MyWorkspace tables load SalesWH dbo.events --file events.parquet
+fdw tables load SalesWH dbo.events --file events.parquet
 
 # Load a local JSON file (converted to Parquet internally; requires pyarrow)
-fdw -w MyWorkspace tables load SalesWH dbo.products --file products.json
+fdw tables load SalesWH dbo.products --file products.json
 ```
 
 ### Remote URL (`--url`)
@@ -194,12 +207,12 @@ For OneLake or same-tenant URLs no credential is needed (`COPY INTO` runs under 
 
 ```shell
 # Load from a remote OneLake URL (no credential needed)
-fdw -w MyWorkspace tables load SalesWH dbo.orders \
+fdw tables load SalesWH dbo.orders \
     --url "https://onelake.dfs.fabric.microsoft.com/ws/lh.Lakehouse/Files/orders.parquet" \
     --format parquet
 
 # Load from Azure Blob Storage with a SAS token
-fdw -w MyWorkspace tables load SalesWH dbo.events \
+fdw tables load SalesWH dbo.events \
     --url "https://myaccount.blob.core.windows.net/data/events.csv" \
     --format csv --credential-type sas --secret "?sv=2021&..."
 ```
@@ -227,17 +240,17 @@ Pass `--create` (local files only; requires `pyarrow`) to infer the schema from 
 
 ```shell
 # Auto-create from a Parquet schema, then load
-fdw -w MyWorkspace tables load SalesWH dbo.sales --file data.parquet --create
+fdw tables load SalesWH dbo.sales --file data.parquet --create
 
 # Auto-create from CSV, forcing all columns to VARCHAR
-fdw -w MyWorkspace tables load SalesWH dbo.raw --file raw.csv --create --all-varchar
+fdw tables load SalesWH dbo.raw --file raw.csv --create --all-varchar
 
 # Replace the table (drop + recreate + load), skip the confirmation, drop on failure
-fdw -w MyWorkspace tables load SalesWH dbo.sales --file data.parquet --create \
+fdw tables load SalesWH dbo.sales --file data.parquet --create \
     --if-exists replace -y --cleanup-on-failure
 
 # Auto-create with CLUSTER BY (columns must exist in the inferred schema)
-fdw -w MyWorkspace tables load SalesWH dbo.sales --file data.parquet --create \
+fdw tables load SalesWH dbo.sales --file data.parquet --create \
     --cluster-by SaleDate --cluster-by CustomerID
 ```
 
@@ -258,17 +271,17 @@ Confirm the data landed:
 === "CLI"
 
     ```shell
-    # Row count
-    fdw -w MyWorkspace tables count SalesWH dbo.sales
+    # Row count (warehouse positional kept — table name follows)
+    fdw tables count SalesWH dbo.sales
 
     # Sample some rows
-    fdw -w MyWorkspace tables read SalesWH dbo.sales --count 5
+    fdw tables read SalesWH dbo.sales --count 5
 
     # Inspect column metadata (names, types, nullability)
-    fdw -w MyWorkspace tables columns SalesWH dbo.sales
+    fdw tables columns SalesWH dbo.sales
 
     # List tables in the schema
-    fdw -w MyWorkspace tables list SalesWH --schema dbo
+    fdw tables list --schema dbo
     ```
 
 === "MCP"
@@ -290,15 +303,15 @@ Statistics are **not** updated automatically after a load. Create or update sing
 === "CLI"
 
     ```shell
-    # Create a statistic on a column (full scan; --name optional, auto-generated when omitted)
-    fdw -w MyWorkspace statistics create SalesWH \
-      --table dbo.sales --column SaleDate
+    # Create a single-column statistic (full scan; --name is required)
+    fdw statistics create \
+      --table dbo.sales --column SaleDate --name stat_sales_saledate
 
-    # Update an existing statistic after a subsequent load
-    fdw -w MyWorkspace statistics update SalesWH dbo.sales _stat_sales_saledate
+    # Update an existing statistic after a subsequent load (warehouse positional kept — names follow)
+    fdw statistics update SalesWH dbo.sales stat_sales_saledate
 
     # Inspect a statistic (header, density vector, histogram)
-    fdw -w MyWorkspace statistics show SalesWH dbo.sales _stat_sales_saledate
+    fdw statistics show SalesWH dbo.sales stat_sales_saledate
     ```
 
 === "MCP"

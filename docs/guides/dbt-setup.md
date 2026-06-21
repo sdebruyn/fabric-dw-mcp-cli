@@ -4,18 +4,18 @@ title: dbt setup
 
 # Set up a dbt environment
 
-This guide walks an analytics engineer end-to-end through standing up a working [dbt](https://docs.getdbt.com/) environment on a Microsoft Fabric Data Warehouse, using `fabric-dw` to do the provisioning and to generate a correct `profiles.yml` automatically:
+This guide walks an analytics engineer end-to-end through standing up a working [dbt](https://docs.getdbt.com/) environment on a Microsoft Fabric Data Warehouse with `fabric-dw`. The headline feature is `fdw dbt init --with-sources`: it **introspects the live warehouse and writes a complete `models/staging/_sources.yml`** — one dbt `source:` per schema, listing every table (with column names and types) — so you never hand-author source definitions:
 
 1. **Provision** a new Warehouse.
-2. **Get the SQL connection details** dbt needs (host + database).
-3. **Scaffold and configure** a dbt project for the [dbt-fabric](https://docs.getdbt.com/docs/core/connect-data-platform/fabric-setup) adapter.
+2. **Scaffold** a dbt project for the [dbt-fabric](https://docs.getdbt.com/docs/core/connect-data-platform/fabric-setup) adapter, with the connection details (host + database) filled in automatically.
+3. **Provision all your dbt sources** — `--with-sources` generates `_sources.yml` from the warehouse's real schemas and tables.
 4. **Verify** the connection with `dbt debug` and build a model with `dbt run`.
 
-Microsoft's own [tutorial](https://learn.microsoft.com/fabric/data-warehouse/tutorial-setup-dbt?WT.mc_id=MVP_310840) requires you to find the SQL analytics endpoint in the portal and hand-author `profiles.yml`. `fabric-dw` automates exactly that step, so this guide closes the gap between Microsoft's manual portal steps and a fully scriptable path.
+Microsoft's own [tutorial](https://learn.microsoft.com/fabric/data-warehouse/tutorial-setup-dbt?WT.mc_id=MVP_310840) requires you to find the SQL analytics endpoint in the portal, hand-author `profiles.yml`, and write every source definition yourself. `fabric-dw` automates all of that, so this guide closes the gap between Microsoft's manual portal steps and a fully scriptable path.
 
 !!! tip "Using an AI assistant? The `dbt-setup` skill does all of this for you"
 
-    Everything below is the **human, copy-pasteable narrative** for someone driving `fabric-dw` from a terminal. If you drive an AI assistant (Claude) against the [MCP server](../mcp.md), the shipped [`dbt-setup` Agent Skill](../skills.md#dbt-setup) automates the same provision → inspect → scaffold → verify flow through the MCP tools. The CLI commands here and the skill are two front-ends to the same logic — pick whichever fits your workflow.
+    Everything below is the **human, copy-pasteable narrative** for someone driving `fabric-dw` from a terminal. If you drive an AI assistant (Claude) against the [MCP server](../mcp.md), the shipped [`dbt-setup` Agent Skill](../skills.md#dbt-setup) automates the same provision → scaffold → sources → verify flow through the MCP tools. The CLI commands here and the skill are two front-ends to the same logic — pick whichever fits your workflow.
 
 ---
 
@@ -60,20 +60,22 @@ export AZURE_CLIENT_ID=<your-client-id>
 export AZURE_CLIENT_SECRET=<your-client-secret>
 ```
 
-Microsoft recommends interactive (`CLI`) auth for working on a warehouse by hand, and service principals for automation — see the [tutorial's considerations](https://learn.microsoft.com/fabric/data-warehouse/tutorial-setup-dbt?WT.mc_id=MVP_310840#considerations). The mode you choose here is also what the scaffolder maps into the dbt profile in [Step 4](#step-4-scaffold-the-dbt-project).
+Microsoft recommends interactive (`CLI`) auth for working on a warehouse by hand, and service principals for automation — see the [tutorial's considerations](https://learn.microsoft.com/fabric/data-warehouse/tutorial-setup-dbt?WT.mc_id=MVP_310840#considerations). The mode you choose here is also what the scaffolder maps into the dbt profile in [Step 3](#step-3-scaffold-the-dbt-project).
 
 See the [Authentication reference](../authentication.md) for the full credential chain and every environment variable.
 
-!!! info "Set a default workspace to type less"
+---
 
-    Every command below takes its target workspace from the global `-w/--workspace NAME|GUID` option. To avoid repeating it, set a default once:
+## Set your defaults
 
-    ```shell
-    fdw config set workspace "Sales Workspace"
-    fdw config set warehouse SalesWH        # optional: a default warehouse too
-    ```
+Once you are signed in, store the workspace so you do not repeat it on every command:
 
-    The examples below show the explicit `-w` form so they are self-contained.
+```shell
+fdw config set workspace "Sales Workspace"
+fdw config set warehouse SalesWH        # optional — once the warehouse exists (Step 2)
+```
+
+The rest of this guide assumes the workspace default is set, so the examples omit `-w "Sales Workspace"`. Any command still accepts an explicit `-w`/`--workspace NAME|GUID` to override it. The warehouse default fills optional `[ITEM]` positionals once the warehouse has been provisioned; commands here that take a required name (`warehouses create NAME`, `dbt init … FOLDER`, `sql-endpoints get ENDPOINT`) still spell out the warehouse. See [Configuration & defaults](../commands/config.md).
 
 ---
 
@@ -82,7 +84,7 @@ See the [Authentication reference](../authentication.md) for the full credential
 Create a new warehouse with [`fdw warehouses create`](../commands/warehouses.md#warehouses-create). `NAME` is positional; the workspace comes from the global `-w` option.
 
 ```shell
-fdw -w "Sales Workspace" warehouses create SalesWH --description "dbt target warehouse"
+fdw warehouses create SalesWH --description "dbt target warehouse"
 ```
 
 `fabric-dw` issues the create request, **polls the create operation to completion**, and re-reads the warehouse so the returned object is fully populated — when the command returns, the warehouse is ready to connect to.
@@ -98,125 +100,92 @@ If a service principal or team needs access (for example, the identity that will
 
 ---
 
-## Step 3 — Inspect the connection details
-
-dbt's `profiles.yml` needs two values, and Fabric maps them like this:
-
-- **`host`** — the **SQL analytics endpoint** connection string (the TDS server, `<guid>.datawarehouse.fabric.microsoft.com`).
-- **`database`** — the **warehouse display name** (Fabric uses the item name as the Initial Catalog). For `SalesWH`, the database is simply `SalesWH`.
-
-You can read the host with [`fdw sql-endpoints get`](../commands/sql-endpoints.md#sql-endpoints-get):
-
-```shell
-fdw -w "Sales Workspace" sql-endpoints get SalesWH
-```
-
-!!! note "Eventual consistency right after `create`"
-
-    The SQL analytics endpoint is provisioned with eventual consistency, so its connection string can be empty for a short window after `warehouses create`. `fabric-dw` **polls until the connection string is non-empty** (default timeout 120 s), so you do not normally have to retry by hand.
-
-You **do not** have to copy this value anywhere: `fdw dbt init` in the next step resolves the host itself, so the inspection here is just to understand what ends up in the profile. The [Find the warehouse connection string](https://learn.microsoft.com/fabric/data-warehouse/how-to-connect?WT.mc_id=MVP_310840) page confirms the same `host` = SQL connection string, `database` = item name mapping.
-
----
-
-## Step 4 — Scaffold the dbt project
+## Step 3 — Scaffold the dbt project
 
 [`fdw dbt init`](../commands/dbt.md#dbt-init) creates the whole project directory pre-wired to the warehouse. `ITEM` (the warehouse name or GUID) is optional if you set a default warehouse; `FOLDER` is the target directory.
 
 ```shell
-fdw -w "Sales Workspace" dbt init SalesWH ./sales_dbt
+fdw dbt init SalesWH ./sales_dbt
 ```
 
-This writes `dbt_project.yml`, `profiles.yml`, `requirements.txt`, `.gitignore`, the standard dbt directories, a sample model, a `README.md`, and (with `--with-sources`) a real `models/staging/_sources.yml` introspected from the warehouse. If `git` is on your PATH and the folder is not already a repository, `git init` runs automatically. No dbt installation is required to scaffold — `fabric-dw` writes every file itself.
+This writes `dbt_project.yml`, `profiles.yml`, `requirements.txt`, `.gitignore`, the standard dbt directories, a sample model, a `README.md`, and a `models/staging/_sources.yml` (a placeholder, or **real source definitions** with `--with-sources` — see [Step 4](#step-4-provision-all-your-dbt-sources)). If `git` is on your PATH and the folder is not already a repository, `git init` runs automatically. No dbt installation is required to scaffold — `fabric-dw` writes every file itself.
 
-Useful options (see the [dbt command reference](../commands/dbt.md#dbt-init) for the full list):
+### The connection is configured for you
 
-| Option | Default | Description |
-| --- | --- | --- |
-| `--project-name TEXT` | sanitised folder name | dbt project name. |
-| `--profile-name TEXT` | same as project name | dbt profile name. |
-| `--schema TEXT` | `dbo` | Default target schema for models. |
-| `--target TEXT` | `dev` | dbt target name. |
-| `--threads INTEGER` | `4` | Number of dbt threads (1–64). |
-| `--auth [auto\|CLI\|ServicePrincipal\|interactive\|sp]` | from the active `--auth` mode | dbt-fabric authentication override. |
-| `--profiles-dir [project\|home]` | `project` | `project` writes `profiles.yml` in the folder; `home` merges into `~/.dbt/profiles.yml` (backs up an existing file). |
-| `--with-sources` | off | Introspect the live warehouse and generate `models/staging/_sources.yml` from its real schemas, tables, and column types. |
-| `--force` | off | Scaffold into a non-empty folder instead of refusing. |
+You do **not** hand-author `profiles.yml`. `fdw dbt init` resolves the warehouse's SQL analytics endpoint itself and fills in the two values dbt needs:
 
-### How the CLI fills in `profiles.yml`
+- **`host`** — the SQL analytics endpoint TDS server (`<guid>.datawarehouse.fabric.microsoft.com`), polled until the connection string is ready (the endpoint is eventually consistent right after `create`).
+- **`database`** — the warehouse display name (Fabric uses the item name as the Initial Catalog). For `SalesWH`, the database is simply `SalesWH`.
 
-| dbt `profiles.yml` key | Fabric value | How `fabric-dw` supplies it |
-| --- | --- | --- |
-| `type` | `fabric` | hard-coded by the scaffolder |
-| `driver` | `ODBC Driver 18 for SQL Server` | hard-coded by the scaffolder |
-| `host` | SQL analytics endpoint (TDS server) | resolved connection string, polled until ready |
-| `database` | warehouse display name (Initial Catalog) | resolved item name |
-| `schema` | `dbo` (default) | `--schema` |
-| `threads` | `4` (default) | `--threads` |
-| `authentication` | `auto` / `CLI` / `ServicePrincipal` | mapped from `--auth` |
+The `authentication` value is mapped from your sign-in mode (`default` → `auto`, `interactive` → `CLI`, `sp` → `ServicePrincipal`). With `--auth sp`, secrets are emitted as Jinja2 `env_var()` placeholders — never literal secrets — so the file is safe to commit. The full option list (`--schema`, `--target`, `--threads`, `--profiles-dir`, `--auth`, …), the exact generated `profiles.yml`, and the auth mapping live in the [dbt command reference](../commands/dbt.md#dbt-init); the credential chain is in the [Authentication reference](../authentication.md).
 
-The **authentication** value is mapped from your CLI auth mode:
+---
 
-| CLI `--auth` | dbt `authentication` |
-| --- | --- |
-| `default` | `auto` |
-| `interactive` | `CLI` |
-| `sp` | `ServicePrincipal` |
+## Step 4 — Provision all your dbt sources
 
-You can override it independently with `fdw dbt init … --auth`, where `interactive` and `sp` are accepted aliases for `CLI` and `ServicePrincipal`.
-
-### The generated `profiles.yml`
-
-With the default (`auto`) authentication, the generated `profiles.yml` looks like this — note the top-level `config: partial_parse` block:
-
-```yaml
-config:
-  partial_parse: true
-saleswh:
-  target: dev
-  outputs:
-    dev:
-      type: fabric
-      driver: ODBC Driver 18 for SQL Server
-      host: abc123def456ghij.datawarehouse.fabric.microsoft.com
-      database: SalesWH
-      schema: dbo
-      threads: 4
-      authentication: auto
-```
-
-### Service principal: secrets become `env_var()` placeholders
-
-When you scaffold with `--auth sp` (or `--auth ServicePrincipal`), the profile uses `authentication: ServicePrincipal` and emits the credentials as Jinja2 `env_var()` placeholders — **never literal secrets**:
-
-```yaml
-config:
-  partial_parse: true
-saleswh:
-  target: dev
-  outputs:
-    dev:
-      type: fabric
-      driver: ODBC Driver 18 for SQL Server
-      host: abc123def456ghij.datawarehouse.fabric.microsoft.com
-      database: SalesWH
-      schema: dbo
-      threads: 4
-      authentication: ServicePrincipal
-      tenant_id: '{{ env_var(''AZURE_TENANT_ID'') }}'
-      client_id: '{{ env_var(''AZURE_CLIENT_ID'') }}'
-      client_secret: '{{ env_var(''AZURE_CLIENT_SECRET'') }}'
-```
-
-Set the matching environment variables before running dbt, so the placeholders resolve at runtime:
+This is the part you would otherwise do by hand. Add `--with-sources` and `fdw dbt init` **introspects the live warehouse** and writes a complete `models/staging/_sources.yml` — so you never type out a source definition:
 
 ```shell
-export AZURE_TENANT_ID=<your-tenant-id>
-export AZURE_CLIENT_ID=<your-client-id>
-export AZURE_CLIENT_SECRET=<your-client-secret>
+fdw dbt init SalesWH ./sales_dbt --with-sources
 ```
 
-This keeps the generated file safe to commit. See the [dbt-fabric resource configs](https://docs.getdbt.com/reference/resource-configs/fabric-configs) for the full set of profile fields.
+The `--with-sources` flag generates `models/staging/_sources.yml` **from the warehouse's actual schemas and tables**: one dbt `source:` entry **per schema**, each listing every table in that schema (with its column names and data types). Without `--with-sources`, you get a minimal placeholder `_sources.yml` to fill in yourself.
+
+### The generated `models/staging/_sources.yml`
+
+With `--with-sources`, the file has one `sources:` entry per schema. Each source's `database` is the warehouse name and its `schema` is the schema name; every table is listed under `tables:`, with columns and their data types:
+
+```yaml
+version: 2
+sources:
+  - name: sales
+    database: SalesWH
+    schema: sales
+    tables:
+      - name: customer
+        columns:
+          - name: customer_id
+            data_type: bigint
+          - name: region
+            data_type: varchar
+      - name: orders
+        columns:
+          - name: order_id
+            data_type: bigint
+          - name: order_date
+            data_type: date
+  - name: dbo
+    database: SalesWH
+    schema: dbo
+    tables:
+      - name: my_first_model
+```
+
+Without `--with-sources`, the placeholder looks like this — replace it with your own definitions:
+
+```yaml
+version: 2
+sources:
+  - name: placeholder
+    description: Replace with your source definitions.
+    database: "{{ env_var('DBT_DATABASE', 'SalesWH') }}"
+    schema: dbo
+    tables: []
+```
+
+### Reference the sources from your models
+
+dbt models read from these sources with the [`source()`](https://docs.getdbt.com/reference/dbt-jinja-functions/source) function — `{{ source('<schema>', '<table>') }}`, where the first argument is the `source:` name (the schema) and the second is the table:
+
+```sql
+-- models/staging/stg_customers.sql
+select
+    customer_id,
+    region
+from {{ source('sales', 'customer') }}
+```
+
+Because every schema and table is already declared in `_sources.yml`, `source()` resolves immediately and `dbt run` / `dbt test` can build on top of the real warehouse objects without any manual source authoring.
 
 ---
 
@@ -240,11 +209,11 @@ A passing `dbt debug` confirms the host, database, ODBC driver, and authenticati
 You can cross-check from `fabric-dw` itself that the model landed:
 
 ```shell
-# Confirm the warehouse answers SQL
-fdw -w "Sales Workspace" sql exec SalesWH -q "select 1"
+# Confirm the warehouse answers SQL (warehouse positional spelled out — the warehouse default is optional in this guide)
+fdw sql exec SalesWH -q "select 1"
 
 # List the tables/views the run produced
-fdw -w "Sales Workspace" tables list SalesWH
+fdw tables list SalesWH
 ```
 
 !!! warning "Use `sql exec`, not `sql query`"
@@ -259,11 +228,11 @@ If you drive an AI client over the [MCP server](../mcp.md), the same scaffold is
 
 - `profiles_yml`
 - `dbt_project_yml`
-- `sources_yml`
+- `sources_yml` — the same `models/staging/_sources.yml` content as the CLI: **real source definitions for every schema and table when called with `with_sources=True`**, otherwise the placeholder.
 - `requirements_txt`
 - `gitignore`
 
-The AI agent writes those strings to disk itself. The shipped [`dbt-setup` Agent Skill](../skills.md#dbt-setup) orchestrates the whole flow — it resolves the warehouse with `get_warehouse`, confirms connectivity with `list_schemas` / `list_tables`, calls `generate_dbt_profile` (with `with_sources=true` for column-rich sources), writes the files, and tells you to run `pip install -r requirements.txt`, `dbt debug`, and `dbt run`. In short: **the guide is the CLI narrative; the skill is the assistant-driven equivalent.**
+The AI agent writes those strings to disk itself. The shipped [`dbt-setup` Agent Skill](../skills.md#dbt-setup) orchestrates the whole flow — it resolves the warehouse with `get_warehouse`, confirms connectivity with `list_schemas` / `list_tables`, calls `generate_dbt_profile` with `with_sources=True` to provision the sources, writes the files, and tells you to run `pip install -r requirements.txt`, `dbt debug`, and `dbt run`. In short: **the guide is the CLI narrative; the skill is the assistant-driven equivalent.**
 
 ---
 
