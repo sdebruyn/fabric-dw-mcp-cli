@@ -252,40 +252,48 @@ _install_id_cache: str | None = None
 # ---------------------------------------------------------------------------
 
 _TENANT_ID_FILE = "tenant_id"
-_tenant_id_cache: str | None = None
-_tenant_id_cache_loaded: bool = False
+_UNSET: object = object()  # sentinel — distinguishes "not yet read" from None/"no value"
+_tenant_id_cache: str | None | object = _UNSET  # _UNSET → not yet loaded; None → loaded, absent
 
 
 def _get_cached_tenant_id() -> str | None:
     """Return the persisted tenant UUID, or None if missing/empty/unreadable.
 
-    In-memory cached after the first read.  Never raises.
+    In-memory cached after the first read (sentinel ``_UNSET`` means not yet read).
+    Never raises.
     """
-    global _tenant_id_cache, _tenant_id_cache_loaded  # noqa: PLW0603
-    if _tenant_id_cache_loaded:
-        return _tenant_id_cache
+    global _tenant_id_cache  # noqa: PLW0603
+    if _tenant_id_cache is not _UNSET:
+        # _tenant_id_cache is str | None here (set either below or by _persist_tenant_id).
+        return _tenant_id_cache if isinstance(_tenant_id_cache, str) else None
 
+    result: str | None = None
     with contextlib.suppress(Exception):
         id_file = _config_dir() / _TENANT_ID_FILE
         if id_file.exists():
             value = id_file.read_text(encoding="utf-8").strip()
             if value:
-                _tenant_id_cache = value
+                result = value
 
-    _tenant_id_cache_loaded = True
-    return _tenant_id_cache
+    _tenant_id_cache = result
+    return result
 
 
 def _persist_tenant_id(tid: str) -> None:
-    """Write the tenant UUID to the config directory.  Fail-safe: never raises."""
-    global _tenant_id_cache, _tenant_id_cache_loaded  # noqa: PLW0603
+    """Write the tenant UUID to the config directory.  Fail-safe: never raises.
+
+    The in-memory cache is only updated when the write succeeds, so a
+    read-only-FS failure does not leave the cache in a "loaded but not
+    persisted" state.  The current process stays correct regardless via
+    ``_tenant_id_override``.
+    """
+    global _tenant_id_cache  # noqa: PLW0603
     with contextlib.suppress(Exception):
         config_dir = _config_dir()
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / _TENANT_ID_FILE).write_text(tid, encoding="utf-8")
-    # Keep in-memory cache in sync even if the write silently failed.
-    _tenant_id_cache = tid
-    _tenant_id_cache_loaded = True
+        # Cache only after a successful write (C1: don't cache on FS failure).
+        _tenant_id_cache = tid
 
 
 def _get_install_id() -> str:
@@ -420,6 +428,10 @@ def _build_envelope() -> dict[str, object]:
     # Prefer the runtime-set override (populated by #366 token-claim hook),
     # then fall back to environment variables, then the persisted cache (#652),
     # then "unknown" so the key is always present on every event (Finding 2 / #477).
+    # Bounded staleness: if telemetry was disabled on the previous run, the cache
+    # may hold a tenant from an earlier authenticated run against a different tenant.
+    # This is the accepted trade-off — at most one misattributed lifecycle event
+    # (e.g. app_started) before set_tenant_id() corrects it in the same process.
     tenant_id: str = (
         _tenant_id_override
         or os.environ.get("AZURE_TENANT_ID")
@@ -989,6 +1001,13 @@ def set_tenant_id(tenant_id: str) -> None:
     is propagated here so every subsequent event envelope carries the tenant.
     Env-var fallback (``AZURE_TENANT_ID`` / ``FABRIC_INTERACTIVE_TENANT_ID``) is
     used by :func:`_build_envelope` when this override has not been set.
+
+    **Persistence**: when :func:`telemetry_enabled` returns ``True`` at the time
+    of this call, the resolved tenant is also written to the persistent tenant
+    store (``$XDG_CONFIG_HOME/fabric-dw/tenant_id``) so that subsequent process
+    invocations can read it back before authentication completes.  When telemetry
+    is disabled the value is kept only in-memory for the lifetime of the current
+    process and nothing is written to disk.
 
     Args:
         tenant_id: The tenant UUID string extracted from the access token.

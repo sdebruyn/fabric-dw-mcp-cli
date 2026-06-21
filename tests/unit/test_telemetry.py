@@ -1367,6 +1367,66 @@ def test_env_var_takes_precedence_over_cache(
     assert envelope["tenant_id"] == "env-tenant-wins"
 
 
+def test_stale_cache_corrected_by_set_tenant_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Document the accepted bounded-staleness behaviour (#652, C5).
+
+    Sequence:
+      run1  telemetry ON  → set_tenant_id("tenant-A") persists to cache
+      run2  telemetry OFF → set_tenant_id("tenant-B") does NOT update cache
+      run3  telemetry ON  → app_started fires BEFORE auth (reads stale "tenant-A")
+                          → set_tenant_id("tenant-B") corrects it for every
+                            subsequent event in the same process
+
+    At most one lifecycle event (app_started) is misattributed per run — this is
+    the intentional, bounded trade-off documented in _build_envelope.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("FABRIC_TELEMETRY_CONNECTION_STRING", _DUMMY_CONN_STR)
+    monkeypatch.delenv("AZURE_TENANT_ID", raising=False)
+    monkeypatch.delenv("FABRIC_INTERACTIVE_TENANT_ID", raising=False)
+    monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.delenv("JENKINS_URL", raising=False)
+    monkeypatch.delenv("TRAVIS", raising=False)
+    monkeypatch.delenv("CIRCLECI", raising=False)
+    monkeypatch.delenv("GITLAB_CI", raising=False)
+    monkeypatch.delenv("TF_BUILD", raising=False)
+    monkeypatch.delenv("FABRIC_TELEMETRY", raising=False)
+
+    # run1: telemetry ON → tenant-A written to cache
+    mod = _reload_telemetry()
+    assert mod.telemetry_enabled() is True  # type: ignore[attr-defined]
+    mod.set_tenant_id("tenant-A")  # type: ignore[attr-defined]
+
+    # run2: telemetry OFF → tenant-B NOT written to cache
+    monkeypatch.setenv("FABRIC_DISABLE_TELEMETRY", "1")
+    mod2 = _reload_telemetry()
+    assert mod2.telemetry_enabled() is False  # type: ignore[attr-defined]
+    mod2.set_tenant_id("tenant-B")  # type: ignore[attr-defined]
+    # Cache file still holds tenant-A
+    assert (tmp_path / "fabric-dw" / "tenant_id").read_text(encoding="utf-8").strip() == "tenant-A"
+
+    # run3: telemetry re-enabled; app_started fires before auth (no live override)
+    monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
+    mod3 = _reload_telemetry()
+    mod3._tenant_id_override = None  # type: ignore[attr-defined]
+
+    pre_auth_envelope = mod3._build_envelope()  # type: ignore[attr-defined]
+    # Stale cache value is used for the pre-auth event (bounded misattribution)
+    assert pre_auth_envelope["tenant_id"] == "tenant-A"
+
+    # After authentication, set_tenant_id corrects the override for this process
+    mod3.set_tenant_id("tenant-B")  # type: ignore[attr-defined]
+    post_auth_envelope = mod3._build_envelope()  # type: ignore[attr-defined]
+    assert post_auth_envelope["tenant_id"] == "tenant-B"
+    # And the cache is now updated with the correct tenant for future runs
+    assert (tmp_path / "fabric-dw" / "tenant_id").read_text(encoding="utf-8").strip() == "tenant-B"
+
+
 # ---------------------------------------------------------------------------
 # A3: marker file written AFTER notice is printed
 # ---------------------------------------------------------------------------
