@@ -24,6 +24,7 @@ from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.exceptions import FabricError, NotFoundError
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import WarehouseKind
+from fabric_dw.sql import tenant_from_connection_string_host
 
 _logger = logging.getLogger("fabric_dw.resolver")
 
@@ -389,6 +390,24 @@ class Resolver:
                 workspace_id,
             )
             conn = await resolve_lakehouse_connection_string(self._http, workspace_id, item_id)
+
+        # Decode the tenant ID from the connection-string hostname (zero-cost,
+        # no network request) and forward it to telemetry so subsequent events
+        # carry the correct tenant even before the first token round-trip.
+        # Fail-safe: tenant_from_connection_string_host never raises; ignore None.
+        #
+        # Token tid (identity tenant) takes precedence; the connection-string host
+        # (resource tenant) is a fallback only.  For B2B guest scenarios the two
+        # differ, and the JWT tid is the authoritative identity-plane value.
+        # cache_tenant_id_from_token() early-exits when _tenant_id_override is
+        # already set, so we only fill from the host when no token has been seen yet.
+        if conn is not None:
+            tenant_id = tenant_from_connection_string_host(conn)
+            if tenant_id is not None:
+                import fabric_dw.telemetry as _tel  # noqa: PLC0415
+
+                if _tel._tenant_id_override is None:
+                    _tel.set_tenant_id(tenant_id)
 
         display_name = str(generic_payload.get("displayName", str(item_id)))
         entry = ItemEntry(
