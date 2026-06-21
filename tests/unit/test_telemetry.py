@@ -615,7 +615,12 @@ def test_record_app_exited_enabled_calls_emit(
     mod = _reload_telemetry()
     emitted: list[tuple[str, dict[str, object]]] = []
 
-    def fake_emit(name: str, attrs: dict[str, object]) -> None:
+    def fake_emit(
+        name: str,
+        attrs: dict[str, object],
+        *,
+        omit_keys: set[str] | None = None,  # noqa: ARG001
+    ) -> None:
         emitted.append((name, attrs))
 
     with patch.object(mod, "emit_event", side_effect=fake_emit):  # type: ignore[attr-defined]
@@ -744,6 +749,25 @@ def test_app_exited_includes_auth_mode(monkeypatch: pytest.MonkeyPatch, tmp_path
     assert len(captured) == 1
     assert "auth_mode" in captured[0], (
         "app_exited must include auth_mode — it is emitted after auth is resolved and "
+        "the value is accurate by that point (#677)."
+    )
+
+
+def test_command_invoked_includes_auth_mode(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """command_invoked events MUST carry auth_mode (emitted after the first token acquisition).
+
+    Unlike lifecycle-start events (app_started, mcp_server_started), command_invoked
+    fires after the auth layer has called set_auth_mode(), so the value is accurate
+    and should always be present in the emitted envelope.
+    """
+    mod, captured = _setup_telemetry_with_fake_logger(monkeypatch, tmp_path)
+    mod.emit_event("command_invoked", {"name": "workspace.list", "status": "success"})  # type: ignore[attr-defined]
+
+    assert len(captured) == 1
+    assert "auth_mode" in captured[0], (
+        "command_invoked must include auth_mode — it fires after auth is resolved and "
         "the value is accurate by that point (#677)."
     )
 

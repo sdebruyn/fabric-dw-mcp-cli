@@ -781,7 +781,9 @@ class TestCliShutdownOrdering:
 
         call_order: list[str] = []
 
-        def _track_emit(event_name: str, _attrs: dict) -> None:
+        def _track_emit(
+            event_name: str, _attrs: dict, *, omit_keys: set[str] | None = None
+        ) -> None:
             call_order.append(f"emit:{event_name}")
 
         def _track_shutdown(_timeout_ms: int = 2000) -> None:

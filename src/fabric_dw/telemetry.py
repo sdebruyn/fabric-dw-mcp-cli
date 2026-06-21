@@ -908,6 +908,10 @@ def emit_event(
             record before emission.  Use this for lifecycle-start events that
             fire before auth is resolved so that a potentially-wrong
             ``auth_mode`` value is never emitted (e.g. ``omit_keys={"auth_mode"}``).
+            Only envelope keys (those present in the ``merged`` dict at the
+            time of the pop) can be suppressed.  The three special App Insights
+            keys written *after* the pop — ``microsoft.custom_event.name``,
+            ``enduser.pseudo.id``, and ``ai.operation.name`` — are unaffected.
     """
     if not telemetry_enabled():
         return
@@ -926,7 +930,7 @@ def emit_event(
         # lifecycle-start events (app_started, mcp_server_started) that fire
         # before auth is resolved — omitting auth_mode avoids emitting a
         # possibly-wrong value derived from _detect_auth_mode()'s env heuristic.
-        if omit_keys:
+        if omit_keys is not None:
             for key in omit_keys:
                 merged.pop(key, None)
 
