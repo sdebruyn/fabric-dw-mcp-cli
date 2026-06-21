@@ -111,28 +111,28 @@ fdw tables create \
 }
 ```
 
-### Infer a table from a JSON data file
+### Infer a table from a data file (Parquet, CSV, or JSON)
 
-Point `--from-json` at a JSONL file or a JSON file containing an array of objects and `fabric-dw` reads a bounded sample of records to infer the column schema — **no rows are loaded**. The usual inference options apply: `--all-varchar` to force every column to `VARCHAR`, `--varchar-length` to set the default string length, and `--sample-rows` to cap how many records are sampled. Load data afterwards with `tables load --format json`.
+All three file-based flags — `--from-parquet`, `--from-csv`, and `--from-json` — do the same thing conceptually: read only the schema from a data file and scaffold an **empty** table (no rows are read or inserted). How much of the file each flag reads differs by format:
+
+- **Parquet** — reads only the Parquet footer, which encodes exact column names and types; no row-group data is touched.
+- **CSV** — reads the header row plus a bounded sample of rows (controlled by `--sample-rows`) to infer types; accepts `--delimiter` and `--encoding` for non-default files.
+- **JSON** — reads a bounded sample of records from a JSONL file (one JSON object per line) or a JSON file containing an array of objects.
+
+**Shared options** (available on all three paths unless noted):
+
+| Option | Applies to | Effect |
+| --- | --- | --- |
+| `--all-varchar` | CSV, JSON | Force every inferred column to `VARCHAR` |
+| `--varchar-length N` | CSV, JSON, Parquet (default length for string cols) | Default string column length |
+| `--sample-rows N` | CSV, JSON | Cap the number of rows sampled for inference |
+| `--delimiter CHAR` | CSV only | Field delimiter (default `,`) |
+| `--encoding ENC` | CSV only | File encoding (default `utf-8`) |
+
+**Mutual exclusivity:** `--from-parquet`, `--from-csv`, `--from-json`, `--column`, and the CTAS flags `--select`/`--from-file` are all mutually exclusive — pick exactly one column source per `tables create` invocation.
 
 ```shell
-# data/audit_log.jsonl: one JSON object per line
-# {"id": 1, "action": "login", "occurred_at": "2026-01-01T00:00:00"}
-# ...
-
-fdw tables create \
-  --name sales.audit_log \
-  --from-json ./data/audit_log.jsonl --varchar-length 500
-```
-
-`--from-json` is **mutually exclusive** with `--column`, `--from-csv`, `--from-parquet`, and `--select`/`--from-file` (CTAS) — pick exactly one column source. It is **CLI-only**: the MCP `create_empty_table` tool takes an explicit `columns` list and does not do file-based inference; pass the resolved column list to `create_empty_table` instead.
-
-### Infer an empty table from a Parquet or CSV file
-
-Point `--from-parquet` / `--from-csv` at a file and `fabric-dw` reads only the schema (the Parquet footer, or the CSV header plus a bounded sample) to scaffold the columns — **no rows are read or inserted**. The CSV path takes the usual options (`--all-varchar`, `--varchar-length`, `--delimiter`, `--encoding`, `--sample-rows`).
-
-```shell
-# From a Parquet footer (exact types)
+# From a Parquet footer (exact types, no sampling)
 fdw tables create \
   --name sales.orders \
   --from-parquet ./exports/orders.parquet
@@ -141,7 +141,15 @@ fdw tables create \
 fdw tables create \
   --name staging.raw_products \
   --from-csv ./data/products.csv --varchar-length 500
+
+# From a JSONL file (one JSON object per line)
+# data/audit_log.jsonl: {"id": 1, "action": "login", "occurred_at": "2026-01-01T00:00:00"}
+fdw tables create \
+  --name sales.audit_log \
+  --from-json ./data/audit_log.jsonl --varchar-length 500
 ```
+
+Once the table is created, load data into it with `tables load --format <parquet|csv|json>`.
 
 !!! note "File inference is CLI-only"
 
