@@ -6,7 +6,9 @@ helper is added to fabric_dw.sql.
 
 from __future__ import annotations
 
+import sys
 import time
+import types
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
@@ -17,11 +19,24 @@ import respx
 from azure.core.credentials import AccessToken
 from azure.core.credentials_async import AsyncTokenCredential
 
-import fabric_dw.telemetry as _tel
 from fabric_dw.cache import LookupCache
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.resolver import Resolver
 from fabric_dw.sql import tenant_from_connection_string_host
+
+
+def _live_tel() -> types.ModuleType:
+    """Return the live telemetry module from sys.modules.
+
+    test_telemetry.py reloads the module between tests via _reload_telemetry(),
+    which replaces the object in sys.modules with a fresh one.  The module-level
+    ``_tel`` alias in this file may point to a stale object after such a reload.
+    Always using the sys.modules entry ensures monkeypatch and patch.object
+    operate on the same object that the resolver's deferred
+    ``import fabric_dw.telemetry`` will resolve to at call time.
+    """
+    return sys.modules["fabric_dw.telemetry"]
+
 
 # ---------------------------------------------------------------------------
 # Verified example from the issue description
@@ -131,6 +146,10 @@ async def test_resolver_feeds_tenant_to_telemetry(
 ) -> None:
     """When item() resolves a connection string whose host encodes a tenant,
     set_tenant_id() is called with the decoded tenant GUID."""
+    # Resolve the live module object at call time — test_telemetry.py may have
+    # reloaded it between tests, making the module-level _tel alias stale.
+    tel = _live_tel()
+
     # Safe telemetry setup: dummy instrumentation key, isolated XDG dir, reset override
     monkeypatch.setenv(
         "FABRIC_TELEMETRY_CONNECTION_STRING",
@@ -142,10 +161,9 @@ async def test_resolver_feeds_tenant_to_telemetry(
     monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
     monkeypatch.delenv("CI", raising=False)
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-    monkeypatch.setattr(_tel, "_tenant_id_override", None)
+    monkeypatch.setattr(tel, "_tenant_id_override", None)
     # Reset the warm in-memory cache sentinel so XDG redirection takes full effect.
-    monkeypatch.setattr(_tel, "_tenant_id_cache", _tel._UNSET)
-
+    monkeypatch.setattr(tel, "_tenant_id_cache", tel._UNSET)
     resolver, client, _cache = _make_resolver(tmp_path)
 
     recorded_tenant: list[str] = []
@@ -155,7 +173,7 @@ async def test_resolver_feeds_tenant_to_telemetry(
 
     with (
         respx.mock(assert_all_called=False) as mock,
-        patch.object(_tel, "set_tenant_id", side_effect=_capture_set_tenant),
+        patch.object(tel, "set_tenant_id", side_effect=_capture_set_tenant),
     ):
         # Generic item endpoint returns Warehouse type
         mock.get(_FABRIC_ITEM_GENERIC_URL).mock(
@@ -202,14 +220,19 @@ async def test_resolver_does_not_override_token_tenant(
     host-derived tenant must NOT overwrite it — token tid (identity) takes precedence."""
     existing_token_tenant = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"  # noqa: S105
 
+    # Resolve the live module object at call time (see test_resolver_feeds_tenant_to_telemetry).
+    tel = _live_tel()
+
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.delenv("FABRIC_TELEMETRY", raising=False)
     monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
     monkeypatch.delenv("CI", raising=False)
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-    # Simulate a token tid that was already captured before connection-string resolution.
-    monkeypatch.setattr(_tel, "_tenant_id_override", existing_token_tenant)
-    monkeypatch.setattr(_tel, "_tenant_id_cache", _tel._UNSET)
+    # Baseline: reset override first, then set it to the simulated token value.
+    monkeypatch.setattr(tel, "_tenant_id_override", None)
+    monkeypatch.setattr(tel, "_tenant_id_cache", tel._UNSET)
+    # Now set the simulated token tid — must survive connection-string resolution.
+    monkeypatch.setattr(tel, "_tenant_id_override", existing_token_tenant)
 
     resolver, client, _cache = _make_resolver(tmp_path)
 
@@ -220,7 +243,7 @@ async def test_resolver_does_not_override_token_tenant(
 
     with (
         respx.mock(assert_all_called=False) as mock,
-        patch.object(_tel, "set_tenant_id", side_effect=_capture_set_tenant),
+        patch.object(tel, "set_tenant_id", side_effect=_capture_set_tenant),
     ):
         mock.get(_FABRIC_ITEM_GENERIC_URL).mock(
             return_value=httpx.Response(
