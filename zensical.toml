@@ -14,7 +14,6 @@ watch = ["README.md", "CONTRIBUTING.md", "LICENSE", "SECURITY.md", "CODE_OF_COND
 nav = [
   { "Home" = "index.md" },
   { "Install" = "install.md" },
-  { "Concepts" = "concepts.md" },
   { "Commands" = [
     { "Overview" = "commands/index.md" },
     { "Audit" = "commands/audit.md" },
@@ -39,6 +38,7 @@ nav = [
     { "Workspaces" = "commands/workspaces.md" }
   ] },
   { "Reference" = [
+    { "Concepts" = "concepts.md" },
     { "Authentication" = "authentication.md" },
     { "Agent Skills" = "skills.md" },
     { "Exit codes" = "reference/exit-codes.md" },
