@@ -17,7 +17,7 @@ Every telemetry event includes a shared envelope of anonymous fields:
 | `install_method` | Best-effort detection: `pip`, `uv`, `pipx`, or `source`. |
 | `surface` | `cli` or `mcp` — which interface was used. |
 | `auth_mode` | Categorical authentication mode: `service_principal`, `github_oidc`, `azure_cli`, or `interactive`. **Never credentials.** |
-| `tenant_id` | Your Azure tenant ID, resolved from the access-token `tid` claim, the Fabric connection-string hostname, `AZURE_TENANT_ID`/`FABRIC_INTERACTIVE_TENANT_ID`, and a locally-cached value. This identifies the organisation (not an individual). |
+| `tenant_id` | Your Azure (Entra) tenant ID. |
 
 ### Lifecycle events
 
@@ -71,8 +71,6 @@ One `command_invoked` event is emitted after every CLI command and every MCP too
 - Connection strings or any credentials
 - File paths or environment variable values
 - Any other personally-identifiable information
-
-`tenant_id` is the only organisation-identifying field.
 
 ## Where telemetry data goes
 
