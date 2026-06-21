@@ -11,6 +11,7 @@ from typing import Any
 
 import click
 
+from fabric_dw import __version__
 from fabric_dw.auth import CredentialMode
 from fabric_dw.cli._context import CliContext
 from fabric_dw.logging import setup_logging
@@ -483,6 +484,13 @@ class _LazyGroup(_InstrumentedGroup):
     invoke_without_command=False,
     cls=_LazyGroup,
     context_settings={"help_option_names": ["-h", "--help"], "max_content_width": _HELP_MAX_WIDTH},
+)
+@click.version_option(
+    __version__,
+    "-V",
+    "--version",
+    prog_name="fabric-dw",
+    message="%(prog)s %(version)s",
 )
 @click.option(
     "--json",

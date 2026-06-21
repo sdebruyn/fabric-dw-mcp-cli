@@ -30,6 +30,7 @@ These options are placed immediately after `fabric-dw` (or `fdw`), before the co
 
 | Flag | Description | Default |
 | --- | --- | --- |
+| `-V` / `--version` | Print the installed `fabric-dw` version and exit. | — |
 | `-w` / `--workspace TEXT` | Target workspace (name or GUID). Overrides the `FABRIC_DW_DEFAULT_WORKSPACE` environment variable and the configured default. See [Selecting a workspace](#selecting-a-workspace). | — |
 | `--json` | Emit machine-readable JSON instead of Rich tables. | off |
 | `--auth {default\|sp\|interactive}` | Override `FABRIC_AUTH` for this invocation. | `default` |

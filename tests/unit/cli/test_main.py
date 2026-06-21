@@ -10,9 +10,11 @@ from unittest.mock import patch
 import pytest
 from click.testing import CliRunner
 
+import fabric_dw
 import fabric_dw.cli as _cli_pkg
 import fabric_dw.cli._main as _main_mod
 import fabric_dw.telemetry as _tel
+import fabric_dw.telemetry as _telemetry_mod
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._main import cli
 
@@ -54,6 +56,12 @@ class TestCliHelp:
         runner = CliRunner()
         result = runner.invoke(cli, ["--help"])
         assert "--workspace" in result.output or "-w" in result.output
+
+    def test_no_args_shows_help_or_usage(self) -> None:
+        runner = CliRunner()
+        result = runner.invoke(cli, [])
+        # With invoke_without_command=False, missing subcommand should show usage
+        assert result.exit_code != 0 or "Usage" in result.output or "cache" in result.output
 
 
 class TestCliWorkspaceOption:
@@ -102,13 +110,90 @@ class TestCliUnknownCommand:
 
 
 class TestCliVersion:
-    """CLI version option (smoke test — just checks it runs)."""
+    """--version / -V flag: output format, exit code, and telemetry short-circuit."""
 
-    def test_no_args_shows_help_or_usage(self) -> None:
+    def test_version_flag_exits_zero(self) -> None:
+        """--version must exit 0."""
         runner = CliRunner()
-        result = runner.invoke(cli, [])
-        # With invoke_without_command=False, missing subcommand should show usage
-        assert result.exit_code != 0 or "Usage" in result.output or "cache" in result.output
+        result = runner.invoke(cli, ["--version"])
+        assert result.exit_code == 0
+
+    def test_version_flag_output_format(self) -> None:
+        """--version output must be in the form 'fabric-dw <version>'."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--version"])
+        assert result.output.strip() == f"fabric-dw {fabric_dw.__version__}"
+
+    def test_short_version_flag_exits_zero(self) -> None:
+        """-V must exit 0."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["-V"])
+        assert result.exit_code == 0
+
+    def test_short_version_flag_output_format(self) -> None:
+        """-V output must match --version: 'fabric-dw <version>'."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["-V"])
+        assert result.output.strip() == f"fabric-dw {fabric_dw.__version__}"
+
+    def test_version_flag_emits_no_telemetry(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """--version must short-circuit before any telemetry path is entered.
+
+        The autouse ``_disable_telemetry_globally`` fixture sets
+        ``FABRIC_DISABLE_TELEMETRY=1`` for every test in this file, which means
+        telemetry calls are silently skipped at the ``telemetry_enabled()`` guard
+        before they reach ``record_app_started`` / ``_InstrumentedGroup.invoke``.
+        That makes a plain ``assert_not_called()`` check vacuous — it would pass
+        even if the eager ``--version`` option were removed.
+
+        To make the assertion meaningful, this test *enables* telemetry for its
+        own scope (by removing all opt-out env vars) and mocks
+        ``configure_azure_monitor`` so no real SDK initialisation or egress can
+        occur.  It then asserts three independent invariants that can only hold
+        simultaneously when the eager option genuinely short-circuits:
+
+        1. ``_InstrumentedGroup.invoke`` was never entered.
+        2. ``record_app_started`` was never called.
+        3. ``fabric_dw.telemetry._sdk_initialised`` is still ``False`` (the SDK
+           was never initialised — no ``configure_azure_monitor`` side-effects).
+        """
+        # Enable telemetry for this test only by removing all opt-out signals.
+        monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
+        monkeypatch.delenv("FABRIC_TELEMETRY", raising=False)
+        monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+        # Prevent real SDK init / egress by pointing at a localhost dummy endpoint.
+        monkeypatch.setenv(
+            "FABRIC_TELEMETRY_CONNECTION_STRING",
+            "InstrumentationKey=00000000-0000-0000-0000-000000000000;"
+            "IngestionEndpoint=https://localhost/",
+        )
+        # Reset _sdk_initialised so the module is in a clean state.
+        _telemetry_mod._sdk_initialised = False  # type: ignore[attr-defined]
+
+        runner = CliRunner()
+        with (
+            patch("azure.monitor.opentelemetry.configure_azure_monitor") as mock_configure,
+            patch.object(
+                _main_mod._InstrumentedGroup,
+                "invoke",
+                wraps=_main_mod._InstrumentedGroup.invoke,
+            ) as mock_invoke,
+            patch("fabric_dw.cli._main.record_app_started") as mock_started,
+        ):
+            result = runner.invoke(cli, ["--version"])
+
+        assert result.exit_code == 0
+        # The eager option must short-circuit before any of these are reached.
+        mock_invoke.assert_not_called()
+        mock_started.assert_not_called()
+        mock_configure.assert_not_called()
+        assert _telemetry_mod._sdk_initialised is False  # type: ignore[attr-defined]
+
+    def test_version_flag_listed_in_help(self) -> None:
+        """--version must appear in the root --help output."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--help"])
+        assert "--version" in result.output
 
 
 class TestCliVerboseFlag:
