@@ -16,7 +16,6 @@ Every telemetry event includes a shared envelope of anonymous fields:
 | `arch` | CPU architecture (e.g. `arm64`, `x86_64`). |
 | `install_method` | Best-effort detection: `pip`, `uv`, `pipx`, or `source`. |
 | `surface` | `cli` or `mcp` — which interface was used. |
-| `is_ci` | Whether a CI environment was detected. |
 | `auth_mode` | Categorical authentication mode: `service_principal`, `github_oidc`, `azure_cli`, or `interactive`. **Never credentials.** |
 | `tenant_id` | Your Azure tenant ID, read from `AZURE_TENANT_ID` or `FABRIC_INTERACTIVE_TENANT_ID` **only when telemetry is enabled**. This identifies the organisation (not an individual). |
 
