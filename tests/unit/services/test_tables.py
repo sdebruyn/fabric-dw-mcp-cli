@@ -1729,6 +1729,263 @@ class TestCreateTableFromCsvClusterBy:
 
 
 # ===========================================================================
+# infer_columns_from_json
+# ===========================================================================
+
+
+class TestInferColumnsFromJson:
+    async def test_jsonl_infers_types(self, tmp_path: Path) -> None:
+        json_file = tmp_path / "data.jsonl"
+        json_file.write_text(
+            '{"id": 1, "name": "Alice", "price": 1.5, "ok": true, "ts": "2024-01-01T00:00:00"}\n'
+            '{"id": 2, "name": "Bob", "price": 2.0, "ok": false, "ts": "2024-02-01T00:00:00"}\n'
+        )
+        cols = await tables.infer_columns_from_json(json_file)
+        by_name = {c.name: c.sql_type for c in cols}
+        assert by_name["id"] == "BIGINT"
+        assert by_name["price"] == "FLOAT"
+        assert by_name["ok"] == "BIT"
+        assert "VARCHAR" in by_name["name"]
+        assert by_name["ts"].startswith("DATETIME2")
+        # All JSON columns are nullable.
+        assert all(c.nullable for c in cols)
+
+    async def test_json_array_happy_path(self, tmp_path: Path) -> None:
+        json_file = tmp_path / "data.json"
+        json_file.write_text('[{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]')
+        cols = await tables.infer_columns_from_json(json_file)
+        by_name = {c.name: c.sql_type for c in cols}
+        assert by_name["id"] == "BIGINT"
+        assert "VARCHAR" in by_name["name"]
+
+    async def test_json_array_with_bom(self, tmp_path: Path) -> None:
+        json_file = tmp_path / "data.json"
+        json_file.write_bytes(b"\xef\xbb\xbf" + b'[{"id": 1}]')
+        cols = await tables.infer_columns_from_json(json_file)
+        assert [c.name for c in cols] == ["id"]
+        assert cols[0].sql_type == "BIGINT"
+
+    async def test_key_union_across_records(self, tmp_path: Path) -> None:
+        """Keys absent from some records still produce nullable columns."""
+        json_file = tmp_path / "data.jsonl"
+        json_file.write_text('{"a": 1}\n{"b": 2}\n')
+        cols = await tables.infer_columns_from_json(json_file)
+        names = {c.name for c in cols}
+        assert names == {"a", "b"}
+        assert all(c.nullable for c in cols)
+
+    async def test_mixed_int_float_widens_to_float(self, tmp_path: Path) -> None:
+        json_file = tmp_path / "data.jsonl"
+        json_file.write_text('{"x": 1}\n{"x": 1.5}\n')
+        cols = await tables.infer_columns_from_json(json_file)
+        assert cols[0].sql_type == "FLOAT"
+
+    async def test_number_then_string_conflict_errors(self, tmp_path: Path) -> None:
+        json_file = tmp_path / "data.jsonl"
+        json_file.write_text('{"x": 1}\n{"x": "hello"}\n')
+        with pytest.raises(ValueError, match="all-varchar"):
+            await tables.infer_columns_from_json(json_file)
+
+    async def test_nested_struct_falls_back_to_varchar(self, tmp_path: Path) -> None:
+        json_file = tmp_path / "data.jsonl"
+        json_file.write_text('{"obj": {"a": 1}}\n')
+        cols = await tables.infer_columns_from_json(json_file)
+        assert cols[0].name == "obj"
+        assert "VARCHAR" in cols[0].sql_type
+
+    async def test_nested_list_falls_back_to_varchar(self, tmp_path: Path) -> None:
+        json_file = tmp_path / "data.jsonl"
+        json_file.write_text('{"arr": [1, 2, 3]}\n')
+        cols = await tables.infer_columns_from_json(json_file)
+        assert cols[0].name == "arr"
+        assert "VARCHAR" in cols[0].sql_type
+
+    async def test_all_varchar_forces_varchar(self, tmp_path: Path) -> None:
+        json_file = tmp_path / "data.jsonl"
+        json_file.write_text('{"id": 1, "price": 1.5}\n')
+        cols = await tables.infer_columns_from_json(json_file, all_varchar=True)
+        assert all(c.sql_type == "VARCHAR(8000)" for c in cols)
+        assert {c.name for c in cols} == {"id", "price"}
+
+    async def test_all_varchar_survives_number_string_conflict(self, tmp_path: Path) -> None:
+        """--all-varchar must succeed even when a column mixes numbers and strings."""
+        json_file = tmp_path / "data.jsonl"
+        json_file.write_text('{"x": 1, "y": 2}\n{"x": "hello"}\n')
+        cols = await tables.infer_columns_from_json(json_file, all_varchar=True)
+        assert {c.name for c in cols} == {"x", "y"}
+        assert all(c.sql_type == "VARCHAR(8000)" for c in cols)
+
+    async def test_all_varchar_array_survives_conflict(self, tmp_path: Path) -> None:
+        json_file = tmp_path / "data.json"
+        json_file.write_text('[{"x": 1}, {"x": "s", "z": true}]')
+        cols = await tables.infer_columns_from_json(json_file, all_varchar=True)
+        assert {c.name for c in cols} == {"x", "z"}
+
+    async def test_custom_varchar_length(self, tmp_path: Path) -> None:
+        json_file = tmp_path / "data.jsonl"
+        json_file.write_text('{"name": "Alice"}\n')
+        cols = await tables.infer_columns_from_json(json_file, varchar_length=255)
+        assert cols[0].sql_type == "VARCHAR(255)"
+
+    async def test_empty_file_raises(self, tmp_path: Path) -> None:
+        json_file = tmp_path / "empty.jsonl"
+        json_file.write_text("")
+        with pytest.raises(ValueError, match="empty"):
+            await tables.infer_columns_from_json(json_file)
+
+    async def test_empty_file_raises_all_varchar(self, tmp_path: Path) -> None:
+        json_file = tmp_path / "empty.jsonl"
+        json_file.write_text("   \n")
+        with pytest.raises(ValueError, match="empty"):
+            await tables.infer_columns_from_json(json_file, all_varchar=True)
+
+    async def test_empty_array_raises(self, tmp_path: Path) -> None:
+        json_file = tmp_path / "empty.json"
+        json_file.write_text("[]")
+        with pytest.raises(ValueError, match="non-empty list of objects"):
+            await tables.infer_columns_from_json(json_file)
+
+    async def test_array_of_non_objects_raises(self, tmp_path: Path) -> None:
+        json_file = tmp_path / "bad.json"
+        json_file.write_text("[1, 2, 3]")
+        with pytest.raises(ValueError, match="only objects"):
+            await tables.infer_columns_from_json(json_file)
+
+    async def test_malformed_jsonl_raises(self, tmp_path: Path) -> None:
+        json_file = tmp_path / "bad.jsonl"
+        json_file.write_text("{not valid json")
+        with pytest.raises(ValueError, match="Could not infer a schema"):
+            await tables.infer_columns_from_json(json_file)
+
+    async def test_malformed_array_raises(self, tmp_path: Path) -> None:
+        json_file = tmp_path / "bad.json"
+        json_file.write_text('[{"a": 1},')
+        with pytest.raises(ValueError, match="Invalid JSON"):
+            await tables.infer_columns_from_json(json_file)
+
+    async def test_file_not_found_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(FileNotFoundError):
+            await tables.infer_columns_from_json(tmp_path / "nonexistent.jsonl")
+
+    async def test_sample_rows_bounds_returned_sample(self, tmp_path: Path) -> None:
+        """A bounded sample drives inference on a multi-record JSONL file.
+
+        pyarrow parses a whole read block at once, so *sample_rows* bounds the
+        records reflected in the returned schema (and the JSONL prefix actually
+        accumulated) rather than guaranteeing later bytes are never parsed.  We
+        write 10 consistent records and confirm inference produced the expected
+        typed column.
+        """
+        json_file = tmp_path / "big.jsonl"
+        lines = [f'{{"id": {i}, "value": {i * 10}}}' for i in range(10)]
+        json_file.write_text("\n".join(lines) + "\n")
+        cols = await tables.infer_columns_from_json(json_file, sample_rows=3)
+        by_name = {c.name: c.sql_type for c in cols}
+        assert by_name["id"] == "BIGINT"
+        assert by_name["value"] == "BIGINT"
+
+
+# ===========================================================================
+# create_table_from_json
+# ===========================================================================
+
+
+class TestCreateTableFromJson:
+    async def test_creates_table_from_jsonl(self, tmp_path: Path) -> None:
+        json_file = tmp_path / "data.jsonl"
+        json_file.write_text('{"id": 1, "name": "Alice"}\n')
+
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            result = await tables.create_table_from_json(target, "dbo", "sales", json_file)
+        assert isinstance(result, Table)
+        ddl_cursor = ddl_conn.cursor.return_value
+        sql: str = ddl_cursor.execute.call_args[0][0]
+        assert "[id]" in sql
+        assert "[name]" in sql
+
+    async def test_creates_table_from_json_array(self, tmp_path: Path) -> None:
+        json_file = tmp_path / "data.json"
+        json_file.write_text('[{"id": 1, "name": "Alice"}]')
+
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            result = await tables.create_table_from_json(target, "dbo", "sales", json_file)
+        assert isinstance(result, Table)
+
+    async def test_all_varchar_uses_varchar(self, tmp_path: Path) -> None:
+        json_file = tmp_path / "data.jsonl"
+        json_file.write_text('{"count": 1, "label": "foo"}\n')
+
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await tables.create_table_from_json(target, "dbo", "sales", json_file, all_varchar=True)
+        ddl_cursor = ddl_conn.cursor.return_value
+        sql: str = ddl_cursor.execute.call_args[0][0]
+        assert "VARCHAR" in sql
+
+    async def test_json_rejects_sql_endpoint(self, tmp_path: Path) -> None:
+        json_file = tmp_path / "data.jsonl"
+        json_file.write_text('{"id": 1}\n')
+        target = _make_target()
+        with pytest.raises(ItemKindError):
+            await tables.create_table_from_json(
+                target, "dbo", "sales", json_file, kind=WarehouseKind.SQL_ENDPOINT
+            )
+
+    async def test_json_raises_file_not_found(self, tmp_path: Path) -> None:
+        target = _make_target()
+        with pytest.raises(FileNotFoundError):
+            await tables.create_table_from_json(
+                target, "dbo", "sales", tmp_path / "nonexistent.jsonl"
+            )
+
+    async def test_json_empty_file_raises(self, tmp_path: Path) -> None:
+        json_file = tmp_path / "empty.jsonl"
+        json_file.write_text("")
+        target = _make_target()
+        with pytest.raises(ValueError, match="empty"):
+            await tables.create_table_from_json(target, "dbo", "sales", json_file)
+
+
+# ===========================================================================
+# create_table_from_json — cluster_by tests
+# ===========================================================================
+
+
+class TestCreateTableFromJsonClusterBy:
+    async def test_passes_cluster_by_to_create_empty(self, tmp_path: Path) -> None:
+        json_file = tmp_path / "data.jsonl"
+        json_file.write_text('{"CustomerID": 1, "SaleDate": "2024-01-01"}\n')
+
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await tables.create_table_from_json(
+                target, "dbo", "sales", json_file, cluster_by=["CustomerID"]
+            )
+        cursor = ddl_conn.cursor.return_value
+        sql: str = cursor.execute.call_args[0][0]
+        assert "CLUSTER BY ([CustomerID])" in sql
+
+    async def test_unknown_cluster_col_raises(self, tmp_path: Path) -> None:
+        json_file = tmp_path / "data.jsonl"
+        json_file.write_text('{"id": 1, "name": "foo"}\n')
+        target = _make_target()
+        with pytest.raises(ValueError, match="not defined in the table schema"):
+            await tables.create_table_from_json(
+                target, "dbo", "sales", json_file, cluster_by=["MissingCol"]
+            )
+
+
+# ===========================================================================
 # recluster_table
 # ===========================================================================
 

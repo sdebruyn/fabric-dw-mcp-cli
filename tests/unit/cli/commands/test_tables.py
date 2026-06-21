@@ -20,7 +20,7 @@ from fabric_dw.auth import CredentialMode
 from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._main import cli
-from fabric_dw.cli.commands.tables import _load_cmd_local, _parse_column_spec, _parse_schema_file
+from fabric_dw.cli.commands.tables import _load_cmd_local, _parse_column_spec
 from fabric_dw.exceptions import ItemKindError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import CopyIntoResult, Table, WarehouseKind
 from fabric_dw.sql import SqlTarget
@@ -1461,17 +1461,14 @@ class TestTablesCreateEmpty:
         parsed = json.loads(result.output)
         assert parsed["name"] == "sales"
 
-    def test_from_schema_file_exits_zero(
+    def test_from_json_jsonl_exits_zero(
         self, runner: CliRunner, cache_env: Path, tmp_path: Path
     ) -> None:
         _ = cache_env
-        schema_file = tmp_path / "schema.json"
-        schema_file.write_text(
-            '[{"name": "id", "type": "INT", "nullable": false}, '
-            '{"name": "label", "type": "VARCHAR(100)"}]'
-        )
+        json_file = tmp_path / "data.jsonl"
+        json_file.write_text('{"id": 1, "name": "Alice"}\n{"id": 2, "name": "Bob"}\n')
         mock_http = AsyncMock()
-        mock_create_empty = AsyncMock(return_value=_make_table())
+        mock_create = AsyncMock(return_value=_make_table())
         with (
             patch(
                 "fabric_dw.cli.commands.tables.build_http_client",
@@ -1482,8 +1479,8 @@ class TestTablesCreateEmpty:
                 new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch(
-                "fabric_dw.services.tables.create_empty_table",
-                new=mock_create_empty,
+                "fabric_dw.services.tables.create_table_from_json",
+                new=mock_create,
             ),
         ):
             result = runner.invoke(
@@ -1497,12 +1494,85 @@ class TestTablesCreateEmpty:
                     WH_GUID,
                     "--name",
                     "dbo.sales",
-                    "--from-schema",
-                    str(schema_file),
+                    "--from-json",
+                    str(json_file),
                 ],
             )
         assert result.exit_code == 0, result.output
-        mock_create_empty.assert_awaited_once()
+        mock_create.assert_awaited_once()
+
+    def test_from_json_array_exits_zero(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        _ = cache_env
+        json_file = tmp_path / "data.json"
+        json_file.write_text('[{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]')
+        mock_http = AsyncMock()
+        mock_create = AsyncMock(return_value=_make_table())
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.create_table_from_json",
+                new=mock_create,
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "--json",
+                    "tables",
+                    "create",
+                    WH_GUID,
+                    "--name",
+                    "dbo.sales",
+                    "--from-json",
+                    str(json_file),
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        mock_create.assert_awaited_once()
+
+    def test_from_json_bad_file_fails(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        _ = cache_env
+        json_file = tmp_path / "bad.jsonl"
+        json_file.write_text("{not valid json")
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "tables",
+                    "create",
+                    WH_GUID,
+                    "--name",
+                    "dbo.sales",
+                    "--from-json",
+                    str(json_file),
+                ],
+            )
+        assert result.exit_code != 0
 
     def test_from_parquet_exits_zero(
         self, runner: CliRunner, cache_env: Path, tmp_path: Path
@@ -1647,6 +1717,106 @@ class TestTablesCreateEmpty:
         )
         assert result.exit_code != 0
 
+    def test_csv_and_json_mutually_exclusive(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        _ = cache_env
+        csv_file = tmp_path / "data.csv"
+        json_file = tmp_path / "data.jsonl"
+        csv_file.write_text("id\n1\n")
+        json_file.write_text('{"id": 1}\n')
+        result = runner.invoke(
+            cli,
+            [
+                "-w",
+                WS_GUID,
+                "tables",
+                "create",
+                WH_GUID,
+                "--name",
+                "dbo.sales",
+                "--from-csv",
+                str(csv_file),
+                "--from-json",
+                str(json_file),
+            ],
+        )
+        assert result.exit_code != 0
+
+    def test_parquet_and_json_mutually_exclusive(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        _ = cache_env
+        parquet_file = tmp_path / "data.parquet"
+        json_file = tmp_path / "data.jsonl"
+        pq.write_table(pa.table({"id": pa.array([], type=pa.int32())}), str(parquet_file))
+        json_file.write_text('{"id": 1}\n')
+        result = runner.invoke(
+            cli,
+            [
+                "-w",
+                WS_GUID,
+                "tables",
+                "create",
+                WH_GUID,
+                "--name",
+                "dbo.sales",
+                "--from-parquet",
+                str(parquet_file),
+                "--from-json",
+                str(json_file),
+            ],
+        )
+        assert result.exit_code != 0
+
+    def test_json_and_column_mutually_exclusive(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        _ = cache_env
+        json_file = tmp_path / "data.jsonl"
+        json_file.write_text('{"id": 1}\n')
+        result = runner.invoke(
+            cli,
+            [
+                "-w",
+                WS_GUID,
+                "tables",
+                "create",
+                WH_GUID,
+                "--name",
+                "dbo.sales",
+                "--from-json",
+                str(json_file),
+                "--column",
+                "extra:INT",
+            ],
+        )
+        assert result.exit_code != 0
+
+    def test_ctas_and_json_mutually_exclusive(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        _ = cache_env
+        json_file = tmp_path / "data.jsonl"
+        json_file.write_text('{"id": 1}\n')
+        result = runner.invoke(
+            cli,
+            [
+                "-w",
+                WS_GUID,
+                "tables",
+                "create",
+                WH_GUID,
+                "--name",
+                "dbo.sales",
+                "--select",
+                "SELECT 1",
+                "--from-json",
+                str(json_file),
+            ],
+        )
+        assert result.exit_code != 0
+
     def test_parse_column_spec_null(self) -> None:
         spec = _parse_column_spec("my_col:VARCHAR(100):null")
         assert spec.name == "my_col"
@@ -1667,28 +1837,8 @@ class TestTablesCreateEmpty:
         with pytest.raises(click.UsageError):
             _parse_column_spec("notype")
 
-    def test_parse_schema_file_valid(self, tmp_path: Path) -> None:
-        f = tmp_path / "s.json"
-        f.write_text(
-            '[{"name": "id", "type": "INT"},'
-            ' {"name": "lbl", "type": "VARCHAR(100)", "nullable": false}]'
-        )
-        specs = _parse_schema_file(str(f))
-        assert len(specs) == 2
-        assert specs[0].name == "id"
-        assert specs[1].nullable is False
-
-    def test_parse_schema_file_missing(self) -> None:
-        with pytest.raises(click.UsageError, match="not found"):
-            _parse_schema_file("/nonexistent/path.json")
-
-    def test_parse_schema_file_invalid_json(self, tmp_path: Path) -> None:
-        f = tmp_path / "bad.json"
-        f.write_text("not json")
-        with pytest.raises(click.UsageError, match="Invalid JSON"):
-            _parse_schema_file(str(f))
-
-    def test_all_varchar_requires_from_csv(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_all_varchar_requires_csv_or_json(self, runner: CliRunner, cache_env: Path) -> None:
+        """--all-varchar without --from-csv or --from-json is a usage error."""
         _ = cache_env
         result = runner.invoke(
             cli,
@@ -1706,6 +1856,49 @@ class TestTablesCreateEmpty:
             ],
         )
         assert result.exit_code != 0
+
+    def test_all_varchar_satisfied_by_from_json(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        """--all-varchar is accepted together with --from-json."""
+        _ = cache_env
+        json_file = tmp_path / "data.jsonl"
+        json_file.write_text('{"id": 1, "name": "Alice"}\n')
+        mock_http = AsyncMock()
+        mock_create = AsyncMock(return_value=_make_table())
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.create_table_from_json",
+                new=mock_create,
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "--json",
+                    "tables",
+                    "create",
+                    WH_GUID,
+                    "--name",
+                    "dbo.sales",
+                    "--from-json",
+                    str(json_file),
+                    "--all-varchar",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        mock_create.assert_awaited_once()
+        assert mock_create.call_args.kwargs["all_varchar"] is True
 
 
 # ---------------------------------------------------------------------------

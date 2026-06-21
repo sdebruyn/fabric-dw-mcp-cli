@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import re
 from collections.abc import Mapping
 from pathlib import Path
@@ -154,52 +153,6 @@ def _parse_column_spec(value: str) -> ColumnSpec:
     return ColumnSpec(name=name, sql_type=sql_type, nullable=nullable)
 
 
-def _parse_schema_file(path: str) -> list[ColumnSpec]:
-    """Load a JSON column spec file as a list of :class:`~fabric_dw.models.ColumnSpec`.
-
-    The file must contain a JSON array of objects, each with ``name`` and ``type``
-    keys, and an optional ``nullable`` boolean.
-
-    Args:
-        path: Path to the JSON file.
-
-    Returns:
-        A list of :class:`~fabric_dw.models.ColumnSpec` instances.
-
-    Raises:
-        click.UsageError: If the file does not exist, is not valid JSON,
-            or does not match the expected schema.
-    """
-    p = Path(path)
-    if not p.is_file():
-        raise click.UsageError(f"Schema file not found: {path}")
-    try:
-        raw = json.loads(p.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise click.UsageError(f"Invalid JSON in --from-schema {path!r}: {exc}") from exc
-    if not isinstance(raw, list):
-        raise click.UsageError(
-            f"--from-schema {path!r} must be a JSON array of objects, got {type(raw).__name__}"
-        )
-    specs: list[ColumnSpec] = []
-    for i, item in enumerate(raw):
-        if not isinstance(item, dict):
-            raise click.UsageError(
-                f"--from-schema {path!r}: element {i} must be an object, got {type(item).__name__}"
-            )
-        name = item.get("name")
-        sql_type = item.get("type")
-        if not name or not sql_type:
-            raise click.UsageError(
-                f"--from-schema {path!r}: element {i} must have 'name' and 'type' keys"
-            )
-        nullable = bool(item.get("nullable", True))
-        specs.append(ColumnSpec(name=str(name), sql_type=str(sql_type), nullable=nullable))
-    if not specs:
-        raise click.UsageError(f"--from-schema {path!r}: schema file contains no columns")
-    return specs
-
-
 @tables_group.command("columns")
 @click.argument("item", required=False, default=None)
 @click.argument("qualified_name")
@@ -314,12 +267,14 @@ async def health_check_cmd(
     help="Create an empty table whose schema is derived from a CSV file header.",
 )
 @click.option(
-    "--from-schema",
-    "schema_file",
+    "--from-json",
+    "json_path",
     default=None,
     metavar="PATH",
     help=(
-        "Create an empty table from a JSON spec file (array of {name, type, nullable?} objects)."
+        "Path to a JSONL file or a JSON file containing an array of objects; "
+        "the table schema is inferred from the data (no data is loaded). "
+        "JSONL streams; a JSON array is fully loaded — for very large data prefer JSONL."
     ),
 )
 @click.option(
@@ -327,10 +282,7 @@ async def health_check_cmd(
     "column_specs",
     multiple=True,
     metavar="NAME:TYPE[:null|notnull]",
-    help=(
-        "Add a column in NAME:TYPE[:null|notnull] format (repeatable). "
-        "Can be combined with --from-schema."
-    ),
+    help="Add a column in NAME:TYPE[:null|notnull] format (repeatable).",
 )
 @click.option(
     "--cluster-by",
@@ -344,14 +296,14 @@ async def health_check_cmd(
     "--all-varchar",
     is_flag=True,
     default=False,
-    help="(CSV) Force all columns to VARCHAR; skip type inference.",
+    help="(CSV/JSON) Force all columns to VARCHAR; skip type inference.",
 )
 @click.option(
     "--varchar-length",
     default=8000,
     show_default=True,
     type=click.IntRange(1, 8000),
-    help="Default VARCHAR/VARBINARY length for string/binary columns.",
+    help="(CSV/JSON) Default VARCHAR/VARBINARY length for string/binary columns.",
 )
 @click.option(
     "--delimiter",
@@ -370,11 +322,11 @@ async def health_check_cmd(
     default=1000,
     show_default=True,
     type=click.IntRange(1, 100_000),
-    help="(CSV) Maximum number of rows to sample for type inference.",
+    help="(CSV/JSON) Maximum number of rows/records to sample for type inference.",
 )
 @click.pass_obj
 @coro
-async def create_cmd(  # noqa: PLR0912
+async def create_cmd(  # noqa: PLR0912, PLR0915
     ctx: CliContext,
     item: str | None,
     qualified_name: str,
@@ -382,7 +334,7 @@ async def create_cmd(  # noqa: PLR0912
     from_file: str | None,
     parquet_path: str | None,
     csv_path: str | None,
-    schema_file: str | None,
+    json_path: str | None,
     column_specs: tuple[str, ...],
     cluster_by: tuple[str, ...],
     all_varchar: bool,
@@ -396,17 +348,21 @@ async def create_cmd(  # noqa: PLR0912
     \b
     Two modes are available:
       CTAS (CREATE TABLE AS SELECT) — supply --select or --from-file.
-      Empty DDL — supply one of --from-parquet, --from-csv, --from-schema,
-                  or --column (repeatable).  These can be combined:
-                  --from-schema adds base columns and --column appends extras.
+      Empty DDL — supply exactly one of --from-parquet, --from-csv,
+                  --from-json, or one-or-more --column (repeatable).
+                  --from-json infers the schema from JSONL or a JSON array
+                  of objects; --column lists explicit columns inline.
 
     \b
-    CSV options (only with --from-csv):
+    CSV/JSON inference options (with --from-csv or --from-json):
       --all-varchar     Force all columns to VARCHAR, skipping type inference.
       --varchar-length  Default VARCHAR length (1-8000, default 8000).
+      --sample-rows     Rows/records to sample for inference (default 1000).
+
+    \b
+    CSV-only options (with --from-csv):
       --delimiter       Field delimiter (default ',').
       --encoding        File encoding (default 'utf-8-sig').
-      --sample-rows     Rows to sample for inference (default 1000).
     """
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
@@ -416,39 +372,42 @@ async def create_cmd(  # noqa: PLR0912
     has_ctas = bool(select_body or from_file)
     has_parquet = parquet_path is not None
     has_csv = csv_path is not None
-    has_explicit = schema_file is not None or bool(column_specs)
+    has_json = json_path is not None
+    has_explicit = bool(column_specs)
 
     # Count distinct source groups.
-    source_count = sum([has_ctas, has_parquet, has_csv, has_explicit])
+    source_count = sum([has_ctas, has_parquet, has_csv, has_json, has_explicit])
 
     if source_count == 0:
         raise click.UsageError(
             "Specify a source: --select/--from-file (CTAS), --from-parquet, "
-            "--from-csv, --from-schema, or --column."
+            "--from-csv, --from-json, or --column."
         )
 
     # CTAS cannot be combined with empty-DDL sources.
-    if has_ctas and (has_parquet or has_csv or has_explicit):
+    if has_ctas and (has_parquet or has_csv or has_json or has_explicit):
         raise click.UsageError(
             "--select/--from-file (CTAS) cannot be combined with "
-            "--from-parquet, --from-csv, --from-schema, or --column."
+            "--from-parquet, --from-csv, --from-json, or --column."
         )
 
-    # Parquet, CSV, and explicit schema are mutually exclusive with each other.
+    # Parquet, CSV, JSON, and explicit columns are mutually exclusive with each other.
     if has_parquet and has_csv:
         raise click.UsageError("--from-parquet and --from-csv are mutually exclusive.")
-    if has_parquet and schema_file:
-        raise click.UsageError("--from-parquet and --from-schema are mutually exclusive.")
+    if has_parquet and has_json:
+        raise click.UsageError("--from-parquet and --from-json are mutually exclusive.")
     if has_parquet and column_specs:
         raise click.UsageError("--from-parquet and --column are mutually exclusive.")
-    if has_csv and schema_file:
-        raise click.UsageError("--from-csv and --from-schema are mutually exclusive.")
+    if has_csv and has_json:
+        raise click.UsageError("--from-csv and --from-json are mutually exclusive.")
     if has_csv and column_specs:
         raise click.UsageError("--from-csv and --column are mutually exclusive.")
+    if has_json and column_specs:
+        raise click.UsageError("--from-json and --column are mutually exclusive.")
 
-    # --all-varchar only makes sense with --from-csv.
-    if all_varchar and not has_csv:
-        raise click.UsageError("--all-varchar requires --from-csv.")
+    # --all-varchar only makes sense with --from-csv or --from-json.
+    if all_varchar and not (has_csv or has_json):
+        raise click.UsageError("--all-varchar requires --from-csv or --from-json.")
 
     # --select and --from-file are mutually exclusive.
     if select_body and from_file:
@@ -500,15 +459,26 @@ async def create_cmd(  # noqa: PLR0912
                     sample_rows=sample_rows,
                 )
 
+            elif has_json:
+                t = await _tables_svc.create_table_from_json(
+                    target,
+                    schema,
+                    table_name,
+                    Path(json_path),  # type: ignore[arg-type]
+                    cluster_by=cluster_by_list,
+                    kind=entry.kind,
+                    mode=ctx.auth,
+                    all_varchar=all_varchar,
+                    varchar_length=varchar_length,
+                    sample_rows=sample_rows,
+                )
+
             else:
-                # Explicit schema via --from-schema and/or --column.
-                cols: list[ColumnSpec] = []
-                if schema_file:
-                    cols.extend(_parse_schema_file(schema_file))
-                cols.extend(_parse_column_spec(s) for s in column_specs)
+                # Explicit columns via --column.
+                cols = [_parse_column_spec(s) for s in column_specs]
                 if not cols:
                     raise click.UsageError(
-                        "--from-schema or at least one --column is required for the DDL path."
+                        "At least one --column is required for the explicit DDL path."
                     )
                 t = await _tables_svc.create_empty_table(
                     target,
