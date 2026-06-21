@@ -110,7 +110,7 @@ fdw queries long-running
 # High-frequency queries (biggest aggregate cost), ranked by run count DESC
 fdw queries frequent --limit 20
 
-# Capacity-pressure / read-optimization signals (beta/preview)
+# Capacity-pressure / read-optimization signals
 fdw sql-pools insights
 ```
 

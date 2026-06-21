@@ -92,7 +92,7 @@ Even with no custom configuration, the engine isolates work into two pools, spli
 - a **`NON-SELECT`** pool for DML/DDL/ETL/ingestion statements.
 
 This keeps ingestion from starving interactive reads (and vice-versa) by default. You can change
-this baseline with **custom SQL pools** (preview) — covered in [Step 3](#step-3-tune-apply-the-right-lever).
+this baseline with **custom SQL pools** — covered in [Step 3](#step-3-tune-apply-the-right-lever).
 See [Workload management — compute pool isolation](https://learn.microsoft.com/fabric/data-warehouse/workload-management?WT.mc_id=MVP_310840#compute-pool-isolation).
 
 ---
@@ -176,12 +176,8 @@ direct *"is compute the bottleneck?"* read.
 fdw sql-pools insights --since 2026-06-13T00:00:00
 ```
 
-!!! warning "Preview feature"
-
-    `sql-pools insights` (and the wider custom SQL pools feature it reports on) is a **preview /
-    beta** capability and may change. See
-    [Custom SQL pools (preview)](https://learn.microsoft.com/fabric/data-warehouse/custom-sql-pools?WT.mc_id=MVP_310840)
-    and the [`queryinsights.sql_pool_insights` column reference](https://learn.microsoft.com/sql/relational-databases/system-views/queryinsights-sql-pool-insights-transact-sql?view=fabric&WT.mc_id=MVP_310840).
+See [Custom SQL pools](https://learn.microsoft.com/fabric/data-warehouse/custom-sql-pools?WT.mc_id=MVP_310840)
+and the [`queryinsights.sql_pool_insights` column reference](https://learn.microsoft.com/sql/relational-databases/system-views/queryinsights-sql-pool-insights-transact-sql?view=fabric&WT.mc_id=MVP_310840).
 
 ### Check the capacity state
 
@@ -347,7 +343,7 @@ The MCP equivalents **exist and are not read-only**: `create_statistics`, `updat
 `delete_statistics` (the last flagged destructive) all run behind the MCP write/destructive guards.
 SQL Analytics Endpoints are rejected for these DDL operations.
 
-### Workload isolation via custom SQL pools (preview, workspace admin)
+### Workload isolation via custom SQL pools (workspace admin)
 
 If [Step 2](#read-sql-pool-pressure) showed one workload (e.g. heavy ETL) starving interactive
 reads, override the default 50/50 split with **custom SQL pools**: you cap each workload's
@@ -376,13 +372,12 @@ fdw sql-pools create \
   --classifier-value "Load"
 ```
 
-!!! warning "Preview feature"
+!!! note "Default pool behaviour"
 
-    Custom SQL pools are a **preview / beta** capability. When no custom pools exist, `sql-pools list`
-    reports the default autonomous **50/50 split** (one `SELECT` pool, one `NON-SELECT` pool) rather
-    than an empty list. The sum of every pool's `maxResourcePercentage` must be ≤ 100 and exactly one
-    pool is the default. See
-    [Custom SQL pools (preview)](https://learn.microsoft.com/fabric/data-warehouse/custom-sql-pools?WT.mc_id=MVP_310840)
+    When no custom pools exist, `sql-pools list` reports the default autonomous **50/50 split**
+    (one `SELECT` pool, one `NON-SELECT` pool) rather than an empty list. The sum of every pool's
+    `maxResourcePercentage` must be ≤ 100 and exactly one pool is the default. See
+    [Custom SQL pools](https://learn.microsoft.com/fabric/data-warehouse/custom-sql-pools?WT.mc_id=MVP_310840)
     and [Configure custom SQL pools via REST API](https://learn.microsoft.com/fabric/data-warehouse/configure-custom-sql-pools-api?WT.mc_id=MVP_310840).
 
 ### Relieve live contention
@@ -487,7 +482,6 @@ of scope:
 - **No Capacity Metrics app.** For CU-usage and throttling trends over time, use the
   [Capacity Metrics app](https://learn.microsoft.com/fabric/enterprise/metrics-app?WT.mc_id=MVP_310840) —
   this tool does not replace it.
-- **Custom SQL pools are preview** and may change.
 - **Application-name classifier only.** The only SQL-pool routing key today is the application-name
   classifier; statement-type routing is observe-only with no API
   ([#596](https://github.com/sdebruyn/fabric-dw-mcp-cli/issues/596)).
