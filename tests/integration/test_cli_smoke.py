@@ -33,6 +33,8 @@ telemetry init → flush → shutdown path is exercised for every command.
 from __future__ import annotations
 
 import json
+import logging
+import math
 import os
 import shutil
 import subprocess
@@ -42,7 +44,27 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
+from fabric_dw.sql import _CONNECT_RETRY_TIMEOUT_S
+
 from .conftest import SharedWarehouseTarget
+
+_logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Subprocess timeout budget for SQL-touching smoke tests.
+#
+# INVARIANT: this value MUST be strictly greater than _CONNECT_RETRY_TIMEOUT_S
+# (the CLI's internal connect-retry budget) plus a generous margin for process
+# startup, authentication, and query execution overhead.  If the two values are
+# equal the subprocess is killed exactly when the CLI's retry loop gives up,
+# leaving zero headroom for the startup/auth/query overhead that is paid on top
+# of the retry budget.
+#
+# A dedicated unit test in tests/unit/ guards this invariant at import time so
+# that it cannot silently drift back to an unsafe value.
+# ---------------------------------------------------------------------------
+_SQL_STARTUP_MARGIN_S: int = 120
+_SQL_SMOKE_SUBPROCESS_TIMEOUT_S: int = math.ceil(_CONNECT_RETRY_TIMEOUT_S) + _SQL_STARTUP_MARGIN_S
 
 pytestmark = pytest.mark.integration
 
@@ -169,6 +191,60 @@ async def _cli_smoke_sql_env(shared_warehouse: SharedWarehouseTarget) -> dict[st
         "FABRIC_DW_DEFAULT_WORKSPACE": str(shared_warehouse.workspace_id),
         "FABRIC_DW_DEFAULT_WAREHOUSE": shared_warehouse.warehouse.name,
     }
+
+
+# ---------------------------------------------------------------------------
+# Session-scoped SQL cold-start warmup.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def _cli_smoke_sql_warmup(
+    _cli_smoke_sql_env: dict[str, str],
+) -> None:
+    """Absorb the SQL cold-start cost once per test session.
+
+    On a cold Fabric capacity the first ``sql exec`` can consume most of the
+    CLI's internal connect-retry budget (_CONNECT_RETRY_TIMEOUT_S = 120 s)
+    before the warehouse becomes reachable.  Running one tolerant warmup call
+    here — with the same generous timeout used by the SQL smoke tests
+    (_SQL_SMOKE_SUBPROCESS_TIMEOUT_S) — ensures that by the time
+    ``test_sql_exec_select1_clean_stderr`` runs the endpoint is already warm.
+
+    This fixture is NOT autouse: only SQL-touching tests request it as an
+    explicit parameter.  This prevents non-SQL smoke tests (workspaces, help)
+    from inadvertently triggering the shared_warehouse provisioning and the
+    240 s warmup call.
+
+    Any exception (TimeoutExpired, OSError/FileNotFoundError for a stale binary
+    path, or non-zero exit) is silently suppressed: the warmup is a best-effort
+    probe.  If the endpoint is genuinely unreachable the subsequent per-test
+    assertion will surface the real failure with full context.
+    """
+    if _FABRIC_DW_BIN is None:
+        return  # binary guard fixture will skip the SQL tests; nothing to warm
+    child_env = _child_env(_cli_smoke_sql_env)
+    try:
+        subprocess.run(  # noqa: S603
+            [_FABRIC_DW_BIN, "sql", "exec", "-q", "SELECT 1 AS n"],
+            capture_output=True,
+            text=True,
+            env=child_env,
+            timeout=_SQL_SMOKE_SUBPROCESS_TIMEOUT_S,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        _logger.warning(
+            "SQL cold-start warmup timed out after %ds; "
+            "the per-test assertion may also fail if the endpoint is still unavailable.",
+            _SQL_SMOKE_SUBPROCESS_TIMEOUT_S,
+        )
+    except OSError:
+        # Covers FileNotFoundError (stale _FABRIC_DW_BIN) and other exec errors.
+        _logger.warning(
+            "SQL cold-start warmup could not launch the binary; "
+            "the per-test assertion will surface the real failure.",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -300,6 +376,7 @@ def test_workspaces_get_json_valid(
 
 def test_sql_exec_select1_clean_stderr(
     _cli_smoke_sql_env: dict[str, str],  # noqa: PT019 — value IS used in the body
+    _cli_smoke_sql_warmup: None,  # noqa: PT019 — absorbs cold-start cost before this assertion
 ) -> None:
     """``sql exec -q 'SELECT 1'`` must exit 0 with a clean stderr.
 
@@ -312,9 +389,17 @@ def test_sql_exec_select1_clean_stderr(
     value (a plain ``dict[str, str]``) is injected here synchronously by
     pytest-asyncio under ``asyncio_mode = "auto"``.  No async machinery is needed
     inside this test function itself.
+
+    The subprocess timeout is _SQL_SMOKE_SUBPROCESS_TIMEOUT_S, which is derived
+    from _CONNECT_RETRY_TIMEOUT_S + a generous margin for startup/auth/query
+    overhead.  See the module-level constant and the unit guard test for details.
+    The session-scoped _cli_smoke_sql_warmup fixture absorbs most of the cold-
+    start cost before this assertion runs.
     """
     child_env = _child_env(_cli_smoke_sql_env)
-    result = _run("sql", "exec", "-q", "SELECT 1 AS n", env=child_env)
+    result = _run(
+        "sql", "exec", "-q", "SELECT 1 AS n", env=child_env, timeout=_SQL_SMOKE_SUBPROCESS_TIMEOUT_S
+    )
     assert result.returncode == 0, (
         f"sql exec exited {result.returncode}; stderr:\n{result.stderr}\nstdout:\n{result.stdout}"
     )
