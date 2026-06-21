@@ -46,7 +46,7 @@ The `queryinsights` views are documented in [Query insights in Fabric Data Wareh
 
 !!! warning "New-warehouse delay"
 
-    The `queryinsights.*` views are **not populated immediately** on a brand-new warehouse and completed queries lag behind real time. If a view comes back empty on a fresh item, give it time and re-run. See [Caveats & limits](#caveats--limits).
+    The `queryinsights.*` views are **not populated immediately** on a brand-new warehouse and completed queries lag behind real time. If a view comes back empty on a fresh item, give it time and re-run. See [Caveats & limits](#caveats-limits).
 
 ---
 
