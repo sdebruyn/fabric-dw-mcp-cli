@@ -236,16 +236,6 @@ The AI agent writes those strings to disk itself. The shipped [`dbt-setup` Agent
 
 ---
 
-## Limitations & gotchas
-
-- **Entra ID only.** dbt-fabric does not support SQL authentication — only Entra identities. See [Connect using dbt](https://learn.microsoft.com/fabric/data-warehouse/how-to-connect?WT.mc_id=MVP_310840#connect-using-dbt).
-- **Remove `MultipleActiveResultSets`.** MARS is not supported by the warehouse TDS endpoint; do not add it to the connection. See [Warehouse connectivity — considerations and limitations](https://learn.microsoft.com/fabric/data-warehouse/connectivity?WT.mc_id=MVP_310840#considerations-and-limitations).
-- **T-SQL surface area is reduced.** Not every T-SQL construct from SQL Server is available — check the [T-SQL surface area](https://learn.microsoft.com/fabric/data-warehouse/tsql-surface-area?WT.mc_id=MVP_310840) and [Fabric Data Warehouse limitations](https://learn.microsoft.com/fabric/data-warehouse/limitations?WT.mc_id=MVP_310840) before relying on a feature.
-- **Unsupported data types.** Some SQL Server data types are unsupported in Fabric DW; model your sources accordingly (see the limitations page above).
-- **Transient connection errors.** The endpoint can return transient errors; the [connectivity guidance](https://learn.microsoft.com/fabric/data-warehouse/connectivity?WT.mc_id=MVP_310840#considerations-and-limitations) recommends retry logic. Throttling surfaces as error `24801`.
-
----
-
 ## Next steps & references
 
 - [dbt command reference](../commands/dbt.md) — every `fdw dbt init` option and the `generate_dbt_profile` MCP tool.
