@@ -499,12 +499,15 @@ class TestConfigTelemetryEndToEnd:
     ) -> None:
         """config set telemetry disabled true → telemetry_enabled() is False."""
         _ = config_env
-        # Remove env-var opt-outs so the config-file layer is in control.
-        monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
-        monkeypatch.delenv("DO_NOT_TRACK", raising=False)
-
+        # Run the CLI while the autouse env-var guard (_disable_telemetry_globally)
+        # is still active so no real socket connection is attempted.
         result = runner.invoke(cli, ["config", "set", "telemetry", "disabled", "true"])
         assert result.exit_code == 0
+
+        # Strip the env-var opt-out AFTER the CLI call so telemetry_enabled()
+        # reflects only the config-file layer.
+        monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+        monkeypatch.delenv("DO_NOT_TRACK", raising=False)
 
         assert telemetry_enabled() is False
 
@@ -516,12 +519,13 @@ class TestConfigTelemetryEndToEnd:
     ) -> None:
         """config set telemetry disabled false → telemetry_enabled() is True."""
         _ = config_env
-        monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
-        monkeypatch.delenv("DO_NOT_TRACK", raising=False)
-
-        # First opt out, then opt back in.
+        # Run CLI invocations while the env-var guard is still active.
         runner.invoke(cli, ["config", "set", "telemetry", "disabled", "true"])
         runner.invoke(cli, ["config", "set", "telemetry", "disabled", "false"])
+
+        # Only strip the env-var guard for the final assertion.
+        monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+        monkeypatch.delenv("DO_NOT_TRACK", raising=False)
 
         assert telemetry_enabled() is True
 
@@ -533,10 +537,12 @@ class TestConfigTelemetryEndToEnd:
     ) -> None:
         """config unset telemetry disabled → telemetry_enabled() is True."""
         _ = config_env
-        monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
-        monkeypatch.delenv("DO_NOT_TRACK", raising=False)
-
+        # Run CLI invocations while the env-var guard is still active.
         runner.invoke(cli, ["config", "set", "telemetry", "disabled", "true"])
         runner.invoke(cli, ["config", "unset", "telemetry", "disabled"])
+
+        # Only strip the env-var guard for the final assertion.
+        monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+        monkeypatch.delenv("DO_NOT_TRACK", raising=False)
 
         assert telemetry_enabled() is True
