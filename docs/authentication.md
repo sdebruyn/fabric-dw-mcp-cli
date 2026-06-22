@@ -22,13 +22,24 @@ If neither of those works for you, read on for the alternatives.
 
 ---
 
-`fabric-dw` selects a credential source via the `FABRIC_AUTH` environment variable:
+`fabric-dw` selects a credential source via a 3-layer resolution stack:
 
-| `FABRIC_AUTH` value | What it uses |
+| Layer | Mechanism | Description |
+| --- | --- | --- |
+| 1 | `FABRIC_AUTH` env var | Wins when non-empty and non-whitespace. An empty/whitespace value is treated as absent (falls through). An unrecognised non-empty value raises an error. |
+| 2 | `[defaults] auth_mode` in `config.toml` | Set with `fdw config set auth-mode MODE`. Invalid values are discarded (treated as unset) with a warning. |
+| 3 | Built-in default | `default` (DefaultAzureCredential chain) |
+
+Valid values: `default`, `interactive`, `sp` (case-insensitive).
+
+| Value | What it uses |
 | --- | --- |
-| `default` (default) | [`azure-identity` `DefaultAzureCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.defaultazurecredential?WT.mc_id=MVP_310840) — see [credential chain](#fabric_authdefault-defaultazurecredential-chain) below |
+| `default` | [`azure-identity` `DefaultAzureCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.defaultazurecredential?WT.mc_id=MVP_310840) — see [credential chain](#fabric_authdefault-defaultazurecredential-chain) below |
 | `interactive` | Browser pop-up — see [interactive sign-in](#interactive-browser-sign-in-zero-setup) below |
 | `sp` | Service-principal — see [service principal](#fabric_authsp-service-principal) below |
+
+!!! note "Empty-value semantics"
+    An empty or whitespace-only `FABRIC_AUTH` (e.g. `FABRIC_AUTH=`) is treated as absent and falls through to `config.toml` / the built-in default. An unrecognised non-empty value (e.g. `FABRIC_AUTH=typo`) raises a configuration error immediately at server start so the credential is never silently wrong.
 
 ---
 
@@ -113,12 +124,22 @@ The package uses [`ClientSecretCredential`](https://learn.microsoft.com/python/a
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `FABRIC_AUTH` | `default` | Credential mode: `default`, `interactive`, or `sp` |
+| `FABRIC_AUTH` | _(unset — falls through to config / built-in default)_ | Credential mode: `default`, `interactive`, or `sp`. Empty/whitespace falls through; unrecognised non-empty value raises an error at startup. |
 | `FABRIC_INTERACTIVE_CLIENT_ID` | `f666e5ee-2149-4c6a-87eb-13c9e1fdc70d` | Override the shared app client ID for browser sign-in |
 | `FABRIC_INTERACTIVE_TENANT_ID` | _(unset)_ | Pin a specific Entra tenant for browser sign-in |
 | `AZURE_TENANT_ID` | _(unset)_ | Required for `FABRIC_AUTH=sp` |
 | `AZURE_CLIENT_ID` | _(unset)_ | Required for `FABRIC_AUTH=sp` |
 | `AZURE_CLIENT_SECRET` | _(unset)_ | Required for `FABRIC_AUTH=sp` |
+
+To persist the credential mode for the **MCP server** across restarts without setting an environment variable:
+
+```shell
+fdw config set auth-mode interactive   # persist 'interactive' in config.toml
+fdw config unset auth-mode             # revert to built-in default
+```
+
+!!! note "MCP server only"
+    `[defaults] auth_mode` is consumed by the MCP server (`fdw mcp`) only.  The `fdw` CLI credential is controlled by the `--auth` / `-a` flag and does not fall back to this config key.  A follow-up issue will unify the CLI credential path with the config default.
 
 ---
 

@@ -123,7 +123,37 @@ fdw config set sql-pool true
 fdw config unset sql-pool
 ```
 
-For authentication configuration, see [Authentication](../install.md#authentication).
+## MCP server credential mode
+
+!!! note "MCP server only"
+    `[defaults] auth_mode` is read exclusively by the **MCP server** (`fdw mcp`).  The `fdw` CLI selects its credential via the `--auth` / `-a` flag (default: `default`) and does not yet fall back to this config key.  A follow-up issue will unify the CLI credential path with the config default.
+
+The MCP server credential mode can be configured via a 3-layer stack. Resolution order (highest priority first):
+
+| Layer | Mechanism | Description |
+|---|---|---|
+| 1 | `FABRIC_AUTH` env var | Read at server start-up; takes precedence over everything else. An empty or whitespace-only value is treated as absent (falls through to the next layer). An unrecognised non-empty value raises a configuration error. |
+| 2 | `[defaults] auth_mode` in `config.toml` | Stored with `fdw config set auth-mode`. Invalid values are discarded (treated as unset) with a warning. |
+| 3 | Built-in default | `default` (DefaultAzureCredential chain) |
+
+Valid modes: `default`, `interactive`, `sp` (case-insensitive).
+
+!!! note "Security note"
+    An empty or invalid value is never silently downgraded or substituted with an unexpected credential. Empty/whitespace `FABRIC_AUTH` always falls through to config/default; a non-empty but unrecognised value raises an error.
+
+To persist a credential mode for the MCP server:
+
+```shell
+fdw config set auth-mode interactive
+```
+
+To revert to the built-in default:
+
+```shell
+fdw config unset auth-mode
+```
+
+See [Authentication](../authentication.md) for the full list of valid modes and their requirements.
 
 ---
 
@@ -143,7 +173,7 @@ fdw config clear
 
 ### config set
 
-Set a default value. Accepts `workspace`, `warehouse`, `max-429-retries`, `retry-deadline`, `sql-retry-deadline`, `sql-retry-executes`, or `sql-pool` as a flat key, or the nested sub-commands `telemetry disabled` and `logging level` for section-scoped knobs.
+Set a default value. Accepts `workspace`, `warehouse`, `max-429-retries`, `retry-deadline`, `sql-retry-deadline`, `sql-retry-executes`, `sql-pool`, or `auth-mode` as a flat key, or the nested sub-commands `telemetry disabled` and `logging level` for section-scoped knobs.
 
 **Synopsis**
 
@@ -155,6 +185,7 @@ fdw config set retry-deadline SECONDS
 fdw config set sql-retry-deadline SECONDS
 fdw config set sql-retry-executes true|false
 fdw config set sql-pool true|false
+fdw config set auth-mode MODE
 fdw config set telemetry disabled true|false
 fdw config set logging level LEVEL
 ```
@@ -169,6 +200,7 @@ fdw config set retry-deadline 600.0
 fdw config set sql-retry-deadline 300.0
 fdw config set sql-retry-executes true
 fdw config set sql-pool false
+fdw config set auth-mode interactive
 fdw config set telemetry disabled true
 fdw config set logging level DEBUG
 ```
@@ -201,7 +233,7 @@ warehouse  MyWarehouse
 
 ### config unset
 
-Clear a single default value. Accepts `workspace`, `warehouse`, `max-429-retries`, `retry-deadline`, `sql-retry-deadline`, `sql-retry-executes`, or `sql-pool` as a flat key, or the nested sub-commands `telemetry disabled` and `logging level` for section-scoped knobs.
+Clear a single default value. Accepts `workspace`, `warehouse`, `max-429-retries`, `retry-deadline`, `sql-retry-deadline`, `sql-retry-executes`, `sql-pool`, or `auth-mode` as a flat key, or the nested sub-commands `telemetry disabled` and `logging level` for section-scoped knobs.
 
 **Synopsis**
 
@@ -213,6 +245,7 @@ fdw config unset retry-deadline
 fdw config unset sql-retry-deadline
 fdw config unset sql-retry-executes
 fdw config unset sql-pool
+fdw config unset auth-mode
 fdw config unset telemetry disabled
 fdw config unset logging level
 ```

@@ -9,7 +9,9 @@ from unittest.mock import patch
 import filelock
 import pytest
 
+from fabric_dw.auth import CredentialMode
 from fabric_dw.config import (
+    VALID_AUTH_MODES,
     VALID_LOG_LEVELS,
     AuthConfig,
     ConfigError,
@@ -1134,3 +1136,135 @@ def test_set_default_sql_pool_preserves_other_keys(tmp_path: Path) -> None:
     assert loaded.defaults.sql_pool is False
     assert loaded.defaults.workspace == "WS"
     assert loaded.defaults.sql_retry_executes is True
+
+
+# ---------------------------------------------------------------------------
+# auth_mode — round-trip, set_default, validation, case normalisation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("mode", sorted(VALID_AUTH_MODES))
+def test_round_trip_auth_mode(tmp_path: Path, mode: str) -> None:
+    """Each valid auth_mode value survives a save/load cycle."""
+    path = tmp_path / "config.toml"
+    cfg = UserConfig(defaults=Defaults(auth_mode=mode))
+    save_config(cfg, path)
+    loaded = load_config(path)
+    assert loaded.defaults.auth_mode == mode
+
+
+def test_auth_mode_none_not_written(tmp_path: Path) -> None:
+    """When auth_mode is None, the key is absent from the file."""
+    path = tmp_path / "config.toml"
+    cfg = UserConfig(defaults=Defaults(workspace="WS", auth_mode=None))
+    save_config(cfg, path)
+    content = path.read_text(encoding="utf-8")
+    assert "auth_mode" not in content
+    loaded = load_config(path)
+    assert loaded.defaults.auth_mode is None
+
+
+@pytest.mark.parametrize("mode", sorted(VALID_AUTH_MODES))
+def test_set_default_auth_mode_persists(tmp_path: Path, mode: str) -> None:
+    """set_default('auth_mode', mode) stores the mode and preserves other keys."""
+    path = tmp_path / "config.toml"
+    save_config(UserConfig(defaults=Defaults(workspace="WS")), path)
+    set_default("auth_mode", mode, path)
+    loaded = load_config(path)
+    assert loaded.defaults.auth_mode == mode
+    assert loaded.defaults.workspace == "WS"  # preserved
+
+
+def test_set_default_auth_mode_none_clears(tmp_path: Path) -> None:
+    """set_default('auth_mode', None) clears the key."""
+    path = tmp_path / "config.toml"
+    save_config(UserConfig(defaults=Defaults(auth_mode="interactive", workspace="WS")), path)
+    set_default("auth_mode", None, path)
+    loaded = load_config(path)
+    assert loaded.defaults.auth_mode is None
+    assert loaded.defaults.workspace == "WS"  # preserved
+
+
+def test_set_default_auth_mode_invalid_raises(tmp_path: Path) -> None:
+    """An unrecognised auth_mode raises ValueError."""
+    path = tmp_path / "config.toml"
+    with pytest.raises(ValueError, match="auth_mode"):
+        set_default("auth_mode", "managed_identity", path)
+
+
+def test_set_default_auth_mode_invalid_gibberish_raises(tmp_path: Path) -> None:
+    """Gibberish auth_mode values raise ValueError."""
+    path = tmp_path / "config.toml"
+    with pytest.raises(ValueError, match="auth_mode"):
+        set_default("auth_mode", "notamode", path)
+
+
+@pytest.mark.parametrize("raw", ["DEFAULT", "Default", "default"])
+def test_set_default_auth_mode_normalises_to_lower(tmp_path: Path, raw: str) -> None:
+    """auth_mode is normalised to lowercase when set."""
+    path = tmp_path / "config.toml"
+    set_default("auth_mode", raw, path)
+    loaded = load_config(path)
+    assert loaded.defaults.auth_mode == "default"
+
+
+@pytest.mark.parametrize("raw", ["INTERACTIVE", "Interactive"])
+def test_set_default_auth_mode_interactive_normalised(tmp_path: Path, raw: str) -> None:
+    """'interactive' auth_mode variant cases are normalised."""
+    path = tmp_path / "config.toml"
+    set_default("auth_mode", raw, path)
+    loaded = load_config(path)
+    assert loaded.defaults.auth_mode == "interactive"
+
+
+@pytest.mark.parametrize("raw", ["SP", "Sp"])
+def test_set_default_auth_mode_sp_normalised(tmp_path: Path, raw: str) -> None:
+    """'sp' auth_mode variant cases are normalised."""
+    path = tmp_path / "config.toml"
+    set_default("auth_mode", raw, path)
+    loaded = load_config(path)
+    assert loaded.defaults.auth_mode == "sp"
+
+
+def test_load_config_invalid_auth_mode_discarded(tmp_path: Path) -> None:
+    """A hand-edited [defaults] auth_mode with an invalid value is discarded (treated as None)."""
+    path = tmp_path / "config.toml"
+    path.write_text('[defaults]\nauth_mode = "not_valid"\n', encoding="utf-8")
+    cfg = load_config(path)
+    assert cfg.defaults.auth_mode is None
+
+
+def test_load_config_auth_mode_valid_normalised(tmp_path: Path) -> None:
+    """A valid but uppercased [defaults] auth_mode is normalised to lowercase on load."""
+    path = tmp_path / "config.toml"
+    path.write_text('[defaults]\nauth_mode = "DEFAULT"\n', encoding="utf-8")
+    cfg = load_config(path)
+    assert cfg.defaults.auth_mode == "default"
+
+
+def test_set_default_auth_mode_preserves_other_keys(tmp_path: Path) -> None:
+    """set_default('auth_mode', ...) does not clear unrelated keys."""
+    path = tmp_path / "config.toml"
+    save_config(UserConfig(defaults=Defaults(workspace="WS", warehouse="WH", sql_pool=True)), path)
+    set_default("auth_mode", "interactive", path)
+    loaded = load_config(path)
+    assert loaded.defaults.auth_mode == "interactive"
+    assert loaded.defaults.workspace == "WS"
+    assert loaded.defaults.warehouse == "WH"
+    assert loaded.defaults.sql_pool is True
+
+
+# ---------------------------------------------------------------------------
+# Drift guard — VALID_AUTH_MODES must mirror CredentialMode enum values
+# ---------------------------------------------------------------------------
+
+
+def test_valid_auth_modes_mirrors_credential_mode_enum() -> None:
+    """VALID_AUTH_MODES must be exactly the set of CredentialMode values.
+
+    This test guards against VALID_AUTH_MODES drifting out of sync with
+    :class:`~fabric_dw.auth.CredentialMode`.  If a new mode is added to the
+    enum but not mirrored here (or vice-versa), this test will fail fast
+    instead of silently rejecting/accepting the wrong modes at runtime.
+    """
+    assert frozenset(m.value for m in CredentialMode) == VALID_AUTH_MODES
