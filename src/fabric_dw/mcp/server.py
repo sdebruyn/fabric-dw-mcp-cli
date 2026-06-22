@@ -99,14 +99,32 @@ def _resolve_log_level() -> int:
 
     Resolution order: env ``FABRIC_LOG_LEVEL`` > ``[logging] level`` in
     ``config.toml`` > :data:`logging.INFO`.
+
+    Empty or whitespace-only values of ``FABRIC_LOG_LEVEL`` are treated as
+    absent and fall through to the config/default layer.  Unrecognised
+    (non-empty) values emit a :func:`logging.warning` to *stderr* via the root
+    logger and also fall through rather than silently producing :data:`logging.INFO`.
     """
-    env_level = os.environ.get("FABRIC_LOG_LEVEL")
-    if env_level is not None:
-        raw = env_level.upper()
-    else:
-        cfg_level = load_config().logging.level
-        raw = cfg_level.upper() if cfg_level is not None else "INFO"
-    return getattr(logging, raw, logging.INFO)
+    from fabric_dw.config import VALID_LOG_LEVELS  # noqa: PLC0415
+
+    env_raw = os.environ.get("FABRIC_LOG_LEVEL", "").strip()
+    if env_raw:
+        env_upper = env_raw.upper()
+        if env_upper in VALID_LOG_LEVELS:
+            return getattr(logging, env_upper)
+        # Non-empty but unrecognised — warn to stderr and fall through to
+        # config/default.  We write to stderr directly because setup_logging()
+        # has not yet run so no handlers are attached to the named logger.
+        print(  # noqa: T201
+            f"WARNING: FABRIC_LOG_LEVEL={env_raw!r} is not a recognised log level "
+            f"(valid: {', '.join(sorted(VALID_LOG_LEVELS))}); "
+            "ignoring and falling through to config/default.",
+            file=sys.stderr,
+        )
+    cfg_level = load_config().logging.level
+    if cfg_level is not None:
+        return getattr(logging, cfg_level.upper(), logging.INFO)
+    return logging.INFO
 
 
 def run(argv: Sequence[str] | None = None) -> None:

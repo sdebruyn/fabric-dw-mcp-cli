@@ -1021,3 +1021,19 @@ def test_logging_section_absent_when_level_none(tmp_path: Path) -> None:
     save_config(UserConfig(defaults=Defaults(workspace="WS")), path)
     content = path.read_text(encoding="utf-8")
     assert "[logging]" not in content
+
+
+def test_load_config_invalid_logging_level_discarded(tmp_path: Path) -> None:
+    """A hand-edited [logging] level with an invalid value is discarded (treated as None)."""
+    path = tmp_path / "config.toml"
+    path.write_text('[logging]\nlevel = "VERBOSE"\n', encoding="utf-8")
+    cfg = load_config(path)
+    assert cfg.logging.level is None
+
+
+def test_load_config_invalid_logging_level_valid_level_preserved(tmp_path: Path) -> None:
+    """A valid (but lowercased) [logging] level is normalised to upper-case on load."""
+    path = tmp_path / "config.toml"
+    path.write_text('[logging]\nlevel = "debug"\n', encoding="utf-8")
+    cfg = load_config(path)
+    assert cfg.logging.level == "DEBUG"
