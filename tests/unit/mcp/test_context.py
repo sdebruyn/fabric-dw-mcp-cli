@@ -13,12 +13,14 @@ Coverage goals
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 import fabric_dw.mcp._context as _ctx_module
 from fabric_dw import auth as _auth
+from fabric_dw.config import Defaults, UserConfig, save_config
 from fabric_dw.exceptions import ConfigError
 from fabric_dw.mcp._context import (
     ServerContext,
@@ -272,3 +274,66 @@ class TestFabricLifespan:
                 raise RuntimeError("crash")
 
         mock_reset_pool.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# build_context reads config.toml
+# ---------------------------------------------------------------------------
+
+
+class TestBuildContextConfigRead:
+    """Tests that build_context reads retry knobs from config.toml."""
+
+    def test_config_max_429_retries_wired_to_client(self, tmp_path: Path) -> None:
+        """[defaults] max_429_retries from config propagates to the HTTP client."""
+        path = tmp_path / "config.toml"
+        save_config(UserConfig(defaults=Defaults(max_429_retries=7)), path)
+        fake_http = MagicMock()
+        with patch("fabric_dw.mcp._context.FabricHttpClient", return_value=fake_http) as mock_cls:
+            build_context(environ={"FABRIC_AUTH": "default"}, config_path=path)
+        _, kwargs = mock_cls.call_args
+        assert kwargs.get("max_429_retries") == 7
+
+    def test_config_retry_deadline_s_wired_to_client(self, tmp_path: Path) -> None:
+        """[defaults] retry_deadline_s from config propagates to the HTTP client."""
+        path = tmp_path / "config.toml"
+        save_config(UserConfig(defaults=Defaults(retry_deadline_s=120.0)), path)
+        fake_http = MagicMock()
+        with patch("fabric_dw.mcp._context.FabricHttpClient", return_value=fake_http) as mock_cls:
+            build_context(environ={"FABRIC_AUTH": "default"}, config_path=path)
+        _, kwargs = mock_cls.call_args
+        assert kwargs.get("combined_deadline_s") == 120.0
+
+    def test_env_beats_config_for_retries(self, tmp_path: Path) -> None:
+        """Env var takes precedence over config for max_429_retries."""
+        path = tmp_path / "config.toml"
+        save_config(UserConfig(defaults=Defaults(max_429_retries=3)), path)
+        fake_http = MagicMock()
+        with patch("fabric_dw.mcp._context.FabricHttpClient", return_value=fake_http) as mock_cls:
+            build_context(
+                environ={"FABRIC_AUTH": "default", "FABRIC_DW_MAX_429_RETRIES": "25"},
+                config_path=path,
+            )
+        _, kwargs = mock_cls.call_args
+        assert kwargs.get("max_429_retries") == 25
+
+    def test_env_beats_config_for_deadline(self, tmp_path: Path) -> None:
+        """Env var takes precedence over config for retry_deadline_s."""
+        path = tmp_path / "config.toml"
+        save_config(UserConfig(defaults=Defaults(retry_deadline_s=60.0)), path)
+        fake_http = MagicMock()
+        with patch("fabric_dw.mcp._context.FabricHttpClient", return_value=fake_http) as mock_cls:
+            build_context(
+                environ={"FABRIC_AUTH": "default", "FABRIC_DW_RETRY_DEADLINE_S": "999.0"},
+                config_path=path,
+            )
+        _, kwargs = mock_cls.call_args
+        assert kwargs.get("combined_deadline_s") == 999.0
+
+    def test_config_path_none_uses_platform_default(self) -> None:
+        """config_path=None is accepted and load_config is called without error."""
+        fake_http = MagicMock()
+        with patch("fabric_dw.mcp._context.FabricHttpClient", return_value=fake_http):
+            # This should not raise even if the default config file doesn't exist.
+            ctx = build_context(environ={"FABRIC_AUTH": "default"}, config_path=None)
+        assert isinstance(ctx, ServerContext)

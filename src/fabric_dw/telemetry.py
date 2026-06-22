@@ -83,7 +83,6 @@ import logging
 import os
 import sys
 import threading
-import tomllib
 import uuid
 from pathlib import Path
 
@@ -175,16 +174,14 @@ def _config_dir() -> Path:
 
 def _is_disabled_by_config() -> bool:
     """Return True when the config file contains ``[telemetry] disabled = true``."""
-    config_file = _config_dir() / "config.toml"
-    if not config_file.exists():
+    try:
+        from fabric_dw.config import load_config  # noqa: PLC0415
+
+        cfg = load_config()
+    except Exception:
         return False
-    with contextlib.suppress(Exception):
-        raw = config_file.read_text(encoding="utf-8")
-        data = tomllib.loads(raw)
-        telemetry_section = data.get("telemetry", {})
-        if isinstance(telemetry_section, dict):
-            return bool(telemetry_section.get("disabled", False))
-    return False
+    else:
+        return cfg.telemetry.disabled is True
 
 
 def telemetry_enabled() -> bool:

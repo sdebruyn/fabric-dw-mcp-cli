@@ -43,7 +43,7 @@ def config_group() -> None:
 @config_group.command("show")
 @click.pass_obj
 def show_cmd(ctx: CliContext) -> None:
-    """Show the current configuration defaults."""
+    """Show the current configuration."""
     cfg = ctx.config
     data = {
         "defaults": {
@@ -53,7 +53,10 @@ def show_cmd(ctx: CliContext) -> None:
             "retry_deadline_s": cfg.defaults.retry_deadline_s,
             "sql_retry_deadline_s": cfg.defaults.sql_retry_deadline_s,
             "sql_retry_executes": cfg.defaults.sql_retry_executes,
-        }
+        },
+        "telemetry": {
+            "disabled": cfg.telemetry.disabled,
+        },
     }
     render(data, json_output=ctx.json_output)
 
