@@ -9,7 +9,9 @@ from unittest.mock import patch
 import filelock
 import pytest
 
+from fabric_dw.auth import CredentialMode
 from fabric_dw.config import (
+    VALID_AUTH_MODES,
     VALID_LOG_LEVELS,
     AuthConfig,
     ConfigError,
@@ -1141,9 +1143,6 @@ def test_set_default_sql_pool_preserves_other_keys(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-from fabric_dw.config import VALID_AUTH_MODES  # noqa: E402  (appended after top-level imports)
-
-
 @pytest.mark.parametrize("mode", sorted(VALID_AUTH_MODES))
 def test_round_trip_auth_mode(tmp_path: Path, mode: str) -> None:
     """Each valid auth_mode value survives a save/load cycle."""
@@ -1253,3 +1252,19 @@ def test_set_default_auth_mode_preserves_other_keys(tmp_path: Path) -> None:
     assert loaded.defaults.workspace == "WS"
     assert loaded.defaults.warehouse == "WH"
     assert loaded.defaults.sql_pool is True
+
+
+# ---------------------------------------------------------------------------
+# Drift guard — VALID_AUTH_MODES must mirror CredentialMode enum values
+# ---------------------------------------------------------------------------
+
+
+def test_valid_auth_modes_mirrors_credential_mode_enum() -> None:
+    """VALID_AUTH_MODES must be exactly the set of CredentialMode values.
+
+    This test guards against VALID_AUTH_MODES drifting out of sync with
+    :class:`~fabric_dw.auth.CredentialMode`.  If a new mode is added to the
+    enum but not mirrored here (or vice-versa), this test will fail fast
+    instead of silently rejecting/accepting the wrong modes at runtime.
+    """
+    assert frozenset(m.value for m in CredentialMode) == VALID_AUTH_MODES

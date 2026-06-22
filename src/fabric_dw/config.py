@@ -656,9 +656,13 @@ def _set_mcp_workspace_allowlist(current: UserConfig, value: str | None) -> User
 
 VALID_LOG_LEVELS: frozenset[str] = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
 
-# Valid credential modes — kept in sync with :class:`~fabric_dw.auth.CredentialMode`.
-# Duplicated here to avoid importing auth.py at module level (keeps the dependency
-# graph acyclic and the import lightweight).
+# Valid credential modes — literal copy of :class:`~fabric_dw.auth.CredentialMode` values.
+# Kept as a literal rather than derived at import time (``frozenset(m.value for m in
+# CredentialMode)``) to avoid pulling the azure-identity / msal import chain into
+# config.py's startup path — config.py is imported very early (CLI boot, test fixtures)
+# and should remain a lightweight leaf.  The drift-guard test in tests/unit/test_config.py
+# asserts ``VALID_AUTH_MODES == {m.value for m in CredentialMode}`` and will fail fast
+# if a new mode is added to the enum but not mirrored here.
 VALID_AUTH_MODES: frozenset[str] = frozenset({"default", "sp", "interactive"})
 
 

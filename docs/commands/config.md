@@ -125,6 +125,9 @@ fdw config unset sql-pool
 
 ## MCP server credential mode
 
+!!! note "MCP server only"
+    `[defaults] auth_mode` is read exclusively by the **MCP server** (`fdw mcp`).  The `fdw` CLI selects its credential via the `--auth` / `-a` flag (default: `default`) and does not yet fall back to this config key.  A follow-up issue will unify the CLI credential path with the config default.
+
 The MCP server credential mode can be configured via a 3-layer stack. Resolution order (highest priority first):
 
 | Layer | Mechanism | Description |
@@ -138,7 +141,7 @@ Valid modes: `default`, `interactive`, `sp` (case-insensitive).
 !!! note "Security note"
     An empty or invalid value is never silently downgraded or substituted with an unexpected credential. Empty/whitespace `FABRIC_AUTH` always falls through to config/default; a non-empty but unrecognised value raises an error.
 
-To persist a credential mode:
+To persist a credential mode for the MCP server:
 
 ```shell
 fdw config set auth-mode interactive

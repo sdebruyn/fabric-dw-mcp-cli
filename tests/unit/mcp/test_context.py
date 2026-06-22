@@ -445,3 +445,44 @@ class TestBuildContextAuthModeResolution:
         with patch("fabric_dw.mcp._context.FabricHttpClient", return_value=fake_http):
             ctx = build_context(environ={}, config_path=path)
         assert ctx.auth_mode == _auth.CredentialMode.DEFAULT
+
+    def test_env_fabric_auth_interactive_maps_to_interactive(self) -> None:
+        """FABRIC_AUTH=interactive selects CredentialMode.INTERACTIVE via the env path."""
+        fake_http = MagicMock()
+        with (
+            patch("fabric_dw.mcp._context.FabricHttpClient", return_value=fake_http),
+            patch("fabric_dw.mcp._context._auth.get_credential", return_value=MagicMock()),
+        ):
+            ctx = build_context(environ={"FABRIC_AUTH": "interactive"})
+        assert ctx.auth_mode == _auth.CredentialMode.INTERACTIVE
+
+    def test_env_fabric_auth_uppercase_sp_accepted(self) -> None:
+        """FABRIC_AUTH=SP (uppercase) is accepted and maps to SERVICE_PRINCIPAL.
+
+        The env path normalises to lowercase before lookup, so mixed-case values
+        must work identically to their lowercase equivalents.
+        """
+        fake_http = MagicMock()
+        with (
+            patch("fabric_dw.mcp._context.FabricHttpClient", return_value=fake_http),
+            patch("fabric_dw.mcp._context._auth.get_credential", return_value=MagicMock()),
+        ):
+            ctx = build_context(environ={"FABRIC_AUTH": "SP"})
+        assert ctx.auth_mode == _auth.CredentialMode.SERVICE_PRINCIPAL
+
+    def test_env_fabric_auth_mixed_case_interactive_accepted(self) -> None:
+        """FABRIC_AUTH=Interactive (mixed case) is accepted and maps to INTERACTIVE."""
+        fake_http = MagicMock()
+        with (
+            patch("fabric_dw.mcp._context.FabricHttpClient", return_value=fake_http),
+            patch("fabric_dw.mcp._context._auth.get_credential", return_value=MagicMock()),
+        ):
+            ctx = build_context(environ={"FABRIC_AUTH": "Interactive"})
+        assert ctx.auth_mode == _auth.CredentialMode.INTERACTIVE
+
+    def test_env_fabric_auth_uppercase_default_accepted(self) -> None:
+        """FABRIC_AUTH=DEFAULT (uppercase) is accepted and maps to DEFAULT."""
+        fake_http = MagicMock()
+        with patch("fabric_dw.mcp._context.FabricHttpClient", return_value=fake_http):
+            ctx = build_context(environ={"FABRIC_AUTH": "DEFAULT"})
+        assert ctx.auth_mode == _auth.CredentialMode.DEFAULT

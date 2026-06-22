@@ -136,7 +136,9 @@ def build_context(
     env = environ if environ is not None else os.environ
 
     # 1. Env var (wins when non-empty/non-whitespace).
-    raw_env_mode = env.get("FABRIC_AUTH", "").strip()
+    # Normalise to lowercase so FABRIC_AUTH=SP / Interactive / DEFAULT all work,
+    # matching the case-insensitive behaviour documented for config/CLI.
+    raw_env_mode = env.get("FABRIC_AUTH", "").strip().lower()
 
     cfg = load_config(config_path)
 
@@ -150,7 +152,12 @@ def build_context(
                 f"expected one of {[m.value for m in _auth.CredentialMode]}"
             ) from exc
     elif cfg.defaults.auth_mode is not None:
-        # 2. Config file value — already validated at write time, but guard anyway.
+        # 2. Config file value.  In normal operation this branch is guaranteed to
+        # hold an exact lowercase enum member because `_parse_defaults_section`
+        # already discards invalid values to ``None`` and lowercases valid ones.
+        # The try/except is a belt-and-suspenders guard against parse-time
+        # validation regressing (e.g. a direct ``save_config`` bypass) and cannot
+        # be reached by any test without monkeypatching ``load_config``.
         try:
             mode = _auth.CredentialMode(cfg.defaults.auth_mode)
         except ValueError:
