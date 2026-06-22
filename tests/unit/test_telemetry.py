@@ -109,6 +109,163 @@ def test_telemetry_disabled_by_config_setting(
     assert mod.telemetry_enabled() is False  # type: ignore[attr-defined]
 
 
+def test_telemetry_disabled_by_config_integer_truthy(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """telemetry_enabled() returns False when config has disabled = 1 (integer)."""
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    config_dir = tmp_path / "fabric-dw"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    # Write disabled = 1 (integer, not bool) — valid TOML truthy value
+    config_file = config_dir / "config.toml"
+    config_file.write_text("[telemetry]\ndisabled = 1\n", encoding="utf-8")
+
+    mod = _reload_telemetry()
+    assert mod.telemetry_enabled() is False  # type: ignore[attr-defined]
+
+
+def test_telemetry_not_disabled_by_config_integer_zero(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """telemetry_enabled() returns True when config has disabled = 0 (falsy int)."""
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    config_dir = tmp_path / "fabric-dw"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_file = config_dir / "config.toml"
+    config_file.write_text("[telemetry]\ndisabled = 0\n", encoding="utf-8")
+
+    mod = _reload_telemetry()
+    assert mod.telemetry_enabled() is True  # type: ignore[attr-defined]
+
+
+def test_telemetry_disabled_by_config_string_true(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """telemetry_enabled() returns False when config has disabled = \"true\" (string)."""
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    config_dir = tmp_path / "fabric-dw"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_file = config_dir / "config.toml"
+    config_file.write_text('[telemetry]\ndisabled = "true"\n', encoding="utf-8")
+
+    mod = _reload_telemetry()
+    assert mod.telemetry_enabled() is False  # type: ignore[attr-defined]
+
+
+def test_telemetry_not_disabled_by_config_string_false(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """telemetry_enabled() returns True when config has disabled = \"false\" (string)."""
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    config_dir = tmp_path / "fabric-dw"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_file = config_dir / "config.toml"
+    config_file.write_text('[telemetry]\ndisabled = "false"\n', encoding="utf-8")
+
+    mod = _reload_telemetry()
+    assert mod.telemetry_enabled() is True  # type: ignore[attr-defined]
+
+
+def test_telemetry_not_disabled_by_config_string_zero(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """telemetry_enabled() returns True when config has disabled = \"0\" (string)."""
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    config_dir = tmp_path / "fabric-dw"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_file = config_dir / "config.toml"
+    config_file.write_text('[telemetry]\ndisabled = "0"\n', encoding="utf-8")
+
+    mod = _reload_telemetry()
+    assert mod.telemetry_enabled() is True  # type: ignore[attr-defined]
+
+
+def test_telemetry_disabled_fail_closed_on_lock_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """When config file EXISTS but cannot be read (lock timeout or OSError),
+    telemetry must NOT be sent (fail-closed privacy guarantee)."""
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    config_dir = tmp_path / "fabric-dw"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    # Write opt-out config — this file EXISTS so read-failure must fail-closed.
+    config_file = config_dir / "config.toml"
+    config_file.write_text("[telemetry]\ndisabled = true\n", encoding="utf-8")
+
+    # Simulate an OSError when reading the file (e.g. permission denied).
+    with patch.object(Path, "read_text", side_effect=OSError("permission denied")):
+        mod = _reload_telemetry()
+        # File exists but is unreadable — must treat as opted out (fail-closed).
+        assert mod.telemetry_enabled() is False  # type: ignore[attr-defined]
+
+
+def test_telemetry_disabled_fail_closed_on_corrupt_toml(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """When config file EXISTS but contains corrupt TOML, telemetry must not
+    be sent (fail-closed privacy guarantee)."""
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    config_dir = tmp_path / "fabric-dw"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_file = config_dir / "config.toml"
+    # File exists but TOML is invalid — must treat as opted out (fail-closed).
+    config_file.write_text("[[[[invalid TOML", encoding="utf-8")
+
+    mod = _reload_telemetry()
+    assert mod.telemetry_enabled() is False  # type: ignore[attr-defined]
+
+
+def test_env_opt_out_beats_config_fail_closed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """FABRIC_DW_TELEMETRY_OPT_OUT still disables telemetry even when config
+    exists but is unreadable (env opt-outs checked before config read)."""
+    monkeypatch.setenv("FABRIC_DW_TELEMETRY_OPT_OUT", "1")
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    config_dir = tmp_path / "fabric-dw"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_file = config_dir / "config.toml"
+    config_file.write_text("[telemetry]\ndisabled = false\n", encoding="utf-8")
+
+    mod = _reload_telemetry()
+    # Env opt-out must win regardless of config content.
+    assert mod.telemetry_enabled() is False  # type: ignore[attr-defined]
+
+
+def test_suppress_beats_config_fail_closed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Process-level suppress_telemetry() wins over config (checked first)."""
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    mod = _reload_telemetry()
+    mod.suppress_telemetry()  # type: ignore[attr-defined]
+    assert mod.telemetry_enabled() is False  # type: ignore[attr-defined]
+
+
 # ---------------------------------------------------------------------------
 # SDK is never imported when disabled
 # ---------------------------------------------------------------------------

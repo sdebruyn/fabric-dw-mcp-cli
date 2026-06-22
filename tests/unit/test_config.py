@@ -10,13 +10,18 @@ import filelock
 import pytest
 
 from fabric_dw.config import (
+    AuthConfig,
     ConfigError,
     Defaults,
+    LoggingConfig,
+    McpConfig,
+    TelemetryConfig,
     UserConfig,
     clear_config,
     default_path,
     load_config,
     save_config,
+    set_config,
     set_default,
 )
 
@@ -627,3 +632,326 @@ def test_set_default_sql_retry_executes_falsy_variants(tmp_path: Path, falsy: st
     set_default("sql_retry_executes", falsy, path)
     loaded = load_config(path)
     assert loaded.defaults.sql_retry_executes is False
+
+
+# ---------------------------------------------------------------------------
+# Backward-compat: defaults-only file loads with new sections at None
+# ---------------------------------------------------------------------------
+
+
+def test_defaults_only_file_loads_with_new_sections_empty(tmp_path: Path) -> None:
+    """A [defaults]-only TOML file loads with all new sections defaulting to None."""
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[defaults]\nworkspace = "SalesWS"\nwarehouse = "SalesDW"\n',
+        encoding="utf-8",
+    )
+    cfg = load_config(path)
+    assert cfg.defaults.workspace == "SalesWS"
+    assert cfg.defaults.warehouse == "SalesDW"
+    assert cfg.telemetry.disabled is None
+    assert cfg.mcp.workspace_allowlist is None
+    assert cfg.logging.level is None
+    assert cfg.auth.tenant_id is None
+    assert cfg.auth.client_id is None
+
+
+def test_old_style_user_config_equals_fully_defaulted() -> None:
+    """UserConfig(defaults=Defaults()) equals a fully-defaulted UserConfig()."""
+    old_style = UserConfig(defaults=Defaults())
+    new_style = UserConfig()
+    assert old_style == new_style
+
+
+# ---------------------------------------------------------------------------
+# TelemetryConfig round-trip
+# ---------------------------------------------------------------------------
+
+
+def test_round_trip_telemetry_disabled_true(tmp_path: Path) -> None:
+    """[telemetry] disabled = true survives save/load."""
+    path = tmp_path / "config.toml"
+    cfg = UserConfig(telemetry=TelemetryConfig(disabled=True))
+    save_config(cfg, path)
+    loaded = load_config(path)
+    assert loaded.telemetry.disabled is True
+
+
+def test_round_trip_telemetry_disabled_false(tmp_path: Path) -> None:
+    """[telemetry] disabled = false survives save/load."""
+    path = tmp_path / "config.toml"
+    cfg = UserConfig(telemetry=TelemetryConfig(disabled=False))
+    save_config(cfg, path)
+    loaded = load_config(path)
+    assert loaded.telemetry.disabled is False
+
+
+def test_telemetry_section_absent_when_none(tmp_path: Path) -> None:
+    """When telemetry.disabled is None, the [telemetry] section is not written."""
+    path = tmp_path / "config.toml"
+    cfg = UserConfig(defaults=Defaults(workspace="WS"))
+    save_config(cfg, path)
+    content = path.read_text(encoding="utf-8")
+    assert "[telemetry]" not in content
+
+
+def test_telemetry_disabled_integer_one_parsed_as_true(tmp_path: Path) -> None:
+    """[telemetry] disabled = 1 (integer) is treated as disabled=True."""
+    path = tmp_path / "config.toml"
+    path.write_text("[telemetry]\ndisabled = 1\n", encoding="utf-8")
+    cfg = load_config(path)
+    assert cfg.telemetry.disabled is True
+
+
+def test_telemetry_disabled_integer_zero_parsed_as_false(tmp_path: Path) -> None:
+    """[telemetry] disabled = 0 (integer) is treated as disabled=False."""
+    path = tmp_path / "config.toml"
+    path.write_text("[telemetry]\ndisabled = 0\n", encoding="utf-8")
+    cfg = load_config(path)
+    assert cfg.telemetry.disabled is False
+
+
+def test_telemetry_disabled_string_true_parsed_as_true(tmp_path: Path) -> None:
+    """[telemetry] disabled = \"true\" (string) is treated as disabled=True."""
+    path = tmp_path / "config.toml"
+    path.write_text('[telemetry]\ndisabled = "true"\n', encoding="utf-8")
+    cfg = load_config(path)
+    assert cfg.telemetry.disabled is True
+
+
+def test_telemetry_disabled_string_false_parsed_as_false(tmp_path: Path) -> None:
+    """[telemetry] disabled = \"false\" (string) must not opt out (disabled=False)."""
+    path = tmp_path / "config.toml"
+    path.write_text('[telemetry]\ndisabled = "false"\n', encoding="utf-8")
+    cfg = load_config(path)
+    assert cfg.telemetry.disabled is False
+
+
+def test_telemetry_disabled_string_zero_parsed_as_false(tmp_path: Path) -> None:
+    """[telemetry] disabled = \"0\" (string) must not opt out (disabled=False)."""
+    path = tmp_path / "config.toml"
+    path.write_text('[telemetry]\ndisabled = "0"\n', encoding="utf-8")
+    cfg = load_config(path)
+    assert cfg.telemetry.disabled is False
+
+
+def test_empty_user_config_writes_empty_file(tmp_path: Path) -> None:
+    """A fully-None UserConfig writes an empty TOML file (no sections at all)."""
+    path = tmp_path / "config.toml"
+    save_config(UserConfig(), path)
+    content = path.read_text(encoding="utf-8")
+    assert content.strip() == ""
+
+
+# ---------------------------------------------------------------------------
+# McpConfig round-trip
+# ---------------------------------------------------------------------------
+
+
+def test_round_trip_mcp_workspace_allowlist(tmp_path: Path) -> None:
+    """[mcp] workspace_allowlist survives save/load."""
+    path = tmp_path / "config.toml"
+    cfg = UserConfig(mcp=McpConfig(workspace_allowlist=["Sales", "Finance"]))
+    save_config(cfg, path)
+    loaded = load_config(path)
+    assert loaded.mcp.workspace_allowlist == ["Sales", "Finance"]
+
+
+def test_mcp_section_absent_when_none(tmp_path: Path) -> None:
+    """When mcp fields are None, the [mcp] section is not written."""
+    path = tmp_path / "config.toml"
+    save_config(UserConfig(), path)
+    content = path.read_text(encoding="utf-8")
+    assert "[mcp]" not in content
+
+
+# ---------------------------------------------------------------------------
+# LoggingConfig round-trip
+# ---------------------------------------------------------------------------
+
+
+def test_round_trip_logging_level(tmp_path: Path) -> None:
+    """[logging] level survives save/load."""
+    path = tmp_path / "config.toml"
+    cfg = UserConfig(logging=LoggingConfig(level="DEBUG"))
+    save_config(cfg, path)
+    loaded = load_config(path)
+    assert loaded.logging.level == "DEBUG"
+
+
+# ---------------------------------------------------------------------------
+# AuthConfig round-trip
+# ---------------------------------------------------------------------------
+
+
+def test_round_trip_auth_config(tmp_path: Path) -> None:
+    """[auth] tenant_id and client_id survive save/load."""
+    path = tmp_path / "config.toml"
+    cfg = UserConfig(
+        auth=AuthConfig(
+            tenant_id="00000000-0000-0000-0000-000000000001",
+            client_id="00000000-0000-0000-0000-000000000002",
+        )
+    )
+    save_config(cfg, path)
+    loaded = load_config(path)
+    assert loaded.auth.tenant_id == "00000000-0000-0000-0000-000000000001"
+    assert loaded.auth.client_id == "00000000-0000-0000-0000-000000000002"
+
+
+# ---------------------------------------------------------------------------
+# All sections round-trip together
+# ---------------------------------------------------------------------------
+
+
+def test_round_trip_all_sections(tmp_path: Path) -> None:
+    """All sections survive a combined save/load cycle."""
+    path = tmp_path / "config.toml"
+    cfg = UserConfig(
+        defaults=Defaults(workspace="WS", max_429_retries=5),
+        telemetry=TelemetryConfig(disabled=True),
+        mcp=McpConfig(workspace_allowlist=["A", "B"]),
+        logging=LoggingConfig(level="WARNING"),
+        auth=AuthConfig(tenant_id="tid", client_id="cid"),
+    )
+    save_config(cfg, path)
+    loaded = load_config(path)
+    assert loaded.defaults.workspace == "WS"
+    assert loaded.defaults.max_429_retries == 5
+    assert loaded.telemetry.disabled is True
+    assert loaded.mcp.workspace_allowlist == ["A", "B"]
+    assert loaded.logging.level == "WARNING"
+    assert loaded.auth.tenant_id == "tid"
+    assert loaded.auth.client_id == "cid"
+
+
+# ---------------------------------------------------------------------------
+# Unknown sections silently ignored
+# ---------------------------------------------------------------------------
+
+
+def test_unknown_section_ignored_on_load(tmp_path: Path) -> None:
+    """Unknown TOML sections are silently ignored on load."""
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[defaults]\nworkspace = "WS"\n\n[unknown_future_section]\nsome_key = "val"\n',
+        encoding="utf-8",
+    )
+    cfg = load_config(path)
+    assert cfg.defaults.workspace == "WS"
+    # No error raised, other sections default to None.
+    assert cfg.telemetry.disabled is None
+
+
+# ---------------------------------------------------------------------------
+# set_config — parity with set_default + new sections
+# ---------------------------------------------------------------------------
+
+
+def test_set_config_defaults_parity_with_set_default(tmp_path: Path) -> None:
+    """set_config('defaults', 'workspace', ...) behaves identically to set_default."""
+    path = tmp_path / "config.toml"
+    set_config("defaults", "workspace", "SalesWS", path)
+    loaded = load_config(path)
+    assert loaded.defaults.workspace == "SalesWS"
+
+
+def test_set_config_unknown_section_raises(tmp_path: Path) -> None:
+    """set_config with unknown section raises ValueError."""
+    path = tmp_path / "config.toml"
+    with pytest.raises(ValueError, match="Unknown config section/key"):
+        set_config("nonexistent", "key", "val", path)
+
+
+def test_set_config_unknown_key_raises(tmp_path: Path) -> None:
+    """set_config with unknown key in known section raises ValueError."""
+    path = tmp_path / "config.toml"
+    with pytest.raises(ValueError, match="Unknown config section/key"):
+        set_config("defaults", "not_a_real_key", "val", path)
+
+
+def test_set_config_none_clears_key(tmp_path: Path) -> None:
+    """set_config(value=None) removes a key from its section."""
+    path = tmp_path / "config.toml"
+    save_config(UserConfig(defaults=Defaults(workspace="WS", warehouse="WH")), path)
+    set_config("defaults", "workspace", None, path)
+    loaded = load_config(path)
+    assert loaded.defaults.workspace is None
+    assert loaded.defaults.warehouse == "WH"  # preserved
+
+
+def test_set_config_lock_timeout_raises_config_error(tmp_path: Path) -> None:
+    """set_config raises ConfigError on lock acquisition timeout."""
+    path = tmp_path / "config.toml"
+    lock_side_effect = filelock.Timeout(str(path) + ".lock")
+    with (
+        patch("filelock.FileLock.acquire", side_effect=lock_side_effect),
+        pytest.raises(ConfigError, match="Could not acquire lock"),
+    ):
+        set_config("defaults", "workspace", "SalesWS", path)
+
+
+def test_set_config_preserves_other_sections(tmp_path: Path) -> None:
+    """set_config on one section does not disturb unrelated sections."""
+    path = tmp_path / "config.toml"
+    save_config(
+        UserConfig(
+            defaults=Defaults(workspace="WS"),
+            telemetry=TelemetryConfig(disabled=True),
+        ),
+        path,
+    )
+    set_config("defaults", "warehouse", "DW", path)
+    loaded = load_config(path)
+    assert loaded.defaults.workspace == "WS"
+    assert loaded.defaults.warehouse == "DW"
+    assert loaded.telemetry.disabled is True  # not lost
+
+
+def test_set_config_telemetry_disabled_true(tmp_path: Path) -> None:
+    """set_config can write telemetry.disabled = True."""
+    path = tmp_path / "config.toml"
+    set_config("telemetry", "disabled", "true", path)
+    loaded = load_config(path)
+    assert loaded.telemetry.disabled is True
+
+
+def test_set_config_telemetry_disabled_false(tmp_path: Path) -> None:
+    """set_config can write telemetry.disabled = False."""
+    path = tmp_path / "config.toml"
+    save_config(UserConfig(telemetry=TelemetryConfig(disabled=True)), path)
+    set_config("telemetry", "disabled", "false", path)
+    loaded = load_config(path)
+    assert loaded.telemetry.disabled is False
+
+
+def test_set_config_concurrent_different_sections_no_lost_update(tmp_path: Path) -> None:
+    """Concurrent set_config calls to different sections must not lose updates."""
+    path = tmp_path / "config.toml"
+    errors: list[Exception] = []
+
+    def set_ws() -> None:
+        try:
+            for _ in range(5):
+                set_config("defaults", "workspace", "ConcurrentWS", path)
+        except Exception as exc:
+            errors.append(exc)
+
+    def set_telemetry() -> None:
+        try:
+            for _ in range(5):
+                set_config("telemetry", "disabled", "true", path)
+        except Exception as exc:
+            errors.append(exc)
+
+    t1 = threading.Thread(target=set_ws)
+    t2 = threading.Thread(target=set_telemetry)
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    assert not errors, f"Thread errors: {errors}"
+    loaded = load_config(path)
+    assert loaded.defaults.workspace == "ConcurrentWS"
+    assert loaded.telemetry.disabled is True

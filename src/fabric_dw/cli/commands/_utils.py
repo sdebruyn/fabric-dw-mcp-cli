@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import math
 import os
 import re
 from collections.abc import AsyncIterator, Callable, Coroutine
@@ -19,6 +18,7 @@ import click
 
 from fabric_dw import auth as _auth
 from fabric_dw.cache import ItemEntry, LookupCache
+from fabric_dw.config_resolve import resolve_float_knob, resolve_int_knob
 from fabric_dw.exceptions import ConfigError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.identifiers import parse_qualified_name as _parse_qn
@@ -80,28 +80,13 @@ def _resolve_max_429_retries(ctx: CliContext) -> int | None:
     its own built-in default (10).  Malformed env/config values are logged and
     skipped so a bad stored value never blocks all requests.
     """
-    # 1. CLI option (already validated by click.IntRange(min=1))
-    if ctx.max_429_retries is not None:
-        return ctx.max_429_retries
-    # 2. Environment variable — accept float-formatted ints like "20.0"
-    raw = os.environ.get("FABRIC_DW_MAX_429_RETRIES")
-    if raw is not None:
-        try:
-            v = int(float(raw))
-            if v >= 1:
-                return v
-            _logger_utils.warning("FABRIC_DW_MAX_429_RETRIES=%r is less than 1; ignoring", raw)
-        except (ValueError, OverflowError):
-            _logger_utils.warning(
-                "FABRIC_DW_MAX_429_RETRIES=%r is not a valid integer; ignoring", raw
-            )
-    # 3. Config file
-    cfg_val = ctx.config.defaults.max_429_retries
-    if cfg_val is not None:
-        if cfg_val >= 1:
-            return cfg_val
-        _logger_utils.warning("config max_429_retries=%r is less than 1; ignoring", cfg_val)
-    return None
+    return resolve_int_knob(
+        cli_value=ctx.max_429_retries,
+        env_key="FABRIC_DW_MAX_429_RETRIES",
+        config_value=ctx.config.defaults.max_429_retries,
+        min_val=1,
+        knob_name="max_429_retries",
+    )
 
 
 def _resolve_retry_deadline_s(ctx: CliContext) -> float | None:
@@ -111,42 +96,13 @@ def _resolve_retry_deadline_s(ctx: CliContext) -> float | None:
     its own built-in default (300.0).  Malformed, non-finite, or out-of-range
     env/config values are logged and skipped.
     """
-    # 1. CLI option (already validated by click.FloatRange(min=0.1));
-    #    FloatRange does not reject inf, so guard here too.
-    if ctx.retry_deadline_s is not None:
-        if math.isfinite(ctx.retry_deadline_s):
-            return ctx.retry_deadline_s
-        _logger_utils.warning("--retry-deadline %r is not finite; ignoring", ctx.retry_deadline_s)
-    # 2. Environment variable
-    raw = os.environ.get("FABRIC_DW_RETRY_DEADLINE_S")
-    if raw is not None:
-        try:
-            v = float(raw)
-            if not math.isfinite(v):
-                _logger_utils.warning("FABRIC_DW_RETRY_DEADLINE_S=%r is not finite; ignoring", raw)
-            elif v >= _MIN_RETRY_DEADLINE_S:
-                return v
-            else:
-                _logger_utils.warning(
-                    "FABRIC_DW_RETRY_DEADLINE_S=%r is less than %s; ignoring",
-                    raw,
-                    _MIN_RETRY_DEADLINE_S,
-                )
-        except ValueError:
-            _logger_utils.warning(
-                "FABRIC_DW_RETRY_DEADLINE_S=%r is not a valid float; ignoring", raw
-            )
-    # 3. Config file (non-finite values were already rejected at load/set time)
-    cfg_val = ctx.config.defaults.retry_deadline_s
-    if cfg_val is not None:
-        if cfg_val >= _MIN_RETRY_DEADLINE_S:
-            return cfg_val
-        _logger_utils.warning(
-            "config retry_deadline_s=%r is less than %s; ignoring",
-            cfg_val,
-            _MIN_RETRY_DEADLINE_S,
-        )
-    return None
+    return resolve_float_knob(
+        cli_value=ctx.retry_deadline_s,
+        env_key="FABRIC_DW_RETRY_DEADLINE_S",
+        config_value=ctx.config.defaults.retry_deadline_s,
+        min_val=_MIN_RETRY_DEADLINE_S,
+        knob_name="retry-deadline",
+    )
 
 
 @asynccontextmanager

@@ -25,15 +25,17 @@ exit, SIGTERM, or CTRL-C.
 from __future__ import annotations
 
 import logging
-import math
 import os
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fabric_dw import auth as _auth
 from fabric_dw.cache import LookupCache
+from fabric_dw.config import load_config
+from fabric_dw.config_resolve import resolve_float_knob, resolve_int_knob
 from fabric_dw.exceptions import ConfigError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.resolver import Resolver
@@ -95,58 +97,24 @@ def get_context() -> ServerContext:
 
 _logger = logging.getLogger(__name__)
 
-
-def _parse_mcp_int_env(env: Mapping[str, str], key: str, *, min_val: int) -> int | None:
-    """Parse an integer env var for the MCP context; warn and return None on failure.
-
-    Accepts float-formatted ints (e.g. ``"20.0"``) for compatibility with
-    Docker-composed environments that serialise YAML integers as floats.
-    """
-    raw = env.get(key)
-    if raw is None:
-        return None
-    try:
-        v = int(float(raw))
-        if v >= min_val:
-            return v
-        _logger.warning("%s=%r is less than %d; ignoring", key, raw, min_val)
-    except (ValueError, OverflowError):
-        _logger.warning("%s=%r is not a valid integer; ignoring", key, raw)
-    return None
+_MIN_RETRY_DEADLINE_S: float = 0.1
 
 
-def _parse_mcp_float_env(env: Mapping[str, str], key: str, *, min_val: float) -> float | None:
-    """Parse a float env var for the MCP context; warn and return None on failure.
+def build_context(
+    environ: Mapping[str, str] | None = None,
+    config_path: Path | None = None,
+) -> ServerContext:
+    """Construct a fresh :class:`ServerContext` from the environment and config file.
 
-    Non-finite values (``inf``, ``nan``) are rejected with a warning because
-    passing them to the HTTP client would disable the retry deadline silently.
-    """
-    raw = env.get(key)
-    if raw is None:
-        return None
-    try:
-        v = float(raw)
-        if not math.isfinite(v):
-            _logger.warning("%s=%r is not finite; ignoring", key, raw)
-            return None
-        if v >= min_val:
-            return v
-        _logger.warning("%s=%r is less than %s; ignoring", key, raw, min_val)
-    except ValueError:
-        _logger.warning("%s=%r is not a valid float; ignoring", key, raw)
-    return None
-
-
-def build_context(environ: Mapping[str, str] | None = None) -> ServerContext:
-    """Construct a fresh :class:`ServerContext` from the environment.
-
-    The 429 retry budget is read from ``FABRIC_DW_MAX_429_RETRIES`` and
-    ``FABRIC_DW_RETRY_DEADLINE_S``.  When absent or malformed the HTTP
-    client's built-in defaults (10 / 300.0) apply.
+    The 429 retry budget is resolved with precedence env > config > built-in
+    default (10 / 300.0) via the shared :func:`~fabric_dw.config_resolve.resolve_int_knob`
+    and :func:`~fabric_dw.config_resolve.resolve_float_knob` helpers.
 
     Args:
         environ: Mapping to read environment variables from.  Defaults to
             ``os.environ`` when ``None``.
+        config_path: Path to the config file.  Defaults to the platform
+            standard path when ``None``.
 
     Returns:
         A fully initialised :class:`ServerContext`.
@@ -167,8 +135,24 @@ def build_context(environ: Mapping[str, str] | None = None) -> ServerContext:
 
     credential = _auth.get_credential(mode)
 
-    retries = _parse_mcp_int_env(env, "FABRIC_DW_MAX_429_RETRIES", min_val=1)
-    deadline = _parse_mcp_float_env(env, "FABRIC_DW_RETRY_DEADLINE_S", min_val=0.1)
+    cfg = load_config(config_path)
+
+    retries = resolve_int_knob(
+        cli_value=None,
+        env_key="FABRIC_DW_MAX_429_RETRIES",
+        env=env,
+        config_value=cfg.defaults.max_429_retries,
+        min_val=1,
+        knob_name="max_429_retries",
+    )
+    deadline = resolve_float_knob(
+        cli_value=None,
+        env_key="FABRIC_DW_RETRY_DEADLINE_S",
+        env=env,
+        config_value=cfg.defaults.retry_deadline_s,
+        min_val=_MIN_RETRY_DEADLINE_S,
+        knob_name="retry_deadline_s",
+    )
 
     http = FabricHttpClient(
         credential=credential,
