@@ -23,10 +23,31 @@ from click.testing import CliRunner
 import fabric_dw.cli._main as _main_mod
 from fabric_dw.cli._main import (
     _DESTRUCTIVE_CLI_COMMANDS,
-    _MCP_TO_CLI_DESTRUCTIVE_MAP,
     cli,
 )
 from fabric_dw.mcp._helpers import _DESTRUCTIVE_MCP_TOOLS
+
+# ---------------------------------------------------------------------------
+# Drift-guard map (test-local) — MCP tool name → CLI dotted name
+# ---------------------------------------------------------------------------
+# Kept here rather than in the production module since it has no runtime use.
+# Conditional tools (refresh_sql_endpoint_metadata, import_table_from_url) are
+# excluded — they carry their own runtime flag logic.
+_MCP_TO_CLI_DESTRUCTIVE_MAP: dict[str, str] = {
+    "drop_function": "functions.drop",
+    "drop_procedure": "procedures.drop",
+    "delete_restore_point": "restore-points.delete",
+    "restore_warehouse_in_place": "restore-points.restore",
+    "delete_schema": "schemas.delete",
+    "delete_snapshot": "snapshots.delete",
+    "delete_sql_pool": "sql-pools.delete",
+    "delete_statistics": "statistics.delete",
+    "delete_table": "tables.delete",
+    "clear_table": "tables.clear",
+    "set_cluster_columns": "tables.cluster-by",
+    "drop_view": "views.drop",
+    "delete_warehouse": "warehouses.delete",
+}
 
 # ---------------------------------------------------------------------------
 # Helpers

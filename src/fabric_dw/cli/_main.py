@@ -59,26 +59,6 @@ _DESTRUCTIVE_CLI_COMMANDS: frozenset[str] = frozenset(
     }
 )
 
-# Bidirectional drift-guard map: MCP tool name → CLI dotted name.
-# Used by tests/unit/test_cli_destructive_parity.py to cross-check both sets.
-# Conditional tools (refresh_sql_endpoint_metadata, import_table_from_url) are
-# excluded — they are handled via runtime ctx.meta flags below.
-_MCP_TO_CLI_DESTRUCTIVE_MAP: dict[str, str] = {
-    "drop_function": "functions.drop",
-    "drop_procedure": "procedures.drop",
-    "delete_restore_point": "restore-points.delete",
-    "restore_warehouse_in_place": "restore-points.restore",
-    "delete_schema": "schemas.delete",
-    "delete_snapshot": "snapshots.delete",
-    "delete_sql_pool": "sql-pools.delete",
-    "delete_statistics": "statistics.delete",
-    "delete_table": "tables.delete",
-    "clear_table": "tables.clear",
-    "set_cluster_columns": "tables.cluster-by",
-    "drop_view": "views.drop",
-    "delete_warehouse": "warehouses.delete",
-}
-
 # ctx.meta key written by conditionally-destructive command bodies BEFORE any
 # API call or prompt, so the finally block in _InstrumentedGroup.invoke can
 # pick it up outcome-independently.
