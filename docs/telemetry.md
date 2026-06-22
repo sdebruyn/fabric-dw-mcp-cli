@@ -86,4 +86,5 @@ Any of the following fully disables telemetry — no events are emitted and the 
 |---|---|
 | Environment variable | Set `FABRIC_DW_TELEMETRY_OPT_OUT` to any value except the falsy set (`""`, `0`, `false`, `no`, `off`, case-insensitive). Setting it to `0` or `false` does **not** opt out. |
 | Do Not Track | Set `DO_NOT_TRACK` to any value except the falsy set (same rules as above). |
+| CLI command | Run `fdw config set telemetry disabled true`. To re-enable, run `fdw config set telemetry disabled false` or `fdw config unset telemetry disabled`. |
 | Config file | Add `disabled = true` under a `[telemetry]` section in `$XDG_CONFIG_HOME/fabric-dw/config.toml` |

@@ -10,6 +10,7 @@ from click.testing import CliRunner
 
 from fabric_dw.cli._main import cli
 from fabric_dw.config import Defaults, UserConfig, default_path, load_config
+from fabric_dw.telemetry import telemetry_enabled
 
 
 @pytest.fixture
@@ -371,3 +372,171 @@ class TestConfigShowSqlRetry:
         data = json.loads(result.output)
         assert data["defaults"]["sql_retry_deadline_s"] is None
         assert data["defaults"]["sql_retry_executes"] is None
+
+
+# ---------------------------------------------------------------------------
+# config set / unset / show for telemetry disabled
+# ---------------------------------------------------------------------------
+
+
+class TestConfigSetTelemetryDisabled:
+    def test_set_telemetry_disabled_true_exits_zero(
+        self, runner: CliRunner, config_env: Path
+    ) -> None:
+        _ = config_env
+        result = runner.invoke(cli, ["config", "set", "telemetry", "disabled", "true"])
+        assert result.exit_code == 0
+
+    def test_set_telemetry_disabled_false_exits_zero(
+        self, runner: CliRunner, config_env: Path
+    ) -> None:
+        _ = config_env
+        result = runner.invoke(cli, ["config", "set", "telemetry", "disabled", "false"])
+        assert result.exit_code == 0
+
+    def test_set_telemetry_disabled_true_writes_file(
+        self, runner: CliRunner, config_env: Path
+    ) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "telemetry", "disabled", "true"])
+        cfg = load_config(default_path())
+        assert cfg.telemetry.disabled is True
+
+    def test_set_telemetry_disabled_false_writes_file(
+        self, runner: CliRunner, config_env: Path
+    ) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "telemetry", "disabled", "false"])
+        cfg = load_config(default_path())
+        assert cfg.telemetry.disabled is False
+
+    def test_set_telemetry_disabled_case_insensitive(
+        self, runner: CliRunner, config_env: Path
+    ) -> None:
+        _ = config_env
+        result = runner.invoke(cli, ["config", "set", "telemetry", "disabled", "True"])
+        assert result.exit_code == 0
+        cfg = load_config(default_path())
+        assert cfg.telemetry.disabled is True
+
+    def test_set_telemetry_disabled_preserves_other_keys(
+        self, runner: CliRunner, config_env: Path
+    ) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "workspace", "WS1"])
+        runner.invoke(cli, ["config", "set", "telemetry", "disabled", "true"])
+        cfg = load_config(default_path())
+        assert cfg.telemetry.disabled is True
+        assert cfg.defaults.workspace == "WS1"
+
+    def test_set_telemetry_disabled_invalid_rejected(
+        self, runner: CliRunner, config_env: Path
+    ) -> None:
+        _ = config_env
+        result = runner.invoke(cli, ["config", "set", "telemetry", "disabled", "maybe"])
+        assert result.exit_code != 0
+
+
+class TestConfigUnsetTelemetryDisabled:
+    def test_unset_telemetry_disabled_exits_zero(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "telemetry", "disabled", "true"])
+        result = runner.invoke(cli, ["config", "unset", "telemetry", "disabled"])
+        assert result.exit_code == 0
+
+    def test_unset_telemetry_disabled_clears_key(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "telemetry", "disabled", "true"])
+        runner.invoke(cli, ["config", "unset", "telemetry", "disabled"])
+        cfg = load_config(default_path())
+        assert cfg.telemetry.disabled is None
+
+    def test_unset_telemetry_disabled_preserves_other_keys(
+        self, runner: CliRunner, config_env: Path
+    ) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "workspace", "WS1"])
+        runner.invoke(cli, ["config", "set", "telemetry", "disabled", "true"])
+        runner.invoke(cli, ["config", "unset", "telemetry", "disabled"])
+        cfg = load_config(default_path())
+        assert cfg.telemetry.disabled is None
+        assert cfg.defaults.workspace == "WS1"
+
+    def test_unset_telemetry_disabled_nonexistent_exits_zero(
+        self, runner: CliRunner, config_env: Path
+    ) -> None:
+        _ = config_env
+        result = runner.invoke(cli, ["config", "unset", "telemetry", "disabled"])
+        assert result.exit_code == 0
+
+
+class TestConfigShowTelemetry:
+    def test_show_includes_telemetry_section(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "telemetry", "disabled", "true"])
+        result = runner.invoke(cli, ["--json", "config", "show"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert "telemetry" in data
+        assert data["telemetry"]["disabled"] is True
+
+    def test_show_null_when_telemetry_not_set(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        result = runner.invoke(cli, ["--json", "config", "show"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["telemetry"]["disabled"] is None
+
+
+class TestConfigTelemetryEndToEnd:
+    """End-to-end: CLI set → telemetry_enabled() reflects the change."""
+
+    def test_set_telemetry_disabled_true_disables_telemetry(
+        self,
+        runner: CliRunner,
+        config_env: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """config set telemetry disabled true → telemetry_enabled() is False."""
+        _ = config_env
+        # Remove env-var opt-outs so the config-file layer is in control.
+        monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+        monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+
+        result = runner.invoke(cli, ["config", "set", "telemetry", "disabled", "true"])
+        assert result.exit_code == 0
+
+        assert telemetry_enabled() is False
+
+    def test_set_telemetry_disabled_false_enables_telemetry(
+        self,
+        runner: CliRunner,
+        config_env: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """config set telemetry disabled false → telemetry_enabled() is True."""
+        _ = config_env
+        monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+        monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+
+        # First opt out, then opt back in.
+        runner.invoke(cli, ["config", "set", "telemetry", "disabled", "true"])
+        runner.invoke(cli, ["config", "set", "telemetry", "disabled", "false"])
+
+        assert telemetry_enabled() is True
+
+    def test_unset_telemetry_disabled_enables_telemetry(
+        self,
+        runner: CliRunner,
+        config_env: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """config unset telemetry disabled → telemetry_enabled() is True."""
+        _ = config_env
+        monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+        monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+
+        runner.invoke(cli, ["config", "set", "telemetry", "disabled", "true"])
+        runner.invoke(cli, ["config", "unset", "telemetry", "disabled"])
+
+        assert telemetry_enabled() is True

@@ -12,12 +12,14 @@ config set max-429-retries     — persist the max consecutive 429 retry count
 config set retry-deadline      — persist the combined 429+5xx wall-clock deadline
 config set sql-retry-deadline  — persist the SQL/TDS connect+execute retry budget
 config set sql-retry-executes  — persist whether fetch="none" statements are retried
+config set telemetry disabled  — opt in/out of telemetry via config
 config unset workspace         — clear the workspace default
 config unset warehouse         — clear the warehouse default
 config unset max-429-retries   — clear the max consecutive 429 retry count
 config unset retry-deadline    — clear the HTTP deadline default
 config unset sql-retry-deadline — clear the SQL retry deadline default
 config unset sql-retry-executes — clear the SQL execute-retry flag
+config unset telemetry disabled — clear the telemetry opt-out (revert to default-on)
 config clear                   — wipe the entire config file
 """
 
@@ -27,7 +29,7 @@ import click
 
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import confirm, render
-from fabric_dw.config import clear_config, set_default
+from fabric_dw.config import clear_config, set_config, set_default
 
 
 @click.group("config")
@@ -125,6 +127,24 @@ def set_sql_retry_executes_cmd(value: str) -> None:
     click.echo(f"Default sql_retry_executes set to {value.lower()}.")
 
 
+@set_group.group("telemetry")
+def set_telemetry_group() -> None:
+    """Set a telemetry configuration value."""
+
+
+@set_telemetry_group.command("disabled")
+@click.argument("value", type=click.Choice(["true", "false"], case_sensitive=False))
+def set_telemetry_disabled_cmd(value: str) -> None:
+    """Opt in or out of telemetry via the config file.
+
+    Pass ``true`` to disable telemetry (opt out); ``false`` to re-enable it.
+    Setting this to ``false`` does NOT override the env-var opt-out
+    (``FABRIC_DW_TELEMETRY_OPT_OUT`` / ``DO_NOT_TRACK`` still take precedence).
+    """
+    set_config("telemetry", "disabled", value.lower())
+    click.echo(f"Telemetry disabled set to {value.lower()}.")
+
+
 # ---------------------------------------------------------------------------
 # config unset  (sub-group with workspace / warehouse sub-commands)
 # ---------------------------------------------------------------------------
@@ -175,6 +195,22 @@ def unset_sql_retry_executes_cmd() -> None:
     """Clear the sql_retry_executes default (revert to built-in false)."""
     set_default("sql_retry_executes", None)
     click.echo("Default sql_retry_executes cleared.")
+
+
+@unset_group.group("telemetry")
+def unset_telemetry_group() -> None:
+    """Clear a telemetry configuration value."""
+
+
+@unset_telemetry_group.command("disabled")
+def unset_telemetry_disabled_cmd() -> None:
+    """Clear the telemetry opt-out from the config file (revert to default-on).
+
+    Note: env-var opt-outs (``FABRIC_DW_TELEMETRY_OPT_OUT`` / ``DO_NOT_TRACK``)
+    still take precedence over this setting.
+    """
+    set_config("telemetry", "disabled", None)
+    click.echo("Telemetry disabled cleared.")
 
 
 # ---------------------------------------------------------------------------
