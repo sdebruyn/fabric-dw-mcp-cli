@@ -984,20 +984,21 @@ async def load_cmd(  # noqa: PLR0912, PLR0915
     else:
         effective_if_exists = "append"
 
+    # Stash the conditional destructive flag before any guard or API call so the
+    # finally block in _InstrumentedGroup.invoke picks it up outcome-independently —
+    # even when the call is rejected by the --create guard below.
+    is_destructive = effective_if_exists in ("truncate", "replace")
+    if is_destructive:
+        click.get_current_context().meta[_CLI_CONDITIONAL_DESTRUCTIVE_KEY] = True
+
     # truncate/replace are only meaningful on the --create path (local files).
     # For --url there is no schema to infer, and for --file without --create the
     # destructive policies are undefined.  Reject early with a clear message.
-    if effective_if_exists in ("truncate", "replace") and not create:
+    if is_destructive and not create:
         raise click.UsageError(
             f"--if-exists {effective_if_exists} requires --create "
             "(destructive policies only apply to the auto-create load path)."
         )
-
-    # Stash the conditional destructive flag before any API call or prompt so the
-    # finally block in _InstrumentedGroup.invoke picks it up outcome-independently.
-    is_destructive = effective_if_exists in ("truncate", "replace")
-    if is_destructive:
-        click.get_current_context().meta[_CLI_CONDITIONAL_DESTRUCTIVE_KEY] = True
 
     # Destructive confirmation for truncate / replace.
     if is_destructive:

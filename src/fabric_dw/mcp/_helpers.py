@@ -53,7 +53,6 @@ from fabric_dw.telemetry_commands import (
 )
 
 __all__ = [
-    "_DESTRUCTIVE_MCP_TOOLS",
     "InstrumentedFastMCP",
     "fabric_err",
     "make_sql_target",
@@ -63,7 +62,7 @@ __all__ = [
     "resolve_item",
     "safe_rows",
     "tool_err",
-]  # RUF022 sort: _DESTRUCTIVE_MCP_TOOLS starts with underscore — intentionally first within group
+]
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")

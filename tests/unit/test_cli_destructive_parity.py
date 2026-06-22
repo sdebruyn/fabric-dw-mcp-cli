@@ -33,12 +33,16 @@ from fabric_dw.mcp._helpers import _DESTRUCTIVE_MCP_TOOLS
 # ---------------------------------------------------------------------------
 
 
-def _invoke_and_capture_destructive(args: list[str]) -> bool | None:
+def _invoke_and_capture_destructive(args: list[str]) -> bool:
     """Run the CLI with *args* and return the ``destructive`` kwarg from the
-    last ``emit_command_invoked`` call, or ``None`` if it was never called.
+    last ``emit_command_invoked`` call.
 
     Patches out all I/O and infrastructure so no real network access or auth
     is needed.
+
+    Raises:
+        AssertionError: When ``emit_command_invoked`` was never called — this
+            indicates an instrumentation break distinct from a flag-value bug.
     """
     captured: list[dict] = []
 
@@ -55,9 +59,10 @@ def _invoke_and_capture_destructive(args: list[str]) -> bool | None:
     ):
         runner.invoke(cli, args, catch_exceptions=True)
 
-    if not captured:
-        return None
-    return captured[-1].get("destructive", False)  # type: ignore[return-value]
+    assert captured, (
+        f"emit_command_invoked was never called for args {args!r}; instrumentation may be broken"
+    )
+    return bool(captured[-1].get("destructive", False))
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +99,21 @@ class TestDestructiveParity:
         ]
         assert not missing, "\n".join(missing)
 
+    def test_every_cli_destructive_command_appears_in_map_values(self) -> None:
+        """Every entry in _DESTRUCTIVE_CLI_COMMANDS must appear as a map value.
+
+        A new CLI destructive command added to the frozenset but not to
+        _MCP_TO_CLI_DESTRUCTIVE_MAP.values() would be unreachable from MCP
+        parity checks — this test catches that gap.
+        """
+        map_values = set(_MCP_TO_CLI_DESTRUCTIVE_MAP.values())
+        missing = [
+            f"{cmd!r} not a value in _MCP_TO_CLI_DESTRUCTIVE_MAP"
+            for cmd in sorted(_DESTRUCTIVE_CLI_COMMANDS)
+            if cmd not in map_values
+        ]
+        assert not missing, "\n".join(missing)
+
     def test_mcp_destructive_set_not_empty(self) -> None:
         """_DESTRUCTIVE_MCP_TOOLS must be non-empty (sanity check)."""
         assert _DESTRUCTIVE_MCP_TOOLS, "_DESTRUCTIVE_MCP_TOOLS is empty — check _helpers.py"
@@ -117,9 +137,7 @@ class TestDestructiveCliCommandsEmitDestructiveOp:
     )
     def test_destructive_command_name_in_frozenset(self, dotted_name: str) -> None:
         """All entries in _DESTRUCTIVE_CLI_COMMANDS follow the <group>.<subcommand> convention."""
-        assert "." in dotted_name, (
-            f"{dotted_name!r} is not in <group>.<subcommand> format"
-        )
+        assert "." in dotted_name, f"{dotted_name!r} is not in <group>.<subcommand> format"
 
     def test_functions_drop_is_destructive(self) -> None:
         assert "functions.drop" in _DESTRUCTIVE_CLI_COMMANDS
@@ -265,17 +283,12 @@ class TestNonDestructiveCommandsDoNotSetDestructiveOp:
         destructive = _invoke_and_capture_destructive(
             ["-w", "myws", "queries", "kill", "mywarehouse", "123"]
         )
-        # None (not called) or False are both acceptable; True is not
-        assert destructive is not True, (
-            "queries kill incorrectly emitted destructive_op=True"
-        )
+        assert destructive is False, "queries kill incorrectly emitted destructive_op=True"
 
     def test_cache_clear_does_not_emit_destructive(self) -> None:
         """cache clear must NOT emit destructive_op=True."""
         destructive = _invoke_and_capture_destructive(["cache", "clear"])
-        assert destructive is not True, (
-            "cache clear incorrectly emitted destructive_op=True"
-        )
+        assert destructive is False, "cache clear incorrectly emitted destructive_op=True"
 
 
 # ---------------------------------------------------------------------------
@@ -293,7 +306,7 @@ class TestConditionalDestructiveCommands:
         destructive = _invoke_and_capture_destructive(
             ["-w", "myws", "sql-endpoints", "refresh", "myendpoint"]
         )
-        assert destructive is not True, (
+        assert destructive is False, (
             "sql-endpoints refresh (no --recreate-tables) incorrectly emitted destructive_op=True"
         )
 
@@ -313,7 +326,7 @@ class TestConditionalDestructiveCommands:
         destructive = _invoke_and_capture_destructive(
             ["-w", "myws", "tables", "load", "mywarehouse", "dbo.mytable", "--url", "http://x"]
         )
-        assert destructive is not True, (
+        assert destructive is False, (
             "tables load (no destructive if-exists) incorrectly emitted destructive_op=True"
         )
 
@@ -357,6 +370,56 @@ class TestConditionalDestructiveCommands:
             ]
         )
         assert destructive is True, (
-            "tables load --if-exists replace did not emit destructive_op=True; "
-            f"got {destructive!r}"
+            f"tables load --if-exists replace did not emit destructive_op=True; got {destructive!r}"
+        )
+
+    def test_tables_load_truncate_without_create_still_emits_destructive(self) -> None:
+        """tables load --if-exists truncate without --create is rejected (UsageError) but
+        must STILL emit destructive_op=True — the intent is destructive even on rejection.
+
+        Regression test for the outcome-independence gap: the ctx.meta flag must be
+        stashed BEFORE the --create guard raises UsageError.
+        """
+        destructive = _invoke_and_capture_destructive(
+            [
+                "-w",
+                "myws",
+                "tables",
+                "load",
+                "mywarehouse",
+                "dbo.mytable",
+                "--file",
+                "/tmp/data.csv",  # noqa: S108
+                "--if-exists",
+                "truncate",
+                # NOTE: --create is intentionally omitted to trigger the UsageError guard
+            ]
+        )
+        assert destructive is True, (
+            "tables load --if-exists truncate (without --create) did not emit destructive_op=True "
+            f"on rejection; got {destructive!r}"
+        )
+
+    def test_tables_load_replace_without_create_still_emits_destructive(self) -> None:
+        """tables load --if-exists replace without --create is rejected (UsageError) but
+        must STILL emit destructive_op=True — the intent is destructive even on rejection.
+        """
+        destructive = _invoke_and_capture_destructive(
+            [
+                "-w",
+                "myws",
+                "tables",
+                "load",
+                "mywarehouse",
+                "dbo.mytable",
+                "--file",
+                "/tmp/data.csv",  # noqa: S108
+                "--if-exists",
+                "replace",
+                # NOTE: --create is intentionally omitted to trigger the UsageError guard
+            ]
+        )
+        assert destructive is True, (
+            "tables load --if-exists replace (without --create) did not emit destructive_op=True "
+            f"on rejection; got {destructive!r}"
         )
