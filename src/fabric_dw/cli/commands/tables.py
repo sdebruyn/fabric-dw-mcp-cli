@@ -13,6 +13,7 @@ import click
 
 from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._context import CliContext
+from fabric_dw.cli._main import _CLI_CONDITIONAL_DESTRUCTIVE_KEY
 from fabric_dw.cli._render import render
 from fabric_dw.cli.commands._utils import (
     build_http_client,
@@ -901,7 +902,7 @@ def _resolve_url_file_type(fmt: str | None, url: str) -> str:
 )
 @click.pass_obj
 @coro
-async def load_cmd(  # noqa: PLR0912
+async def load_cmd(  # noqa: PLR0912, PLR0915
     ctx: CliContext,
     item: str | None,
     qualified_name: str,
@@ -983,17 +984,23 @@ async def load_cmd(  # noqa: PLR0912
     else:
         effective_if_exists = "append"
 
+    # Stash the conditional destructive flag before any guard or API call so the
+    # finally block in _InstrumentedGroup.invoke picks it up outcome-independently —
+    # even when the call is rejected by the --create guard below.
+    is_destructive = effective_if_exists in ("truncate", "replace")
+    if is_destructive:
+        click.get_current_context().meta[_CLI_CONDITIONAL_DESTRUCTIVE_KEY] = True
+
     # truncate/replace are only meaningful on the --create path (local files).
     # For --url there is no schema to infer, and for --file without --create the
     # destructive policies are undefined.  Reject early with a clear message.
-    if effective_if_exists in ("truncate", "replace") and not create:
+    if is_destructive and not create:
         raise click.UsageError(
             f"--if-exists {effective_if_exists} requires --create "
             "(destructive policies only apply to the auto-create load path)."
         )
 
     # Destructive confirmation for truncate / replace.
-    is_destructive = effective_if_exists in ("truncate", "replace")
     if is_destructive:
         action = "TRUNCATE" if effective_if_exists == "truncate" else "DROP+recreate"
         if not confirm_destructive(

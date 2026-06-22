@@ -76,6 +76,17 @@ _log = logging.getLogger(__name__)
 
 _TELEMETRY_WRAPPED_ATTR = "__fabric_telemetry_wrapped__"
 
+# ---------------------------------------------------------------------------
+# Destructive MCP tool registry
+# ---------------------------------------------------------------------------
+# Populated at decoration-time by mutating_tool(destructive=True) so that
+# _main.py can cross-check parity with _DESTRUCTIVE_CLI_COMMANDS.
+#
+# Conditional tools (e.g. refresh_sql_endpoint_metadata, import_table_from_url)
+# are NOT listed here — they carry their own runtime flag logic and are handled
+# separately in the CLI via ctx.meta.
+_DESTRUCTIVE_MCP_TOOLS: set[str] = set()
+
 
 def _wrap_mcp_tool_with_telemetry(
     fn: Callable[_P, Coroutine[None, None, _R]],
@@ -183,6 +194,11 @@ def mutating_tool(
             if destructive:
                 _guards.assert_destructive_allowed()
             return await fn(*args, **kwargs)
+
+        # Register unconditionally-destructive tool names so the CLI drift guard
+        # can cross-check parity with _DESTRUCTIVE_CLI_COMMANDS.
+        if destructive:
+            _DESTRUCTIVE_MCP_TOOLS.add(name)
 
         # Add telemetry around the guard wrapper.
         tel_wrapped = _wrap_mcp_tool_with_telemetry(guard_wrapper, name, destructive=destructive)
