@@ -533,9 +533,7 @@ def _coerce_defaults_key(  # noqa: PLR0912
             elif value.lower() in {"false", "0", "no", "off"}:
                 coerced_bool = False
             else:
-                raise ValueError(
-                    f"{key} {value!r} must be one of: true/1/yes/on or false/0/no/off"
-                )
+                raise ValueError(f"{key} {value!r} must be one of: true/1/yes/on or false/0/no/off")
     return coerced_int, coerced_float, coerced_bool
 
 
