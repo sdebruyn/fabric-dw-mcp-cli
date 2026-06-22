@@ -2991,3 +2991,111 @@ class TestSqlRetryExecutes:
         assert mock_mssql.connect.call_count == 1, (
             "DML (fetch='none') must not retry on execute-phase transient errors by default"
         )
+
+
+# ---------------------------------------------------------------------------
+# _pool_enabled — 3-layer precedence (env > config > default True)
+# ---------------------------------------------------------------------------
+
+
+class TestPoolEnabledConfig:
+    """_pool_enabled follows the 3-layer rule: env > config > built-in True.
+
+    Note: the module-level ``_disable_pool_by_default`` autouse fixture sets
+    ``FABRIC_SQL_POOL=0`` for every test in this module.  Tests that need to
+    remove the env var entirely (to test config or default fall-through) call
+    ``monkeypatch.delenv("FABRIC_SQL_POOL", raising=False)`` to undo it.
+    """
+
+    def test_env_zero_disables_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """FABRIC_SQL_POOL=0 disables pooling even when config says True."""
+        monkeypatch.setenv("FABRIC_SQL_POOL", "0")
+        cfg = UserConfig(defaults=Defaults(sql_pool=True))
+        _sql_module._sql_config_cache = cfg
+        assert _sql_module._pool_enabled() is False
+
+    def test_env_one_enables_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """FABRIC_SQL_POOL=1 enables pooling even when config says False."""
+        monkeypatch.setenv("FABRIC_SQL_POOL", "1")
+        cfg = UserConfig(defaults=Defaults(sql_pool=False))
+        _sql_module._sql_config_cache = cfg
+        assert _sql_module._pool_enabled() is True
+
+    def test_env_false_string_disables_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """FABRIC_SQL_POOL=false (string) disables pooling."""
+        monkeypatch.setenv("FABRIC_SQL_POOL", "false")
+        assert _sql_module._pool_enabled() is False
+
+    def test_env_off_string_disables_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """FABRIC_SQL_POOL=off (string) disables pooling."""
+        monkeypatch.setenv("FABRIC_SQL_POOL", "off")
+        assert _sql_module._pool_enabled() is False
+
+    def test_env_no_string_disables_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """FABRIC_SQL_POOL=no (string) disables pooling."""
+        monkeypatch.setenv("FABRIC_SQL_POOL", "no")
+        assert _sql_module._pool_enabled() is False
+
+    def test_env_empty_string_falls_through_to_default_on(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """FABRIC_SQL_POOL='' (empty string) is treated as absent — pooling stays ON.
+
+        An empty placeholder (e.g. Docker ``ENV FABRIC_SQL_POOL=``) must not
+        silently disable pooling.  Only a non-empty falsy value disables it.
+        """
+        monkeypatch.setenv("FABRIC_SQL_POOL", "")
+        assert _sql_module._pool_enabled() is True
+
+    def test_env_whitespace_only_falls_through_to_default_on(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """FABRIC_SQL_POOL='  ' (whitespace only) is treated as absent — pooling stays ON."""
+        monkeypatch.setenv("FABRIC_SQL_POOL", "   ")
+        assert _sql_module._pool_enabled() is True
+
+    def test_env_true_string_enables_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """FABRIC_SQL_POOL=true enables pooling."""
+        monkeypatch.setenv("FABRIC_SQL_POOL", "true")
+        assert _sql_module._pool_enabled() is True
+
+    def test_env_any_non_falsy_string_enables_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Any non-falsy FABRIC_SQL_POOL value enables pooling."""
+        monkeypatch.setenv("FABRIC_SQL_POOL", "yes")
+        assert _sql_module._pool_enabled() is True
+
+    def test_config_false_disables_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Config sql_pool=False disables pooling when env var is absent."""
+        monkeypatch.delenv("FABRIC_SQL_POOL", raising=False)
+        cfg = UserConfig(defaults=Defaults(sql_pool=False))
+        _sql_module._sql_config_cache = cfg
+        assert _sql_module._pool_enabled() is False
+
+    def test_config_true_enables_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Config sql_pool=True enables pooling when env var is absent."""
+        monkeypatch.delenv("FABRIC_SQL_POOL", raising=False)
+        cfg = UserConfig(defaults=Defaults(sql_pool=True))
+        _sql_module._sql_config_cache = cfg
+        assert _sql_module._pool_enabled() is True
+
+    def test_falls_back_to_true_when_no_env_no_config(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When neither env var nor config is set, pooling is enabled (default True)."""
+        monkeypatch.delenv("FABRIC_SQL_POOL", raising=False)
+        # _isolate_sql_config autouse fixture already cleared the cache.
+        assert _sql_module._pool_enabled() is True
+
+    def test_config_none_falls_back_to_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Config sql_pool=None (unset) falls through to the built-in True default."""
+        monkeypatch.delenv("FABRIC_SQL_POOL", raising=False)
+        cfg = UserConfig(defaults=Defaults(sql_pool=None))
+        _sql_module._sql_config_cache = cfg
+        assert _sql_module._pool_enabled() is True
+
+    def test_env_wins_over_config_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """FABRIC_SQL_POOL=1 wins over config sql_pool=False."""
+        monkeypatch.setenv("FABRIC_SQL_POOL", "1")
+        cfg = UserConfig(defaults=Defaults(sql_pool=False))
+        _sql_module._sql_config_cache = cfg
+        assert _sql_module._pool_enabled() is True

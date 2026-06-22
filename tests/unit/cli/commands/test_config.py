@@ -546,3 +546,78 @@ class TestConfigTelemetryEndToEnd:
         monkeypatch.delenv("DO_NOT_TRACK", raising=False)
 
         assert telemetry_enabled() is True
+
+
+# ---------------------------------------------------------------------------
+# config set/unset sql-pool
+# ---------------------------------------------------------------------------
+
+
+class TestConfigSetSqlPool:
+    def test_set_sql_pool_false_exits_zero(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        result = runner.invoke(cli, ["config", "set", "sql-pool", "false"])
+        assert result.exit_code == 0
+
+    def test_set_sql_pool_false_writes_file(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "sql-pool", "false"])
+        cfg = load_config(default_path())
+        assert cfg.defaults.sql_pool is False
+
+    def test_set_sql_pool_true_writes_file(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "sql-pool", "true"])
+        cfg = load_config(default_path())
+        assert cfg.defaults.sql_pool is True
+
+    def test_set_sql_pool_case_insensitive(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        result = runner.invoke(cli, ["config", "set", "sql-pool", "False"])
+        assert result.exit_code == 0
+        cfg = load_config(default_path())
+        assert cfg.defaults.sql_pool is False
+
+    def test_set_sql_pool_preserves_other_keys(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "workspace", "MyWS"])
+        runner.invoke(cli, ["config", "set", "sql-retry-executes", "true"])
+        runner.invoke(cli, ["config", "set", "sql-pool", "false"])
+        cfg = load_config(default_path())
+        assert cfg.defaults.sql_pool is False
+        assert cfg.defaults.workspace == "MyWS"
+        assert cfg.defaults.sql_retry_executes is True  # preserved
+
+
+class TestConfigUnsetSqlPool:
+    def test_unset_sql_pool_exits_zero(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "sql-pool", "false"])
+        result = runner.invoke(cli, ["config", "unset", "sql-pool"])
+        assert result.exit_code == 0
+
+    def test_unset_sql_pool_clears_key(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "sql-pool", "false"])
+        runner.invoke(cli, ["config", "set", "sql-retry-executes", "true"])
+        runner.invoke(cli, ["config", "unset", "sql-pool"])
+        cfg = load_config(default_path())
+        assert cfg.defaults.sql_pool is None
+        assert cfg.defaults.sql_retry_executes is True  # preserved
+
+
+class TestConfigShowSqlPool:
+    def test_show_includes_sql_pool_field(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "sql-pool", "false"])
+        result = runner.invoke(cli, ["--json", "config", "show"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["defaults"]["sql_pool"] is False
+
+    def test_show_null_when_sql_pool_not_set(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        result = runner.invoke(cli, ["--json", "config", "show"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["defaults"]["sql_pool"] is None
