@@ -43,7 +43,7 @@ def config_group() -> None:
 @config_group.command("show")
 @click.pass_obj
 def show_cmd(ctx: CliContext) -> None:
-    """Show the current configuration."""
+    """Show the current configuration defaults."""
     cfg = ctx.config
     data = {
         "defaults": {

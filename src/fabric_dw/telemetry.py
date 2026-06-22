@@ -173,15 +173,47 @@ def _config_dir() -> Path:
 
 
 def _is_disabled_by_config() -> bool:
-    """Return True when the config file contains ``[telemetry] disabled = true``."""
-    try:
-        from fabric_dw.config import load_config  # noqa: PLC0415
+    """Return True when the config file contains a truthy ``[telemetry] disabled``.
 
-        cfg = load_config()
-    except Exception:
+    Privacy-safety contract (fail-CLOSED):
+
+    - File absent → not opted out (return False).
+    - File present, opt-out key is truthy → opted out (return True).
+    - File present but unreadable / unparseable → opted out (return True).
+      A user who wrote ``[telemetry] disabled = true`` and whose config file
+      becomes temporarily unreadable (e.g. another process holds the lock)
+      must NOT have telemetry sent against their intent.
+
+    This function uses a best-effort lock-free read with a very short
+    timeout so it does not block the CLI startup path.  The normal
+    :func:`~fabric_dw.config.load_config` path (used for all other config
+    reads) keeps its lenient swallow-and-warn semantics; the opt-out
+    decision is the sole caller that needs fail-closed behaviour.
+    """
+    import tomllib as _tomllib  # noqa: PLC0415
+
+    config_file = _config_dir() / "config.toml"
+    if not config_file.exists():
         return False
+
+    # File exists — read it.  Fail CLOSED on any read/parse error so that
+    # a temporarily unreadable file does not accidentally enable telemetry.
+    try:
+        raw = config_file.read_text(encoding="utf-8")
+        data = _tomllib.loads(raw)
+        telemetry_section = data.get("telemetry", {})
+        if not isinstance(telemetry_section, dict):
+            return False
+        raw_disabled = telemetry_section.get("disabled")
+        # Accept bool or int (TOML native types that can be truthy/falsy).
+        if isinstance(raw_disabled, (bool, int)):
+            return bool(raw_disabled)
+    except Exception:
+        # Any read or parse failure when the file EXISTS is treated as
+        # opt-out (fail-closed) to honour the user's declared intent.
+        return True
     else:
-        return cfg.telemetry.disabled is True
+        return False
 
 
 def telemetry_enabled() -> bool:

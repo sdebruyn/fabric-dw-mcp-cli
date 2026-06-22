@@ -695,6 +695,22 @@ def test_telemetry_section_absent_when_none(tmp_path: Path) -> None:
     assert "[telemetry]" not in content
 
 
+def test_telemetry_disabled_integer_one_parsed_as_true(tmp_path: Path) -> None:
+    """[telemetry] disabled = 1 (integer) is parsed as disabled=True."""
+    path = tmp_path / "config.toml"
+    path.write_text("[telemetry]\ndisabled = 1\n", encoding="utf-8")
+    cfg = load_config(path)
+    assert cfg.telemetry.disabled is True
+
+
+def test_telemetry_disabled_integer_zero_parsed_as_false(tmp_path: Path) -> None:
+    """[telemetry] disabled = 0 (integer) is parsed as disabled=False."""
+    path = tmp_path / "config.toml"
+    path.write_text("[telemetry]\ndisabled = 0\n", encoding="utf-8")
+    cfg = load_config(path)
+    assert cfg.telemetry.disabled is False
+
+
 def test_empty_user_config_writes_empty_file(tmp_path: Path) -> None:
     """A fully-None UserConfig writes an empty TOML file (no sections at all)."""
     path = tmp_path / "config.toml"
