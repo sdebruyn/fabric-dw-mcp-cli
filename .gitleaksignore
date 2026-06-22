@@ -15,3 +15,6 @@ f949307560771b1c6e019fd8750c30341d305d08:src/fabric_dw/config.py:generic-api-key
 # config.py refactor: _make_defaults_setter key comparison for max_429_retries —
 # string literal used as a config-key identifier, not a secret.
 fd8fdba053bd6c9228cbf6170429aa0718c58a8a:src/fabric_dw/config.py:generic-api-key:508
+
+# Same false positive after rebase onto main (new commit sha, slightly different line).
+1976c27b5a576d1f696adb84b0d24ca0f76461fc:src/fabric_dw/config.py:generic-api-key:516
