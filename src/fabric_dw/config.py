@@ -429,7 +429,7 @@ def _read_defaults_locked(resolved: Path) -> Defaults:
 _MIN_RETRY_DEADLINE_S: float = 0.1
 
 
-def _coerce_defaults_key(
+def _coerce_defaults_key(  # noqa: PLR0912
     key: str, value: str | None
 ) -> tuple[int | None, float | None, bool | None]:
     """Coerce and validate a numeric/boolean defaults key.
