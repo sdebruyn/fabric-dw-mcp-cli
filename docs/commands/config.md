@@ -96,7 +96,7 @@ fdw config clear
 
 ### config set
 
-Set a default value. Accepts `workspace`, `warehouse`, `max-429-retries`, `retry-deadline`, `sql-retry-deadline`, or `sql-retry-executes` as the key.
+Set a default value. Accepts `workspace`, `warehouse`, `max-429-retries`, `retry-deadline`, `sql-retry-deadline`, or `sql-retry-executes` as a flat key, or the nested sub-command `telemetry disabled` to configure the telemetry opt-out.
 
 **Synopsis**
 
@@ -107,6 +107,7 @@ fdw config set max-429-retries N
 fdw config set retry-deadline SECONDS
 fdw config set sql-retry-deadline SECONDS
 fdw config set sql-retry-executes true|false
+fdw config set telemetry disabled true|false
 ```
 
 **Example**
@@ -118,6 +119,7 @@ fdw config set max-429-retries 20
 fdw config set retry-deadline 600.0
 fdw config set sql-retry-deadline 300.0
 fdw config set sql-retry-executes true
+fdw config set telemetry disabled true
 ```
 
 ---
@@ -148,7 +150,7 @@ warehouse  MyWarehouse
 
 ### config unset
 
-Clear a single default value. Accepts `workspace`, `warehouse`, `max-429-retries`, `retry-deadline`, `sql-retry-deadline`, or `sql-retry-executes` as the key.
+Clear a single default value. Accepts `workspace`, `warehouse`, `max-429-retries`, `retry-deadline`, `sql-retry-deadline`, or `sql-retry-executes` as a flat key, or the nested sub-command `telemetry disabled` to remove the config-file telemetry opt-out.
 
 **Synopsis**
 
@@ -159,4 +161,5 @@ fdw config unset max-429-retries
 fdw config unset retry-deadline
 fdw config unset sql-retry-deadline
 fdw config unset sql-retry-executes
+fdw config unset telemetry disabled
 ```
