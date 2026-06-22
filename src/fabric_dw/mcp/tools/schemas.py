@@ -43,11 +43,13 @@ def register(mcp: FastMCP) -> None:
             workspace: Workspace name or GUID.
             item: Warehouse or SQL Analytics Endpoint name or GUID.
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("list_schemas ws=%s item=%s", ws_id, entry.id)
             target = make_sql_target(ws_id, entry, item)
             result = await schemas_svc.list_schemas(target, mode=ctx.auth_mode)
@@ -67,11 +69,13 @@ def register(mcp: FastMCP) -> None:
             item: Warehouse or SQL Analytics Endpoint name or GUID.
             name: The schema name.  Must be a valid SQL identifier.
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("create_schema ws=%s item=%s name=%r", ws_id, entry.id, name)
             target = make_sql_target(ws_id, entry, item)
             result = await schemas_svc.create_schema(target, name, mode=ctx.auth_mode)
@@ -106,11 +110,13 @@ def register(mcp: FastMCP) -> None:
             cascade: When ``True``, drop all tables and views in the schema first.
                 Defaults to ``False``.
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("delete_schema ws=%s item=%s name=%r", ws_id, entry.id, name)
             target = make_sql_target(ws_id, entry, item)
             await schemas_svc.delete_schema(

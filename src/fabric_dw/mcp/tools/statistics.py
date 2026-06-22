@@ -52,11 +52,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             user_only: When True, only user-created statistics are returned.
             auto_only: When True, only auto-created statistics are returned.
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "list_statistics ws=%s item=%s schema=%r table=%r user_only=%s auto_only=%s",
                 ws_id,
@@ -101,11 +103,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             histogram_only: When True, return only the histogram steps.
         """
         parse_qualified_name(qualified_table, kind="table")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "show_statistics ws=%s item=%s table=%r stat=%r",
                 ws_id,
@@ -153,11 +157,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 and uses WITH SAMPLE n PERCENT.
         """
         parse_qualified_name(qualified_table, kind="table")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "create_statistics ws=%s item=%s table=%r col=%r name=%r",
                 ws_id,
@@ -206,11 +212,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 and uses WITH SAMPLE n PERCENT.
         """
         parse_qualified_name(qualified_table, kind="table")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "update_statistics ws=%s item=%s table=%r stat=%r",
                 ws_id,
@@ -251,11 +259,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             stat_name: Name of the statistic to drop.
         """
         parse_qualified_name(qualified_table, kind="table")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "delete_statistics ws=%s item=%s table=%r stat=%r",
                 ws_id,

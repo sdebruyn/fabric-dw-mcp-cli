@@ -369,8 +369,18 @@ The MCP server reads the following environment variables to restrict what it may
 |---|---|---|
 | `FABRIC_MCP_READONLY` | unset | Set to `1` to restrict `execute_sql` to SELECT/WITH and block all mutating tools. |
 | `FABRIC_MCP_ALLOW_DESTRUCTIVE` | unset | Set to `1` to enable permanently-destructive tools (`delete_*`, `clear_table`, `restore_warehouse_in_place`). Disabled by default. |
-| `FABRIC_MCP_WORKSPACES` | unset | Comma-separated workspace names or GUIDs the server may touch. Unset = all workspaces allowed. |
+| `FABRIC_MCP_WORKSPACES` | unset | Comma-separated workspace names or GUIDs the server may touch. Highest-priority layer of the workspace allowlist knob — see below. An empty or whitespace-only value is treated as absent (falls through to the config layer). |
 | `FABRIC_MCP_ALLOW_REMOTE` | unset | Set to `1` to allow the HTTP transport (`--transport http`) to bind on a non-loopback address. Always front with an authenticating reverse proxy that handles TLS. |
+
+#### Workspace allowlist
+
+`FABRIC_MCP_WORKSPACES` is the highest-priority layer of a 3-layer workspace allowlist knob. Resolution order (highest first):
+
+1. `FABRIC_MCP_WORKSPACES` env var — an empty or whitespace-only value falls through to layer 2.
+2. `[mcp] workspace_allowlist` in `config.toml`, set via `fdw config set mcp workspace-allowlist` — an empty array `[]` falls through to layer 3.
+3. Built-in default: no restriction (all workspaces allowed).
+
+An empty list at any layer is **not** treated as "block everything"; it falls through to the next layer. This prevents an accidental `FABRIC_MCP_WORKSPACES=` from locking out all workspaces. See [MCP workspace allowlist](commands/config.md#mcp-workspace-allowlist) for the config knob.
 
 ### Logging
 

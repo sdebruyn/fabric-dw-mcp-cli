@@ -55,11 +55,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             kind: Filter by function kind — ``"scalar"`` (FN only),
                 ``"inline-tvf"`` (IF only), or ``"all"`` (FN + IF + TF, the default).
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "list_functions ws=%s item=%s schema=%r kind=%r",
                 ws_id,
@@ -92,11 +94,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             qualified_name: Dot-separated qualified function name, e.g. ``dbo.fn_clean_input``.
         """
         schema, fn_name = parse_qualified_name(qualified_name, kind="function")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("get_function ws=%s item=%s fn=%s.%s", ws_id, entry.id, schema, fn_name)
             target = make_sql_target(ws_id, entry, item)
             result = await functions_svc.get_function(target, schema, fn_name, mode=ctx.auth_mode)
@@ -126,11 +130,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             body: The function body (parameter list, RETURNS clause, and implementation).
         """
         schema, fn_name = parse_qualified_name(qualified_name, kind="function")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("create_function ws=%s item=%s fn=%s.%s", ws_id, entry.id, schema, fn_name)
             target = make_sql_target(ws_id, entry, item)
             result = await functions_svc.create_function(
@@ -163,11 +169,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             body: The new function body (parameter list, RETURNS clause, and implementation).
         """
         schema, fn_name = parse_qualified_name(qualified_name, kind="function")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("update_function ws=%s item=%s fn=%s.%s", ws_id, entry.id, schema, fn_name)
             target = make_sql_target(ws_id, entry, item)
             result = await functions_svc.update_function(
@@ -197,11 +205,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 does not exist). Defaults to ``false``.
         """
         schema, fn_name = parse_qualified_name(qualified_name, kind="function")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("drop_function ws=%s item=%s fn=%s.%s", ws_id, entry.id, schema, fn_name)
             target = make_sql_target(ws_id, entry, item)
             await functions_svc.drop_function(
@@ -229,12 +239,14 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 e.g. ``dbo.fn_clean_input``.
             new_name: New bare function name (no schema prefix), e.g. ``fn_sanitize_input``.
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         schema, old_fn_name = parse_qualified_name(qualified_name, kind="function")
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "rename_function ws=%s item=%s fn=%s.%s -> %s",
                 ws_id,

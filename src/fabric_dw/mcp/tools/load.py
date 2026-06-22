@@ -144,8 +144,8 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             rejected_row_location: URL for rejected-row output.
         """
         schema, table_name = parse_qualified_name(qualified_name, kind="table")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
 
         # Validate file_type
         if file_type not in ("CSV", "PARQUET"):
@@ -167,7 +167,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
 
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             # Log without secrets.
             _log.debug(
                 "load_table_from_url ws=%s item=%s table=%s.%s url=%s file_type=%s cred_type=%s",
@@ -343,8 +345,8 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         from fabric_dw.models import WarehouseKind  # noqa: PLC0415
 
         schema, table_name = parse_qualified_name(qualified_name, kind="table")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
 
         # SQL Endpoint guard: COPY INTO is Warehouse-only.
         if file_type not in ("CSV", "PARQUET"):
@@ -366,7 +368,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
 
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
 
             # SQL Endpoint: COPY INTO is Warehouse-only.
             if entry.kind == WarehouseKind.SQL_ENDPOINT:

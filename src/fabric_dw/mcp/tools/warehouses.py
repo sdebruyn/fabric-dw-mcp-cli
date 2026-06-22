@@ -37,21 +37,23 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         When *all_workspaces* is ``True``, ignore *workspace* and aggregate results
         across every workspace the caller can see.
         """
-        if all_workspaces and workspace_allowlist_active():
+        ctx = get_context()
+        if all_workspaces and workspace_allowlist_active(ctx.workspace_allowlist):
             raise ToolError(
                 "all_workspaces=True is not permitted when FABRIC_MCP_WORKSPACES is configured; "
                 "specify an individual workspace instead"
             )
         if not all_workspaces:
-            assert_workspace_allowed(workspace)
-        ctx = get_context()
+            assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             if all_workspaces:
                 _log.debug("list_warehouses all_workspaces=True")
                 result = await warehouses.list_all_workspaces(ctx.http)
             else:
                 ws_id = await ctx.resolver.workspace_id(workspace)
-                assert_workspace_allowed(workspace, str(ws_id))
+                assert_workspace_allowed(
+                    workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+                )
                 _log.debug("list_warehouses ws=%s", ws_id)
                 result = await warehouses.list_warehouses(ctx.http, ws_id)
         except FabricError as exc:
@@ -61,11 +63,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
     @mcp.tool(name="get_warehouse")
     async def get_warehouse(workspace: str, warehouse: str) -> dict[str, Any]:
         """Return details for a single warehouse (name or GUID)."""
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("get_warehouse ws=%s item=%s", ws_id, item.id)
             result = await warehouses.get_warehouse(ctx.http, ws_id, item.id)
         except FabricError as exc:
@@ -99,11 +103,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 list of supported collations.
             description: Optional description for the new warehouse.
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id = await ctx.resolver.workspace_id(workspace)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("create_warehouse ws=%s name=%r", ws_id, name)
             result = await warehouses.create(
                 ctx.http, ws_id, name, collation=collation, description=description
@@ -121,11 +127,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         description: str | None = None,
     ) -> dict[str, Any]:
         """Rename a Warehouse (and optionally update its description)."""
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("rename_warehouse ws=%s item=%s new=%r", ws_id, item.id, new_name)
             result = await warehouses.rename(
                 ctx.http, ws_id, item.id, new_name, description=description
@@ -138,11 +146,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
     @mutating_tool(mcp, "delete_warehouse", destructive=True)
     async def delete_warehouse(workspace: str, warehouse: str) -> dict[str, Any]:
         """Delete a Warehouse."""
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("delete_warehouse ws=%s item=%s", ws_id, item.id)
             await warehouses.delete(ctx.http, ws_id, item.id)
         except FabricError as exc:
@@ -152,11 +162,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
     @mutating_tool(mcp, "takeover_warehouse")
     async def takeover_warehouse(workspace: str, warehouse: str) -> dict[str, Any]:
         """Take ownership of a Warehouse."""
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("takeover_warehouse ws=%s item=%s", ws_id, item.id)
             await ownership_svc.takeover(ctx.http, ws_id, item.id)
         except FabricError as exc:
@@ -171,11 +183,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
 
         See https://learn.microsoft.com/en-us/fabric/admin/microsoft-fabric-admin for details.
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("get_warehouse_permissions ws=%s item=%s", ws_id, item.id)
             result = await _permissions_svc.list_item_access(ctx.http, ws_id, item.id)
         except FabricError as exc:

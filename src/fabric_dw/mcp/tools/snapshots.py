@@ -33,11 +33,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
     @mcp.tool(name="list_snapshots")
     async def list_snapshots(workspace: str, warehouse: str) -> list[dict[str, Any]]:
         """Return all snapshots belonging to a warehouse."""
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("list_snapshots ws=%s item=%s", ws_id, item.id)
             result = await snapshots.list_snapshots(ctx.http, ws_id, item.id)
         except FabricError as exc:
@@ -61,12 +63,14 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             description: Optional description.
             snapshot_dt: Optional ISO-8601 datetime string for the snapshot point-in-time.
         """
-        assert_workspace_allowed(workspace)
-        parsed_dt = parse_iso8601(snapshot_dt, "snapshot_dt")
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
+        parsed_dt = parse_iso8601(snapshot_dt, "snapshot_dt")
         try:
             ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("create_snapshot ws=%s item=%s name=%r", ws_id, item.id, name)
             result = await snapshots.create(
                 ctx.http,
@@ -89,11 +93,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         description: str | None = None,
     ) -> dict[str, Any]:
         """Rename a warehouse snapshot."""
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, snap_item = await resolve_item(ctx.resolver, workspace, snapshot)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("rename_snapshot ws=%s item=%s new=%r", ws_id, snap_item.id, new_name)
             result = await snapshots.rename(
                 ctx.http,
@@ -110,11 +116,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
     @mutating_tool(mcp, "delete_snapshot", destructive=True)
     async def delete_snapshot(workspace: str, snapshot: str) -> dict[str, Any]:
         """Delete a warehouse snapshot."""
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, snap_item = await resolve_item(ctx.resolver, workspace, snapshot)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("delete_snapshot ws=%s item=%s", ws_id, snap_item.id)
             await snapshots.delete(ctx.http, ws_id, snap_item.id)
         except (ValueError, FabricError) as exc:
@@ -136,12 +144,14 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             snapshot_name: The snapshot database name to roll.
             new_dt: Optional ISO-8601 datetime string; defaults to CURRENT_TIMESTAMP.
         """
-        assert_workspace_allowed(workspace)
-        parsed_dt = parse_iso8601(new_dt, "new_dt")
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
+        parsed_dt = parse_iso8601(new_dt, "new_dt")
         try:
             ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "roll_snapshot_timestamp ws=%s item=%s snap=%r", ws_id, item.id, snapshot_name
             )

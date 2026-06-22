@@ -40,11 +40,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         Requires workspace admin role.  This tool targets a **beta / preview** API
         endpoint that may change before general availability.
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id = await ctx.resolver.workspace_id(workspace)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("get_sql_pools_configuration ws=%s", ws_id)
             result = await sql_pools_svc.get_configuration(ctx.http, ws_id)
         except FabricError as exc:
@@ -57,11 +59,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
 
         Requires workspace admin role.  This tool targets a **beta / preview** API.
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id = await ctx.resolver.workspace_id(workspace)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("list_sql_pools ws=%s", ws_id)
             config = await sql_pools_svc.get_configuration(ctx.http, ws_id)
         except FabricError as exc:
@@ -78,11 +82,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
 
         Requires workspace admin role.  This tool targets a **beta / preview** API.
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id = await ctx.resolver.workspace_id(workspace)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("get_sql_pool ws=%s pool=%r", ws_id, pool_name)
             config = await sql_pools_svc.get_configuration(ctx.http, ws_id)
         except FabricError as exc:
@@ -115,7 +121,8 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
 
         Requires workspace admin role.  This tool targets a **beta / preview** API.
         """
-        assert_workspace_allowed(workspace)
+        ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         classifier: SqlPoolClassifier | None = None
         if classifier_type is not None:
             classifier = SqlPoolClassifier.model_validate(
@@ -137,10 +144,11 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         except ValidationError as exc:
             raise ToolError(f"Invalid pool: {exc}") from exc
 
-        ctx = get_context()
         try:
             ws_id = await ctx.resolver.workspace_id(workspace)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("create_sql_pool ws=%s name=%r max_percent=%d", ws_id, name, max_percent)
             result = await sql_pools_svc.create_pool(ctx.http, ws_id, pool)
         except AlreadyExistsError as exc:
@@ -179,11 +187,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
 
         Requires workspace admin role.  This tool targets a **beta / preview** API.
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id = await ctx.resolver.workspace_id(workspace)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("update_sql_pool ws=%s name=%r", ws_id, name)
             result = await sql_pools_svc.update_pool(
                 ctx.http,
@@ -217,11 +227,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
 
         Requires workspace admin role.  This tool targets a **beta / preview** API.
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id = await ctx.resolver.workspace_id(workspace)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("delete_sql_pool ws=%s pool=%r", ws_id, pool_name)
             await sql_pools_svc.delete_pool(ctx.http, ws_id, pool_name)
         except NotFoundError as exc:
@@ -236,11 +248,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
 
         Requires workspace admin role.  This tool targets a **beta / preview** API.
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id = await ctx.resolver.workspace_id(workspace)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("enable_sql_pools ws=%s", ws_id)
             result = await sql_pools_svc.enable(ctx.http, ws_id)
         except FabricError as exc:
@@ -255,11 +269,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
 
         Requires workspace admin role.  This tool targets a **beta / preview** API.
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id = await ctx.resolver.workspace_id(workspace)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("disable_sql_pools ws=%s", ws_id)
             result = await sql_pools_svc.disable(ctx.http, ws_id)
         except FabricError as exc:
@@ -285,11 +301,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         """
         since_dt = parse_iso8601(since, "since")
         until_dt = parse_iso8601(until, "until")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("list_sql_pool_insights ws=%s item=%s limit=%d", ws_id, item.id, limit)
             target = make_sql_target(ws_id, item, warehouse)
             result = await _qi_svc.list_sql_pool_insights(

@@ -1727,7 +1727,7 @@ async def test_rename_table_workspace_allowlist_blocks(mock_ctx, ctx_patch) -> N
     with (
         ctx_patch,
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
-        pytest.raises(ToolError, match="FABRIC_MCP_WORKSPACES"),
+        pytest.raises(ToolError, match="allowlist"),
     ):
         await mcp._tool_manager.call_tool(
             "rename_table",

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 from uuid import UUID
 
@@ -12,7 +11,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
-from fabric_dw.mcp._guards import assert_workspace_allowed
+from fabric_dw.mcp._guards import assert_workspace_allowed, resolve_workspace_allowlist
 from fabric_dw.mcp._helpers import fabric_err, mutating_tool
 from fabric_dw.models import Workspace
 from fabric_dw.services import capacities, workspaces
@@ -38,15 +37,17 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             workspace: Workspace name or GUID.
             capacity_id: UUID of the capacity to assign the workspace to.
         """
-        assert_workspace_allowed(workspace)
+        ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             cap_uuid = UUID(capacity_id)
         except ValueError as exc:
             raise ToolError(f"Invalid capacity_id {capacity_id!r}: must be a UUID.") from exc
-        ctx = get_context()
         try:
             ws_id = await ctx.resolver.workspace_id(workspace)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("assign_workspace_to_capacity ws=%s capacity=%s", ws_id, cap_uuid)
             await workspaces.assign_to_capacity(ctx.http, ws_id, cap_uuid)
         except FabricError as exc:
@@ -72,8 +73,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
     async def list_workspaces() -> list[dict[str, Any]]:
         """List all Fabric workspaces the caller has access to.
 
-        When ``FABRIC_MCP_WORKSPACES`` is configured only the workspaces that
-        match the allowlist (by name or GUID) are returned.
+        When a workspace allowlist is configured (via ``FABRIC_MCP_WORKSPACES``
+        env var or ``[mcp] workspace_allowlist`` in ``config.toml``) only the
+        workspaces that match the allowlist (by name or GUID) are returned.
         """
         _log.debug("list_workspaces called")
         ctx = get_context()
@@ -81,23 +83,21 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             result = await workspaces.list_all(ctx.http)
         except FabricError as exc:
             raise fabric_err(exc) from exc
-        raw_allowlist = os.environ.get("FABRIC_MCP_WORKSPACES", "").strip()
-        if raw_allowlist:
-            allowed: frozenset[str] = frozenset(
-                entry.strip().lower() for entry in raw_allowlist.split(",") if entry.strip()
-            )
-            if allowed:
-                result = [ws for ws in result if _workspace_in_allowlist(ws, allowed)]
+        allowed = resolve_workspace_allowlist(ctx.workspace_allowlist)
+        if allowed is not None:
+            result = [ws for ws in result if _workspace_in_allowlist(ws, allowed)]
         return [ws.model_dump(by_alias=True, mode="json") for ws in result]
 
     @mcp.tool(name="get_workspace")
     async def get_workspace(workspace: str) -> dict[str, Any]:
         """Return details for a single workspace (name or GUID)."""
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id = await ctx.resolver.workspace_id(workspace)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("get_workspace ws=%s", ws_id)
             result = await workspaces.get(ctx.http, ws_id)
         except FabricError as exc:
@@ -122,11 +122,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 return an error.  See the Fabric documentation for the full
                 list of supported collations.
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id = await ctx.resolver.workspace_id(workspace)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("set_workspace_collation ws=%s collation=%r", ws_id, collation)
             await workspaces.set_collation(ctx.http, ws_id, collation)
         except ValueError as exc:

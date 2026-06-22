@@ -26,11 +26,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
     @mcp.tool(name="list_restore_points")
     async def list_restore_points(workspace: str, warehouse: str) -> list[dict[str, Any]]:
         """Return all restore points for a warehouse."""
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("list_restore_points ws=%s item=%s", ws_id, item.id)
             result = await restore_svc.list_points(ctx.http, ws_id, item.id)
         except FabricError as exc:
@@ -48,11 +50,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             warehouse: Warehouse name or GUID.
             restore_point_id: The restore point ID string (e.g. ``"1726617378000"``).
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("get_restore_point ws=%s item=%s rp=%r", ws_id, item.id, restore_point_id)
             result = await restore_svc.get_point(ctx.http, ws_id, item.id, restore_point_id)
         except FabricError as exc:
@@ -74,11 +78,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             name: Optional display name (max 128 chars).
             description: Optional description (max 512 chars).
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("create_restore_point ws=%s item=%s name=%r", ws_id, item.id, name)
             result = await restore_svc.create_point(
                 ctx.http, ws_id, item.id, name=name, description=description
@@ -106,11 +112,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             name: New display name (max 128 chars).
             description: New description (max 512 chars).
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("update_restore_point ws=%s item=%s rp=%r", ws_id, item.id, restore_point_id)
             result = await restore_svc.update_point(
                 ctx.http,
@@ -137,11 +145,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             warehouse: Warehouse name or GUID.
             restore_point_id: The restore point ID string.
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("delete_restore_point ws=%s item=%s rp=%r", ws_id, item.id, restore_point_id)
             await restore_svc.delete_point(ctx.http, ws_id, item.id, restore_point_id)
         except FabricError as exc:
@@ -163,11 +173,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             warehouse: Warehouse name or GUID.
             restore_point_id: The restore point ID string to restore to.
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "restore_warehouse_in_place ws=%s item=%s rp=%r",
                 ws_id,

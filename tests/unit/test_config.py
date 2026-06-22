@@ -1268,3 +1268,83 @@ def test_valid_auth_modes_mirrors_credential_mode_enum() -> None:
     instead of silently rejecting/accepting the wrong modes at runtime.
     """
     assert frozenset(m.value for m in CredentialMode) == VALID_AUTH_MODES
+
+
+# ---------------------------------------------------------------------------
+# set_config mcp.workspace_allowlist — CSV parse, round-trip, unset
+# ---------------------------------------------------------------------------
+
+
+def test_set_config_mcp_workspace_allowlist_csv_parses(tmp_path: Path) -> None:
+    """CSV value is split, trimmed, and stored as a list."""
+    path = tmp_path / "config.toml"
+    set_config("mcp", "workspace_allowlist", "Sales WS, Finance WS", path)
+    loaded = load_config(path)
+    assert loaded.mcp.workspace_allowlist == ["Sales WS", "Finance WS"]
+
+
+def test_set_config_mcp_workspace_allowlist_single_entry(tmp_path: Path) -> None:
+    """A single workspace name without commas is stored as a one-element list."""
+    path = tmp_path / "config.toml"
+    set_config("mcp", "workspace_allowlist", "prod", path)
+    loaded = load_config(path)
+    assert loaded.mcp.workspace_allowlist == ["prod"]
+
+
+def test_set_config_mcp_workspace_allowlist_none_clears(tmp_path: Path) -> None:
+    """set_config(..., None) removes the key and section when it was the only field."""
+    path = tmp_path / "config.toml"
+    set_config("mcp", "workspace_allowlist", "prod", path)
+    assert load_config(path).mcp.workspace_allowlist == ["prod"]
+    set_config("mcp", "workspace_allowlist", None, path)
+    loaded = load_config(path)
+    assert loaded.mcp.workspace_allowlist is None
+
+
+def test_set_config_mcp_workspace_allowlist_trims_entries(tmp_path: Path) -> None:
+    """Whitespace around individual entries is stripped."""
+    path = tmp_path / "config.toml"
+    set_config("mcp", "workspace_allowlist", "  Sales WS  ,  Finance WS  ", path)
+    loaded = load_config(path)
+    assert loaded.mcp.workspace_allowlist == ["Sales WS", "Finance WS"]
+
+
+def test_set_config_mcp_workspace_allowlist_empty_entries_skipped(tmp_path: Path) -> None:
+    """Comma-only or whitespace-only entries are not stored."""
+    path = tmp_path / "config.toml"
+    set_config("mcp", "workspace_allowlist", "prod,,staging,  ", path)
+    loaded = load_config(path)
+    assert loaded.mcp.workspace_allowlist == ["prod", "staging"]
+
+
+def test_set_config_mcp_workspace_allowlist_all_empty_clears(tmp_path: Path) -> None:
+    """A value of only commas/whitespace results in no allowlist (no restriction)."""
+    path = tmp_path / "config.toml"
+    set_config("mcp", "workspace_allowlist", " , , ", path)
+    loaded = load_config(path)
+    assert loaded.mcp.workspace_allowlist is None
+
+
+def test_set_config_mcp_workspace_allowlist_preserves_other_sections(tmp_path: Path) -> None:
+    """Writing mcp.workspace_allowlist does not disturb unrelated sections."""
+    path = tmp_path / "config.toml"
+    save_config(
+        UserConfig(
+            defaults=Defaults(workspace="WS"),
+            telemetry=TelemetryConfig(disabled=True),
+        ),
+        path,
+    )
+    set_config("mcp", "workspace_allowlist", "prod", path)
+    loaded = load_config(path)
+    assert loaded.mcp.workspace_allowlist == ["prod"]
+    assert loaded.defaults.workspace == "WS"
+    assert loaded.telemetry.disabled is True
+
+
+def test_set_config_mcp_workspace_allowlist_round_trip(tmp_path: Path) -> None:
+    """Full CSV round-trip: set → save → load preserves list."""
+    path = tmp_path / "config.toml"
+    set_config("mcp", "workspace_allowlist", "Sales WS,Finance WS,HR WS", path)
+    loaded = load_config(path)
+    assert loaded.mcp.workspace_allowlist == ["Sales WS", "Finance WS", "HR WS"]

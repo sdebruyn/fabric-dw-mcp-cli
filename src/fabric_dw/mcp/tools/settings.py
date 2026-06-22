@@ -46,11 +46,13 @@ def register(mcp: FastMCP) -> None:
             workspace: Workspace name or GUID.
             item: Warehouse or SQL Analytics Endpoint name or GUID.
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "get_warehouse_settings ws=%s item=%s",
                 ws_id,
@@ -84,11 +86,13 @@ def register(mcp: FastMCP) -> None:
             item: Warehouse name or GUID.  SQL Analytics Endpoints are rejected.
             enabled: ``True`` to enable result-set caching, ``False`` to disable it.
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "set_result_set_caching ws=%s item=%s enabled=%s",
                 ws_id,
@@ -125,11 +129,13 @@ def register(mcp: FastMCP) -> None:
             item: Warehouse name or GUID.  SQL Analytics Endpoints are rejected.
             days: Retention period in days. Must be in the range 1-120 (inclusive).
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "set_time_travel_retention ws=%s item=%s days=%s",
                 ws_id,
