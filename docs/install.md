@@ -372,6 +372,16 @@ The MCP server reads the following environment variables to restrict what it may
 | `FABRIC_MCP_WORKSPACES` | unset | Comma-separated workspace names or GUIDs the server may touch. Unset = all workspaces allowed. |
 | `FABRIC_MCP_ALLOW_REMOTE` | unset | Set to `1` to allow the HTTP transport (`--transport http`) to bind on a non-loopback address. Always front with an authenticating reverse proxy that handles TLS. |
 
+### Logging
+
+The MCP server log level is resolved in priority order: `FABRIC_LOG_LEVEL` env var (highest) > `[logging] level` in `config.toml` > `INFO` (built-in default).
+
+| Variable | Default | Description |
+|---|---|---|
+| `FABRIC_LOG_LEVEL` | `INFO` | Log level for the MCP server (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`). Empty or unrecognised values fall through to the config/default layer with a warning. |
+
+To persist the log level across restarts without setting an env var each time, use the config knob — see [MCP server log level](commands/config.md#mcp-server-log-level).
+
 ### HTTP transport
 
 The MCP server can be started in HTTP mode for remote clients:

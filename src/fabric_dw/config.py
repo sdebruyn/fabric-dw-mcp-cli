@@ -68,6 +68,7 @@ import filelock
 import tomli_w
 
 __all__ = [
+    "VALID_LOG_LEVELS",
     "AuthConfig",
     "ConfigError",
     "Defaults",
@@ -249,12 +250,29 @@ def _parse_mcp_section(data: dict[str, object]) -> McpConfig:
 
 
 def _parse_logging_section(data: dict[str, object]) -> LoggingConfig:
-    """Parse the ``[logging]`` section from *data*."""
+    """Parse the ``[logging]`` section from *data*.
+
+    The ``level`` value is validated case-insensitively against
+    :data:`VALID_LOG_LEVELS`.  An unrecognised value is discarded (treated as
+    ``None``) and a :func:`logging.warning` is emitted so users notice the
+    misconfiguration.
+    """
     raw = data.get("logging", {})
     if not isinstance(raw, dict):
         raw = {}
     raw_level = raw.get("level")
-    return LoggingConfig(level=raw_level if isinstance(raw_level, str) else None)
+    level: str | None = None
+    if isinstance(raw_level, str):
+        normalised = raw_level.strip().upper()
+        if normalised in VALID_LOG_LEVELS:
+            level = normalised
+        else:
+            _log.warning(
+                "[logging] level %r is not a recognised log level (valid: %s); ignoring.",
+                raw_level,
+                ", ".join(sorted(VALID_LOG_LEVELS)),
+            )
+    return LoggingConfig(level=level)
 
 
 def _parse_auth_section(data: dict[str, object]) -> AuthConfig:
@@ -597,7 +615,18 @@ def _set_mcp_workspace_allowlist(current: UserConfig, value: str | None) -> User
     )
 
 
+VALID_LOG_LEVELS: frozenset[str] = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
+
+
 def _set_logging_level(current: UserConfig, value: str | None) -> UserConfig:
+    if value is not None:
+        normalised = value.strip().upper()
+        if normalised not in VALID_LOG_LEVELS:
+            valid_sorted = ", ".join(sorted(VALID_LOG_LEVELS))
+            raise ValueError(
+                f"logging.level {value!r} is not a valid log level; must be one of {valid_sorted}"
+            )
+        value = normalised
     new_logging = LoggingConfig(level=value)
     return UserConfig(
         defaults=current.defaults,

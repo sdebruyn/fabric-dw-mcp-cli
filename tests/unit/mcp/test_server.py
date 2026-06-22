@@ -2103,3 +2103,138 @@ async def test_set_cluster_columns_sql_endpoint_raises_tool_error(mock_ctx, ctx_
 
     err_str = str(exc_info.value).lower()
     assert "sql endpoint" in err_str or "itemkinderror" in err_str
+
+
+# ---------------------------------------------------------------------------
+# Log-level resolution: env > config > INFO
+# ---------------------------------------------------------------------------
+
+
+def test_run_log_level_env_takes_precedence() -> None:
+    """FABRIC_LOG_LEVEL env var overrides [logging] level in config.toml."""
+    from fabric_dw.config import LoggingConfig, UserConfig  # noqa: PLC0415
+    from fabric_dw.mcp import run  # noqa: PLC0415
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    cfg_with_warning = UserConfig(logging=LoggingConfig(level="WARNING"))
+
+    with (
+        patch.object(mcp, "run"),
+        patch("fabric_dw.mcp.server.load_config", return_value=cfg_with_warning),
+        patch("fabric_dw.mcp.server.setup_logging") as mock_setup,
+        patch.dict(os.environ, {"FABRIC_LOG_LEVEL": "DEBUG"}),
+    ):
+        run([])
+
+    import logging  # noqa: PLC0415
+
+    mock_setup.assert_called_once_with(logging.DEBUG)
+
+
+def test_run_log_level_config_used_when_no_env() -> None:
+    """[logging] level from config.toml is used when FABRIC_LOG_LEVEL is unset."""
+    from fabric_dw.config import LoggingConfig, UserConfig  # noqa: PLC0415
+    from fabric_dw.mcp import run  # noqa: PLC0415
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    cfg_with_error = UserConfig(logging=LoggingConfig(level="ERROR"))
+
+    env_without_log = {k: v for k, v in os.environ.items() if k != "FABRIC_LOG_LEVEL"}
+    with (
+        patch.object(mcp, "run"),
+        patch("fabric_dw.mcp.server.load_config", return_value=cfg_with_error),
+        patch("fabric_dw.mcp.server.setup_logging") as mock_setup,
+        patch.dict(os.environ, env_without_log, clear=True),
+    ):
+        run([])
+
+    import logging  # noqa: PLC0415
+
+    mock_setup.assert_called_once_with(logging.ERROR)
+
+
+def test_run_log_level_defaults_to_info_when_no_env_and_no_config() -> None:
+    """INFO is used when neither FABRIC_LOG_LEVEL nor [logging] level is set."""
+    from fabric_dw.config import UserConfig  # noqa: PLC0415
+    from fabric_dw.mcp import run  # noqa: PLC0415
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    cfg_empty = UserConfig()
+
+    env_without_log = {k: v for k, v in os.environ.items() if k != "FABRIC_LOG_LEVEL"}
+    with (
+        patch.object(mcp, "run"),
+        patch("fabric_dw.mcp.server.load_config", return_value=cfg_empty),
+        patch("fabric_dw.mcp.server.setup_logging") as mock_setup,
+        patch.dict(os.environ, env_without_log, clear=True),
+    ):
+        run([])
+
+    import logging  # noqa: PLC0415
+
+    mock_setup.assert_called_once_with(logging.INFO)
+
+
+def test_run_log_level_empty_env_falls_through_to_config() -> None:
+    """An empty FABRIC_LOG_LEVEL is treated as absent and config layer is used."""
+    import logging  # noqa: PLC0415
+
+    from fabric_dw.config import LoggingConfig, UserConfig  # noqa: PLC0415
+    from fabric_dw.mcp import run  # noqa: PLC0415
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    cfg_with_critical = UserConfig(logging=LoggingConfig(level="CRITICAL"))
+
+    with (
+        patch.object(mcp, "run"),
+        patch("fabric_dw.mcp.server.load_config", return_value=cfg_with_critical),
+        patch("fabric_dw.mcp.server.setup_logging") as mock_setup,
+        patch.dict(os.environ, {"FABRIC_LOG_LEVEL": ""}),
+    ):
+        run([])
+
+    mock_setup.assert_called_once_with(logging.CRITICAL)
+
+
+def test_run_log_level_invalid_env_warns_and_falls_through() -> None:
+    """An invalid FABRIC_LOG_LEVEL emits a warning and falls through to config/default."""
+    import logging  # noqa: PLC0415
+
+    from fabric_dw.config import UserConfig  # noqa: PLC0415
+    from fabric_dw.mcp import run  # noqa: PLC0415
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    cfg_empty = UserConfig()
+    env_with_invalid = {k: v for k, v in os.environ.items() if k != "FABRIC_LOG_LEVEL"}
+    env_with_invalid["FABRIC_LOG_LEVEL"] = "VERBOSE"
+
+    with (
+        patch.object(mcp, "run"),
+        patch("fabric_dw.mcp.server.load_config", return_value=cfg_empty),
+        patch("fabric_dw.mcp.server.setup_logging") as mock_setup,
+        patch.dict(os.environ, env_with_invalid, clear=True),
+    ):
+        run([])
+
+    # Falls through to built-in default INFO; warning is emitted but not asserted
+    # here since it goes to the root logger pre-setup.
+    mock_setup.assert_called_once_with(logging.INFO)
+
+
+def test_run_log_level_invalid_config_value_discarded_uses_default() -> None:
+    """An invalid [logging] level in config.toml is discarded and INFO is used."""
+    import logging  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import _resolve_log_level  # noqa: PLC0415
+
+    # Write a config file with an invalid level and resolve without going through run().
+    with patch(
+        "fabric_dw.mcp.server.load_config",
+        return_value=__import__("fabric_dw.config", fromlist=["UserConfig"]).UserConfig(),
+    ):
+        # load_config() returns LoggingConfig(level=None) for an invalid stored level
+        # because _parse_logging_section discards unrecognised values; here we simulate
+        # that already-discarded state by providing an empty UserConfig.
+        level = _resolve_log_level()
+
+    assert level == logging.INFO

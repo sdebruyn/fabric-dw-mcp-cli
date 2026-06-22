@@ -13,6 +13,7 @@ config set retry-deadline      — persist the combined 429+5xx wall-clock deadl
 config set sql-retry-deadline  — persist the SQL/TDS connect+execute retry budget
 config set sql-retry-executes  — persist whether fetch="none" statements are retried
 config set telemetry disabled  — opt in/out of telemetry via config
+config set logging level       — set the MCP server log level
 config unset workspace         — clear the workspace default
 config unset warehouse         — clear the warehouse default
 config unset max-429-retries   — clear the max consecutive 429 retry count
@@ -20,6 +21,7 @@ config unset retry-deadline    — clear the HTTP deadline default
 config unset sql-retry-deadline — clear the SQL retry deadline default
 config unset sql-retry-executes — clear the SQL execute-retry flag
 config unset telemetry disabled — clear the telemetry opt-out (revert to default-on)
+config unset logging level     — clear the logging level (revert to built-in INFO)
 config clear                   — wipe the entire config file
 """
 
@@ -29,7 +31,7 @@ import click
 
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import confirm, render
-from fabric_dw.config import clear_config, set_config, set_default
+from fabric_dw.config import VALID_LOG_LEVELS, clear_config, set_config, set_default
 
 
 @click.group("config")
@@ -58,6 +60,9 @@ def show_cmd(ctx: CliContext) -> None:
         },
         "telemetry": {
             "disabled": cfg.telemetry.disabled,
+        },
+        "logging": {
+            "level": cfg.logging.level,
         },
     }
     render(data, json_output=ctx.json_output)
@@ -145,6 +150,23 @@ def set_telemetry_disabled_cmd(value: str) -> None:
     click.echo(f"Telemetry disabled set to {value.lower()}.")
 
 
+@set_group.group("logging")
+def set_logging_group() -> None:
+    """Set logging configuration."""
+
+
+_LOG_LEVEL_CHOICES = click.Choice(sorted(VALID_LOG_LEVELS), case_sensitive=False)
+
+
+@set_logging_group.command("level")
+@click.argument("value", type=_LOG_LEVEL_CHOICES)
+def set_logging_level_cmd(value: str) -> None:
+    """Set the MCP server log level (DEBUG, INFO, WARNING, ERROR, or CRITICAL)."""
+    normalised = value.upper()
+    set_config("logging", "level", normalised)
+    click.echo(f"Logging level set to {normalised!r}.")
+
+
 # ---------------------------------------------------------------------------
 # config unset  (sub-group with workspace / warehouse sub-commands)
 # ---------------------------------------------------------------------------
@@ -211,6 +233,18 @@ def unset_telemetry_disabled_cmd() -> None:
     """
     set_config("telemetry", "disabled", None)
     click.echo("Telemetry disabled cleared.")
+
+
+@unset_group.group("logging")
+def unset_logging_group() -> None:
+    """Clear logging configuration."""
+
+
+@unset_logging_group.command("level")
+def unset_logging_level_cmd() -> None:
+    """Clear the logging level (revert to built-in INFO)."""
+    set_config("logging", "level", None)
+    click.echo("Logging level cleared.")
 
 
 # ---------------------------------------------------------------------------
