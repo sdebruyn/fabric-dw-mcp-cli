@@ -44,7 +44,7 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
-from fabric_dw.sql import _CONNECT_RETRY_TIMEOUT_S
+from fabric_dw.sql import _resolve_sql_retry_deadline_s
 
 from .conftest import SharedWarehouseTarget
 
@@ -53,17 +53,23 @@ _logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Subprocess timeout budget for SQL-touching smoke tests.
 #
-# INVARIANT: this value MUST be strictly greater than _CONNECT_RETRY_TIMEOUT_S
-# (the CLI's internal connect-retry budget) plus a generous margin for process
-# startup, authentication, and query execution overhead.  If the two values are
-# equal the subprocess is killed exactly when the CLI's retry loop gives up,
-# leaving zero headroom for the startup/auth/query overhead that is paid on top
-# of the retry budget.
+# INVARIANT: this value MUST be strictly greater than the *resolved* SQL retry
+# deadline (the CLI's internal connect-retry budget, which is now configurable
+# via FABRIC_SQL_RETRY_TIMEOUT_S) plus a generous margin for process startup,
+# authentication, and query execution overhead.  If the two values are equal
+# the subprocess is killed exactly when the CLI's retry loop gives up, leaving
+# zero headroom for the startup/auth/query overhead that is paid on top of the
+# retry budget.
+#
+# The resolved value is read at module load so that when FABRIC_SQL_RETRY_TIMEOUT_S
+# is set (e.g. to 300 in the integration CI job) the subprocess timeout scales up
+# accordingly and the invariant cannot be violated by env configuration.
 #
 # A dedicated unit test in tests/unit/ guards this invariant at import time so
 # that it cannot silently drift back to an unsafe value.
 # ---------------------------------------------------------------------------
 _SQL_STARTUP_MARGIN_S: int = 120
+_CONNECT_RETRY_TIMEOUT_S: float = _resolve_sql_retry_deadline_s()
 _SQL_SMOKE_SUBPROCESS_TIMEOUT_S: int = math.ceil(_CONNECT_RETRY_TIMEOUT_S) + _SQL_STARTUP_MARGIN_S
 
 pytestmark = pytest.mark.integration

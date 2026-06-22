@@ -80,18 +80,6 @@ def _disable_pool_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     reset_pool()
 
 
-@pytest.fixture(autouse=True)
-def _clear_sql_config_cache(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Reset the SQL config cache and SQL retry env vars between tests.
-
-    Prevents cross-test contamination from _load_sql_config() memoisation and
-    from lingering FABRIC_SQL_RETRY_* env vars set by individual tests.
-    """
-    _sql_module._sql_config_cache_clear()
-    monkeypatch.delenv("FABRIC_SQL_RETRY_TIMEOUT_S", raising=False)
-    monkeypatch.delenv("FABRIC_SQL_RETRY_EXECUTES", raising=False)
-
-
 # ---------------------------------------------------------------------------
 # SqlTarget dataclass
 # ---------------------------------------------------------------------------

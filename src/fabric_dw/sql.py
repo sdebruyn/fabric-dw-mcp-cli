@@ -93,8 +93,13 @@ __all__ = [
 # wall-clock deadline (sql_retry_deadline_s, default 120.0 s) is exceeded.
 # Both guards are applied so the worst-case bound is clearly bounded:
 #   worst case <= (len(_EXECUTE_RETRY_DELAYS) + 1) attempts
-#              x (configurable deadline default + SQL_QUERY_TIMEOUT_S)
-#            = 4 x (120 s + 300 s) = ~1680 s (~28 minutes absolute max)
+#              x (effective deadline + SQL_QUERY_TIMEOUT_S)
+#
+# With the built-in default deadline (120.0 s):
+#   = 4 x (120 s + 300 s) = ~1680 s (~28 minutes)
+# With FABRIC_SQL_RETRY_TIMEOUT_S=300 (integration CI):
+#   = 4 x (300 s + 300 s) = ~2400 s (~40 minutes)
+#
 # The deadline is configurable via FABRIC_SQL_RETRY_TIMEOUT_S env var or
 # ``fdw config set sql-retry-deadline``.
 _EXECUTE_RETRY_DELAYS: tuple[float, ...] = (2.0, 5.0, 10.0)
@@ -167,10 +172,18 @@ def _load_sql_config() -> _UserConfig:
     """Return a cached :class:`~fabric_dw.config.UserConfig`, loading on first call.
 
     Uses a module-level cache so the config file is read at most once per
-    process.  Thread-safe: the cache is guarded by ``_sql_config_lock``.
+    process.  Thread-safe via double-checked locking: the fast path (cache
+    already populated) avoids acquiring the lock entirely; the slow path
+    (first call) acquires the lock and re-checks before loading.  Safe
+    because ``_UserConfig`` is a frozen dataclass — once assigned the
+    reference is immutable and visible to all threads after the lock release.
     """
     global _sql_config_cache  # noqa: PLW0603
+    # Fast path: check without the lock (common case after first load).
+    if _sql_config_cache is not None:
+        return _sql_config_cache
     with _sql_config_lock:
+        # Re-check inside the lock to handle a concurrent first-loader.
         if _sql_config_cache is None:
             from fabric_dw.config import load_config  # noqa: PLC0415
 
