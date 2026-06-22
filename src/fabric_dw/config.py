@@ -87,6 +87,10 @@ _log = logging.getLogger(__name__)
 
 _LOCK_TIMEOUT = 5  # seconds
 
+# Falsy string values for boolean-like config keys (e.g. [telemetry] disabled).
+# Matches the convention in telemetry._FALSY_VALUES / consoledonottrack.com.
+_FALSY_STRINGS = frozenset({"", "0", "false", "no", "off"})
+
 
 class ConfigError(RuntimeError):
     """Raised when a config write operation cannot complete (e.g. lock timeout)."""
@@ -201,13 +205,31 @@ def _parse_defaults_section(data: dict[str, object]) -> Defaults:
 
 
 def _parse_telemetry_section(data: dict[str, object]) -> TelemetryConfig:
-    """Parse the ``[telemetry]`` section from *data*."""
+    """Parse the ``[telemetry]`` section from *data*.
+
+    Accepted ``disabled`` value types:
+
+    - TOML bool (``true`` / ``false``) → direct bool coercion.
+    - TOML int (``1`` / ``0``) → bool via ``bool()``.
+    - TOML string (``"true"`` / ``"false"`` etc.) → falsy-set check:
+      strings in ``_FALSY_STRINGS`` map to ``False``; any other
+      non-empty string maps to ``True``.  This avoids ``bool("false") is True``
+      which would silently re-enable telemetry for a user who wrote
+      ``disabled = "false"``.
+    - Any other type → ``None`` (unknown, treated as not opted out).
+    """
     raw = data.get("telemetry", {})
     if not isinstance(raw, dict):
         raw = {}
     raw_disabled = raw.get("disabled")
-    if isinstance(raw_disabled, (bool, int)):
-        disabled: bool | None = bool(raw_disabled)
+    disabled: bool | None
+    if isinstance(raw_disabled, bool):
+        disabled = raw_disabled
+    elif isinstance(raw_disabled, int):
+        disabled = bool(raw_disabled)
+    elif isinstance(raw_disabled, str):
+        stripped = raw_disabled.strip().lower()
+        disabled = stripped not in _FALSY_STRINGS
     else:
         disabled = None
     return TelemetryConfig(disabled=disabled)

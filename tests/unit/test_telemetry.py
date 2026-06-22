@@ -144,6 +144,57 @@ def test_telemetry_not_disabled_by_config_integer_zero(
     assert mod.telemetry_enabled() is True  # type: ignore[attr-defined]
 
 
+def test_telemetry_disabled_by_config_string_true(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """telemetry_enabled() returns False when config has disabled = \"true\" (string)."""
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    config_dir = tmp_path / "fabric-dw"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_file = config_dir / "config.toml"
+    config_file.write_text('[telemetry]\ndisabled = "true"\n', encoding="utf-8")
+
+    mod = _reload_telemetry()
+    assert mod.telemetry_enabled() is False  # type: ignore[attr-defined]
+
+
+def test_telemetry_not_disabled_by_config_string_false(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """telemetry_enabled() returns True when config has disabled = \"false\" (string)."""
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    config_dir = tmp_path / "fabric-dw"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_file = config_dir / "config.toml"
+    config_file.write_text('[telemetry]\ndisabled = "false"\n', encoding="utf-8")
+
+    mod = _reload_telemetry()
+    assert mod.telemetry_enabled() is True  # type: ignore[attr-defined]
+
+
+def test_telemetry_not_disabled_by_config_string_zero(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """telemetry_enabled() returns True when config has disabled = \"0\" (string)."""
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    config_dir = tmp_path / "fabric-dw"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_file = config_dir / "config.toml"
+    config_file.write_text('[telemetry]\ndisabled = "0"\n', encoding="utf-8")
+
+    mod = _reload_telemetry()
+    assert mod.telemetry_enabled() is True  # type: ignore[attr-defined]
+
+
 def test_telemetry_disabled_fail_closed_on_lock_timeout(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

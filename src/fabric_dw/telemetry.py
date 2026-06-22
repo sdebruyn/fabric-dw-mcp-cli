@@ -205,15 +205,23 @@ def _is_disabled_by_config() -> bool:
         if not isinstance(telemetry_section, dict):
             return False
         raw_disabled = telemetry_section.get("disabled")
-        # Accept bool or int (TOML native types that can be truthy/falsy).
-        if isinstance(raw_disabled, (bool, int)):
-            return bool(raw_disabled)
+        # Accept bool, int, and string — mirrors _parse_telemetry_section in
+        # config.py.  CRITICAL: do NOT use bool(str_value) because
+        # bool("false") is True and would silently re-enable telemetry.
+        if isinstance(raw_disabled, bool):
+            disabled = raw_disabled
+        elif isinstance(raw_disabled, int):
+            disabled = bool(raw_disabled)
+        elif isinstance(raw_disabled, str):
+            disabled = raw_disabled.strip().lower() not in _FALSY_VALUES
+        else:
+            disabled = False
     except Exception:
         # Any read or parse failure when the file EXISTS is treated as
         # opt-out (fail-closed) to honour the user's declared intent.
         return True
     else:
-        return False
+        return disabled
 
 
 def telemetry_enabled() -> bool:
