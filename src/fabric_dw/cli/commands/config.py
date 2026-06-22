@@ -5,16 +5,20 @@ workspace / warehouse on every command.
 
 Commands
 --------
-config show                  — print current defaults (JSON or table)
-config set workspace         — persist a workspace default
-config set warehouse         — persist a warehouse default
-config set max-429-retries   — persist the max consecutive 429 retry count
-config set retry-deadline    — persist the combined 429+5xx wall-clock deadline
-config unset workspace       — clear the workspace default
-config unset warehouse       — clear the warehouse default
-config unset max-429-retries — clear the max consecutive 429 retry count
-config unset retry-deadline  — clear the deadline default
-config clear                 — wipe the entire config file
+config show                    — print current defaults (JSON or table)
+config set workspace           — persist a workspace default
+config set warehouse           — persist a warehouse default
+config set max-429-retries     — persist the max consecutive 429 retry count
+config set retry-deadline      — persist the combined 429+5xx wall-clock deadline
+config set sql-retry-deadline  — persist the SQL/TDS connect+execute retry budget
+config set sql-retry-executes  — persist whether fetch="none" statements are retried
+config unset workspace         — clear the workspace default
+config unset warehouse         — clear the warehouse default
+config unset max-429-retries   — clear the max consecutive 429 retry count
+config unset retry-deadline    — clear the HTTP deadline default
+config unset sql-retry-deadline — clear the SQL retry deadline default
+config unset sql-retry-executes — clear the SQL execute-retry flag
+config clear                   — wipe the entire config file
 """
 
 from __future__ import annotations
@@ -47,6 +51,8 @@ def show_cmd(ctx: CliContext) -> None:
             "warehouse": cfg.defaults.warehouse,
             "max_429_retries": cfg.defaults.max_429_retries,
             "retry_deadline_s": cfg.defaults.retry_deadline_s,
+            "sql_retry_deadline_s": cfg.defaults.sql_retry_deadline_s,
+            "sql_retry_executes": cfg.defaults.sql_retry_executes,
         }
     }
     render(data, json_output=ctx.json_output)
@@ -94,6 +100,28 @@ def set_retry_deadline_cmd(value: float) -> None:
     click.echo(f"Default retry_deadline_s set to {value}.")
 
 
+@set_group.command("sql-retry-deadline")
+@click.argument("value", type=click.FloatRange(min=0.1))
+def set_sql_retry_deadline_cmd(value: float) -> None:
+    """Set the SQL/TDS connect+execute retry wall-clock budget in seconds."""
+    set_default("sql_retry_deadline_s", str(value))
+    click.echo(f"Default sql_retry_deadline_s set to {value}.")
+
+
+@set_group.command("sql-retry-executes")
+@click.argument("value", type=click.Choice(["true", "false"], case_sensitive=False))
+def set_sql_retry_executes_cmd(value: str) -> None:
+    """Enable or disable execute-phase retry for fetch=none (non-idempotent) statements.
+
+    WARNING: setting this to true means a transient error on a non-idempotent
+    statement (INSERT, UPDATE, DELETE, DDL) may trigger a retry and cause the
+    statement to execute more than once.  Only enable when all such statements
+    are idempotent.
+    """
+    set_default("sql_retry_executes", value.lower())
+    click.echo(f"Default sql_retry_executes set to {value.lower()}.")
+
+
 # ---------------------------------------------------------------------------
 # config unset  (sub-group with workspace / warehouse sub-commands)
 # ---------------------------------------------------------------------------
@@ -130,6 +158,20 @@ def unset_retry_deadline_cmd() -> None:
     """Clear the retry_deadline_s default (revert to built-in 300.0)."""
     set_default("retry_deadline_s", None)
     click.echo("Default retry_deadline_s cleared.")
+
+
+@unset_group.command("sql-retry-deadline")
+def unset_sql_retry_deadline_cmd() -> None:
+    """Clear the sql_retry_deadline_s default (revert to built-in 120.0)."""
+    set_default("sql_retry_deadline_s", None)
+    click.echo("Default sql_retry_deadline_s cleared.")
+
+
+@unset_group.command("sql-retry-executes")
+def unset_sql_retry_executes_cmd() -> None:
+    """Clear the sql_retry_executes default (revert to built-in false)."""
+    set_default("sql_retry_executes", None)
+    click.echo("Default sql_retry_executes cleared.")
 
 
 # ---------------------------------------------------------------------------

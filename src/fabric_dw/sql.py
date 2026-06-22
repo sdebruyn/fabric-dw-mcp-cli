@@ -42,6 +42,8 @@ from __future__ import annotations
 import contextlib
 import functools
 import importlib
+import logging
+import math
 import os
 import re
 import threading
@@ -53,6 +55,8 @@ from typing import Any, Literal, Protocol
 
 from fabric_dw.auth import CredentialMode, get_sql_token_struct
 from fabric_dw.exceptions import AuthError, NotFoundError, PermissionDeniedError
+
+_log = logging.getLogger(__name__)
 
 __all__ = [
     "POOL_MAX_IDLE",
@@ -86,11 +90,13 @@ __all__ = [
 #
 # The loop retries up to len(_EXECUTE_RETRY_DELAYS) + 1 attempts total
 # (initial attempt + 3 retries = 4 attempts max) AND stops early if the
-# wall-clock deadline (_CONNECT_RETRY_TIMEOUT_S) is exceeded.  Both guards
-# are applied so the worst-case bound is clearly bounded:
+# wall-clock deadline (sql_retry_deadline_s, default 120.0 s) is exceeded.
+# Both guards are applied so the worst-case bound is clearly bounded:
 #   worst case <= (len(_EXECUTE_RETRY_DELAYS) + 1) attempts
-#              x (max connect budget + SQL_QUERY_TIMEOUT_S)
+#              x (configurable deadline default + SQL_QUERY_TIMEOUT_S)
 #            = 4 x (120 s + 300 s) = ~1680 s (~28 minutes absolute max)
+# The deadline is configurable via FABRIC_SQL_RETRY_TIMEOUT_S env var or
+# ``fdw config set sql-retry-deadline``.
 _EXECUTE_RETRY_DELAYS: tuple[float, ...] = (2.0, 5.0, 10.0)
 
 # ---------------------------------------------------------------------------
@@ -101,14 +107,21 @@ _EXECUTE_RETRY_DELAYS: tuple[float, ...] = (2.0, 5.0, 10.0)
 # _with_connect_retry.  The loop keeps retrying while _is_connect_retryable
 # returns True and the elapsed time is less than this budget.
 #
-# 120 s covers the observed Fabric warehouse warm-up window (~60-90 s) with
-# comfortable margin.
+# The built-in default is 120.0 s, which covers the observed Fabric warehouse
+# warm-up window (~60-90 s) with comfortable margin.  It is configurable via
+# the FABRIC_SQL_RETRY_TIMEOUT_S env var or ``fdw config set sql-retry-deadline``.
 #
 # **Trade-off**: a genuinely-wrong credential will now hang up to ~120 s
 # before the AuthError is surfaced to the caller — because the retry loop
 # cannot distinguish "wrong credential" from "warehouse still warming up".
 # This latency is accepted: the warm-up case is far more common in production.
-_CONNECT_RETRY_TIMEOUT_S: float = 120.0
+_SQL_RETRY_DEADLINE_S_DEFAULT: float = 120.0
+_MIN_SQL_RETRY_DEADLINE_S: float = 0.1  # minimum accepted value for env / config
+
+# Backwards-compatible alias used by integration tests and the smoke-timeout invariant test.
+# The old name was _CONNECT_RETRY_TIMEOUT_S; it was renamed to _SQL_RETRY_DEADLINE_S_DEFAULT
+# when the value became configurable.  Remove after all callsites are updated.
+_CONNECT_RETRY_TIMEOUT_S: float = _SQL_RETRY_DEADLINE_S_DEFAULT
 
 # Backoff delays for the connect-phase retry loop.  The delay before attempt
 # N+1 is _CONNECT_RETRY_DELAYS[min(N, len-1)], so the sequence is:
@@ -132,6 +145,101 @@ SQL_LOGIN_TIMEOUT_S: int = 60
 # A generous value prevents long-running administrative queries from being
 # cancelled prematurely.
 SQL_QUERY_TIMEOUT_S: int = 300
+
+# ---------------------------------------------------------------------------
+# SQL retry config resolution — 3-layer precedence
+# ---------------------------------------------------------------------------
+# Both knobs resolve at call-time via the 3-layer rule:
+#   env var (highest) > config.toml [defaults] > built-in fallback
+#
+# A module-level cache avoids re-reading the config file on every query.
+# The cache is protected by a threading.Lock (threading is already imported).
+# _sql_config_cache_clear() is a test-only hook to reset the cache between
+# tests that mutate env vars or the config.
+
+from fabric_dw.config import UserConfig as _UserConfig  # noqa: E402
+
+_sql_config_cache: _UserConfig | None = None
+_sql_config_lock: threading.Lock = threading.Lock()
+
+
+def _load_sql_config() -> _UserConfig:
+    """Return a cached :class:`~fabric_dw.config.UserConfig`, loading on first call.
+
+    Uses a module-level cache so the config file is read at most once per
+    process.  Thread-safe: the cache is guarded by ``_sql_config_lock``.
+    """
+    global _sql_config_cache  # noqa: PLW0603
+    with _sql_config_lock:
+        if _sql_config_cache is None:
+            from fabric_dw.config import load_config  # noqa: PLC0415
+
+            _sql_config_cache = load_config()
+        return _sql_config_cache
+
+
+def _sql_config_cache_clear() -> None:
+    """Reset the SQL config cache.  For use in tests only."""
+    global _sql_config_cache  # noqa: PLW0603
+    with _sql_config_lock:
+        _sql_config_cache = None
+
+
+def _resolve_sql_retry_deadline_s() -> float:
+    """Return the effective SQL retry deadline in seconds.
+
+    Resolution order (3-layer):
+    1. ``FABRIC_SQL_RETRY_TIMEOUT_S`` env var — must be a finite float >= 0.1.
+       Invalid values are ignored (warning logged) and fall through to next layer.
+    2. ``config.toml`` ``[defaults].sql_retry_deadline_s``.
+    3. Built-in fallback: :data:`_SQL_RETRY_DEADLINE_S_DEFAULT` (120.0 s).
+    """
+    raw_env = os.environ.get("FABRIC_SQL_RETRY_TIMEOUT_S")
+    if raw_env is not None:
+        try:
+            v = float(raw_env)
+        except (ValueError, OverflowError):
+            _log.warning("FABRIC_SQL_RETRY_TIMEOUT_S=%r is not a valid float; ignoring", raw_env)
+        else:
+            if math.isfinite(v) and v >= _MIN_SQL_RETRY_DEADLINE_S:
+                return v
+            _log.warning(
+                "FABRIC_SQL_RETRY_TIMEOUT_S=%r must be a finite number >= %s; ignoring",
+                raw_env,
+                _MIN_SQL_RETRY_DEADLINE_S,
+            )
+
+    cfg_val = _load_sql_config().defaults.sql_retry_deadline_s
+    if cfg_val is not None:
+        return cfg_val
+
+    return _SQL_RETRY_DEADLINE_S_DEFAULT
+
+
+# Truthy/falsy string sets for _resolve_sql_retry_executes.
+# Kept inline to avoid importing telemetry's private helpers.
+_FALSY_STRINGS: frozenset[str] = frozenset({"", "0", "false", "no", "off"})
+
+
+def _resolve_sql_retry_executes() -> bool:
+    """Return True if execute-phase retry should be widened to include fetch="none".
+
+    Resolution order (3-layer):
+    1. ``FABRIC_SQL_RETRY_EXECUTES`` env var — falsy: ``{"","0","false","no","off"}``
+       (case-insensitive); anything else is truthy.
+    2. ``config.toml`` ``[defaults].sql_retry_executes``.
+    3. Built-in fallback: ``False`` (non-idempotent DML is not retried by default).
+    """
+    raw_env = os.environ.get("FABRIC_SQL_RETRY_EXECUTES")
+    if raw_env is not None:
+        return raw_env.lower() not in _FALSY_STRINGS
+
+    cfg_val = _load_sql_config().defaults.sql_retry_executes
+    if cfg_val is not None:
+        return cfg_val
+
+    return False
+
 
 # ---------------------------------------------------------------------------
 # Lazy driver import — @functools.cache avoids the module-level global and the
@@ -1016,7 +1124,7 @@ def _with_connect_retry(
         Any non-retryable exception from ``open_connection`` immediately.
         The last retryable exception when the wall-clock deadline passes.
     """
-    deadline = time.monotonic() + _CONNECT_RETRY_TIMEOUT_S
+    deadline = time.monotonic() + _resolve_sql_retry_deadline_s()
     last_exc: BaseException | None = None
     attempt = 0
 
@@ -1144,9 +1252,11 @@ def run_query(  # noqa: PLR0913, PLR0915
         Exception: Any other driver error is propagated unchanged.
     """
     # Whether execute-phase transient errors are safe to retry.
-    # Only non-DML fetches (fetch != "none") can safely be retried after
-    # execute has started — DML could have already been applied server-side.
-    execute_retry_allowed = fetch != "none"
+    # Default: only non-DML fetches (fetch != "none") can safely be retried
+    # after execute has started — DML could have already been applied server-side.
+    # When sql_retry_executes is enabled (opt-in), fetch="none" statements are
+    # also retried; callers must ensure idempotency of those statements.
+    execute_retry_allowed = fetch != "none" or _resolve_sql_retry_executes()
 
     # Maximum number of execute-phase attempts: initial + len(_EXECUTE_RETRY_DELAYS) retries.
     # Both this cap AND the wall-clock deadline must be satisfied for a retry to fire.
@@ -1210,8 +1320,8 @@ def run_query(  # noqa: PLR0913, PLR0915
     # and the attempt cap).  Starts at 1 for the first attempt.
     execute_attempt = 1
     # deadline is set on the first execute-phase transient failure.  The total
-    # wall-clock budget for execute-phase retries is _CONNECT_RETRY_TIMEOUT_S
-    # (~120 s), reusing the same constant as the connect-phase loop.
+    # wall-clock budget for execute-phase retries matches the connect-phase
+    # budget (sql_retry_deadline_s, default 120.0 s), resolved at call-time.
     execute_deadline: float | None = None
 
     while True:
@@ -1235,7 +1345,7 @@ def run_query(  # noqa: PLR0913, PLR0915
                 raise
             # Set the deadline on the first execute-phase transient failure.
             if execute_deadline is None:
-                execute_deadline = time.monotonic() + _CONNECT_RETRY_TIMEOUT_S
+                execute_deadline = time.monotonic() + _resolve_sql_retry_deadline_s()
             # Close the tainted connection before sleeping.  _PooledConnection
             # is idempotent so a later close() call is a no-op.
             conn.close()

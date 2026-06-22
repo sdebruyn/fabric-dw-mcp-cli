@@ -10,6 +10,7 @@ import pytest
 
 import fabric_dw.sql as _sql_module
 from fabric_dw.auth import CredentialMode
+from fabric_dw.config import Defaults, UserConfig
 from fabric_dw.exceptions import AuthError, NotFoundError, PermissionDeniedError
 from fabric_dw.sql import (
     SqlTarget,
@@ -77,6 +78,18 @@ def _disable_pool_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     """Disable the connection pool for all tests unless they opt in."""
     monkeypatch.setenv("FABRIC_SQL_POOL", "0")
     reset_pool()
+
+
+@pytest.fixture(autouse=True)
+def _clear_sql_config_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reset the SQL config cache and SQL retry env vars between tests.
+
+    Prevents cross-test contamination from _load_sql_config() memoisation and
+    from lingering FABRIC_SQL_RETRY_* env vars set by individual tests.
+    """
+    _sql_module._sql_config_cache_clear()
+    monkeypatch.delenv("FABRIC_SQL_RETRY_TIMEOUT_S", raising=False)
+    monkeypatch.delenv("FABRIC_SQL_RETRY_EXECUTES", raising=False)
 
 
 # ---------------------------------------------------------------------------
@@ -1074,7 +1087,7 @@ class TestTransientRetry:
         """When the time budget is exhausted the last transient error is re-raised.
 
         The execute-phase retry loop is time-budgeted: it keeps retrying until
-        _CONNECT_RETRY_TIMEOUT_S seconds have elapsed since the first failure.
+        _SQL_RETRY_DEADLINE_S_DEFAULT seconds have elapsed since the first failure.
         With the clock advanced past the deadline immediately after the first
         failure, the attempt-cap/deadline check fires before sleeping and the
         loop stops after the first attempt — no retry connection is opened.
@@ -1088,11 +1101,11 @@ class TestTransientRetry:
         """
         # Monotonic values consumed in order:
         #   [0] deadline base inside _with_connect_retry
-        #   [1] sets execute_deadline = 0 + _CONNECT_RETRY_TIMEOUT_S
+        #   [1] sets execute_deadline = 0 + _SQL_RETRY_DEADLINE_S_DEFAULT
         #   [2] first deadline check after sleep: returns value past deadline
         # The connect-phase _with_connect_retry for the retry conn also needs
         # a value for its own deadline calculation.
-        timeout = _sql_module._CONNECT_RETRY_TIMEOUT_S  # type: ignore[attr-defined]
+        timeout = _sql_module._SQL_RETRY_DEADLINE_S_DEFAULT  # type: ignore[attr-defined]
         fake_time = _make_fake_time_module(
             monotonic_values=[
                 0.0,  # _with_connect_retry deadline base (initial conn)
@@ -1128,7 +1141,7 @@ class TestTransientRetry:
           connect 4 → execute succeeds
         Total connect calls: 4.  Clock stays within budget throughout.
         """
-        timeout = _sql_module._CONNECT_RETRY_TIMEOUT_S  # type: ignore[attr-defined]
+        timeout = _sql_module._SQL_RETRY_DEADLINE_S_DEFAULT  # type: ignore[attr-defined]
         # Monotonic values:
         #  [0]  _with_connect_retry deadline base (initial conn)
         #  [1]  execute_deadline = 0 + timeout (set on first failure)
@@ -1326,7 +1339,7 @@ class TestTransientRetry:
           [2] deadline check: past deadline → stop, raise
         Total connect calls: 1.
         """
-        timeout = _sql_module._CONNECT_RETRY_TIMEOUT_S  # type: ignore[attr-defined]
+        timeout = _sql_module._SQL_RETRY_DEADLINE_S_DEFAULT  # type: ignore[attr-defined]
         fake_time = _make_fake_time_module(
             monotonic_values=[
                 0.0,  # _with_connect_retry deadline base
@@ -2163,7 +2176,7 @@ class TestOpenConnectionTimeoutAPI:
 class TestAuthFailedConnectRetry:
     """_with_connect_retry must retry auth-failed / 18456 errors on the connect path.
 
-    The connect-phase retry is time-bounded (``_CONNECT_RETRY_TIMEOUT_S``, ~120 s)
+    The connect-phase retry is time-bounded (``_SQL_RETRY_DEADLINE_S_DEFAULT``, ~120 s)
     rather than attempt-count-bounded.  Tests inject a fake monotonic clock so
     that deadlines are exercised deterministically without any real wall-clock
     delay.
@@ -2210,7 +2223,7 @@ class TestAuthFailedConnectRetry:
     def _fake_time_within_deadline(n_failures: int) -> MagicMock:
         """Return a fake time module where all deadline checks are within budget.
 
-        The deadline is set to ``t0 + _CONNECT_RETRY_TIMEOUT_S``.  We use t0=0
+        The deadline is set to ``t0 + _SQL_RETRY_DEADLINE_S_DEFAULT``.  We use t0=0
         and all post-failure monotonic() calls return 1.0 (well within budget).
         This simulates the warehouse recovering before the deadline.
         """
@@ -2227,7 +2240,7 @@ class TestAuthFailedConnectRetry:
         within the ~120 s window.  After the single failure the monotonic clock
         jumps past the deadline so the loop raises immediately.
         """
-        timeout = _sql_module._CONNECT_RETRY_TIMEOUT_S
+        timeout = _sql_module._SQL_RETRY_DEADLINE_S_DEFAULT
         # call 0: t0=0  →  deadline = 0 + timeout
         # call 1: t0 + timeout + 1.0  →  past deadline
         mono_values = [0.0, timeout + 1.0]
@@ -2381,8 +2394,8 @@ class TestAuthFailedConnectRetry:
         assert mock_mssql.connect.call_count == 1
 
     def test_retry_policy_constants(self) -> None:
-        """Connect-phase uses a ~120 s deadline; execute-phase constants are set."""
-        assert _sql_module._CONNECT_RETRY_TIMEOUT_S == 120.0
+        """Connect+execute-phase default deadline is 120 s; backoff arrays are set."""
+        assert _sql_module._SQL_RETRY_DEADLINE_S_DEFAULT == 120.0
         assert _sql_module._CONNECT_RETRY_DELAYS == (5.0, 10.0, 15.0)
         assert _sql_module._EXECUTE_RETRY_DELAYS == (2.0, 5.0, 10.0)
 
@@ -2837,3 +2850,156 @@ class TestFetchAllDescriptionNoneGuard:
         assert cols == []
         assert rows == []
         assert fake_conn._committed[0] is True
+
+
+# ---------------------------------------------------------------------------
+# SQL retry config resolution — 3-layer precedence
+# ---------------------------------------------------------------------------
+
+
+class TestSqlRetryConfig:
+    """_resolve_sql_retry_deadline_s and _resolve_sql_retry_executes follow the 3-layer rule."""
+
+    def test_deadline_env_wins_over_config_and_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """FABRIC_SQL_RETRY_TIMEOUT_S takes precedence over config and built-in default."""
+        monkeypatch.setenv("FABRIC_SQL_RETRY_TIMEOUT_S", "999.0")
+        assert _sql_module._resolve_sql_retry_deadline_s() == 999.0
+
+    def test_deadline_config_wins_over_default(self) -> None:
+        """Config sql_retry_deadline_s beats the built-in 120.0 default."""
+        cfg = UserConfig(defaults=Defaults(sql_retry_deadline_s=250.0))
+        _sql_module._sql_config_cache = cfg
+        assert _sql_module._resolve_sql_retry_deadline_s() == 250.0
+
+    def test_deadline_falls_back_to_default(self) -> None:
+        """When no env var and no config value, the default 120.0 is returned."""
+        assert _sql_module._resolve_sql_retry_deadline_s() == 120.0
+
+    def test_deadline_invalid_env_falls_through_to_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A non-numeric FABRIC_SQL_RETRY_TIMEOUT_S is ignored; default used instead."""
+        monkeypatch.setenv("FABRIC_SQL_RETRY_TIMEOUT_S", "not-a-float")
+        assert _sql_module._resolve_sql_retry_deadline_s() == 120.0
+
+    def test_deadline_negative_env_falls_through_to_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A value < 0.1 in FABRIC_SQL_RETRY_TIMEOUT_S is ignored; default used instead."""
+        monkeypatch.setenv("FABRIC_SQL_RETRY_TIMEOUT_S", "0.0")
+        assert _sql_module._resolve_sql_retry_deadline_s() == 120.0
+
+    def test_deadline_invalid_env_falls_through_to_config(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Invalid env var falls through to config value."""
+        monkeypatch.setenv("FABRIC_SQL_RETRY_TIMEOUT_S", "bad")
+        cfg = UserConfig(defaults=Defaults(sql_retry_deadline_s=88.0))
+        _sql_module._sql_config_cache = cfg
+        assert _sql_module._resolve_sql_retry_deadline_s() == 88.0
+
+    def test_executes_env_wins_over_config_and_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """FABRIC_SQL_RETRY_EXECUTES=1 takes precedence over config and built-in default."""
+        monkeypatch.setenv("FABRIC_SQL_RETRY_EXECUTES", "1")
+        assert _sql_module._resolve_sql_retry_executes() is True
+
+    def test_executes_env_false_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """FABRIC_SQL_RETRY_EXECUTES=false → False."""
+        monkeypatch.setenv("FABRIC_SQL_RETRY_EXECUTES", "false")
+        cfg = UserConfig(defaults=Defaults(sql_retry_executes=True))
+        _sql_module._sql_config_cache = cfg
+        assert _sql_module._resolve_sql_retry_executes() is False
+
+    def test_executes_config_wins_over_default(self) -> None:
+        """Config sql_retry_executes=True beats the built-in False default."""
+        cfg = UserConfig(defaults=Defaults(sql_retry_executes=True))
+        _sql_module._sql_config_cache = cfg
+        assert _sql_module._resolve_sql_retry_executes() is True
+
+    def test_executes_falls_back_to_false(self) -> None:
+        """When no env var and no config value, False is returned."""
+        assert _sql_module._resolve_sql_retry_executes() is False
+
+    def test_executes_truthy_strings(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Various truthy env values are all recognised."""
+        for v in ("1", "true", "TRUE", "True", "yes", "on", "anything-else"):
+            monkeypatch.setenv("FABRIC_SQL_RETRY_EXECUTES", v)
+            _sql_module._sql_config_cache_clear()
+            assert _sql_module._resolve_sql_retry_executes() is True, f"expected True for {v!r}"
+
+    def test_executes_falsy_strings(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """All recognised falsy env values map to False."""
+        for v in ("0", "false", "FALSE", "False", "no", "off", ""):
+            monkeypatch.setenv("FABRIC_SQL_RETRY_EXECUTES", v)
+            _sql_module._sql_config_cache_clear()
+            assert _sql_module._resolve_sql_retry_executes() is False, f"expected False for {v!r}"
+
+
+# ---------------------------------------------------------------------------
+# SQL retry execute-widening — fetch="none" opt-in
+# ---------------------------------------------------------------------------
+
+
+class TestSqlRetryExecutes:
+    """sql_retry_executes=True widens execute retry to cover fetch='none' statements."""
+
+    @pytest.fixture(autouse=True)
+    def _disable_sleep(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(_sql_module, "time", _make_fake_time_module())
+
+    def test_fetch_none_retried_when_sql_retry_executes_enabled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With FABRIC_SQL_RETRY_EXECUTES=1, a transient error on fetch='none' IS retried."""
+        monkeypatch.setenv("FABRIC_SQL_RETRY_EXECUTES", "1")
+        _sql_module._sql_config_cache_clear()
+
+        mock_mssql, _, _ = _make_mock_mssql()
+
+        bad_cursor = MagicMock()
+        bad_cursor.execute.side_effect = Exception("communication link failure")
+        bad_conn = MagicMock()
+        bad_conn.cursor.return_value = bad_cursor
+
+        good_cursor = MagicMock()
+        good_cursor.description = None
+        good_conn = MagicMock()
+        good_conn.cursor.return_value = good_cursor
+
+        mock_mssql.connect.side_effect = [bad_conn, good_conn]
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        cols, rows = run_query(_make_target(), "INSERT INTO t VALUES (1)", fetch="none")
+
+        # Retry fired — two connect calls.
+        assert mock_mssql.connect.call_count == 2
+        assert cols == []
+        assert rows == []
+
+    def test_fetch_none_not_retried_by_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Default (sql_retry_executes=False): fetch='none' transient error is NOT retried.
+
+        This is the D10 idempotency guarantee — re-validates it with the new
+        _resolve_sql_retry_executes() path.
+        """
+        # env var is already unset by _clear_sql_config_cache autouse fixture.
+        mock_mssql, _, _ = _make_mock_mssql()
+
+        bad_cursor = MagicMock()
+        bad_cursor.execute.side_effect = Exception("communication link failure")
+        bad_conn = MagicMock()
+        bad_conn.cursor.return_value = bad_cursor
+        mock_mssql.connect.return_value = bad_conn
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with pytest.raises(Exception, match="communication link failure"):
+            run_query(_make_target(), "INSERT INTO t VALUES (1)", fetch="none")
+
+        # Must NOT retry — exactly 1 connect attempt.
+        assert mock_mssql.connect.call_count == 1, (
+            "DML (fetch='none') must not retry on execute-phase transient errors by default"
+        )

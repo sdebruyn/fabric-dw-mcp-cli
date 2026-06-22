@@ -1,8 +1,8 @@
 """User-level configuration for fabric-dw CLI.
 
-Stores persistent defaults (workspace, warehouse, and HTTP retry knobs)
-in a TOML file at ``$XDG_CONFIG_HOME/fabric-dw/config.toml`` (falling
-back to ``~/.config/fabric-dw/config.toml``).
+Stores persistent defaults (workspace, warehouse, HTTP retry knobs, and SQL
+retry knobs) in a TOML file at ``$XDG_CONFIG_HOME/fabric-dw/config.toml``
+(falling back to ``~/.config/fabric-dw/config.toml``).
 
 The TOML shape is intentionally tiny:
 
@@ -13,6 +13,8 @@ The TOML shape is intentionally tiny:
     warehouse = "Sales-DW"
     max_429_retries = 10
     retry_deadline_s = 300.0
+    sql_retry_deadline_s = 120.0
+    sql_retry_executes = false
 
 Reads are done with :mod:`tomllib` (stdlib, Python 3.11+).
 Writes use :mod:`tomli_w` for spec-compliant serialisation (handles newlines,
@@ -58,12 +60,14 @@ class ConfigError(RuntimeError):
 
 @dataclass(frozen=True)
 class Defaults:
-    """Persistent workspace / warehouse defaults and HTTP retry knobs."""
+    """Persistent workspace / warehouse defaults, HTTP retry knobs, and SQL retry knobs."""
 
     workspace: str | None = None
     warehouse: str | None = None
     max_429_retries: int | None = None
     retry_deadline_s: float | None = None
+    sql_retry_deadline_s: float | None = None
+    sql_retry_executes: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -148,6 +152,8 @@ def load_config(path: Path | None = None) -> UserConfig:
     warehouse = defaults_raw.get("warehouse")
     raw_retries = defaults_raw.get("max_429_retries")
     raw_deadline = defaults_raw.get("retry_deadline_s")
+    raw_sql_deadline = defaults_raw.get("sql_retry_deadline_s")
+    raw_sql_executes = defaults_raw.get("sql_retry_executes")
     return UserConfig(
         defaults=Defaults(
             workspace=workspace if isinstance(workspace, str) else None,
@@ -156,6 +162,10 @@ def load_config(path: Path | None = None) -> UserConfig:
             retry_deadline_s=float(raw_deadline)
             if isinstance(raw_deadline, (int, float)) and math.isfinite(raw_deadline)
             else None,
+            sql_retry_deadline_s=float(raw_sql_deadline)
+            if isinstance(raw_sql_deadline, (int, float)) and math.isfinite(raw_sql_deadline)
+            else None,
+            sql_retry_executes=raw_sql_executes if isinstance(raw_sql_executes, bool) else None,
         )
     )
 
@@ -188,6 +198,10 @@ def _defaults_to_dict(d: Defaults) -> dict[str, object]:
         out["max_429_retries"] = d.max_429_retries
     if d.retry_deadline_s is not None:
         out["retry_deadline_s"] = d.retry_deadline_s
+    if d.sql_retry_deadline_s is not None:
+        out["sql_retry_deadline_s"] = d.sql_retry_deadline_s
+    if d.sql_retry_executes is not None:
+        out["sql_retry_executes"] = d.sql_retry_executes
     return out
 
 
@@ -212,18 +226,24 @@ def _read_defaults_locked(resolved: Path) -> Defaults:
     wh = defaults_raw.get("warehouse")
     rr = defaults_raw.get("max_429_retries")
     rd = defaults_raw.get("retry_deadline_s")
+    srd = defaults_raw.get("sql_retry_deadline_s")
+    sre = defaults_raw.get("sql_retry_executes")
     return Defaults(
         workspace=ws if isinstance(ws, str) else None,
         warehouse=wh if isinstance(wh, str) else None,
         max_429_retries=int(rr) if isinstance(rr, int) else None,
         retry_deadline_s=float(rd) if isinstance(rd, (int, float)) and math.isfinite(rd) else None,
+        sql_retry_deadline_s=float(srd)
+        if isinstance(srd, (int, float)) and math.isfinite(srd)
+        else None,
+        sql_retry_executes=sre if isinstance(sre, bool) else None,
     )
 
 
 _MIN_RETRY_DEADLINE_S: float = 0.1
 
 
-def set_default(key: str, value: str | None, path: Path | None = None) -> None:
+def set_default(key: str, value: str | None, path: Path | None = None) -> None:  # noqa: PLR0912, PLR0915
     """Atomically update a single key under ``[defaults]`` without touching other keys.
 
     The read-modify-write is performed under a single :class:`filelock.FileLock`
@@ -245,7 +265,14 @@ def set_default(key: str, value: str | None, path: Path | None = None) -> None:
             silent data loss — set_default will never overwrite a file it could
             not read).
     """
-    allowed = {"workspace", "warehouse", "max_429_retries", "retry_deadline_s"}
+    allowed = {
+        "workspace",
+        "warehouse",
+        "max_429_retries",
+        "retry_deadline_s",
+        "sql_retry_deadline_s",
+        "sql_retry_executes",
+    }
     if key not in allowed:
         raise ValueError(f"Unknown config key {key!r}; must be one of {sorted(allowed)}")
 
@@ -253,10 +280,11 @@ def set_default(key: str, value: str | None, path: Path | None = None) -> None:
     resolved.parent.mkdir(parents=True, exist_ok=True)
     lock = filelock.FileLock(str(resolved) + ".lock", timeout=_LOCK_TIMEOUT)
 
-    # Coerce and validate numeric keys before acquiring the lock so errors
+    # Coerce and validate numeric/boolean keys before acquiring the lock so errors
     # surface early without any lock or I/O.
     coerced_int: int | None = None
     coerced_float: float | None = None
+    coerced_bool: bool | None = None
     if value is not None:
         if key == "max_429_retries":
             try:
@@ -280,6 +308,30 @@ def set_default(key: str, value: str | None, path: Path | None = None) -> None:
                 raise ValueError(
                     f"retry_deadline_s must be >= {_MIN_RETRY_DEADLINE_S}, got {coerced_float}"
                 )
+        elif key == "sql_retry_deadline_s":
+            try:
+                coerced_float = float(value)
+            except (ValueError, OverflowError) as exc:
+                raise ValueError(
+                    f"sql_retry_deadline_s {value!r} cannot be converted to a float: {exc}"
+                ) from exc
+            if not math.isfinite(coerced_float):
+                raise ValueError(
+                    f"sql_retry_deadline_s must be a finite number, got {coerced_float!r}"
+                )
+            if coerced_float < _MIN_RETRY_DEADLINE_S:
+                raise ValueError(
+                    f"sql_retry_deadline_s must be >= {_MIN_RETRY_DEADLINE_S}, got {coerced_float}"
+                )
+        elif key == "sql_retry_executes":
+            if value.lower() in {"true", "1", "yes", "on"}:
+                coerced_bool = True
+            elif value.lower() in {"false", "0", "no", "off"}:
+                coerced_bool = False
+            else:
+                raise ValueError(
+                    f"sql_retry_executes {value!r} must be one of: true/1/yes/on or false/0/no/off"
+                )
 
     try:
         with lock:
@@ -297,6 +349,12 @@ def set_default(key: str, value: str | None, path: Path | None = None) -> None:
                 retry_deadline_s=coerced_float
                 if key == "retry_deadline_s"
                 else current.retry_deadline_s,
+                sql_retry_deadline_s=coerced_float
+                if key == "sql_retry_deadline_s"
+                else current.sql_retry_deadline_s,
+                sql_retry_executes=coerced_bool
+                if key == "sql_retry_executes"
+                else current.sql_retry_executes,
             )
             # _write_config_unlocked is called inside the lock so the full
             # read-modify-write stays within a single lock cycle (C20).

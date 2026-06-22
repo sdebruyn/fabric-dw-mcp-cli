@@ -44,6 +44,38 @@ fdw config unset max-429-retries
 fdw config unset retry-deadline
 ```
 
+## SQL retry budget
+
+The SQL/TDS connect-phase and execute-phase retry budget is a separate layer from the HTTP retry knobs above and operates at the driver level. Resolution order (env var > config > built-in):
+
+| Knob | Env var | Config key | Built-in default |
+|---|---|---|---|
+| Connect+execute deadline (s) | `FABRIC_SQL_RETRY_TIMEOUT_S` | `sql_retry_deadline_s` | 120.0 |
+| Retry non-idempotent statements | `FABRIC_SQL_RETRY_EXECUTES` | `sql_retry_executes` | false |
+
+`sql_retry_deadline_s` sets the total wall-clock budget for both the connect-phase and execute-phase retry loops. The built-in 120 s covers the observed Fabric warehouse warm-up window (~60–90 s).
+
+`sql_retry_executes` opts in to retrying statements that use `fetch="none"` (INSERT, UPDATE, DELETE, DDL) on transient TDS errors. **WARNING: enabling this flag can cause a non-idempotent statement to execute more than once if a transient error occurs after the server begins processing it. Only enable when all such statements are idempotent.**
+
+To persist a longer SQL retry budget:
+
+```shell
+fdw config set sql-retry-deadline 300.0
+```
+
+To opt in to retrying non-idempotent statements:
+
+```shell
+fdw config set sql-retry-executes true
+```
+
+To revert to the built-in defaults:
+
+```shell
+fdw config unset sql-retry-deadline
+fdw config unset sql-retry-executes
+```
+
 For authentication configuration, see [Authentication](../install.md#authentication).
 
 ---
@@ -64,7 +96,7 @@ fdw config clear
 
 ### config set
 
-Set a default value. Accepts `workspace`, `warehouse`, `max-429-retries`, or `retry-deadline` as the key.
+Set a default value. Accepts `workspace`, `warehouse`, `max-429-retries`, `retry-deadline`, `sql-retry-deadline`, or `sql-retry-executes` as the key.
 
 **Synopsis**
 
@@ -73,6 +105,8 @@ fdw config set workspace VALUE
 fdw config set warehouse VALUE
 fdw config set max-429-retries N
 fdw config set retry-deadline SECONDS
+fdw config set sql-retry-deadline SECONDS
+fdw config set sql-retry-executes true|false
 ```
 
 **Example**
@@ -82,6 +116,8 @@ fdw config set workspace MyWorkspace
 fdw config set warehouse MyWarehouse
 fdw config set max-429-retries 20
 fdw config set retry-deadline 600.0
+fdw config set sql-retry-deadline 300.0
+fdw config set sql-retry-executes true
 ```
 
 ---
@@ -112,7 +148,7 @@ warehouse  MyWarehouse
 
 ### config unset
 
-Clear a single default value. Accepts `workspace`, `warehouse`, `max-429-retries`, or `retry-deadline` as the key.
+Clear a single default value. Accepts `workspace`, `warehouse`, `max-429-retries`, `retry-deadline`, `sql-retry-deadline`, or `sql-retry-executes` as the key.
 
 **Synopsis**
 
@@ -121,4 +157,6 @@ fdw config unset workspace
 fdw config unset warehouse
 fdw config unset max-429-retries
 fdw config unset retry-deadline
+fdw config unset sql-retry-deadline
+fdw config unset sql-retry-executes
 ```
