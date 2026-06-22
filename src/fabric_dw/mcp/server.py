@@ -58,6 +58,7 @@ import sys
 from collections.abc import Sequence
 from typing import Literal
 
+from fabric_dw.config import load_config
 from fabric_dw.logging import setup_logging
 from fabric_dw.mcp._context import fabric_lifespan
 from fabric_dw.mcp._guards import env_flag as _guards_env_flag
@@ -93,6 +94,21 @@ register_all(mcp)
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
+def _resolve_log_level() -> int:
+    """Return the effective log level integer.
+
+    Resolution order: env ``FABRIC_LOG_LEVEL`` > ``[logging] level`` in
+    ``config.toml`` > :data:`logging.INFO`.
+    """
+    env_level = os.environ.get("FABRIC_LOG_LEVEL")
+    if env_level is not None:
+        raw = env_level.upper()
+    else:
+        cfg_level = load_config().logging.level
+        raw = cfg_level.upper() if cfg_level is not None else "INFO"
+    return getattr(logging, raw, logging.INFO)
+
+
 def run(argv: Sequence[str] | None = None) -> None:
     """Parse CLI arguments and start the FastMCP server.
 
@@ -114,10 +130,7 @@ def run(argv: Sequence[str] | None = None) -> None:
     ``--port PORT``
         TCP port for HTTP transport (default ``8000``).
     """
-    # Configure structured logging from env var (default INFO)
-    raw_level = os.environ.get("FABRIC_LOG_LEVEL", "INFO").upper()
-    log_level = getattr(logging, raw_level, logging.INFO)
-    setup_logging(log_level)
+    setup_logging(_resolve_log_level())
 
     logger = logging.getLogger(__name__)
 

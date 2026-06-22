@@ -68,6 +68,7 @@ import filelock
 import tomli_w
 
 __all__ = [
+    "VALID_LOG_LEVELS",
     "AuthConfig",
     "ConfigError",
     "Defaults",
@@ -597,7 +598,18 @@ def _set_mcp_workspace_allowlist(current: UserConfig, value: str | None) -> User
     )
 
 
+VALID_LOG_LEVELS: frozenset[str] = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
+
+
 def _set_logging_level(current: UserConfig, value: str | None) -> UserConfig:
+    if value is not None:
+        normalised = value.strip().upper()
+        if normalised not in VALID_LOG_LEVELS:
+            valid_sorted = ", ".join(sorted(VALID_LOG_LEVELS))
+            raise ValueError(
+                f"logging.level {value!r} is not a valid log level; must be one of {valid_sorted}"
+            )
+        value = normalised
     new_logging = LoggingConfig(level=value)
     return UserConfig(
         defaults=current.defaults,

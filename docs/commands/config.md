@@ -76,6 +76,30 @@ fdw config unset sql-retry-deadline
 fdw config unset sql-retry-executes
 ```
 
+## MCP server log level
+
+The MCP server log level can be configured via a 3-layer stack. Resolution order (highest priority first):
+
+| Layer | Mechanism | Description |
+|---|---|---|
+| 1 | `FABRIC_LOG_LEVEL` env var | Read at server start-up; takes precedence over everything else. Invalid or empty values fall through to the next layer with a warning. |
+| 2 | `[logging] level` in `config.toml` | Stored with `fdw config set logging level`. Invalid values are discarded (treated as unset). |
+| 3 | Built-in default | `INFO` |
+
+Valid levels: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` (case-insensitive).
+
+To persist a level across MCP server restarts:
+
+```shell
+fdw config set logging level DEBUG
+```
+
+To revert to the built-in `INFO` default:
+
+```shell
+fdw config unset logging level
+```
+
 For authentication configuration, see [Authentication](../install.md#authentication).
 
 ---
@@ -96,7 +120,7 @@ fdw config clear
 
 ### config set
 
-Set a default value. Accepts `workspace`, `warehouse`, `max-429-retries`, `retry-deadline`, `sql-retry-deadline`, or `sql-retry-executes` as a flat key, or the nested sub-command `telemetry disabled` to configure the telemetry opt-out.
+Set a default value. Accepts `workspace`, `warehouse`, `max-429-retries`, `retry-deadline`, `sql-retry-deadline`, or `sql-retry-executes` as a flat key, or the nested sub-commands `telemetry disabled` and `logging level` for section-scoped knobs.
 
 **Synopsis**
 
@@ -108,6 +132,7 @@ fdw config set retry-deadline SECONDS
 fdw config set sql-retry-deadline SECONDS
 fdw config set sql-retry-executes true|false
 fdw config set telemetry disabled true|false
+fdw config set logging level LEVEL
 ```
 
 **Example**
@@ -120,6 +145,7 @@ fdw config set retry-deadline 600.0
 fdw config set sql-retry-deadline 300.0
 fdw config set sql-retry-executes true
 fdw config set telemetry disabled true
+fdw config set logging level DEBUG
 ```
 
 ---
@@ -150,7 +176,7 @@ warehouse  MyWarehouse
 
 ### config unset
 
-Clear a single default value. Accepts `workspace`, `warehouse`, `max-429-retries`, `retry-deadline`, `sql-retry-deadline`, or `sql-retry-executes` as a flat key, or the nested sub-command `telemetry disabled` to remove the config-file telemetry opt-out.
+Clear a single default value. Accepts `workspace`, `warehouse`, `max-429-retries`, `retry-deadline`, `sql-retry-deadline`, or `sql-retry-executes` as a flat key, or the nested sub-commands `telemetry disabled` and `logging level` for section-scoped knobs.
 
 **Synopsis**
 
@@ -162,4 +188,5 @@ fdw config unset retry-deadline
 fdw config unset sql-retry-deadline
 fdw config unset sql-retry-executes
 fdw config unset telemetry disabled
+fdw config unset logging level
 ```

@@ -10,6 +10,7 @@ import filelock
 import pytest
 
 from fabric_dw.config import (
+    VALID_LOG_LEVELS,
     AuthConfig,
     ConfigError,
     Defaults,
@@ -955,3 +956,68 @@ def test_set_config_concurrent_different_sections_no_lost_update(tmp_path: Path)
     loaded = load_config(path)
     assert loaded.defaults.workspace == "ConcurrentWS"
     assert loaded.telemetry.disabled is True
+
+
+# ---------------------------------------------------------------------------
+# set_config logging.level — round-trip, unset, validation, normalisation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("level", sorted(VALID_LOG_LEVELS))
+def test_set_config_logging_level_valid_values(tmp_path: Path, level: str) -> None:
+    """All valid log levels can be written and round-trip correctly."""
+    path = tmp_path / "config.toml"
+    set_config("logging", "level", level, path)
+    loaded = load_config(path)
+    assert loaded.logging.level == level.upper()
+
+
+@pytest.mark.parametrize("raw", ["debug", "Debug", "DEBUG"])
+def test_set_config_logging_level_normalises_to_upper(tmp_path: Path, raw: str) -> None:
+    """Levels written in any case are normalised to upper-case."""
+    path = tmp_path / "config.toml"
+    set_config("logging", "level", raw, path)
+    loaded = load_config(path)
+    assert loaded.logging.level == "DEBUG"
+
+
+def test_set_config_logging_level_unset(tmp_path: Path) -> None:
+    """set_config('logging', 'level', None) clears the key."""
+    path = tmp_path / "config.toml"
+    set_config("logging", "level", "WARNING", path)
+    assert load_config(path).logging.level == "WARNING"
+    set_config("logging", "level", None, path)
+    loaded = load_config(path)
+    assert loaded.logging.level is None
+
+
+def test_set_config_logging_level_invalid_raises(tmp_path: Path) -> None:
+    """An unrecognised log level raises ValueError."""
+    path = tmp_path / "config.toml"
+    with pytest.raises(ValueError, match=r"logging\.level"):
+        set_config("logging", "level", "VERBOSE", path)
+
+
+def test_set_config_logging_level_preserves_other_sections(tmp_path: Path) -> None:
+    """Writing logging.level does not disturb unrelated sections."""
+    path = tmp_path / "config.toml"
+    save_config(
+        UserConfig(
+            defaults=Defaults(workspace="WS"),
+            telemetry=TelemetryConfig(disabled=True),
+        ),
+        path,
+    )
+    set_config("logging", "level", "DEBUG", path)
+    loaded = load_config(path)
+    assert loaded.logging.level == "DEBUG"
+    assert loaded.defaults.workspace == "WS"
+    assert loaded.telemetry.disabled is True
+
+
+def test_logging_section_absent_when_level_none(tmp_path: Path) -> None:
+    """When logging.level is None, the [logging] section is not written."""
+    path = tmp_path / "config.toml"
+    save_config(UserConfig(defaults=Defaults(workspace="WS")), path)
+    content = path.read_text(encoding="utf-8")
+    assert "[logging]" not in content
