@@ -40,7 +40,8 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         ctx = get_context()
         if all_workspaces and workspace_allowlist_active(ctx.workspace_allowlist):
             raise ToolError(
-                "all_workspaces=True is not permitted when FABRIC_MCP_WORKSPACES is configured; "
+                "all_workspaces=True is not permitted when a workspace allowlist is configured "
+                "(env FABRIC_MCP_WORKSPACES or [mcp] workspace_allowlist in config.toml); "
                 "specify an individual workspace instead"
             )
         if not all_workspaces:

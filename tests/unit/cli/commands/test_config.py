@@ -817,3 +817,36 @@ class TestConfigShowMcpWorkspaceAllowlist:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["mcp"]["workspace_allowlist"] is None
+
+
+class TestConfigSetMcpWorkspaceAllowlistValidation:
+    """set mcp workspace-allowlist rejects empty / whitespace-only input."""
+
+    def test_empty_string_rejected(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        result = runner.invoke(cli, ["config", "set", "mcp", "workspace-allowlist", ""])
+        assert result.exit_code != 0
+
+    def test_whitespace_string_rejected(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        result = runner.invoke(cli, ["config", "set", "mcp", "workspace-allowlist", "   "])
+        assert result.exit_code != 0
+
+    def test_comma_only_rejected(self, runner: CliRunner, config_env: Path) -> None:
+        """A value that is all commas has no non-empty entries after splitting."""
+        _ = config_env
+        result = runner.invoke(cli, ["config", "set", "mcp", "workspace-allowlist", ",,,"])
+        assert result.exit_code != 0
+
+    def test_empty_string_error_mentions_unset(self, runner: CliRunner, config_env: Path) -> None:
+        """Error message points operator toward fdw config unset."""
+        _ = config_env
+        result = runner.invoke(cli, ["config", "set", "mcp", "workspace-allowlist", ""])
+        assert "unset" in result.output.lower()
+
+    def test_empty_string_does_not_write_config(self, runner: CliRunner, config_env: Path) -> None:
+        """A rejected empty call must not modify config.toml."""
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "mcp", "workspace-allowlist", ""])
+        cfg = load_config(default_path())
+        assert cfg.mcp.workspace_allowlist is None

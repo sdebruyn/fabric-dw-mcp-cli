@@ -237,13 +237,26 @@ def set_mcp_workspace_allowlist_cmd(value: str) -> None:
     matched case-insensitively against workspace names and GUIDs.
 
     This is the config-layer knob: ``FABRIC_MCP_WORKSPACES`` (env var) takes
-    precedence when set.  An empty string is not accepted; use
-    ``fdw config unset mcp workspace-allowlist`` to remove all restrictions.
+    precedence when set.
+
+    To remove all workspace restrictions, use the explicit unset command rather
+    than passing an empty string:
+
+        fdw config unset mcp workspace-allowlist
 
     Example::
 
         fdw config set mcp workspace-allowlist "Sales WS,Finance WS"
     """
+    # Reject empty or whitespace-only input explicitly so the operator gets a
+    # clear error instead of silently clearing the allowlist via a typo.
+    stripped = value.strip()
+    if not stripped or not any(e.strip() for e in stripped.split(",")):
+        raise click.UsageError(
+            "VALUE must not be empty. "
+            "To remove all workspace restrictions use: "
+            "fdw config unset mcp workspace-allowlist"
+        )
     set_config("mcp", "workspace_allowlist", value)
     click.echo(f"MCP workspace allowlist set to {value!r}.")
 

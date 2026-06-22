@@ -14,6 +14,7 @@ Coverage
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
@@ -1276,3 +1277,85 @@ def test_assert_workspace_allowed_still_blocks_name_when_allowlist_has_names() -
         pytest.raises(ToolError, match="allowlist"),
     ):
         assert_workspace_allowed("forbidden-workspace")  # pre-resolve, name-only allowlist
+
+
+# ---------------------------------------------------------------------------
+# FIX 1(a): build_context wiring — workspace_allowlist propagated to ServerContext
+# ---------------------------------------------------------------------------
+
+
+def test_build_context_propagates_workspace_allowlist(tmp_path: Path) -> None:
+    """build_context passes cfg.mcp.workspace_allowlist into ServerContext."""
+    from fabric_dw.config import McpConfig, UserConfig, save_config  # noqa: PLC0415
+    from fabric_dw.mcp._context import build_context  # noqa: PLC0415
+
+    cfg_file = tmp_path / "config.toml"
+    save_config(
+        UserConfig(mcp=McpConfig(workspace_allowlist=["Sales WS", "Finance WS"])),
+        cfg_file,
+    )
+
+    env_without_workspaces = {k: v for k, v in os.environ.items() if k != "FABRIC_MCP_WORKSPACES"}
+    with patch.dict(os.environ, env_without_workspaces, clear=True):
+        ctx = build_context(config_path=cfg_file)
+
+    assert ctx.workspace_allowlist == ["Sales WS", "Finance WS"]
+
+
+def test_build_context_workspace_allowlist_none_when_absent(tmp_path: Path) -> None:
+    """build_context sets workspace_allowlist=None when the key is absent from config."""
+    from fabric_dw.config import UserConfig, save_config  # noqa: PLC0415
+    from fabric_dw.mcp._context import build_context  # noqa: PLC0415
+
+    cfg_file = tmp_path / "config.toml"
+    save_config(UserConfig(), cfg_file)
+
+    env_without_workspaces = {k: v for k, v in os.environ.items() if k != "FABRIC_MCP_WORKSPACES"}
+    with patch.dict(os.environ, env_without_workspaces, clear=True):
+        ctx = build_context(config_path=cfg_file)
+
+    assert ctx.workspace_allowlist is None
+
+
+# ---------------------------------------------------------------------------
+# FIX 1(b): tool-level test — config layer blocks when env is UNSET
+# ---------------------------------------------------------------------------
+
+
+async def test_get_workspace_blocked_by_config_allowlist_env_unset() -> None:
+    """get_workspace blocks a workspace via config layer when FABRIC_MCP_WORKSPACES is unset.
+
+    This test proves that:
+    1.  The tool reads ctx.workspace_allowlist from ServerContext.
+    2.  When FABRIC_MCP_WORKSPACES is absent, the config layer still restricts access.
+    """
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw import auth as _auth  # noqa: PLC0415
+    from fabric_dw.cache import LookupCache  # noqa: PLC0415
+    from fabric_dw.mcp._context import ServerContext  # noqa: PLC0415
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+    from fabric_dw.resolver import Resolver  # noqa: PLC0415
+
+    mock_http = AsyncMock()
+    mock_cache = LookupCache()
+    mock_resolver = AsyncMock(spec=Resolver)
+
+    ctx = ServerContext(
+        http=mock_http,
+        cache=mock_cache,
+        resolver=mock_resolver,
+        auth_mode=_auth.CredentialMode.DEFAULT,
+        workspace_allowlist=["allowed-ws"],
+    )
+
+    env_without_workspaces = {k: v for k, v in os.environ.items() if k != "FABRIC_MCP_WORKSPACES"}
+    with (
+        patch("fabric_dw.mcp._context._SERVER_CTX", ctx),
+        patch.dict(os.environ, env_without_workspaces, clear=True),
+        pytest.raises(ToolError, match="allowlist"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "get_workspace",
+            {"workspace": "forbidden-ws"},
+        )
