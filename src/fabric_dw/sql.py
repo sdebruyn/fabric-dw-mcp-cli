@@ -26,11 +26,15 @@ module-level constants:
 ``POOL_MAX_IDLE``       — maximum idle connections per key (default 4).
 ``POOL_MAX_IDLE_SECS``  — maximum idle age in seconds before eviction (default 300).
 
-Disable pooling entirely by setting the environment variable
-``FABRIC_SQL_POOL=0`` before process startup, or at runtime by setting
-``os.environ["FABRIC_SQL_POOL"] = "0"`` and then calling :func:`reset_pool` to
-drain existing connections.  When disabled every ``open_connection`` call opens a
-fresh physical connection and ``.close()`` physically closes it.
+Disable pooling by setting the environment variable ``FABRIC_SQL_POOL``
+to a falsy value (``"0"``, ``"false"``, ``"no"``, or ``"off"``) before
+process startup, or at runtime by assigning the same value and then calling
+:func:`reset_pool` to drain existing connections.  Pooling can also be
+disabled via ``config.toml`` ``[defaults] sql_pool = false`` (resolution
+order: env var > config > built-in default on).  An empty or whitespace-only
+``FABRIC_SQL_POOL`` is treated as absent and falls through to the config/default
+layer.  When disabled every ``open_connection`` call opens a fresh physical
+connection and ``.close()`` physically closes it.
 
 Call :func:`reset_pool` on graceful shutdown to close all idle connections.  The
 MCP server lifespan calls ``reset_pool`` in its ``finally`` block so pooled TDS
@@ -559,7 +563,9 @@ def _set_key(connection_string: str, key: str, value: str) -> str:
 # ---------------------------------------------------------------------------
 
 # Pool configuration constants — override at module level before first use.
-# Env var FABRIC_SQL_POOL=0 disables pooling entirely at any time.
+# Pooling is controlled by _pool_enabled() which resolves: env var FABRIC_SQL_POOL
+# (falsy: "0"/"false"/"no"/"off"; empty/whitespace → absent) > config.toml
+# [defaults].sql_pool > built-in default on.
 POOL_MAX_IDLE: int = 4
 """Maximum number of idle connections kept per ``(workspace_id, database, mode)`` key."""
 
@@ -580,11 +586,32 @@ _pool_lock = threading.Lock()
 def _pool_enabled() -> bool:
     """Return True when connection pooling is active.
 
-    Reads ``FABRIC_SQL_POOL`` from the environment at call-time so tests can
-    toggle it without reimporting the module.  Any value other than ``"0"``
-    keeps pooling enabled (the default).
+    Resolution order (3-layer):
+    1. ``FABRIC_SQL_POOL`` env var — read at call-time so tests can toggle
+       it without reimporting the module.  Only a non-empty, non-whitespace
+       value is honoured; an empty or whitespace-only value (e.g. a Docker
+       ``ENV FABRIC_SQL_POOL=`` placeholder) is treated as absent and falls
+       through to the next layer.  Accepted disable values: ``"0"``,
+       ``"false"``, ``"no"``, ``"off"`` (case-insensitive).  Any other
+       non-empty string keeps pooling enabled.
+    2. ``config.toml`` ``[defaults].sql_pool`` — consulted via the existing
+       memoised :func:`_load_sql_config` cache (never calls load_config()
+       per call).
+    3. Built-in default: ``True`` (pooling on).
     """
-    return os.environ.get("FABRIC_SQL_POOL", "1") != "0"
+    raw_env = os.environ.get("FABRIC_SQL_POOL")
+    if raw_env is not None:
+        stripped = raw_env.strip()
+        if stripped:
+            # Non-empty value — honour it (falsy set disables, anything else enables).
+            return stripped.lower() not in _FALSY_STRINGS
+        # Empty / whitespace-only — treat as absent; fall through to config/default.
+
+    cfg_val = _load_sql_config().defaults.sql_pool
+    if cfg_val is not None:
+        return cfg_val
+
+    return True
 
 
 def _pool_time() -> float:
@@ -708,8 +735,8 @@ class _PooledConnection:
     When ``.close()`` is called:
     - If ``_discard`` is ``True`` (set after a failed query), the underlying
       connection is physically closed and NOT returned to the pool.
-    - If pooling is disabled (``FABRIC_SQL_POOL=0``), the underlying connection
-      is physically closed.
+    - If pooling is disabled (``_pool_enabled()`` returns ``False``), the
+      underlying connection is physically closed.
     - Otherwise the underlying connection is returned to the pool for reuse.
 
     All other method calls are forwarded verbatim to the underlying connection,
@@ -839,8 +866,10 @@ def open_connection(
     socket.  Callers do **not** need to change - the ``contextlib.closing``
     pattern works unchanged.
 
-    When pooling is disabled (``FABRIC_SQL_POOL=0``) every call opens a fresh
-    physical connection and ``.close()`` physically closes it.
+    When pooling is disabled (``_pool_enabled()`` returns ``False``, controlled
+    via the ``FABRIC_SQL_POOL`` env var, ``config.toml [defaults] sql_pool``,
+    or the built-in default on) every call opens a fresh physical connection
+    and ``.close()`` physically closes it.
 
     When ``autocommit=True``, the ODBC driver does **not** wrap each statement
     in an explicit ``BEGIN TRANSACTION`` / ``COMMIT`` pair.  This is required

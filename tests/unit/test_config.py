@@ -1037,3 +1037,100 @@ def test_load_config_invalid_logging_level_valid_level_preserved(tmp_path: Path)
     path.write_text('[logging]\nlevel = "debug"\n', encoding="utf-8")
     cfg = load_config(path)
     assert cfg.logging.level == "DEBUG"
+
+
+# ---------------------------------------------------------------------------
+# sql_pool — round-trip and set_default coercion
+# ---------------------------------------------------------------------------
+
+
+def test_round_trip_sql_pool_true(tmp_path: Path) -> None:
+    """sql_pool=True is saved and loaded as a bool."""
+    path = tmp_path / "config.toml"
+    cfg = UserConfig(defaults=Defaults(sql_pool=True))
+    save_config(cfg, path)
+    loaded = load_config(path)
+    assert loaded.defaults.sql_pool is True
+
+
+def test_round_trip_sql_pool_false(tmp_path: Path) -> None:
+    """sql_pool=False is saved and loaded as a bool."""
+    path = tmp_path / "config.toml"
+    cfg = UserConfig(defaults=Defaults(sql_pool=False))
+    save_config(cfg, path)
+    loaded = load_config(path)
+    assert loaded.defaults.sql_pool is False
+
+
+def test_round_trip_sql_pool_none(tmp_path: Path) -> None:
+    """sql_pool=None is not written to the file."""
+    path = tmp_path / "config.toml"
+    cfg = UserConfig(defaults=Defaults(workspace="WS", sql_pool=None))
+    save_config(cfg, path)
+    content = path.read_text(encoding="utf-8")
+    assert "sql_pool" not in content
+    loaded = load_config(path)
+    assert loaded.defaults.sql_pool is None
+    assert loaded.defaults.workspace == "WS"
+
+
+def test_set_default_sql_pool_true_persists(tmp_path: Path) -> None:
+    """set_default('sql_pool', 'true') stores True."""
+    path = tmp_path / "config.toml"
+    set_default("sql_pool", "true", path)
+    loaded = load_config(path)
+    assert loaded.defaults.sql_pool is True
+
+
+def test_set_default_sql_pool_false_persists(tmp_path: Path) -> None:
+    """set_default('sql_pool', 'false') stores False."""
+    path = tmp_path / "config.toml"
+    set_default("sql_pool", "false", path)
+    loaded = load_config(path)
+    assert loaded.defaults.sql_pool is False
+
+
+def test_set_default_sql_pool_none_clears(tmp_path: Path) -> None:
+    """set_default('sql_pool', None) clears the key."""
+    path = tmp_path / "config.toml"
+    save_config(UserConfig(defaults=Defaults(sql_pool=False, sql_retry_executes=True)), path)
+    set_default("sql_pool", None, path)
+    loaded = load_config(path)
+    assert loaded.defaults.sql_pool is None
+    assert loaded.defaults.sql_retry_executes is True  # preserved
+
+
+def test_set_default_sql_pool_garbage_raises(tmp_path: Path) -> None:
+    """An unrecognised value for sql_pool raises ValueError."""
+    path = tmp_path / "config.toml"
+    with pytest.raises(ValueError, match="sql_pool"):
+        set_default("sql_pool", "maybe", path)
+
+
+@pytest.mark.parametrize("truthy", ["true", "True", "TRUE", "1", "yes", "on"])
+def test_set_default_sql_pool_truthy_variants(tmp_path: Path, truthy: str) -> None:
+    """All truthy string variants are accepted for sql_pool."""
+    path = tmp_path / "config.toml"
+    set_default("sql_pool", truthy, path)
+    loaded = load_config(path)
+    assert loaded.defaults.sql_pool is True
+
+
+@pytest.mark.parametrize("falsy", ["false", "False", "FALSE", "0", "no", "off"])
+def test_set_default_sql_pool_falsy_variants(tmp_path: Path, falsy: str) -> None:
+    """All falsy string variants are accepted for sql_pool."""
+    path = tmp_path / "config.toml"
+    set_default("sql_pool", falsy, path)
+    loaded = load_config(path)
+    assert loaded.defaults.sql_pool is False
+
+
+def test_set_default_sql_pool_preserves_other_keys(tmp_path: Path) -> None:
+    """set_default('sql_pool', ...) does not clear unrelated keys."""
+    path = tmp_path / "config.toml"
+    save_config(UserConfig(defaults=Defaults(workspace="WS", sql_retry_executes=True)), path)
+    set_default("sql_pool", "false", path)
+    loaded = load_config(path)
+    assert loaded.defaults.sql_pool is False
+    assert loaded.defaults.workspace == "WS"
+    assert loaded.defaults.sql_retry_executes is True

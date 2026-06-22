@@ -107,6 +107,7 @@ class Defaults:
     retry_deadline_s: float | None = None
     sql_retry_deadline_s: float | None = None
     sql_retry_executes: bool | None = None
+    sql_pool: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -191,6 +192,7 @@ def _parse_defaults_section(data: dict[str, object]) -> Defaults:
     raw_deadline = raw.get("retry_deadline_s")
     raw_sql_deadline = raw.get("sql_retry_deadline_s")
     raw_sql_executes = raw.get("sql_retry_executes")
+    raw_sql_pool = raw.get("sql_pool")
     return Defaults(
         workspace=workspace if isinstance(workspace, str) else None,
         warehouse=warehouse if isinstance(warehouse, str) else None,
@@ -202,6 +204,7 @@ def _parse_defaults_section(data: dict[str, object]) -> Defaults:
         if isinstance(raw_sql_deadline, (int, float)) and math.isfinite(raw_sql_deadline)
         else None,
         sql_retry_executes=raw_sql_executes if isinstance(raw_sql_executes, bool) else None,
+        sql_pool=raw_sql_pool if isinstance(raw_sql_pool, bool) else None,
     )
 
 
@@ -372,6 +375,8 @@ def _defaults_to_dict(d: Defaults) -> dict[str, object]:
         out["sql_retry_deadline_s"] = d.sql_retry_deadline_s
     if d.sql_retry_executes is not None:
         out["sql_retry_executes"] = d.sql_retry_executes
+    if d.sql_pool is not None:
+        out["sql_pool"] = d.sql_pool
     return out
 
 
@@ -522,15 +527,13 @@ def _coerce_defaults_key(  # noqa: PLR0912
                 raise ValueError(
                     f"sql_retry_deadline_s must be >= {_MIN_RETRY_DEADLINE_S}, got {coerced_float}"
                 )
-        elif key == "sql_retry_executes":
+        elif key in {"sql_retry_executes", "sql_pool"}:
             if value.lower() in {"true", "1", "yes", "on"}:
                 coerced_bool = True
             elif value.lower() in {"false", "0", "no", "off"}:
                 coerced_bool = False
             else:
-                raise ValueError(
-                    f"sql_retry_executes {value!r} must be one of: true/1/yes/on or false/0/no/off"
-                )
+                raise ValueError(f"{key} {value!r} must be one of: true/1/yes/on or false/0/no/off")
     return coerced_int, coerced_float, coerced_bool
 
 
@@ -564,6 +567,7 @@ def _make_defaults_setter(
             sql_retry_executes=coerced_bool
             if key == "sql_retry_executes"
             else current.defaults.sql_retry_executes,
+            sql_pool=coerced_bool if key == "sql_pool" else current.defaults.sql_pool,
         )
         return UserConfig(
             defaults=new_defaults,
@@ -669,6 +673,7 @@ _SET_CONFIG_DISPATCH: dict[
     ("defaults", "retry_deadline_s"): _make_defaults_setter("retry_deadline_s"),
     ("defaults", "sql_retry_deadline_s"): _make_defaults_setter("sql_retry_deadline_s"),
     ("defaults", "sql_retry_executes"): _make_defaults_setter("sql_retry_executes"),
+    ("defaults", "sql_pool"): _make_defaults_setter("sql_pool"),
     ("telemetry", "disabled"): _set_telemetry_disabled,
     ("mcp", "workspace_allowlist"): _set_mcp_workspace_allowlist,
     ("logging", "level"): _set_logging_level,
@@ -744,8 +749,8 @@ def set_default(key: str, value: str | None, path: Path | None = None) -> None:
 
     Args:
         key: One of ``"workspace"``, ``"warehouse"``, ``"max_429_retries"``,
-             ``"retry_deadline_s"``, ``"sql_retry_deadline_s"``, or
-             ``"sql_retry_executes"``.
+             ``"retry_deadline_s"``, ``"sql_retry_deadline_s"``,
+             ``"sql_retry_executes"``, or ``"sql_pool"``.
         value: The new value (as a string for numeric keys it is coerced), or
                *None* to clear (unset) the key.
         path: Optional override for the config file path.
@@ -765,6 +770,7 @@ def set_default(key: str, value: str | None, path: Path | None = None) -> None:
         "retry_deadline_s",
         "sql_retry_deadline_s",
         "sql_retry_executes",
+        "sql_pool",
     }
     if key not in allowed:
         raise ValueError(f"Unknown config key {key!r}; must be one of {sorted(allowed)}")
