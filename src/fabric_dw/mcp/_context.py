@@ -110,6 +110,16 @@ def build_context(
     default (10 / 300.0) via the shared :func:`~fabric_dw.config_resolve.resolve_int_knob`
     and :func:`~fabric_dw.config_resolve.resolve_float_knob` helpers.
 
+    The credential mode is resolved with precedence:
+
+    1. ``FABRIC_AUTH`` environment variable (when non-empty/non-whitespace).
+    2. ``[defaults] auth_mode`` in ``config.toml``.
+    3. Built-in default: ``default`` (``DefaultAzureCredential``).
+
+    An empty or whitespace-only ``FABRIC_AUTH`` is treated as absent (falls
+    through to config/default) rather than raising an error.  An unrecognised
+    non-empty value raises :class:`~fabric_dw.exceptions.ConfigError`.
+
     Args:
         environ: Mapping to read environment variables from.  Defaults to
             ``os.environ`` when ``None``.
@@ -121,21 +131,40 @@ def build_context(
 
     Raises:
         :class:`~fabric_dw.exceptions.ConfigError`: When ``FABRIC_AUTH``
-            contains an unrecognised value.
+            contains an unrecognised non-empty value.
     """
     env = environ if environ is not None else os.environ
-    raw_mode = env.get("FABRIC_AUTH", "default")
-    try:
-        mode = _auth.CredentialMode(raw_mode)
-    except ValueError as exc:
-        raise ConfigError(
-            f"invalid FABRIC_AUTH value {raw_mode!r}; "
-            f"expected one of {[m.value for m in _auth.CredentialMode]}"
-        ) from exc
 
-    credential = _auth.get_credential(mode)
+    # 1. Env var (wins when non-empty/non-whitespace).
+    raw_env_mode = env.get("FABRIC_AUTH", "").strip()
 
     cfg = load_config(config_path)
+
+    if raw_env_mode:
+        # Non-empty env value — must be a recognised mode or we raise.
+        try:
+            mode = _auth.CredentialMode(raw_env_mode)
+        except ValueError as exc:
+            raise ConfigError(
+                f"invalid FABRIC_AUTH value {raw_env_mode!r}; "
+                f"expected one of {[m.value for m in _auth.CredentialMode]}"
+            ) from exc
+    elif cfg.defaults.auth_mode is not None:
+        # 2. Config file value — already validated at write time, but guard anyway.
+        try:
+            mode = _auth.CredentialMode(cfg.defaults.auth_mode)
+        except ValueError:
+            _logger.warning(
+                "[defaults] auth_mode %r from config is not a recognised credential mode; "
+                "falling back to built-in default.",
+                cfg.defaults.auth_mode,
+            )
+            mode = _auth.CredentialMode.DEFAULT
+    else:
+        # 3. Built-in default.
+        mode = _auth.CredentialMode.DEFAULT
+
+    credential = _auth.get_credential(mode)
 
     retries = resolve_int_knob(
         cli_value=None,

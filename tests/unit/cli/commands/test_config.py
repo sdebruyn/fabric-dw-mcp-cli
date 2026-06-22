@@ -621,3 +621,95 @@ class TestConfigShowSqlPool:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["defaults"]["sql_pool"] is None
+
+
+# ---------------------------------------------------------------------------
+# config set / unset / show for auth-mode
+# ---------------------------------------------------------------------------
+
+
+class TestConfigSetAuthMode:
+    def test_set_auth_mode_default_exits_zero(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        result = runner.invoke(cli, ["config", "set", "auth-mode", "default"])
+        assert result.exit_code == 0
+
+    def test_set_auth_mode_interactive_exits_zero(
+        self, runner: CliRunner, config_env: Path
+    ) -> None:
+        _ = config_env
+        result = runner.invoke(cli, ["config", "set", "auth-mode", "interactive"])
+        assert result.exit_code == 0
+
+    def test_set_auth_mode_sp_exits_zero(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        result = runner.invoke(cli, ["config", "set", "auth-mode", "sp"])
+        assert result.exit_code == 0
+
+    def test_set_auth_mode_writes_file(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "auth-mode", "interactive"])
+        cfg = load_config(default_path())
+        assert cfg.defaults.auth_mode == "interactive"
+
+    def test_set_auth_mode_sp_writes_file(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "auth-mode", "sp"])
+        cfg = load_config(default_path())
+        assert cfg.defaults.auth_mode == "sp"
+
+    def test_set_auth_mode_case_insensitive(self, runner: CliRunner, config_env: Path) -> None:
+        """auth-mode choice is case-insensitive; stored as lowercase."""
+        _ = config_env
+        result = runner.invoke(cli, ["config", "set", "auth-mode", "INTERACTIVE"])
+        assert result.exit_code == 0
+        cfg = load_config(default_path())
+        assert cfg.defaults.auth_mode == "interactive"
+
+    def test_set_auth_mode_invalid_rejected(self, runner: CliRunner, config_env: Path) -> None:
+        """An invalid auth-mode value must be rejected by click.Choice."""
+        _ = config_env
+        result = runner.invoke(cli, ["config", "set", "auth-mode", "managed_identity"])
+        assert result.exit_code != 0
+
+    def test_set_auth_mode_preserves_workspace(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "workspace", "MyWS"])
+        runner.invoke(cli, ["config", "set", "auth-mode", "interactive"])
+        cfg = load_config(default_path())
+        assert cfg.defaults.auth_mode == "interactive"
+        assert cfg.defaults.workspace == "MyWS"
+
+
+class TestConfigUnsetAuthMode:
+    def test_unset_auth_mode_exits_zero(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "auth-mode", "interactive"])
+        result = runner.invoke(cli, ["config", "unset", "auth-mode"])
+        assert result.exit_code == 0
+
+    def test_unset_auth_mode_clears_key(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "auth-mode", "interactive"])
+        runner.invoke(cli, ["config", "set", "workspace", "WS1"])
+        runner.invoke(cli, ["config", "unset", "auth-mode"])
+        cfg = load_config(default_path())
+        assert cfg.defaults.auth_mode is None
+        assert cfg.defaults.workspace == "WS1"  # preserved
+
+
+class TestConfigShowAuthMode:
+    def test_show_includes_auth_mode_field(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "auth-mode", "interactive"])
+        result = runner.invoke(cli, ["--json", "config", "show"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["defaults"]["auth_mode"] == "interactive"
+
+    def test_show_null_when_auth_mode_not_set(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        result = runner.invoke(cli, ["--json", "config", "show"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["defaults"]["auth_mode"] is None

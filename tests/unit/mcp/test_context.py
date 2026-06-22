@@ -337,3 +337,111 @@ class TestBuildContextConfigRead:
             # This should not raise even if the default config file doesn't exist.
             ctx = build_context(environ={"FABRIC_AUTH": "default"}, config_path=None)
         assert isinstance(ctx, ServerContext)
+
+
+# ---------------------------------------------------------------------------
+# build_context — 3-layer auth_mode resolution
+# ---------------------------------------------------------------------------
+
+
+class TestBuildContextAuthModeResolution:
+    """Tests for the 3-layer auth_mode resolution: env > config > built-in default."""
+
+    def test_env_fabric_auth_takes_precedence_over_config(self, tmp_path: Path) -> None:
+        """FABRIC_AUTH env var overrides [defaults] auth_mode in config."""
+        path = tmp_path / "config.toml"
+        save_config(UserConfig(defaults=Defaults(auth_mode="interactive")), path)
+        fake_http = MagicMock()
+        with (
+            patch("fabric_dw.mcp._context.FabricHttpClient", return_value=fake_http),
+            patch("fabric_dw.mcp._context._auth.get_credential", return_value=MagicMock()),
+        ):
+            ctx = build_context(environ={"FABRIC_AUTH": "sp"}, config_path=path)
+        assert ctx.auth_mode == _auth.CredentialMode.SERVICE_PRINCIPAL
+
+    def test_config_auth_mode_used_when_env_absent(self, tmp_path: Path) -> None:
+        """[defaults] auth_mode is used when FABRIC_AUTH is absent."""
+        path = tmp_path / "config.toml"
+        save_config(UserConfig(defaults=Defaults(auth_mode="interactive")), path)
+        fake_http = MagicMock()
+        with (
+            patch("fabric_dw.mcp._context.FabricHttpClient", return_value=fake_http),
+            patch("fabric_dw.mcp._context._auth.get_credential", return_value=MagicMock()),
+        ):
+            ctx = build_context(environ={}, config_path=path)
+        assert ctx.auth_mode == _auth.CredentialMode.INTERACTIVE
+
+    def test_builtin_default_used_when_env_and_config_absent(self, tmp_path: Path) -> None:
+        """Built-in default (CredentialMode.DEFAULT) is used when neither env nor config is set."""
+        path = tmp_path / "config.toml"
+        save_config(UserConfig(), path)
+        fake_http = MagicMock()
+        with patch("fabric_dw.mcp._context.FabricHttpClient", return_value=fake_http):
+            ctx = build_context(environ={}, config_path=path)
+        assert ctx.auth_mode == _auth.CredentialMode.DEFAULT
+
+    def test_empty_fabric_auth_falls_through_to_config(self, tmp_path: Path) -> None:
+        """Empty FABRIC_AUTH (whitespace) falls through to config, not treated as invalid."""
+        path = tmp_path / "config.toml"
+        save_config(UserConfig(defaults=Defaults(auth_mode="interactive")), path)
+        fake_http = MagicMock()
+        with (
+            patch("fabric_dw.mcp._context.FabricHttpClient", return_value=fake_http),
+            patch("fabric_dw.mcp._context._auth.get_credential", return_value=MagicMock()),
+        ):
+            ctx = build_context(environ={"FABRIC_AUTH": ""}, config_path=path)
+        assert ctx.auth_mode == _auth.CredentialMode.INTERACTIVE
+
+    def test_whitespace_only_fabric_auth_falls_through_to_config(self, tmp_path: Path) -> None:
+        """Whitespace-only FABRIC_AUTH falls through to config."""
+        path = tmp_path / "config.toml"
+        save_config(UserConfig(defaults=Defaults(auth_mode="interactive")), path)
+        fake_http = MagicMock()
+        with (
+            patch("fabric_dw.mcp._context.FabricHttpClient", return_value=fake_http),
+            patch("fabric_dw.mcp._context._auth.get_credential", return_value=MagicMock()),
+        ):
+            ctx = build_context(environ={"FABRIC_AUTH": "   "}, config_path=path)
+        assert ctx.auth_mode == _auth.CredentialMode.INTERACTIVE
+
+    def test_empty_fabric_auth_falls_through_to_builtin_default(self, tmp_path: Path) -> None:
+        """Empty FABRIC_AUTH with no config falls through to built-in default."""
+        path = tmp_path / "no-config.toml"  # does not exist
+        fake_http = MagicMock()
+        with patch("fabric_dw.mcp._context.FabricHttpClient", return_value=fake_http):
+            ctx = build_context(environ={"FABRIC_AUTH": ""}, config_path=path)
+        assert ctx.auth_mode == _auth.CredentialMode.DEFAULT
+
+    def test_invalid_fabric_auth_raises_config_error(self) -> None:
+        """A non-empty but unrecognised FABRIC_AUTH value raises ConfigError."""
+        with pytest.raises(ConfigError, match="invalid FABRIC_AUTH"):
+            build_context(environ={"FABRIC_AUTH": "managed_identity"})
+
+    def test_invalid_fabric_auth_does_not_fall_through_to_config(self, tmp_path: Path) -> None:
+        """An invalid non-empty FABRIC_AUTH must NOT silently fall through to a different mode."""
+        path = tmp_path / "config.toml"
+        save_config(UserConfig(defaults=Defaults(auth_mode="interactive")), path)
+        # Should raise, not silently pick 'interactive' from config.
+        with pytest.raises(ConfigError, match="invalid FABRIC_AUTH"):
+            build_context(environ={"FABRIC_AUTH": "bad-mode"}, config_path=path)
+
+    def test_config_sp_mode_wired(self, tmp_path: Path) -> None:
+        """[defaults] auth_mode = 'sp' selects SERVICE_PRINCIPAL."""
+        path = tmp_path / "config.toml"
+        save_config(UserConfig(defaults=Defaults(auth_mode="sp")), path)
+        fake_http = MagicMock()
+        with (
+            patch("fabric_dw.mcp._context.FabricHttpClient", return_value=fake_http),
+            patch("fabric_dw.mcp._context._auth.get_credential", return_value=MagicMock()),
+        ):
+            ctx = build_context(environ={}, config_path=path)
+        assert ctx.auth_mode == _auth.CredentialMode.SERVICE_PRINCIPAL
+
+    def test_config_default_mode_wired(self, tmp_path: Path) -> None:
+        """[defaults] auth_mode = 'default' selects DEFAULT."""
+        path = tmp_path / "config.toml"
+        save_config(UserConfig(defaults=Defaults(auth_mode="default")), path)
+        fake_http = MagicMock()
+        with patch("fabric_dw.mcp._context.FabricHttpClient", return_value=fake_http):
+            ctx = build_context(environ={}, config_path=path)
+        assert ctx.auth_mode == _auth.CredentialMode.DEFAULT

@@ -13,6 +13,7 @@ config set retry-deadline      — persist the combined 429+5xx wall-clock deadl
 config set sql-retry-deadline  — persist the SQL/TDS connect+execute retry budget
 config set sql-retry-executes  — persist whether fetch="none" statements are retried
 config set sql-pool            — persist whether SQL connection pooling is enabled
+config set auth-mode           — persist the MCP server credential mode
 config set telemetry disabled  — opt in/out of telemetry via config
 config set logging level       — set the MCP server log level
 config unset workspace         — clear the workspace default
@@ -22,6 +23,7 @@ config unset retry-deadline    — clear the HTTP deadline default
 config unset sql-retry-deadline — clear the SQL retry deadline default
 config unset sql-retry-executes — clear the SQL execute-retry flag
 config unset sql-pool          — clear the SQL pool flag
+config unset auth-mode         — clear the credential mode (revert to built-in default)
 config unset telemetry disabled — clear the telemetry opt-out (revert to default-on)
 config unset logging level     — clear the logging level (revert to built-in INFO)
 config clear                   — wipe the entire config file
@@ -33,7 +35,13 @@ import click
 
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import confirm, render
-from fabric_dw.config import VALID_LOG_LEVELS, clear_config, set_config, set_default
+from fabric_dw.config import (
+    VALID_AUTH_MODES,
+    VALID_LOG_LEVELS,
+    clear_config,
+    set_config,
+    set_default,
+)
 
 
 @click.group("config")
@@ -60,6 +68,7 @@ def show_cmd(ctx: CliContext) -> None:
             "sql_retry_deadline_s": cfg.defaults.sql_retry_deadline_s,
             "sql_retry_executes": cfg.defaults.sql_retry_executes,
             "sql_pool": cfg.defaults.sql_pool,
+            "auth_mode": cfg.defaults.auth_mode,
         },
         "telemetry": {
             "disabled": cfg.telemetry.disabled,
@@ -147,6 +156,31 @@ def set_sql_pool_cmd(value: str) -> None:
     """
     set_default("sql_pool", value.lower())
     click.echo(f"Default sql_pool set to {value.lower()}.")
+
+
+_AUTH_MODE_CHOICES = click.Choice(sorted(VALID_AUTH_MODES), case_sensitive=False)
+
+
+@set_group.command("auth-mode")
+@click.argument("value", type=_AUTH_MODE_CHOICES)
+def set_auth_mode_cmd(value: str) -> None:
+    """Set the MCP server credential mode (default, interactive, or sp).
+
+    This persists the credential mode used by the MCP server.  The
+    ``FABRIC_AUTH`` environment variable takes precedence over this setting
+    when non-empty.
+
+    Valid modes:
+
+    \b
+    default      DefaultAzureCredential chain (Azure CLI, Managed Identity, etc.)
+    interactive  Interactive browser sign-in
+    sp           Service principal (requires AZURE_TENANT_ID, AZURE_CLIENT_ID,
+                 AZURE_CLIENT_SECRET)
+    """
+    normalised = value.strip().lower()
+    set_default("auth_mode", normalised)
+    click.echo(f"Default auth_mode set to {normalised!r}.")
 
 
 @set_group.group("telemetry")
@@ -241,6 +275,13 @@ def unset_sql_pool_cmd() -> None:
     """Clear the sql_pool default (revert to built-in true)."""
     set_default("sql_pool", None)
     click.echo("Default sql_pool cleared.")
+
+
+@unset_group.command("auth-mode")
+def unset_auth_mode_cmd() -> None:
+    """Clear the auth_mode default (revert to built-in default credential mode)."""
+    set_default("auth_mode", None)
+    click.echo("Default auth_mode cleared.")
 
 
 @unset_group.group("telemetry")

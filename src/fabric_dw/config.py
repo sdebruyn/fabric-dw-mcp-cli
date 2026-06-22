@@ -1,7 +1,8 @@
 """User-level configuration for fabric-dw CLI.
 
-Stores persistent defaults (workspace, warehouse, HTTP retry knobs, and SQL
-retry knobs) in a TOML file at ``$XDG_CONFIG_HOME/fabric-dw/config.toml``
+Stores persistent defaults (workspace, warehouse, HTTP retry knobs, SQL
+retry knobs, and auth mode) in a TOML file at
+``$XDG_CONFIG_HOME/fabric-dw/config.toml``
 (falling back to ``~/.config/fabric-dw/config.toml``).
 
 The TOML shape supports multiple named sections:
@@ -15,6 +16,7 @@ The TOML shape supports multiple named sections:
     retry_deadline_s = 300.0
     sql_retry_deadline_s = 120.0
     sql_retry_executes = false
+    auth_mode = "default"
 
     [telemetry]
     disabled = true
@@ -68,6 +70,7 @@ import filelock
 import tomli_w
 
 __all__ = [
+    "VALID_AUTH_MODES",
     "VALID_LOG_LEVELS",
     "AuthConfig",
     "ConfigError",
@@ -99,7 +102,7 @@ class ConfigError(RuntimeError):
 
 @dataclass(frozen=True)
 class Defaults:
-    """Persistent workspace / warehouse defaults, HTTP retry knobs, and SQL retry knobs."""
+    """Persistent workspace / warehouse defaults, HTTP + SQL retry knobs, and auth mode."""
 
     workspace: str | None = None
     warehouse: str | None = None
@@ -108,6 +111,7 @@ class Defaults:
     sql_retry_deadline_s: float | None = None
     sql_retry_executes: bool | None = None
     sql_pool: bool | None = None
+    auth_mode: str | None = None
 
 
 @dataclass(frozen=True)
@@ -193,6 +197,19 @@ def _parse_defaults_section(data: dict[str, object]) -> Defaults:
     raw_sql_deadline = raw.get("sql_retry_deadline_s")
     raw_sql_executes = raw.get("sql_retry_executes")
     raw_sql_pool = raw.get("sql_pool")
+    raw_auth_mode = raw.get("auth_mode")
+    auth_mode: str | None = None
+    if isinstance(raw_auth_mode, str):
+        normalised = raw_auth_mode.strip().lower()
+        if normalised in VALID_AUTH_MODES:
+            auth_mode = normalised
+        else:
+            _log.warning(
+                "[defaults] auth_mode %r is not a recognised credential mode "
+                "(valid: %s); ignoring.",
+                raw_auth_mode,
+                ", ".join(sorted(VALID_AUTH_MODES)),
+            )
     return Defaults(
         workspace=workspace if isinstance(workspace, str) else None,
         warehouse=warehouse if isinstance(warehouse, str) else None,
@@ -205,6 +222,7 @@ def _parse_defaults_section(data: dict[str, object]) -> Defaults:
         else None,
         sql_retry_executes=raw_sql_executes if isinstance(raw_sql_executes, bool) else None,
         sql_pool=raw_sql_pool if isinstance(raw_sql_pool, bool) else None,
+        auth_mode=auth_mode,
     )
 
 
@@ -377,6 +395,8 @@ def _defaults_to_dict(d: Defaults) -> dict[str, object]:
         out["sql_retry_executes"] = d.sql_retry_executes
     if d.sql_pool is not None:
         out["sql_pool"] = d.sql_pool
+    if d.auth_mode is not None:
+        out["auth_mode"] = d.auth_mode
     return out
 
 
@@ -534,6 +554,14 @@ def _coerce_defaults_key(  # noqa: PLR0912
                 coerced_bool = False
             else:
                 raise ValueError(f"{key} {value!r} must be one of: true/1/yes/on or false/0/no/off")
+        elif key == "auth_mode":
+            normalised = value.strip().lower()
+            if normalised not in VALID_AUTH_MODES:
+                valid_sorted = ", ".join(sorted(VALID_AUTH_MODES))
+                raise ValueError(
+                    f"auth_mode {value!r} is not a valid credential mode; "
+                    f"must be one of {valid_sorted}"
+                )
     return coerced_int, coerced_float, coerced_bool
 
 
@@ -552,6 +580,12 @@ def _make_defaults_setter(
 
     def _set(current: UserConfig, value: str | None) -> UserConfig:
         coerced_int, coerced_float, coerced_bool = _coerce_defaults_key(key, value)
+        # For auth_mode, normalise to lowercase when setting (None clears the key).
+        auth_mode_value: str | None
+        if key == "auth_mode":
+            auth_mode_value = value.strip().lower() if value is not None else None
+        else:
+            auth_mode_value = current.defaults.auth_mode
         new_defaults = Defaults(
             workspace=value if key == "workspace" else current.defaults.workspace,
             warehouse=value if key == "warehouse" else current.defaults.warehouse,
@@ -568,6 +602,7 @@ def _make_defaults_setter(
             if key == "sql_retry_executes"
             else current.defaults.sql_retry_executes,
             sql_pool=coerced_bool if key == "sql_pool" else current.defaults.sql_pool,
+            auth_mode=auth_mode_value,
         )
         return UserConfig(
             defaults=new_defaults,
@@ -620,6 +655,11 @@ def _set_mcp_workspace_allowlist(current: UserConfig, value: str | None) -> User
 
 
 VALID_LOG_LEVELS: frozenset[str] = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
+
+# Valid credential modes — kept in sync with :class:`~fabric_dw.auth.CredentialMode`.
+# Duplicated here to avoid importing auth.py at module level (keeps the dependency
+# graph acyclic and the import lightweight).
+VALID_AUTH_MODES: frozenset[str] = frozenset({"default", "sp", "interactive"})
 
 
 def _set_logging_level(current: UserConfig, value: str | None) -> UserConfig:
@@ -674,6 +714,7 @@ _SET_CONFIG_DISPATCH: dict[
     ("defaults", "sql_retry_deadline_s"): _make_defaults_setter("sql_retry_deadline_s"),
     ("defaults", "sql_retry_executes"): _make_defaults_setter("sql_retry_executes"),
     ("defaults", "sql_pool"): _make_defaults_setter("sql_pool"),
+    ("defaults", "auth_mode"): _make_defaults_setter("auth_mode"),
     ("telemetry", "disabled"): _set_telemetry_disabled,
     ("mcp", "workspace_allowlist"): _set_mcp_workspace_allowlist,
     ("logging", "level"): _set_logging_level,
@@ -771,6 +812,7 @@ def set_default(key: str, value: str | None, path: Path | None = None) -> None:
         "sql_retry_deadline_s",
         "sql_retry_executes",
         "sql_pool",
+        "auth_mode",
     }
     if key not in allowed:
         raise ValueError(f"Unknown config key {key!r}; must be one of {sorted(allowed)}")
