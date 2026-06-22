@@ -9,6 +9,8 @@ from unittest.mock import patch
 import pytest
 from pytest_socket import disable_socket, enable_socket
 
+import fabric_dw.sql as _sql_module
+
 
 @pytest.fixture(autouse=True)
 def _block_real_sockets() -> Generator[None, None, None]:
@@ -88,3 +90,26 @@ def _reset_fabric_dw_logger() -> Generator[None, None, None]:
         pkg.removeHandler(h)
     for h in orig_handlers:
         pkg.addHandler(h)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_sql_config(tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Isolate SQL retry config resolution for every unit test.
+
+    Three sources of contamination are neutralised here so that any unit test
+    can safely call _resolve_sql_retry_deadline_s() / _resolve_sql_retry_executes()
+    or exercise code that does (e.g. _with_connect_retry in test_sql_exec.py):
+
+    1. **Module-level cache** — _load_sql_config() memoise result; cleared so each
+       test starts with a clean read.
+    2. **Env vars** — FABRIC_SQL_RETRY_TIMEOUT_S / FABRIC_SQL_RETRY_EXECUTES leaked
+       from one test can change resolution in a later test (pytest-randomly makes order
+       non-deterministic); both are removed after every test via monkeypatch.
+    3. **On-disk config** — a developer who ran ``fdw config set sql-retry-executes true``
+       locally would see resolution tests fail; XDG_CONFIG_HOME is redirected to an
+       empty tmp dir so load_config() reads nothing.
+    """
+    _sql_module._sql_config_cache_clear()
+    monkeypatch.delenv("FABRIC_SQL_RETRY_TIMEOUT_S", raising=False)
+    monkeypatch.delenv("FABRIC_SQL_RETRY_EXECUTES", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))

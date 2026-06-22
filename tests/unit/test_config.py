@@ -474,3 +474,156 @@ def test_set_default_retry_deadline_s_below_minimum_raises(tmp_path: Path) -> No
     path = tmp_path / "config.toml"
     with pytest.raises(ValueError, match=r">= 0\.1"):
         set_default("retry_deadline_s", "0.0", path)
+
+
+# ---------------------------------------------------------------------------
+# SQL retry fields — round-trip and set_default validation
+# ---------------------------------------------------------------------------
+
+
+def test_round_trip_sql_retry_deadline_s(tmp_path: Path) -> None:
+    """sql_retry_deadline_s is saved and loaded as a float."""
+    path = tmp_path / "config.toml"
+    cfg = UserConfig(defaults=Defaults(sql_retry_deadline_s=300.0))
+    save_config(cfg, path)
+    loaded = load_config(path)
+    assert loaded.defaults.sql_retry_deadline_s == 300.0
+    assert loaded.defaults.sql_retry_executes is None
+
+
+def test_round_trip_sql_retry_executes_true(tmp_path: Path) -> None:
+    """sql_retry_executes=True is saved and loaded as a bool."""
+    path = tmp_path / "config.toml"
+    cfg = UserConfig(defaults=Defaults(sql_retry_executes=True))
+    save_config(cfg, path)
+    loaded = load_config(path)
+    assert loaded.defaults.sql_retry_executes is True
+
+
+def test_round_trip_sql_retry_executes_false(tmp_path: Path) -> None:
+    """sql_retry_executes=False is saved and loaded as a bool."""
+    path = tmp_path / "config.toml"
+    cfg = UserConfig(defaults=Defaults(sql_retry_executes=False))
+    save_config(cfg, path)
+    loaded = load_config(path)
+    assert loaded.defaults.sql_retry_executes is False
+
+
+def test_round_trip_all_six_defaults(tmp_path: Path) -> None:
+    """All six Defaults fields survive a save/load cycle together."""
+    path = tmp_path / "config.toml"
+    cfg = UserConfig(
+        defaults=Defaults(
+            workspace="SalesWS",
+            warehouse="SalesDW",
+            max_429_retries=7,
+            retry_deadline_s=180.0,
+            sql_retry_deadline_s=240.0,
+            sql_retry_executes=True,
+        )
+    )
+    save_config(cfg, path)
+    loaded = load_config(path)
+    assert loaded.defaults.workspace == "SalesWS"
+    assert loaded.defaults.warehouse == "SalesDW"
+    assert loaded.defaults.max_429_retries == 7
+    assert loaded.defaults.retry_deadline_s == 180.0
+    assert loaded.defaults.sql_retry_deadline_s == 240.0
+    assert loaded.defaults.sql_retry_executes is True
+
+
+def test_set_default_sql_retry_deadline_s_persists(tmp_path: Path) -> None:
+    """set_default('sql_retry_deadline_s', '300.0') stores 300.0 and preserves other keys."""
+    path = tmp_path / "config.toml"
+    save_config(UserConfig(defaults=Defaults(workspace="WS")), path)
+    set_default("sql_retry_deadline_s", "300.0", path)
+    loaded = load_config(path)
+    assert loaded.defaults.sql_retry_deadline_s == 300.0
+    assert loaded.defaults.workspace == "WS"  # preserved
+
+
+def test_set_default_sql_retry_deadline_s_none_clears(tmp_path: Path) -> None:
+    """set_default('sql_retry_deadline_s', None) clears the key."""
+    path = tmp_path / "config.toml"
+    save_config(
+        UserConfig(defaults=Defaults(sql_retry_deadline_s=300.0, sql_retry_executes=True)), path
+    )
+    set_default("sql_retry_deadline_s", None, path)
+    loaded = load_config(path)
+    assert loaded.defaults.sql_retry_deadline_s is None
+    assert loaded.defaults.sql_retry_executes is True  # preserved
+
+
+def test_set_default_sql_retry_deadline_s_bad_value_raises(tmp_path: Path) -> None:
+    """set_default('sql_retry_deadline_s', 'bad') raises ValueError."""
+    path = tmp_path / "config.toml"
+    with pytest.raises(ValueError, match="cannot be converted"):
+        set_default("sql_retry_deadline_s", "bad", path)
+
+
+def test_set_default_sql_retry_deadline_s_below_minimum_raises(tmp_path: Path) -> None:
+    """sql_retry_deadline_s must be >= 0.1; 0.0 raises ValueError."""
+    path = tmp_path / "config.toml"
+    with pytest.raises(ValueError, match=r">= 0\.1"):
+        set_default("sql_retry_deadline_s", "0.0", path)
+
+
+@pytest.mark.parametrize("val", ["inf", "-inf", "nan"])
+def test_set_default_sql_retry_deadline_s_non_finite_raises(tmp_path: Path, val: str) -> None:
+    """Non-finite values for sql_retry_deadline_s must raise ValueError."""
+    path = tmp_path / "config.toml"
+    with pytest.raises(ValueError, match="finite"):
+        set_default("sql_retry_deadline_s", val, path)
+
+
+def test_set_default_sql_retry_executes_true_persists(tmp_path: Path) -> None:
+    """set_default('sql_retry_executes', 'true') stores True."""
+    path = tmp_path / "config.toml"
+    set_default("sql_retry_executes", "true", path)
+    loaded = load_config(path)
+    assert loaded.defaults.sql_retry_executes is True
+
+
+def test_set_default_sql_retry_executes_false_persists(tmp_path: Path) -> None:
+    """set_default('sql_retry_executes', 'false') stores False."""
+    path = tmp_path / "config.toml"
+    set_default("sql_retry_executes", "false", path)
+    loaded = load_config(path)
+    assert loaded.defaults.sql_retry_executes is False
+
+
+def test_set_default_sql_retry_executes_none_clears(tmp_path: Path) -> None:
+    """set_default('sql_retry_executes', None) clears the key."""
+    path = tmp_path / "config.toml"
+    save_config(
+        UserConfig(defaults=Defaults(sql_retry_executes=True, sql_retry_deadline_s=120.0)), path
+    )
+    set_default("sql_retry_executes", None, path)
+    loaded = load_config(path)
+    assert loaded.defaults.sql_retry_executes is None
+    assert loaded.defaults.sql_retry_deadline_s == 120.0  # preserved
+
+
+def test_set_default_sql_retry_executes_garbage_raises(tmp_path: Path) -> None:
+    """An unrecognised value for sql_retry_executes raises ValueError."""
+    path = tmp_path / "config.toml"
+    with pytest.raises(ValueError, match="sql_retry_executes"):
+        set_default("sql_retry_executes", "maybe", path)
+
+
+@pytest.mark.parametrize("truthy", ["true", "True", "TRUE", "1", "yes", "on"])
+def test_set_default_sql_retry_executes_truthy_variants(tmp_path: Path, truthy: str) -> None:
+    """All truthy string variants are accepted for sql_retry_executes."""
+    path = tmp_path / "config.toml"
+    set_default("sql_retry_executes", truthy, path)
+    loaded = load_config(path)
+    assert loaded.defaults.sql_retry_executes is True
+
+
+@pytest.mark.parametrize("falsy", ["false", "False", "FALSE", "0", "no", "off"])
+def test_set_default_sql_retry_executes_falsy_variants(tmp_path: Path, falsy: str) -> None:
+    """All falsy string variants are accepted for sql_retry_executes."""
+    path = tmp_path / "config.toml"
+    set_default("sql_retry_executes", falsy, path)
+    loaded = load_config(path)
+    assert loaded.defaults.sql_retry_executes is False

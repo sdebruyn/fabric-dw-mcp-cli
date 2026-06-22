@@ -7,13 +7,15 @@ asserts the relationship that prevents flaky cold-start timeouts.
 
 Background
 ----------
-The CLI's internal connect-retry loop runs for up to ``_CONNECT_RETRY_TIMEOUT_S``
-seconds before surfacing a connection error.  The integration smoke test wraps the
+The CLI's internal connect-retry loop runs for up to the *resolved* SQL retry
+deadline (``_CONNECT_RETRY_TIMEOUT_S`` in the smoke module — runtime-resolved from
+the ``FABRIC_SQL_RETRY_TIMEOUT_S`` env var if set, else the built-in default of
+120 s) before surfacing a connection error.  The integration smoke test wraps the
 CLI in a subprocess with its own wall-clock timeout.  If that subprocess timeout is
-less than or equal to ``_CONNECT_RETRY_TIMEOUT_S`` the subprocess gets killed exactly
-when the retry loop gives up — leaving zero room for process startup, authentication,
-and query execution overhead that is paid *on top of* the retry budget.  The result
-is a flaky ``TimeoutExpired`` failure on cold Fabric capacities.
+less than or equal to the resolved budget the subprocess is killed exactly when the
+retry loop gives up — leaving zero room for process startup, authentication, and
+query execution overhead paid *on top of* the retry budget.  The result is a flaky
+``TimeoutExpired`` failure on cold Fabric capacities.
 
 The required invariant is::
 
@@ -24,11 +26,12 @@ where ``minimum_margin`` is at least 60 s to cover real-world startup/auth costs
 
 from __future__ import annotations
 
-from fabric_dw.sql import _CONNECT_RETRY_TIMEOUT_S
-
 # Import the actual constants used by the smoke test module so any future edits
 # to either side of the invariant are immediately caught by this test.
+# _CONNECT_RETRY_TIMEOUT_S in the smoke module is the runtime-resolved retry budget
+# (reads FABRIC_SQL_RETRY_TIMEOUT_S if set, so it scales with env configuration).
 from tests.integration.test_cli_smoke import (
+    _CONNECT_RETRY_TIMEOUT_S,
     _SQL_SMOKE_SUBPROCESS_TIMEOUT_S,
     _SQL_STARTUP_MARGIN_S,
 )

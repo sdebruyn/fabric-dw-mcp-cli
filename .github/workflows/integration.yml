@@ -202,6 +202,8 @@ jobs:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           XDIST_WORKERS_INPUT: ${{ inputs.xdist_workers }}
           PYTEST_K_INPUT: ${{ inputs.pytest_k }}
+          FABRIC_SQL_RETRY_TIMEOUT_S: "300"
+          FABRIC_SQL_RETRY_EXECUTES: "1"
         run: |
           # Worker-count rationale
           # ----------------------
