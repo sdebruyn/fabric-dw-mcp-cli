@@ -1348,3 +1348,56 @@ def test_set_config_mcp_workspace_allowlist_round_trip(tmp_path: Path) -> None:
     set_config("mcp", "workspace_allowlist", "Sales WS,Finance WS,HR WS", path)
     loaded = load_config(path)
     assert loaded.mcp.workspace_allowlist == ["Sales WS", "Finance WS", "HR WS"]
+
+
+# ---------------------------------------------------------------------------
+# [auth] tenant_id / client_id — UUID validation
+# ---------------------------------------------------------------------------
+
+_VALID_UUID = "12345678-1234-5678-1234-567812345678"
+_VALID_UUID_NO_HYPHENS = "12345678123456781234567812345678"
+
+
+@pytest.mark.parametrize("key", ["tenant_id", "client_id"])
+def test_set_config_auth_invalid_uuid_raises(tmp_path: Path, key: str) -> None:
+    """set_config('auth', key, non-UUID) raises ValueError."""
+    path = tmp_path / "config.toml"
+    with pytest.raises(ValueError, match=key):
+        set_config("auth", key, "not-a-uuid", path)
+
+
+@pytest.mark.parametrize("key", ["tenant_id", "client_id"])
+def test_set_config_auth_garbage_uuid_raises(tmp_path: Path, key: str) -> None:
+    """Garbage strings for tenant_id/client_id raise ValueError."""
+    path = tmp_path / "config.toml"
+    with pytest.raises(ValueError, match=key):
+        set_config("auth", key, "garbage!!!", path)
+
+
+@pytest.mark.parametrize("key", ["tenant_id", "client_id"])
+def test_set_config_auth_valid_uuid_accepted(tmp_path: Path, key: str) -> None:
+    """A standard hyphenated UUID is accepted and persisted."""
+    path = tmp_path / "config.toml"
+    set_config("auth", key, _VALID_UUID, path)
+    loaded = load_config(path)
+    assert getattr(loaded.auth, key) == _VALID_UUID
+
+
+@pytest.mark.parametrize("key", ["tenant_id", "client_id"])
+def test_set_config_auth_uuid_without_hyphens_accepted(tmp_path: Path, key: str) -> None:
+    """A UUID without hyphens (32 hex chars) is also accepted."""
+    path = tmp_path / "config.toml"
+    set_config("auth", key, _VALID_UUID_NO_HYPHENS, path)
+    loaded = load_config(path)
+    assert getattr(loaded.auth, key) == _VALID_UUID_NO_HYPHENS
+
+
+@pytest.mark.parametrize("key", ["tenant_id", "client_id"])
+def test_set_config_auth_none_clears(tmp_path: Path, key: str) -> None:
+    """Passing None for tenant_id/client_id clears the value."""
+    path = tmp_path / "config.toml"
+    # First set a valid UUID so there is something to clear.
+    set_config("auth", key, _VALID_UUID, path)
+    set_config("auth", key, None, path)
+    loaded = load_config(path)
+    assert getattr(loaded.auth, key) is None
