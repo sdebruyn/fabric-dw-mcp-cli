@@ -63,6 +63,7 @@ import os
 import tempfile
 import tomllib
 import typing
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -685,7 +686,22 @@ def _set_logging_level(current: UserConfig, value: str | None) -> UserConfig:
     )
 
 
+def _validate_uuid(key: str, value: str) -> None:
+    """Raise ValueError if *value* is not a valid UUID string."""
+    try:
+        uuid.UUID(value)
+    except (ValueError, TypeError, AttributeError):
+        # uuid.UUID raises TypeError/AttributeError for non-str inputs; normalise
+        # them all to ValueError so callers always see a consistent exception type.
+        raise ValueError(
+            f"{key} {value!r} is not a valid UUID; "
+            "expected a standard UUID format (e.g. xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)"
+        ) from None
+
+
 def _set_auth_tenant_id(current: UserConfig, value: str | None) -> UserConfig:
+    if value is not None:
+        _validate_uuid("tenant_id", value)
     new_auth = AuthConfig(tenant_id=value, client_id=current.auth.client_id)
     return UserConfig(
         defaults=current.defaults,
@@ -697,6 +713,8 @@ def _set_auth_tenant_id(current: UserConfig, value: str | None) -> UserConfig:
 
 
 def _set_auth_client_id(current: UserConfig, value: str | None) -> UserConfig:
+    if value is not None:
+        _validate_uuid("client_id", value)
     new_auth = AuthConfig(tenant_id=current.auth.tenant_id, client_id=value)
     return UserConfig(
         defaults=current.defaults,
