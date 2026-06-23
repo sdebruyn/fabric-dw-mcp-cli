@@ -188,8 +188,7 @@ def resolve_auth_mode(
         normalised = cli_value.strip().lower()
         if normalised not in valid_modes:
             raise ValueError(
-                f"invalid --auth value {cli_value!r}; "
-                f"expected one of {sorted(valid_modes)}"
+                f"invalid --auth value {cli_value!r}; expected one of {sorted(valid_modes)}"
             )
         return normalised
 
@@ -198,8 +197,7 @@ def resolve_auth_mode(
     if raw_env:
         if raw_env not in valid_modes:
             raise ValueError(
-                f"invalid FABRIC_AUTH value {raw_env!r}; "
-                f"expected one of {sorted(valid_modes)}"
+                f"invalid FABRIC_AUTH value {raw_env!r}; expected one of {sorted(valid_modes)}"
             )
         return raw_env
 

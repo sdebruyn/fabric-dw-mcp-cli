@@ -350,9 +350,7 @@ class TestCliAuthModeResolution:
         auth = self._captured_auth(["cache", "--help"])
         assert auth == CredentialMode.DEFAULT
 
-    def test_explicit_flag_wins_over_env_and_default(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_explicit_flag_wins_over_env_and_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """--auth flag overrides FABRIC_AUTH env var."""
         monkeypatch.setenv("FABRIC_AUTH", "sp")
         auth = self._captured_auth(["--auth", "interactive", "cache", "--help"])
@@ -377,9 +375,7 @@ class TestCliAuthModeResolution:
         auth = self._captured_auth(["cache", "--help"], config_path=cfg_path)
         assert auth == CredentialMode.INTERACTIVE
 
-    def test_env_wins_over_config(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_env_wins_over_config(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """FABRIC_AUTH env var overrides [defaults] auth_mode in config."""
         monkeypatch.setenv("FABRIC_AUTH", "sp")
         cfg_path = tmp_path / "config.toml"
@@ -390,9 +386,7 @@ class TestCliAuthModeResolution:
         auth = self._captured_auth(["cache", "--help"], config_path=cfg_path)
         assert auth == CredentialMode.SERVICE_PRINCIPAL
 
-    def test_flag_wins_over_config(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_flag_wins_over_config(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """Explicit --auth flag overrides [defaults] auth_mode in config."""
         monkeypatch.delenv("FABRIC_AUTH", raising=False)
         cfg_path = tmp_path / "config.toml"
