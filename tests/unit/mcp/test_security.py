@@ -1359,3 +1359,195 @@ async def test_get_workspace_blocked_by_config_allowlist_env_unset() -> None:
             "get_workspace",
             {"workspace": "forbidden-ws"},
         )
+
+
+# ---------------------------------------------------------------------------
+# #697 — GUID canonicalization + mixed name/GUID allowlist fixes
+# ---------------------------------------------------------------------------
+
+# Canonical form of the test GUID used across these tests.
+_CANONICAL_GUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+
+class TestGuidCanonicalization:
+    """Trap 1: non-canonical GUID allowlist entries must match the canonical resolved GUID."""
+
+    def test_braced_guid_entry_matches_canonical_resolved_id(self) -> None:
+        """A braced {guid} allowlist entry must match the canonical hyphenated resolved GUID."""
+        from fabric_dw.mcp._guards import assert_workspace_allowed  # noqa: PLC0415
+
+        braced = "{" + _CANONICAL_GUID + "}"
+        env_without_workspaces = {
+            k: v for k, v in os.environ.items() if k != "FABRIC_MCP_WORKSPACES"
+        }
+        with patch.dict(os.environ, env_without_workspaces, clear=True):
+            # Must not raise: braced entry should match canonical resolved_id
+            assert_workspace_allowed(
+                _CANONICAL_GUID,
+                resolved_id=_CANONICAL_GUID,
+                config_allowlist=[braced],
+            )
+
+    def test_unhyphenated_guid_entry_matches_canonical_resolved_id(self) -> None:
+        """A 32-hex unhyphenated GUID allowlist entry must match the canonical resolved GUID."""
+        from fabric_dw.mcp._guards import assert_workspace_allowed  # noqa: PLC0415
+
+        unhyphenated = _CANONICAL_GUID.replace("-", "")
+        env_without_workspaces = {
+            k: v for k, v in os.environ.items() if k != "FABRIC_MCP_WORKSPACES"
+        }
+        with patch.dict(os.environ, env_without_workspaces, clear=True):
+            assert_workspace_allowed(
+                _CANONICAL_GUID,
+                resolved_id=_CANONICAL_GUID,
+                config_allowlist=[unhyphenated],
+            )
+
+    def test_urn_uuid_entry_matches_canonical_resolved_id(self) -> None:
+        """A urn:uuid:<guid> allowlist entry must match the canonical resolved GUID."""
+        from fabric_dw.mcp._guards import assert_workspace_allowed  # noqa: PLC0415
+
+        urn = "urn:uuid:" + _CANONICAL_GUID
+        env_without_workspaces = {
+            k: v for k, v in os.environ.items() if k != "FABRIC_MCP_WORKSPACES"
+        }
+        with patch.dict(os.environ, env_without_workspaces, clear=True):
+            assert_workspace_allowed(
+                _CANONICAL_GUID,
+                resolved_id=_CANONICAL_GUID,
+                config_allowlist=[urn],
+            )
+
+    def test_non_listed_workspace_still_blocked_with_non_canonical_entry(self) -> None:
+        """A workspace not on the allowlist is still denied even when the entry is non-canonical."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        from fabric_dw.mcp._guards import assert_workspace_allowed  # noqa: PLC0415
+
+        other_guid = "00000000-0000-0000-0000-000000000099"
+        braced = "{" + _CANONICAL_GUID + "}"
+        env_without_workspaces = {
+            k: v for k, v in os.environ.items() if k != "FABRIC_MCP_WORKSPACES"
+        }
+        with (
+            patch.dict(os.environ, env_without_workspaces, clear=True),
+            pytest.raises(ToolError, match="allowlist"),
+        ):
+            assert_workspace_allowed(
+                other_guid,
+                resolved_id=other_guid,
+                config_allowlist=[braced],
+            )
+
+    def test_resolve_workspace_allowlist_canonicalizes_braced_guid(self) -> None:
+        """resolve_workspace_allowlist stores braced GUIDs in canonical form."""
+        from fabric_dw.mcp._guards import resolve_workspace_allowlist  # noqa: PLC0415
+
+        braced = "{" + _CANONICAL_GUID + "}"
+        env_without_workspaces = {
+            k: v for k, v in os.environ.items() if k != "FABRIC_MCP_WORKSPACES"
+        }
+        with patch.dict(os.environ, env_without_workspaces, clear=True):
+            result = resolve_workspace_allowlist([braced])
+        assert result == frozenset({_CANONICAL_GUID})
+
+    def test_resolve_workspace_allowlist_canonicalizes_unhyphenated_guid(self) -> None:
+        """resolve_workspace_allowlist stores 32-hex GUIDs in canonical form."""
+        from fabric_dw.mcp._guards import resolve_workspace_allowlist  # noqa: PLC0415
+
+        unhyphenated = _CANONICAL_GUID.replace("-", "")
+        env_without_workspaces = {
+            k: v for k, v in os.environ.items() if k != "FABRIC_MCP_WORKSPACES"
+        }
+        with patch.dict(os.environ, env_without_workspaces, clear=True):
+            result = resolve_workspace_allowlist([unhyphenated])
+        assert result == frozenset({_CANONICAL_GUID})
+
+
+class TestMixedNameGuidAllowlist:
+    """Trap 2: a name addressed against a mixed name+GUID allowlist must defer to post-resolve."""
+
+    def test_name_defers_to_post_resolve_with_mixed_allowlist(self) -> None:
+        """Pre-resolve name call must NOT raise when allowlist is a mix of GUIDs and names.
+
+        The name 'sales' can't be matched pre-resolve against the GUID entry;
+        the guard must defer to the post-resolve call.
+        """
+        from fabric_dw.mcp._guards import assert_workspace_allowed  # noqa: PLC0415
+
+        env_without_workspaces = {
+            k: v for k, v in os.environ.items() if k != "FABRIC_MCP_WORKSPACES"
+        }
+        with patch.dict(os.environ, env_without_workspaces, clear=True):
+            # Pre-resolve call with a name against a mixed allowlist — must NOT raise
+            assert_workspace_allowed(
+                "sales",
+                resolved_id=None,
+                config_allowlist=[_CANONICAL_GUID, "finance"],
+            )
+
+    def test_post_resolve_matches_guid_in_mixed_allowlist(self) -> None:
+        """Post-resolve call succeeds when the resolved GUID is in a mixed allowlist."""
+        from fabric_dw.mcp._guards import assert_workspace_allowed  # noqa: PLC0415
+
+        env_without_workspaces = {
+            k: v for k, v in os.environ.items() if k != "FABRIC_MCP_WORKSPACES"
+        }
+        with patch.dict(os.environ, env_without_workspaces, clear=True):
+            # 'sales' resolves to _CANONICAL_GUID which IS in the allowlist
+            assert_workspace_allowed(
+                "sales",
+                resolved_id=_CANONICAL_GUID,
+                config_allowlist=[_CANONICAL_GUID, "finance"],
+            )
+
+    def test_post_resolve_blocks_when_guid_not_in_mixed_allowlist(self) -> None:
+        """Post-resolve call blocks when the resolved GUID is NOT in a mixed allowlist."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        from fabric_dw.mcp._guards import assert_workspace_allowed  # noqa: PLC0415
+
+        other_guid = "00000000-0000-0000-0000-000000000099"
+        env_without_workspaces = {
+            k: v for k, v in os.environ.items() if k != "FABRIC_MCP_WORKSPACES"
+        }
+        with (
+            patch.dict(os.environ, env_without_workspaces, clear=True),
+            pytest.raises(ToolError, match="allowlist"),
+        ):
+            # 'evil-ws' resolves to other_guid which is NOT in the allowlist
+            assert_workspace_allowed(
+                "evil-ws",
+                resolved_id=other_guid,
+                config_allowlist=[_CANONICAL_GUID, "finance"],
+            )
+
+    def test_name_in_mixed_allowlist_matches_directly(self) -> None:
+        """A name that IS in the mixed allowlist matches at the post-resolve call."""
+        from fabric_dw.mcp._guards import assert_workspace_allowed  # noqa: PLC0415
+
+        env_without_workspaces = {
+            k: v for k, v in os.environ.items() if k != "FABRIC_MCP_WORKSPACES"
+        }
+        with patch.dict(os.environ, env_without_workspaces, clear=True):
+            # 'finance' is explicitly in the allowlist by name
+            assert_workspace_allowed(
+                "finance",
+                resolved_id=None,
+                config_allowlist=[_CANONICAL_GUID, "finance"],
+            )
+
+    def test_guid_arg_against_mixed_allowlist_is_not_deferred(self) -> None:
+        """A GUID workspace_arg does NOT defer pre-resolve; it is checked immediately."""
+        from fabric_dw.mcp._guards import assert_workspace_allowed  # noqa: PLC0415
+
+        env_without_workspaces = {
+            k: v for k, v in os.environ.items() if k != "FABRIC_MCP_WORKSPACES"
+        }
+        with patch.dict(os.environ, env_without_workspaces, clear=True):
+            # Canonical GUID arg against matching allowlist — must succeed pre-resolve
+            assert_workspace_allowed(
+                _CANONICAL_GUID,
+                resolved_id=None,
+                config_allowlist=[_CANONICAL_GUID, "finance"],
+            )
