@@ -86,6 +86,22 @@ def env_flag(name: str) -> bool:
 _env_flag = env_flag
 
 
+def _canonicalize_entry(entry: str) -> str:
+    """Return a canonical form of a workspace allowlist entry.
+
+    GUID-shaped entries (braced, unhyphenated, ``urn:uuid:``, or canonical) are
+    normalised to RFC-4122 lower-cased hyphenated form via :func:`uuid.UUID`.
+    Non-GUID strings are lower-cased and trimmed as before.
+
+    This prevents wrongful denials when a hand-edited ``config.toml`` entry uses
+    a non-canonical GUID form such as ``{a1b2c3d4-...}`` or a 32-hex string.
+    """
+    stripped = entry.strip()
+    if _looks_like_uuid(stripped):
+        return str(_uuid_mod.UUID(stripped))
+    return stripped.lower()
+
+
 def resolve_workspace_allowlist(
     config_allowlist: Sequence[str] | None = None,
 ) -> frozenset[str] | None:
@@ -105,13 +121,17 @@ def resolve_workspace_allowlist(
        list.
     3. Built-in default: ``None`` — no restriction, all workspaces allowed.
 
+    GUID-shaped entries are canonicalised to RFC-4122 lower-cased hyphenated
+    form so that ``{guid}``, ``urn:uuid:guid``, or unhyphenated 32-hex entries
+    reliably match the resolved workspace ID returned by the Fabric API.
+
     Args:
         config_allowlist: The ``McpConfig.workspace_allowlist`` value loaded
             from ``config.toml``.  Pass ``None`` when no config is available
             or when the key is absent.
 
     Returns:
-        A non-empty :class:`frozenset` of lower-cased, trimmed workspace
+        A non-empty :class:`frozenset` of canonicalised, trimmed workspace
         names / GUIDs when a restriction is in effect, or ``None`` when
         every workspace is allowed.
     """
@@ -119,7 +139,7 @@ def resolve_workspace_allowlist(
     raw_env = os.environ.get("FABRIC_MCP_WORKSPACES", "").strip()
     if raw_env:
         env_entries = frozenset(
-            entry.strip().lower() for entry in raw_env.split(",") if entry.strip()
+            _canonicalize_entry(entry) for entry in raw_env.split(",") if entry.strip()
         )
         if env_entries:
             return env_entries
@@ -127,7 +147,7 @@ def resolve_workspace_allowlist(
     # Layer 2: config.toml
     if config_allowlist is not None:
         config_entries = frozenset(
-            entry.strip().lower() for entry in config_allowlist if entry.strip()
+            _canonicalize_entry(entry) for entry in config_allowlist if entry.strip()
         )
         if config_entries:
             return config_entries
@@ -427,15 +447,22 @@ def assert_workspace_allowed(
     if allowed is None:
         return  # no restriction — every workspace is allowed
 
-    candidates = {workspace_arg.strip().lower()}
+    # Build the candidate set using the same canonicalisation applied to the
+    # allowlist entries so that non-canonical GUID forms match correctly.
+    candidates = {_canonicalize_entry(workspace_arg)}
     if resolved_id is not None:
-        candidates.add(resolved_id.strip().lower())
+        candidates.add(_canonicalize_entry(resolved_id))
     else:
-        # Pre-resolve: if *all* allowlist entries are GUIDs and the raw arg is
-        # not itself a GUID, we cannot determine validity yet — defer to the
-        # post-resolve call rather than falsely rejecting a valid name.
-        all_guids = all(_looks_like_uuid(entry) for entry in allowed)
-        if all_guids and not _looks_like_uuid(workspace_arg.strip()):
+        # Pre-resolve: when the raw arg is a name (not a GUID) and the
+        # allowlist contains at least one GUID-shaped entry, we cannot
+        # determine whether this name resolves to a listed GUID.  Defer to
+        # the post-resolve call to prevent false denials.  This covers both
+        # the all-GUIDs case and the mixed (names + GUIDs) case.
+        # If the allowlist has no GUID entries at all, a name can be
+        # matched (or rejected) immediately by name comparison.
+        arg_is_name = not _looks_like_uuid(workspace_arg.strip())
+        allowlist_has_guids = any(_looks_like_uuid(e) for e in allowed)
+        if arg_is_name and allowlist_has_guids:
             return  # cannot decide pre-resolve; post-resolve call will gate
 
     if candidates.isdisjoint(allowed):
