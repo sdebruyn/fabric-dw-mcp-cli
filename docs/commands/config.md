@@ -154,14 +154,13 @@ fdw config unset sql-pool
 
 ## Telemetry
 
-`fabric-dw` collects **anonymous, opt-out** usage telemetry — it is **on by default**. Any of the following disables it. Resolution order (highest priority first):
+`fabric-dw` collects **anonymous, opt-out** usage telemetry — it is **on by default**. Any of the following independently disables it — no events are emitted and the SDK is never imported:
 
-| Layer | Mechanism | Description |
+| Mechanism | Type | Effect |
 |---|---|---|
-| 1 | `FABRIC_DW_TELEMETRY_OPT_OUT` env var | Any truthy value (not in `""`, `0`, `false`, `no`, `off`, case-insensitive) disables telemetry. |
-| 2 | `DO_NOT_TRACK` env var | The [consoledonottrack.com](https://consoledonottrack.com/) standard. Any truthy value (same rules as above) disables telemetry. |
-| 3 | `[telemetry] disabled` in `config.toml` | Stored with `fdw config set telemetry disabled true`. |
-| 4 | Built-in default | Telemetry **enabled**. |
+| `FABRIC_DW_TELEMETRY_OPT_OUT` | env var | Any truthy value (not in `""`, `0`, `false`, `no`, `off`, case-insensitive) disables telemetry. |
+| `DO_NOT_TRACK` | env var | The [consoledonottrack.com](https://consoledonottrack.com/) standard. Any truthy value (same rules as above) disables telemetry. |
+| `[telemetry] disabled = true` in `config.toml` | config key | Set with `fdw config set telemetry disabled true`. |
 
 To opt out via the config file:
 
