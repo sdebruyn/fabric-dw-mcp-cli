@@ -1411,4 +1411,4 @@ def test_validate_uuid_non_str_raises_value_error(tmp_path: Path) -> None:
     """
     path = tmp_path / "config.toml"
     with pytest.raises(ValueError, match="tenant_id"):
-        set_config("auth", "tenant_id", 12345, path)  # type: ignore[arg-type]
+        set_config("auth", "tenant_id", 12345, path)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
