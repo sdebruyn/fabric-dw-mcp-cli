@@ -331,7 +331,9 @@ class TestResolveAuthMode:
 
     # --- case-insensitivity --------------------------------------------------
 
-    @pytest.mark.parametrize("raw", ["DEFAULT", "Default", "SP", "Sp", "INTERACTIVE", "Interactive"])
+    @pytest.mark.parametrize(
+        "raw", ["DEFAULT", "Default", "SP", "Sp", "INTERACTIVE", "Interactive"]
+    )
     def test_cli_value_case_insensitive(self, raw: str) -> None:
         """--auth is case-insensitive; result is always lowercase."""
         result = resolve_auth_mode(

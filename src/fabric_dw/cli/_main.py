@@ -16,7 +16,6 @@ from fabric_dw.auth import CredentialMode
 from fabric_dw.cli._context import CliContext
 from fabric_dw.config import VALID_AUTH_MODES, load_config
 from fabric_dw.config_resolve import resolve_auth_mode
-from fabric_dw.exceptions import ConfigError
 from fabric_dw.logging import setup_logging
 from fabric_dw.telemetry import (
     maybe_print_first_run_notice,

@@ -1,6 +1,6 @@
-"""Shared resolution helpers for 3-layer config knobs (CLI > env > config > None).
+"""Shared resolution helpers for config knobs (CLI flag > env > config > built-in default).
 
-Both the CLI (``cli/commands/_utils.py``) and the MCP server
+Both the CLI (``cli/_main.py``, ``cli/commands/_utils.py``) and the MCP server
 (``mcp/_context.py``) use these helpers so they cannot drift apart.
 
 This module intentionally imports only :mod:`fabric_dw.config` — it must not

@@ -328,7 +328,7 @@ class TestCliAuthModeResolution:
         original = _main_mod.CliContext
 
         def _spy(**kwargs: object) -> CliContext:
-            obj = original(**kwargs)  # type: ignore[arg-type]
+            obj = original(**kwargs)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
             captured.append(obj)
             return obj
 
@@ -336,7 +336,8 @@ class TestCliAuthModeResolution:
         with patch.object(_main_mod, "CliContext", _spy):
             runner = CliRunner(env=env or {})
             if config_path is not None:
-                with patch("fabric_dw.cli._main.load_config", return_value=_main_mod.load_config(config_path)):
+                loaded = _main_mod.load_config(config_path)
+                with patch("fabric_dw.cli._main.load_config", return_value=loaded):
                     runner.invoke(cli, args)
             else:
                 runner.invoke(cli, args)
