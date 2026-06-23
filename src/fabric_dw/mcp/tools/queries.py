@@ -37,11 +37,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             workspace: Workspace name or GUID.
             item: Warehouse or SQL Analytics Endpoint name or GUID.
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("list_running_queries ws=%s item=%s", ws_id, entry.id)
             target = make_sql_target(ws_id, entry, item)
             result = await queries.list_running(target, mode=ctx.auth_mode)
@@ -57,11 +59,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             workspace: Workspace name or GUID.
             item: Warehouse or SQL Analytics Endpoint name or GUID.
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("list_connections ws=%s item=%s", ws_id, entry.id)
             target = make_sql_target(ws_id, entry, item)
             result = await queries.list_connections(target, mode=ctx.auth_mode)
@@ -83,11 +87,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             session_id: Session ID to terminate (must be a positive integer).
         """
         assert_writes_allowed("kill_session")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("kill_session ws=%s item=%s session=%s", ws_id, entry.id, session_id)
             target = make_sql_target(ws_id, entry, item)
             await queries.kill(target, session_id, mode=ctx.auth_mode)
@@ -114,11 +120,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         """
         since_dt = parse_iso8601(since, "since")
         until_dt = parse_iso8601(until, "until")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("list_request_history ws=%s item=%s limit=%d", ws_id, entry.id, limit)
             target = make_sql_target(ws_id, entry, item)
             result = await _qi_svc.list_request_history(
@@ -147,11 +155,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         """
         since_dt = parse_iso8601(since, "since")
         until_dt = parse_iso8601(until, "until")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("list_session_history ws=%s item=%s limit=%d", ws_id, entry.id, limit)
             target = make_sql_target(ws_id, entry, item)
             result = await _qi_svc.list_session_history(
@@ -180,11 +190,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         """
         since_dt = parse_iso8601(since, "since")
         until_dt = parse_iso8601(until, "until")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("list_frequent_queries ws=%s item=%s limit=%d", ws_id, entry.id, limit)
             target = make_sql_target(ws_id, entry, item)
             result = await _qi_svc.list_frequent_queries(
@@ -213,11 +225,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         """
         since_dt = parse_iso8601(since, "since")
         until_dt = parse_iso8601(until, "until")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("list_long_running_queries ws=%s item=%s limit=%d", ws_id, entry.id, limit)
             target = make_sql_target(ws_id, entry, item)
             result = await _qi_svc.list_long_running_queries(

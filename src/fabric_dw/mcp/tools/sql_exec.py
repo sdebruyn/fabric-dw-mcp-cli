@@ -69,11 +69,13 @@ def register(mcp: FastMCP) -> None:
         """
         if env_flag("FABRIC_MCP_READONLY"):
             assert_readonly_sql(query)
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("execute_sql ws=%s item=%s max_rows=%d", ws_id, entry.id, max_rows)
             target = make_sql_target(ws_id, entry, item)
             result = await _sql_exec_svc.execute(
@@ -146,11 +148,13 @@ def register(mcp: FastMCP) -> None:
             - ``json``    → ``{"format": "json",    "plan_json":  str}``
             - ``mermaid`` → ``{"format": "mermaid", "mermaid":    str}``
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("get_query_plan ws=%s item=%s format=%s", ws_id, entry.id, format)
             target = make_sql_target(ws_id, entry, item)
             plan_xml = await _sql_exec_svc.get_plan(target, query, mode=ctx.auth_mode)

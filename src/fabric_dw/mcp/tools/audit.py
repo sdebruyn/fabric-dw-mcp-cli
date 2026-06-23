@@ -30,11 +30,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             workspace: Workspace name or GUID.
             warehouse: Warehouse or SQL analytics endpoint name or GUID.
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("get_audit_settings ws=%s item=%s kind=%s", ws_id, item.id, item.kind)
             result = await audit.get_settings(ctx.http, ws_id, item.id, item.kind)
         except (ValueError, FabricError) as exc:
@@ -55,11 +57,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             retention_days: Log retention in days (0-3650; 0 = unlimited). Default 0.
         """
         assert_writes_allowed("enable_audit")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "enable_audit ws=%s item=%s kind=%s retention=%d",
                 ws_id,
@@ -83,11 +87,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             warehouse: Warehouse or SQL analytics endpoint name or GUID.
         """
         assert_writes_allowed("disable_audit")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("disable_audit ws=%s item=%s kind=%s", ws_id, item.id, item.kind)
             result = await audit.disable(ctx.http, ws_id, item.id, item.kind)
         except (ValueError, FabricError) as exc:
@@ -106,11 +112,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             action_groups: List of audit action group names.
         """
         assert_writes_allowed("set_audit_action_groups")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "set_audit_action_groups ws=%s item=%s kind=%s groups=%s",
                 ws_id,
@@ -140,11 +148,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             group: Action group name, e.g. ``BATCH_COMPLETED_GROUP``.
         """
         assert_writes_allowed("add_audit_group")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "add_audit_group ws=%s item=%s kind=%s group=%r", ws_id, item.id, item.kind, group
             )
@@ -168,11 +178,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             group: Action group name, e.g. ``BATCH_COMPLETED_GROUP``.
         """
         assert_writes_allowed("remove_audit_group")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "remove_audit_group ws=%s item=%s kind=%s group=%r",
                 ws_id,
@@ -201,11 +213,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             days: Retention period in days (1-3650). The API enforces its own upper bound.
         """
         assert_writes_allowed("set_audit_retention")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "set_audit_retention ws=%s item=%s kind=%s days=%d",
                 ws_id,

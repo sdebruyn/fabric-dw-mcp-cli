@@ -63,11 +63,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             item: Warehouse or SQL endpoint name or GUID.
             schema: When provided, only tables in this schema are returned.
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("list_tables ws=%s item=%s schema=%r", ws_id, entry.id, schema)
             target = make_sql_target(ws_id, entry, item)
             result = await tables_svc.list_tables(target, schema=schema, mode=ctx.auth_mode)
@@ -91,11 +93,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             count: Maximum number of rows to return (1-10000, default 10).
         """
         schema, table_name = parse_qualified_name(qualified_name, kind="table")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "read_table ws=%s item=%s table=%s.%s count=%d",
                 ws_id,
@@ -131,11 +135,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             qualified_name: Dot-separated qualified table name, e.g. ``dbo.sales``.
         """
         schema, table_name = parse_qualified_name(qualified_name, kind="table")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "count_table_rows ws=%s item=%s table=%s.%s",
                 ws_id,
@@ -168,11 +174,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             qualified_name: Dot-separated qualified table name, e.g. ``dbo.sales``.
         """
         schema, table_name = parse_qualified_name(qualified_name, kind="table")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "get_cluster_columns ws=%s item=%s table=%s.%s",
                 ws_id,
@@ -203,11 +211,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             qualified_name: Dot-separated qualified table name, e.g. ``dbo.sales``.
         """
         schema, table_name = parse_qualified_name(qualified_name, kind="table")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "get_table_columns ws=%s item=%s table=%s.%s",
                 ws_id,
@@ -254,11 +264,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 (up to 4).
         """
         schema, table_name = parse_qualified_name(qualified_name, kind="table")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "create_table ws=%s item=%s table=%s.%s", ws_id, entry.id, schema, table_name
             )
@@ -293,11 +305,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             qualified_name: Dot-separated qualified table name, e.g. ``dbo.sales``.
         """
         schema, table_name = parse_qualified_name(qualified_name, kind="table")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "delete_table ws=%s item=%s table=%s.%s", ws_id, entry.id, schema, table_name
             )
@@ -326,11 +340,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             qualified_name: Dot-separated qualified table name, e.g. ``dbo.sales``.
         """
         schema, table_name = parse_qualified_name(qualified_name, kind="table")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("clear_table ws=%s item=%s table=%s.%s", ws_id, entry.id, schema, table_name)
             target = make_sql_target(ws_id, entry, item)
             await tables_svc.clear_table(
@@ -374,12 +390,14 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 (up to 4).  Each name must appear in ``columns``.
         """
         schema, table_name = parse_qualified_name(qualified_name, kind="table")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             col_specs = [_parse_column_dict(i, col) for i, col in enumerate(columns)]
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "create_empty_table ws=%s item=%s table=%s.%s cols=%d",
                 ws_id,
@@ -425,7 +443,8 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 window (30 days by default).  When omitted, the clone reflects the
                 current state of the source table.
         """
-        assert_workspace_allowed(workspace)
+        ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
 
         at_dt_raw = parse_iso8601(at, "at")
         at_dt: datetime | None = (
@@ -438,10 +457,11 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             )
         )
 
-        ctx = get_context()
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "clone_table ws=%s item=%s source=%s new_table=%s at=%s",
                 ws_id,
@@ -487,11 +507,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             qualified_name: Dot-separated qualified table name, e.g. ``dbo.sales``.
         """
         schema, table_name = parse_qualified_name(qualified_name, kind="table")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "get_table_health_metrics ws=%s item=%s table=%s.%s",
                 ws_id,
@@ -532,11 +554,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 contain a dot.
         """
         parse_qualified_name(qualified_name, kind="table")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "rename_table ws=%s item=%s qualified=%r new_name=%r",
                 ws_id,
@@ -588,11 +612,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 (rebuilds table without ``CLUSTER BY``).
         """
         schema, table_name = parse_qualified_name(qualified_name, kind="table")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "set_cluster_columns ws=%s item=%s table=%s.%s cluster_by=%r",
                 ws_id,

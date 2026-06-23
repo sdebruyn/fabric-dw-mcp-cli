@@ -37,21 +37,24 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         When *all_workspaces* is ``True``, ignore *workspace* and aggregate results
         across every workspace the caller can see.
         """
-        if all_workspaces and workspace_allowlist_active():
+        ctx = get_context()
+        if all_workspaces and workspace_allowlist_active(ctx.workspace_allowlist):
             raise ToolError(
-                "all_workspaces=True is not permitted when FABRIC_MCP_WORKSPACES is configured; "
+                "all_workspaces=True is not permitted when a workspace allowlist is configured "
+                "(env FABRIC_MCP_WORKSPACES or [mcp] workspace_allowlist in config.toml); "
                 "specify an individual workspace instead"
             )
         if not all_workspaces:
-            assert_workspace_allowed(workspace)
-        ctx = get_context()
+            assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             if all_workspaces:
                 _log.debug("list_sql_endpoints all_workspaces=True")
                 result = await sql_endpoints.list_all_workspaces(ctx.http)
             else:
                 ws_id = await ctx.resolver.workspace_id(workspace)
-                assert_workspace_allowed(workspace, str(ws_id))
+                assert_workspace_allowed(
+                    workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+                )
                 _log.debug("list_sql_endpoints ws=%s", ws_id)
                 result = await sql_endpoints.list_endpoints(ctx.http, ws_id)
         except FabricError as exc:
@@ -61,11 +64,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
     @mcp.tool(name="get_sql_endpoint")
     async def get_sql_endpoint(workspace: str, endpoint: str) -> dict[str, Any]:
         """Return details for a single SQL analytics endpoint (name or GUID)."""
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, item = await resolve_item(ctx.resolver, workspace, endpoint)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("get_sql_endpoint ws=%s item=%s", ws_id, item.id)
             result = await sql_endpoints.get_endpoint(ctx.http, ws_id, item.id)
         except FabricError as exc:
@@ -96,11 +101,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         # checked here rather than via mutating_tool(destructive=True).
         if recreate_tables:
             assert_destructive_allowed()
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, item = await resolve_item(ctx.resolver, workspace, endpoint)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "refresh_sql_endpoint_metadata ws=%s item=%s recreate=%s",
                 ws_id,
@@ -124,11 +131,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
 
         See https://learn.microsoft.com/en-us/fabric/admin/microsoft-fabric-admin for details.
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, item = await resolve_item(ctx.resolver, workspace, sql_endpoint)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("get_sql_endpoint_permissions ws=%s item=%s", ws_id, item.id)
             result = await _permissions_svc.list_item_access(ctx.http, ws_id, item.id)
         except FabricError as exc:

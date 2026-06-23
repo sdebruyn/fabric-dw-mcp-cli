@@ -14,6 +14,7 @@ Coverage
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
@@ -420,6 +421,211 @@ class TestAssertWorkspaceAllowed:
 
 
 # ---------------------------------------------------------------------------
+# 4b. resolve_workspace_allowlist — 3-layer precedence
+# ---------------------------------------------------------------------------
+
+
+class TestResolveWorkspaceAllowlist:
+    """3-layer resolution: env > config > no restriction."""
+
+    def test_no_restriction_when_both_absent(self) -> None:
+        """Unset env AND unset config → None (no restriction)."""
+        from fabric_dw.mcp._guards import resolve_workspace_allowlist  # noqa: PLC0415
+
+        env_without_workspaces = {
+            k: v for k, v in os.environ.items() if k != "FABRIC_MCP_WORKSPACES"
+        }
+        with patch.dict(os.environ, env_without_workspaces, clear=True):
+            assert resolve_workspace_allowlist(None) is None
+
+    def test_env_wins_over_config(self) -> None:
+        """Non-empty env var takes precedence over config."""
+        from fabric_dw.mcp._guards import resolve_workspace_allowlist  # noqa: PLC0415
+
+        with patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "env-ws"}):
+            result = resolve_workspace_allowlist(["config-ws"])
+        assert result == frozenset({"env-ws"})
+
+    def test_config_used_when_env_absent(self) -> None:
+        """When env is absent, config layer provides the allowlist."""
+        from fabric_dw.mcp._guards import resolve_workspace_allowlist  # noqa: PLC0415
+
+        env_without_workspaces = {
+            k: v for k, v in os.environ.items() if k != "FABRIC_MCP_WORKSPACES"
+        }
+        with patch.dict(os.environ, env_without_workspaces, clear=True):
+            result = resolve_workspace_allowlist(["Sales WS", "Finance WS"])
+        assert result == frozenset({"sales ws", "finance ws"})
+
+    def test_empty_env_falls_through_to_config(self) -> None:
+        """Empty FABRIC_MCP_WORKSPACES= falls through to config layer."""
+        from fabric_dw.mcp._guards import resolve_workspace_allowlist  # noqa: PLC0415
+
+        with patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": ""}):
+            result = resolve_workspace_allowlist(["config-ws"])
+        assert result == frozenset({"config-ws"})
+
+    def test_whitespace_only_env_falls_through_to_config(self) -> None:
+        """Whitespace-only env value falls through to config, not no-restriction."""
+        from fabric_dw.mcp._guards import resolve_workspace_allowlist  # noqa: PLC0415
+
+        with patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "   "}):
+            result = resolve_workspace_allowlist(["config-ws"])
+        assert result == frozenset({"config-ws"})
+
+    def test_comma_only_env_falls_through_to_config(self) -> None:
+        """Comma-only env value falls through to config."""
+        from fabric_dw.mcp._guards import resolve_workspace_allowlist  # noqa: PLC0415
+
+        with patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": " , , "}):
+            result = resolve_workspace_allowlist(["config-ws"])
+        assert result == frozenset({"config-ws"})
+
+    def test_empty_config_list_means_no_restriction(self) -> None:
+        """Empty TOML array [] is treated as absent — no restriction, NOT block-all."""
+        from fabric_dw.mcp._guards import resolve_workspace_allowlist  # noqa: PLC0415
+
+        env_without_workspaces = {
+            k: v for k, v in os.environ.items() if k != "FABRIC_MCP_WORKSPACES"
+        }
+        with patch.dict(os.environ, env_without_workspaces, clear=True):
+            assert resolve_workspace_allowlist([]) is None
+
+    def test_empty_env_and_empty_config_means_no_restriction(self) -> None:
+        """Both empty env and empty config → no restriction."""
+        from fabric_dw.mcp._guards import resolve_workspace_allowlist  # noqa: PLC0415
+
+        with patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": ""}):
+            assert resolve_workspace_allowlist([]) is None
+
+    def test_non_empty_allowlist_restricts(self) -> None:
+        """Non-empty allowlist returns a frozenset of lower-cased entries."""
+        from fabric_dw.mcp._guards import resolve_workspace_allowlist  # noqa: PLC0415
+
+        with patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "  Sales WS , Finance WS  "}):
+            result = resolve_workspace_allowlist(None)
+        assert result == frozenset({"sales ws", "finance ws"})
+
+    def test_config_entries_trimmed_and_lowercased(self) -> None:
+        """Config entries are trimmed and lowercased before comparison."""
+        from fabric_dw.mcp._guards import resolve_workspace_allowlist  # noqa: PLC0415
+
+        env_without_workspaces = {
+            k: v for k, v in os.environ.items() if k != "FABRIC_MCP_WORKSPACES"
+        }
+        with patch.dict(os.environ, env_without_workspaces, clear=True):
+            result = resolve_workspace_allowlist(["  PROD  ", " Staging "])
+        assert result == frozenset({"prod", "staging"})
+
+
+class TestWorkspaceAllowlistActive:
+    """workspace_allowlist_active mirrors resolve_workspace_allowlist semantics."""
+
+    def test_false_when_no_restriction(self) -> None:
+        from fabric_dw.mcp._guards import workspace_allowlist_active  # noqa: PLC0415
+
+        env_without_workspaces = {
+            k: v for k, v in os.environ.items() if k != "FABRIC_MCP_WORKSPACES"
+        }
+        with patch.dict(os.environ, env_without_workspaces, clear=True):
+            assert workspace_allowlist_active(None) is False
+
+    def test_true_when_env_set(self) -> None:
+        from fabric_dw.mcp._guards import workspace_allowlist_active  # noqa: PLC0415
+
+        with patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "prod"}):
+            assert workspace_allowlist_active(None) is True
+
+    def test_true_when_config_set(self) -> None:
+        from fabric_dw.mcp._guards import workspace_allowlist_active  # noqa: PLC0415
+
+        env_without_workspaces = {
+            k: v for k, v in os.environ.items() if k != "FABRIC_MCP_WORKSPACES"
+        }
+        with patch.dict(os.environ, env_without_workspaces, clear=True):
+            assert workspace_allowlist_active(["prod"]) is True
+
+    def test_false_when_empty_env_and_no_config(self) -> None:
+        from fabric_dw.mcp._guards import workspace_allowlist_active  # noqa: PLC0415
+
+        with patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": ""}):
+            assert workspace_allowlist_active(None) is False
+
+    def test_false_when_empty_config_list(self) -> None:
+        from fabric_dw.mcp._guards import workspace_allowlist_active  # noqa: PLC0415
+
+        env_without_workspaces = {
+            k: v for k, v in os.environ.items() if k != "FABRIC_MCP_WORKSPACES"
+        }
+        with patch.dict(os.environ, env_without_workspaces, clear=True):
+            assert workspace_allowlist_active([]) is False
+
+
+class TestAssertWorkspaceAllowedConfigLayer:
+    """assert_workspace_allowed 3-layer semantics."""
+
+    def test_config_layer_blocks_unlisted(self) -> None:
+        """Config-only allowlist blocks workspaces not in the list."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        from fabric_dw.mcp._guards import assert_workspace_allowed  # noqa: PLC0415
+
+        env_without_workspaces = {
+            k: v for k, v in os.environ.items() if k != "FABRIC_MCP_WORKSPACES"
+        }
+        with (
+            patch.dict(os.environ, env_without_workspaces, clear=True),
+            pytest.raises(ToolError, match="allowlist"),
+        ):
+            assert_workspace_allowed("dev", config_allowlist=["prod", "staging"])
+
+    def test_config_layer_allows_listed(self) -> None:
+        """Config-only allowlist permits workspaces in the list."""
+        from fabric_dw.mcp._guards import assert_workspace_allowed  # noqa: PLC0415
+
+        env_without_workspaces = {
+            k: v for k, v in os.environ.items() if k != "FABRIC_MCP_WORKSPACES"
+        }
+        with patch.dict(os.environ, env_without_workspaces, clear=True):
+            assert_workspace_allowed("prod", config_allowlist=["prod", "staging"])
+
+    def test_env_overrides_config(self) -> None:
+        """Env allowlist overrides config; workspace in config but not env is blocked."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        from fabric_dw.mcp._guards import assert_workspace_allowed  # noqa: PLC0415
+
+        with (
+            patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "env-ws"}),
+            pytest.raises(ToolError, match="allowlist"),
+        ):
+            # "config-ws" is in the config layer but not the env layer — env wins
+            assert_workspace_allowed("config-ws", config_allowlist=["config-ws"])
+
+    def test_no_restriction_when_both_absent(self) -> None:
+        """No env, no config → all workspaces allowed."""
+        from fabric_dw.mcp._guards import assert_workspace_allowed  # noqa: PLC0415
+
+        env_without_workspaces = {
+            k: v for k, v in os.environ.items() if k != "FABRIC_MCP_WORKSPACES"
+        }
+        with patch.dict(os.environ, env_without_workspaces, clear=True):
+            assert_workspace_allowed("any-ws", config_allowlist=None)
+
+    def test_empty_env_falls_through_config_blocks(self) -> None:
+        """Empty env falls through to config; config restriction is applied."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        from fabric_dw.mcp._guards import assert_workspace_allowed  # noqa: PLC0415
+
+        with (
+            patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": ""}),
+            pytest.raises(ToolError, match="allowlist"),
+        ):
+            assert_workspace_allowed("dev", config_allowlist=["prod"])
+
+
+# ---------------------------------------------------------------------------
 # 5. execute_sql max_rows truncation
 # ---------------------------------------------------------------------------
 
@@ -642,9 +848,21 @@ async def test_get_workspace_blocked_by_workspace_allowlist() -> None:
     """get_workspace raises ToolError when workspace not in FABRIC_MCP_WORKSPACES."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
 
+    from fabric_dw import auth as _auth  # noqa: PLC0415
+    from fabric_dw.mcp._context import ServerContext  # noqa: PLC0415
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
+    mock_resolver = AsyncMock()
+    mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    ctx = ServerContext(
+        http=AsyncMock(),
+        cache=MagicMock(),
+        resolver=mock_resolver,
+        auth_mode=_auth.CredentialMode.DEFAULT,
+    )
+
     with (
+        patch("fabric_dw.mcp._context._SERVER_CTX", ctx),
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "allowed-ws"}),
         pytest.raises(ToolError, match="allowlist"),
     ):
@@ -658,9 +876,19 @@ async def test_list_warehouses_all_workspaces_blocked_when_allowlist_set() -> No
     """list_warehouses(all_workspaces=True) raises ToolError when FABRIC_MCP_WORKSPACES is set."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
 
+    from fabric_dw import auth as _auth  # noqa: PLC0415
+    from fabric_dw.mcp._context import ServerContext  # noqa: PLC0415
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
+    ctx = ServerContext(
+        http=AsyncMock(),
+        cache=MagicMock(),
+        resolver=AsyncMock(),
+        auth_mode=_auth.CredentialMode.DEFAULT,
+    )
+
     with (
+        patch("fabric_dw.mcp._context._SERVER_CTX", ctx),
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "prod"}),
         pytest.raises(ToolError, match="all_workspaces"),
     ):
@@ -674,9 +902,19 @@ async def test_list_sql_endpoints_all_workspaces_blocked_when_allowlist_set() ->
     """list_sql_endpoints(all_workspaces=True) raises ToolError when allowlist is set."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
 
+    from fabric_dw import auth as _auth  # noqa: PLC0415
+    from fabric_dw.mcp._context import ServerContext  # noqa: PLC0415
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
+    ctx = ServerContext(
+        http=AsyncMock(),
+        cache=MagicMock(),
+        resolver=AsyncMock(),
+        auth_mode=_auth.CredentialMode.DEFAULT,
+    )
+
     with (
+        patch("fabric_dw.mcp._context._SERVER_CTX", ctx),
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "prod"}),
         pytest.raises(ToolError, match="all_workspaces"),
     ):
@@ -1039,3 +1277,85 @@ def test_assert_workspace_allowed_still_blocks_name_when_allowlist_has_names() -
         pytest.raises(ToolError, match="allowlist"),
     ):
         assert_workspace_allowed("forbidden-workspace")  # pre-resolve, name-only allowlist
+
+
+# ---------------------------------------------------------------------------
+# FIX 1(a): build_context wiring — workspace_allowlist propagated to ServerContext
+# ---------------------------------------------------------------------------
+
+
+def test_build_context_propagates_workspace_allowlist(tmp_path: Path) -> None:
+    """build_context passes cfg.mcp.workspace_allowlist into ServerContext."""
+    from fabric_dw.config import McpConfig, UserConfig, save_config  # noqa: PLC0415
+    from fabric_dw.mcp._context import build_context  # noqa: PLC0415
+
+    cfg_file = tmp_path / "config.toml"
+    save_config(
+        UserConfig(mcp=McpConfig(workspace_allowlist=["Sales WS", "Finance WS"])),
+        cfg_file,
+    )
+
+    env_without_workspaces = {k: v for k, v in os.environ.items() if k != "FABRIC_MCP_WORKSPACES"}
+    with patch.dict(os.environ, env_without_workspaces, clear=True):
+        ctx = build_context(config_path=cfg_file)
+
+    assert ctx.workspace_allowlist == ["Sales WS", "Finance WS"]
+
+
+def test_build_context_workspace_allowlist_none_when_absent(tmp_path: Path) -> None:
+    """build_context sets workspace_allowlist=None when the key is absent from config."""
+    from fabric_dw.config import UserConfig, save_config  # noqa: PLC0415
+    from fabric_dw.mcp._context import build_context  # noqa: PLC0415
+
+    cfg_file = tmp_path / "config.toml"
+    save_config(UserConfig(), cfg_file)
+
+    env_without_workspaces = {k: v for k, v in os.environ.items() if k != "FABRIC_MCP_WORKSPACES"}
+    with patch.dict(os.environ, env_without_workspaces, clear=True):
+        ctx = build_context(config_path=cfg_file)
+
+    assert ctx.workspace_allowlist is None
+
+
+# ---------------------------------------------------------------------------
+# FIX 1(b): tool-level test — config layer blocks when env is UNSET
+# ---------------------------------------------------------------------------
+
+
+async def test_get_workspace_blocked_by_config_allowlist_env_unset() -> None:
+    """get_workspace blocks a workspace via config layer when FABRIC_MCP_WORKSPACES is unset.
+
+    This test proves that:
+    1.  The tool reads ctx.workspace_allowlist from ServerContext.
+    2.  When FABRIC_MCP_WORKSPACES is absent, the config layer still restricts access.
+    """
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw import auth as _auth  # noqa: PLC0415
+    from fabric_dw.cache import LookupCache  # noqa: PLC0415
+    from fabric_dw.mcp._context import ServerContext  # noqa: PLC0415
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+    from fabric_dw.resolver import Resolver  # noqa: PLC0415
+
+    mock_http = AsyncMock()
+    mock_cache = LookupCache()
+    mock_resolver = AsyncMock(spec=Resolver)
+
+    ctx = ServerContext(
+        http=mock_http,
+        cache=mock_cache,
+        resolver=mock_resolver,
+        auth_mode=_auth.CredentialMode.DEFAULT,
+        workspace_allowlist=["allowed-ws"],
+    )
+
+    env_without_workspaces = {k: v for k, v in os.environ.items() if k != "FABRIC_MCP_WORKSPACES"}
+    with (
+        patch("fabric_dw.mcp._context._SERVER_CTX", ctx),
+        patch.dict(os.environ, env_without_workspaces, clear=True),
+        pytest.raises(ToolError, match="allowlist"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "get_workspace",
+            {"workspace": "forbidden-ws"},
+        )

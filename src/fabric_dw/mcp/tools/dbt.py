@@ -80,12 +80,14 @@ def register(mcp: FastMCP) -> None:
             - ``requirements_txt``: content for ``requirements.txt``.
             - ``gitignore``: content for ``.gitignore``.
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
 
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("generate_dbt_profile ws=%s item=%s", ws_id, entry.id)
             sql_target = make_sql_target(ws_id, entry, item)
         except (ValueError, FabricError) as exc:

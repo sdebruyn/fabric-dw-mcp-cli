@@ -61,12 +61,17 @@ class ServerContext:
         cache: Name-to-UUID lookup cache.
         resolver: Workspace / item resolver backed by *http* and *cache*.
         auth_mode: The active credential mode (e.g. ``"default"``).
+        workspace_allowlist: The ``[mcp] workspace_allowlist`` value from
+            ``config.toml``, or ``None`` when the key is absent.  The guard
+            functions in :mod:`fabric_dw.mcp._guards` resolve the effective
+            allowlist from env var (highest) > this value > no restriction.
     """
 
     http: FabricHttpClient
     cache: LookupCache
     resolver: Resolver
     auth_mode: _auth.CredentialMode
+    workspace_allowlist: list[str] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +202,13 @@ def build_context(
     )
     cache = LookupCache()
     resolver = Resolver(http=http, cache=cache)
-    return ServerContext(http=http, cache=cache, resolver=resolver, auth_mode=mode)
+    return ServerContext(
+        http=http,
+        cache=cache,
+        resolver=resolver,
+        auth_mode=mode,
+        workspace_allowlist=cfg.mcp.workspace_allowlist,
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -76,6 +76,35 @@ fdw config unset sql-retry-deadline
 fdw config unset sql-retry-executes
 ```
 
+## MCP workspace allowlist {#mcp-workspace-allowlist}
+
+!!! warning "Security control"
+    The workspace allowlist is an **access-control** setting. Mistakes here can silently allow or deny access to workspaces. Read the empty-value semantics carefully before configuring this knob.
+
+The MCP server workspace allowlist restricts which workspaces the server may operate on. It is resolved in the following priority order (highest first):
+
+| Layer | Mechanism | Description |
+|---|---|---|
+| 1 | `FABRIC_MCP_WORKSPACES` env var | Comma-separated workspace names or GUIDs. An empty or whitespace-only value (including `FABRIC_MCP_WORKSPACES=`) is treated as **absent** and falls through to the next layer — it does **not** block all workspaces. |
+| 2 | `[mcp] workspace_allowlist` in `config.toml` | Stored with `fdw config set mcp workspace-allowlist`. An empty TOML array `[]` is treated as absent (no restriction) — consistent with the unset case. |
+| 3 | Built-in default | No restriction — all workspaces allowed. |
+
+Matching is case-insensitive and whitespace-trimmed. Both workspace names and GUIDs are accepted.
+
+To restrict the MCP server to specific workspaces:
+
+```shell
+fdw config set mcp workspace-allowlist "Sales WS,Finance WS"
+```
+
+To revert to the built-in default (no restriction):
+
+```shell
+fdw config unset mcp workspace-allowlist
+```
+
+The env var takes highest priority. When both are set, `FABRIC_MCP_WORKSPACES` wins over the config file value.
+
 ## MCP server log level
 
 The MCP server log level can be configured via a 3-layer stack. Resolution order (highest priority first):
@@ -173,7 +202,7 @@ fdw config clear
 
 ### config set
 
-Set a default value. Accepts `workspace`, `warehouse`, `max-429-retries`, `retry-deadline`, `sql-retry-deadline`, `sql-retry-executes`, `sql-pool`, or `auth-mode` as a flat key, or the nested sub-commands `telemetry disabled` and `logging level` for section-scoped knobs.
+Set a default value. Accepts `workspace`, `warehouse`, `max-429-retries`, `retry-deadline`, `sql-retry-deadline`, `sql-retry-executes`, `sql-pool`, or `auth-mode` as a flat key, or the nested sub-commands `telemetry disabled`, `logging level`, and `mcp workspace-allowlist` for section-scoped knobs.
 
 **Synopsis**
 
@@ -188,6 +217,7 @@ fdw config set sql-pool true|false
 fdw config set auth-mode MODE
 fdw config set telemetry disabled true|false
 fdw config set logging level LEVEL
+fdw config set mcp workspace-allowlist WS1,WS2,...
 ```
 
 **Example**
@@ -203,6 +233,7 @@ fdw config set sql-pool false
 fdw config set auth-mode interactive
 fdw config set telemetry disabled true
 fdw config set logging level DEBUG
+fdw config set mcp workspace-allowlist "Sales WS,Finance WS"
 ```
 
 ---
@@ -233,7 +264,7 @@ warehouse  MyWarehouse
 
 ### config unset
 
-Clear a single default value. Accepts `workspace`, `warehouse`, `max-429-retries`, `retry-deadline`, `sql-retry-deadline`, `sql-retry-executes`, `sql-pool`, or `auth-mode` as a flat key, or the nested sub-commands `telemetry disabled` and `logging level` for section-scoped knobs.
+Clear a single default value. Accepts `workspace`, `warehouse`, `max-429-retries`, `retry-deadline`, `sql-retry-deadline`, `sql-retry-executes`, `sql-pool`, or `auth-mode` as a flat key, or the nested sub-commands `telemetry disabled`, `logging level`, and `mcp workspace-allowlist` for section-scoped knobs.
 
 **Synopsis**
 
@@ -248,4 +279,5 @@ fdw config unset sql-pool
 fdw config unset auth-mode
 fdw config unset telemetry disabled
 fdw config unset logging level
+fdw config unset mcp workspace-allowlist
 ```

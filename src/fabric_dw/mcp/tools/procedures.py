@@ -43,11 +43,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             item: Warehouse or SQL endpoint name or GUID.
             schema: When provided, only procedures in this schema are returned.
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("list_procedures ws=%s item=%s schema=%r", ws_id, entry.id, schema)
             target = make_sql_target(ws_id, entry, item)
             result = await procedures_svc.list_procedures(target, schema=schema, mode=ctx.auth_mode)
@@ -68,11 +70,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             qualified_name: Dot-separated qualified procedure name, e.g. ``dbo.usp_load``.
         """
         schema, proc_name = parse_qualified_name(qualified_name, kind="procedure")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("get_procedure ws=%s item=%s proc=%s.%s", ws_id, entry.id, schema, proc_name)
             target = make_sql_target(ws_id, entry, item)
             result = await procedures_svc.get_procedure(
@@ -101,11 +105,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             body: The procedure body (the AS … section).
         """
         schema, proc_name = parse_qualified_name(qualified_name, kind="procedure")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "create_procedure ws=%s item=%s proc=%s.%s", ws_id, entry.id, schema, proc_name
             )
@@ -137,11 +143,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             body: The new procedure body (the AS … section).
         """
         schema, proc_name = parse_qualified_name(qualified_name, kind="procedure")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "update_procedure ws=%s item=%s proc=%s.%s", ws_id, entry.id, schema, proc_name
             )
@@ -166,11 +174,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             qualified_name: Dot-separated qualified procedure name, e.g. ``dbo.usp_load``.
         """
         schema, proc_name = parse_qualified_name(qualified_name, kind="procedure")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "drop_procedure ws=%s item=%s proc=%s.%s", ws_id, entry.id, schema, proc_name
             )

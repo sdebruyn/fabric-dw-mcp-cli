@@ -713,3 +713,140 @@ class TestConfigShowAuthMode:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["defaults"]["auth_mode"] is None
+
+
+# ---------------------------------------------------------------------------
+# config set / unset / show for mcp workspace_allowlist
+# ---------------------------------------------------------------------------
+
+
+class TestConfigSetMcpWorkspaceAllowlist:
+    def test_set_workspace_allowlist_exits_zero(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        result = runner.invoke(
+            cli, ["config", "set", "mcp", "workspace-allowlist", "Sales WS,Finance WS"]
+        )
+        assert result.exit_code == 0
+
+    def test_set_workspace_allowlist_writes_list(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "mcp", "workspace-allowlist", "Sales WS,Finance WS"])
+        cfg = load_config(default_path())
+        assert cfg.mcp.workspace_allowlist == ["Sales WS", "Finance WS"]
+
+    def test_set_workspace_allowlist_trims_whitespace(
+        self, runner: CliRunner, config_env: Path
+    ) -> None:
+        _ = config_env
+        runner.invoke(
+            cli, ["config", "set", "mcp", "workspace-allowlist", "  Sales WS , Finance WS  "]
+        )
+        cfg = load_config(default_path())
+        assert cfg.mcp.workspace_allowlist == ["Sales WS", "Finance WS"]
+
+    def test_set_workspace_allowlist_single_entry(
+        self, runner: CliRunner, config_env: Path
+    ) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "mcp", "workspace-allowlist", "prod"])
+        cfg = load_config(default_path())
+        assert cfg.mcp.workspace_allowlist == ["prod"]
+
+    def test_set_workspace_allowlist_preserves_other_keys(
+        self, runner: CliRunner, config_env: Path
+    ) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "workspace", "MyWS"])
+        runner.invoke(cli, ["config", "set", "mcp", "workspace-allowlist", "prod,staging"])
+        cfg = load_config(default_path())
+        assert cfg.mcp.workspace_allowlist == ["prod", "staging"]
+        assert cfg.defaults.workspace == "MyWS"  # preserved
+
+
+class TestConfigUnsetMcpWorkspaceAllowlist:
+    def test_unset_workspace_allowlist_exits_zero(
+        self, runner: CliRunner, config_env: Path
+    ) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "mcp", "workspace-allowlist", "prod"])
+        result = runner.invoke(cli, ["config", "unset", "mcp", "workspace-allowlist"])
+        assert result.exit_code == 0
+
+    def test_unset_workspace_allowlist_clears_key(
+        self, runner: CliRunner, config_env: Path
+    ) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "mcp", "workspace-allowlist", "prod"])
+        runner.invoke(cli, ["config", "unset", "mcp", "workspace-allowlist"])
+        cfg = load_config(default_path())
+        assert cfg.mcp.workspace_allowlist is None
+
+    def test_unset_workspace_allowlist_preserves_other_keys(
+        self, runner: CliRunner, config_env: Path
+    ) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "workspace", "MyWS"])
+        runner.invoke(cli, ["config", "set", "mcp", "workspace-allowlist", "prod"])
+        runner.invoke(cli, ["config", "unset", "mcp", "workspace-allowlist"])
+        cfg = load_config(default_path())
+        assert cfg.mcp.workspace_allowlist is None
+        assert cfg.defaults.workspace == "MyWS"  # preserved
+
+
+class TestConfigShowMcpWorkspaceAllowlist:
+    def test_show_includes_mcp_section(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        result = runner.invoke(cli, ["--json", "config", "show"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert "mcp" in data
+
+    def test_show_workspace_allowlist_when_set(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "mcp", "workspace-allowlist", "Sales WS,Finance WS"])
+        result = runner.invoke(cli, ["--json", "config", "show"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["mcp"]["workspace_allowlist"] == ["Sales WS", "Finance WS"]
+
+    def test_show_workspace_allowlist_null_when_not_set(
+        self, runner: CliRunner, config_env: Path
+    ) -> None:
+        _ = config_env
+        result = runner.invoke(cli, ["--json", "config", "show"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["mcp"]["workspace_allowlist"] is None
+
+
+class TestConfigSetMcpWorkspaceAllowlistValidation:
+    """set mcp workspace-allowlist rejects empty / whitespace-only input."""
+
+    def test_empty_string_rejected(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        result = runner.invoke(cli, ["config", "set", "mcp", "workspace-allowlist", ""])
+        assert result.exit_code != 0
+
+    def test_whitespace_string_rejected(self, runner: CliRunner, config_env: Path) -> None:
+        _ = config_env
+        result = runner.invoke(cli, ["config", "set", "mcp", "workspace-allowlist", "   "])
+        assert result.exit_code != 0
+
+    def test_comma_only_rejected(self, runner: CliRunner, config_env: Path) -> None:
+        """A value that is all commas has no non-empty entries after splitting."""
+        _ = config_env
+        result = runner.invoke(cli, ["config", "set", "mcp", "workspace-allowlist", ",,,"])
+        assert result.exit_code != 0
+
+    def test_empty_string_error_mentions_unset(self, runner: CliRunner, config_env: Path) -> None:
+        """Error message points operator toward fdw config unset."""
+        _ = config_env
+        result = runner.invoke(cli, ["config", "set", "mcp", "workspace-allowlist", ""])
+        assert "unset" in result.output.lower()
+
+    def test_empty_string_does_not_write_config(self, runner: CliRunner, config_env: Path) -> None:
+        """A rejected empty call must not modify config.toml."""
+        _ = config_env
+        runner.invoke(cli, ["config", "set", "mcp", "workspace-allowlist", ""])
+        cfg = load_config(default_path())
+        assert cfg.mcp.workspace_allowlist is None

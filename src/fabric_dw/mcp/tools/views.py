@@ -43,11 +43,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             item: Warehouse or SQL endpoint name or GUID.
             schema: When provided, only views in this schema are returned.
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("list_views ws=%s item=%s schema=%r", ws_id, entry.id, schema)
             target = make_sql_target(ws_id, entry, item)
             result = await views_svc.list_views(target, schema=schema, mode=ctx.auth_mode)
@@ -71,11 +73,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             count: Maximum number of rows to return (1-10000, default 10).
         """
         schema, view_name = parse_qualified_name(qualified_name, kind="view")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "read_view ws=%s item=%s view=%s.%s count=%d",
                 ws_id,
@@ -111,11 +115,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             qualified_name: Dot-separated qualified view name, e.g. ``dbo.vw_sales``.
         """
         schema, view_name = parse_qualified_name(qualified_name, kind="view")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "count_view_rows ws=%s item=%s view=%s.%s",
                 ws_id,
@@ -147,11 +153,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             qualified_name: Dot-separated qualified view name, e.g. ``dbo.vw_sales``.
         """
         schema, view_name = parse_qualified_name(qualified_name, kind="view")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "get_view_columns ws=%s item=%s view=%s.%s",
                 ws_id,
@@ -177,11 +185,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             qualified_name: Dot-separated qualified view name, e.g. ``dbo.vw_sales``.
         """
         schema, view_name = parse_qualified_name(qualified_name, kind="view")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("get_view ws=%s item=%s view=%s.%s", ws_id, entry.id, schema, view_name)
             target = make_sql_target(ws_id, entry, item)
             result = await views_svc.get_view(target, schema, view_name, mode=ctx.auth_mode)
@@ -205,11 +215,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             select_body: The SELECT statement that forms the view body.
         """
         schema, view_name = parse_qualified_name(qualified_name, kind="view")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("create_view ws=%s item=%s view=%s.%s", ws_id, entry.id, schema, view_name)
             target = make_sql_target(ws_id, entry, item)
             result = await views_svc.create_view(
@@ -236,11 +248,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             select_body: The new SELECT statement.
         """
         schema, view_name = parse_qualified_name(qualified_name, kind="view")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("update_view ws=%s item=%s view=%s.%s", ws_id, entry.id, schema, view_name)
             target = make_sql_target(ws_id, entry, item)
             result = await views_svc.update_view(
@@ -261,11 +275,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             qualified_name: Dot-separated qualified view name, e.g. ``dbo.vw_sales``.
         """
         schema, view_name = parse_qualified_name(qualified_name, kind="view")
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug("drop_view ws=%s item=%s view=%s.%s", ws_id, entry.id, schema, view_name)
             target = make_sql_target(ws_id, entry, item)
             await views_svc.drop_view(target, schema, view_name, mode=ctx.auth_mode)
@@ -292,12 +308,14 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 e.g. ``dbo.vw_sales``.
             new_name: New bare view name (no schema prefix), e.g. ``vw_revenue``.
         """
-        assert_workspace_allowed(workspace)
         ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         schema, old_view_name = parse_qualified_name(qualified_name, kind="view")
         try:
             ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
-            assert_workspace_allowed(workspace, str(ws_id))
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
             _log.debug(
                 "rename_view ws=%s item=%s view=%s.%s -> %s",
                 ws_id,

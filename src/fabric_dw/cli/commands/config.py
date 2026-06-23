@@ -5,28 +5,30 @@ workspace / warehouse on every command.
 
 Commands
 --------
-config show                    — print current defaults (JSON or table)
-config set workspace           — persist a workspace default
-config set warehouse           — persist a warehouse default
-config set max-429-retries     — persist the max consecutive 429 retry count
-config set retry-deadline      — persist the combined 429+5xx wall-clock deadline
-config set sql-retry-deadline  — persist the SQL/TDS connect+execute retry budget
-config set sql-retry-executes  — persist whether fetch="none" statements are retried
-config set sql-pool            — persist whether SQL connection pooling is enabled
-config set auth-mode           — persist the MCP server credential mode
-config set telemetry disabled  — opt in/out of telemetry via config
-config set logging level       — set the MCP server log level
-config unset workspace         — clear the workspace default
-config unset warehouse         — clear the warehouse default
-config unset max-429-retries   — clear the max consecutive 429 retry count
-config unset retry-deadline    — clear the HTTP deadline default
-config unset sql-retry-deadline — clear the SQL retry deadline default
-config unset sql-retry-executes — clear the SQL execute-retry flag
-config unset sql-pool          — clear the SQL pool flag
-config unset auth-mode         — clear the credential mode (revert to built-in default)
-config unset telemetry disabled — clear the telemetry opt-out (revert to default-on)
-config unset logging level     — clear the logging level (revert to built-in INFO)
-config clear                   — wipe the entire config file
+config show                          — print current defaults (JSON or table)
+config set workspace                 — persist a workspace default
+config set warehouse                 — persist a warehouse default
+config set max-429-retries           — persist the max consecutive 429 retry count
+config set retry-deadline            — persist the combined 429+5xx wall-clock deadline
+config set sql-retry-deadline        — persist the SQL/TDS connect+execute retry budget
+config set sql-retry-executes        — persist whether fetch="none" statements are retried
+config set sql-pool                  — persist whether SQL connection pooling is enabled
+config set auth-mode                 — persist the MCP server credential mode
+config set telemetry disabled        — opt in/out of telemetry via config
+config set logging level             — set the MCP server log level
+config set mcp workspace-allowlist   — set the MCP workspace allowlist (comma-separated)
+config unset workspace               — clear the workspace default
+config unset warehouse               — clear the warehouse default
+config unset max-429-retries         — clear the max consecutive 429 retry count
+config unset retry-deadline          — clear the HTTP deadline default
+config unset sql-retry-deadline      — clear the SQL retry deadline default
+config unset sql-retry-executes      — clear the SQL execute-retry flag
+config unset sql-pool                — clear the SQL pool flag
+config unset auth-mode               — clear the credential mode (revert to built-in default)
+config unset telemetry disabled      — clear the telemetry opt-out (revert to default-on)
+config unset logging level           — clear the logging level (revert to built-in INFO)
+config unset mcp workspace-allowlist — clear the MCP workspace allowlist (no restriction)
+config clear                         — wipe the entire config file
 """
 
 from __future__ import annotations
@@ -72,6 +74,9 @@ def show_cmd(ctx: CliContext) -> None:
         },
         "telemetry": {
             "disabled": cfg.telemetry.disabled,
+        },
+        "mcp": {
+            "workspace_allowlist": cfg.mcp.workspace_allowlist,
         },
         "logging": {
             "level": cfg.logging.level,
@@ -218,6 +223,44 @@ def set_logging_level_cmd(value: str) -> None:
     click.echo(f"Logging level set to {normalised!r}.")
 
 
+@set_group.group("mcp")
+def set_mcp_group() -> None:
+    """Set MCP server configuration."""
+
+
+@set_mcp_group.command("workspace-allowlist")
+@click.argument("value")
+def set_mcp_workspace_allowlist_cmd(value: str) -> None:
+    """Set the MCP workspace allowlist (comma-separated workspace names or GUIDs).
+
+    Restricts the MCP server to the named workspaces only.  The allowlist is
+    matched case-insensitively against workspace names and GUIDs.
+
+    This is the config-layer knob: ``FABRIC_MCP_WORKSPACES`` (env var) takes
+    precedence when set.
+
+    To remove all workspace restrictions, use the explicit unset command rather
+    than passing an empty string:
+
+        fdw config unset mcp workspace-allowlist
+
+    Example::
+
+        fdw config set mcp workspace-allowlist "Sales WS,Finance WS"
+    """
+    # Reject empty or whitespace-only input explicitly so the operator gets a
+    # clear error instead of silently clearing the allowlist via a typo.
+    stripped = value.strip()
+    if not stripped or not any(e.strip() for e in stripped.split(",")):
+        raise click.UsageError(
+            "VALUE must not be empty. "
+            "To remove all workspace restrictions use: "
+            "fdw config unset mcp workspace-allowlist"
+        )
+    set_config("mcp", "workspace_allowlist", value)
+    click.echo(f"MCP workspace allowlist set to {value!r}.")
+
+
 # ---------------------------------------------------------------------------
 # config unset  (sub-group with workspace / warehouse sub-commands)
 # ---------------------------------------------------------------------------
@@ -310,6 +353,18 @@ def unset_logging_level_cmd() -> None:
     """Clear the logging level (revert to built-in INFO)."""
     set_config("logging", "level", None)
     click.echo("Logging level cleared.")
+
+
+@unset_group.group("mcp")
+def unset_mcp_group() -> None:
+    """Clear MCP server configuration."""
+
+
+@unset_mcp_group.command("workspace-allowlist")
+def unset_mcp_workspace_allowlist_cmd() -> None:
+    """Clear the MCP workspace allowlist (revert to no restriction — all workspaces allowed)."""
+    set_config("mcp", "workspace_allowlist", None)
+    click.echo("MCP workspace allowlist cleared.")
 
 
 # ---------------------------------------------------------------------------
