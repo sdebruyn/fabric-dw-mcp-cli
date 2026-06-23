@@ -28,13 +28,13 @@ The 429 retry budget (consecutive retries and combined wall-clock deadline) can 
 | Knob | CLI option | Env var | Config key | Built-in default |
 |---|---|---|---|---|
 | Max consecutive 429 retries | `--max-429-retries N` | `FABRIC_DW_MAX_429_RETRIES` | `max_429_retries` | 10 |
-| Combined deadline (s) | `--retry-deadline SECONDS` | `FABRIC_DW_RETRY_DEADLINE_S` | `retry_deadline_s` | 300.0 |
+| Combined deadline (s) | `--retry-deadline SECONDS` | `FABRIC_DW_RETRY_DEADLINE_S` | `retry_deadline_s` | 300 |
 
 To persist a higher retry budget for all invocations:
 
 ```shell
 fdw config set max-429-retries 20
-fdw config set retry-deadline 600.0
+fdw config set retry-deadline 600
 ```
 
 To revert to the built-in defaults:
@@ -50,7 +50,7 @@ The SQL/TDS connect-phase and execute-phase retry budget is a separate layer fro
 
 | Knob | Env var | Config key | Built-in default |
 |---|---|---|---|
-| Connect+execute deadline (s) | `FABRIC_SQL_RETRY_TIMEOUT_S` | `sql_retry_deadline_s` | 120.0 |
+| Connect+execute deadline (s) | `FABRIC_SQL_RETRY_TIMEOUT_S` | `sql_retry_deadline_s` | 120 |
 | Retry non-idempotent statements | `FABRIC_SQL_RETRY_EXECUTES` | `sql_retry_executes` | false |
 
 `sql_retry_deadline_s` sets the total wall-clock budget for both the connect-phase and execute-phase retry loops. The built-in 120 s covers the observed Fabric warehouse warm-up window (~60–90 s).
@@ -60,7 +60,7 @@ The SQL/TDS connect-phase and execute-phase retry budget is a separate layer fro
 To persist a longer SQL retry budget:
 
 ```shell
-fdw config set sql-retry-deadline 300.0
+fdw config set sql-retry-deadline 300
 ```
 
 To opt in to retrying non-idempotent statements:
@@ -231,8 +231,8 @@ fdw config set mcp workspace-allowlist WS1,WS2,...
 fdw config set workspace MyWorkspace
 fdw config set warehouse MyWarehouse
 fdw config set max-429-retries 20
-fdw config set retry-deadline 600.0
-fdw config set sql-retry-deadline 300.0
+fdw config set retry-deadline 600
+fdw config set sql-retry-deadline 300
 fdw config set sql-retry-executes true
 fdw config set sql-pool false
 fdw config set auth-mode interactive

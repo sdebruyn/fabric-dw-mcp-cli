@@ -2382,8 +2382,9 @@ class TestAuthFailedConnectRetry:
         assert mock_mssql.connect.call_count == 1
 
     def test_retry_policy_constants(self) -> None:
-        """Connect+execute-phase default deadline is 120 s; backoff arrays are set."""
-        assert _sql_module._SQL_RETRY_DEADLINE_S_DEFAULT == 120.0
+        """Connect+execute-phase default deadline is 120 s (int); backoff arrays are set."""
+        assert _sql_module._SQL_RETRY_DEADLINE_S_DEFAULT == 120
+        assert isinstance(_sql_module._SQL_RETRY_DEADLINE_S_DEFAULT, int)
         assert _sql_module._CONNECT_RETRY_DELAYS == (5.0, 10.0, 15.0)
         assert _sql_module._EXECUTE_RETRY_DELAYS == (2.0, 5.0, 10.0)
 
@@ -2852,41 +2853,52 @@ class TestSqlRetryConfig:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """FABRIC_SQL_RETRY_TIMEOUT_S takes precedence over config and built-in default."""
+        monkeypatch.setenv("FABRIC_SQL_RETRY_TIMEOUT_S", "999")
+        assert _sql_module._resolve_sql_retry_deadline_s() == 999
+
+    def test_deadline_float_formatted_int_env_accepted(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """FABRIC_SQL_RETRY_TIMEOUT_S='999.0' is accepted as 999 (Docker float-int)."""
         monkeypatch.setenv("FABRIC_SQL_RETRY_TIMEOUT_S", "999.0")
-        assert _sql_module._resolve_sql_retry_deadline_s() == 999.0
+        assert _sql_module._resolve_sql_retry_deadline_s() == 999
 
     def test_deadline_config_wins_over_default(self) -> None:
-        """Config sql_retry_deadline_s beats the built-in 120.0 default."""
-        cfg = UserConfig(defaults=Defaults(sql_retry_deadline_s=250.0))
+        """Config sql_retry_deadline_s beats the built-in 120 default."""
+        cfg = UserConfig(defaults=Defaults(sql_retry_deadline_s=250))
         _sql_module._sql_config_cache = cfg
-        assert _sql_module._resolve_sql_retry_deadline_s() == 250.0
+        assert _sql_module._resolve_sql_retry_deadline_s() == 250
 
     def test_deadline_falls_back_to_default(self) -> None:
-        """When no env var and no config value, the default 120.0 is returned."""
-        assert _sql_module._resolve_sql_retry_deadline_s() == 120.0
+        """When no env var and no config value, the default 120 is returned."""
+        assert _sql_module._resolve_sql_retry_deadline_s() == 120
+
+    def test_deadline_return_type_is_int(self) -> None:
+        """_resolve_sql_retry_deadline_s always returns an int."""
+        assert isinstance(_sql_module._resolve_sql_retry_deadline_s(), int)
 
     def test_deadline_invalid_env_falls_through_to_default(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A non-numeric FABRIC_SQL_RETRY_TIMEOUT_S is ignored; default used instead."""
-        monkeypatch.setenv("FABRIC_SQL_RETRY_TIMEOUT_S", "not-a-float")
-        assert _sql_module._resolve_sql_retry_deadline_s() == 120.0
+        monkeypatch.setenv("FABRIC_SQL_RETRY_TIMEOUT_S", "not-an-int")
+        assert _sql_module._resolve_sql_retry_deadline_s() == 120
 
-    def test_deadline_negative_env_falls_through_to_default(
+    def test_deadline_below_min_env_falls_through_to_default(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A value < 0.1 in FABRIC_SQL_RETRY_TIMEOUT_S is ignored; default used instead."""
-        monkeypatch.setenv("FABRIC_SQL_RETRY_TIMEOUT_S", "0.0")
-        assert _sql_module._resolve_sql_retry_deadline_s() == 120.0
+        """A value < 1 in FABRIC_SQL_RETRY_TIMEOUT_S is ignored; default used instead."""
+        monkeypatch.setenv("FABRIC_SQL_RETRY_TIMEOUT_S", "0")
+        assert _sql_module._resolve_sql_retry_deadline_s() == 120
 
     def test_deadline_invalid_env_falls_through_to_config(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Invalid env var falls through to config value."""
         monkeypatch.setenv("FABRIC_SQL_RETRY_TIMEOUT_S", "bad")
-        cfg = UserConfig(defaults=Defaults(sql_retry_deadline_s=88.0))
+        cfg = UserConfig(defaults=Defaults(sql_retry_deadline_s=88))
         _sql_module._sql_config_cache = cfg
-        assert _sql_module._resolve_sql_retry_deadline_s() == 88.0
+        assert _sql_module._resolve_sql_retry_deadline_s() == 88
 
     def test_executes_env_wins_over_config_and_default(
         self, monkeypatch: pytest.MonkeyPatch

@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING
 from fabric_dw import auth as _auth
 from fabric_dw.cache import LookupCache
 from fabric_dw.config import VALID_AUTH_MODES, load_config
-from fabric_dw.config_resolve import resolve_auth_mode, resolve_float_knob, resolve_int_knob
+from fabric_dw.config_resolve import resolve_auth_mode, resolve_int_knob
 from fabric_dw.exceptions import ConfigError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.resolver import Resolver
@@ -102,7 +102,7 @@ def get_context() -> ServerContext:
 
 _logger = logging.getLogger(__name__)
 
-_MIN_RETRY_DEADLINE_S: float = 0.1
+_MIN_RETRY_DEADLINE_S: int = 1
 
 
 def build_context(
@@ -112,8 +112,8 @@ def build_context(
     """Construct a fresh :class:`ServerContext` from the environment and config file.
 
     The 429 retry budget is resolved with precedence env > config > built-in
-    default (10 / 300.0) via the shared :func:`~fabric_dw.config_resolve.resolve_int_knob`
-    and :func:`~fabric_dw.config_resolve.resolve_float_knob` helpers.
+    default (10 / 300) via the shared :func:`~fabric_dw.config_resolve.resolve_int_knob`
+    helper.
 
     The credential mode is resolved with precedence:
 
@@ -168,7 +168,7 @@ def build_context(
         min_val=1,
         knob_name="max_429_retries",
     )
-    deadline = resolve_float_knob(
+    deadline = resolve_int_knob(
         cli_value=None,
         env_key="FABRIC_DW_RETRY_DEADLINE_S",
         env=env,

@@ -120,16 +120,16 @@ def set_max_429_retries_cmd(value: int) -> None:
 
 
 @set_group.command("retry-deadline")
-@click.argument("value", type=click.FloatRange(min=0.1))
-def set_retry_deadline_cmd(value: float) -> None:
+@click.argument("value", type=click.IntRange(min=1))
+def set_retry_deadline_cmd(value: int) -> None:
     """Set the combined 429+5xx retry wall-clock deadline in seconds."""
     set_default("retry_deadline_s", str(value))
     click.echo(f"Default retry_deadline_s set to {value}.")
 
 
 @set_group.command("sql-retry-deadline")
-@click.argument("value", type=click.FloatRange(min=0.1))
-def set_sql_retry_deadline_cmd(value: float) -> None:
+@click.argument("value", type=click.IntRange(min=1))
+def set_sql_retry_deadline_cmd(value: int) -> None:
     """Set the SQL/TDS connect+execute retry wall-clock budget in seconds."""
     set_default("sql_retry_deadline_s", str(value))
     click.echo(f"Default sql_retry_deadline_s set to {value}.")
@@ -294,14 +294,14 @@ def unset_max_429_retries_cmd() -> None:
 
 @unset_group.command("retry-deadline")
 def unset_retry_deadline_cmd() -> None:
-    """Clear the retry_deadline_s default (revert to built-in 300.0)."""
+    """Clear the retry_deadline_s default (revert to built-in 300)."""
     set_default("retry_deadline_s", None)
     click.echo("Default retry_deadline_s cleared.")
 
 
 @unset_group.command("sql-retry-deadline")
 def unset_sql_retry_deadline_cmd() -> None:
-    """Clear the sql_retry_deadline_s default (revert to built-in 120.0)."""
+    """Clear the sql_retry_deadline_s default (revert to built-in 120)."""
     set_default("sql_retry_deadline_s", None)
     click.echo("Default sql_retry_deadline_s cleared.")
 

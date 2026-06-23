@@ -339,12 +339,13 @@ def test_round_trip_max_429_retries(tmp_path: Path) -> None:
 
 
 def test_round_trip_retry_deadline_s(tmp_path: Path) -> None:
-    """retry_deadline_s is saved and loaded as a float."""
+    """retry_deadline_s is saved and loaded as an int."""
     path = tmp_path / "config.toml"
-    cfg = UserConfig(defaults=Defaults(retry_deadline_s=600.0))
+    cfg = UserConfig(defaults=Defaults(retry_deadline_s=600))
     save_config(cfg, path)
     loaded = load_config(path)
-    assert loaded.defaults.retry_deadline_s == 600.0
+    assert loaded.defaults.retry_deadline_s == 600
+    assert isinstance(loaded.defaults.retry_deadline_s, int)
     assert loaded.defaults.max_429_retries is None
 
 
@@ -356,7 +357,7 @@ def test_round_trip_all_four_defaults(tmp_path: Path) -> None:
             workspace="SalesWS",
             warehouse="SalesDW",
             max_429_retries=7,
-            retry_deadline_s=180.0,
+            retry_deadline_s=180,
         )
     )
     save_config(cfg, path)
@@ -364,7 +365,7 @@ def test_round_trip_all_four_defaults(tmp_path: Path) -> None:
     assert loaded.defaults.workspace == "SalesWS"
     assert loaded.defaults.warehouse == "SalesDW"
     assert loaded.defaults.max_429_retries == 7
-    assert loaded.defaults.retry_deadline_s == 180.0
+    assert loaded.defaults.retry_deadline_s == 180
 
 
 def test_set_default_max_429_retries_persists(tmp_path: Path) -> None:
@@ -378,27 +379,37 @@ def test_set_default_max_429_retries_persists(tmp_path: Path) -> None:
 
 
 def test_set_default_retry_deadline_s_persists(tmp_path: Path) -> None:
-    """set_default('retry_deadline_s', '450.0') stores 450.0 as float."""
+    """set_default('retry_deadline_s', '450') stores 450 as int."""
     path = tmp_path / "config.toml"
-    set_default("retry_deadline_s", "450.0", path)
+    set_default("retry_deadline_s", "450", path)
     loaded = load_config(path)
-    assert loaded.defaults.retry_deadline_s == 450.0
+    assert loaded.defaults.retry_deadline_s == 450
+    assert isinstance(loaded.defaults.retry_deadline_s, int)
+
+
+def test_set_default_retry_deadline_s_float_formatted_int(tmp_path: Path) -> None:
+    """set_default('retry_deadline_s', '300.0') accepts float-formatted int."""
+    path = tmp_path / "config.toml"
+    set_default("retry_deadline_s", "300.0", path)
+    loaded = load_config(path)
+    assert loaded.defaults.retry_deadline_s == 300
+    assert isinstance(loaded.defaults.retry_deadline_s, int)
 
 
 def test_set_default_max_429_retries_none_clears(tmp_path: Path) -> None:
     """set_default('max_429_retries', None) clears the key."""
     path = tmp_path / "config.toml"
-    save_config(UserConfig(defaults=Defaults(max_429_retries=5, retry_deadline_s=120.0)), path)
+    save_config(UserConfig(defaults=Defaults(max_429_retries=5, retry_deadline_s=120)), path)
     set_default("max_429_retries", None, path)
     loaded = load_config(path)
     assert loaded.defaults.max_429_retries is None
-    assert loaded.defaults.retry_deadline_s == 120.0  # preserved
+    assert loaded.defaults.retry_deadline_s == 120  # preserved
 
 
 def test_set_default_retry_deadline_s_none_clears(tmp_path: Path) -> None:
     """set_default('retry_deadline_s', None) clears the key."""
     path = tmp_path / "config.toml"
-    save_config(UserConfig(defaults=Defaults(max_429_retries=8, retry_deadline_s=200.0)), path)
+    save_config(UserConfig(defaults=Defaults(max_429_retries=8, retry_deadline_s=200)), path)
     set_default("retry_deadline_s", None, path)
     loaded = load_config(path)
     assert loaded.defaults.retry_deadline_s is None
@@ -446,9 +457,9 @@ def test_set_default_read_error_does_not_clobber_existing_config(tmp_path: Path)
 
 @pytest.mark.parametrize("val", ["inf", "-inf", "nan"])
 def test_set_default_retry_deadline_s_non_finite_raises(tmp_path: Path, val: str) -> None:
-    """Non-finite values for retry_deadline_s must raise ValueError."""
+    """Non-finite values for retry_deadline_s must raise ValueError (cannot convert)."""
     path = tmp_path / "config.toml"
-    with pytest.raises(ValueError, match="finite"):
+    with pytest.raises(ValueError, match=r"cannot be converted|finite"):
         set_default("retry_deadline_s", val, path)
 
 
@@ -478,10 +489,10 @@ def test_set_default_max_429_retries_below_minimum_raises(tmp_path: Path) -> Non
 
 
 def test_set_default_retry_deadline_s_below_minimum_raises(tmp_path: Path) -> None:
-    """retry_deadline_s must be >= 0.1; 0.0 raises ValueError."""
+    """retry_deadline_s must be >= 1; 0 raises ValueError."""
     path = tmp_path / "config.toml"
-    with pytest.raises(ValueError, match=r">= 0\.1"):
-        set_default("retry_deadline_s", "0.0", path)
+    with pytest.raises(ValueError, match=r">= 1"):
+        set_default("retry_deadline_s", "0", path)
 
 
 # ---------------------------------------------------------------------------
@@ -490,12 +501,13 @@ def test_set_default_retry_deadline_s_below_minimum_raises(tmp_path: Path) -> No
 
 
 def test_round_trip_sql_retry_deadline_s(tmp_path: Path) -> None:
-    """sql_retry_deadline_s is saved and loaded as a float."""
+    """sql_retry_deadline_s is saved and loaded as an int."""
     path = tmp_path / "config.toml"
-    cfg = UserConfig(defaults=Defaults(sql_retry_deadline_s=300.0))
+    cfg = UserConfig(defaults=Defaults(sql_retry_deadline_s=300))
     save_config(cfg, path)
     loaded = load_config(path)
-    assert loaded.defaults.sql_retry_deadline_s == 300.0
+    assert loaded.defaults.sql_retry_deadline_s == 300
+    assert isinstance(loaded.defaults.sql_retry_deadline_s, int)
     assert loaded.defaults.sql_retry_executes is None
 
 
@@ -525,8 +537,8 @@ def test_round_trip_all_six_defaults(tmp_path: Path) -> None:
             workspace="SalesWS",
             warehouse="SalesDW",
             max_429_retries=7,
-            retry_deadline_s=180.0,
-            sql_retry_deadline_s=240.0,
+            retry_deadline_s=180,
+            sql_retry_deadline_s=240,
             sql_retry_executes=True,
         )
     )
@@ -535,26 +547,36 @@ def test_round_trip_all_six_defaults(tmp_path: Path) -> None:
     assert loaded.defaults.workspace == "SalesWS"
     assert loaded.defaults.warehouse == "SalesDW"
     assert loaded.defaults.max_429_retries == 7
-    assert loaded.defaults.retry_deadline_s == 180.0
-    assert loaded.defaults.sql_retry_deadline_s == 240.0
+    assert loaded.defaults.retry_deadline_s == 180
+    assert loaded.defaults.sql_retry_deadline_s == 240
     assert loaded.defaults.sql_retry_executes is True
 
 
 def test_set_default_sql_retry_deadline_s_persists(tmp_path: Path) -> None:
-    """set_default('sql_retry_deadline_s', '300.0') stores 300.0 and preserves other keys."""
+    """set_default('sql_retry_deadline_s', '300') stores 300 as int and preserves other keys."""
     path = tmp_path / "config.toml"
     save_config(UserConfig(defaults=Defaults(workspace="WS")), path)
+    set_default("sql_retry_deadline_s", "300", path)
+    loaded = load_config(path)
+    assert loaded.defaults.sql_retry_deadline_s == 300
+    assert isinstance(loaded.defaults.sql_retry_deadline_s, int)
+    assert loaded.defaults.workspace == "WS"  # preserved
+
+
+def test_set_default_sql_retry_deadline_s_float_formatted_int(tmp_path: Path) -> None:
+    """set_default('sql_retry_deadline_s', '300.0') accepts float-formatted int."""
+    path = tmp_path / "config.toml"
     set_default("sql_retry_deadline_s", "300.0", path)
     loaded = load_config(path)
-    assert loaded.defaults.sql_retry_deadline_s == 300.0
-    assert loaded.defaults.workspace == "WS"  # preserved
+    assert loaded.defaults.sql_retry_deadline_s == 300
+    assert isinstance(loaded.defaults.sql_retry_deadline_s, int)
 
 
 def test_set_default_sql_retry_deadline_s_none_clears(tmp_path: Path) -> None:
     """set_default('sql_retry_deadline_s', None) clears the key."""
     path = tmp_path / "config.toml"
     save_config(
-        UserConfig(defaults=Defaults(sql_retry_deadline_s=300.0, sql_retry_executes=True)), path
+        UserConfig(defaults=Defaults(sql_retry_deadline_s=300, sql_retry_executes=True)), path
     )
     set_default("sql_retry_deadline_s", None, path)
     loaded = load_config(path)
@@ -570,17 +592,17 @@ def test_set_default_sql_retry_deadline_s_bad_value_raises(tmp_path: Path) -> No
 
 
 def test_set_default_sql_retry_deadline_s_below_minimum_raises(tmp_path: Path) -> None:
-    """sql_retry_deadline_s must be >= 0.1; 0.0 raises ValueError."""
+    """sql_retry_deadline_s must be >= 1; 0 raises ValueError."""
     path = tmp_path / "config.toml"
-    with pytest.raises(ValueError, match=r">= 0\.1"):
-        set_default("sql_retry_deadline_s", "0.0", path)
+    with pytest.raises(ValueError, match=r">= 1"):
+        set_default("sql_retry_deadline_s", "0", path)
 
 
 @pytest.mark.parametrize("val", ["inf", "-inf", "nan"])
 def test_set_default_sql_retry_deadline_s_non_finite_raises(tmp_path: Path, val: str) -> None:
-    """Non-finite values for sql_retry_deadline_s must raise ValueError."""
+    """Non-finite values for sql_retry_deadline_s must raise ValueError (cannot convert)."""
     path = tmp_path / "config.toml"
-    with pytest.raises(ValueError, match="finite"):
+    with pytest.raises(ValueError, match=r"cannot be converted|finite"):
         set_default("sql_retry_deadline_s", val, path)
 
 
@@ -604,7 +626,7 @@ def test_set_default_sql_retry_executes_none_clears(tmp_path: Path) -> None:
     """set_default('sql_retry_executes', None) clears the key."""
     path = tmp_path / "config.toml"
     save_config(
-        UserConfig(defaults=Defaults(sql_retry_executes=True, sql_retry_deadline_s=120.0)), path
+        UserConfig(defaults=Defaults(sql_retry_executes=True, sql_retry_deadline_s=120)), path
     )
     set_default("sql_retry_executes", None, path)
     loaded = load_config(path)

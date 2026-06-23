@@ -186,18 +186,18 @@ class TestConfigSetRetryBudget:
 
     def test_set_retry_deadline_exits_zero(self, runner: CliRunner, config_env: Path) -> None:
         _ = config_env
-        result = runner.invoke(cli, ["config", "set", "retry-deadline", "600.0"])
+        result = runner.invoke(cli, ["config", "set", "retry-deadline", "600"])
         assert result.exit_code == 0
 
     def test_set_retry_deadline_writes_file(self, runner: CliRunner, config_env: Path) -> None:
         _ = config_env
-        runner.invoke(cli, ["config", "set", "retry-deadline", "450.5"])
+        runner.invoke(cli, ["config", "set", "retry-deadline", "450"])
         cfg = load_config(default_path())
-        assert cfg.defaults.retry_deadline_s == 450.5
+        assert cfg.defaults.retry_deadline_s == 450
 
     def test_set_retry_deadline_invalid_rejected(self, runner: CliRunner, config_env: Path) -> None:
         _ = config_env
-        result = runner.invoke(cli, ["config", "set", "retry-deadline", "0.0"])
+        result = runner.invoke(cli, ["config", "set", "retry-deadline", "0"])
         assert result.exit_code != 0
 
     def test_set_retries_preserves_workspace(self, runner: CliRunner, config_env: Path) -> None:
@@ -219,16 +219,16 @@ class TestConfigUnsetRetryBudget:
     def test_unset_max_429_retries_clears_key(self, runner: CliRunner, config_env: Path) -> None:
         _ = config_env
         runner.invoke(cli, ["config", "set", "max-429-retries", "8"])
-        runner.invoke(cli, ["config", "set", "retry-deadline", "200.0"])
+        runner.invoke(cli, ["config", "set", "retry-deadline", "200"])
         runner.invoke(cli, ["config", "unset", "max-429-retries"])
         cfg = load_config(default_path())
         assert cfg.defaults.max_429_retries is None
-        assert cfg.defaults.retry_deadline_s == 200.0  # preserved
+        assert cfg.defaults.retry_deadline_s == 200  # preserved
 
     def test_unset_retry_deadline_clears_key(self, runner: CliRunner, config_env: Path) -> None:
         _ = config_env
         runner.invoke(cli, ["config", "set", "max-429-retries", "6"])
-        runner.invoke(cli, ["config", "set", "retry-deadline", "300.0"])
+        runner.invoke(cli, ["config", "set", "retry-deadline", "300"])
         runner.invoke(cli, ["config", "unset", "retry-deadline"])
         cfg = load_config(default_path())
         assert cfg.defaults.retry_deadline_s is None
@@ -239,12 +239,12 @@ class TestConfigShowRetryBudget:
     def test_show_includes_retry_budget_fields(self, runner: CliRunner, config_env: Path) -> None:
         _ = config_env
         runner.invoke(cli, ["config", "set", "max-429-retries", "10"])
-        runner.invoke(cli, ["config", "set", "retry-deadline", "300.0"])
+        runner.invoke(cli, ["config", "set", "retry-deadline", "300"])
         result = runner.invoke(cli, ["--json", "config", "show"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["defaults"]["max_429_retries"] == 10
-        assert data["defaults"]["retry_deadline_s"] == 300.0
+        assert data["defaults"]["retry_deadline_s"] == 300
 
     def test_show_null_when_not_set(self, runner: CliRunner, config_env: Path) -> None:
         _ = config_env
@@ -263,20 +263,20 @@ class TestConfigShowRetryBudget:
 class TestConfigSetSqlRetry:
     def test_set_sql_retry_deadline_exits_zero(self, runner: CliRunner, config_env: Path) -> None:
         _ = config_env
-        result = runner.invoke(cli, ["config", "set", "sql-retry-deadline", "300.0"])
+        result = runner.invoke(cli, ["config", "set", "sql-retry-deadline", "300"])
         assert result.exit_code == 0
 
     def test_set_sql_retry_deadline_writes_file(self, runner: CliRunner, config_env: Path) -> None:
         _ = config_env
-        runner.invoke(cli, ["config", "set", "sql-retry-deadline", "250.5"])
+        runner.invoke(cli, ["config", "set", "sql-retry-deadline", "250"])
         cfg = load_config(default_path())
-        assert cfg.defaults.sql_retry_deadline_s == 250.5
+        assert cfg.defaults.sql_retry_deadline_s == 250
 
     def test_set_sql_retry_deadline_invalid_rejected(
         self, runner: CliRunner, config_env: Path
     ) -> None:
         _ = config_env
-        result = runner.invoke(cli, ["config", "set", "sql-retry-deadline", "0.0"])
+        result = runner.invoke(cli, ["config", "set", "sql-retry-deadline", "0"])
         assert result.exit_code != 0
 
     def test_set_sql_retry_deadline_preserves_workspace(
@@ -284,9 +284,9 @@ class TestConfigSetSqlRetry:
     ) -> None:
         _ = config_env
         runner.invoke(cli, ["config", "set", "workspace", "MyWS"])
-        runner.invoke(cli, ["config", "set", "sql-retry-deadline", "180.0"])
+        runner.invoke(cli, ["config", "set", "sql-retry-deadline", "180"])
         cfg = load_config(default_path())
-        assert cfg.defaults.sql_retry_deadline_s == 180.0
+        assert cfg.defaults.sql_retry_deadline_s == 180
         assert cfg.defaults.workspace == "MyWS"
 
     def test_set_sql_retry_executes_true_exits_zero(
@@ -346,23 +346,23 @@ class TestConfigUnsetSqlRetry:
 
     def test_unset_sql_retry_executes_clears_key(self, runner: CliRunner, config_env: Path) -> None:
         _ = config_env
-        runner.invoke(cli, ["config", "set", "sql-retry-deadline", "150.0"])
+        runner.invoke(cli, ["config", "set", "sql-retry-deadline", "150"])
         runner.invoke(cli, ["config", "set", "sql-retry-executes", "true"])
         runner.invoke(cli, ["config", "unset", "sql-retry-executes"])
         cfg = load_config(default_path())
         assert cfg.defaults.sql_retry_executes is None
-        assert cfg.defaults.sql_retry_deadline_s == 150.0  # preserved
+        assert cfg.defaults.sql_retry_deadline_s == 150  # preserved
 
 
 class TestConfigShowSqlRetry:
     def test_show_includes_sql_retry_fields(self, runner: CliRunner, config_env: Path) -> None:
         _ = config_env
-        runner.invoke(cli, ["config", "set", "sql-retry-deadline", "300.0"])
+        runner.invoke(cli, ["config", "set", "sql-retry-deadline", "300"])
         runner.invoke(cli, ["config", "set", "sql-retry-executes", "true"])
         result = runner.invoke(cli, ["--json", "config", "show"])
         assert result.exit_code == 0
         data = json.loads(result.output)
-        assert data["defaults"]["sql_retry_deadline_s"] == 300.0
+        assert data["defaults"]["sql_retry_deadline_s"] == 300
         assert data["defaults"]["sql_retry_executes"] is True
 
     def test_show_null_when_sql_retry_not_set(self, runner: CliRunner, config_env: Path) -> None:
