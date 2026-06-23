@@ -14,6 +14,8 @@ import click
 from fabric_dw import __version__
 from fabric_dw.auth import CredentialMode
 from fabric_dw.cli._context import CliContext
+from fabric_dw.config import VALID_AUTH_MODES, load_config
+from fabric_dw.config_resolve import resolve_auth_mode
 from fabric_dw.logging import setup_logging
 from fabric_dw.telemetry import (
     maybe_print_first_run_notice,
@@ -558,9 +560,12 @@ class _LazyGroup(_InstrumentedGroup):
     "--auth",
     "auth_mode",
     type=click.Choice([m.value for m in CredentialMode], case_sensitive=False),
-    default=CredentialMode.DEFAULT.value,
-    show_default=True,
-    help="Authentication mode.",
+    default=None,
+    show_default=False,
+    help=(
+        "Authentication mode (default: 'default', or as configured by "
+        "FABRIC_AUTH / config file [defaults] auth_mode)."
+    ),
 )
 @click.option(
     "-w",
@@ -612,7 +617,7 @@ class _LazyGroup(_InstrumentedGroup):
 def cli(
     ctx: click.Context,
     json_output: bool,
-    auth_mode: str,
+    auth_mode: str | None,
     workspace: str | None,
     yes: bool,
     verbose: bool,
@@ -622,10 +627,25 @@ def cli(
     """Microsoft Fabric Data Warehouse CLI & MCP Server."""
     setup_logging(logging.DEBUG if verbose else logging.INFO)
 
+    # Resolve the credential mode via the shared 4-layer helper:
+    #   --auth flag (explicit) > FABRIC_AUTH env > [defaults] auth_mode > built-in default.
+    # auth_mode is None when the user did NOT pass --auth; a non-None value
+    # means the flag was explicitly set on the command line (Click's sentinel
+    # default=None guarantees this without needing ParameterSource).
+    cfg = load_config()
+    try:
+        resolved_mode = resolve_auth_mode(
+            cli_value=auth_mode,
+            config_value=cfg.defaults.auth_mode,
+            valid_modes=VALID_AUTH_MODES,
+        )
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+
     ctx.obj = CliContext(
         json_output=json_output,
         yes=yes,
-        auth=CredentialMode(auth_mode),
+        auth=CredentialMode(resolved_mode),
         workspace=workspace,
         max_429_retries=max_429_retries,
         retry_deadline_s=retry_deadline,

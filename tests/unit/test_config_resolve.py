@@ -6,7 +6,9 @@ import math
 
 import pytest
 
-from fabric_dw.config_resolve import resolve_float_knob, resolve_int_knob
+from fabric_dw.config_resolve import resolve_auth_mode, resolve_float_knob, resolve_int_knob
+
+_VALID = frozenset({"default", "sp", "interactive"})
 
 # ---------------------------------------------------------------------------
 # resolve_int_knob
@@ -263,3 +265,161 @@ class TestResolveFloatKnob:
             knob_name="test_knob",
         )
         assert result == pytest.approx(1.23)
+
+
+# ---------------------------------------------------------------------------
+# resolve_auth_mode
+# ---------------------------------------------------------------------------
+
+
+class TestResolveAuthMode:
+    """Unit tests for the 4-layer credential-mode resolution helper."""
+
+    # --- precedence ----------------------------------------------------------
+
+    def test_cli_wins_over_env_and_config(self) -> None:
+        """Explicit --auth flag overrides env and config."""
+        result = resolve_auth_mode(
+            cli_value="sp",
+            env={"FABRIC_AUTH": "interactive"},
+            config_value="interactive",
+            valid_modes=_VALID,
+        )
+        assert result == "sp"
+
+    def test_env_wins_over_config(self) -> None:
+        """FABRIC_AUTH env var overrides config when cli_value is None."""
+        result = resolve_auth_mode(
+            cli_value=None,
+            env={"FABRIC_AUTH": "interactive"},
+            config_value="sp",
+            valid_modes=_VALID,
+        )
+        assert result == "interactive"
+
+    def test_config_wins_over_builtin_default(self) -> None:
+        """Config value is used when cli_value and env are absent."""
+        result = resolve_auth_mode(
+            cli_value=None,
+            env={},
+            config_value="sp",
+            valid_modes=_VALID,
+        )
+        assert result == "sp"
+
+    def test_builtin_default_when_all_absent(self) -> None:
+        """Returns 'default' when no source supplies a value."""
+        result = resolve_auth_mode(
+            cli_value=None,
+            env={},
+            config_value=None,
+            valid_modes=_VALID,
+        )
+        assert result == "default"
+
+    # --- cli_value sentinel --------------------------------------------------
+
+    def test_cli_none_does_not_win(self) -> None:
+        """cli_value=None means flag was not set; falls through to env."""
+        result = resolve_auth_mode(
+            cli_value=None,
+            env={"FABRIC_AUTH": "sp"},
+            config_value=None,
+            valid_modes=_VALID,
+        )
+        assert result == "sp"
+
+    # --- case-insensitivity --------------------------------------------------
+
+    @pytest.mark.parametrize(
+        "raw", ["DEFAULT", "Default", "SP", "Sp", "INTERACTIVE", "Interactive"]
+    )
+    def test_cli_value_case_insensitive(self, raw: str) -> None:
+        """--auth is case-insensitive; result is always lowercase."""
+        result = resolve_auth_mode(
+            cli_value=raw,
+            env={},
+            config_value=None,
+            valid_modes=_VALID,
+        )
+        assert result == raw.lower()
+
+    @pytest.mark.parametrize("raw", ["DEFAULT", "SP", "INTERACTIVE"])
+    def test_env_value_case_insensitive(self, raw: str) -> None:
+        """FABRIC_AUTH is case-insensitive; result is always lowercase."""
+        result = resolve_auth_mode(
+            cli_value=None,
+            env={"FABRIC_AUTH": raw},
+            config_value=None,
+            valid_modes=_VALID,
+        )
+        assert result == raw.lower()
+
+    # --- empty / whitespace env fall-through ---------------------------------
+
+    @pytest.mark.parametrize("val", ["", "  ", "\t"])
+    def test_empty_env_falls_through_to_config(self, val: str) -> None:
+        """Empty/whitespace FABRIC_AUTH falls through to config, not an error."""
+        result = resolve_auth_mode(
+            cli_value=None,
+            env={"FABRIC_AUTH": val},
+            config_value="sp",
+            valid_modes=_VALID,
+        )
+        assert result == "sp"
+
+    @pytest.mark.parametrize("val", ["", "  "])
+    def test_empty_env_falls_through_to_default(self, val: str) -> None:
+        """Empty/whitespace FABRIC_AUTH with no config yields 'default'."""
+        result = resolve_auth_mode(
+            cli_value=None,
+            env={"FABRIC_AUTH": val},
+            config_value=None,
+            valid_modes=_VALID,
+        )
+        assert result == "default"
+
+    # --- invalid value error handling ----------------------------------------
+
+    def test_invalid_env_raises_value_error(self) -> None:
+        """Unrecognised non-empty FABRIC_AUTH raises ValueError."""
+        with pytest.raises(ValueError, match="invalid FABRIC_AUTH"):
+            resolve_auth_mode(
+                cli_value=None,
+                env={"FABRIC_AUTH": "not-a-mode"},
+                config_value=None,
+                valid_modes=_VALID,
+            )
+
+    def test_invalid_cli_value_raises_value_error(self) -> None:
+        """Unrecognised --auth value raises ValueError."""
+        with pytest.raises(ValueError, match="invalid --auth"):
+            resolve_auth_mode(
+                cli_value="not-a-mode",
+                env={},
+                config_value=None,
+                valid_modes=_VALID,
+            )
+
+    def test_invalid_config_value_falls_back_to_default(self) -> None:
+        """Unrecognised config value falls through to built-in default with a warning."""
+        result = resolve_auth_mode(
+            cli_value=None,
+            env={},
+            config_value="bogus",
+            valid_modes=_VALID,
+        )
+        assert result == "default"
+
+    # --- os.environ fallback -------------------------------------------------
+
+    def test_defaults_env_to_os_environ(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """When env=None, FABRIC_AUTH is read from os.environ."""
+        monkeypatch.setenv("FABRIC_AUTH", "interactive")
+        result = resolve_auth_mode(
+            cli_value=None,
+            env=None,
+            config_value=None,
+            valid_modes=_VALID,
+        )
+        assert result == "interactive"
