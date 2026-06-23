@@ -696,7 +696,7 @@ def _validate_uuid(key: str, value: str) -> None:
         raise ValueError(
             f"{key} {value!r} is not a valid UUID; "
             "expected a standard UUID format (e.g. xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)"
-        )
+        ) from None
 
 
 def _set_auth_tenant_id(current: UserConfig, value: str | None) -> UserConfig:
