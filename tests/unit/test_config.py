@@ -1401,3 +1401,14 @@ def test_set_config_auth_none_clears(tmp_path: Path, key: str) -> None:
     set_config("auth", key, None, path)
     loaded = load_config(path)
     assert getattr(loaded.auth, key) is None
+
+
+def test_validate_uuid_non_str_raises_value_error(tmp_path: Path) -> None:
+    """Non-string input raises ValueError, not TypeError/AttributeError.
+
+    uuid.UUID() raises TypeError for non-str inputs; _validate_uuid must
+    normalise that to ValueError so callers always see a consistent type.
+    """
+    path = tmp_path / "config.toml"
+    with pytest.raises(ValueError, match="tenant_id"):
+        set_config("auth", "tenant_id", 12345, path)  # type: ignore[arg-type]

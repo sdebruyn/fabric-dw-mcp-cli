@@ -690,7 +690,9 @@ def _validate_uuid(key: str, value: str) -> None:
     """Raise ValueError if *value* is not a valid UUID string."""
     try:
         uuid.UUID(value)
-    except ValueError:
+    except (ValueError, TypeError, AttributeError):
+        # uuid.UUID raises TypeError/AttributeError for non-str inputs; normalise
+        # them all to ValueError so callers always see a consistent exception type.
         raise ValueError(
             f"{key} {value!r} is not a valid UUID; "
             "expected a standard UUID format (e.g. xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)"
