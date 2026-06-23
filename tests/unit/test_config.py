@@ -1083,98 +1083,98 @@ def test_load_config_invalid_logging_level_valid_level_preserved(tmp_path: Path)
 
 
 # ---------------------------------------------------------------------------
-# sql_pool — round-trip and set_default coercion
+# conn_pooling — round-trip and set_default coercion
 # ---------------------------------------------------------------------------
 
 
-def test_round_trip_sql_pool_true(tmp_path: Path) -> None:
-    """sql_pool=True is saved and loaded as a bool."""
+def test_round_trip_conn_pooling_true(tmp_path: Path) -> None:
+    """conn_pooling=True is saved and loaded as a bool."""
     path = tmp_path / "config.toml"
-    cfg = UserConfig(defaults=Defaults(sql_pool=True))
+    cfg = UserConfig(defaults=Defaults(conn_pooling=True))
     save_config(cfg, path)
     loaded = load_config(path)
-    assert loaded.defaults.sql_pool is True
+    assert loaded.defaults.conn_pooling is True
 
 
-def test_round_trip_sql_pool_false(tmp_path: Path) -> None:
-    """sql_pool=False is saved and loaded as a bool."""
+def test_round_trip_conn_pooling_false(tmp_path: Path) -> None:
+    """conn_pooling=False is saved and loaded as a bool."""
     path = tmp_path / "config.toml"
-    cfg = UserConfig(defaults=Defaults(sql_pool=False))
+    cfg = UserConfig(defaults=Defaults(conn_pooling=False))
     save_config(cfg, path)
     loaded = load_config(path)
-    assert loaded.defaults.sql_pool is False
+    assert loaded.defaults.conn_pooling is False
 
 
-def test_round_trip_sql_pool_none(tmp_path: Path) -> None:
-    """sql_pool=None is not written to the file."""
+def test_round_trip_conn_pooling_none(tmp_path: Path) -> None:
+    """conn_pooling=None is not written to the file."""
     path = tmp_path / "config.toml"
-    cfg = UserConfig(defaults=Defaults(workspace="WS", sql_pool=None))
+    cfg = UserConfig(defaults=Defaults(workspace="WS", conn_pooling=None))
     save_config(cfg, path)
     content = path.read_text(encoding="utf-8")
-    assert "sql_pool" not in content
+    assert "conn_pooling" not in content
     loaded = load_config(path)
-    assert loaded.defaults.sql_pool is None
+    assert loaded.defaults.conn_pooling is None
     assert loaded.defaults.workspace == "WS"
 
 
-def test_set_default_sql_pool_true_persists(tmp_path: Path) -> None:
-    """set_default('sql_pool', 'true') stores True."""
+def test_set_default_conn_pooling_true_persists(tmp_path: Path) -> None:
+    """set_default('conn_pooling', 'true') stores True."""
     path = tmp_path / "config.toml"
-    set_default("sql_pool", "true", path)
+    set_default("conn_pooling", "true", path)
     loaded = load_config(path)
-    assert loaded.defaults.sql_pool is True
+    assert loaded.defaults.conn_pooling is True
 
 
-def test_set_default_sql_pool_false_persists(tmp_path: Path) -> None:
-    """set_default('sql_pool', 'false') stores False."""
+def test_set_default_conn_pooling_false_persists(tmp_path: Path) -> None:
+    """set_default('conn_pooling', 'false') stores False."""
     path = tmp_path / "config.toml"
-    set_default("sql_pool", "false", path)
+    set_default("conn_pooling", "false", path)
     loaded = load_config(path)
-    assert loaded.defaults.sql_pool is False
+    assert loaded.defaults.conn_pooling is False
 
 
-def test_set_default_sql_pool_none_clears(tmp_path: Path) -> None:
-    """set_default('sql_pool', None) clears the key."""
+def test_set_default_conn_pooling_none_clears(tmp_path: Path) -> None:
+    """set_default('conn_pooling', None) clears the key."""
     path = tmp_path / "config.toml"
-    save_config(UserConfig(defaults=Defaults(sql_pool=False, sql_retry_executes=True)), path)
-    set_default("sql_pool", None, path)
+    save_config(UserConfig(defaults=Defaults(conn_pooling=False, sql_retry_executes=True)), path)
+    set_default("conn_pooling", None, path)
     loaded = load_config(path)
-    assert loaded.defaults.sql_pool is None
+    assert loaded.defaults.conn_pooling is None
     assert loaded.defaults.sql_retry_executes is True  # preserved
 
 
-def test_set_default_sql_pool_garbage_raises(tmp_path: Path) -> None:
-    """An unrecognised value for sql_pool raises ValueError."""
+def test_set_default_conn_pooling_garbage_raises(tmp_path: Path) -> None:
+    """An unrecognised value for conn_pooling raises ValueError."""
     path = tmp_path / "config.toml"
-    with pytest.raises(ValueError, match="sql_pool"):
-        set_default("sql_pool", "maybe", path)
+    with pytest.raises(ValueError, match="conn_pooling"):
+        set_default("conn_pooling", "maybe", path)
 
 
 @pytest.mark.parametrize("truthy", ["true", "True", "TRUE", "1", "yes", "on"])
-def test_set_default_sql_pool_truthy_variants(tmp_path: Path, truthy: str) -> None:
-    """All truthy string variants are accepted for sql_pool."""
+def test_set_default_conn_pooling_truthy_variants(tmp_path: Path, truthy: str) -> None:
+    """All truthy string variants are accepted for conn_pooling."""
     path = tmp_path / "config.toml"
-    set_default("sql_pool", truthy, path)
+    set_default("conn_pooling", truthy, path)
     loaded = load_config(path)
-    assert loaded.defaults.sql_pool is True
+    assert loaded.defaults.conn_pooling is True
 
 
 @pytest.mark.parametrize("falsy", ["false", "False", "FALSE", "0", "no", "off"])
-def test_set_default_sql_pool_falsy_variants(tmp_path: Path, falsy: str) -> None:
-    """All falsy string variants are accepted for sql_pool."""
+def test_set_default_conn_pooling_falsy_variants(tmp_path: Path, falsy: str) -> None:
+    """All falsy string variants are accepted for conn_pooling."""
     path = tmp_path / "config.toml"
-    set_default("sql_pool", falsy, path)
+    set_default("conn_pooling", falsy, path)
     loaded = load_config(path)
-    assert loaded.defaults.sql_pool is False
+    assert loaded.defaults.conn_pooling is False
 
 
-def test_set_default_sql_pool_preserves_other_keys(tmp_path: Path) -> None:
-    """set_default('sql_pool', ...) does not clear unrelated keys."""
+def test_set_default_conn_pooling_preserves_other_keys(tmp_path: Path) -> None:
+    """set_default('conn_pooling', ...) does not clear unrelated keys."""
     path = tmp_path / "config.toml"
     save_config(UserConfig(defaults=Defaults(workspace="WS", sql_retry_executes=True)), path)
-    set_default("sql_pool", "false", path)
+    set_default("conn_pooling", "false", path)
     loaded = load_config(path)
-    assert loaded.defaults.sql_pool is False
+    assert loaded.defaults.conn_pooling is False
     assert loaded.defaults.workspace == "WS"
     assert loaded.defaults.sql_retry_executes is True
 
@@ -1286,13 +1286,15 @@ def test_load_config_auth_mode_valid_normalised(tmp_path: Path) -> None:
 def test_set_default_auth_mode_preserves_other_keys(tmp_path: Path) -> None:
     """set_default('auth_mode', ...) does not clear unrelated keys."""
     path = tmp_path / "config.toml"
-    save_config(UserConfig(defaults=Defaults(workspace="WS", warehouse="WH", sql_pool=True)), path)
+    save_config(
+        UserConfig(defaults=Defaults(workspace="WS", warehouse="WH", conn_pooling=True)), path
+    )
     set_default("auth_mode", "interactive", path)
     loaded = load_config(path)
     assert loaded.defaults.auth_mode == "interactive"
     assert loaded.defaults.workspace == "WS"
     assert loaded.defaults.warehouse == "WH"
-    assert loaded.defaults.sql_pool is True
+    assert loaded.defaults.conn_pooling is True
 
 
 # ---------------------------------------------------------------------------
