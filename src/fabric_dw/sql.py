@@ -1363,7 +1363,7 @@ def run_query(  # noqa: PLR0913, PLR0915
     execute_attempt = 1
     # deadline is set on the first execute-phase transient failure.  The total
     # wall-clock budget for execute-phase retries matches the connect-phase
-    # budget (sql_retry_deadline_s, default 120.0 s), resolved at call-time.
+    # budget (sql_retry_deadline_s, default 120 s), resolved at call-time.
     execute_deadline: float | None = None
 
     while True:

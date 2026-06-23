@@ -631,7 +631,7 @@ def test_set_default_sql_retry_executes_none_clears(tmp_path: Path) -> None:
     set_default("sql_retry_executes", None, path)
     loaded = load_config(path)
     assert loaded.defaults.sql_retry_executes is None
-    assert loaded.defaults.sql_retry_deadline_s == 120.0  # preserved
+    assert loaded.defaults.sql_retry_deadline_s == 120  # preserved
 
 
 def test_set_default_sql_retry_executes_garbage_raises(tmp_path: Path) -> None:
@@ -686,6 +686,25 @@ def test_old_style_user_config_equals_fully_defaulted() -> None:
     old_style = UserConfig(defaults=Defaults())
     new_style = UserConfig()
     assert old_style == new_style
+
+
+def test_load_config_toml_float_deadline_coerced_to_int(tmp_path: Path) -> None:
+    """TOML float literals for deadline knobs are coerced to int by load_config.
+
+    Existing config.toml files may contain ``retry_deadline_s = 300.0`` or
+    ``sql_retry_deadline_s = 120.0`` written before the float→int migration.
+    ``load_config`` must load them as ``int`` values, not floats.
+    """
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "[defaults]\nretry_deadline_s = 300.0\nsql_retry_deadline_s = 120.0\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(path)
+    assert cfg.defaults.retry_deadline_s == 300
+    assert isinstance(cfg.defaults.retry_deadline_s, int)
+    assert cfg.defaults.sql_retry_deadline_s == 120
+    assert isinstance(cfg.defaults.sql_retry_deadline_s, int)
 
 
 # ---------------------------------------------------------------------------
