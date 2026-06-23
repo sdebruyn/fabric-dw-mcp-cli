@@ -18,7 +18,7 @@ import click
 
 from fabric_dw import auth as _auth
 from fabric_dw.cache import ItemEntry, LookupCache
-from fabric_dw.config_resolve import resolve_float_knob, resolve_int_knob
+from fabric_dw.config_resolve import resolve_int_knob
 from fabric_dw.exceptions import ConfigError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.identifiers import parse_qualified_name as _parse_qn
@@ -69,8 +69,8 @@ def coro(f: Callable[_P, Coroutine[None, None, _R]]) -> Callable[_P, _R]:
 _logger_utils = logging.getLogger("fabric_dw.cli.utils")
 
 # Minimum accepted value for retry_deadline_s — enforced in both CLI
-# (click.FloatRange) and env-var / config-file fallback paths.
-_MIN_RETRY_DEADLINE_S: float = 0.1
+# (click.IntRange) and env-var / config-file fallback paths.
+_MIN_RETRY_DEADLINE_S: int = 1
 
 
 def _resolve_max_429_retries(ctx: CliContext) -> int | None:
@@ -89,14 +89,15 @@ def _resolve_max_429_retries(ctx: CliContext) -> int | None:
     )
 
 
-def _resolve_retry_deadline_s(ctx: CliContext) -> float | None:
+def _resolve_retry_deadline_s(ctx: CliContext) -> int | None:
     """Resolve effective retry_deadline_s with precedence CLI > env > config > None.
 
     Returns *None* when no source supplies a value, letting the HTTP client use
-    its own built-in default (300.0).  Malformed, non-finite, or out-of-range
-    env/config values are logged and skipped.
+    its own built-in default (300).  Malformed or out-of-range env/config values
+    are logged and skipped.  Float-formatted integers (e.g. ``"300.0"``) from env
+    vars are accepted via ``int(float(...))``.
     """
-    return resolve_float_knob(
+    return resolve_int_knob(
         cli_value=ctx.retry_deadline_s,
         env_key="FABRIC_DW_RETRY_DEADLINE_S",
         config_value=ctx.config.defaults.retry_deadline_s,
@@ -115,9 +116,8 @@ async def build_http_client(ctx: CliContext) -> AsyncIterator[FabricHttpClient]:
     The retry budget is resolved with precedence CLI option > env var
     (``FABRIC_DW_MAX_429_RETRIES`` / ``FABRIC_DW_RETRY_DEADLINE_S``) >
     config file (``[defaults] max_429_retries`` / ``retry_deadline_s``) >
-    built-in default (10 / 300.0).  Malformed, non-finite, or out-of-range
-    env/config values are logged and skipped; the next source in the chain is
-    tried.
+    built-in default (10 / 300).  Malformed or out-of-range env/config values
+    are logged and skipped; the next source in the chain is tried.
 
     Raises:
         click.UsageError: When ``get_credential`` raises :class:`~fabric_dw.exceptions.ConfigError`

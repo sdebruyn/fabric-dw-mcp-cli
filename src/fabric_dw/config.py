@@ -13,8 +13,8 @@ The TOML shape supports multiple named sections:
     workspace = "Sales Workspace"
     warehouse = "Sales-DW"
     max_429_retries = 10
-    retry_deadline_s = 300.0
-    sql_retry_deadline_s = 120.0
+    retry_deadline_s = 300
+    sql_retry_deadline_s = 120
     sql_retry_executes = false
     auth_mode = "default"
 
@@ -108,8 +108,8 @@ class Defaults:
     workspace: str | None = None
     warehouse: str | None = None
     max_429_retries: int | None = None
-    retry_deadline_s: float | None = None
-    sql_retry_deadline_s: float | None = None
+    retry_deadline_s: int | None = None
+    sql_retry_deadline_s: int | None = None
     sql_retry_executes: bool | None = None
     sql_pool: bool | None = None
     auth_mode: str | None = None
@@ -215,10 +215,10 @@ def _parse_defaults_section(data: dict[str, object]) -> Defaults:
         workspace=workspace if isinstance(workspace, str) else None,
         warehouse=warehouse if isinstance(warehouse, str) else None,
         max_429_retries=int(raw_retries) if isinstance(raw_retries, int) else None,
-        retry_deadline_s=float(raw_deadline)
+        retry_deadline_s=int(raw_deadline)
         if isinstance(raw_deadline, (int, float)) and math.isfinite(raw_deadline)
         else None,
-        sql_retry_deadline_s=float(raw_sql_deadline)
+        sql_retry_deadline_s=int(raw_sql_deadline)
         if isinstance(raw_sql_deadline, (int, float)) and math.isfinite(raw_sql_deadline)
         else None,
         sql_retry_executes=raw_sql_executes if isinstance(raw_sql_executes, bool) else None,
@@ -492,62 +492,32 @@ def _read_defaults_locked(resolved: Path) -> Defaults:
     return _read_all_sections_locked(resolved).defaults
 
 
-_MIN_RETRY_DEADLINE_S: float = 0.1
+_MIN_RETRY_DEADLINE_S: int = 1
 
 
-def _coerce_defaults_key(  # noqa: PLR0912
-    key: str, value: str | None
-) -> tuple[int | None, float | None, bool | None]:
+def _coerce_defaults_key(key: str, value: str | None) -> tuple[int | None, bool | None]:
     """Coerce and validate a numeric/boolean defaults key.
 
-    Returns ``(coerced_int, coerced_float, coerced_bool)`` — at most one will
-    be non-``None`` for typed keys; all three are ``None`` for string keys (no
-    coercion needed) or when *value* is ``None``.
+    Returns ``(coerced_int, coerced_bool)`` — at most one will be non-``None``
+    for typed keys; both are ``None`` for string keys (no coercion needed) or
+    when *value* is ``None``.
 
     Raises:
         ValueError: If the value is not coercible or is out of range.
     """
     coerced_int: int | None = None
-    coerced_float: float | None = None
     coerced_bool: bool | None = None
     if value is not None:
-        if key == "max_429_retries":
+        if key in {"max_429_retries", "retry_deadline_s", "sql_retry_deadline_s"}:
             try:
                 coerced_int = int(float(value))
             except (ValueError, OverflowError) as exc:
+                # Catches non-numeric strings, nan (ValueError), and inf (OverflowError).
                 raise ValueError(
-                    f"max_429_retries {value!r} cannot be converted to an integer: {exc}"
+                    f"{key} {value!r} cannot be converted to an integer: {exc}"
                 ) from exc
-            if coerced_int < 1:
-                raise ValueError(f"max_429_retries must be >= 1, got {coerced_int}")
-        elif key == "retry_deadline_s":
-            try:
-                coerced_float = float(value)
-            except (ValueError, OverflowError) as exc:
-                raise ValueError(
-                    f"retry_deadline_s {value!r} cannot be converted to a float: {exc}"
-                ) from exc
-            if not math.isfinite(coerced_float):
-                raise ValueError(f"retry_deadline_s must be a finite number, got {coerced_float!r}")
-            if coerced_float < _MIN_RETRY_DEADLINE_S:
-                raise ValueError(
-                    f"retry_deadline_s must be >= {_MIN_RETRY_DEADLINE_S}, got {coerced_float}"
-                )
-        elif key == "sql_retry_deadline_s":
-            try:
-                coerced_float = float(value)
-            except (ValueError, OverflowError) as exc:
-                raise ValueError(
-                    f"sql_retry_deadline_s {value!r} cannot be converted to a float: {exc}"
-                ) from exc
-            if not math.isfinite(coerced_float):
-                raise ValueError(
-                    f"sql_retry_deadline_s must be a finite number, got {coerced_float!r}"
-                )
-            if coerced_float < _MIN_RETRY_DEADLINE_S:
-                raise ValueError(
-                    f"sql_retry_deadline_s must be >= {_MIN_RETRY_DEADLINE_S}, got {coerced_float}"
-                )
+            if coerced_int < _MIN_RETRY_DEADLINE_S:
+                raise ValueError(f"{key} must be >= {_MIN_RETRY_DEADLINE_S}, got {coerced_int}")
         elif key in {"sql_retry_executes", "sql_pool"}:
             if value.lower() in {"true", "1", "yes", "on"}:
                 coerced_bool = True
@@ -563,7 +533,7 @@ def _coerce_defaults_key(  # noqa: PLR0912
                     f"auth_mode {value!r} is not a valid credential mode; "
                     f"must be one of {valid_sorted}"
                 )
-    return coerced_int, coerced_float, coerced_bool
+    return coerced_int, coerced_bool
 
 
 # ---------------------------------------------------------------------------
@@ -580,7 +550,7 @@ def _make_defaults_setter(
     """Return a UserConfig updater for the given defaults key."""
 
     def _set(current: UserConfig, value: str | None) -> UserConfig:
-        coerced_int, coerced_float, coerced_bool = _coerce_defaults_key(key, value)
+        coerced_int, coerced_bool = _coerce_defaults_key(key, value)
         # For auth_mode, normalise to lowercase when setting (None clears the key).
         auth_mode_value: str | None
         if key == "auth_mode":
@@ -593,10 +563,10 @@ def _make_defaults_setter(
             max_429_retries=coerced_int
             if key == "max_429_retries"
             else current.defaults.max_429_retries,
-            retry_deadline_s=coerced_float
+            retry_deadline_s=coerced_int
             if key == "retry_deadline_s"
             else current.defaults.retry_deadline_s,
-            sql_retry_deadline_s=coerced_float
+            sql_retry_deadline_s=coerced_int
             if key == "sql_retry_deadline_s"
             else current.defaults.sql_retry_deadline_s,
             sql_retry_executes=coerced_bool

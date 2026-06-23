@@ -605,12 +605,12 @@ class _LazyGroup(_InstrumentedGroup):
 @click.option(
     "--retry-deadline",
     "retry_deadline",
-    type=click.FloatRange(min=0.1),
+    type=click.IntRange(min=1),
     default=None,
     metavar="SECONDS",
     help=(
         "Combined wall-clock deadline in seconds for the 429-loop and 5xx-retry budget "
-        "(default: 300.0, or as configured by FABRIC_DW_RETRY_DEADLINE_S / config file)."
+        "(default: 300, or as configured by FABRIC_DW_RETRY_DEADLINE_S / config file)."
     ),
 )
 @click.pass_context
@@ -622,7 +622,7 @@ def cli(
     yes: bool,
     verbose: bool,
     max_429_retries: int | None,
-    retry_deadline: float | None,
+    retry_deadline: int | None,
 ) -> None:
     """Microsoft Fabric Data Warehouse CLI & MCP Server."""
     setup_logging(logging.DEBUG if verbose else logging.INFO)

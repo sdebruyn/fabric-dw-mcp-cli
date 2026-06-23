@@ -47,7 +47,6 @@ import contextlib
 import functools
 import importlib
 import logging
-import math
 import os
 import re
 import threading
@@ -94,12 +93,12 @@ __all__ = [
 #
 # The loop retries up to len(_EXECUTE_RETRY_DELAYS) + 1 attempts total
 # (initial attempt + 3 retries = 4 attempts max) AND stops early if the
-# wall-clock deadline (sql_retry_deadline_s, default 120.0 s) is exceeded.
+# wall-clock deadline (sql_retry_deadline_s, default 120 s) is exceeded.
 # Both guards are applied so the worst-case bound is clearly bounded:
 #   worst case <= (len(_EXECUTE_RETRY_DELAYS) + 1) attempts
 #              x (effective deadline + SQL_QUERY_TIMEOUT_S)
 #
-# With the built-in default deadline (120.0 s):
+# With the built-in default deadline (120 s):
 #   = 4 x (120 s + 300 s) = ~1680 s (~28 minutes)
 # With FABRIC_SQL_RETRY_TIMEOUT_S=300 (integration CI):
 #   = 4 x (300 s + 300 s) = ~2400 s (~40 minutes)
@@ -116,7 +115,7 @@ _EXECUTE_RETRY_DELAYS: tuple[float, ...] = (2.0, 5.0, 10.0)
 # _with_connect_retry.  The loop keeps retrying while _is_connect_retryable
 # returns True and the elapsed time is less than this budget.
 #
-# The built-in default is 120.0 s, which covers the observed Fabric warehouse
+# The built-in default is 120 s, which covers the observed Fabric warehouse
 # warm-up window (~60-90 s) with comfortable margin.  It is configurable via
 # the FABRIC_SQL_RETRY_TIMEOUT_S env var or ``fdw config set sql-retry-deadline``.
 #
@@ -124,13 +123,13 @@ _EXECUTE_RETRY_DELAYS: tuple[float, ...] = (2.0, 5.0, 10.0)
 # before the AuthError is surfaced to the caller — because the retry loop
 # cannot distinguish "wrong credential" from "warehouse still warming up".
 # This latency is accepted: the warm-up case is far more common in production.
-_SQL_RETRY_DEADLINE_S_DEFAULT: float = 120.0
-_MIN_SQL_RETRY_DEADLINE_S: float = 0.1  # minimum accepted value for env / config
+_SQL_RETRY_DEADLINE_S_DEFAULT: int = 120
+_MIN_SQL_RETRY_DEADLINE_S: int = 1  # minimum accepted value for env / config
 
 # Backwards-compatible alias used by integration tests and the smoke-timeout invariant test.
 # The old name was _CONNECT_RETRY_TIMEOUT_S; it was renamed to _SQL_RETRY_DEADLINE_S_DEFAULT
 # when the value became configurable.  Remove after all callsites are updated.
-_CONNECT_RETRY_TIMEOUT_S: float = _SQL_RETRY_DEADLINE_S_DEFAULT
+_CONNECT_RETRY_TIMEOUT_S: int = _SQL_RETRY_DEADLINE_S_DEFAULT
 
 # Backoff delays for the connect-phase retry loop.  The delay before attempt
 # N+1 is _CONNECT_RETRY_DELAYS[min(N, len-1)], so the sequence is:
@@ -202,26 +201,27 @@ def _sql_config_cache_clear() -> None:
         _sql_config_cache = None
 
 
-def _resolve_sql_retry_deadline_s() -> float:
+def _resolve_sql_retry_deadline_s() -> int:
     """Return the effective SQL retry deadline in seconds.
 
     Resolution order (3-layer):
-    1. ``FABRIC_SQL_RETRY_TIMEOUT_S`` env var — must be a finite float >= 0.1.
-       Invalid values are ignored (warning logged) and fall through to next layer.
+    1. ``FABRIC_SQL_RETRY_TIMEOUT_S`` env var — must be an integer (or float-formatted
+       integer like ``"120.0"``) >= 1.  Invalid values are ignored (warning logged)
+       and fall through to next layer.
     2. ``config.toml`` ``[defaults].sql_retry_deadline_s``.
-    3. Built-in fallback: :data:`_SQL_RETRY_DEADLINE_S_DEFAULT` (120.0 s).
+    3. Built-in fallback: :data:`_SQL_RETRY_DEADLINE_S_DEFAULT` (120 s).
     """
     raw_env = os.environ.get("FABRIC_SQL_RETRY_TIMEOUT_S")
     if raw_env is not None:
         try:
-            v = float(raw_env)
+            v = int(float(raw_env))
         except (ValueError, OverflowError):
-            _log.warning("FABRIC_SQL_RETRY_TIMEOUT_S=%r is not a valid float; ignoring", raw_env)
+            _log.warning("FABRIC_SQL_RETRY_TIMEOUT_S=%r is not a valid integer; ignoring", raw_env)
         else:
-            if math.isfinite(v) and v >= _MIN_SQL_RETRY_DEADLINE_S:
+            if v >= _MIN_SQL_RETRY_DEADLINE_S:
                 return v
             _log.warning(
-                "FABRIC_SQL_RETRY_TIMEOUT_S=%r must be a finite number >= %s; ignoring",
+                "FABRIC_SQL_RETRY_TIMEOUT_S=%r must be >= %s; ignoring",
                 raw_env,
                 _MIN_SQL_RETRY_DEADLINE_S,
             )
@@ -1363,7 +1363,7 @@ def run_query(  # noqa: PLR0913, PLR0915
     execute_attempt = 1
     # deadline is set on the first execute-phase transient failure.  The total
     # wall-clock budget for execute-phase retries matches the connect-phase
-    # budget (sql_retry_deadline_s, default 120.0 s), resolved at call-time.
+    # budget (sql_retry_deadline_s, default 120 s), resolved at call-time.
     execute_deadline: float | None = None
 
     while True:
