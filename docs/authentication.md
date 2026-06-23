@@ -131,15 +131,19 @@ The package uses [`ClientSecretCredential`](https://learn.microsoft.com/python/a
 | `AZURE_CLIENT_ID` | _(unset)_ | Required for `FABRIC_AUTH=sp` |
 | `AZURE_CLIENT_SECRET` | _(unset)_ | Required for `FABRIC_AUTH=sp` |
 
-To persist the credential mode for the **MCP server** across restarts without setting an environment variable:
+To persist the credential mode across restarts without setting an environment variable:
 
 ```shell
 fdw config set auth-mode interactive   # persist 'interactive' in config.toml
 fdw config unset auth-mode             # revert to built-in default
 ```
 
-!!! note "MCP server only"
-    `[defaults] auth_mode` is consumed by the MCP server (`fdw mcp`) only.  The `fdw` CLI credential is controlled by the `--auth` / `-a` flag and does not fall back to this config key.  A follow-up issue will unify the CLI credential path with the config default.
+Both the `fdw` CLI and the MCP server (`fdw mcp`) honour `[defaults] auth_mode`.  For
+the CLI, an explicit `--auth` flag on the command line takes the highest priority:
+
+```shell
+fdw --auth sp warehouses list   # override: use service-principal for this invocation
+```
 
 ---
 

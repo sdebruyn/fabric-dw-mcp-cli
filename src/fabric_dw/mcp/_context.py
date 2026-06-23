@@ -34,8 +34,8 @@ from typing import TYPE_CHECKING
 
 from fabric_dw import auth as _auth
 from fabric_dw.cache import LookupCache
-from fabric_dw.config import load_config
-from fabric_dw.config_resolve import resolve_float_knob, resolve_int_knob
+from fabric_dw.config import VALID_AUTH_MODES, load_config
+from fabric_dw.config_resolve import resolve_auth_mode, resolve_float_knob, resolve_int_knob
 from fabric_dw.exceptions import ConfigError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.resolver import Resolver
@@ -135,41 +135,23 @@ def build_context(
     """
     env = environ if environ is not None else os.environ
 
-    # 1. Env var (wins when non-empty/non-whitespace).
-    # Normalise to lowercase so FABRIC_AUTH=SP / Interactive / DEFAULT all work,
-    # matching the case-insensitive behaviour documented for config/CLI.
-    raw_env_mode = env.get("FABRIC_AUTH", "").strip().lower()
-
     cfg = load_config(config_path)
 
-    if raw_env_mode:
-        # Non-empty env value — must be a recognised mode or we raise.
-        try:
-            mode = _auth.CredentialMode(raw_env_mode)
-        except ValueError as exc:
-            raise ConfigError(
-                f"invalid FABRIC_AUTH value {raw_env_mode!r}; "
-                f"expected one of {[m.value for m in _auth.CredentialMode]}"
-            ) from exc
-    elif cfg.defaults.auth_mode is not None:
-        # 2. Config file value.  In normal operation this branch is guaranteed to
-        # hold an exact lowercase enum member because `_parse_defaults_section`
-        # already discards invalid values to ``None`` and lowercases valid ones.
-        # The try/except is a belt-and-suspenders guard against parse-time
-        # validation regressing (e.g. a direct ``save_config`` bypass) and cannot
-        # be reached by any test without monkeypatching ``load_config``.
-        try:
-            mode = _auth.CredentialMode(cfg.defaults.auth_mode)
-        except ValueError:
-            _logger.warning(
-                "[defaults] auth_mode %r from config is not a recognised credential mode; "
-                "falling back to built-in default.",
-                cfg.defaults.auth_mode,
-            )
-            mode = _auth.CredentialMode.DEFAULT
-    else:
-        # 3. Built-in default.
-        mode = _auth.CredentialMode.DEFAULT
+    # Resolve the credential mode via the shared 3-layer helper
+    # (env > config > built-in default).  The MCP server has no CLI flag so
+    # cli_value is always None here; the CLI path passes an explicit flag value
+    # when the user sets --auth on the command line.
+    try:
+        raw_mode = resolve_auth_mode(
+            cli_value=None,
+            env=env,
+            config_value=cfg.defaults.auth_mode,
+            valid_modes=VALID_AUTH_MODES,
+        )
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
+
+    mode = _auth.CredentialMode(raw_mode)
 
     credential = _auth.get_credential(mode)
 

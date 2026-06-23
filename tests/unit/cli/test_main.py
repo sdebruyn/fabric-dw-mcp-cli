@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 from collections.abc import Generator
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -15,8 +16,10 @@ import fabric_dw.cli as _cli_pkg
 import fabric_dw.cli._main as _main_mod
 import fabric_dw.telemetry as _tel
 import fabric_dw.telemetry as _telemetry_mod
+from fabric_dw.auth import CredentialMode
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._main import cli
+from fabric_dw.config import Defaults, UserConfig, save_config
 
 
 class TestCliHelp:
@@ -293,3 +296,149 @@ class TestHelpTelemetrySuppression:
         assert _tel.telemetry_enabled() is False, (
             "telemetry_enabled() must return False when suppress_telemetry() has been called"
         )
+
+
+# ---------------------------------------------------------------------------
+# CLI auth-mode resolution — 4-layer precedence (flag > env > config > default)
+# ---------------------------------------------------------------------------
+
+
+class TestCliAuthModeResolution:
+    """The CLI must honor [defaults] auth_mode and FABRIC_AUTH with the correct precedence.
+
+    Precedence (highest → lowest):
+      1. --auth flag (only when EXPLICITLY passed by the user)
+      2. FABRIC_AUTH environment variable (non-empty/non-whitespace)
+      3. [defaults] auth_mode in config.toml
+      4. Built-in default: CredentialMode.DEFAULT
+    """
+
+    def _captured_auth(
+        self,
+        args: list[str],
+        env: dict[str, str] | None = None,
+        config_path: Path | None = None,
+    ) -> CredentialMode:
+        """Invoke *args* and return the auth mode stored on the built CliContext.
+
+        Spies on the CliContext constructor to capture the ``auth`` kwarg.
+        ``cache --help`` triggers the root callback without any network access.
+        """
+        captured: list[CliContext] = []
+        original = _main_mod.CliContext
+
+        def _spy(**kwargs: object) -> CliContext:
+            obj = original(**kwargs)  # type: ignore[arg-type]
+            captured.append(obj)
+            return obj
+
+        # Optionally point load_config at a temp config file to test config layer.
+        with patch.object(_main_mod, "CliContext", _spy):
+            runner = CliRunner(env=env or {})
+            if config_path is not None:
+                with patch("fabric_dw.cli._main.load_config", return_value=_main_mod.load_config(config_path)):
+                    runner.invoke(cli, args)
+            else:
+                runner.invoke(cli, args)
+        assert captured, "root callback did not construct a CliContext"
+        return captured[-1].auth
+
+    def test_builtin_default_when_nothing_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """With no flag, no env, no config, auth falls back to CredentialMode.DEFAULT."""
+        monkeypatch.delenv("FABRIC_AUTH", raising=False)
+        auth = self._captured_auth(["cache", "--help"])
+        assert auth == CredentialMode.DEFAULT
+
+    def test_explicit_flag_wins_over_env_and_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """--auth flag overrides FABRIC_AUTH env var."""
+        monkeypatch.setenv("FABRIC_AUTH", "sp")
+        auth = self._captured_auth(["--auth", "interactive", "cache", "--help"])
+        assert auth == CredentialMode.INTERACTIVE
+
+    def test_env_wins_over_builtin_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """FABRIC_AUTH env var is used when --auth is absent."""
+        monkeypatch.setenv("FABRIC_AUTH", "sp")
+        auth = self._captured_auth(["cache", "--help"])
+        assert auth == CredentialMode.SERVICE_PRINCIPAL
+
+    def test_config_wins_over_builtin_default(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """[defaults] auth_mode is used when --auth and FABRIC_AUTH are absent."""
+        monkeypatch.delenv("FABRIC_AUTH", raising=False)
+        cfg_path = tmp_path / "config.toml"
+        save_config(
+            UserConfig(defaults=Defaults(auth_mode="interactive")),
+            path=cfg_path,
+        )
+        auth = self._captured_auth(["cache", "--help"], config_path=cfg_path)
+        assert auth == CredentialMode.INTERACTIVE
+
+    def test_env_wins_over_config(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """FABRIC_AUTH env var overrides [defaults] auth_mode in config."""
+        monkeypatch.setenv("FABRIC_AUTH", "sp")
+        cfg_path = tmp_path / "config.toml"
+        save_config(
+            UserConfig(defaults=Defaults(auth_mode="interactive")),
+            path=cfg_path,
+        )
+        auth = self._captured_auth(["cache", "--help"], config_path=cfg_path)
+        assert auth == CredentialMode.SERVICE_PRINCIPAL
+
+    def test_flag_wins_over_config(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Explicit --auth flag overrides [defaults] auth_mode in config."""
+        monkeypatch.delenv("FABRIC_AUTH", raising=False)
+        cfg_path = tmp_path / "config.toml"
+        save_config(
+            UserConfig(defaults=Defaults(auth_mode="interactive")),
+            path=cfg_path,
+        )
+        auth = self._captured_auth(["--auth", "sp", "cache", "--help"], config_path=cfg_path)
+        assert auth == CredentialMode.SERVICE_PRINCIPAL
+
+    def test_empty_env_falls_through_to_config(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Empty/whitespace FABRIC_AUTH falls through to config, not an error."""
+        monkeypatch.setenv("FABRIC_AUTH", "")
+        cfg_path = tmp_path / "config.toml"
+        save_config(
+            UserConfig(defaults=Defaults(auth_mode="sp")),
+            path=cfg_path,
+        )
+        auth = self._captured_auth(["cache", "--help"], config_path=cfg_path)
+        assert auth == CredentialMode.SERVICE_PRINCIPAL
+
+    def test_empty_env_falls_through_to_builtin_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Empty FABRIC_AUTH with no config yields the built-in default."""
+        monkeypatch.setenv("FABRIC_AUTH", "")
+        auth = self._captured_auth(["cache", "--help"])
+        assert auth == CredentialMode.DEFAULT
+
+    def test_invalid_env_exits_nonzero(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Unrecognised FABRIC_AUTH surfaces a clear error (non-zero exit)."""
+        monkeypatch.setenv("FABRIC_AUTH", "not-a-mode")
+        runner = CliRunner()
+        result = runner.invoke(cli, ["cache", "--help"])
+        assert result.exit_code != 0
+        assert "not-a-mode" in (result.output or "")
+
+    def test_flag_case_insensitive(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """--auth value is case-insensitive (e.g. 'SP' is accepted)."""
+        monkeypatch.delenv("FABRIC_AUTH", raising=False)
+        auth = self._captured_auth(["--auth", "SP", "cache", "--help"])
+        assert auth == CredentialMode.SERVICE_PRINCIPAL
+
+    def test_env_case_insensitive(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """FABRIC_AUTH value is case-insensitive (e.g. 'INTERACTIVE' is accepted)."""
+        monkeypatch.setenv("FABRIC_AUTH", "INTERACTIVE")
+        auth = self._captured_auth(["cache", "--help"])
+        assert auth == CredentialMode.INTERACTIVE

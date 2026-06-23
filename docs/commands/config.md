@@ -123,25 +123,24 @@ fdw config set sql-pool true
 fdw config unset sql-pool
 ```
 
-## MCP server credential mode
+## Credential mode
 
-!!! note "MCP server only"
-    `[defaults] auth_mode` is read exclusively by the **MCP server** (`fdw mcp`).  The `fdw` CLI selects its credential via the `--auth` / `-a` flag (default: `default`) and does not yet fall back to this config key.  A follow-up issue will unify the CLI credential path with the config default.
-
-The MCP server credential mode can be configured via a 3-layer stack. Resolution order (highest priority first):
+Both the `fdw` CLI and the MCP server (`fdw mcp`) resolve the credential mode from the same
+4-layer stack. Resolution order (highest priority first):
 
 | Layer | Mechanism | Description |
 |---|---|---|
-| 1 | `FABRIC_AUTH` env var | Read at server start-up; takes precedence over everything else. An empty or whitespace-only value is treated as absent (falls through to the next layer). An unrecognised non-empty value raises a configuration error. |
-| 2 | `[defaults] auth_mode` in `config.toml` | Stored with `fdw config set auth-mode`. Invalid values are discarded (treated as unset) with a warning. |
-| 3 | Built-in default | `default` (DefaultAzureCredential chain) |
+| 1 | `--auth` CLI flag | Wins when explicitly passed on the command line. |
+| 2 | `FABRIC_AUTH` env var | Wins when non-empty/non-whitespace. An empty or whitespace-only value is treated as absent (falls through to the next layer). An unrecognised non-empty value raises a configuration error. |
+| 3 | `[defaults] auth_mode` in `config.toml` | Stored with `fdw config set auth-mode`. Invalid values are discarded (treated as unset) with a warning. |
+| 4 | Built-in default | `default` (DefaultAzureCredential chain) |
 
 Valid modes: `default`, `interactive`, `sp` (case-insensitive).
 
 !!! note "Security note"
     An empty or invalid value is never silently downgraded or substituted with an unexpected credential. Empty/whitespace `FABRIC_AUTH` always falls through to config/default; a non-empty but unrecognised value raises an error.
 
-To persist a credential mode for the MCP server:
+To persist a credential mode across CLI and MCP server invocations:
 
 ```shell
 fdw config set auth-mode interactive
@@ -151,6 +150,12 @@ To revert to the built-in default:
 
 ```shell
 fdw config unset auth-mode
+```
+
+To override for a single CLI invocation (highest priority):
+
+```shell
+fdw --auth sp warehouses list
 ```
 
 See [Authentication](../authentication.md) for the full list of valid modes and their requirements.
