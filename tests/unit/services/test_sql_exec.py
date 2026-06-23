@@ -653,7 +653,7 @@ class TestExecuteLoginRetry:
     @pytest.fixture(autouse=True)
     def _setup(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Disable pooling and replace time.sleep so retries are instant."""
-        monkeypatch.setenv("FABRIC_SQL_POOL", "0")
+        monkeypatch.setenv("FABRIC_CONN_POOLING", "0")
         _sql_module.reset_pool()
         # Default: real monotonic clock (deadline never fires in fast tests).
         monkeypatch.setattr(_sql_module, "time", _make_fake_time())
