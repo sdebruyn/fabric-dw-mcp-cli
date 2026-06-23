@@ -152,6 +152,36 @@ fdw config set sql-pool true
 fdw config unset sql-pool
 ```
 
+## Telemetry
+
+`fabric-dw` collects **anonymous, opt-out** usage telemetry — it is **on by default**. Any of the following independently disables it — no events are emitted and the SDK is never imported:
+
+| Mechanism | Type | Effect |
+|---|---|---|
+| `FABRIC_DW_TELEMETRY_OPT_OUT` | env var | Any truthy value (not in `""`, `0`, `false`, `no`, `off`, case-insensitive) disables telemetry. |
+| `DO_NOT_TRACK` | env var | The [consoledonottrack.com](https://consoledonottrack.com/) standard. Any truthy value (same rules as above) disables telemetry. |
+| `[telemetry] disabled = true` in `config.toml` | config key | Set with `fdw config set telemetry disabled true`. |
+
+To opt out via the config file:
+
+```shell
+fdw config set telemetry disabled true
+```
+
+To re-enable telemetry:
+
+```shell
+fdw config set telemetry disabled false
+```
+
+To revert to the built-in default:
+
+```shell
+fdw config unset telemetry disabled
+```
+
+See [Telemetry](../telemetry.md) for the full list of collected fields and lifecycle events.
+
 ## Credential mode
 
 Both the `fdw` CLI and the MCP server (`fdw mcp`) resolve the credential mode from the same
