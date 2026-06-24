@@ -3337,19 +3337,20 @@ class TestWrapUnmappedDriverError:
         exc = Exception("connection timed out")
         assert self._wrap(exc) is None
 
-    def test_not_found_208_not_double_wrapped(self) -> None:
-        """Error 208 is already handled by map_driver_error; _wrap returns None
-        only when called in isolation, but in run_query map_driver_error fires first."""
-        # _wrap_unmapped_driver_error itself does not know about error numbers —
-        # it wraps any exception that carries ddbc_error.  The test here verifies
-        # that the wrapper is transparent: the result is FabricServerError (not
-        # NotFoundError), and the caller (run_query) always calls map_driver_error
-        # first so NotFoundError is raised before _wrap is consulted.
+    def test_not_found_208_wraps_as_fabric_server_error_in_isolation(self) -> None:
+        """_wrap_unmapped_driver_error wraps error-208 as FabricServerError when called alone.
+
+        _wrap_unmapped_driver_error does not know about error numbers — it wraps
+        any exception that carries a ddbc_error attribute.  In run_query the
+        callers invoke map_driver_error FIRST (which returns NotFoundError for 208),
+        so _wrap_unmapped_driver_error is never reached for known error numbers.
+        When called in isolation the wrapper returns FabricServerError; the
+        prioritisation is enforced by the call order in run_query, not by _wrap.
+        """
         exc = self._make_driver_exc_with_ddbc(
             "Invalid object name 'dbo.x'",
             "Error: 208 Invalid object name 'dbo.x'",
         )
-        # _wrap_unmapped_driver_error itself wraps it; map_driver_error takes priority in run_query.
         result = self._wrap(exc)
         assert isinstance(result, FabricServerError)
 

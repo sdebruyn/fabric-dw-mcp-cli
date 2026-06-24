@@ -772,23 +772,23 @@ async def copy_into_from_url(
         _mode = mode if isinstance(mode, CredentialMode) else CredentialMode.DEFAULT
         try:
             _cols, rows = run_query(target, sql, mode=_mode, commit=True, fetch="rowcount")
+        except FabricServerError as exc:
+            # run_query now wraps unmapped driver SQL errors (e.g. a column-type
+            # mismatch in the COPY INTO target) as FabricServerError.  Re-raise
+            # with the COPY INTO context prepended so the user knows which table
+            # failed, while the cleaned SQL Server message is preserved.
+            safe_msg = f"COPY INTO [{schema}].[{table}] failed: {exc}"
+            raise FabricServerError(safe_msg, is_retriable=False) from exc
         except FabricError:
-            # Already a mapped high-level error — re-raise as-is; it does not
-            # contain the raw SQL statement text.
+            # Other already-mapped high-level errors (NotFoundError,
+            # PermissionDeniedError, AuthError) are re-raised as-is; they carry
+            # their own actionable messages and do not contain SQL statement text.
             raise
         except Exception as exc:
-            # Raw driver errors (e.g. pyodbc.Error) can include the full SQL
-            # statement text in str(exc), which may contain embedded secrets.
-            # run_query already calls map_driver_error and re-raises mapped
-            # errors as FabricError subclasses; those are caught by the
-            # `except FabricError: raise` guard above.  Any exception that
-            # reaches here is therefore guaranteed to be unmapped.
-            #
-            # Surface the server-side error detail (ddbc_error) which contains
-            # the SQL Server error message but NOT the raw SQL statement text.
-            # This gives the user actionable feedback (e.g. "Column 'x' does
-            # not exist") without leaking the COPY INTO statement that may
-            # embed credential values.
+            # Truly unmapped exceptions that carry no ddbc_error attribute (e.g.
+            # network errors whose str() may embed the raw SQL statement with
+            # embedded secrets).  Surface only the safe ddbc_detail when present,
+            # otherwise suppress the detail entirely to protect credentials.
             ddbc_detail = getattr(exc, "ddbc_error", None)
             _logger.debug(
                 "copy_into_from_url: driver error executing COPY INTO (schema=%s table=%s): %s",

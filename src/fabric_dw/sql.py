@@ -1061,11 +1061,10 @@ def _wrap_unmapped_driver_error(exc: BaseException) -> FabricServerError | None:
     ddbc_error = getattr(exc, "ddbc_error", None)
     if not ddbc_error:
         return None
-    # Prefer ddbc_error as the message source: it contains the SQL Server-level
-    # text without the leading driver-noise prefix.  Fall back to the cleaned
-    # full exception string when ddbc_error is present but empty.
-    cleaned = str(ddbc_error).strip() or _clean_driver_error_message(str(exc))
-    return FabricServerError(cleaned)
+    # ddbc_error contains the SQL Server-level message without driver-noise prefix.
+    # The `if not ddbc_error` guard above already handles the empty/falsy case, so
+    # str(ddbc_error) is always non-empty here.
+    return FabricServerError(str(ddbc_error).strip(), is_retriable=False)
 
 
 def is_transient_connection_error(exc: BaseException) -> bool:
