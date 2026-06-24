@@ -2454,6 +2454,114 @@ class TestLoadCmdCreateAndLoadStorageCredential:
 
 
 # ===========================================================================
+# copy_into_from_url — error propagation (#713)
+# ===========================================================================
+
+
+class TestCopyIntoFromUrlErrorPropagation:
+    """Verify that COPY INTO errors surface actionable detail to the user (#713).
+
+    Previously, unmapped driver errors were wrapped in a FabricError with a
+    generic 'details suppressed' message.  Now:
+    - Mapped errors (PermissionDenied, Auth, NotFound) re-raise the mapped type.
+    - Unmapped errors with a ddbc_error attribute include the server-side detail.
+    - Unmapped errors without ddbc_error keep the safe fallback message.
+    """
+
+    @pytest.mark.asyncio
+    async def test_mapped_error_is_reraised_as_mapped_type(self) -> None:
+        """A driver error that map_driver_error recognises must raise the mapped type."""
+        from fabric_dw.exceptions import PermissionDeniedError  # noqa: PLC0415
+        from fabric_dw.services.load import copy_into_from_url  # noqa: PLC0415
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws",
+            database="db",
+            connection_string="server.fabric.microsoft.com",
+        )
+
+        perm_error = PermissionDeniedError("SELECT permission denied")
+
+        with (
+            patch("fabric_dw.services.load.run_query", side_effect=perm_error),
+            pytest.raises(PermissionDeniedError),
+        ):
+            await copy_into_from_url(
+                target,
+                "dbo",
+                "t",
+                "https://onelake.dfs.fabric.microsoft.com/ws/lh/Files/f.parquet",
+                file_type="PARQUET",
+            )
+
+    @pytest.mark.asyncio
+    async def test_unmapped_error_with_ddbc_error_includes_server_detail(self) -> None:
+        """An unmapped driver error with ddbc_error must include the server-side message."""
+        from fabric_dw.exceptions import FabricError  # noqa: PLC0415
+        from fabric_dw.services.load import copy_into_from_url  # noqa: PLC0415
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws",
+            database="db",
+            connection_string="server.fabric.microsoft.com",
+        )
+
+        raw_exc = RuntimeError("raw driver error with embedded SQL")
+        raw_exc.ddbc_error = "Column 'missing_col' does not exist in table 'dbo.t'"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+        with (
+            patch("fabric_dw.services.load.run_query", side_effect=raw_exc),
+            patch("fabric_dw.services.load.map_driver_error", return_value=None),
+            pytest.raises(FabricError) as exc_info,
+        ):
+            await copy_into_from_url(
+                target,
+                "dbo",
+                "t",
+                "https://onelake.dfs.fabric.microsoft.com/ws/lh/Files/f.parquet",
+                file_type="PARQUET",
+            )
+
+        assert "missing_col" in str(exc_info.value), "ddbc_error detail must appear in message"
+        assert "suppressed" not in str(exc_info.value), "message must not say 'suppressed'"
+
+    @pytest.mark.asyncio
+    async def test_unmapped_error_without_ddbc_error_uses_safe_fallback(self) -> None:
+        """An unmapped driver error without ddbc_error keeps the safe fallback message."""
+        from fabric_dw.exceptions import FabricError  # noqa: PLC0415
+        from fabric_dw.services.load import copy_into_from_url  # noqa: PLC0415
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws",
+            database="db",
+            connection_string="server.fabric.microsoft.com",
+        )
+
+        secret = "super-secret-token"  # noqa: S105
+        raw_exc = RuntimeError(f"COPY INTO ... CREDENTIAL=(SECRET='{secret}')")
+
+        with (
+            patch("fabric_dw.services.load.run_query", side_effect=raw_exc),
+            patch("fabric_dw.services.load.map_driver_error", return_value=None),
+            pytest.raises(FabricError) as exc_info,
+        ):
+            await copy_into_from_url(
+                target,
+                "dbo",
+                "t",
+                "https://onelake.dfs.fabric.microsoft.com/ws/lh/Files/f.parquet",
+                file_type="PARQUET",
+            )
+
+        error_text = str(exc_info.value)
+        assert secret not in error_text, "raw exception text (with secret) must not leak"
+        assert "suppressed" in error_text, "safe fallback message must be used"
+
+
+# ===========================================================================
 # tables columns
 # ===========================================================================
 
