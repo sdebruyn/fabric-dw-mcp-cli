@@ -8,7 +8,6 @@ from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import (
     render,
     render_permissions_table,
-    with_default_collation_for_display,
 )
 from fabric_dw.cli.commands._utils import (
     build_http_client,
@@ -93,8 +92,6 @@ async def list_cmd(
             # --json is never pruned (render ignores drop_columns for JSON).
             drop_columns = None if all_workspaces else ("workspaceId",)
             rows = [w.model_dump(by_alias=True, mode="json") for w in items]
-            if not ctx.json_output:
-                rows = [with_default_collation_for_display(r) for r in rows]
             render(
                 rows,
                 json_output=ctx.json_output,
@@ -118,10 +115,6 @@ async def get_cmd(ctx: CliContext, warehouse: str | None) -> None:
             ws_id, entry = await resolve_item(http, ws, wh)
             obj = await _warehouses_svc.get_warehouse(http, ws_id, entry.id)
             dump = obj.model_dump(by_alias=True, mode="json")
-            # Human output substitutes Fabric's effective default collation when
-            # the API returns null; --json keeps the raw API value.
-            if not ctx.json_output:
-                dump = with_default_collation_for_display(dump)
             render(dump, json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -153,8 +146,6 @@ async def create_cmd(
                 description=description,
             )
             dump = obj.model_dump(by_alias=True, mode="json")
-            if not ctx.json_output:
-                dump = with_default_collation_for_display(dump)
             render(dump, json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -194,8 +185,6 @@ async def rename_cmd(
                 old_name=entry.display_name or None,
             )
             dump = obj.model_dump(by_alias=True, mode="json")
-            if not ctx.json_output:
-                dump = with_default_collation_for_display(dump)
             render(dump, json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc

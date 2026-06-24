@@ -67,6 +67,22 @@ class Capacity(_FabricBase):
 FABRIC_DEFAULT_COLLATION = "Latin1_General_100_BIN2_UTF8"
 
 
+def _coerce_collation_str(v: object) -> str:
+    """Coerce a raw collation value to a non-empty string.
+
+    Maps ``None``, non-string values, empty strings, and whitespace-only
+    strings to :data:`FABRIC_DEFAULT_COLLATION`.  Any other non-empty string
+    is returned unchanged (stripped of surrounding whitespace).
+
+    Used as the shared implementation for the ``collation`` field validators
+    on :class:`Workspace` and :class:`Warehouse`.  Mirrors the :func:`_as_dict`
+    precedent of extracting common validator logic to a module-level helper.
+    """
+    if not isinstance(v, str):
+        return FABRIC_DEFAULT_COLLATION
+    return v.strip() or FABRIC_DEFAULT_COLLATION
+
+
 class Workspace(_FabricBase):
     """A Microsoft Fabric workspace."""
 
@@ -85,9 +101,7 @@ class Workspace(_FabricBase):
     @classmethod
     def _coerce_collation(cls, v: object) -> str:
         """Return the effective collation, defaulting to FABRIC_DEFAULT_COLLATION when absent."""
-        if not isinstance(v, str):
-            return FABRIC_DEFAULT_COLLATION
-        return v.strip() or FABRIC_DEFAULT_COLLATION
+        return _coerce_collation_str(v)
 
 
 class WarehouseKind(StrEnum):
@@ -128,9 +142,7 @@ class Warehouse(_FabricBase):
     @classmethod
     def _coerce_collation(cls, v: object) -> str:
         """Return the effective collation, defaulting to FABRIC_DEFAULT_COLLATION when absent."""
-        if not isinstance(v, str):
-            return FABRIC_DEFAULT_COLLATION
-        return v.strip() or FABRIC_DEFAULT_COLLATION
+        return _coerce_collation_str(v)
 
     @model_validator(mode="before")
     @classmethod
