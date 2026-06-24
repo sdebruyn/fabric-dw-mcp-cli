@@ -779,8 +779,17 @@ async def copy_into_from_url(
         except Exception as exc:
             # Raw driver errors (e.g. pyodbc.Error) can include the full SQL
             # statement text in str(exc), which may contain embedded secrets.
-            # Wrap in a FabricError with a safe message that never reveals the
-            # statement or any credential values.
+            # run_query already calls map_driver_error and re-raises mapped
+            # errors as FabricError subclasses; those are caught by the
+            # `except FabricError: raise` guard above.  Any exception that
+            # reaches here is therefore guaranteed to be unmapped.
+            #
+            # Surface the server-side error detail (ddbc_error) which contains
+            # the SQL Server error message but NOT the raw SQL statement text.
+            # This gives the user actionable feedback (e.g. "Column 'x' does
+            # not exist") without leaking the COPY INTO statement that may
+            # embed credential values.
+            ddbc_detail = getattr(exc, "ddbc_error", None)
             _logger.debug(
                 "copy_into_from_url: driver error executing COPY INTO (schema=%s table=%s): %s",
                 schema,
@@ -788,10 +797,15 @@ async def copy_into_from_url(
                 type(exc).__name__,
                 # Intentionally NOT logging str(exc) — may contain SQL with secrets.
             )
-            safe_msg = (
-                f"COPY INTO [{schema}].[{table}] failed: "
-                f"{type(exc).__name__} (details suppressed to protect credentials)"
-            )
+            if ddbc_detail:
+                safe_msg = (
+                    f"COPY INTO [{schema}].[{table}] failed: {type(exc).__name__}: {ddbc_detail}"
+                )
+            else:
+                safe_msg = (
+                    f"COPY INTO [{schema}].[{table}] failed: "
+                    f"{type(exc).__name__} (details suppressed to protect credentials)"
+                )
             raise FabricError(safe_msg) from exc
         # rows[0][0] is cursor.rowcount from run_query fetch="rowcount".
         # ODBC rowcount is -1 when the driver cannot determine the count;

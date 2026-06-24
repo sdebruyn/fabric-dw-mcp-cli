@@ -859,7 +859,10 @@ def _resolve_url_file_type(fmt: str | None, url: str) -> str:
     help=(
         "What to do when the target table already exists. "
         "Default: 'fail' with --create; 'append' without --create. "
-        "'truncate' and 'replace' are destructive and require confirmation."
+        "'truncate' TRUNCATEs the existing table then loads (destructive). "
+        "'replace' DROPs the existing table; combine with --create to "
+        "auto-recreate from the inferred schema (destructive). "
+        "Both 'truncate' and 'replace' require confirmation."
     ),
 )
 @click.option(
@@ -941,13 +944,15 @@ async def load_cmd(  # noqa: PLR0912, PLR0915
     JSON files are converted to Parquet client-side before staging.
 
     \b
+    Use --if-exists to control behaviour when the target table already exists:
+      fail      Error if table exists (default with --create).
+      append    Load into existing table without modifying it (default).
+      truncate  TRUNCATE the existing table, then load.  [DESTRUCTIVE]
+      replace   DROP the existing table, then load.  [DESTRUCTIVE]
+                Combine with --create to auto-recreate from the source schema.
+    \b
     With --create, the target table is auto-created from the source schema
     before loading (local files only, requires pyarrow).
-    Use --if-exists to control behaviour when the table already exists:
-      fail      Error if table exists (default with --create).
-      append    Load into existing table without modifying it.
-      truncate  TRUNCATE the existing table, then load.  [DESTRUCTIVE]
-      replace   DROP + recreate from inferred schema, then load.  [DESTRUCTIVE]
 
     \b
     Examples:
@@ -993,20 +998,32 @@ async def load_cmd(  # noqa: PLR0912, PLR0915
     if is_destructive:
         click.get_current_context().meta[_CLI_CONDITIONAL_DESTRUCTIVE_KEY] = True
 
-    # truncate/replace are only meaningful on the --create path (local files).
-    # For --url there is no schema to infer, and for --file without --create the
-    # destructive policies are undefined.  Reject early with a clear message.
-    if is_destructive and not create:
+    # truncate/replace on the --url path are not supported: there is no schema
+    # to infer and no pre-load DDL hook.  Reject early with a clear message.
+    if is_destructive and url:
         raise click.UsageError(
-            f"--if-exists {effective_if_exists} requires --create "
-            "(destructive policies only apply to the auto-create load path)."
+            f"--if-exists {effective_if_exists} is not supported with --url. "
+            "Use --file and apply the policy against the local file."
+        )
+
+    # replace without --create is a data-loss footgun: DROP TABLE succeeds but
+    # COPY INTO cannot auto-create the table, so the data is gone and the load
+    # fails.  Require --create so the table is always recreated from the source
+    # schema before loading.
+    if effective_if_exists == "replace" and not create:
+        raise click.UsageError(
+            "--if-exists replace requires --create: the existing table is dropped "
+            "and must be recreated from the source schema before loading."
         )
 
     # Destructive confirmation for truncate / replace.
     if is_destructive:
-        action = "TRUNCATE" if effective_if_exists == "truncate" else "DROP+recreate"
+        if effective_if_exists == "truncate":
+            action = f"TRUNCATE table [{schema}].[{table_name}]"
+        else:
+            action = f"DROP and recreate table [{schema}].[{table_name}]"
         if not confirm_destructive(
-            f"{action} table [{schema}].[{table_name}] before loading?",
+            f"{action} before loading?",
             yes=ctx.yes,
         ):
             click.echo("Aborted.")
@@ -1071,6 +1088,7 @@ async def load_cmd(  # noqa: PLR0912, PLR0915
                         keep_staging,
                         max_errors,
                         rejected_row_location,
+                        if_exists=effective_if_exists,
                     )
             else:
                 assert url is not None  # noqa: S101 — checked above
@@ -1116,10 +1134,21 @@ async def _load_cmd_local(
     keep_staging: bool,
     max_errors: int | None,
     rejected_row_location: str | None,
+    *,
+    if_exists: IfExistsPolicy = "append",
 ) -> CopyIntoResult:
-    """Dispatch the local-file load sub-path."""
+    """Dispatch the local-file load sub-path.
+
+    When *if_exists* is ``"truncate"`` or ``"replace"``, the target table is
+    pre-processed before the COPY INTO:
+
+    - ``"truncate"`` — ``TRUNCATE TABLE`` (data gone, schema kept).
+
+    ``"replace"`` always requires ``--create`` (rejected earlier by the CLI
+    guard), so it never reaches this helper.
+    """
     from fabric_dw import auth as _auth  # noqa: PLC0415
-    from fabric_dw.services.load import FileFormat  # noqa: PLC0415
+    from fabric_dw.services.load import FileFormat, _truncate_table_sql  # noqa: PLC0415
 
     local = Path(file_path)
     if not local.exists():
@@ -1142,6 +1171,14 @@ async def _load_cmd_local(
         if file_format == "csv"
         else None
     )
+
+    # Pre-load destructive operations (only when NOT using --create, which
+    # handles these policies itself via create_and_load).
+    # Note: "replace" always requires --create (enforced earlier) so only
+    # "truncate" can arrive here.
+    if if_exists == "truncate":
+        await _truncate_table_sql(sql_target, schema, table_name, mode=ctx.auth)
+
     credential = _auth.get_credential(ctx.auth)
     try:
         return await load_local_file(
@@ -1169,9 +1206,9 @@ async def _load_cmd_local(
         _close = getattr(credential, "close", None)
         if callable(_close):
             try:
-                result = _close()
-                if asyncio.iscoroutine(result):
-                    await result
+                _close_result = _close()
+                if asyncio.iscoroutine(_close_result):
+                    await _close_result
             except Exception:  # noqa: S110
                 pass
 
@@ -1231,31 +1268,45 @@ async def _load_cmd_create_and_load(
     infer_encoding = cast("str", csv_kw.get("encoding") or "utf-8-sig")
 
     credential = _auth.get_credential(ctx.auth)
-    return await create_and_load(
-        http,
-        credential,
-        ws_id,
-        sql_target,
-        schema,
-        table_name,
-        local,
-        if_exists=if_exists,
-        file_format=file_format,
-        staging_lakehouse_name=staging_lakehouse_name,
-        keep_staging=keep_staging,
-        csv_options=csv_options,
-        max_errors=max_errors,
-        rejected_row_location=rejected_row_location,
-        kind=entry.kind,
-        mode=ctx.auth,
-        cleanup_on_failure=cleanup_on_failure,
-        all_varchar=all_varchar,
-        varchar_length=varchar_length,
-        sample_rows=sample_rows,
-        csv_delimiter=infer_delimiter,
-        csv_encoding=infer_encoding,
-        cluster_by=cluster_by,
-    )
+    try:
+        return await create_and_load(
+            http,
+            credential,
+            ws_id,
+            sql_target,
+            schema,
+            table_name,
+            local,
+            if_exists=if_exists,
+            file_format=file_format,
+            staging_lakehouse_name=staging_lakehouse_name,
+            keep_staging=keep_staging,
+            csv_options=csv_options,
+            max_errors=max_errors,
+            rejected_row_location=rejected_row_location,
+            kind=entry.kind,
+            mode=ctx.auth,
+            cleanup_on_failure=cleanup_on_failure,
+            all_varchar=all_varchar,
+            varchar_length=varchar_length,
+            sample_rows=sample_rows,
+            csv_delimiter=infer_delimiter,
+            csv_encoding=infer_encoding,
+            cluster_by=cluster_by,
+        )
+    finally:
+        # Close the storage-scope credential to release its internal aiohttp
+        # session (azure.identity.aio credentials hold one).  Same pattern as
+        # _load_cmd_local — without this close() call the session leaks and
+        # emits an 'Unclosed client session' ResourceWarning on every load.
+        _close = getattr(credential, "close", None)
+        if callable(_close):
+            try:
+                _close_result = _close()
+                if asyncio.iscoroutine(_close_result):
+                    await _close_result
+            except Exception:  # noqa: S110
+                pass
 
 
 async def _load_cmd_url(
