@@ -259,10 +259,12 @@ jobs:
       - name: Upload test results to Codecov
         # !cancelled(): always upload test results so failures appear in Test Analytics
         if: ${{ !cancelled() }}
-        uses: codecov/test-results-action@v1
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           flags: integration
+          report_type: test_results
+          files: junit.xml
 
       - name: Post-test full workspace wipe
         if: always()

@@ -83,10 +83,12 @@ jobs:
           flags: unit
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
-        uses: codecov/test-results-action@v1
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           flags: unit
+          report_type: test_results
+          files: junit.xml
       # Upload coverage to GitHub Code Quality (public preview).
       # Only runs on Python 3.13 to avoid duplicate uploads across matrix entries.
       # Fork-PR guard: skip on PRs from forks (they lack write permissions).
