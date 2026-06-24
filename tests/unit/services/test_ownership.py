@@ -10,7 +10,7 @@ import respx
 
 from fabric_dw.exceptions import NotFoundError, PermissionDeniedError
 from fabric_dw.http_client import FabricHttpClient
-from fabric_dw.services.ownership import takeover
+from fabric_dw.services.ownership import _ALREADY_OWNER_ERROR_CODE, _TAKEOVER_HINT, takeover
 from tests.unit.services._helpers import _make_credential
 
 # ---------------------------------------------------------------------------
@@ -97,3 +97,38 @@ async def test_takeover_sends_empty_body() -> None:
     req = received_requests[0]
     # httpx sends no body (empty bytes) when json=None
     assert req.content == b""
+
+
+@respx.mock
+async def test_takeover_403_already_owner_raises_clear_message() -> None:
+    """HTTP 403 with ArtifactTakeOverNotAllowedByOwner -> clear 'already owner' message.
+
+    The misleading role hint must NOT appear in the error; the caller is not
+    missing a role — they already own the warehouse.
+    """
+    body = {"errorCode": _ALREADY_OWNER_ERROR_CODE, "message": "Caller is already the owner."}
+    respx.post(_EXPECTED_URL).mock(return_value=respx.MockResponse(403, json=body))
+
+    async with FabricHttpClient(credential=_make_credential(), rps=10) as http:
+        with pytest.raises(PermissionDeniedError) as exc_info:
+            await takeover(http, _WORKSPACE_ID, _WAREHOUSE_ID)
+
+    error_text = str(exc_info.value)
+    assert "already the owner" in error_text
+    # The generic role hint must NOT appear for this specific error code.
+    assert _TAKEOVER_HINT not in error_text
+
+
+@respx.mock
+async def test_takeover_403_generic_still_shows_role_hint() -> None:
+    """A generic HTTP 403 (not ArtifactTakeOverNotAllowedByOwner) still shows the role hint."""
+    body = {"errorCode": "Forbidden", "message": "Caller lacks the required role."}
+    respx.post(_EXPECTED_URL).mock(return_value=respx.MockResponse(403, json=body))
+
+    async with FabricHttpClient(credential=_make_credential(), rps=10) as http:
+        with pytest.raises(PermissionDeniedError) as exc_info:
+            await takeover(http, _WORKSPACE_ID, _WAREHOUSE_ID)
+
+    error_text = str(exc_info.value)
+    assert _TAKEOVER_HINT in error_text
+    assert "already the owner" not in error_text

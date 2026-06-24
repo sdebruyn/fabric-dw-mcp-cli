@@ -12,6 +12,9 @@ __all__ = ["takeover"]
 
 _TAKEOVER_HINT = "takeover requires Admin/Member/Contributor role on the workspace"
 
+# Fabric error code returned when the caller is already the owner of the item.
+_ALREADY_OWNER_ERROR_CODE = "ArtifactTakeOverNotAllowedByOwner"
+
 
 async def takeover(
     http: FabricHttpClient,
@@ -42,6 +45,8 @@ async def takeover(
         ItemKindError: If *kind* is not ``WAREHOUSE`` (e.g. ``SQL_ENDPOINT``).
         PermissionDeniedError: If the caller does not have Admin/Member/Contributor
             role on the workspace (HTTP 403).
+        PermissionDeniedError: If the caller is already the owner (HTTP 403
+            ``ArtifactTakeOverNotAllowedByOwner``); raised without a role hint.
         NotFoundError: If the workspace or warehouse does not exist (HTTP 404).
     """
     if kind != WarehouseKind.WAREHOUSE:
@@ -56,10 +61,21 @@ async def takeover(
     try:
         await http.request("POST", HttpBase.POWERBI, path, json=None)
     except PermissionDeniedError as exc:
-        # Preserve the original status/request_id/body from the HTTP layer and
-        # surface the remediation hint via the hint= field (not as the message).
+        # Detect the "already owner" case: Fabric returns 403 with errorCode
+        # ArtifactTakeOverNotAllowedByOwner when the caller already owns the item.
+        # Surface a clear, accurate message instead of the generic role hint.
+        error_code = exc.body.get("errorCode") if exc.body is not None else None
+        if error_code == _ALREADY_OWNER_ERROR_CODE:
+            raise PermissionDeniedError(
+                "You are already the owner of this warehouse; nothing to take over.",
+                status=exc.status,
+                request_id=exc.request_id,
+                body=exc.body,
+            ) from exc
+        # Generic 403: preserve the original status/request_id/body from the HTTP
+        # layer and surface the remediation hint via the hint= field.
         raise PermissionDeniedError(
-            str(exc.args[0]) if exc.args else _TAKEOVER_HINT,
+            str(exc.args[0]),
             status=exc.status,
             request_id=exc.request_id,
             body=exc.body,
