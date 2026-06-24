@@ -586,6 +586,17 @@ class TestGetView:
         assert "CREATE VIEW [dbo].[vw_sales]" in result.definition
         assert ". AS" not in result.definition
 
+    async def test_get_view_regression_746_exact_live_input(self) -> None:
+        """Regression #746: bare-dot 'CREATE VIEW . AS SELECT ...' is fixed by get_view."""
+        raw_def = "CREATE VIEW . AS SELECT id, label FROM fdw_qa.t_ctas"
+        row = ("fdw_qa", "vw_dwh", _NOW, _LATER, raw_def)
+        target = _make_target()
+        conn = _make_conn([row], _GET_COLS)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await views.get_view(target, "fdw_qa", "vw_dwh")
+        expected = "CREATE VIEW [fdw_qa].[vw_dwh] AS SELECT id, label FROM fdw_qa.t_ctas"
+        assert result.definition == expected
+
     async def test_maps_permission_denied(self) -> None:
         target = _make_target()
         conn = MagicMock()
@@ -727,6 +738,28 @@ class TestCreateView:
         assert result.definition is not None
         assert "CREATE VIEW [dbo].[vw_sales]" in result.definition
         assert ". AS" not in result.definition
+
+    async def test_create_view_regression_746_exact_live_input(self) -> None:
+        """Regression #746: create_view returns a view whose definition is fully normalised.
+
+        After CREATE VIEW DDL is issued, create_view reads the definition back via
+        get_view.  Fabric stores the bare-dot form 'CREATE VIEW . AS ...' in
+        sys.sql_modules; the helper must substitute the correct schema/name so the
+        returned View.definition contains '[fdw_qa].[vw_dwh]'.
+        """
+        raw_def = "CREATE VIEW . AS SELECT id, label FROM fdw_qa.t_ctas"
+        fetch_row = ("fdw_qa", "vw_dwh", _NOW, _LATER, raw_def)
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([fetch_row], _GET_COLS)
+
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            result = await views.create_view(
+                target, "fdw_qa", "vw_dwh", "SELECT id, label FROM fdw_qa.t_ctas"
+            )
+
+        expected = "CREATE VIEW [fdw_qa].[vw_dwh] AS SELECT id, label FROM fdw_qa.t_ctas"
+        assert result.definition == expected
 
 
 # ===========================================================================
@@ -1104,6 +1137,40 @@ class TestRenameView:
             result = await views.rename_view(target, "dbo.vw_sales", "vw_revenue")
 
         assert result.name == "vw_revenue"
+
+    async def test_rename_view_normalizes_empty_definition(self) -> None:
+        """rename_view must fix a Fabric-returned 'CREATE VIEW . AS ...' definition (issue #746).
+
+        After sp_rename succeeds, rename_view calls get_view which fetches the
+        definition from sys.sql_modules.  The bare-dot form must be normalised
+        before it reaches the caller.
+        """
+        broken_def = "CREATE VIEW . AS SELECT id, label FROM fdw_qa.t_ctas"
+        fetch_row = ("fdw_qa", "vw_dwh", _NOW, _LATER, broken_def)
+        target = _make_target()
+        rename_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([fetch_row], _GET_COLS)
+
+        with patch("fabric_dw.sql.open_connection", side_effect=[rename_conn, fetch_conn]):
+            result = await views.rename_view(target, "fdw_qa.vw_old", "vw_dwh")
+
+        assert result.definition is not None
+        assert "CREATE VIEW [fdw_qa].[vw_dwh]" in result.definition
+        assert ". AS" not in result.definition
+
+    async def test_rename_view_regression_746_exact_live_input(self) -> None:
+        """Regression #746: bare-dot 'CREATE VIEW . AS SELECT ...' is fixed after rename."""
+        raw_def = "CREATE VIEW . AS SELECT id, label FROM fdw_qa.t_ctas"
+        fetch_row = ("fdw_qa", "vw_dwh", _NOW, _LATER, raw_def)
+        target = _make_target()
+        rename_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([fetch_row], _GET_COLS)
+
+        with patch("fabric_dw.sql.open_connection", side_effect=[rename_conn, fetch_conn]):
+            result = await views.rename_view(target, "fdw_qa.vw_old", "vw_dwh")
+
+        expected = "CREATE VIEW [fdw_qa].[vw_dwh] AS SELECT id, label FROM fdw_qa.t_ctas"
+        assert result.definition == expected
 
 
 # ===========================================================================

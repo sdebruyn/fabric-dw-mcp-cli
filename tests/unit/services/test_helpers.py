@@ -242,3 +242,60 @@ def test_normalize_bracket_in_catalog_schema_escaped() -> None:
     result = normalize_object_definition("CREATE VIEW . AS SELECT 1", "sch]ema", "vw_ok")
     assert "[sch]]ema]" in result
     assert "[vw_ok]" in result
+
+
+# ---------------------------------------------------------------------------
+# Regression: #746 — bare-dot form "CREATE VIEW . AS" reported on live tenant
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_regression_746_exact_live_input() -> None:
+    """Regression #746: exact live-stored text 'CREATE VIEW . AS' is fixed.
+
+    Fabric's sys.sql_modules stores the definition with a bare dot between
+    CREATE VIEW and AS when the object was created without a fully-qualified
+    name in the DDL header (observed on fabric-dw 2026.6.0b1.dev15).
+    The helper must replace the bare dot schema/name slot with the catalog
+    values even when both parts are empty plain-form tokens (not bracket-quoted).
+    """
+    raw = "CREATE VIEW . AS SELECT id, label FROM fdw_qa.t_ctas"
+    result = normalize_object_definition(raw, "fdw_qa", "vw_dwh")
+    assert result == "CREATE VIEW [fdw_qa].[vw_dwh] AS SELECT id, label FROM fdw_qa.t_ctas"
+
+
+def test_normalize_regression_746_create_or_alter_bare_dot() -> None:
+    """Regression #746: 'CREATE OR ALTER VIEW . AS' bare-dot form is also fixed."""
+    raw = "CREATE OR ALTER VIEW . AS SELECT id, label FROM fdw_qa.t_ctas"
+    result = normalize_object_definition(raw, "fdw_qa", "vw_dwh")
+    expected = "CREATE OR ALTER VIEW [fdw_qa].[vw_dwh] AS SELECT id, label FROM fdw_qa.t_ctas"
+    assert result == expected
+
+
+def test_normalize_regression_746_procedure_bare_dot_form() -> None:
+    """Regression #746: bare-dot 'CREATE PROCEDURE . AS ...' is fixed for procedures."""
+    raw = "CREATE PROCEDURE . AS BEGIN SELECT id, label FROM fdw_qa.t_ctas END"
+    result = normalize_object_definition(raw, "fdw_qa", "usp_load")
+    expected = (
+        "CREATE PROCEDURE [fdw_qa].[usp_load] AS BEGIN SELECT id, label FROM fdw_qa.t_ctas END"
+    )
+    assert result == expected
+
+
+def test_normalize_regression_746_function_bare_dot_form() -> None:
+    """Regression #746: bare-dot 'CREATE FUNCTION . (...) ...' is fixed for functions."""
+    raw = "CREATE FUNCTION . (@x INT) RETURNS INT AS BEGIN RETURN @x END"
+    result = normalize_object_definition(raw, "fdw_qa", "fn_compute")
+    assert "CREATE FUNCTION [fdw_qa].[fn_compute]" in result
+    assert ". (" not in result
+
+
+def test_normalize_regression_746_tester_captured_exact_raw() -> None:
+    """Regression #746: pinned to the EXACT raw string captured from the live tenant.
+
+    The tester ran ``sql exec`` against Fabric DW to read sys.sql_modules directly
+    (bypassing the normalizer) on build 2026.6.0b1.dev15 and observed this verbatim
+    string.  It must survive any future refactor of normalize_object_definition.
+    """
+    raw = "CREATE VIEW . AS SELECT 1 AS id"
+    result = normalize_object_definition(raw, "dbo", "vw_probe746")
+    assert result == "CREATE VIEW [dbo].[vw_probe746] AS SELECT 1 AS id"

@@ -270,6 +270,19 @@ class TestGetProcedure:
         assert "CREATE PROCEDURE [dbo].[usp_load]" in result.definition
         assert ". AS" not in result.definition
 
+    async def test_get_procedure_regression_746_bare_dot_form(self) -> None:
+        """Regression #746: bare-dot 'CREATE PROCEDURE . AS ...' is fixed by get_procedure."""
+        raw_def = "CREATE PROCEDURE . AS BEGIN SELECT id, label FROM fdw_qa.t_ctas END"
+        row = ("fdw_qa", "usp_load", _NOW, _LATER, raw_def)
+        target = _make_target()
+        conn = _make_conn([row], _GET_COLS)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await procedures.get_procedure(target, "fdw_qa", "usp_load")
+        expected = (
+            "CREATE PROCEDURE [fdw_qa].[usp_load] AS BEGIN SELECT id, label FROM fdw_qa.t_ctas END"
+        )
+        assert result.definition == expected
+
     async def test_maps_permission_denied(self) -> None:
         target = _make_target()
         conn = MagicMock()
@@ -374,6 +387,31 @@ class TestCreateProcedure:
             await procedures.create_procedure(
                 target, "dbo", "usp_ok] WITH EXECUTE AS OWNER--", "BEGIN END"
             )
+
+    async def test_create_procedure_regression_746_bare_dot_form(self) -> None:
+        """Regression #746: create_procedure returns a procedure whose definition is normalised.
+
+        Fabric stores 'CREATE PROCEDURE . AS ...' in sys.sql_modules after DDL;
+        the bare-dot header must be rewritten before the caller sees it.
+        """
+        raw_def = "CREATE PROCEDURE . AS BEGIN SELECT id, label FROM fdw_qa.t_ctas END"
+        fetch_row = ("fdw_qa", "usp_load", _NOW, _LATER, raw_def)
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([fetch_row], _GET_COLS)
+
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            result = await procedures.create_procedure(
+                target,
+                "fdw_qa",
+                "usp_load",
+                "BEGIN SELECT id, label FROM fdw_qa.t_ctas END",
+            )
+
+        expected = (
+            "CREATE PROCEDURE [fdw_qa].[usp_load] AS BEGIN SELECT id, label FROM fdw_qa.t_ctas END"
+        )
+        assert result.definition == expected
 
 
 # ===========================================================================
