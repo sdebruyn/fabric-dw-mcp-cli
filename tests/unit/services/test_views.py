@@ -12,6 +12,7 @@ from fabric_dw.models import View
 from fabric_dw.services import views
 from fabric_dw.services.views import read_view, validate_identifier
 from tests.unit.services._helpers import (
+    _FakeRow,
     _make_conn,
     _make_conn_for_ddl,
     _make_no_result_conn,
@@ -981,22 +982,7 @@ class TestRenameView:
 # ===========================================================================
 # read_view — Row normalisation (#718)
 # ===========================================================================
-
-
-class _FakeRow:
-    """Non-tuple sequence that mimics mssql_python.row.Row for testing."""
-
-    def __init__(self, *values: object) -> None:
-        self._values = values
-
-    def __iter__(self):  # type: ignore[return]
-        return iter(self._values)
-
-    def __len__(self) -> int:
-        return len(self._values)
-
-    def __getitem__(self, index: int) -> object:
-        return self._values[index]
+# _FakeRow is imported from tests.unit.services._helpers (shared definition).
 
 
 class TestReadViewRowNormalisation:

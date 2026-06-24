@@ -23,7 +23,7 @@ from fabric_dw.services.query_insights import (
     LONG_RUNNING_QUERIES_COLUMNS,
     SQL_POOL_INSIGHTS_COLUMNS,
 )
-from tests.unit.services._helpers import _make_conn, _make_target
+from tests.unit.services._helpers import _FakeRow, _make_conn, _make_target
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -822,29 +822,7 @@ async def test_list_request_history_both_bounds_passed_as_params() -> None:
 # ---------------------------------------------------------------------------
 # Regression: Row→tuple normalisation (#719)
 # ---------------------------------------------------------------------------
-
-
-class _FakeRow:
-    """Non-tuple sequence mimicking mssql_python.row.Row.
-
-    mssql_python returns Row objects from fetchall().  They are iterable and
-    index-accessible but are NOT tuple subclasses.  If the driver's Row is
-    passed directly to dict(zip(cols, row)), it works only when iteration
-    yields column *values* — which is the expected contract.  This class
-    simulates that so the normalisation test is driver-independent.
-    """
-
-    def __init__(self, *values: object) -> None:
-        self._values = values
-
-    def __iter__(self):  # type: ignore[return]
-        return iter(self._values)
-
-    def __len__(self) -> int:
-        return len(self._values)
-
-    def __getitem__(self, index: int) -> object:
-        return self._values[index]
+# _FakeRow is imported from tests.unit.services._helpers (shared definition).
 
 
 async def test_execute_sql_row_objects_produce_correct_dicts() -> None:

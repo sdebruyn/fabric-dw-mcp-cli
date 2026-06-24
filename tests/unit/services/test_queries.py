@@ -10,7 +10,7 @@ import pytest
 from fabric_dw.exceptions import AuthError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import Connection, RunningQuery
 from fabric_dw.services import queries
-from tests.unit.services._helpers import _make_conn, _make_target
+from tests.unit.services._helpers import _FakeRow, _make_conn, _make_target
 
 # ---------------------------------------------------------------------------
 # Fixture rows matching the DMV query output columns
@@ -685,28 +685,7 @@ async def test_kill_sql_no_params_bound() -> None:
 # ---------------------------------------------------------------------------
 # Regression: Row→tuple normalisation in queries DMV path (#719)
 # ---------------------------------------------------------------------------
-
-
-class _FakeRow:
-    """Non-tuple sequence mimicking mssql_python.row.Row.
-
-    list_running and list_connections call dict(zip(cols, r)) on each row
-    returned by run_query.  The central tuple() normalisation in run_query
-    ensures this always produces the correct column→value mapping even when
-    the driver returns Row objects instead of real tuples.
-    """
-
-    def __init__(self, *values: object) -> None:
-        self._values = values
-
-    def __iter__(self):  # type: ignore[return]
-        return iter(self._values)
-
-    def __len__(self) -> int:
-        return len(self._values)
-
-    def __getitem__(self, index: int) -> object:
-        return self._values[index]
+# _FakeRow is imported from tests.unit.services._helpers (shared definition).
 
 
 async def test_list_running_row_objects_produce_populated_model_fields() -> None:
@@ -730,3 +709,38 @@ async def test_list_running_row_objects_produce_populated_model_fields() -> None
     assert q.status == "running"  # col 3
     assert q.login_name == "user@example.com"  # col 6
     assert q.total_elapsed_time_ms == 1500  # col 5
+
+
+async def test_list_running_run_query_output_is_real_tuples() -> None:
+    """Genuine regression guard for #719: rows from run_query must be real tuples.
+
+    The dict-path test above documents intent but does NOT fail on pre-fix code
+    because _FakeRow.__iter__ yields values (not keys), so dict(zip(cols, row))
+    is always correct.  This test adds the actual guard: it intercepts the rows
+    that run_query delivers to list_running and asserts each is a genuine tuple.
+    A pre-fix codebase would deliver _FakeRow objects here, failing the
+    ``type(row) is tuple`` check.
+    """
+    from fabric_dw.sql import run_query as _run_query  # noqa: PLC0415
+
+    target = _make_target()
+    fake_row = _FakeRow(*_ROW_1_TUPLE)
+    conn = _make_conn([fake_row], _COLS)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+
+    captured_rows: list[object] = []
+
+    def _spy(t, sql, **kw):  # type: ignore[return]
+        cols, rows = _run_query(t, sql, **kw)
+        captured_rows.extend(rows)
+        return cols, rows
+
+    with (
+        patch("fabric_dw.sql.open_connection", return_value=conn),
+        patch("fabric_dw.services.queries.run_query", side_effect=_spy),
+    ):
+        await queries.list_running(target)
+
+    assert len(captured_rows) == 1
+    assert type(captured_rows[0]) is tuple, (
+        f"run_query must return real tuples, got {type(captured_rows[0])}"
+    )

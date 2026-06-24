@@ -1537,7 +1537,7 @@ async def get_table_health_metrics(
 
     def _run() -> tuple[list[str], list[tuple[object, ...]]]:
         cols, rows = run_query(target, sql, mode=mode)
-        return cols, [tuple(r) for r in rows]
+        return cols, list(rows)
 
     return await asyncio.to_thread(_run)
 

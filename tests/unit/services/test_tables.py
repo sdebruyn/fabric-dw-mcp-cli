@@ -18,6 +18,7 @@ from fabric_dw.models import ColumnSpec, Table, WarehouseKind
 from fabric_dw.services import tables
 from fabric_dw.services.tables import validate_identifier
 from tests.unit.services._helpers import (
+    _FakeRow,
     _make_conn,
     _make_conn_for_ddl,
     _make_no_result_conn,
@@ -2289,27 +2290,12 @@ class TestGetTableHealthMetrics:
     async def test_rows_are_normalized_to_real_tuples(self) -> None:
         """Driver Row-like objects (non-tuple sequences) are normalized to real tuples.
 
-        Monkeypatches ``run_query`` to yield a custom non-tuple sequence class
-        that mimics ``mssql_python.row.Row`` — iterable and indexable but NOT a
-        ``tuple`` subclass.  Asserts that every row in the result is a real
-        ``tuple`` and that values are preserved in order.
+        Feeds ``_FakeRow`` instances (imported from
+        ``tests.unit.services._helpers``) through the full stack via
+        ``cursor.fetchall`` so that ``run_query``'s central normalisation
+        converts them to real tuples before ``get_table_health_metrics``
+        returns them.  This mirrors what mssql_python does at runtime.
         """
-
-        class _FakeRow:
-            """Tuple-like but not a tuple subclass, as mssql_python.row.Row."""
-
-            def __init__(self, *values: object) -> None:
-                self._values = values
-
-            def __iter__(self):  # type: ignore[override]
-                return iter(self._values)
-
-            def __len__(self) -> int:
-                return len(self._values)
-
-            def __getitem__(self, index: int) -> object:
-                return self._values[index]
-
         fake_cols = ["col_x", "col_y", "col_z"]
         fake_driver_rows = [
             _FakeRow(1, "alpha", None),
@@ -2317,10 +2303,8 @@ class TestGetTableHealthMetrics:
         ]
 
         target = _make_target()
-        with patch(
-            "fabric_dw.services.tables.run_query",
-            return_value=(fake_cols, fake_driver_rows),
-        ):
+        conn = _make_conn(fake_driver_rows, fake_cols)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
             result_cols, result_rows = await tables.get_table_health_metrics(
                 target,
                 "dbo",
@@ -2339,22 +2323,7 @@ class TestGetTableHealthMetrics:
 # ===========================================================================
 # read_table — Row normalisation (#718)
 # ===========================================================================
-
-
-class _FakeRow:
-    """Non-tuple sequence that mimics mssql_python.row.Row for testing."""
-
-    def __init__(self, *values: object) -> None:
-        self._values = values
-
-    def __iter__(self):  # type: ignore[return]
-        return iter(self._values)
-
-    def __len__(self) -> int:
-        return len(self._values)
-
-    def __getitem__(self, index: int) -> object:
-        return self._values[index]
+# _FakeRow is imported from tests.unit.services._helpers (shared definition).
 
 
 class TestReadTableRowNormalisation:
