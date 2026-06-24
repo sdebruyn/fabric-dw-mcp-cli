@@ -177,7 +177,7 @@ async def update_cmd(
     "--if-exists",
     is_flag=True,
     default=False,
-    help="No-op when the function does not exist (DROP FUNCTION IF EXISTS).",
+    help="No-op when the function does not exist; exit 0 with an informational message.",
 )
 @click.pass_obj
 @coro

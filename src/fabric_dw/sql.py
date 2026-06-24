@@ -315,12 +315,18 @@ _AUTH_FAILED_ERROR_NUMBERS = frozenset({18456})
 # SQL Server native error numbers that indicate a missing object.
 # 208:  Invalid object name (table/view not found).
 # 2812: Could not find stored procedure '<name>'.
-_NOT_FOUND_ERROR_NUMBERS = frozenset({208, 2812})
+# 3701: Cannot drop the <object type> '<name>' because it does not exist or you
+#       do not have permission (DROP FUNCTION / DROP VIEW / DROP PROCEDURE on a
+#       non-existent object).
+_NOT_FOUND_ERROR_NUMBERS = frozenset({208, 2812, 3701})
 
 # Message fragments that indicate a missing database object.
 _NOT_FOUND_FRAGMENTS = (
     "invalid object name",
     "base table or view not found",
+    # SQL Server 3701: "Cannot drop the function/procedure/view '<name>' because
+    # it does not exist or you do not have permission."
+    "cannot drop the",
 )
 
 # Fragments that indicate a freshly-created snapshot database has not yet
