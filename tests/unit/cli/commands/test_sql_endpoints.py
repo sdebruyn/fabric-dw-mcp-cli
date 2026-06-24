@@ -363,7 +363,7 @@ class TestEndpointsGet:
     def test_get_human_output_shows_default_collation(
         self, runner: CliRunner, cache_env: Path
     ) -> None:
-        """SQL endpoints share the warehouse model: null collation → default '(default)'."""
+        """SQL endpoints share the warehouse model: null collation → effective default shown."""
         _ = cache_env
         mock_http = AsyncMock()
         mock_http.request = AsyncMock(return_value=_make_response(200, _ENDPOINT_JSON))
@@ -380,12 +380,11 @@ class TestEndpointsGet:
             result = runner.invoke(cli, ["-w", WS_GUID, "sql-endpoints", "get", EP_GUID])
         assert result.exit_code == 0, result.output
         assert FABRIC_DEFAULT_COLLATION in result.output
-        assert "(default)" in result.output
 
-    def test_get_json_output_keeps_raw_null_collation(
+    def test_get_json_output_coalesces_null_to_default_collation(
         self, runner: CliRunner, cache_env: Path
     ) -> None:
-        """--json must keep the raw API value (null) for SQL endpoints too."""
+        """--json surfaces the effective collation (null coalesced to default in the model)."""
         _ = cache_env
         mock_http = AsyncMock()
         mock_http.request = AsyncMock(return_value=_make_response(200, _ENDPOINT_JSON))
@@ -402,7 +401,7 @@ class TestEndpointsGet:
             result = runner.invoke(cli, ["--json", "-w", WS_GUID, "sql-endpoints", "get", EP_GUID])
         assert result.exit_code == 0, result.output
         parsed = json.loads(result.output)
-        assert parsed["defaultCollation"] is None
+        assert parsed["defaultCollation"] == FABRIC_DEFAULT_COLLATION
 
     def test_get_human_output_shows_explicit_collation_unchanged(
         self, runner: CliRunner, cache_env: Path

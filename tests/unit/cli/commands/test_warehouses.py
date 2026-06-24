@@ -450,18 +450,19 @@ class TestWarehousesGetCollationDefault:
     def test_human_output_shows_default_when_collation_null(
         self, runner: CliRunner, cache_env: Path
     ) -> None:
-        """Human output substitutes Fabric's default collation, marked '(default)'."""
+        """Human output shows the effective default collation when the API returns null."""
         _ = cache_env
         output = self._invoke(runner, self._NULL_COLLATION_PAYLOAD, json_flag=False)
         assert FABRIC_DEFAULT_COLLATION in output
-        assert f"{FABRIC_DEFAULT_COLLATION} (default)" in output
 
-    def test_json_output_keeps_raw_null_collation(self, runner: CliRunner, cache_env: Path) -> None:
-        """--json must keep the raw API value (null) — no fabricated default."""
+    def test_json_output_coalesces_null_to_default_collation(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """--json surfaces the effective collation (null coalesced to default in the model)."""
         _ = cache_env
         output = self._invoke(runner, self._NULL_COLLATION_PAYLOAD, json_flag=True)
         parsed = json.loads(output)
-        assert parsed["defaultCollation"] is None
+        assert parsed["defaultCollation"] == FABRIC_DEFAULT_COLLATION
 
     def test_human_output_shows_explicit_collation_unchanged(
         self, runner: CliRunner, cache_env: Path
