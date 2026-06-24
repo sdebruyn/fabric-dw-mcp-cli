@@ -261,7 +261,7 @@ Confirm the fix actually helped, on the **warm** path.
 
 !!! note "Result-set caching in Fabric is ON by default"
 
-    Unlike the Synapse model (OFF by default), **Fabric Data Warehouse enables result-set caching ON by default** per item. A single query can still opt out with `OPTION (USE HINT('DISABLE_RESULT_SET_CACHE'))`. The toggle is **DW-only** — SQL Analytics Endpoints are rejected. See [Result set caching](https://learn.microsoft.com/fabric/data-warehouse/result-set-caching?WT.mc_id=MVP_310840) (preview known issue: [aka.ms/fabricdwrscki](https://aka.ms/fabricdwrscki)).
+    Unlike the Synapse model (OFF by default), **Fabric Data Warehouse enables result-set caching ON by default** per item. A single query can still opt out with `OPTION (USE HINT('DISABLE_RESULT_SET_CACHE'))`. The toggle is **DW-only** — SQL Analytics Endpoints are rejected. See [Result set caching](https://learn.microsoft.com/fabric/data-warehouse/result-set-caching?WT.mc_id=MVP_310840).
 
 A `result_cache_hit = true` in `queries history` on the second and later runs confirms the cache is doing its job.
 

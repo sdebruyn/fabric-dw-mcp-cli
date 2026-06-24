@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://fdw.debruyn.dev">
-    <img src="docs/assets/logo.svg" alt="fabric-dw logo" width="200" />
+    <img src="https://raw.githubusercontent.com/sdebruyn/fabric-dw-mcp-cli/main/docs/assets/logo.svg" alt="fabric-dw logo" width="200" />
   </a>
 </p>
 <h1 align="center">fabric-dw</h1>
@@ -12,8 +12,6 @@
   <a href="https://pypi.org/project/fabric-dw/"><img src="https://img.shields.io/pypi/pyversions/fabric-dw" alt="Python versions"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/sdebruyn/fabric-dw-mcp-cli" alt="License"></a>
 </p>
-
-> **Alpha — work in progress.** The API and CLI interface may change without notice. See the [open issues](https://github.com/sdebruyn/fabric-dw-mcp-cli/issues) for current status.
 
 Python CLI and MCP server for administering Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
 
