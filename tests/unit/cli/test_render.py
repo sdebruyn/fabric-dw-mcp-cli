@@ -963,3 +963,81 @@ class TestMultiGuidColumnWidthStarvation:
         output = sio.getvalue()
         assert "capacityId" not in output
         assert "displayName" in output
+
+
+# ---------------------------------------------------------------------------
+# Warehouses list -A shape regression test (issue #739)
+# ---------------------------------------------------------------------------
+
+#: Rows that mirror the ``warehouses list -A`` column layout: two GUID columns
+#: (``id`` + ``workspaceId``) plus human-readable columns (``displayName``,
+#: ``kind``).  This is the same ≥2-GUID starvation bug as issue #737.
+_WAREHOUSE_ALL_ROWS: list[dict[str, object]] = [
+    {
+        "id": "d4e5f6a7-b8c9-0123-def0-123456789abc",
+        "displayName": "SalesWarehouse",
+        "description": "Main sales DWH",
+        "kind": "Warehouse",
+        "workspaceId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    },
+    {
+        "id": "11111111-2222-3333-4444-555555555555",
+        "displayName": "MarketingLakehouse",
+        "description": "",
+        "kind": "Lakehouse",
+        "workspaceId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    },
+]
+
+
+class TestWarehousesAllShapeWidthStarvation:
+    """``warehouses list -A`` with id+workspaceId (two GUIDs) must not collapse displayName/kind.
+
+    Regression test for issue #739 — the same shared renderer bug as #737 but
+    exercised with the warehouses column shape (``id``, ``displayName``,
+    ``description``, ``kind``, ``workspaceId``).
+    """
+
+    def _render_at_width(self, width: int) -> str:
+        sio = StringIO()
+        console = Console(file=sio, width=width, highlight=False, no_color=True)
+        render(_WAREHOUSE_ALL_ROWS, json_output=False, console=console, table_title="Warehouses")
+        return sio.getvalue()
+
+    def test_displayname_header_visible_at_width_80(self) -> None:
+        """'displayName' column header must appear (possibly truncated) at width=80."""
+        output = self._render_at_width(80)
+        assert "displ" in output.lower()
+
+    def test_displayname_value_visible_at_width_80(self) -> None:
+        """At least a fragment of a displayName value must appear at width=80."""
+        output = self._render_at_width(80)
+        # "Sales" covers "SalesWarehouse" even when the cell is truncated
+        assert "Sales" in output
+
+    def test_kind_header_visible_at_width_80(self) -> None:
+        """'kind' column header must appear at width=80 (it is a short non-GUID column)."""
+        output = self._render_at_width(80)
+        assert "kind" in output
+
+    def test_kind_value_visible_at_width_80(self) -> None:
+        """A kind cell value must be present in the output at width=80."""
+        output = self._render_at_width(80)
+        assert "Warehouse" in output
+
+    def test_no_empty_column_separators_at_width_80(self) -> None:
+        """The zero-width-column artifact (┃┃┃) must not appear at width=80."""
+        output = self._render_at_width(80)
+        assert "┃┃┃" not in output
+
+    def test_primary_guid_id_visible_at_width_80(self) -> None:
+        """The first GUID column (id) must still render without truncation at width=80."""
+        output = self._render_at_width(80)
+        assert "d4e5f6a7-b8c9-0123-def0-123456789abc" in output
+
+    def test_all_columns_visible_at_width_120(self) -> None:
+        """At width=120 all column headers must be present."""
+        output = self._render_at_width(120)
+        assert "displayName" in output
+        assert "kind" in output
+        assert "id" in output
