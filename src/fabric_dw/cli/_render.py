@@ -8,6 +8,7 @@ from collections.abc import Sequence
 
 import click
 from rich.console import Console
+from rich.markup import escape as _escape_markup
 from rich.panel import Panel
 from rich.table import Table
 
@@ -130,12 +131,16 @@ def _cell(value: object) -> str:
     spurious ``.0`` suffix (e.g. ``"1500"``), matching the appearance of the
     underlying integer.  Fractional floats (e.g. ``1234.5``) are rendered
     as-is via ``str()``.
+
+    All data-derived string values are escaped with :func:`rich.markup.escape`
+    so that bracket characters (``[``, ``]``) in the data are rendered
+    verbatim and never interpreted as Rich markup tags.
     """
     if value is None:
         return "[dim]NULL[/dim]"
     if isinstance(value, float) and value.is_integer():
-        return str(int(value))
-    return str(value)
+        return _escape_markup(str(int(value)))
+    return _escape_markup(str(value))
 
 
 def _column_is_all_null(col: str, norm_rows: list[dict[str, object] | object]) -> bool:
@@ -176,14 +181,15 @@ def _add_columns(
     """
     primary_guid_assigned = False
     for col in visible_columns:
+        escaped_col = _escape_markup(col)
         if _is_guid_column(col, norm_rows):
             if not primary_guid_assigned:
-                table.add_column(col, no_wrap=True, min_width=_GUID_WIDTH)
+                table.add_column(escaped_col, no_wrap=True, min_width=_GUID_WIDTH)
                 primary_guid_assigned = True
             else:
-                table.add_column(col)
+                table.add_column(escaped_col)
         else:
-            table.add_column(col)
+            table.add_column(escaped_col)
 
 
 def _render_table(

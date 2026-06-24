@@ -150,6 +150,78 @@ class TestCellHelper:
         assert _cell(0.0) == "0"
 
 
+class TestRichMarkupEscape:
+    """Column names and cell values containing Rich markup characters render verbatim.
+
+    ``sp_get_table_health_metrics`` returns column names such as
+    ``FileRowCount[0]`` and ``FileRowCount[1,10)`` that include bracket
+    characters.  Rich interprets ``[...]`` as markup tags, so without escaping
+    those names are stripped and the column headers appear blank.
+
+    Regression tests for issue #745.
+    """
+
+    def _render_to_string(self, data: object, *, width: int = 200) -> str:
+        sio = StringIO()
+        console = Console(file=sio, width=width, highlight=False, no_color=True)
+        render(data, json_output=False, console=console, table_title="Table Health Metrics")
+        return sio.getvalue()
+
+    # ------------------------------------------------------------------
+    # 1. Column names with brackets render verbatim (the core issue #745 bug)
+    # ------------------------------------------------------------------
+
+    def test_bracket_column_name_renders_verbatim(self) -> None:
+        """Column headers containing ``[0]`` must appear in the output, not be stripped."""
+        data = [
+            {
+                "FileRowCount[0]": 0,
+                "FileRowCount[1,10)": 0,
+                "PhysicalRowCount": 1000000,
+            }
+        ]
+        output = self._render_to_string(data)
+        assert "FileRowCount[0]" in output
+        assert "FileRowCount[1,10)" in output
+
+    def test_plain_column_name_still_renders(self) -> None:
+        """Non-bracket column names must continue to render correctly after the fix."""
+        data = [{"PhysicalRowCount": 1000000, "FileRowCount[0]": 0}]
+        output = self._render_to_string(data)
+        assert "PhysicalRowCount" in output
+
+    # ------------------------------------------------------------------
+    # 2. Cell values with brackets render verbatim
+    # ------------------------------------------------------------------
+
+    def test_bracket_cell_value_renders_verbatim(self) -> None:
+        """A string cell value like ``[redacted]`` must appear verbatim, not stripped."""
+        data = [{"label": "[redacted]", "count": 5}]
+        output = self._render_to_string(data)
+        assert "[redacted]" in output
+
+    # ------------------------------------------------------------------
+    # 3. Intentional NULL styling is preserved (no double-escape)
+    # ------------------------------------------------------------------
+
+    def test_null_cell_still_renders_as_dim_null(self) -> None:
+        """Escaping data strings must not break the intentional ``[dim]NULL[/dim]`` styling.
+
+        A ``None`` value in a kept column must still render as the visible text
+        ``NULL`` (styled dim) — not as the literal tag string ``[dim]NULL[/dim]``.
+        Two rows are used so the column is not all-null and is therefore kept.
+        """
+        data = [
+            {"FileRowCount[0]": None, "PhysicalRowCount": 1000000},
+            {"FileRowCount[0]": 42, "PhysicalRowCount": 2000000},
+        ]
+        output = self._render_to_string(data)
+        # The visible rendered text "NULL" must appear (dim styling applied by Rich)
+        assert "NULL" in output
+        # The raw tag must NOT appear literally (that would mean escaping went wrong)
+        assert "[dim]NULL[/dim]" not in output
+
+
 class TestNullRendering:
     """NULL values in table and panel output are rendered as dim 'NULL', not 'None'."""
 
