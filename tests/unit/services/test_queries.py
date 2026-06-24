@@ -680,3 +680,53 @@ async def test_kill_sql_no_params_bound() -> None:
     # cursor.execute must be called with exactly one positional arg (the SQL),
     # not with a second params argument, because KILL does not support binding.
     assert cursor.execute.call_args.args == ("KILL 55",)
+
+
+# ---------------------------------------------------------------------------
+# Regression: Row→tuple normalisation in queries DMV path (#719)
+# ---------------------------------------------------------------------------
+
+
+class _FakeRow:
+    """Non-tuple sequence mimicking mssql_python.row.Row.
+
+    list_running and list_connections call dict(zip(cols, r)) on each row
+    returned by run_query.  The central tuple() normalisation in run_query
+    ensures this always produces the correct column→value mapping even when
+    the driver returns Row objects instead of real tuples.
+    """
+
+    def __init__(self, *values: object) -> None:
+        self._values = values
+
+    def __iter__(self):  # type: ignore[return]
+        return iter(self._values)
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    def __getitem__(self, index: int) -> object:
+        return self._values[index]
+
+
+async def test_list_running_row_objects_produce_populated_model_fields() -> None:
+    """Regression for #719: Row-like driver objects are normalised to real tuples.
+
+    Feeds _FakeRow instances through the full stack (via open_connection so
+    run_query's central normalisation fires) and asserts that list_running
+    returns RunningQuery instances with all fields correctly populated —
+    not just the first column.
+    """
+    target = _make_target()
+    fake_row = _FakeRow(*_ROW_1_TUPLE)
+    conn = _make_conn([fake_row], _COLS)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await queries.list_running(target)
+
+    assert len(result) == 1
+    q = result[0]
+    # Verify that fields beyond the first column are populated.
+    assert q.session_id == 42  # col 1
+    assert q.status == "running"  # col 3
+    assert q.login_name == "user@example.com"  # col 6
+    assert q.total_elapsed_time_ms == 1500  # col 5
