@@ -10,7 +10,7 @@ import pytest
 from fabric_dw.exceptions import AuthError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import View
 from fabric_dw.services import views
-from fabric_dw.services.views import read_view, validate_identifier
+from fabric_dw.services.views import _normalize_definition, read_view, validate_identifier
 from tests.unit.services._helpers import (
     _make_conn,
     _make_conn_for_ddl,
@@ -31,6 +31,70 @@ _GET_COLS = ["schema_name", "name", "created", "modified", "definition"]
 _VIEW_ROW_1 = ("dbo", "vw_sales", _NOW, _LATER)
 _VIEW_ROW_2 = ("finance", "vw_monthly", _NOW, _NOW)
 _VIEW_ROW_GET = ("dbo", "vw_sales", _NOW, _LATER, "SELECT id, amount FROM dbo.sales")
+
+
+# ===========================================================================
+# _normalize_definition tests
+# ===========================================================================
+
+
+class TestNormalizeDefinition:
+    """Tests for _normalize_definition — the CREATE VIEW header normaliser."""
+
+    def test_empty_schema_and_name_replaced(self) -> None:
+        """The canonical Fabric bug: 'CREATE VIEW . AS ...' is fixed."""
+        result = _normalize_definition("CREATE VIEW . AS SELECT 1", "dbo", "vw_sales")
+        assert "CREATE VIEW [dbo].[vw_sales]" in result
+        assert " AS SELECT 1" in result
+
+    def test_empty_schema_only_replaced(self) -> None:
+        """Schema is empty but name is present — schema is substituted."""
+        result = _normalize_definition("CREATE VIEW .[vw_sales] AS SELECT 1", "dbo", "vw_sales")
+        assert "[dbo].[vw_sales]" in result
+
+    def test_empty_name_only_replaced(self) -> None:
+        """Name is empty but schema is present — name is substituted."""
+        result = _normalize_definition("CREATE VIEW [dbo]. AS SELECT 1", "dbo", "vw_sales")
+        assert "[dbo].[vw_sales]" in result
+
+    def test_already_correct_bracket_form_unchanged(self) -> None:
+        """When both parts are present and bracket-quoted, they are left as-is."""
+        defn = "CREATE VIEW [fdq_qa].[vw_dwh] AS SELECT id FROM t"
+        result = _normalize_definition(defn, "fdq_qa", "vw_dwh")
+        assert result == defn
+
+    def test_already_correct_plain_form_unchanged(self) -> None:
+        """When both parts are present without brackets, they are left as-is."""
+        defn = "CREATE VIEW dbo.vw_sales AS SELECT 1"
+        result = _normalize_definition(defn, "dbo", "vw_sales")
+        assert result == defn
+
+    def test_as_body_preserved_after_fix(self) -> None:
+        """The SELECT body after AS is preserved verbatim."""
+        body = "SELECT id, label FROM fdw_qa.t_ctas"
+        result = _normalize_definition(f"CREATE VIEW . AS {body}", "fdw_qa", "vw_dwh")
+        assert result.endswith(body)
+
+    def test_case_insensitive_create_view(self) -> None:
+        """Header matching is case-insensitive ('create view' works)."""
+        result = _normalize_definition("create view . as SELECT 1", "dbo", "vw_sales")
+        assert "[dbo].[vw_sales]" in result
+
+    def test_create_or_alter_view_header(self) -> None:
+        """CREATE OR ALTER VIEW header is also normalised."""
+        result = _normalize_definition("CREATE OR ALTER VIEW . AS SELECT 1", "dbo", "vw_sales")
+        assert "[dbo].[vw_sales]" in result
+
+    def test_no_match_returns_unchanged(self) -> None:
+        """A definition that has no recognisable CREATE VIEW header is returned as-is."""
+        defn = "SELECT 1"  # no CREATE VIEW prefix
+        assert _normalize_definition(defn, "dbo", "vw_sales") == defn
+
+    def test_realistic_fabric_bug_case(self) -> None:
+        """Reproduces the exact symptom from issue #715."""
+        raw = "CREATE VIEW . AS SELECT id, label FROM fdw_qa.t_ctas"
+        result = _normalize_definition(raw, "fdw_qa", "vw_dwh")
+        assert result == "CREATE VIEW [fdw_qa].[vw_dwh] AS SELECT id, label FROM fdw_qa.t_ctas"
 
 
 # ===========================================================================
@@ -508,6 +572,18 @@ class TestGetView:
             await views.get_view(target, "dbo", "vw_sales")
         conn.close.assert_called_once()
 
+    async def test_normalizes_empty_schema_name_in_definition(self) -> None:
+        """get_view must fix a Fabric-returned 'CREATE VIEW . AS ...' definition (issue #715)."""
+        broken_def = "CREATE VIEW . AS SELECT id, amount FROM dbo.sales"
+        row = ("dbo", "vw_sales", _NOW, _LATER, broken_def)
+        target = _make_target()
+        conn = _make_conn([row], _GET_COLS)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await views.get_view(target, "dbo", "vw_sales")
+        assert result.definition is not None
+        assert "CREATE VIEW [dbo].[vw_sales]" in result.definition
+        assert ". AS" not in result.definition
+
     async def test_maps_permission_denied(self) -> None:
         target = _make_target()
         conn = MagicMock()
@@ -634,6 +710,21 @@ class TestCreateView:
         target = _make_target()
         with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
             await views.create_view(target, "dbo", "vw_sales", "DROP TABLE dbo.foo")
+
+    async def test_create_view_normalizes_empty_definition(self) -> None:
+        """create_view must fix a Fabric-returned 'CREATE VIEW . AS ...' in the fetched view."""
+        broken_def = "CREATE VIEW . AS SELECT id FROM dbo.sales"
+        fetch_row = ("dbo", "vw_sales", _NOW, _LATER, broken_def)
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([fetch_row], _GET_COLS)
+
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            result = await views.create_view(target, "dbo", "vw_sales", "SELECT id FROM dbo.sales")
+
+        assert result.definition is not None
+        assert "CREATE VIEW [dbo].[vw_sales]" in result.definition
+        assert ". AS" not in result.definition
 
 
 # ===========================================================================
