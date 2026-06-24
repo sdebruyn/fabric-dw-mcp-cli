@@ -2285,3 +2285,52 @@ class TestGetTableHealthMetrics:
                 "bad;table",
                 kind=WarehouseKind.SQL_ENDPOINT,
             )
+
+    async def test_rows_are_normalized_to_real_tuples(self) -> None:
+        """Driver Row-like objects (non-tuple sequences) are normalized to real tuples.
+
+        Monkeypatches ``run_query`` to yield a custom non-tuple sequence class
+        that mimics ``mssql_python.row.Row`` — iterable and indexable but NOT a
+        ``tuple`` subclass.  Asserts that every row in the result is a real
+        ``tuple`` and that values are preserved in order.
+        """
+
+        class _FakeRow:
+            """Tuple-like but not a tuple subclass, as mssql_python.row.Row."""
+
+            def __init__(self, *values: object) -> None:
+                self._values = values
+
+            def __iter__(self):  # type: ignore[override]
+                return iter(self._values)
+
+            def __len__(self) -> int:
+                return len(self._values)
+
+            def __getitem__(self, index: int) -> object:
+                return self._values[index]
+
+        fake_cols = ["col_x", "col_y", "col_z"]
+        fake_driver_rows = [
+            _FakeRow(1, "alpha", None),
+            _FakeRow(2, "beta", 3.14),
+        ]
+
+        target = _make_target()
+        with patch(
+            "fabric_dw.services.tables.run_query",
+            return_value=(fake_cols, fake_driver_rows),
+        ):
+            result_cols, result_rows = await tables.get_table_health_metrics(
+                target,
+                "dbo",
+                "FactSales",
+                kind=WarehouseKind.SQL_ENDPOINT,
+            )
+
+        assert result_cols == fake_cols
+        assert len(result_rows) == 2
+        for row in result_rows:
+            assert isinstance(row, tuple), f"each row must be a tuple, got {type(row)}: {row!r}"
+        assert result_rows[0] == (1, "alpha", None)
+        assert result_rows[1] == (2, "beta", 3.14)
