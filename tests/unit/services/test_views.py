@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from fabric_dw.exceptions import AuthError, NotFoundError, PermissionDeniedError
+from fabric_dw.exceptions import AuthError, FabricServerError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import View
 from fabric_dw.services import views
 from fabric_dw.services._helpers import normalize_object_definition as _normalize_definition
@@ -821,6 +821,41 @@ class TestUpdateView:
                 "WITH cte AS (SELECT id FROM dbo.src) SELECT * FROM cte",
             )
         assert isinstance(result, View)
+
+    async def test_invalid_column_raises_fabric_server_error(self) -> None:
+        """#747: a driver SQL error (invalid column) must raise FabricServerError, not traceback.
+
+        When the server rejects the CREATE OR ALTER VIEW DDL due to an invalid
+        column reference, the mssql_python driver raises a ProgrammingError
+        carrying a ``ddbc_error`` attribute.  run_query must wrap it as a
+        FabricServerError so the CLI's ``except (ValueError, FabricError)``
+        handler catches it and prints a clean error message instead of a raw
+        Python traceback.
+        """
+        target = _make_target()
+        conn = MagicMock()
+        cursor = MagicMock()
+
+        class _InvalidColumnError(Exception):
+            ddbc_error = "[Microsoft][SQL Server]Invalid column name 'amount'."
+
+            def __str__(self) -> str:
+                return (
+                    "Driver Error: Column not found; DDBC Error: "
+                    "[Microsoft][SQL Server]Invalid column name 'amount'."
+                )
+
+        cursor.execute.side_effect = _InvalidColumnError()
+        conn.cursor.return_value = cursor
+
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(FabricServerError) as exc_info,
+        ):
+            await views.update_view(target, "dbo", "vw_sales", "SELECT id, amount FROM t")
+
+        assert "Invalid column name 'amount'" in str(exc_info.value)
+        assert "Driver Error:" not in str(exc_info.value)
 
 
 # ===========================================================================
