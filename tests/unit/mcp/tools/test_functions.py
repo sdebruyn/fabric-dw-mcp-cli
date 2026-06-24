@@ -372,7 +372,7 @@ async def test_drop_function_happy_path(mock_ctx, ctx_patch) -> None:
     with (
         ctx_patch,
         patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
-        patch("fabric_dw.services.functions.drop_function", new=AsyncMock(return_value=None)),
+        patch("fabric_dw.services.functions.drop_function", new=AsyncMock(return_value=True)),
     ):
         result = await mcp._tool_manager.call_tool(
             "drop_function",

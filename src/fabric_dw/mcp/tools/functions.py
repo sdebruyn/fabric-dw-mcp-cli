@@ -214,12 +214,12 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             )
             _log.debug("drop_function ws=%s item=%s fn=%s.%s", ws_id, entry.id, schema, fn_name)
             target = make_sql_target(ws_id, entry, item)
-            await functions_svc.drop_function(
+            dropped = await functions_svc.drop_function(
                 target, schema, fn_name, if_exists=if_exists, mode=ctx.auth_mode
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
-        return {"dropped": True}
+        return {"dropped": dropped}
 
     @mutating_tool(mcp, "rename_function")
     async def rename_function(

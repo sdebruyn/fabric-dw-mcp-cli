@@ -587,14 +587,42 @@ class TestDropFunction:
         assert "[dbo]" in call_sql
         assert "[fn_clean]" in call_sql
 
-    async def test_if_exists_adds_if_exists_clause(self) -> None:
+    async def test_returns_true_when_dropped(self) -> None:
+        """drop_function without --if-exists always returns True."""
         target = _make_target()
         conn = _make_conn_for_ddl()
         with patch("fabric_dw.sql.open_connection", return_value=conn):
-            await functions.drop_function(target, "dbo", "fn_clean", if_exists=True)
-        cursor = conn.cursor.return_value
-        call_sql: str = cursor.execute.call_args[0][0].upper()
-        assert "DROP FUNCTION IF EXISTS" in call_sql
+            result = await functions.drop_function(target, "dbo", "fn_clean")
+        assert result is True
+
+    async def test_if_exists_existing_function_emits_drop_ddl_and_returns_true(self) -> None:
+        """When --if-exists and the function exists, DROP is issued and True is returned."""
+        target = _make_target()
+        # First connection: EXISTS check returns count=1 (function exists)
+        conn_exists = _make_conn([(1,)], [""])
+        # Second connection: DROP DDL
+        conn_drop = _make_conn_for_ddl()
+        with patch("fabric_dw.sql.open_connection", side_effect=[conn_exists, conn_drop]):
+            result = await functions.drop_function(target, "dbo", "fn_clean", if_exists=True)
+        assert result is True
+        drop_cursor = conn_drop.cursor.return_value
+        drop_sql: str = drop_cursor.execute.call_args[0][0].upper()
+        assert "DROP FUNCTION" in drop_sql
+        # IF EXISTS must NOT appear in the DDL — we guard with a pre-check instead
+        assert "IF EXISTS" not in drop_sql
+
+    async def test_if_exists_missing_function_returns_false_without_drop(self) -> None:
+        """When --if-exists and the function does not exist, no DROP is issued and
+        False is returned."""
+        target = _make_target()
+        # EXISTS check returns count=0 (function does not exist)
+        conn_exists = _make_conn([(0,)], [""])
+        drop_conn = _make_conn_for_ddl()  # must NOT be consumed
+        with patch("fabric_dw.sql.open_connection", side_effect=[conn_exists]):
+            result = await functions.drop_function(target, "dbo", "fn_nope", if_exists=True)
+        assert result is False
+        # The drop connection was never opened
+        drop_conn.cursor.return_value.execute.assert_not_called()
 
     async def test_commits_after_execute(self) -> None:
         target = _make_target()
