@@ -894,16 +894,24 @@ class TestMultiGuidColumnWidthStarvation:
     # 3. Primary GUID column (id) still renders correctly
     # ------------------------------------------------------------------
 
-    def test_primary_guid_id_visible_at_width_80(self) -> None:
-        """The first GUID column (id) must render its full value at width=80.
+    def test_primary_guid_intact_and_readable_column_survives_at_width_80(self) -> None:
+        """Primary GUID renders verbatim AND human-readable column survives at width=80.
 
-        The primary GUID column keeps ``no_wrap + min_width=36``, so the full
-        36-character GUID string must appear verbatim — not truncated — even on
-        a narrow terminal.  This distinguishes the new behaviour from the old
-        code (where secondary GUIDs also got full width and starved other cols).
+        Under the old code both GUID columns (``id`` + ``capacityId``) got
+        ``no_wrap + min_width=36``, consuming ≥80 chars and starving
+        ``displayName`` to zero width.  Under the fixed code only the first
+        GUID column keeps its full width, so ``displayName`` gets remaining
+        space and is visible.
+
+        This assertion pair fails on the pre-fix code (``displayName`` was
+        starved) and passes on the post-fix code — making it a genuine guard.
         """
         output = self._render_at_width(80)
+        # Primary GUID must be present verbatim (no_wrap keeps it intact)
         assert _GUID_ID in output
+        # Readable column must NOT be starved — this is the discriminating assertion
+        assert "displ" in output.lower()
+        assert "┃┃┃" not in output
 
     # ------------------------------------------------------------------
     # 4. Wider consoles still render correctly
