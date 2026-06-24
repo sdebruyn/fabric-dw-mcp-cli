@@ -798,3 +798,168 @@ class TestGuidColumnWidthInNarrowConsole:
         ]
         output = self._render_narrow(data, width=50)
         assert _SAMPLE_GUID in output
+
+
+# ---------------------------------------------------------------------------
+# Two-GUID-column width starvation regression tests (issue #737)
+# ---------------------------------------------------------------------------
+
+#: Two sample GUIDs used in the multi-GUID-column tests.
+_GUID_ID = "eb85cc99-5ad8-4f89-85b8-2a46eaa410d6"
+_GUID_CAPACITY = "4c18bf4e-86dd-47da-8602-87184ff16c13"
+
+#: Rows that exercise the two-GUID-column layout (workspaces list shape).
+_WORKSPACE_ROWS: list[dict[str, object]] = [
+    {
+        "id": _GUID_ID,
+        "displayName": "Adventure Works Finance",
+        "description": "Finance",
+        "capacityId": _GUID_CAPACITY,
+        "defaultDataWarehouseCollation": "Latin1_General_100_BIN2_UTF8",
+    },
+    {
+        "id": "51bb6021-07a7-4846-aa54-b9a081d767d8",
+        "displayName": "My workspace",
+        "description": "",
+        "capacityId": None,
+        "defaultDataWarehouseCollation": "Latin1_General_100_BIN2_UTF8",
+    },
+]
+
+
+class TestMultiGuidColumnWidthStarvation:
+    """Two GUID columns must not collapse human-readable columns to zero width.
+
+    Regression tests for the bug described in issue #737: when a table has two
+    GUID-valued columns (e.g. ``id`` and ``capacityId``), both previously got
+    ``no_wrap=True, min_width=36``.  Together they exceed 80 columns (36+36+borders),
+    so Rich collapsed the remaining human-readable columns to zero width, producing
+    empty ``┃┃┃`` headers and invisible content.
+
+    The fix: only the *first* GUID column keeps ``no_wrap + min_width``; secondary
+    GUID columns are rendered without a forced min_width so they can yield space.
+    """
+
+    def _render_at_width(self, width: int) -> str:
+        sio = StringIO()
+        console = Console(file=sio, width=width, highlight=False, no_color=True)
+        render(_WORKSPACE_ROWS, json_output=False, console=console, table_title="Workspaces")
+        return sio.getvalue()
+
+    # ------------------------------------------------------------------
+    # 1. displayName header and value must be visible at width=80
+    # ------------------------------------------------------------------
+
+    def test_displayname_header_visible_at_width_80(self) -> None:
+        """'displayName' column header must appear (possibly truncated) at width=80.
+
+        At 80 columns there is not enough room for the full header text, so Rich
+        will truncate it to e.g. ``displa…``.  The requirement is that the column
+        is *present* — not collapsed to zero width — so we check for the first few
+        characters of the name rather than the full string.
+        """
+        output = self._render_at_width(80)
+        # "displ" covers both "displayName" and any truncation like "displa…"
+        assert "displ" in output.lower()
+
+    def test_displayname_value_visible_at_width_80(self) -> None:
+        """At least the start of the displayName value must appear at width=80."""
+        output = self._render_at_width(80)
+        # "Advent" covers "Adventure" even when the cell is truncated to "Advent…"
+        assert "Advent" in output
+
+    # ------------------------------------------------------------------
+    # 2. No adjacent empty column separators (┃┃┃ artifact)
+    # ------------------------------------------------------------------
+
+    def test_no_empty_column_separators_at_width_80(self) -> None:
+        """Three consecutive column separators with nothing between them must not appear."""
+        output = self._render_at_width(80)
+        # The zero-width-column artifact looks like ┃┃┃ (three separators in a row).
+        # Stripping ANSI and checking for adjacent-separator sequences:
+        assert "┃┃┃" not in output
+
+    # ------------------------------------------------------------------
+    # 3. Primary GUID column (id) still renders correctly
+    # ------------------------------------------------------------------
+
+    def test_primary_guid_id_visible_at_width_80(self) -> None:
+        """The first GUID column (id) must still be visible at width=80."""
+        output = self._render_at_width(80)
+        # At least partial match — the column header must be there
+        assert "id" in output
+
+    # ------------------------------------------------------------------
+    # 4. Wider consoles still render correctly
+    # ------------------------------------------------------------------
+
+    def test_all_columns_visible_at_width_100(self) -> None:
+        """At width=100 all column headers must be present."""
+        output = self._render_at_width(100)
+        assert "displayName" in output
+        assert "id" in output
+
+    def test_all_columns_visible_at_width_120(self) -> None:
+        """At width=120 all column headers and values are fully visible."""
+        output = self._render_at_width(120)
+        assert "displayName" in output
+        # Value may wrap across lines; check that the first word is present
+        assert "Adventure" in output
+        assert "id" in output
+        assert _GUID_ID in output
+
+    # ------------------------------------------------------------------
+    # 5. Existing behaviour: single-GUID-column tables unaffected
+    # ------------------------------------------------------------------
+
+    def test_single_guid_column_still_gets_full_width(self) -> None:
+        """A table with only one GUID column still has it rendered no_wrap at 50 cols."""
+        data: list[dict[str, object]] = [
+            {"id": _GUID_ID, "displayName": "Adventure Works Finance"},
+        ]
+        sio = StringIO()
+        console = Console(file=sio, width=50, highlight=False, no_color=True)
+        render(data, json_output=False, console=console)
+        output = sio.getvalue()
+        # Primary GUID must survive (no_wrap keeps it intact)
+        assert _GUID_ID in output
+
+    # ------------------------------------------------------------------
+    # 6. drop_columns still works alongside the multi-GUID fix
+    # ------------------------------------------------------------------
+
+    def test_drop_columns_still_works_with_two_guid_columns(self) -> None:
+        """drop_columns must remove the named column even when ≥2 GUID columns present."""
+        sio = StringIO()
+        console = Console(file=sio, width=80, highlight=False, no_color=True)
+        render(
+            _WORKSPACE_ROWS,
+            json_output=False,
+            console=console,
+            drop_columns=("capacityId",),
+        )
+        output = sio.getvalue()
+        assert "capacityId" not in output
+        # displayName must be visible (possibly truncated) now that capacityId is dropped
+        assert "displ" in output.lower()
+
+    # ------------------------------------------------------------------
+    # 7. All-null GUID column still pruned
+    # ------------------------------------------------------------------
+
+    def test_all_null_guid_column_still_pruned(self) -> None:
+        """A GUID-shaped column where every row is None must still be dropped."""
+        data: list[dict[str, object]] = [
+            {"id": _GUID_ID, "displayName": "Foo", "capacityId": None},
+            {
+                "id": "51bb6021-07a7-4846-aa54-b9a081d767d8",
+                "displayName": "Bar",
+                "capacityId": None,
+            },
+        ]
+        sio = StringIO()
+        console = Console(file=sio, width=80, highlight=False, no_color=True)
+        render(data, json_output=False, console=console)
+        output = sio.getvalue()
+        assert "capacityId" not in output
+        assert "displayName" in output
