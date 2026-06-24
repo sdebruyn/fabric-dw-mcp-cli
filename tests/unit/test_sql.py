@@ -11,7 +11,7 @@ import pytest
 import fabric_dw.sql as _sql_module
 from fabric_dw.auth import CredentialMode
 from fabric_dw.config import Defaults, UserConfig
-from fabric_dw.exceptions import AuthError, NotFoundError, PermissionDeniedError
+from fabric_dw.exceptions import AuthError, FabricServerError, NotFoundError, PermissionDeniedError
 from fabric_dw.sql import (
     SqlTarget,
     build_connection_string,
@@ -3244,3 +3244,220 @@ class TestRunQueryRowNormalisation:
         dicts = [dict(zip(cols, r, strict=True)) for r in rows]
         assert dicts[0] == {"session_id": "sess-1", "connection_id": "conn-1"}
         assert dicts[1] == {"session_id": "sess-2", "connection_id": "conn-2"}
+
+
+# ---------------------------------------------------------------------------
+# _clean_driver_error_message — noise-stripping helper
+# ---------------------------------------------------------------------------
+
+
+class TestCleanDriverErrorMessage:
+    """Tests for _clean_driver_error_message (private helper, accessed via module)."""
+
+    def _clean(self, msg: str) -> str:
+        return _sql_module._clean_driver_error_message(msg)  # type: ignore[attr-defined]
+
+    def test_strips_driver_noise_prefix(self) -> None:
+        """The driver-noise prefix is removed, leaving only the SQL Server message."""
+        raw = (
+            "Driver Error: Column not found; DDBC Error: "
+            "[Microsoft][SQL Server]Invalid column name 'amount'."
+        )
+        assert self._clean(raw) == "[Microsoft][SQL Server]Invalid column name 'amount'."
+
+    def test_case_insensitive_prefix_match(self) -> None:
+        """Prefix matching is case-insensitive."""
+        raw = "driver error: something; ddbc error: [SQL Server]Bad stuff."
+        assert self._clean(raw) == "[SQL Server]Bad stuff."
+
+    def test_no_prefix_returns_original(self) -> None:
+        """A message without the prefix is returned unchanged."""
+        raw = "[Microsoft][SQL Server]Invalid column name 'amount'."
+        assert self._clean(raw) == raw
+
+    def test_empty_string_returns_empty(self) -> None:
+        assert self._clean("") == ""
+
+    def test_multiple_semicolons_only_strips_first_segment(self) -> None:
+        """Only the first 'Driver Error: ...; DDBC Error:' segment is stripped."""
+        raw = "Driver Error: Col not found; DDBC Error: [SQL Server]Err; extra stuff."
+        assert self._clean(raw) == "[SQL Server]Err; extra stuff."
+
+
+# ---------------------------------------------------------------------------
+# _wrap_unmapped_driver_error — FabricServerError wrapper
+# ---------------------------------------------------------------------------
+
+
+class _DriverExcWithDdbcError(Exception):
+    """Minimal stand-in for a driver exception with a ddbc_error attribute."""
+
+    def __init__(self, msg: str, ddbc_error: str) -> None:
+        super().__init__(msg)
+        self.ddbc_error = ddbc_error
+
+
+class TestWrapUnmappedDriverError:
+    """Tests for _wrap_unmapped_driver_error (private helper, accessed via module)."""
+
+    def _wrap(self, exc: BaseException) -> FabricServerError | None:
+        return _sql_module._wrap_unmapped_driver_error(exc)  # type: ignore[attr-defined]
+
+    def _make_driver_exc_with_ddbc(self, msg: str, ddbc_error: str) -> _DriverExcWithDdbcError:
+        return _DriverExcWithDdbcError(msg, ddbc_error)
+
+    def test_returns_fabric_server_error_for_ddbc_error(self) -> None:
+        """An exception with ddbc_error is wrapped in FabricServerError."""
+        exc = self._make_driver_exc_with_ddbc(
+            "Driver Error: Column not found; DDBC Error: [SQL Server]Invalid column name 'amount'.",
+            "[Microsoft][SQL Server]Invalid column name 'amount'.",
+        )
+        result = self._wrap(exc)
+        assert isinstance(result, FabricServerError)
+
+    def test_message_uses_ddbc_error_content(self) -> None:
+        """The wrapped message comes from ddbc_error, not the noisy full string."""
+        exc = self._make_driver_exc_with_ddbc(
+            "Driver Error: Column not found; DDBC Error: [SQL Server]Invalid column name 'amount'.",
+            "[Microsoft][SQL Server]Invalid column name 'amount'.",
+        )
+        result = self._wrap(exc)
+        assert result is not None
+        assert "Invalid column name 'amount'" in str(result)
+        assert "Driver Error:" not in str(result)
+        assert "DDBC Error:" not in str(result)
+
+    def test_returns_none_for_exception_without_ddbc_error(self) -> None:
+        """An exception without ddbc_error (e.g. network/cursor error) returns None."""
+        exc = Exception("Invalid cursor state")
+        assert self._wrap(exc) is None
+
+    def test_returns_none_for_plain_exception(self) -> None:
+        """A plain Exception with no ddbc_error attribute returns None."""
+        exc = Exception("connection timed out")
+        assert self._wrap(exc) is None
+
+    def test_not_found_208_wraps_as_fabric_server_error_in_isolation(self) -> None:
+        """_wrap_unmapped_driver_error wraps error-208 as FabricServerError when called alone.
+
+        _wrap_unmapped_driver_error does not know about error numbers — it wraps
+        any exception that carries a ddbc_error attribute.  In run_query the
+        callers invoke map_driver_error FIRST (which returns NotFoundError for 208),
+        so _wrap_unmapped_driver_error is never reached for known error numbers.
+        When called in isolation the wrapper returns FabricServerError; the
+        prioritisation is enforced by the call order in run_query, not by _wrap.
+        """
+        exc = self._make_driver_exc_with_ddbc(
+            "Invalid object name 'dbo.x'",
+            "Error: 208 Invalid object name 'dbo.x'",
+        )
+        result = self._wrap(exc)
+        assert isinstance(result, FabricServerError)
+
+
+# ---------------------------------------------------------------------------
+# run_query — unmapped driver SQL error wrapping (#747)
+# ---------------------------------------------------------------------------
+
+
+class _DriverSqlExecError(Exception):
+    """Minimal stand-in for mssql_python.exceptions.ProgrammingError with ddbc_error."""
+
+    def __init__(self, msg: str, ddbc_error: str) -> None:
+        super().__init__(msg)
+        self.ddbc_error = ddbc_error
+
+
+class TestRunQueryUnmappedDriverError:
+    """run_query must surface unmapped driver SQL errors as FabricServerError."""
+
+    @staticmethod
+    def _make_driver_execute_exc(msg: str, ddbc_error: str) -> _DriverSqlExecError:
+        """Return a driver-like exception with ddbc_error attribute."""
+        return _DriverSqlExecError(msg, ddbc_error)
+
+    def test_invalid_column_raises_fabric_server_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A driver ProgrammingError with ddbc_error raises FabricServerError, not a raw error."""
+        mock_mssql, _, mock_cursor = _make_mock_mssql()
+        exc = self._make_driver_execute_exc(
+            "Driver Error: Column not found; DDBC Error: [SQL Server]Invalid column name 'amount'.",
+            "[Microsoft][SQL Server]Invalid column name 'amount'.",
+        )
+        mock_cursor.execute.side_effect = exc
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with pytest.raises(FabricServerError) as exc_info:
+            run_query(_make_target(), "CREATE OR ALTER VIEW [dbo].[v] AS SELECT amount FROM t")
+
+        assert "Invalid column name 'amount'" in str(exc_info.value)
+
+    def test_invalid_column_message_no_driver_noise(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The FabricServerError message must not contain the driver-noise prefix."""
+        mock_mssql, _, mock_cursor = _make_mock_mssql()
+        exc = self._make_driver_execute_exc(
+            "Driver Error: Column not found; DDBC Error: [SQL Server]Invalid column name 'x'.",
+            "[Microsoft][SQL Server]Invalid column name 'x'.",
+        )
+        mock_cursor.execute.side_effect = exc
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with pytest.raises(FabricServerError) as exc_info:
+            run_query(_make_target(), "SELECT x FROM t", fetch="none")
+
+        msg = str(exc_info.value)
+        assert "Driver Error:" not in msg
+        assert "DDBC Error:" not in msg
+
+    def test_fetch_none_invalid_column_raises_fabric_server_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """fetch='none' DDL path also wraps unmapped driver SQL errors."""
+        mock_mssql, _, mock_cursor = _make_mock_mssql()
+        exc = self._make_driver_execute_exc(
+            "Driver Error: Column not found; DDBC Error: [SQL Server]Invalid column name 'amount'.",
+            "[Microsoft][SQL Server]Invalid column name 'amount'.",
+        )
+        mock_cursor.execute.side_effect = exc
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with pytest.raises(FabricServerError):
+            run_query(
+                _make_target(),
+                "CREATE OR ALTER VIEW [dbo].[v] AS SELECT amount FROM t",
+                fetch="none",
+                commit=True,
+            )
+
+    def test_already_mapped_not_found_still_raises_not_found(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Error 208 (NotFoundError) is mapped before the FabricServerError fallback."""
+        mock_mssql, _, mock_cursor = _make_mock_mssql()
+
+        class _Err208Error(Exception):
+            ddbc_error = "Error: 208 Invalid object name 'dbo.missing'"
+
+            def __str__(self) -> str:
+                return "Invalid object name 'dbo.missing'"
+
+        mock_cursor.execute.side_effect = _Err208Error()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with pytest.raises(NotFoundError):
+            run_query(_make_target(), "SELECT * FROM [dbo].[missing]")
+
+    def test_exception_without_ddbc_error_not_wrapped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An exception with no ddbc_error (e.g. cursor state error) propagates unchanged."""
+        mock_mssql, _, mock_cursor = _make_mock_mssql()
+        mock_cursor.execute.side_effect = Exception("Invalid cursor state")
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with pytest.raises(Exception, match="Invalid cursor state") as exc_info:
+            run_query(_make_target(), "SELECT 1")
+
+        # Must NOT be wrapped as FabricServerError.
+        assert not isinstance(exc_info.value, FabricServerError)

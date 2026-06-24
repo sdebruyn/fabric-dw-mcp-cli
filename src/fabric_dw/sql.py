@@ -57,7 +57,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
 from fabric_dw.auth import CredentialMode, get_sql_token_struct
-from fabric_dw.exceptions import AuthError, NotFoundError, PermissionDeniedError
+from fabric_dw.exceptions import AuthError, FabricServerError, NotFoundError, PermissionDeniedError
 
 _log = logging.getLogger(__name__)
 
@@ -1005,6 +1005,68 @@ def map_driver_error(exc: BaseException) -> Exception | None:
     return None
 
 
+# Pattern that matches the driver noise prefix produced by mssql_python.
+# Format: Driver Error: <short category>; DDBC Error: <sql server message>
+# We strip everything up to and including the DDBC Error label so callers
+# see only the meaningful SQL Server portion.
+_DRIVER_NOISE_RE = re.compile(
+    r"^Driver Error:[^;]*;\s*DDBC Error:\s*",
+    re.IGNORECASE,
+)
+
+
+def _clean_driver_error_message(msg: str) -> str:
+    """Strip the mssql_python driver-noise prefix from *msg*.
+
+    The driver wraps SQL Server errors with a prefix of the form::
+
+        Driver Error: <short category>; DDBC Error: <SQL Server message>
+
+    This helper returns the SQL Server message only.  If the prefix is not
+    present the original *msg* is returned unchanged.
+
+    Args:
+        msg: The stringified driver exception message.
+
+    Returns:
+        The cleaned message, with driver-noise prefix removed when present.
+    """
+    return _DRIVER_NOISE_RE.sub("", msg, count=1)
+
+
+def _wrap_unmapped_driver_error(exc: BaseException) -> FabricServerError | None:
+    """Wrap a driver SQL error that was not classified by :func:`map_driver_error`.
+
+    When the driver attaches a ``ddbc_error`` attribute to an exception it
+    signals a genuine SQL Server error (e.g. "Invalid column name", syntax
+    errors, constraint violations).  These are distinct from internal
+    cursor-state errors (which carry no ``ddbc_error``) and from transient
+    network errors.
+
+    A ``ddbc_error`` present on an unclassified exception means
+    :func:`map_driver_error` recognised no specific category (not a
+    permission/auth/not-found error).  We surface it as a
+    :class:`~fabric_dw.exceptions.FabricServerError` with a cleaned message
+    so the CLI can catch it via ``except (ValueError, FabricError)`` and print
+    a friendly error instead of a raw traceback.
+
+    Args:
+        exc: The raw exception raised by the driver.
+
+    Returns:
+        A :class:`~fabric_dw.exceptions.FabricServerError` when *exc* carries
+        a ``ddbc_error`` attribute (unmapped driver SQL error), otherwise
+        ``None`` (not a driver SQL error — let the caller re-raise as-is).
+    """
+    ddbc_error = getattr(exc, "ddbc_error", None)
+    if not ddbc_error:
+        return None
+    # ddbc_error contains the SQL Server-level message without driver-noise prefix.
+    # The `if not ddbc_error` guard above already handles the empty/falsy case, so
+    # str(ddbc_error) is always non-empty here.
+    return FabricServerError(str(ddbc_error).strip(), is_retriable=False)
+
+
 def is_transient_connection_error(exc: BaseException) -> bool:
     """Return True when *exc* represents a retryable TDS connection-level drop.
 
@@ -1297,6 +1359,10 @@ def run_query(  # noqa: PLR0913, PLR0915
         AuthError: If the driver reports an authentication failure.
         NotFoundError: If the driver reports a missing-object error (SQL Server
             error 208, invalid object name / base table or view not found).
+        FabricServerError: If the driver reports an unmapped SQL error (e.g.
+            "Invalid column name") that carries a ``ddbc_error`` attribute.
+            The message is cleaned of driver-noise prefixes so the user sees
+            the SQL Server-level message directly.
         Exception: Any other driver error is propagated unchanged.
     """
     # Whether execute-phase transient errors are safe to retry.
@@ -1396,6 +1462,13 @@ def run_query(  # noqa: PLR0913, PLR0915
             # not be re-executed (D10 retry boundary).
             if not (execute_retry_allowed and is_transient_connection_error(exc)):
                 conn.close()
+                # Wrap unmapped driver SQL errors (e.g. "Invalid column name")
+                # as FabricServerError so the CLI catches them cleanly.
+                # Internal cursor-state errors and network errors carry no
+                # ddbc_error and pass through unwrapped.
+                wrapped = _wrap_unmapped_driver_error(exc)
+                if wrapped:
+                    raise wrapped from exc
                 raise
             # Set the deadline on the first execute-phase transient failure.
             if execute_deadline is None:
@@ -1488,6 +1561,9 @@ def run_statements(
     Raises:
         PermissionDeniedError: If the driver reports a permission error on any statement.
         AuthError: If the driver reports an authentication failure.
+        FabricServerError: If the driver reports an unmapped SQL error that
+            carries a ``ddbc_error`` attribute (e.g. syntax errors, invalid
+            column names).  The message is cleaned of driver-noise prefixes.
         Exception: Any other driver error is propagated unchanged.
     """
     conn, _attempt, _max, _ = _with_connect_retry(target, mode, autocommit)
@@ -1505,6 +1581,11 @@ def run_statements(
                 mapped = map_driver_error(exc)
                 if mapped:
                     raise mapped from exc
+                # Wrap unmapped driver SQL errors as FabricServerError so CLI
+                # callers see a clean message rather than a raw traceback.
+                wrapped = _wrap_unmapped_driver_error(exc)
+                if wrapped:
+                    raise wrapped from exc
                 raise
         # All statements executed — commit once if deferred.
         if not autocommit and not commit_per_statement:

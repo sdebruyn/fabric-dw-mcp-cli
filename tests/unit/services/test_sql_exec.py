@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import fabric_dw.sql as _sql_module
-from fabric_dw.exceptions import AuthError, PermissionDeniedError
+from fabric_dw.exceptions import AuthError, FabricServerError, PermissionDeniedError
 from fabric_dw.models import SqlResult
 from fabric_dw.services import sql_exec
 from fabric_dw.sql import SqlTarget
@@ -209,8 +209,8 @@ async def test_execute_non_binary_column_name_unchanged() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_execute_syntax_error_propagates() -> None:
-    """Non-mapped driver errors are raised as-is."""
+async def test_execute_non_driver_error_propagates() -> None:
+    """Errors without a ddbc_error attribute (not driver SQL errors) are raised as-is."""
     target = _make_target()
     conn = MagicMock()
     cursor = MagicMock()
@@ -1254,3 +1254,75 @@ async def test_get_plan_iter_only_row_with_none_skipped() -> None:
         result = await sql_exec.get_plan(target, "SELECT 1")
 
     assert result == _PLAN_XML
+
+
+# ---------------------------------------------------------------------------
+# execute / get_plan — unmapped driver SQL error wrapping (#747)
+# ---------------------------------------------------------------------------
+
+
+class _SqlExecDriverError(Exception):
+    """Minimal stand-in for mssql_python driver exception with ddbc_error."""
+
+    def __init__(self, msg: str, ddbc_error: str) -> None:
+        super().__init__(msg)
+        self.ddbc_error = ddbc_error
+
+
+async def test_execute_invalid_column_raises_fabric_server_error() -> None:
+    """#747: execute() wraps unmapped driver SQL errors as FabricServerError.
+
+    When the driver rejects a statement due to an invalid column name the
+    exception carries a ddbc_error attribute.  execute() must surface this
+    as FabricServerError so MCP callers catch it via FabricError instead of
+    seeing a raw traceback.
+    """
+    target = _make_target()
+    conn = MagicMock()
+    cursor = MagicMock()
+    cursor.execute.side_effect = _SqlExecDriverError(
+        "Driver Error: Column not found; DDBC Error: [SQL Server]Invalid column name 'x'.",
+        "[Microsoft][SQL Server]Invalid column name 'x'.",
+    )
+    conn.cursor.return_value = cursor
+
+    with _patch_connect(conn), pytest.raises(FabricServerError) as exc_info:
+        await sql_exec.execute(target, "SELECT x FROM t")
+
+    assert "Invalid column name 'x'" in str(exc_info.value)
+    assert "Driver Error:" not in str(exc_info.value)
+
+
+async def test_execute_driver_error_without_ddbc_propagates_unchanged() -> None:
+    """An exception with no ddbc_error attribute is not wrapped by execute()."""
+    target = _make_target()
+    conn = MagicMock()
+    cursor = MagicMock()
+    cursor.execute.side_effect = Exception("something unexpected")
+    conn.cursor.return_value = cursor
+
+    with _patch_connect(conn), pytest.raises(Exception, match="something unexpected") as exc_info:
+        await sql_exec.execute(target, "SELECT 1")
+
+    assert not isinstance(exc_info.value, FabricServerError)
+
+
+async def test_get_plan_invalid_column_raises_fabric_server_error() -> None:
+    """#747: get_plan() wraps unmapped driver SQL errors as FabricServerError."""
+    target = _make_target()
+    conn = MagicMock()
+    cursor = MagicMock()
+    # Simulate driver raising on the plan-capture execute call.
+    cursor.execute.side_effect = _SqlExecDriverError(
+        "Driver Error: Column not found; DDBC Error: [SQL Server]Invalid column name 'y'.",
+        "[Microsoft][SQL Server]Invalid column name 'y'.",
+    )
+    conn.cursor.return_value = cursor
+
+    with (
+        patch("fabric_dw.sql._with_connect_retry", return_value=(conn, 0, 1, None)),
+        pytest.raises(FabricServerError) as exc_info,
+    ):
+        await sql_exec.get_plan(target, "SELECT y FROM t")
+
+    assert "Invalid column name 'y'" in str(exc_info.value)

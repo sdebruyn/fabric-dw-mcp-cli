@@ -187,6 +187,9 @@ async def execute(
         PermissionDeniedError: If the driver raises a SQL permission-denial error.
             The exception message contains a hint pointing to the
             documentation for the required permissions.
+        FabricServerError: If the driver raises an unmapped SQL error (e.g.
+            invalid column name, syntax error) that carries a ``ddbc_error``
+            attribute.  The message is cleaned of driver-noise prefixes.
         Exception: Any other driver error is propagated unchanged.
     """
 
@@ -206,6 +209,11 @@ async def execute(
                                 hint=_SQL_EXEC_PERMISSION_HINT,
                             ) from exc
                         raise mapped from exc
+                    # Wrap unmapped driver SQL errors (e.g. invalid column, syntax
+                    # error) as FabricServerError so callers catch FabricError.
+                    wrapped = sql._wrap_unmapped_driver_error(exc)
+                    if wrapped:
+                        raise wrapped from exc
                     raise
 
                 # Capture result sets in order, keeping only the last one that has
@@ -328,6 +336,10 @@ async def get_plan(
                                     hint=_SQL_EXEC_PERMISSION_HINT,
                                 ) from exc
                             raise mapped from exc
+                        # Wrap unmapped driver SQL errors so callers catch FabricError.
+                        wrapped = sql._wrap_unmapped_driver_error(exc)
+                        if wrapped:
+                            raise wrapped from exc
                     raise
                 finally:
                     # Always attempt to restore SHOWPLAN_XML to OFF before the

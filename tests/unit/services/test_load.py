@@ -12,7 +12,7 @@ import pytest
 import respx
 from azure.core.credentials_async import AsyncTokenCredential
 
-from fabric_dw.exceptions import FabricError, ItemKindError
+from fabric_dw.exceptions import FabricError, FabricServerError, ItemKindError
 from fabric_dw.models import CopyIntoResult, WarehouseKind
 from fabric_dw.services.load import (
     _DFS_API_VERSION,
@@ -2360,7 +2360,7 @@ class TestCopyIntoFromUrlRejectedRowValidation:
         mock_rq.assert_not_called()
 
     async def test_fabric_error_reraised_as_is(self) -> None:
-        """FabricError from run_query must be re-raised as-is (not wrapped)."""
+        """Non-FabricServerError FabricError from run_query must be re-raised as-is."""
         from fabric_dw.sql import SqlTarget  # noqa: PLC0415
 
         target = SqlTarget(
@@ -2381,6 +2381,41 @@ class TestCopyIntoFromUrlRejectedRowValidation:
             )
 
         assert exc_info.value is orig_error
+
+    async def test_fabric_server_error_gets_copy_into_framing(self) -> None:
+        """#747: FabricServerError from run_query gets COPY INTO framing prepended.
+
+        With the #747 fix, run_query wraps unmapped driver SQL errors as
+        FabricServerError.  copy_into_from_url must intercept these and
+        prepend 'COPY INTO [schema].[table] failed:' context so users see
+        which table failed, while retaining the cleaned SQL Server message.
+        """
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+        # Simulate what run_query now raises for an unmapped driver SQL error.
+        driver_error = FabricServerError(
+            "[Microsoft][SQL Server]Column 'amount' cannot be converted to 'int'.",
+            is_retriable=False,
+        )
+
+        with (
+            patch("fabric_dw.services.load.run_query", side_effect=driver_error),
+            pytest.raises(FabricServerError) as exc_info,
+        ):
+            await copy_into_from_url(
+                target,
+                "dbo",
+                "sales",
+                "https://example.com/f.parquet",
+                file_type="PARQUET",
+            )
+
+        msg = str(exc_info.value)
+        assert "COPY INTO [dbo].[sales] failed:" in msg
+        assert "Column 'amount' cannot be converted to 'int'" in msg
 
 
 # ---------------------------------------------------------------------------

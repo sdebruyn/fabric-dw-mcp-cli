@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from fabric_dw.exceptions import AuthError, NotFoundError, PermissionDeniedError
+from fabric_dw.exceptions import AuthError, FabricServerError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import Function, FunctionDetails, FunctionKind, FunctionParameter
 from fabric_dw.services import functions
 from fabric_dw.services.functions import validate_identifier, validate_kind
@@ -582,6 +582,38 @@ class TestUpdateFunction:
             await functions.update_function(target, "dbo", "fn_clean", "...")
 
         ddl_conn.commit.assert_called_once()
+
+    async def test_invalid_column_raises_fabric_server_error(self) -> None:
+        """#747: a driver SQL error (invalid column) on update_function raises FabricServerError.
+
+        The mssql_python driver raises a ProgrammingError with a ``ddbc_error``
+        attribute when the server rejects the DDL.  run_query must wrap it as
+        FabricServerError so the CLI catches it cleanly.
+        """
+        target = _make_target()
+        conn = MagicMock()
+        cursor = MagicMock()
+
+        class _InvalidColumnError(Exception):
+            ddbc_error = "[Microsoft][SQL Server]Invalid column name 'amount'."
+
+            def __str__(self) -> str:
+                return (
+                    "Driver Error: Column not found; DDBC Error: "
+                    "[Microsoft][SQL Server]Invalid column name 'amount'."
+                )
+
+        cursor.execute.side_effect = _InvalidColumnError()
+        conn.cursor.return_value = cursor
+
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(FabricServerError) as exc_info,
+        ):
+            await functions.update_function(target, "dbo", "fn_bad", "RETURN amount FROM t")
+
+        assert "Invalid column name 'amount'" in str(exc_info.value)
+        assert "Driver Error:" not in str(exc_info.value)
 
 
 # ===========================================================================
