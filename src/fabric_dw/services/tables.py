@@ -1422,8 +1422,8 @@ async def recluster_table(
     .. warning::
 
         Dependent views and stored procedures that reference *schema*.*table_name*
-        by name are NOT automatically updated by ``sp_rename``.  After
-        re-clustering you may need to refresh them manually.
+        by name are NOT automatically updated by this CLUSTER BY rebuild
+        (CTAS-swap).  After re-clustering you may need to refresh them manually.
 
     Args:
         target: The warehouse to connect to.

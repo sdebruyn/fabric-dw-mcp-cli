@@ -2611,7 +2611,7 @@ class TestTablesClusterBy:
         # both stdout and stderr in result.output by default (mix_stderr=True is the
         # default on the runner fixture).
         assert "WARNING" in result.output
-        assert "CTAS rebuild" in result.output
+        assert "CTAS-swap" in result.output
         assert "sp_rename" not in result.output
 
 

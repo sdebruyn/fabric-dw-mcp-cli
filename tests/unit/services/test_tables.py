@@ -1114,6 +1114,16 @@ class TestCloneTable:
         # The raised type must be FabricError, not the raw driver exception.
         assert type(exc_info.value) is FabricError
 
+    async def test_unrelated_run_query_error_propagates(self) -> None:
+        """#710: errors unrelated to timestamp-before-creation must propagate unchanged."""
+        target = _make_target()
+        boom = RuntimeError("network timeout")
+        with (
+            patch("fabric_dw.services.tables.run_query", side_effect=[boom]),
+            pytest.raises(RuntimeError, match="network timeout"),
+        ):
+            await tables.clone_table(target, "dbo.source_tbl", "dbo.sales")
+
 
 # ===========================================================================
 # rename_table
