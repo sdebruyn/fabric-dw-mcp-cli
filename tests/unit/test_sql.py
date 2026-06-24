@@ -415,6 +415,27 @@ class TestMapDriverError:
         result = map_driver_error(exc)
         assert isinstance(result, NotFoundError)
 
+    def test_native_error_3701_returns_not_found(self) -> None:
+        """Error number 3701 (Cannot drop … because it does not exist) -> NotFoundError.
+
+        3701 is emitted by DROP FUNCTION / DROP PROCEDURE / DROP VIEW when the
+        named object does not exist.  Adding it to _NOT_FOUND_ERROR_NUMBERS
+        means drop_function (and other drop operations) can use the
+        NotFoundError mapping instead of a catalog pre-check.
+        """
+        exc = self._make_driver_exc(
+            "Cannot drop the function 'dbo.fn_nope' because it does not exist",
+            "Error: 3701 Cannot drop the function 'dbo.fn_nope'",
+        )
+        result = map_driver_error(exc)
+        assert isinstance(result, NotFoundError)
+
+    def test_fragment_cannot_drop_the_returns_not_found(self) -> None:
+        """Message containing 'cannot drop the' -> NotFoundError (fragment fallback)."""
+        exc = Exception("Cannot drop the function 'fn_nope' because it does not exist")
+        result = map_driver_error(exc)
+        assert isinstance(result, NotFoundError)
+
     def test_fragment_invalid_object_name_returns_not_found(self) -> None:
         """Message containing 'invalid object name' -> NotFoundError."""
         exc = Exception("Invalid object name 'dbo.missing_view'")

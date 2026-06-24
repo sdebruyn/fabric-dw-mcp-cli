@@ -372,7 +372,7 @@ async def test_drop_function_happy_path(mock_ctx, ctx_patch) -> None:
     with (
         ctx_patch,
         patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
-        patch("fabric_dw.services.functions.drop_function", new=AsyncMock(return_value=None)),
+        patch("fabric_dw.services.functions.drop_function", new=AsyncMock(return_value=True)),
     ):
         result = await mcp._tool_manager.call_tool(
             "drop_function",
@@ -383,7 +383,7 @@ async def test_drop_function_happy_path(mock_ctx, ctx_patch) -> None:
 
 
 async def test_drop_function_not_found_raises(mock_ctx, ctx_patch) -> None:
-    """drop_function propagates NotFoundError."""
+    """drop_function propagates NotFoundError (when if_exists is false)."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
@@ -402,6 +402,31 @@ async def test_drop_function_not_found_raises(mock_ctx, ctx_patch) -> None:
             "drop_function",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.nonexistent"},
         )
+
+
+async def test_drop_function_if_exists_missing_returns_not_dropped(mock_ctx, ctx_patch) -> None:
+    """drop_function with if_exists=True on a missing function returns {"dropped": false}."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
+        patch("fabric_dw.services.functions.drop_function", new=AsyncMock(return_value=False)),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "drop_function",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "qualified_name": "dbo.fn_nope",
+                "if_exists": True,
+            },
+        )
+
+    assert result == {"dropped": False}
 
 
 # ---------------------------------------------------------------------------

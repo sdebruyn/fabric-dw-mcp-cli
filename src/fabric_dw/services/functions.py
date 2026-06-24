@@ -7,7 +7,7 @@ Public API
 - :func:`get_function`        — fetch a single function with its definition and parameters.
 - :func:`create_function`     — issue CREATE FUNCTION [<schema>].[<name>] AS <body>.
 - :func:`update_function`     — issue CREATE OR ALTER FUNCTION [<schema>].[<name>] AS <body>.
-- :func:`drop_function`       — issue DROP FUNCTION [IF EXISTS].
+- :func:`drop_function`       — issue DROP FUNCTION; no-op on missing when if_exists=True.
 - :func:`rename_function`     — rename via DROP + CREATE (Fabric DW rejects sp_rename for UDFs).
 
 Note: User-defined functions are supported on **both** Fabric Data Warehouses and
@@ -97,6 +97,7 @@ JOIN sys.schemas s ON s.schema_id = o.schema_id
 WHERE s.name = ? AND o.name = ?
 ORDER BY p.parameter_id;
 """
+
 
 # Fabric DW does not support sp_rename for user-defined functions.
 # Microsoft docs explicitly state: "drop the object and re-create it with the
@@ -500,36 +501,56 @@ async def drop_function(
     *,
     if_exists: bool = False,
     mode: CredentialMode = CredentialMode.DEFAULT,
-) -> None:
-    """Drop a user-defined function via ``DROP FUNCTION [IF EXISTS] [<schema>].[<name>]``.
+) -> bool:
+    """Drop a user-defined function via ``DROP FUNCTION [<schema>].[<name>]``.
 
     Supported on both Fabric Data Warehouses and SQL Analytics Endpoints.
+
+    The implementation issues ``DROP FUNCTION`` directly (no ``IF EXISTS`` clause
+    and no catalog pre-check).  SQL Server error 3701 ("Cannot drop the function
+    '<name>' because it does not exist …") is mapped to
+    :class:`~fabric_dw.exceptions.NotFoundError` by :func:`~fabric_dw.sql.run_query`.
+    When *if_exists* is ``True`` that ``NotFoundError`` is caught here and treated
+    as a silent no-op; otherwise it propagates to the caller.
+
+    This design requires only ``DROP FUNCTION`` permission — no catalog-read
+    (``VIEW DEFINITION``) permission is needed, which keeps the behaviour
+    identical to the pre-fix ``DROP FUNCTION IF EXISTS`` with respect to
+    required privileges.
 
     Args:
         target: The warehouse or SQL Analytics Endpoint to connect to.
         schema: The schema name.  Must pass :func:`validate_identifier`.
         function_name: The function name.  Must pass :func:`validate_identifier`.
-        if_exists: When ``True``, emits ``DROP FUNCTION IF EXISTS`` so the statement
-            is a no-op when the function does not exist.
+        if_exists: When ``True``, a missing function is treated as a no-op and
+            ``False`` is returned.  When ``False`` (the default), a missing
+            function surfaces as :class:`~fabric_dw.exceptions.NotFoundError`.
         mode: The credential mode for Entra authentication.
+
+    Returns:
+        ``True`` when the function was dropped, ``False`` when *if_exists* is
+        ``True`` and the function did not exist (no-op).
 
     Raises:
         ValueError: If *schema* or *function_name* fails identifier validation.
+        NotFoundError: If the function does not exist and *if_exists* is ``False``.
         PermissionDeniedError: If the driver reports a DROP FUNCTION permission error.
     """
     validate_identifier(schema)
     validate_identifier(function_name)
 
-    if_exists_clause = "IF EXISTS " if if_exists else ""
-    ddl = (
-        f"DROP FUNCTION {if_exists_clause}"
-        f"{quote_identifier(schema)}.{quote_identifier(function_name)}"
-    )
+    ddl = f"DROP FUNCTION {quote_identifier(schema)}.{quote_identifier(function_name)}"
 
     def _run() -> None:
         run_query(target, ddl, mode=mode, commit=True, fetch="none")
 
-    await asyncio.to_thread(_run)
+    try:
+        await asyncio.to_thread(_run)
+    except NotFoundError:
+        if if_exists:
+            return False
+        raise
+    return True
 
 
 async def rename_function(

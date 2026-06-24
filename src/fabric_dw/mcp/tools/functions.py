@@ -201,8 +201,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             workspace: Workspace name or GUID.
             item: Warehouse or SQL Analytics Endpoint name or GUID.
             qualified_name: Dot-separated qualified function name, e.g. ``dbo.fn_clean_input``.
-            if_exists: When ``true``, emits DROP FUNCTION IF EXISTS (no-op when function
-                does not exist). Defaults to ``false``.
+            if_exists: When ``true``, a missing function is treated as a no-op and
+                ``{"dropped": false}`` is returned instead of raising an error.
+                Defaults to ``false``.
         """
         schema, fn_name = parse_qualified_name(qualified_name, kind="function")
         ctx = get_context()
@@ -214,12 +215,12 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             )
             _log.debug("drop_function ws=%s item=%s fn=%s.%s", ws_id, entry.id, schema, fn_name)
             target = make_sql_target(ws_id, entry, item)
-            await functions_svc.drop_function(
+            dropped = await functions_svc.drop_function(
                 target, schema, fn_name, if_exists=if_exists, mode=ctx.auth_mode
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
-        return {"dropped": True}
+        return {"dropped": dropped}
 
     @mutating_tool(mcp, "rename_function")
     async def rename_function(

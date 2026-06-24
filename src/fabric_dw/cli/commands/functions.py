@@ -177,7 +177,7 @@ async def update_cmd(
     "--if-exists",
     is_flag=True,
     default=False,
-    help="No-op when the function does not exist (DROP FUNCTION IF EXISTS).",
+    help="No-op when the function does not exist; exit 0 with an informational message.",
 )
 @click.pass_obj
 @coro
@@ -203,13 +203,19 @@ async def drop_cmd(
             ):
                 click.echo("Aborted.")
                 return
-            await _fns_svc.drop_function(
+            dropped = await _fns_svc.drop_function(
                 target, schema, fn_name, if_exists=if_exists, mode=ctx.auth
             )
             if ctx.json_output:
-                render({"status": "dropped", "name": f"[{schema}].[{fn_name}]"}, json_output=True)
-            else:
+                status = "dropped" if dropped else "not_found"
+                render(
+                    {"status": status, "name": f"[{schema}].[{fn_name}]"},
+                    json_output=True,
+                )
+            elif dropped:
                 click.echo(f"Function [{schema}].[{fn_name}] dropped.")
+            else:
+                click.echo(f"Function [{schema}].[{fn_name}] does not exist; nothing to drop.")
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 

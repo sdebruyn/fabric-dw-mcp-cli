@@ -587,14 +587,53 @@ class TestDropFunction:
         assert "[dbo]" in call_sql
         assert "[fn_clean]" in call_sql
 
-    async def test_if_exists_adds_if_exists_clause(self) -> None:
+    async def test_returns_true_when_dropped(self) -> None:
+        """drop_function without --if-exists always returns True."""
         target = _make_target()
         conn = _make_conn_for_ddl()
         with patch("fabric_dw.sql.open_connection", return_value=conn):
-            await functions.drop_function(target, "dbo", "fn_clean", if_exists=True)
-        cursor = conn.cursor.return_value
-        call_sql: str = cursor.execute.call_args[0][0].upper()
-        assert "DROP FUNCTION IF EXISTS" in call_sql
+            result = await functions.drop_function(target, "dbo", "fn_clean")
+        assert result is True
+
+    async def test_if_exists_existing_function_emits_drop_ddl_and_returns_true(self) -> None:
+        """When if_exists=True and the function exists, DROP is issued and True is returned."""
+        target = _make_target()
+        # Single connection: DROP succeeds (function exists)
+        conn_drop = _make_conn_for_ddl()
+        with patch("fabric_dw.sql.open_connection", return_value=conn_drop):
+            result = await functions.drop_function(target, "dbo", "fn_clean", if_exists=True)
+        assert result is True
+        drop_cursor = conn_drop.cursor.return_value
+        drop_sql: str = drop_cursor.execute.call_args[0][0].upper()
+        assert "DROP FUNCTION" in drop_sql
+        # No pre-SELECT; no IF EXISTS in the DDL — single round-trip only
+        assert "IF EXISTS" not in drop_sql
+
+    async def test_if_exists_missing_function_returns_false(self) -> None:
+        """When if_exists=True and the function does not exist, NotFoundError is caught
+        and False is returned (no-op)."""
+        target = _make_target()
+        conn = MagicMock()
+        cursor = MagicMock()
+        # Simulate SQL Server error 3701 mapped to NotFoundError by run_query
+        cursor.execute.side_effect = Exception("cannot drop the function 'fn_nope'")
+        conn.cursor.return_value = cursor
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await functions.drop_function(target, "dbo", "fn_nope", if_exists=True)
+        assert result is False
+
+    async def test_without_if_exists_missing_function_raises_not_found(self) -> None:
+        """Without if_exists=True, NotFoundError propagates to the caller."""
+        target = _make_target()
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.execute.side_effect = Exception("cannot drop the function 'fn_nope'")
+        conn.cursor.return_value = cursor
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(NotFoundError),
+        ):
+            await functions.drop_function(target, "dbo", "fn_nope")
 
     async def test_commits_after_execute(self) -> None:
         target = _make_target()

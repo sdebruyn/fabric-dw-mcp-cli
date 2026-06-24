@@ -532,7 +532,7 @@ class TestFunctionsDrop:
     def test_drop_with_yes_flag(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
-        mock_drop = AsyncMock(return_value=None)
+        mock_drop = AsyncMock(return_value=True)
         with (
             patch(
                 "fabric_dw.cli.commands.functions.build_http_client",
@@ -548,9 +548,10 @@ class TestFunctionsDrop:
                 cli, ["--yes", "-w", WS_GUID, "functions", "drop", WH_GUID, "dbo.fn_clean"]
             )
         assert result.exit_code == 0
+        assert "dropped" in result.output
         mock_drop.assert_awaited_once()
 
-    def test_drop_json_output(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_drop_json_output_dropped(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
         with (
@@ -564,7 +565,7 @@ class TestFunctionsDrop:
             ),
             patch(
                 "fabric_dw.services.functions.drop_function",
-                new=AsyncMock(return_value=None),
+                new=AsyncMock(return_value=True),
             ),
         ):
             result = runner.invoke(
@@ -597,10 +598,11 @@ class TestFunctionsDrop:
         assert result.exit_code == 0
         assert "Aborted" in result.output
 
-    def test_drop_with_if_exists(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_drop_if_exists_existing_function(self, runner: CliRunner, cache_env: Path) -> None:
+        """--if-exists on an existing function reports 'dropped'."""
         _ = cache_env
         mock_http = AsyncMock()
-        mock_drop = AsyncMock(return_value=None)
+        mock_drop = AsyncMock(return_value=True)
         with (
             patch(
                 "fabric_dw.cli.commands.functions.build_http_client",
@@ -626,8 +628,80 @@ class TestFunctionsDrop:
                 ],
             )
         assert result.exit_code == 0
+        assert "dropped" in result.output
         _, kwargs = mock_drop.call_args
         assert kwargs.get("if_exists") is True
+
+    def test_drop_if_exists_missing_function_prints_no_op(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """--if-exists on a non-existent function prints a no-op message, not 'dropped'."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_drop = AsyncMock(return_value=False)
+        with (
+            patch(
+                "fabric_dw.cli.commands.functions.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.functions.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch("fabric_dw.services.functions.drop_function", new=mock_drop),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "--yes",
+                    "-w",
+                    WS_GUID,
+                    "functions",
+                    "drop",
+                    WH_GUID,
+                    "dbo.fn_clean",
+                    "--if-exists",
+                ],
+            )
+        assert result.exit_code == 0
+        assert "dropped" not in result.output
+        assert "does not exist" in result.output
+
+    def test_drop_if_exists_missing_function_json_not_found(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """--if-exists on a non-existent function with --json reports status 'not_found'."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_drop = AsyncMock(return_value=False)
+        with (
+            patch(
+                "fabric_dw.cli.commands.functions.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.functions.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch("fabric_dw.services.functions.drop_function", new=mock_drop),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "--json",
+                    "--yes",
+                    "-w",
+                    WS_GUID,
+                    "functions",
+                    "drop",
+                    WH_GUID,
+                    "dbo.fn_clean",
+                    "--if-exists",
+                ],
+            )
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["status"] == "not_found"
 
 
 # ===========================================================================
