@@ -2334,3 +2334,77 @@ class TestGetTableHealthMetrics:
             assert isinstance(row, tuple), f"each row must be a tuple, got {type(row)}: {row!r}"
         assert result_rows[0] == (1, "alpha", None)
         assert result_rows[1] == (2, "beta", 3.14)
+
+
+# ===========================================================================
+# read_table — Row normalisation (#718)
+# ===========================================================================
+
+
+class _FakeRow:
+    """Non-tuple sequence that mimics mssql_python.row.Row for testing."""
+
+    def __init__(self, *values: object) -> None:
+        self._values = values
+
+    def __iter__(self):  # type: ignore[return]
+        return iter(self._values)
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    def __getitem__(self, index: int) -> object:
+        return self._values[index]
+
+
+class TestReadTableRowNormalisation:
+    """Tests for :func:`tables.read_table` — ensures real tuples are returned (#718)."""
+
+    async def test_returns_columns_and_rows(self) -> None:
+        """Basic smoke: columns and row values are returned correctly."""
+        target = _make_target()
+        cols = ["id", "name"]
+        rows: list[tuple[object, ...]] = [(1, "Alice"), (2, "Bob")]
+        conn = _make_conn(rows, cols)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result_cols, result_rows = await tables.read_table(target, "dbo", "my_table")
+        assert result_cols == cols
+        assert list(result_rows) == rows
+
+    async def test_driver_row_objects_are_normalised_to_tuples(self) -> None:
+        """Row objects (non-tuple) returned by the driver become real tuples.
+
+        Feeds _FakeRow instances (not real tuples) through the full stack via
+        cursor.fetchall, so that run_query's central normalisation converts them
+        to real tuples before read_table returns them.  This mirrors exactly
+        what mssql_python does at runtime (#718).
+        """
+        target = _make_target()
+        cols = ["id", "label", "value"]
+        fake_driver_rows = [_FakeRow(1, "alpha", 3.14), _FakeRow(2, "beta", None)]
+        # _make_conn puts rows directly into cursor.fetchall.return_value.
+        # run_query's central normalisation will convert them to real tuples.
+        conn = _make_conn(fake_driver_rows, cols)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result_cols, result_rows = await tables.read_table(target, "dbo", "my_table")
+
+        assert result_cols == cols
+        assert len(result_rows) == 2
+        for row in result_rows:
+            assert type(row) is tuple, f"expected tuple, got {type(row)}: {row!r}"
+        assert result_rows[0] == (1, "alpha", 3.14)
+        assert result_rows[1] == (2, "beta", None)
+
+    async def test_raises_not_found_when_no_columns(self) -> None:
+        """Empty column metadata raises NotFoundError (mirrors read_table contract)."""
+        target = _make_target()
+        cursor = MagicMock()
+        cursor.description = None
+        cursor.fetchall.return_value = []
+        conn = MagicMock()
+        conn.cursor.return_value = cursor
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(NotFoundError),
+        ):
+            await tables.read_table(target, "dbo", "nonexistent")

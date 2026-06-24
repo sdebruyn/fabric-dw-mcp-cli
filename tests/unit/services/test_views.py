@@ -976,3 +976,52 @@ class TestRenameView:
             result = await views.rename_view(target, "dbo.vw_sales", "vw_revenue")
 
         assert result.name == "vw_revenue"
+
+
+# ===========================================================================
+# read_view — Row normalisation (#718)
+# ===========================================================================
+
+
+class _FakeRow:
+    """Non-tuple sequence that mimics mssql_python.row.Row for testing."""
+
+    def __init__(self, *values: object) -> None:
+        self._values = values
+
+    def __iter__(self):  # type: ignore[return]
+        return iter(self._values)
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    def __getitem__(self, index: int) -> object:
+        return self._values[index]
+
+
+class TestReadViewRowNormalisation:
+    """read_view must return real tuples even when the driver yields Row objects."""
+
+    async def test_driver_row_objects_are_normalised_to_tuples(self) -> None:
+        """Row objects (non-tuple) returned by the driver become real tuples.
+
+        Feeds _FakeRow instances through the full stack via cursor.fetchall so
+        that run_query's central normalisation converts them to real tuples
+        before read_view returns them.  This mirrors what mssql_python does at
+        runtime (#718).
+        """
+        target = _make_target()
+        cols = ["id", "label"]
+        fake_driver_rows = [_FakeRow(10, "alpha"), _FakeRow(20, "beta")]
+        # _make_conn puts rows directly into cursor.fetchall.return_value.
+        # run_query's central normalisation will convert them to real tuples.
+        conn = _make_conn(fake_driver_rows, cols)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result_cols, result_rows = await read_view(target, "dbo", "vw_sales")
+
+        assert result_cols == cols
+        assert len(result_rows) == 2
+        for row in result_rows:
+            assert type(row) is tuple, f"expected tuple, got {type(row)}: {row!r}"
+        assert result_rows[0] == (10, "alpha")
+        assert result_rows[1] == (20, "beta")

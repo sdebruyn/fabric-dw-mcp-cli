@@ -3111,3 +3111,115 @@ class TestPoolEnabledConfig:
         cfg = UserConfig(defaults=Defaults(conn_pooling=False))
         _sql_module._sql_config_cache = cfg
         assert _sql_module._pool_enabled() is True
+
+
+# ---------------------------------------------------------------------------
+# Row normalisation — run_query must return real tuples (#718 / #719)
+# ---------------------------------------------------------------------------
+
+
+class _FakeRow:
+    """Sequence-compatible non-tuple stand-in for mssql_python.row.Row.
+
+    mssql_python returns Row objects from fetchall() / fetchone().  They are
+    iterable and index-accessible but are NOT tuple subclasses.  This minimal
+    class reproduces that contract so the tests are driver-independent.
+    """
+
+    def __init__(self, *values: object) -> None:
+        self._values = values
+
+    def __iter__(self):  # type: ignore[return]
+        return iter(self._values)
+
+    def __getitem__(self, idx: int) -> object:
+        return self._values[idx]
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+
+class TestRunQueryRowNormalisation:
+    """run_query must normalise driver Row objects to real Python tuples."""
+
+    def _make_mssql_with_rows(
+        self,
+        rows: list,
+        fetchone_row: object | None = None,
+    ) -> tuple[MagicMock, MagicMock, MagicMock]:
+        """Return (mssql_module, conn, cursor) with controlled fetchall/fetchone."""
+        cursor = MagicMock()
+        cursor.description = [("col1", None), ("col2", None)]
+        cursor.fetchall.return_value = rows
+        cursor.fetchone.return_value = fetchone_row
+        cursor.rowcount = len(rows)
+        conn = MagicMock()
+        conn.cursor.return_value = cursor
+        mssql = MagicMock()
+        mssql.connect.return_value = conn
+        return mssql, conn, cursor
+
+    def test_fetchall_row_objects_become_tuples(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """fetchall returning Row objects must be normalised to real tuples."""
+        fake_rows = [_FakeRow(1, "alpha"), _FakeRow(2, "beta")]
+        mssql, _, _ = self._make_mssql_with_rows(fake_rows)
+        _patch_mssql(monkeypatch, mssql)
+
+        _, rows = run_query(_make_target(), "SELECT col1, col2 FROM t")
+
+        assert len(rows) == 2
+        for row in rows:
+            assert type(row) is tuple, f"expected tuple, got {type(row)}"
+        assert rows[0] == (1, "alpha")
+        assert rows[1] == (2, "beta")
+
+    def test_fetchall_plain_tuples_pass_through_unchanged(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Normalisation is idempotent: real tuples stay real tuples."""
+        plain_rows = [(10, "x"), (20, "y")]
+        mssql, _, _ = self._make_mssql_with_rows(plain_rows)
+        _patch_mssql(monkeypatch, mssql)
+
+        _, rows = run_query(_make_target(), "SELECT col1, col2 FROM t")
+
+        assert rows == [(10, "x"), (20, "y")]
+        for row in rows:
+            assert type(row) is tuple
+
+    def test_fetchone_row_object_becomes_tuple(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """fetchone returning a Row object must also be normalised to a real tuple."""
+        fake_row = _FakeRow(99, "single")
+        mssql, _, _ = self._make_mssql_with_rows([], fetchone_row=fake_row)
+        _patch_mssql(monkeypatch, mssql)
+
+        _, rows = run_query(_make_target(), "SELECT col1, col2 FROM t", fetch="one")
+
+        assert len(rows) == 1
+        assert type(rows[0]) is tuple
+        assert rows[0] == (99, "single")
+
+    def test_fetchone_none_returns_empty_list(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """fetchone returning None must produce an empty row list, not a list with None."""
+        mssql, _, _ = self._make_mssql_with_rows([], fetchone_row=None)
+        _patch_mssql(monkeypatch, mssql)
+
+        _, rows = run_query(_make_target(), "SELECT col1, col2 FROM t", fetch="one")
+
+        assert rows == []
+
+    def test_zip_with_cols_works_after_normalisation(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """dict(zip(cols, row)) must produce correct column→value mapping after normalisation.
+
+        This is the exact pattern used in query_insights._execute_sql (#719).
+        """
+        fake_rows = [_FakeRow("sess-1", "conn-1"), _FakeRow("sess-2", "conn-2")]
+        mssql, _, cursor = self._make_mssql_with_rows(fake_rows)
+        cursor.description = [("session_id", None), ("connection_id", None)]
+        _patch_mssql(monkeypatch, mssql)
+
+        cols, rows = run_query(_make_target(), "SELECT session_id, connection_id FROM t")
+
+        dicts = [dict(zip(cols, r, strict=True)) for r in rows]
+        assert dicts[0] == {"session_id": "sess-1", "connection_id": "conn-1"}
+        assert dicts[1] == {"session_id": "sess-2", "connection_id": "conn-2"}

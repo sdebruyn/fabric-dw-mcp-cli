@@ -817,3 +817,67 @@ async def test_list_request_history_both_bounds_passed_as_params() -> None:
     call_params = cursor.execute.call_args[0][1]
     assert since in call_params
     assert until in call_params
+
+
+# ---------------------------------------------------------------------------
+# Regression: Row→tuple normalisation (#719)
+# ---------------------------------------------------------------------------
+
+
+class _FakeRow:
+    """Non-tuple sequence mimicking mssql_python.row.Row.
+
+    mssql_python returns Row objects from fetchall().  They are iterable and
+    index-accessible but are NOT tuple subclasses.  If the driver's Row is
+    passed directly to dict(zip(cols, row)), it works only when iteration
+    yields column *values* — which is the expected contract.  This class
+    simulates that so the normalisation test is driver-independent.
+    """
+
+    def __init__(self, *values: object) -> None:
+        self._values = values
+
+    def __iter__(self):  # type: ignore[return]
+        return iter(self._values)
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    def __getitem__(self, index: int) -> object:
+        return self._values[index]
+
+
+async def test_execute_sql_row_objects_produce_correct_dicts() -> None:
+    """Regression for #719: Row-like objects must produce fully-populated dicts.
+
+    The ``_execute_sql`` helper calls ``dict(zip(cols, row))`` on the rows
+    returned by ``run_query``.  When mssql_python returns Row objects (not real
+    tuples), each row must still iterate over column *values* so that every
+    column in the dict is populated — not silently empty after the first.
+
+    This test patches ``run_query`` to return _FakeRow instances and checks that
+    the public ``list_request_history`` function builds model instances with
+    values from all columns (i.e. columns 2…N are not dropped).
+    """
+    target = _make_target()
+
+    # Build a _FakeRow in column order for exec_requests_history.
+    # Only the first few columns have non-None values; the rest are None.
+    fake_row = _FakeRow(*_REQ_HIST_ROW)
+    assert len(_REQ_HIST_ROW) == len(EXEC_REQUESTS_HISTORY_COLUMNS), (
+        "Fixture row must have one value per column"
+    )
+
+    conn = _make_conn([fake_row], _REQ_HIST_COLS)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await query_insights.list_request_history(target)
+
+    assert len(result) == 1
+    req = result[0]
+    # Verify that fields beyond the first column are populated — the #719 bug
+    # caused all columns after the first to appear empty / None because zip()
+    # produced (col_name, col_name) pairs when Row iterated over keys, not values.
+    assert req.database_name == "MyWarehouse"  # col 2
+    assert req.status == "Succeeded"  # col 11
+    assert req.session_id == 42  # col 12
+    assert req.total_elapsed_time_ms == 1500  # col 8
