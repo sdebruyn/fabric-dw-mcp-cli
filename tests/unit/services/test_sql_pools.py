@@ -11,7 +11,12 @@ import pytest
 import respx
 from pydantic import ValidationError
 
-from fabric_dw.exceptions import AlreadyExistsError, NotFoundError, PermissionDeniedError
+from fabric_dw.exceptions import (
+    AlreadyExistsError,
+    BadRequestError,
+    NotFoundError,
+    PermissionDeniedError,
+)
 from fabric_dw.models import SqlPool, SqlPoolsConfiguration
 from fabric_dw.services import sql_pools
 from tests.unit.services._helpers import _make_client
@@ -264,6 +269,29 @@ async def test_disable_patches_enabled_false_preserving_pools() -> None:
 
     assert get_route.call_count == 2
     assert isinstance(result, SqlPoolsConfiguration)
+
+
+async def test_enable_raises_bad_request_when_no_pools_defined() -> None:
+    """enable raises BadRequestError when customSQLPools is empty.
+
+    The Fabric API rejects customSQLPoolsEnabled=True with an empty pool list
+    (HTTP 400 "Array item count 0 is less than minimum count of 1").  The
+    service must surface this as a typed BadRequestError *before* the PATCH so
+    callers (CLI and MCP) never see a raw HTTP 400.
+    """
+    with respx.mock:
+        get_route = respx.get(_CONFIG_URL).mock(
+            return_value=httpx.Response(200, json=POOLS_EMPTY_PAYLOAD)
+        )
+        patch_route = respx.patch(_CONFIG_URL).mock(return_value=httpx.Response(200))
+        client = await _make_client()
+        async with client:
+            with pytest.raises(BadRequestError, match="sql-pools create"):
+                await sql_pools.enable(client, _WS_ID)
+
+    # The GET must have been called, but the PATCH must NOT — no round-trip to the API.
+    assert get_route.call_count == 1
+    assert not patch_route.called
 
 
 async def test_enable_propagates_not_found_on_404() -> None:
