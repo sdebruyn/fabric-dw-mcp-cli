@@ -64,7 +64,7 @@ async def takeover(
         # Detect the "already owner" case: Fabric returns 403 with errorCode
         # ArtifactTakeOverNotAllowedByOwner when the caller already owns the item.
         # Surface a clear, accurate message instead of the generic role hint.
-        error_code = exc.body.get("errorCode") if isinstance(exc.body, dict) else None
+        error_code = exc.body.get("errorCode") if exc.body is not None else None
         if error_code == _ALREADY_OWNER_ERROR_CODE:
             raise PermissionDeniedError(
                 "You are already the owner of this warehouse; nothing to take over.",
@@ -75,7 +75,7 @@ async def takeover(
         # Generic 403: preserve the original status/request_id/body from the HTTP
         # layer and surface the remediation hint via the hint= field.
         raise PermissionDeniedError(
-            str(exc.args[0]) if exc.args else _TAKEOVER_HINT,
+            str(exc.args[0]),
             status=exc.status,
             request_id=exc.request_id,
             body=exc.body,

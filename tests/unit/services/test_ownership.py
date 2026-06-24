@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
 from uuid import UUID
 
@@ -108,13 +107,7 @@ async def test_takeover_403_already_owner_raises_clear_message() -> None:
     missing a role — they already own the warehouse.
     """
     body = {"errorCode": _ALREADY_OWNER_ERROR_CODE, "message": "Caller is already the owner."}
-    respx.post(_EXPECTED_URL).mock(
-        return_value=respx.MockResponse(
-            403,
-            content=json.dumps(body),
-            headers={"Content-Type": "application/json"},
-        )
-    )
+    respx.post(_EXPECTED_URL).mock(return_value=respx.MockResponse(403, json=body))
 
     async with FabricHttpClient(credential=_make_credential(), rps=10) as http:
         with pytest.raises(PermissionDeniedError) as exc_info:
@@ -130,13 +123,7 @@ async def test_takeover_403_already_owner_raises_clear_message() -> None:
 async def test_takeover_403_generic_still_shows_role_hint() -> None:
     """A generic HTTP 403 (not ArtifactTakeOverNotAllowedByOwner) still shows the role hint."""
     body = {"errorCode": "Forbidden", "message": "Caller lacks the required role."}
-    respx.post(_EXPECTED_URL).mock(
-        return_value=respx.MockResponse(
-            403,
-            content=json.dumps(body),
-            headers={"Content-Type": "application/json"},
-        )
-    )
+    respx.post(_EXPECTED_URL).mock(return_value=respx.MockResponse(403, json=body))
 
     async with FabricHttpClient(credential=_make_credential(), rps=10) as http:
         with pytest.raises(PermissionDeniedError) as exc_info:
