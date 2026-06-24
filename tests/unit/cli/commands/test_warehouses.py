@@ -160,10 +160,11 @@ class TestWarehousesListHideWorkspaceId:
         ):
             result = runner.invoke(cli, ["-w", WS_GUID, "warehouses", "list"])
         assert result.exit_code == 0, result.output
-        # The warehouse id (GUID column, full width) is shown, but the
-        # redundant workspace GUID column is dropped.  Asserting on the GUIDs is
-        # robust to the narrow CliRunner terminal width (text columns truncate,
-        # GUID columns do not).  WS_GUID and WH_GUID are distinct values.
+        # The warehouse id (primary GUID column, always no_wrap) is shown, but
+        # the redundant workspace GUID column is dropped.  Only the *first* GUID
+        # column keeps no_wrap/min_width=36; secondary columns may be truncated
+        # on narrow terminals, so we assert on the primary GUID value and on the
+        # absence of the workspace GUID header.  WS_GUID and WH_GUID are distinct.
         assert WH_GUID in result.output
         assert WS_GUID not in result.output
 
@@ -219,7 +220,19 @@ class TestWarehousesListHideWorkspaceId:
         ):
             result = runner.invoke(cli, ["warehouses", "list", "-A"])
         assert result.exit_code == 0, result.output
-        assert WS_GUID in result.output
+        # The workspaceId column must NOT be dropped from the -A table.  The
+        # primary GUID column (id) keeps its full no_wrap width so WH_GUID must
+        # appear verbatim.  The secondary GUID column (workspaceId) may be
+        # truncated on a narrow CliRunner terminal, so we assert on its column-
+        # header prefix AND the first 8 chars of the GUID value to verify it is
+        # present and not fully omitted.
+        assert WH_GUID in result.output
+        # "worksp" covers "workspaceId" even when truncated to "worksp…"
+        assert "worksp" in result.output.lower()
+        # Leading chars of WS_GUID verify the workspaceId cell value is present
+        # (the cell is truncated to fit the narrow CliRunner terminal; 6 chars
+        # are reliably visible even at the narrowest column allocation)
+        assert WS_GUID[:6] in result.output
 
 
 class TestWarehousesListAllWithConfigDefault:

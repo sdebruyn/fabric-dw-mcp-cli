@@ -153,6 +153,39 @@ def _column_is_all_null(col: str, norm_rows: list[dict[str, object] | object]) -
     return True
 
 
+def _add_columns(
+    table: Table,
+    visible_columns: list[str],
+    norm_rows: list[dict[str, object] | object],
+) -> None:
+    """Add columns to *table*, applying GUID-specific width constraints.
+
+    Only the *first* GUID column gets ``no_wrap=True, min_width=_GUID_WIDTH``
+    so it is never truncated.  Additional GUID columns are rendered without a
+    forced ``min_width``: they can yield space to human-readable columns
+    (``displayName``, ``description``, …) rather than starving them to zero
+    width on a narrow terminal (e.g. the 80-col default for piped/non-TTY
+    output).
+
+    .. note::
+        "First" is determined by insertion order of *visible_columns*, which
+        mirrors API-response field order.  All current Fabric API models place
+        ``id`` first, making it the consistent primary GUID column.  If a
+        future model reorders fields such that a different GUID appears first,
+        the heuristic will silently shift — keep model field order stable.
+    """
+    primary_guid_assigned = False
+    for col in visible_columns:
+        if _is_guid_column(col, norm_rows):
+            if not primary_guid_assigned:
+                table.add_column(col, no_wrap=True, min_width=_GUID_WIDTH)
+                primary_guid_assigned = True
+            else:
+                table.add_column(col)
+        else:
+            table.add_column(col)
+
+
 def _render_table(
     rows: Sequence[object],
     *,
@@ -204,14 +237,7 @@ def _render_table(
     all_null = {col for col in columns if _column_is_all_null(col, norm_rows)}
     visible_columns = [col for col in columns if col not in all_null and col not in dropped]
 
-    for col in visible_columns:
-        if _is_guid_column(col, norm_rows):
-            # Best-effort: GUID columns are prioritised, but a very narrow console
-            # with multiple GUID columns may still overflow — Rich cannot fit all
-            # of them without truncation in that extreme case.
-            table.add_column(col, no_wrap=True, min_width=_GUID_WIDTH)
-        else:
-            table.add_column(col)
+    _add_columns(table, visible_columns, norm_rows)
 
     for row in norm_rows:
         if isinstance(row, dict):
