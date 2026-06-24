@@ -287,3 +287,15 @@ def test_normalize_regression_746_function_bare_dot_form() -> None:
     result = normalize_object_definition(raw, "fdw_qa", "fn_compute")
     assert "CREATE FUNCTION [fdw_qa].[fn_compute]" in result
     assert ". (" not in result
+
+
+def test_normalize_regression_746_tester_captured_exact_raw() -> None:
+    """Regression #746: pinned to the EXACT raw string captured from the live tenant.
+
+    The tester ran ``sql exec`` against Fabric DW to read sys.sql_modules directly
+    (bypassing the normalizer) on build 2026.6.0b1.dev15 and observed this verbatim
+    string.  It must survive any future refactor of normalize_object_definition.
+    """
+    raw = "CREATE VIEW . AS SELECT 1 AS id"
+    result = normalize_object_definition(raw, "dbo", "vw_probe746")
+    assert result == "CREATE VIEW [dbo].[vw_probe746] AS SELECT 1 AS id"
