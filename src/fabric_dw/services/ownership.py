@@ -45,8 +45,12 @@ async def takeover(
         ItemKindError: If *kind* is not ``WAREHOUSE`` (e.g. ``SQL_ENDPOINT``).
         PermissionDeniedError: If the caller does not have Admin/Member/Contributor
             role on the workspace (HTTP 403).
-        PermissionDeniedError: If the caller is already the owner (HTTP 403
-            ``ArtifactTakeOverNotAllowedByOwner``); raised without a role hint.
+        PermissionDeniedError: If Fabric returns HTTP 403
+            ``ArtifactTakeOverNotAllowedByOwner``, indicating the caller is already
+            the owner; raised without the generic role hint. Note: on the live tenant
+            a self-takeover may instead return HTTP 2xx (Fabric treats it as an
+            idempotent no-op), in which case this function returns ``None`` without
+            raising. Callers must handle **both** outcomes.
         NotFoundError: If the workspace or warehouse does not exist (HTTP 404).
     """
     if kind != WarehouseKind.WAREHOUSE:

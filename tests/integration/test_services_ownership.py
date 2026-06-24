@@ -22,5 +22,10 @@ async def test_takeover_ephemeral_warehouse_already_owner(
     # Both are legitimate outcomes; the test accepts either.
     try:
         await ownership.takeover(http, workspace_id, ephemeral_warehouse.id)
+        # Clean return (2xx): Fabric treated the self-takeover as an idempotent
+        # no-op. No assertion is possible here — this outcome is inherently
+        # unverifiable beyond the absence of an exception.
     except PermissionDeniedError as exc:
+        if "already the owner" not in str(exc):
+            raise  # generic 403 (e.g. role revoked mid-test) — surface the diagnostic
         assert "already the owner" in str(exc)  # noqa: PT017
