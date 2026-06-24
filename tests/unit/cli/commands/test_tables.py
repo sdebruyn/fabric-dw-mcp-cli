@@ -2339,6 +2339,121 @@ class TestLoadCmdLocalStorageCredential:
 
 
 # ===========================================================================
+# _load_cmd_create_and_load — storage credential lifecycle (#714)
+# ===========================================================================
+
+
+class TestLoadCmdCreateAndLoadStorageCredential:
+    """Verify that _load_cmd_create_and_load closes the storage-scope credential.
+
+    Every load path must close the Azure Identity credential after use so that
+    the internal aiohttp.ClientSession is released and no 'Unclosed client
+    session' ResourceWarning is emitted.  The create-and-load path (--create)
+    previously omitted this close() call.
+    """
+
+    def _make_ctx(self) -> CliContext:
+        return CliContext(auth=CredentialMode.DEFAULT)
+
+    @pytest.mark.asyncio
+    async def test_storage_credential_is_closed_on_success(self, tmp_path: Path) -> None:
+        """The storage-scope credential must be closed after create_and_load returns."""
+        from fabric_dw.cli.commands.tables import _load_cmd_create_and_load  # noqa: PLC0415
+
+        local = tmp_path / "data.parquet"
+        local.write_bytes(b"PAR1")
+
+        fake_result = CopyIntoResult(rows_loaded=2, rows_rejected=0, target="dbo.t")
+        close_spy = AsyncMock()
+        mock_cred = MagicMock()
+        mock_cred.close = close_spy
+
+        with (
+            patch("fabric_dw.auth.get_credential", return_value=mock_cred),
+            patch(
+                "fabric_dw.cli.commands.tables.create_and_load",
+                new=AsyncMock(return_value=fake_result),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.infer_file_format",
+                return_value="parquet",
+            ),
+        ):
+            result = await _load_cmd_create_and_load(
+                ctx=self._make_ctx(),
+                http=MagicMock(),
+                ws_id=WS_UUID,
+                sql_target=_make_sql_target(),
+                entry=_make_item_entry(),
+                schema="dbo",
+                table_name="t",
+                file_path=str(local),
+                fmt=None,
+                csv_kw={},
+                staging_lakehouse_name=None,
+                keep_staging=False,
+                max_errors=None,
+                rejected_row_location=None,
+                if_exists="fail",
+                all_varchar=False,
+                varchar_length=8000,
+                sample_rows=1000,
+                cleanup_on_failure=False,
+            )
+
+        assert result == fake_result
+        close_spy.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_storage_credential_is_closed_even_when_load_raises(self, tmp_path: Path) -> None:
+        """The storage-scope credential must be closed even when create_and_load raises."""
+        from fabric_dw.cli.commands.tables import _load_cmd_create_and_load  # noqa: PLC0415
+
+        local = tmp_path / "data.parquet"
+        local.write_bytes(b"PAR1")
+
+        close_spy = AsyncMock()
+        mock_cred = MagicMock()
+        mock_cred.close = close_spy
+
+        with (
+            patch("fabric_dw.auth.get_credential", return_value=mock_cred),
+            patch(
+                "fabric_dw.cli.commands.tables.create_and_load",
+                new=AsyncMock(side_effect=RuntimeError("load failed")),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.infer_file_format",
+                return_value="parquet",
+            ),
+            pytest.raises(RuntimeError, match="load failed"),
+        ):
+            await _load_cmd_create_and_load(
+                ctx=self._make_ctx(),
+                http=MagicMock(),
+                ws_id=WS_UUID,
+                sql_target=_make_sql_target(),
+                entry=_make_item_entry(),
+                schema="dbo",
+                table_name="t",
+                file_path=str(local),
+                fmt=None,
+                csv_kw={},
+                staging_lakehouse_name=None,
+                keep_staging=False,
+                max_errors=None,
+                rejected_row_location=None,
+                if_exists="fail",
+                all_varchar=False,
+                varchar_length=8000,
+                sample_rows=1000,
+                cleanup_on_failure=False,
+            )
+
+        close_spy.assert_awaited_once()
+
+
+# ===========================================================================
 # tables columns
 # ===========================================================================
 

@@ -1264,31 +1264,45 @@ async def _load_cmd_create_and_load(
     infer_encoding = cast("str", csv_kw.get("encoding") or "utf-8-sig")
 
     credential = _auth.get_credential(ctx.auth)
-    return await create_and_load(
-        http,
-        credential,
-        ws_id,
-        sql_target,
-        schema,
-        table_name,
-        local,
-        if_exists=if_exists,
-        file_format=file_format,
-        staging_lakehouse_name=staging_lakehouse_name,
-        keep_staging=keep_staging,
-        csv_options=csv_options,
-        max_errors=max_errors,
-        rejected_row_location=rejected_row_location,
-        kind=entry.kind,
-        mode=ctx.auth,
-        cleanup_on_failure=cleanup_on_failure,
-        all_varchar=all_varchar,
-        varchar_length=varchar_length,
-        sample_rows=sample_rows,
-        csv_delimiter=infer_delimiter,
-        csv_encoding=infer_encoding,
-        cluster_by=cluster_by,
-    )
+    try:
+        return await create_and_load(
+            http,
+            credential,
+            ws_id,
+            sql_target,
+            schema,
+            table_name,
+            local,
+            if_exists=if_exists,
+            file_format=file_format,
+            staging_lakehouse_name=staging_lakehouse_name,
+            keep_staging=keep_staging,
+            csv_options=csv_options,
+            max_errors=max_errors,
+            rejected_row_location=rejected_row_location,
+            kind=entry.kind,
+            mode=ctx.auth,
+            cleanup_on_failure=cleanup_on_failure,
+            all_varchar=all_varchar,
+            varchar_length=varchar_length,
+            sample_rows=sample_rows,
+            csv_delimiter=infer_delimiter,
+            csv_encoding=infer_encoding,
+            cluster_by=cluster_by,
+        )
+    finally:
+        # Close the storage-scope credential to release its internal aiohttp
+        # session (azure.identity.aio credentials hold one).  Same pattern as
+        # _load_cmd_local — without this close() call the session leaks and
+        # emits an 'Unclosed client session' ResourceWarning on every load.
+        _close = getattr(credential, "close", None)
+        if callable(_close):
+            try:
+                result = _close()
+                if asyncio.iscoroutine(result):
+                    await result
+            except Exception:  # noqa: S110
+                pass
 
 
 async def _load_cmd_url(
