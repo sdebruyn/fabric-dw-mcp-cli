@@ -348,7 +348,9 @@ def _build_copy_into_sql(
         if cred:
             with_parts.append(cred)
 
-    if max_errors is not None:
+    # MAXERRORS is only valid for CSV; Fabric rejects it for PARQUET with
+    # "Option 'MAXERRORS' is not supported for specified format 'PARQUET'".
+    if max_errors is not None and file_type == "CSV":
         with_parts.append(f"MAXERRORS = {int(max_errors)}")
 
     if rejected_row_location is not None:
@@ -933,6 +935,14 @@ async def load_local_file(  # noqa: PLR0912, PLR0915
         file_type = "PARQUET"
     else:
         file_type = "CSV"
+
+    # MAXERRORS is not supported for PARQUET COPY INTO; warn and ignore.
+    if max_errors is not None and file_type == "PARQUET":
+        _logger.warning(
+            "load_local_file: --max-errors is not supported for Parquet COPY INTO "
+            "(Fabric rejects MAXERRORS for FILE_TYPE='PARQUET'); ignoring max_errors=%d",
+            max_errors,
+        )
 
     # A1: normalise the destination filename — decode percent-encoded characters
     # (e.g. %2F / %5C that could be interpreted as path separators) and strip

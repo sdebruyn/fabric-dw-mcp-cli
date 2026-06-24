@@ -139,11 +139,26 @@ class TestBuildCopyIntoSql:
         )
         assert "CREDENTIAL = (IDENTITY = 'Storage Account Key', SECRET = 'base64key==')" in sql
 
-    def test_max_errors_option(self) -> None:
+    def test_max_errors_csv(self) -> None:
+        """MAXERRORS must appear in the SQL for CSV loads."""
         sql = _build_copy_into_sql(
-            "dbo", "t", "https://example.com/f.parquet", "PARQUET", max_errors=10
+            "dbo", "t", "https://example.com/f.csv", "CSV", max_errors=5
         )
-        assert "MAXERRORS = 10" in sql
+        assert "MAXERRORS = 5" in sql
+
+    def test_max_errors_parquet_omitted(self) -> None:
+        """MAXERRORS must NOT appear when FILE_TYPE is PARQUET (Fabric rejects it)."""
+        sql = _build_copy_into_sql(
+            "dbo", "t", "https://example.com/f.parquet", "PARQUET", max_errors=0
+        )
+        assert "MAXERRORS" not in sql
+
+    def test_max_errors_parquet_none_unaffected(self) -> None:
+        """No MAXERRORS in PARQUET SQL when max_errors is None."""
+        sql = _build_copy_into_sql(
+            "dbo", "t", "https://example.com/f.parquet", "PARQUET", max_errors=None
+        )
+        assert "MAXERRORS" not in sql
 
     def test_rejected_row_location(self) -> None:
         sql = _build_copy_into_sql(
@@ -817,6 +832,153 @@ class TestTempFileCleanup:
         assert not converted_paths[0].exists(), (
             f"Temp Parquet file was not cleaned up: {converted_paths[0]}"
         )
+
+
+# ---------------------------------------------------------------------------
+# max_errors warning for Parquet/JSON-converted loads (#744)
+# ---------------------------------------------------------------------------
+
+
+class TestMaxErrorsParquetWarning:
+    async def test_json_load_with_max_errors_emits_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """When format=json (converted to Parquet) and max_errors is set,
+        a WARNING must be emitted and the load must succeed (not raise)."""
+        json_file = tmp_path / "data.json"
+        json_file.write_text('{"id": 1}\n', encoding="utf-8")
+
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+        ws_id = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+        mock_http = AsyncMock()
+        mock_credential = AsyncMock()
+
+        with (
+            caplog.at_level(logging.WARNING, logger="fabric_dw"),
+            patch("fabric_dw.services.load.create_staging_lakehouse", return_value="lh-id"),
+            patch("fabric_dw.services.load.onelake_upload_file", return_value=None),
+            patch(
+                "fabric_dw.services.load.copy_into_from_url",
+                return_value=CopyIntoResult(rows_loaded=1, rows_rejected=0, target="dbo.t"),
+            ),
+            patch("fabric_dw.services.load.delete_lakehouse"),
+        ):
+            result = await load_local_file(
+                mock_http,
+                mock_credential,
+                ws_id,
+                target,
+                "dbo",
+                "t",
+                json_file,
+                file_format="json",
+                max_errors=0,
+            )
+
+        # Load must succeed.
+        assert result.rows_loaded == 1
+
+        # A WARNING must have been logged mentioning max-errors and Parquet.
+        warning_messages = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert any(
+            "max-errors" in msg.lower() or "max_errors" in msg.lower() for msg in warning_messages
+        ), f"Expected a warning about max_errors/max-errors; got: {warning_messages}"
+        assert any(
+            "parquet" in msg.lower() for msg in warning_messages
+        ), f"Expected warning to mention 'parquet'; got: {warning_messages}"
+
+    async def test_parquet_load_with_max_errors_emits_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """When format=parquet and max_errors is set, a WARNING must be emitted."""
+        parquet_file = tmp_path / "data.parquet"
+        parquet_file.write_bytes(b"PAR1")  # minimal placeholder
+
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+        ws_id = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+        mock_http = AsyncMock()
+        mock_credential = AsyncMock()
+
+        with (
+            caplog.at_level(logging.WARNING, logger="fabric_dw"),
+            patch("fabric_dw.services.load.create_staging_lakehouse", return_value="lh-id"),
+            patch("fabric_dw.services.load.onelake_upload_file", return_value=None),
+            patch(
+                "fabric_dw.services.load.copy_into_from_url",
+                return_value=CopyIntoResult(rows_loaded=3, rows_rejected=0, target="dbo.t"),
+            ),
+            patch("fabric_dw.services.load.delete_lakehouse"),
+        ):
+            result = await load_local_file(
+                mock_http,
+                mock_credential,
+                ws_id,
+                target,
+                "dbo",
+                "t",
+                parquet_file,
+                file_format="parquet",
+                max_errors=5,
+            )
+
+        assert result.rows_loaded == 3
+
+        warning_messages = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert any(
+            "max-errors" in msg.lower() or "max_errors" in msg.lower() for msg in warning_messages
+        ), f"Expected a warning about max_errors/max-errors; got: {warning_messages}"
+
+    async def test_csv_load_with_max_errors_no_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """CSV loads with max_errors must NOT emit a warning (MAXERRORS is valid for CSV)."""
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("id\n1\n", encoding="utf-8")
+
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+        ws_id = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+        mock_http = AsyncMock()
+        mock_credential = AsyncMock()
+
+        with (
+            caplog.at_level(logging.WARNING, logger="fabric_dw"),
+            patch("fabric_dw.services.load.create_staging_lakehouse", return_value="lh-id"),
+            patch("fabric_dw.services.load.onelake_upload_file", return_value=None),
+            patch(
+                "fabric_dw.services.load.copy_into_from_url",
+                return_value=CopyIntoResult(rows_loaded=1, rows_rejected=0, target="dbo.t"),
+            ),
+            patch("fabric_dw.services.load.delete_lakehouse"),
+        ):
+            await load_local_file(
+                mock_http,
+                mock_credential,
+                ws_id,
+                target,
+                "dbo",
+                "t",
+                csv_file,
+                file_format="csv",
+                max_errors=10,
+            )
+
+        # No warning expected for CSV + max_errors.
+        warning_messages = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert not any(
+            "max-errors" in msg.lower() or "max_errors" in msg.lower() for msg in warning_messages
+        ), f"Unexpected warning for CSV max_errors; got: {warning_messages}"
 
 
 # ---------------------------------------------------------------------------
