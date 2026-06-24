@@ -741,6 +741,38 @@ class TestSqlPoolsEnable:
         assert "admin" in result.output.lower()
 
 
+class TestSqlPoolsEnableNoPoolsError:
+    """enable_cmd — ValueError (no pools defined) branch."""
+
+    def test_enable_no_pools_exits_nonzero_with_actionable_message(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """enable with zero pools yields a non-zero exit and a user-readable message."""
+        _ = cache_env
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_pools.build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools.resolve_workspace_id",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._svc.enable",
+                new=AsyncMock(
+                    side_effect=ValueError(
+                        "Cannot enable custom SQL pools: no pools are defined. "
+                        "Create at least one pool first (`sql-pools create`)."
+                    )
+                ),
+            ),
+        ):
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-pools", "enable"])
+        assert result.exit_code != 0
+        assert "sql-pools create" in result.output
+
+
 class TestSqlPoolsDisable:
     def test_disable_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
