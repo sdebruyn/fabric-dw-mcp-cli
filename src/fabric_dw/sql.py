@@ -1346,13 +1346,19 @@ def run_query(  # noqa: PLR0913, PLR0915
         cols = [col[0] for col in cur.description]
 
         if fetch == "one":
-            row = cur.fetchone()
+            raw_row = cur.fetchone()
+            # Normalise to a real tuple so callers' list[tuple[...]] annotations
+            # are honest regardless of which driver Row type is returned.
             result: tuple[list[str], list[tuple[Any, ...]]] = (
                 cols,
-                ([row] if row is not None else []),
+                ([tuple(raw_row)] if raw_row is not None else []),
             )
         else:
-            fetched_rows: list[tuple[Any, ...]] = cur.fetchall()
+            # mssql_python returns Row objects that are sequence-compatible but
+            # are not tuple subclasses.  Normalise here once so every caller
+            # receives real tuples and dict(zip(cols, row)) / tuple indexing
+            # work correctly without per-callsite workarounds.
+            fetched_rows: list[tuple[Any, ...]] = [tuple(r) for r in cur.fetchall()]
             result = cols, fetched_rows
 
         return result

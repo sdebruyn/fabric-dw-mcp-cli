@@ -106,3 +106,28 @@ def _make_conn_for_ddl() -> MagicMock:
     compatibility with the modules that already import it by name.
     """
     return _make_no_result_conn(rowcount=0)
+
+
+class _FakeRow:
+    """Non-tuple sequence that mimics ``mssql_python.row.Row`` for testing.
+
+    ``mssql_python`` returns ``Row`` objects from ``fetchall()`` /
+    ``fetchone()``.  They are iterable and index-accessible but are **not**
+    ``tuple`` subclasses.  This class reproduces that contract so
+    Row-normalisation tests are driver-independent.
+
+    Shared here so every service test module imports the same definition
+    instead of maintaining per-file copies.
+    """
+
+    def __init__(self, *values: object) -> None:
+        self._values = values
+
+    def __iter__(self):  # type: ignore[return]
+        return iter(self._values)
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    def __getitem__(self, index: int) -> object:
+        return self._values[index]
