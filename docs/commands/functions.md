@@ -16,7 +16,7 @@ Manage T-SQL user-defined functions on Microsoft Fabric Data Warehouses and SQL 
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
-Create a new T-SQL user-defined function. Scalar UDFs and inline TVFs are preview features.
+Create a new T-SQL user-defined function.
 
 **Synopsis**
 
@@ -184,7 +184,7 @@ fdw -w MyWorkspace functions update SalesWH dbo.fn_clean_input \
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
-Create a new T-SQL user-defined function. Scalar UDFs and inline TVFs are preview features.
+Create a new T-SQL user-defined function.
 
 !!! warning "Caution"
 
