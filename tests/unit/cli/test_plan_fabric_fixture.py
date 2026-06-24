@@ -191,6 +191,7 @@ class TestFabricFixtureTreeRenderer:
         operators = _parse(plan_xml)
         output = _render_tree_str(operators)
         assert "(Move)" in output
+        assert "Compute To Control Node" in output
 
     @pytest.mark.parametrize("plan_xml", _FIXTURE_CASES)
     def test_renders_hash_match(self, plan_xml: str) -> None:
@@ -331,8 +332,7 @@ class TestFabricFixtureSvgRenderer:
             result = render_plan_svg(operators)
 
         assert result == _FAKE_SVG
-        call_kwargs = mock_run.call_args
-        stdin_data: bytes = call_kwargs[1].get("input") or call_kwargs[0][1]
+        stdin_data: bytes = mock_run.call_args.kwargs["input"]
         assert b"Compute To Control Node" in stdin_data
 
     @pytest.mark.parametrize("plan_xml", _FIXTURE_CASES)
@@ -371,4 +371,6 @@ class TestFabricFixtureHtmlRenderer:
         """The raw SHOWPLAN_XML must be embedded so the JS library can read it."""
         output = render_plan_html(plan_xml)
         # The HTML renderer embeds (a portion of) the XML; confirm the root element
+        # and the Fabric operator so a regression where the full XML is omitted is caught.
         assert "ShowPlanXML" in output
+        assert "Compute To Control Node" in output
