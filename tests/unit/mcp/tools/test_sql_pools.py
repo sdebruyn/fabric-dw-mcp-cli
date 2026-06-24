@@ -27,7 +27,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from fabric_dw.exceptions import AlreadyExistsError, FabricError, NotFoundError
+from fabric_dw.exceptions import AlreadyExistsError, BadRequestError, FabricError, NotFoundError
 from fabric_dw.models import (
     SqlPool,
     SqlPoolInsight,
@@ -801,6 +801,36 @@ async def test_enable_sql_pools_fabric_error(mock_ctx, ctx_patch) -> None:
             "enable_sql_pools",
             {"workspace": _WS_NAME},
         )
+
+
+async def test_enable_sql_pools_no_pools_defined_raises_tool_error(mock_ctx, ctx_patch) -> None:
+    """enable_sql_pools surfaces BadRequestError from service as ToolError, not a raw traceback.
+
+    The service raises BadRequestError when the workspace has no custom SQL pools
+    (the Fabric API rejects an empty pool list with HTTP 400).  The MCP tool only
+    catches FabricError; BadRequestError is a subclass, so it must be caught and
+    re-raised as ToolError — not escape as a raw exception.
+    """
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.sql_pools.enable",
+            new=AsyncMock(side_effect=BadRequestError("no pools — use sql-pools create")),
+        ),
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "enable_sql_pools",
+            {"workspace": _WS_NAME},
+        )
+
+    assert "sql-pools create" in str(exc_info.value)
 
 
 async def test_enable_sql_pools_readonly_blocked(ctx_patch) -> None:

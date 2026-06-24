@@ -15,6 +15,7 @@ from click.testing import CliRunner
 from fabric_dw.cli._main import cli
 from fabric_dw.exceptions import (
     AlreadyExistsError,
+    BadRequestError,
     FabricError,
     NotFoundError,
     PermissionDeniedError,
@@ -742,7 +743,7 @@ class TestSqlPoolsEnable:
 
 
 class TestSqlPoolsEnableNoPoolsError:
-    """enable_cmd — ValueError (no pools defined) branch."""
+    """enable_cmd — BadRequestError (no pools defined) branch."""
 
     def test_enable_no_pools_exits_nonzero_with_actionable_message(
         self, runner: CliRunner, cache_env: Path
@@ -760,12 +761,7 @@ class TestSqlPoolsEnableNoPoolsError:
             ),
             patch(
                 "fabric_dw.cli.commands.sql_pools._svc.enable",
-                new=AsyncMock(
-                    side_effect=ValueError(
-                        "Cannot enable custom SQL pools: no pools are defined. "
-                        "Create at least one pool first (`sql-pools create`)."
-                    )
-                ),
+                new=AsyncMock(side_effect=BadRequestError("no pools — use sql-pools create")),
             ),
         ):
             result = runner.invoke(cli, ["-w", WS_GUID, "sql-pools", "enable"])

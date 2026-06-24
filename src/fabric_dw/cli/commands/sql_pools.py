@@ -396,8 +396,6 @@ async def enable_cmd(ctx: CliContext) -> None:
                 result.model_dump(by_alias=True, mode="json"),
                 json_output=ctx.json_output,
             )
-    except ValueError as exc:
-        raise click.ClickException(str(exc)) from exc
     except PermissionDeniedError as exc:
         raise _permission_hint(exc) from exc
     except FabricError as exc:

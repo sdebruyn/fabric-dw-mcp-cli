@@ -25,7 +25,7 @@ import types
 from collections.abc import Mapping
 from uuid import UUID
 
-from fabric_dw.exceptions import AlreadyExistsError, NotFoundError
+from fabric_dw.exceptions import AlreadyExistsError, BadRequestError, NotFoundError
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import SqlPool, SqlPoolsConfiguration
 
@@ -166,10 +166,11 @@ async def enable(
     Raises:
         PermissionDeniedError: If the caller does not have the workspace admin role
             (HTTP 403).
-        ValueError: If no custom SQL pools are defined.  The Fabric API rejects
-            ``customSQLPoolsEnabled=True`` with an empty pool list; this guard
-            surfaces the constraint as a clear, actionable message before the
-            PATCH is attempted.
+        BadRequestError: If no custom SQL pools are defined.  The Fabric API
+            rejects ``customSQLPoolsEnabled=True`` with an empty pool list
+            (HTTP 400 "Array item count 0 is less than minimum count of 1");
+            this guard surfaces the constraint as a clear, actionable message
+            before the PATCH is attempted.
     """
     current = await get_configuration(http, workspace_id)
     if current.custom_sql_pools_enabled:
@@ -180,7 +181,7 @@ async def enable(
             "Cannot enable custom SQL pools: no pools are defined. "
             "Create at least one pool first (`sql-pools create`)."
         )
-        raise ValueError(msg)
+        raise BadRequestError(msg)
 
     enabled_config = _rebuild_config(enabled=True, pools=current.custom_sql_pools)
     return await update_configuration(http, workspace_id, enabled_config)
