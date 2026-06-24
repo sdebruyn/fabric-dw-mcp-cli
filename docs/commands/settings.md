@@ -10,11 +10,11 @@ Manage **server-side** database settings on a Fabric Data Warehouse or SQL Analy
 
     `settings` manages server-side warehouse/database configuration. For client-side CLI defaults (workspace, warehouse) use [`fdw config`](config.md) instead.
 
-`show` and `result-set-caching` work on both Data Warehouses and SQL Analytics Endpoints. The `retention` command sets the time-travel retention period, which is primarily a Warehouse concept and may be a no-op on a SQL Analytics Endpoint.
+`show` works on both Data Warehouses and SQL Analytics Endpoints. `result-set-caching` and `retention` issue `ALTER DATABASE CURRENT SET …`, which is **not supported on SQL Analytics Endpoints** — running either command against one returns a clean error.
 
 The workspace is resolved from the global `-w/--workspace` option, the `FABRIC_DW_DEFAULT_WORKSPACE` environment variable, or the client-side config default. `ITEM` may be a display name or GUID.
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse
 
 ---
 
@@ -22,7 +22,7 @@ The workspace is resolved from the global `-w/--workspace` option, the `FABRIC_D
 
 ### settings result-set-caching
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse
 
 Enable or disable result-set caching.
 
@@ -46,7 +46,7 @@ fdw -w MyWorkspace --json settings result-set-caching MyWarehouse on
 
 ### settings retention
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse
 
 Set the time-travel retention period in days.
 
@@ -111,7 +111,7 @@ Return the current server-side database settings for a warehouse. Reads `result_
 
 ### set_result_set_caching
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse
 
 **Guards:** `assert_writes_allowed`, `assert_workspace_allowed`
 
@@ -131,7 +131,7 @@ Enable or disable result-set caching on a warehouse. Executes `ALTER DATABASE CU
 
 ### set_time_travel_retention
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse
 
 **Guards:** `assert_writes_allowed`, `assert_workspace_allowed`
 
