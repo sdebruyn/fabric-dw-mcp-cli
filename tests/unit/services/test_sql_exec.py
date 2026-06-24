@@ -570,6 +570,43 @@ async def test_execute_row_limit_does_not_truncate_rows() -> None:
     assert len(result.rows) == 6
 
 
+async def test_execute_row_limit_rowcount_capped_at_row_limit() -> None:
+    """rowcount fallback is capped at row_limit when the driver returns -1.
+
+    When row_limit=N and the driver fetches N+1 rows (the truncation sentinel),
+    the fallback rowcount must be min(N+1, N) = N, not N+1.  Reporting N+1
+    would inflate rowcount by 1 compared to what the caller asked for.
+    """
+    target = _make_target()
+    # Driver returns 6 rows (row_limit=5 → fetchmany(6) over-fetches by 1).
+    rows: list[tuple[object, ...]] = [(i,) for i in range(6)]
+    cursor = _make_stateful_cursor([(["n"], rows)])
+    conn = MagicMock()
+    conn.cursor.return_value = cursor
+
+    with _patch_connect(conn):
+        result = await sql_exec.execute(target, "SELECT n FROM t", row_limit=5)
+
+    # rowcount must be capped at row_limit (5), not the sentinel count (6).
+    assert result.rowcount == 5
+
+
+async def test_execute_row_limit_rowcount_not_capped_when_driver_provides_it() -> None:
+    """When the driver returns a positive rowcount, it is used as-is (no cap applied)."""
+    target = _make_target()
+    rows: list[tuple[object, ...]] = [(i,) for i in range(6)]
+    cursor = _make_stateful_cursor([(["n"], rows)])
+    cursor.rowcount = 6  # driver provides a positive count — use it directly
+    conn = MagicMock()
+    conn.cursor.return_value = cursor
+
+    with _patch_connect(conn):
+        result = await sql_exec.execute(target, "SELECT n FROM t", row_limit=5)
+
+    # Driver-reported rowcount takes priority; cap only applies to the fallback.
+    assert result.rowcount == 6
+
+
 # ---------------------------------------------------------------------------
 # T02: pool-discard on error
 # ---------------------------------------------------------------------------
@@ -1019,15 +1056,48 @@ async def test_get_plan_original_error_preserved_when_off_also_fails() -> None:
 # Row normalisation: execute() and get_plan() must return real tuples even
 # when the driver yields non-tuple Row objects (mssql_python.Row is iterable
 # and index-accessible but is NOT a tuple subclass).
+#
+# These tests are deliberately written so that removing the `[tuple(r) for r
+# in ...]` normalisation in sql_exec.py causes AT LEAST ONE test to fail:
+#
+# - execute() tests spy on _tag_binary_columns to assert that every row
+#   passed in is already a real tuple (type is tuple, not _FakeRow).
+#   Without the normalisation the spy sees _FakeRow objects and the
+#   `all(type(r) is tuple ...)` assertion fails.
+#
+# - get_plan() tests use _IterOnlyRow: a sequence-like that exposes __iter__
+#   but raises TypeError on __getitem__.  Without tuple() conversion the
+#   `row[0]` access in get_plan() raises TypeError.  With conversion the
+#   row is a real tuple and row[0] works normally.
 # ---------------------------------------------------------------------------
 
 
-async def test_execute_row_normalised_to_real_tuple() -> None:
-    """execute() converts driver Row objects to real tuples.
+class _IterOnlyRow:
+    """Sequence-like that supports iteration but NOT index access.
 
-    Feeds _FakeRow instances (non-tuple sequences, like mssql_python.Row)
-    through execute() and asserts that every returned row is a real tuple
-    with values preserved and type(row) is tuple.
+    Used to verify that get_plan() calls tuple() on each fetched row BEFORE
+    accessing row[0].  If tuple() is removed, row[0] raises TypeError here.
+    """
+
+    def __init__(self, *values: object) -> None:
+        self._values = values
+
+    def __iter__(self):  # type: ignore[return]
+        return iter(self._values)
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    def __getitem__(self, index: int) -> object:
+        raise TypeError("_IterOnlyRow does not support index access — tuple() it first")
+
+
+async def test_execute_passes_real_tuples_to_tag_binary_columns() -> None:
+    """execute() normalises _FakeRow objects to real tuples before _tag_binary_columns.
+
+    Spies on _tag_binary_columns to assert that every row in the `rows`
+    argument is a genuine tuple (type is tuple, not _FakeRow).  Removing
+    the [tuple(r) for r in ...] normalisation in sql_exec.py makes this fail.
     """
     target = _make_target()
     fake_rows = [_FakeRow(1, "hello"), _FakeRow(2, "world")]
@@ -1040,21 +1110,41 @@ async def test_execute_row_normalised_to_real_tuple() -> None:
     conn = MagicMock()
     conn.cursor.return_value = cursor
 
-    with _patch_connect(conn):
+    captured_rows: list[list[tuple[object, ...]]] = []
+
+    original_tag = sql_exec._tag_binary_columns  # type: ignore[attr-defined]
+
+    def _spy_tag(
+        raw_columns: list[str],
+        rows: list[tuple[object, ...]],
+        *,
+        description: list[tuple[str, object]] | None = None,
+    ) -> tuple[list[str], list[list[object]]]:
+        captured_rows.append(list(rows))
+        return original_tag(raw_columns, rows, description=description)
+
+    with (
+        _patch_connect(conn),
+        patch("fabric_dw.services.sql_exec._tag_binary_columns", side_effect=_spy_tag),
+    ):
         result = await sql_exec.execute(target, "SELECT id, name FROM t")
 
-    assert len(result.rows) == 2
-    # rows in SqlResult are list[list[object]], but the underlying fetch must
-    # have normalised to real tuples before _tag_binary_columns serialised them.
-    # Verify values are preserved correctly.
+    assert len(captured_rows) == 1, "spy was not called"
+    assert all(type(r) is tuple for r in captured_rows[0]), (
+        "rows passed to _tag_binary_columns must be real tuples, not driver Row objects"
+    )
+    # Values are preserved after normalisation + serialisation.
     assert result.rows[0] == [1, "hello"]
     assert result.rows[1] == [2, "world"]
 
 
-async def test_execute_row_limit_fake_rows_normalised() -> None:
-    """execute() normalises _FakeRow objects when row_limit is set (fetchmany path)."""
+async def test_execute_fetchmany_passes_real_tuples_to_tag_binary_columns() -> None:
+    """execute() normalises _FakeRow objects on the fetchmany (row_limit) path.
+
+    Same spy approach as the fetchall path, but exercises cursor.fetchmany().
+    """
     target = _make_target()
-    fake_rows = [_FakeRow(i, f"val{i}") for i in range(3)]
+    fake_rows = [_FakeRow(i, f"v{i}") for i in range(3)]
 
     cursor = MagicMock()
     cursor.description = [("n", None), ("v", None)]
@@ -1064,16 +1154,35 @@ async def test_execute_row_limit_fake_rows_normalised() -> None:
     conn = MagicMock()
     conn.cursor.return_value = cursor
 
-    with _patch_connect(conn):
+    captured_rows: list[list[tuple[object, ...]]] = []
+
+    original_tag = sql_exec._tag_binary_columns  # type: ignore[attr-defined]
+
+    def _spy_tag(
+        raw_columns: list[str],
+        rows: list[tuple[object, ...]],
+        *,
+        description: list[tuple[str, object]] | None = None,
+    ) -> tuple[list[str], list[list[object]]]:
+        captured_rows.append(list(rows))
+        return original_tag(raw_columns, rows, description=description)
+
+    with (
+        _patch_connect(conn),
+        patch("fabric_dw.services.sql_exec._tag_binary_columns", side_effect=_spy_tag),
+    ):
         result = await sql_exec.execute(target, "SELECT n, v FROM t", row_limit=5)
 
-    assert len(result.rows) == 3
-    assert result.rows[0] == [0, "val0"]
-    assert result.rows[2] == [2, "val2"]
+    assert len(captured_rows) == 1, "spy was not called"
+    assert all(type(r) is tuple for r in captured_rows[0]), (
+        "fetchmany rows must be normalised to real tuples before _tag_binary_columns"
+    )
+    assert result.rows[0] == [0, "v0"]
+    assert result.rows[2] == [2, "v2"]
 
 
 async def test_execute_empty_fake_rows_normalised() -> None:
-    """execute() handles an empty fetchall result without error even with _FakeRow."""
+    """execute() handles an empty fetchall result without error."""
     target = _make_target()
     cursor = MagicMock()
     cursor.description = [("id", None)]
@@ -1090,37 +1199,37 @@ async def test_execute_empty_fake_rows_normalised() -> None:
     assert result.columns == ["id"]
 
 
-async def test_get_plan_fake_rows_normalised_to_tuple() -> None:
-    """get_plan() converts driver Row objects to real tuples before reading row[0].
+async def test_get_plan_iter_only_row_normalised_to_tuple() -> None:
+    """get_plan() must call tuple() on rows before accessing row[0].
 
-    Feeds _FakeRow instances from cursor.fetchall() and asserts that the first
-    column is correctly extracted and the plan string is built as expected.
+    Uses _IterOnlyRow: supports __iter__ but raises TypeError on __getitem__.
+    Without the [tuple(r) for r in cursor.fetchall()] normalisation in
+    get_plan(), the `row[0]` access raises TypeError and this test fails.
+    With normalisation, row becomes a real tuple and row[0] works correctly.
     """
     target = _make_target()
-    plan_xml = _PLAN_XML
 
     cursor = MagicMock()
     cursor.description = [("Microsoft SQL Server 2005 XML Showplan", None)]
-    # fetchall returns _FakeRow objects (not tuples)
-    cursor.fetchall.return_value = [_FakeRow(plan_xml)]
+    cursor.fetchall.return_value = [_IterOnlyRow(_PLAN_XML)]
     conn = MagicMock()
     conn.cursor.return_value = cursor
 
     with patch("fabric_dw.sql._with_connect_retry", return_value=(conn, 0, 1, None)):
         result = await sql_exec.get_plan(target, "SELECT 1")
 
-    assert result == plan_xml
+    assert result == _PLAN_XML
 
 
-async def test_get_plan_multiple_fake_rows_concatenated() -> None:
-    """get_plan() concatenates the first column of multiple _FakeRow objects."""
+async def test_get_plan_multiple_iter_only_rows_concatenated() -> None:
+    """get_plan() concatenates the first column of multiple _IterOnlyRow objects."""
     target = _make_target()
     part1 = "<ShowPlanXML>part1"
     part2 = "part2</ShowPlanXML>"
 
     cursor = MagicMock()
     cursor.description = [("Microsoft SQL Server 2005 XML Showplan", None)]
-    cursor.fetchall.return_value = [_FakeRow(part1), _FakeRow(part2)]
+    cursor.fetchall.return_value = [_IterOnlyRow(part1), _IterOnlyRow(part2)]
     conn = MagicMock()
     conn.cursor.return_value = cursor
 
@@ -1130,19 +1239,18 @@ async def test_get_plan_multiple_fake_rows_concatenated() -> None:
     assert result == part1 + part2
 
 
-async def test_get_plan_fake_row_with_none_skipped() -> None:
-    """get_plan() skips _FakeRow entries where the first column is None."""
+async def test_get_plan_iter_only_row_with_none_skipped() -> None:
+    """get_plan() skips _IterOnlyRow entries where the first column is None."""
     target = _make_target()
-    plan_xml = _PLAN_XML
 
     cursor = MagicMock()
     cursor.description = [("Microsoft SQL Server 2005 XML Showplan", None)]
-    # Row with None first column must be skipped; the second row carries the plan.
-    cursor.fetchall.return_value = [_FakeRow(None), _FakeRow(plan_xml)]
+    # First row has None in position 0; second row carries the real plan.
+    cursor.fetchall.return_value = [_IterOnlyRow(None), _IterOnlyRow(_PLAN_XML)]
     conn = MagicMock()
     conn.cursor.return_value = cursor
 
     with patch("fabric_dw.sql._with_connect_retry", return_value=(conn, 0, 1, None)):
         result = await sql_exec.get_plan(target, "SELECT 1")
 
-    assert result == plan_xml
+    assert result == _PLAN_XML

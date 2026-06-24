@@ -234,7 +234,14 @@ async def execute(
                         )
                         rc: int = getattr(cursor, "rowcount", -1)
                         if rc is None or rc == -1:
-                            rc = len(serialised_rows)
+                            # When row_limit is set we fetched row_limit+1 rows as a
+                            # truncation sentinel.  Cap the fallback count at row_limit
+                            # so rowcount does not include the sentinel over-fetch row.
+                            rc = (
+                                min(len(serialised_rows), row_limit)
+                                if row_limit is not None
+                                else len(serialised_rows)
+                            )
                         last = (tagged_cols, serialised_rows, rc)
                     if not cursor.nextset():
                         break
