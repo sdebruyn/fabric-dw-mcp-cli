@@ -1264,6 +1264,24 @@ def _with_connect_retry(
             return conn, attempt, attempt + 2, last_exc
 
 
+def _log_sql_execute(sql: str, *, param_count: int = 0) -> None:
+    """Emit a DEBUG record for an SQL statement about to be executed.
+
+    Guards the :func:`redact_sql` call and the log emission behind a single
+    :meth:`logging.Logger.isEnabledFor` check so there is zero overhead when
+    the ``fabric_dw.sql`` logger is not at DEBUG level.  Centralises the
+    redact-then-log idiom shared by :func:`run_query` and
+    :func:`run_statements` to prevent drift.
+
+    Args:
+        sql: The raw SQL statement (will be redacted before logging).
+        param_count: Number of bound parameters being passed (values are never
+            logged; only the count may appear in the log record).
+    """
+    if _log.isEnabledFor(logging.DEBUG):
+        _log.debug("sql execute", extra={"sql": redact_sql(sql), "param_count": param_count})
+
+
 def run_query(  # noqa: PLR0913, PLR0915
     target: SqlTarget,
     statement: str,
@@ -1387,20 +1405,14 @@ def run_query(  # noqa: PLR0913, PLR0915
         been committed server-side.
         """
         cur = c.cursor()
-        if _log.isEnabledFor(logging.DEBUG):
-            _log.debug(
-                "sql execute",
-                extra={
-                    "sql": redact_sql(statement),
-                    "param_count": len(params) if params else 0,
-                },
-            )
-        _t0 = time.monotonic() if _log.isEnabledFor(logging.DEBUG) else 0.0
+        _debug = _log.isEnabledFor(logging.DEBUG)
+        _log_sql_execute(statement, param_count=len(params) if params else 0)
+        _t0 = time.monotonic() if _debug else 0.0
         if params:
             cur.execute(statement, params)
         else:
             cur.execute(statement)
-        if _log.isEnabledFor(logging.DEBUG):
+        if _debug:
             _log.debug(
                 "sql execute -> done",
                 extra={
@@ -1590,8 +1602,7 @@ def run_statements(
     try:
         for stmt in statements:
             try:
-                if _log.isEnabledFor(logging.DEBUG):
-                    _log.debug("sql execute", extra={"sql": redact_sql(stmt)})
+                _log_sql_execute(stmt)
                 cursor.execute(stmt)
                 if not autocommit and commit_per_statement:
                     conn.commit()

@@ -283,3 +283,25 @@ class TestRedactSql:
         sql = "COPY INTO [t] FROM 'https://myaccount.blob.core.windows.net/c/f.parquet'"
         result = redact_sql(sql)
         assert result == sql
+
+    def test_abfss_url_query_string_redacted(self) -> None:
+        """abfss:// Azure Data Lake Storage URLs with query strings must be redacted."""
+        sql = (
+            "COPY INTO [t] FROM"
+            " 'abfss://container@account.dfs.core.windows.net/data.parquet"
+            "?sv=2024-01-01&sig=ABCSECRET&se=2025&sp=r'"
+        )
+        result = redact_sql(sql)
+        assert "ABCSECRET" not in result
+        assert "abfss://container@account.dfs.core.windows.net/data.parquet?***" in result
+
+    def test_wasbs_url_query_string_redacted(self) -> None:
+        """wasbs:// Azure Blob Storage URLs with query strings must be redacted."""
+        sql = (
+            "COPY INTO [t] FROM"
+            " 'wasbs://container@account.blob.core.windows.net/data.parquet"
+            "?sv=2024&sig=WASB_SECRET'"
+        )
+        result = redact_sql(sql)
+        assert "WASB_SECRET" not in result
+        assert "?***" in result

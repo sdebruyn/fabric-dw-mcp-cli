@@ -125,11 +125,12 @@ _RE_SQL_SECRET: re.Pattern[str] = re.compile(
     re.IGNORECASE,
 )
 
-# Matches a https:// URL that contains a query string — replaces ?... with ?***.
-# Targets blob/dfs SAS URLs embedded in SQL (e.g. COPY INTO '...' FROM '...' …)
-# by stripping query-string parameters starting at '?'.
+# Matches any URL scheme that can carry SAS/query secrets and contains a query
+# string — replaces ?... with ?***.  Covers https://, http://, and Azure blob/
+# dfs/OneLake schemes (abfss://, abfs://, wasbs://, wasb://) that can also
+# appear inside SQL statements such as COPY INTO.
 _RE_SAS_URL: re.Pattern[str] = re.compile(
-    r"(https://[^\s'\"]*)\?[^\s'\"]*",
+    r"((?:https?|abfss?|wasbs?)://[^\s'\"]*)\?[^\s'\"]*",
     re.IGNORECASE,
 )
 
@@ -145,10 +146,12 @@ def redact_sql(sql: str) -> str:
        single-quotes by doubling them (``''``), so the regex handles values
        that contain ``''`` inside the quoted string.
 
-    2. **SAS URL query strings** — any ``https://...?...`` URL embedded in the
-       SQL has the ``?<query-string>`` replaced with ``?***``.  This covers
-       ``sig=``, ``sv=``, and all other SAS parameters without having to
-       enumerate them individually.
+    2. **SAS URL query strings** — any URL with a query string embedded in the
+       SQL has the ``?<query-string>`` replaced with ``?***``.  Covers
+       ``https://``, ``http://``, and Azure blob/dfs/OneLake schemes
+       (``abfss://``, ``abfs://``, ``wasbs://``, ``wasb://``).  This masks
+       ``sig=``, ``sv=``, and all other SAS parameters without enumerating
+       them individually.
 
     The function is intentionally conservative (over-redacts rather than
     leaks).  It must be applied to the SQL string before emitting any log
