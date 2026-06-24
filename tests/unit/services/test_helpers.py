@@ -242,3 +242,29 @@ def test_normalize_bracket_in_catalog_schema_escaped() -> None:
     result = normalize_object_definition("CREATE VIEW . AS SELECT 1", "sch]ema", "vw_ok")
     assert "[sch]]ema]" in result
     assert "[vw_ok]" in result
+
+
+# ---------------------------------------------------------------------------
+# Regression: #746 — bare-dot form "CREATE VIEW . AS" reported on live tenant
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_regression_746_exact_live_input() -> None:
+    """Regression #746: exact live-stored text 'CREATE VIEW . AS' is fixed.
+
+    Fabric's sys.sql_modules stores the definition with a bare dot between
+    CREATE VIEW and AS when the object was created without a fully-qualified
+    name in the DDL header (observed on fabric-dw 2026.6.0b1.dev15).
+    The helper must replace the bare dot schema/name slot with the catalog
+    values even when both parts are empty plain-form tokens (not bracket-quoted).
+    """
+    raw = "CREATE VIEW . AS SELECT id, label FROM fdw_qa.t_ctas"
+    result = normalize_object_definition(raw, "fdw_qa", "vw_dwh")
+    assert result == "CREATE VIEW [fdw_qa].[vw_dwh] AS SELECT id, label FROM fdw_qa.t_ctas"
+
+
+def test_normalize_regression_746_create_or_alter_bare_dot() -> None:
+    """Regression #746: 'CREATE OR ALTER VIEW . AS' bare-dot form is also fixed."""
+    raw = "CREATE OR ALTER VIEW . AS SELECT id, label FROM fdw_qa.t_ctas"
+    result = normalize_object_definition(raw, "fdw_qa", "vw_dwh")
+    assert result == "CREATE OR ALTER VIEW [fdw_qa].[vw_dwh] AS SELECT id, label FROM fdw_qa.t_ctas"
