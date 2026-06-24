@@ -58,6 +58,7 @@ from typing import Any, Literal, Protocol
 
 from fabric_dw.auth import CredentialMode, get_sql_token_struct
 from fabric_dw.exceptions import AuthError, FabricServerError, NotFoundError, PermissionDeniedError
+from fabric_dw.logging import redact_sql
 
 _log = logging.getLogger(__name__)
 
@@ -1386,10 +1387,27 @@ def run_query(  # noqa: PLR0913, PLR0915
         been committed server-side.
         """
         cur = c.cursor()
+        if _log.isEnabledFor(logging.DEBUG):
+            _log.debug(
+                "sql execute",
+                extra={
+                    "sql": redact_sql(statement),
+                    "param_count": len(params) if params else 0,
+                },
+            )
+        _t0 = time.monotonic() if _log.isEnabledFor(logging.DEBUG) else 0.0
         if params:
             cur.execute(statement, params)
         else:
             cur.execute(statement)
+        if _log.isEnabledFor(logging.DEBUG):
+            _log.debug(
+                "sql execute -> done",
+                extra={
+                    "elapsed_ms": (time.monotonic() - _t0) * 1000,
+                    "rowcount": cur.rowcount,
+                },
+            )
 
         if fetch == "none":
             # No result set to read.  Return without committing — commit is
@@ -1572,6 +1590,8 @@ def run_statements(
     try:
         for stmt in statements:
             try:
+                if _log.isEnabledFor(logging.DEBUG):
+                    _log.debug("sql execute", extra={"sql": redact_sql(stmt)})
                 cursor.execute(stmt)
                 if not autocommit and commit_per_statement:
                     conn.commit()
