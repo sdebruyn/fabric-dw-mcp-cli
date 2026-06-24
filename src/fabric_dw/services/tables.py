@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     import pyarrow as pa
 
 from fabric_dw.auth import CredentialMode
-from fabric_dw.exceptions import ItemKindError, NotFoundError
+from fabric_dw.exceptions import FabricError, ItemKindError, NotFoundError
 from fabric_dw.identifiers import parse_qualified_name, quote_identifier, validate_identifier
 from fabric_dw.models import ColumnSpec, Table, WarehouseKind
 from fabric_dw.services._helpers import reject_non_select
@@ -75,6 +75,10 @@ _log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _SQL_ENDPOINT_READONLY_MSG = "SQL Endpoints are read-only; CREATE/DROP/TRUNCATE not supported"
+
+# Fragment from the Fabric TDS driver error when the AT timestamp predates the
+# object-creation time or falls outside the data-retention window.
+_CLONE_TIMESTAMP_BEFORE_CREATION_FRAGMENT = "timestamp in the query"
 _SQL_ENDPOINT_CLUSTERING_MSG = (
     "Data clustering is not supported on SQL Analytics Endpoints; use a Fabric Data Warehouse"
 )
@@ -1297,7 +1301,20 @@ async def clone_table(
         # eliminate the implicit transaction, matching the pattern used for
         # ALTER DATABASE snapshot DDL.  Both the AT and non-AT paths share
         # this single code path for consistency.
-        run_query(target, ddl, mode=mode, autocommit=True, fetch="none")
+        try:
+            run_query(target, ddl, mode=mode, autocommit=True, fetch="none")
+        except Exception as err:
+            # The Fabric TDS driver raises a ProgrammingError when the AT
+            # timestamp predates the table's creation time or falls outside
+            # the data-retention window.  Translate it to a typed FabricError
+            # with an actionable message so no raw traceback reaches the user.
+            if _CLONE_TIMESTAMP_BEFORE_CREATION_FRAGMENT in str(err).lower():
+                msg = (
+                    f"The specified --at timestamp is before the table was created "
+                    f"or outside the data-retention window. {err}"
+                )
+                raise FabricError(msg) from err
+            raise
 
     await asyncio.to_thread(_run_ddl)
     return await _fetch_table(target, new_schema, new_name, mode=mode)
@@ -1405,8 +1422,8 @@ async def recluster_table(
     .. warning::
 
         Dependent views and stored procedures that reference *schema*.*table_name*
-        by name are NOT automatically updated by ``sp_rename``.  After
-        re-clustering you may need to refresh them manually.
+        by name are NOT automatically updated by this CLUSTER BY rebuild
+        (CTAS-swap).  After re-clustering you may need to refresh them manually.
 
     Args:
         target: The warehouse to connect to.

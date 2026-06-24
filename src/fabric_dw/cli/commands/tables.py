@@ -605,7 +605,8 @@ async def cluster_by_cmd(
 
     \b
     WARNING: Dependent views and stored procedures that reference this table by
-    name are NOT automatically updated by sp_rename and may need refreshing.
+    name are NOT automatically updated by this CLUSTER BY rebuild (which
+    recreates the table via CTAS and sp_rename) and may need refreshing.
 
     Only supported on Fabric Data Warehouses (not SQL Analytics Endpoints).
     This operation copies the full table — runtime is proportional to table size.
@@ -626,7 +627,8 @@ async def cluster_by_cmd(
                 return
             click.echo(
                 "WARNING: Dependent views and stored procedures referencing this table "
-                "are NOT updated by sp_rename and may need refreshing.",
+                "are NOT automatically updated by this CLUSTER BY rebuild (CTAS-swap) "
+                "and may need refreshing.",
                 err=True,
             )
             t = await _tables_svc.recluster_table(
