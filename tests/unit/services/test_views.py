@@ -10,7 +10,8 @@ import pytest
 from fabric_dw.exceptions import AuthError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import View
 from fabric_dw.services import views
-from fabric_dw.services.views import _normalize_definition, read_view, validate_identifier
+from fabric_dw.services._helpers import normalize_object_definition as _normalize_definition
+from fabric_dw.services.views import read_view, validate_identifier
 from tests.unit.services._helpers import (
     _make_conn,
     _make_conn_for_ddl,
@@ -34,12 +35,12 @@ _VIEW_ROW_GET = ("dbo", "vw_sales", _NOW, _LATER, "SELECT id, amount FROM dbo.sa
 
 
 # ===========================================================================
-# _normalize_definition tests
+# normalize_object_definition tests (imported as _normalize_definition)
 # ===========================================================================
 
 
 class TestNormalizeDefinition:
-    """Tests for _normalize_definition — the CREATE VIEW header normaliser."""
+    """Tests for normalize_object_definition exercised via VIEW definitions."""
 
     def test_empty_schema_and_name_replaced(self) -> None:
         """The canonical Fabric bug: 'CREATE VIEW . AS ...' is fixed."""

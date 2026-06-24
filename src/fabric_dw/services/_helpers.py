@@ -10,7 +10,7 @@ from uuid import UUID
 
 from fabric_dw.services.capacities import ACTIVE_STATE
 
-__all__ = ["compact", "reject_non_select", "scan_all_workspaces"]
+__all__ = ["compact", "normalize_object_definition", "reject_non_select", "scan_all_workspaces"]
 
 _T = TypeVar("_T")
 
@@ -226,6 +226,68 @@ async def scan_all_workspaces(
         )
 
     return out
+
+
+# ---------------------------------------------------------------------------
+# Definition normaliser (shared by views, functions, and procedures)
+# ---------------------------------------------------------------------------
+
+# Fabric Data Warehouse can return a definition from sys.sql_modules where the
+# schema and/or object name in the CREATE <TYPE> header are empty (e.g.
+# "CREATE VIEW . AS ...", "CREATE FUNCTION . (...)" etc.).  The pattern
+# matches CREATE VIEW, CREATE FUNCTION, CREATE PROCEDURE (and their
+# CREATE OR ALTER variants), allowing either or both of the schema/name parts
+# to be empty or whitespace-only.
+_CREATE_OBJECT_HEADER_RE = re.compile(
+    r"(?i)^(\s*CREATE\s+(?:OR\s+ALTER\s+)?(?:VIEW|FUNCTION|PROCEDURE)\s+)"
+    r"(?:\[([^\]]*)\]|([^\[.\s]*))"  # schema: [schema] or plain
+    r"\."  # dot separator
+    r"(?:\[([^\]]*)\]|([^\[.\s\(]*))",  # name: [name] or plain
+)
+
+
+def normalize_object_definition(definition: str, schema_name: str, name: str) -> str:
+    """Replace an empty or missing schema/name in a CREATE … header.
+
+    Fabric's ``sys.sql_modules`` can store a definition where the object name
+    in the CREATE header is blank (e.g. ``CREATE VIEW . AS ...``).  This helper
+    detects that pattern and replaces the header with the correct bracket-quoted
+    ``[schema].[name]`` taken from the catalog columns (which are always
+    populated correctly via ``sys.views``/``sys.objects``/``sys.procedures``
+    JOINed with ``sys.schemas``).
+
+    Covers ``CREATE VIEW``, ``CREATE FUNCTION``, and ``CREATE PROCEDURE`` (and
+    their ``CREATE OR ALTER`` variants).  When both parts are already present
+    the definition is returned unchanged.
+
+    Args:
+        definition: The raw ``sys.sql_modules.definition`` string.
+        schema_name: The catalog schema name (from ``sys.schemas.name``).
+        name: The catalog object name (from ``sys.views/objects/procedures.name``).
+
+    Returns:
+        The definition with the CREATE header corrected, or the original string
+        when no correction is needed.
+    """
+    m = _CREATE_OBJECT_HEADER_RE.match(definition)
+    if m is None:
+        # Cannot identify the header — return as-is.
+        return definition
+
+    prefix = m.group(1)  # "CREATE VIEW " (with leading whitespace)
+    # Bracket-quoted form wins over plain; fall back to the other group.
+    stored_schema = (m.group(2) if m.group(2) is not None else m.group(3) or "").strip()
+    stored_name = (m.group(4) if m.group(4) is not None else m.group(5) or "").strip()
+
+    if stored_schema and stored_name:
+        # Both parts present — nothing to fix.
+        return definition
+
+    # At least one part is empty: substitute with the catalog values.
+    effective_schema = stored_schema or schema_name
+    effective_name = stored_name or name
+    new_header = f"{prefix}[{effective_schema}].[{effective_name}]"
+    return new_header + definition[m.end() :]
 
 
 # ---------------------------------------------------------------------------

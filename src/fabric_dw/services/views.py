@@ -16,7 +16,6 @@ Public API
 from __future__ import annotations
 
 import asyncio
-import re
 from datetime import datetime
 from typing import cast
 
@@ -24,7 +23,7 @@ from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import NotFoundError
 from fabric_dw.identifiers import parse_qualified_name, quote_identifier, validate_identifier
 from fabric_dw.models import View
-from fabric_dw.services._helpers import reject_non_select
+from fabric_dw.services._helpers import normalize_object_definition, reject_non_select
 from fabric_dw.sql import SqlTarget, run_query
 
 __all__ = [
@@ -84,50 +83,6 @@ _SP_RENAME_SQL = "EXEC sp_rename ?, ?, 'OBJECT'"
 # Helpers
 # ---------------------------------------------------------------------------
 
-# Fabric Data Warehouse can return a definition from sys.sql_modules where the
-# schema and/or view name in the CREATE VIEW header are empty (e.g.
-# "CREATE VIEW . AS ...").  The pattern matches both the bracket-quoted form
-# (CREATE VIEW [schema].[name]) and the plain form (CREATE VIEW schema.name),
-# allowing either or both parts to be empty or whitespace-only.
-_CREATE_VIEW_HEADER_RE = re.compile(
-    r"(?i)^(\s*CREATE\s+(?:OR\s+ALTER\s+)?VIEW\s+)"  # "CREATE VIEW " prefix
-    r"(?:\[([^\]]*)\]|([^\[.\s]*))"  # schema: [schema] or plain
-    r"\."  # dot separator
-    r"(?:\[([^\]]*)\]|([^\[.\s\(]*))",  # name: [name] or plain
-)
-
-
-def _normalize_definition(definition: str, schema_name: str, name: str) -> str:
-    """Replace an empty or missing schema/name in a CREATE VIEW header.
-
-    Fabric's ``sys.sql_modules`` can store a definition where the object name
-    in the header is blank (``CREATE VIEW . AS ...``).  This helper detects
-    that pattern and replaces the header with the correct bracket-quoted
-    ``[schema].[name]`` taken from the catalog columns (which are always
-    populated correctly).
-
-    If the header already contains non-empty values they are left untouched.
-    """
-    m = _CREATE_VIEW_HEADER_RE.match(definition)
-    if m is None:
-        # Cannot identify the header — return as-is.
-        return definition
-
-    prefix = m.group(1)  # "CREATE VIEW " (with leading whitespace)
-    # Bracket-quoted form wins over plain; fall back to the other group.
-    stored_schema = (m.group(2) if m.group(2) is not None else m.group(3) or "").strip()
-    stored_name = (m.group(4) if m.group(4) is not None else m.group(5) or "").strip()
-
-    if stored_schema and stored_name:
-        # Both parts present — nothing to fix.
-        return definition
-
-    # At least one part is empty: substitute with the catalog values.
-    effective_schema = stored_schema or schema_name
-    effective_name = stored_name or name
-    new_header = f"{prefix}[{effective_schema}].[{effective_name}]"
-    return new_header + definition[m.end() :]
-
 
 def _row_to_view(cols: list[str], row: tuple[object, ...]) -> View:
     """Build a :class:`View` from a column-name list and a result row tuple."""
@@ -137,7 +92,7 @@ def _row_to_view(cols: list[str], row: tuple[object, ...]) -> View:
     raw_def = data.get("definition") if "definition" in data else None
     definition: str | None = cast("str | None", raw_def)
     if definition is not None:
-        definition = _normalize_definition(definition, schema_name, name)
+        definition = normalize_object_definition(definition, schema_name, name)
     return View(
         schema_name=schema_name,
         name=name,

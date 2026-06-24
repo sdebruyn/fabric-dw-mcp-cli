@@ -258,6 +258,18 @@ class TestGetProcedure:
             await procedures.get_procedure(target, "dbo", "usp_load")
         conn.close.assert_called_once()
 
+    async def test_normalizes_empty_schema_name_in_definition(self) -> None:
+        """get_procedure must fix a Fabric-returned 'CREATE PROCEDURE . AS ...' (issue #715)."""
+        broken_def = "CREATE PROCEDURE . AS BEGIN SELECT 1 END"
+        row = ("dbo", "usp_load", _NOW, _LATER, broken_def)
+        target = _make_target()
+        conn = _make_conn([row], _GET_COLS)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await procedures.get_procedure(target, "dbo", "usp_load")
+        assert result.definition is not None
+        assert "CREATE PROCEDURE [dbo].[usp_load]" in result.definition
+        assert ". AS" not in result.definition
+
     async def test_maps_permission_denied(self) -> None:
         target = _make_target()
         conn = MagicMock()

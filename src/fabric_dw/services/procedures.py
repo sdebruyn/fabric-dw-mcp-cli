@@ -26,6 +26,7 @@ from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import NotFoundError
 from fabric_dw.identifiers import quote_identifier, validate_identifier
 from fabric_dw.models import StoredProcedure
+from fabric_dw.services._helpers import normalize_object_definition
 from fabric_dw.sql import SqlTarget, run_query
 
 __all__ = [
@@ -78,7 +79,9 @@ def _row_to_procedure(cols: list[str], row: tuple[object, ...]) -> StoredProcedu
     schema_name = str(data["schema_name"])
     name = str(data["name"])
     raw_def = data.get("definition") if "definition" in data else None
-    definition = cast("str | None", raw_def)
+    definition: str | None = cast("str | None", raw_def)
+    if definition is not None:
+        definition = normalize_object_definition(definition, schema_name, name)
     return StoredProcedure(
         schema_name=schema_name,
         name=name,

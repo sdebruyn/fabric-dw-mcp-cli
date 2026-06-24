@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from fabric_dw.services._helpers import compact, reject_non_select
+from fabric_dw.services._helpers import compact, normalize_object_definition, reject_non_select
 
 # ---------------------------------------------------------------------------
 # compact
@@ -95,3 +95,57 @@ def test_reject_non_select_empty_raises() -> None:
     """Empty string raises ValueError."""
     with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
         reject_non_select("")
+
+
+# ---------------------------------------------------------------------------
+# normalize_object_definition (shared by views, functions, procedures)
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_view_empty_schema_and_name() -> None:
+    """Canonical Fabric bug for VIEW: 'CREATE VIEW . AS ...' is fixed."""
+    result = normalize_object_definition("CREATE VIEW . AS SELECT 1", "dbo", "vw_sales")
+    assert "CREATE VIEW [dbo].[vw_sales]" in result
+    assert " AS SELECT 1" in result
+
+
+def test_normalize_function_empty_schema_and_name() -> None:
+    """Canonical Fabric bug for FUNCTION: 'CREATE FUNCTION . (' is fixed."""
+    raw = "CREATE FUNCTION . (@x INT) RETURNS INT AS BEGIN RETURN @x END"
+    result = normalize_object_definition(raw, "dbo", "fn_clean")
+    assert "CREATE FUNCTION [dbo].[fn_clean]" in result
+    assert ". (" not in result
+
+
+def test_normalize_procedure_empty_schema_and_name() -> None:
+    """Canonical Fabric bug for PROCEDURE: 'CREATE PROCEDURE . AS ...' is fixed."""
+    raw = "CREATE PROCEDURE . AS BEGIN SELECT 1 END"
+    result = normalize_object_definition(raw, "fdw_qa", "usp_load")
+    assert "CREATE PROCEDURE [fdw_qa].[usp_load]" in result
+    assert ". AS" not in result
+
+
+def test_normalize_create_or_alter_view() -> None:
+    """CREATE OR ALTER VIEW header is also normalised."""
+    result = normalize_object_definition("CREATE OR ALTER VIEW . AS SELECT 1", "dbo", "vw_sales")
+    assert "[dbo].[vw_sales]" in result
+
+
+def test_normalize_already_correct_unchanged() -> None:
+    """When both parts are non-empty, the definition is returned unchanged."""
+    defn = "CREATE VIEW [dbo].[vw_sales] AS SELECT 1"
+    assert normalize_object_definition(defn, "dbo", "vw_sales") == defn
+
+
+def test_normalize_no_match_returns_unchanged() -> None:
+    """A string with no CREATE <TYPE> header is returned as-is."""
+    defn = "SELECT 1 AS col"
+    assert normalize_object_definition(defn, "dbo", "vw_sales") == defn
+
+
+def test_normalize_body_preserved_verbatim() -> None:
+    """The body after the header is preserved byte-for-byte."""
+    body = "SELECT id, label FROM fdw_qa.t_ctas"
+    result = normalize_object_definition(f"CREATE VIEW . AS {body}", "fdw_qa", "vw_dwh")
+    assert result.endswith(body)
+    assert result == f"CREATE VIEW [fdw_qa].[vw_dwh] AS {body}"
