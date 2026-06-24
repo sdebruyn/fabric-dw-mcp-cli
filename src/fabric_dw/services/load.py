@@ -348,7 +348,9 @@ def _build_copy_into_sql(
         if cred:
             with_parts.append(cred)
 
-    if max_errors is not None:
+    # MAXERRORS is only valid for CSV; Fabric rejects it for PARQUET with
+    # "Option 'MAXERRORS' is not supported for specified format 'PARQUET'".
+    if max_errors is not None and file_type == "CSV":
         with_parts.append(f"MAXERRORS = {int(max_errors)}")
 
     if rejected_row_location is not None:
@@ -725,7 +727,10 @@ async def copy_into_from_url(
         secret: Secret value (SAS token / client secret / account key).
         identity: Identity for managed-identity or service-principal credentials.
         csv_options: Optional CSV loading options.
-        max_errors: Maximum errors before abort.
+        max_errors: Maximum errors before abort.  Only valid for ``FILE_TYPE='CSV'``;
+            Fabric rejects ``MAXERRORS`` for Parquet.  When *file_type* is
+            ``'PARQUET'`` and *max_errors* is not ``None``, a warning is emitted
+            and the value is cleared before building the SQL statement.
         rejected_row_location: URL for rejected row output.
         kind: Warehouse item kind.  SQL Endpoint items are rejected.
         mode: Credential mode for SQL authentication.
@@ -745,6 +750,18 @@ async def copy_into_from_url(
     _validate_https_url(url, "url")
     if rejected_row_location is not None:
         _validate_https_url(rejected_row_location, "rejected_row_location")
+
+    # MAXERRORS is only valid for CSV; Fabric rejects it for PARQUET with
+    # "Option 'MAXERRORS' is not supported for specified format 'PARQUET'".
+    # Clear the value here (defence-in-depth alongside the gate in
+    # _build_copy_into_sql) so every caller — local-file and URL — is covered.
+    if max_errors is not None and file_type == "PARQUET":
+        _logger.warning(
+            "copy_into_from_url: --max-errors is not supported for Parquet COPY INTO "
+            "(Fabric rejects MAXERRORS for FILE_TYPE='PARQUET'); ignoring max_errors=%d",
+            max_errors,
+        )
+        max_errors = None
 
     sql = _build_copy_into_sql(
         schema,
