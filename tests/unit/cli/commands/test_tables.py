@@ -21,7 +21,7 @@ from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._main import cli
 from fabric_dw.cli.commands.tables import _load_cmd_local, _parse_column_spec
-from fabric_dw.exceptions import ItemKindError, NotFoundError, PermissionDeniedError
+from fabric_dw.exceptions import FabricError, ItemKindError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import CopyIntoResult, Table, WarehouseKind
 from fabric_dw.sql import SqlTarget
 
@@ -1222,6 +1222,52 @@ class TestTablesClone:
             )
         assert result.exit_code != 0
 
+    def test_clone_at_before_creation_shows_friendly_error(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """#710: FabricError from timestamp-before-creation shows a clean message, no traceback."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.clone_table",
+                new=AsyncMock(
+                    side_effect=FabricError(
+                        "The specified --at timestamp is before the table was created "
+                        "or outside the data-retention window."
+                    )
+                ),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "tables",
+                    "clone",
+                    WH_GUID,
+                    "--source",
+                    "dbo.source_tbl",
+                    "--name",
+                    "dbo.sales_clone",
+                    "--at",
+                    "2026-06-24T08:19:35",
+                ],
+            )
+        assert result.exit_code != 0
+        # The error must appear as a clean Click error, not a Python traceback.
+        assert "before the table was created" in result.output
+        assert "Traceback" not in result.output
+
 
 class TestTablesRename:
     def test_rename_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
@@ -2416,10 +2462,10 @@ class TestTablesClusterBy:
             )
         assert result.exit_code == 0
         assert "Aborted." in result.output
-        # The dependent-views warning (sp_rename caveat) must NOT appear on abort —
+        # The dependent-views warning (CTAS rebuild caveat) must NOT appear on abort —
         # it is only emitted when the swap actually proceeds.
         # Note: confirm_destructive itself prints "WARNING: <prompt>" — that is distinct
-        # from the sp_rename caveat and is expected to appear on every invocation.
+        # from the CTAS rebuild caveat and is expected to appear on every invocation.
         assert "sp_rename" not in result.output
 
     def test_yes_flag_skips_confirmation(self, runner: CliRunner, cache_env: Path) -> None:
@@ -2565,7 +2611,8 @@ class TestTablesClusterBy:
         # both stdout and stderr in result.output by default (mix_stderr=True is the
         # default on the runner fixture).
         assert "WARNING" in result.output
-        assert "sp_rename" in result.output
+        assert "CTAS rebuild" in result.output
+        assert "sp_rename" not in result.output
 
 
 # ===========================================================================

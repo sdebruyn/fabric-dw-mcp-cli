@@ -13,7 +13,13 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from fabric_dw.exceptions import AuthError, ItemKindError, NotFoundError, PermissionDeniedError
+from fabric_dw.exceptions import (
+    AuthError,
+    FabricError,
+    ItemKindError,
+    NotFoundError,
+    PermissionDeniedError,
+)
 from fabric_dw.models import ColumnSpec, Table, WarehouseKind
 from fabric_dw.services import tables
 from fabric_dw.services.tables import validate_identifier
@@ -1068,6 +1074,45 @@ class TestCloneTable:
             pytest.raises(PermissionDeniedError),
         ):
             await tables.clone_table(target, "dbo.source_tbl", "dbo.sales")
+
+    async def test_at_before_creation_raises_fabric_error(self) -> None:
+        """#710: a ProgrammingError about timestamp-before-creation is translated to FabricError."""
+        target = _make_target()
+        # Simulate the mssql_python ProgrammingError message verbatim.
+        driver_msg = (
+            "Driver Error: Syntax error or access violation; "
+            "DDBC Error: [Microsoft][SQL Server]The TIMESTAMP in the query "
+            "(2026-06-24T08:19:35) is before the object was created. "
+            "Specify a TIMESTAMP at or after the object creation time "
+            "(2026-06-24T08:23:29.137)."
+        )
+        at_dt = datetime(2026, 6, 24, 8, 19, 35, tzinfo=UTC)
+        with (
+            patch(
+                "fabric_dw.services.tables.run_query",
+                side_effect=[Exception(driver_msg)],
+            ),
+            pytest.raises(FabricError, match="before the table was created"),
+        ):
+            await tables.clone_table(target, "dbo.source_tbl", "dbo.sales", at=at_dt)
+
+    async def test_at_before_creation_chains_original_as_cause(self) -> None:
+        """#710: the raw driver exception is chained as __cause__, not propagated directly."""
+        target = _make_target()
+        driver_msg = (
+            "TIMESTAMP in the query (2026-06-24T08:19:35) is before the object was created."
+        )
+        raw_exc = Exception(driver_msg)
+        at_dt = datetime(2026, 6, 24, 8, 19, 35, tzinfo=UTC)
+        with (
+            patch("fabric_dw.services.tables.run_query", side_effect=[raw_exc]),
+            pytest.raises(FabricError) as exc_info,
+        ):
+            await tables.clone_table(target, "dbo.source_tbl", "dbo.sales", at=at_dt)
+        # The FabricError must chain the original exception as __cause__.
+        assert exc_info.value.__cause__ is raw_exc
+        # The raised type must be FabricError, not the raw driver exception.
+        assert type(exc_info.value) is FabricError
 
 
 # ===========================================================================
