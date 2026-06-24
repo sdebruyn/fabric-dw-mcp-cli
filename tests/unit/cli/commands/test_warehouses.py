@@ -221,13 +221,18 @@ class TestWarehousesListHideWorkspaceId:
             result = runner.invoke(cli, ["warehouses", "list", "-A"])
         assert result.exit_code == 0, result.output
         # The workspaceId column must NOT be dropped from the -A table.  The
-        # primary GUID column (id) keeps its full no_wrap width; the secondary
-        # GUID column (workspaceId) may be truncated on a narrow CliRunner
-        # terminal, so we check for the column-header prefix rather than its full
-        # text, and verify the warehouse id (primary GUID) is still intact.
+        # primary GUID column (id) keeps its full no_wrap width so WH_GUID must
+        # appear verbatim.  The secondary GUID column (workspaceId) may be
+        # truncated on a narrow CliRunner terminal, so we assert on its column-
+        # header prefix AND the first 8 chars of the GUID value to verify it is
+        # present and not fully omitted.
         assert WH_GUID in result.output
         # "worksp" covers "workspaceId" even when truncated to "worksp…"
         assert "worksp" in result.output.lower()
+        # Leading chars of WS_GUID verify the workspaceId cell value is present
+        # (the cell is truncated to fit the narrow CliRunner terminal; 6 chars
+        # are reliably visible even at the narrowest column allocation)
+        assert WS_GUID[:6] in result.output
 
 
 class TestWarehousesListAllWithConfigDefault:

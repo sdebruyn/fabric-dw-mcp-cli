@@ -166,6 +166,13 @@ def _add_columns(
     (``displayName``, ``description``, …) rather than starving them to zero
     width on a narrow terminal (e.g. the 80-col default for piped/non-TTY
     output).
+
+    .. note::
+        "First" is determined by insertion order of *visible_columns*, which
+        mirrors API-response field order.  All current Fabric API models place
+        ``id`` first, making it the consistent primary GUID column.  If a
+        future model reorders fields such that a different GUID appears first,
+        the heuristic will silently shift — keep model field order stable.
     """
     primary_guid_assigned = False
     for col in visible_columns:
