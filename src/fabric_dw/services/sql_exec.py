@@ -222,9 +222,11 @@ async def execute(
                     if cursor.description is not None:
                         raw_cols = [col[0] for col in cursor.description]
                         if row_limit is not None:
-                            raw_rows: list[tuple[object, ...]] = cursor.fetchmany(row_limit + 1)
+                            raw_rows: list[tuple[object, ...]] = [
+                                tuple(r) for r in cursor.fetchmany(row_limit + 1)
+                            ]
                         else:
-                            raw_rows = cursor.fetchall()
+                            raw_rows = [tuple(r) for r in cursor.fetchall()]
                         tagged_cols, serialised_rows = _tag_binary_columns(
                             raw_cols,
                             raw_rows,
@@ -301,7 +303,10 @@ async def get_plan(
                 try:
                     cursor.execute("SET SHOWPLAN_XML ON")
                     cursor.execute(query)
-                    rows = cursor.fetchall()
+                    # Normalise to real tuples so the list[tuple[...]] annotation
+                    # is honest regardless of which driver Row type is returned
+                    # (mssql_python.Row is iterable but not a tuple subclass).
+                    rows: list[tuple[object, ...]] = [tuple(r) for r in cursor.fetchall()]
                     # Read the first column positionally (row[0]) — the standard
                     # Showplan column name varies by SQL Server version/locale.
                     plan_parts = [str(row[0]) for row in rows if row[0] is not None]
