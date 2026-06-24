@@ -267,4 +267,23 @@ def test_normalize_regression_746_create_or_alter_bare_dot() -> None:
     """Regression #746: 'CREATE OR ALTER VIEW . AS' bare-dot form is also fixed."""
     raw = "CREATE OR ALTER VIEW . AS SELECT id, label FROM fdw_qa.t_ctas"
     result = normalize_object_definition(raw, "fdw_qa", "vw_dwh")
-    assert result == "CREATE OR ALTER VIEW [fdw_qa].[vw_dwh] AS SELECT id, label FROM fdw_qa.t_ctas"
+    expected = "CREATE OR ALTER VIEW [fdw_qa].[vw_dwh] AS SELECT id, label FROM fdw_qa.t_ctas"
+    assert result == expected
+
+
+def test_normalize_regression_746_procedure_bare_dot_form() -> None:
+    """Regression #746: bare-dot 'CREATE PROCEDURE . AS ...' is fixed for procedures."""
+    raw = "CREATE PROCEDURE . AS BEGIN SELECT id, label FROM fdw_qa.t_ctas END"
+    result = normalize_object_definition(raw, "fdw_qa", "usp_load")
+    expected = (
+        "CREATE PROCEDURE [fdw_qa].[usp_load] AS BEGIN SELECT id, label FROM fdw_qa.t_ctas END"
+    )
+    assert result == expected
+
+
+def test_normalize_regression_746_function_bare_dot_form() -> None:
+    """Regression #746: bare-dot 'CREATE FUNCTION . (...) ...' is fixed for functions."""
+    raw = "CREATE FUNCTION . (@x INT) RETURNS INT AS BEGIN RETURN @x END"
+    result = normalize_object_definition(raw, "fdw_qa", "fn_compute")
+    assert "CREATE FUNCTION [fdw_qa].[fn_compute]" in result
+    assert ". (" not in result

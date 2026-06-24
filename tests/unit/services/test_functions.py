@@ -403,6 +403,28 @@ class TestGetFunction:
         assert "CREATE FUNCTION [dbo].[fn_clean]" in result.definition
         assert ". (" not in result.definition
 
+    async def test_get_function_regression_746_bare_dot_form(self) -> None:
+        """Regression #746: bare-dot 'CREATE FUNCTION . (...) ...' is fixed by get_function."""
+        raw_def = "CREATE FUNCTION . (@x INT) RETURNS INT AS BEGIN RETURN @x END"
+        row = (
+            "fdw_qa",
+            "fn_compute",
+            "FN",
+            "SQL_SCALAR_FUNCTION",
+            _NOW,
+            _LATER,
+            raw_def,
+            1,
+        )
+        target = _make_target()
+        conn_fn = _make_conn([row], _GET_COLS)
+        conn_params = _make_conn([], _PARAM_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[conn_fn, conn_params]):
+            result = await functions.get_function(target, "fdw_qa", "fn_compute")
+        assert result.definition is not None
+        assert "CREATE FUNCTION [fdw_qa].[fn_compute]" in result.definition
+        assert ". (" not in result.definition
+
     async def test_maps_permission_denied(self) -> None:
         target = _make_target()
         conn = MagicMock()
@@ -516,6 +538,36 @@ class TestCreateFunction:
             pytest.raises(PermissionDeniedError),
         ):
             await functions.create_function(target, "dbo", "fn_clean", "...")
+
+    async def test_create_function_regression_746_bare_dot_form(self) -> None:
+        """Regression #746: create_function returns a function whose definition is normalised.
+
+        Fabric stores 'CREATE FUNCTION . (...) ...' in sys.sql_modules after DDL;
+        the bare-dot header must be rewritten before the caller sees it.
+        """
+        body = "(@x INT) RETURNS INT AS BEGIN RETURN @x END"
+        raw_def = f"CREATE FUNCTION . {body}"
+        fetch_row = (
+            "fdw_qa",
+            "fn_compute",
+            "FN",
+            "SQL_SCALAR_FUNCTION",
+            _NOW,
+            _LATER,
+            raw_def,
+            1,
+        )
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        conn_fn = _make_conn([fetch_row], _GET_COLS)
+        conn_params = _make_conn([], _PARAM_COLS)
+
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, conn_fn, conn_params]):
+            result = await functions.create_function(target, "fdw_qa", "fn_compute", body)
+
+        assert result.definition is not None
+        assert "CREATE FUNCTION [fdw_qa].[fn_compute]" in result.definition
+        assert ". (" not in result.definition
 
 
 # ===========================================================================
