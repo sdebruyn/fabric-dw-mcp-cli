@@ -31,6 +31,7 @@ from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import NotFoundError
 from fabric_dw.identifiers import parse_qualified_name, quote_identifier, validate_identifier
 from fabric_dw.models import Function, FunctionDetails, FunctionKind, FunctionParameter
+from fabric_dw.services._helpers import normalize_object_definition
 from fabric_dw.sql import SqlTarget, run_query
 
 # Valid values for the ``kind`` parameter of :func:`list_functions`.
@@ -161,7 +162,9 @@ def _row_to_function_details(
     type_code = str(data["type"]).strip()
     kind = _KIND_MAP.get(type_code, FunctionKind.SCALAR)
     raw_def = data.get("definition")
-    definition = cast("str | None", raw_def)
+    definition: str | None = cast("str | None", raw_def)
+    if definition is not None:
+        definition = normalize_object_definition(definition, schema_name, name)
     raw_inlineable = data.get("is_inlineable")
     is_inlineable: bool | None = bool(raw_inlineable) if raw_inlineable is not None else None
     return FunctionDetails(

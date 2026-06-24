@@ -381,6 +381,28 @@ class TestGetFunction:
             result = await functions.get_function(target, "dbo", "fn_get_orders")
         assert result.kind == FunctionKind.INLINE_TVF
 
+    async def test_normalizes_empty_schema_name_in_definition(self) -> None:
+        """get_function must fix a Fabric-returned 'CREATE FUNCTION . ...' (issue #715)."""
+        broken_def = "CREATE FUNCTION . (@x INT) RETURNS INT AS BEGIN RETURN @x END"
+        row = (
+            "dbo",
+            "fn_clean",
+            "FN",
+            "SQL_SCALAR_FUNCTION",
+            _NOW,
+            _LATER,
+            broken_def,
+            1,
+        )
+        target = _make_target()
+        conn_fn = _make_conn([row], _GET_COLS)
+        conn_params = _make_conn([], _PARAM_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[conn_fn, conn_params]):
+            result = await functions.get_function(target, "dbo", "fn_clean")
+        assert result.definition is not None
+        assert "CREATE FUNCTION [dbo].[fn_clean]" in result.definition
+        assert ". (" not in result.definition
+
     async def test_maps_permission_denied(self) -> None:
         target = _make_target()
         conn = MagicMock()
