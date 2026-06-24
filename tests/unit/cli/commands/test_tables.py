@@ -2147,65 +2147,39 @@ class TestLoadCreateAndLoad:
         assert result.exit_code == 0, result.output
         mock_trunc.assert_awaited_once()
 
-    def test_if_exists_replace_without_create_invokes_drop(
+    def test_if_exists_replace_without_create_raises_usage_error(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
-        """--if-exists replace without --create drops the table then loads (fix #711).
+        """--if-exists replace without --create must fail with a UsageError.
 
-        truncate/replace operate on an existing table and do not require --create.
+        replace is a data-loss footgun: it drops the existing table.  Without
+        --create there is no schema source to recreate it from, so COPY INTO
+        would fail.  The CLI must reject this combination early rather than
+        silently destroying data.
         """
-        from fabric_dw.http_client import FabricHttpClient  # noqa: PLC0415
-
         csv_file = tmp_path / "data.csv"
         csv_file.write_text("id\n1\n", encoding="utf-8")
 
-        mock_result = CopyIntoResult(rows_loaded=1, rows_rejected=0, target="dbo.sales")
-        mock_http = AsyncMock(spec=FabricHttpClient)
-        mock_entry = _make_item_entry()
+        result = runner.invoke(
+            cli,
+            [
+                "--yes",
+                "-w",
+                "ws",
+                "tables",
+                "load",
+                "wh",
+                "dbo.sales",
+                "--file",
+                str(csv_file),
+                "--if-exists",
+                "replace",
+            ],
+            catch_exceptions=False,
+        )
 
-        with (
-            patch("fabric_dw.cli.commands.tables.build_http_client", new=_make_http_cm(mock_http)),
-            patch(
-                "fabric_dw.cli.commands.tables.resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, mock_entry)),
-            ),
-            patch(
-                "fabric_dw.cli.commands.tables.load_local_file",
-                new=AsyncMock(return_value=mock_result),
-            ),
-            patch(
-                "fabric_dw.auth.get_credential",
-                return_value=MagicMock(close=AsyncMock()),
-            ),
-            patch(
-                "fabric_dw.cli.commands.tables.infer_file_format",
-                return_value="csv",
-            ),
-            patch(
-                "fabric_dw.services.load._drop_table_sql",
-                new=AsyncMock(),
-            ) as mock_drop,
-        ):
-            result = runner.invoke(
-                cli,
-                [
-                    "--yes",
-                    "-w",
-                    "ws",
-                    "tables",
-                    "load",
-                    "wh",
-                    "dbo.sales",
-                    "--file",
-                    str(csv_file),
-                    "--if-exists",
-                    "replace",
-                ],
-                catch_exceptions=False,
-            )
-
-        assert result.exit_code == 0, result.output
-        mock_drop.assert_awaited_once()
+        assert result.exit_code != 0
+        assert "--create" in result.output
 
     def test_if_exists_truncate_with_url_raises_usage_error(self, runner: CliRunner) -> None:
         """--if-exists truncate with --url raises UsageError (not supported for URL path)."""
@@ -2466,6 +2440,7 @@ class TestCopyIntoFromUrlErrorPropagation:
     - Mapped errors (PermissionDenied, Auth, NotFound) re-raise the mapped type.
     - Unmapped errors with a ddbc_error attribute include the server-side detail.
     - Unmapped errors without ddbc_error keep the safe fallback message.
+    - Raw exception str() containing credential secrets must never reach the caller.
     """
 
     @pytest.mark.asyncio
@@ -2508,12 +2483,14 @@ class TestCopyIntoFromUrlErrorPropagation:
             connection_string="server.fabric.microsoft.com",
         )
 
+        # A raw (unmapped) driver error: run_query raises a plain RuntimeError
+        # (not a FabricError subclass) so the except-FabricError guard does not
+        # fire, and the ddbc_detail branch is reached.
         raw_exc = RuntimeError("raw driver error with embedded SQL")
         raw_exc.ddbc_error = "Column 'missing_col' does not exist in table 'dbo.t'"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         with (
             patch("fabric_dw.services.load.run_query", side_effect=raw_exc),
-            patch("fabric_dw.services.load.map_driver_error", return_value=None),
             pytest.raises(FabricError) as exc_info,
         ):
             await copy_into_from_url(
@@ -2526,6 +2503,48 @@ class TestCopyIntoFromUrlErrorPropagation:
 
         assert "missing_col" in str(exc_info.value), "ddbc_error detail must appear in message"
         assert "suppressed" not in str(exc_info.value), "message must not say 'suppressed'"
+
+    @pytest.mark.asyncio
+    async def test_credential_secret_not_leaked_in_error_message(self) -> None:
+        """A raw driver exception whose str() embeds a CREDENTIAL secret must NOT
+        surface that secret through the FabricError raised to the caller.
+
+        This covers the security requirement from issue #713: COPY INTO SQL
+        statements may embed SAS tokens or other secrets in the CREDENTIAL clause.
+        The safe fallback path must suppress them.
+        """
+        from fabric_dw.exceptions import FabricError  # noqa: PLC0415
+        from fabric_dw.services.load import copy_into_from_url  # noqa: PLC0415
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws",
+            database="db",
+            connection_string="server.fabric.microsoft.com",
+        )
+
+        # Simulate a raw driver error whose message text contains a credential
+        # secret — exactly what a COPY INTO statement with a SAS token would
+        # produce if the driver includes the full SQL in the error.
+        secret = "super-secret-sas-token"  # noqa: S105
+        raw_exc = RuntimeError(f"Syntax error near CREDENTIAL=(SECRET='{secret}', TYPE='SAS')")
+        # No ddbc_error attribute — the safe fallback branch must be taken.
+
+        with (
+            patch("fabric_dw.services.load.run_query", side_effect=raw_exc),
+            pytest.raises(FabricError) as exc_info,
+        ):
+            await copy_into_from_url(
+                target,
+                "dbo",
+                "t",
+                "https://onelake.dfs.fabric.microsoft.com/ws/lh/Files/f.parquet",
+                file_type="PARQUET",
+            )
+
+        error_text = str(exc_info.value)
+        assert secret not in error_text, "raw exception text (with secret) must not leak"
+        assert "suppressed" in error_text, "safe fallback message must be used"
 
     @pytest.mark.asyncio
     async def test_unmapped_error_without_ddbc_error_uses_safe_fallback(self) -> None:
@@ -2545,7 +2564,6 @@ class TestCopyIntoFromUrlErrorPropagation:
 
         with (
             patch("fabric_dw.services.load.run_query", side_effect=raw_exc),
-            patch("fabric_dw.services.load.map_driver_error", return_value=None),
             pytest.raises(FabricError) as exc_info,
         ):
             await copy_into_from_url(

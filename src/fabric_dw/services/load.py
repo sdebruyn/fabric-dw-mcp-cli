@@ -50,7 +50,7 @@ from fabric_dw.exceptions import (
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.identifiers import quote_identifier, validate_identifier
 from fabric_dw.models import CopyIntoResult, WarehouseKind
-from fabric_dw.sql import SqlTarget, map_driver_error, run_query
+from fabric_dw.sql import SqlTarget, run_query
 
 __all__ = [
     "CopyIntoCredentialType",
@@ -779,23 +779,16 @@ async def copy_into_from_url(
         except Exception as exc:
             # Raw driver errors (e.g. pyodbc.Error) can include the full SQL
             # statement text in str(exc), which may contain embedded secrets.
-            # First try to map the error to a high-level exception whose message
-            # is already scrubbed (e.g. PermissionDeniedError, AuthError).
-            mapped = map_driver_error(exc)
-            if mapped is not None:
-                _logger.debug(
-                    "copy_into_from_url: mapped driver error (schema=%s table=%s): %s",
-                    schema,
-                    table,
-                    type(mapped).__name__,
-                )
-                raise mapped from exc
-
-            # For unmapped errors, surface the server-side error detail
-            # (ddbc_error) which contains the SQL Server error message but NOT
-            # the full SQL statement text.  This gives the user actionable
-            # feedback (e.g. "Column 'x' does not exist") without leaking the
-            # COPY INTO statement that may embed credential values.
+            # run_query already calls map_driver_error and re-raises mapped
+            # errors as FabricError subclasses; those are caught by the
+            # `except FabricError: raise` guard above.  Any exception that
+            # reaches here is therefore guaranteed to be unmapped.
+            #
+            # Surface the server-side error detail (ddbc_error) which contains
+            # the SQL Server error message but NOT the raw SQL statement text.
+            # This gives the user actionable feedback (e.g. "Column 'x' does
+            # not exist") without leaking the COPY INTO statement that may
+            # embed credential values.
             ddbc_detail = getattr(exc, "ddbc_error", None)
             _logger.debug(
                 "copy_into_from_url: driver error executing COPY INTO (schema=%s table=%s): %s",

@@ -1004,11 +1004,24 @@ async def load_cmd(  # noqa: PLR0912, PLR0915
             "Use --file and apply the policy against the local file."
         )
 
+    # replace without --create is a data-loss footgun: DROP TABLE succeeds but
+    # COPY INTO cannot auto-create the table, so the data is gone and the load
+    # fails.  Require --create so the table is always recreated from the source
+    # schema before loading.
+    if effective_if_exists == "replace" and not create:
+        raise click.UsageError(
+            "--if-exists replace requires --create: the existing table is dropped "
+            "and must be recreated from the source schema before loading."
+        )
+
     # Destructive confirmation for truncate / replace.
     if is_destructive:
-        action = "TRUNCATE" if effective_if_exists == "truncate" else "DROP+recreate"
+        if effective_if_exists == "truncate":
+            action = f"TRUNCATE table [{schema}].[{table_name}]"
+        else:
+            action = f"DROP and recreate table [{schema}].[{table_name}]"
         if not confirm_destructive(
-            f"{action} table [{schema}].[{table_name}] before loading?",
+            f"{action} before loading?",
             yes=ctx.yes,
         ):
             click.echo("Aborted.")
@@ -1128,17 +1141,12 @@ async def _load_cmd_local(
     pre-processed before the COPY INTO:
 
     - ``"truncate"`` — ``TRUNCATE TABLE`` (data gone, schema kept).
-    - ``"replace"`` — ``DROP TABLE`` then re-create from the existing schema
-      via a transactional CTAS-swap (same as ``tables cluster-by``).  Without
-      ``--create`` the column list is read from ``sys.columns`` rather than
-      inferred from the source file.
+
+    ``"replace"`` always requires ``--create`` (rejected earlier by the CLI
+    guard), so it never reaches this helper.
     """
     from fabric_dw import auth as _auth  # noqa: PLC0415
-    from fabric_dw.services.load import (  # noqa: PLC0415
-        FileFormat,
-        _drop_table_sql,
-        _truncate_table_sql,
-    )
+    from fabric_dw.services.load import FileFormat, _truncate_table_sql  # noqa: PLC0415
 
     local = Path(file_path)
     if not local.exists():
@@ -1164,16 +1172,10 @@ async def _load_cmd_local(
 
     # Pre-load destructive operations (only when NOT using --create, which
     # handles these policies itself via create_and_load).
+    # Note: "replace" always requires --create (enforced earlier) so only
+    # "truncate" can arrive here.
     if if_exists == "truncate":
         await _truncate_table_sql(sql_target, schema, table_name, mode=ctx.auth)
-    elif if_exists == "replace":
-        # Without --create there is no schema to infer — fall back to a plain
-        # DROP so the existing table is removed and COPY INTO can re-create it
-        # via its own implicit behaviour.  COPY INTO on Fabric DW does NOT
-        # auto-create tables, so this will fail if the table does not exist;
-        # that is the caller's responsibility when using --if-exists replace
-        # without --create.
-        await _drop_table_sql(sql_target, schema, table_name, mode=ctx.auth)
 
     credential = _auth.get_credential(ctx.auth)
     try:
@@ -1202,9 +1204,9 @@ async def _load_cmd_local(
         _close = getattr(credential, "close", None)
         if callable(_close):
             try:
-                result = _close()
-                if asyncio.iscoroutine(result):
-                    await result
+                _close_result = _close()
+                if asyncio.iscoroutine(_close_result):
+                    await _close_result
             except Exception:  # noqa: S110
                 pass
 
@@ -1298,9 +1300,9 @@ async def _load_cmd_create_and_load(
         _close = getattr(credential, "close", None)
         if callable(_close):
             try:
-                result = _close()
-                if asyncio.iscoroutine(result):
-                    await result
+                _close_result = _close()
+                if asyncio.iscoroutine(_close_result):
+                    await _close_result
             except Exception:  # noqa: S110
                 pass
 
