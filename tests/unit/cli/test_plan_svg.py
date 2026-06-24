@@ -214,8 +214,7 @@ class TestRenderPlanSvgHappyPath:
         ):
             render_plan_svg(operators)
 
-        call_kwargs = mock_run.call_args
-        stdin_data = call_kwargs[1].get("input") or call_kwargs[0][1]
+        stdin_data = mock_run.call_args.kwargs["input"]
         assert b"digraph" in stdin_data
 
     def test_empty_operators_still_calls_dot(self) -> None:
