@@ -14,6 +14,7 @@ from click.testing import CliRunner
 
 from fabric_dw.cli._main import cli
 from fabric_dw.exceptions import NotFoundError
+from fabric_dw.models import FABRIC_DEFAULT_COLLATION
 from tests.fixtures.api_payloads import WORKSPACE_GET_PAYLOAD
 
 WS_GUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
@@ -130,7 +131,9 @@ class TestWorkspacesGet:
         parsed = json.loads(result.output)
         assert parsed["defaultDataWarehouseCollation"] == "Latin1_General_100_BIN2_UTF8"
 
-    def test_get_collation_null_in_json_output(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_get_collation_null_coalesces_to_default_in_json_output(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
         _ = cache_env
         mock_http = AsyncMock()
         mock_http.request = AsyncMock(return_value=_make_response(200, WORKSPACE_GET_PAYLOAD))
@@ -141,7 +144,8 @@ class TestWorkspacesGet:
             result = runner.invoke(cli, ["--json", "workspaces", "get", WS_GUID])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
-        assert parsed["defaultDataWarehouseCollation"] is None
+        # null/absent collation is coalesced to FABRIC_DEFAULT_COLLATION in the model
+        assert parsed["defaultDataWarehouseCollation"] == FABRIC_DEFAULT_COLLATION
 
     def test_get_shows_collation_in_table_output(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env

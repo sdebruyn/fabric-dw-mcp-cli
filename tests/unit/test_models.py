@@ -10,6 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 from fabric_dw.models import (
+    FABRIC_DEFAULT_COLLATION,
     AuditSettings,
     CreationModeType,
     ExecRequestHistory,
@@ -54,8 +55,11 @@ class TestWorkspace:
             "description",
             "capacityId",
             "defaultDatasetStorageFormat",
+            "defaultDataWarehouseCollation",
         }
         expected = {k: v for k, v in workspace_data.items() if k in modelled_keys and v is not None}
+        # collation is always populated (defaults to FABRIC_DEFAULT_COLLATION when absent)
+        expected.setdefault("defaultDataWarehouseCollation", FABRIC_DEFAULT_COLLATION)
         assert dumped == expected
 
     def test_round_trip_no_capacity(self) -> None:
@@ -1272,3 +1276,144 @@ class TestExecRequestHistoryFloatElapsedTime:
         obj = ExecRequestHistory.model_validate(payload)
         assert obj.allocated_cpu_time_ms == 99.5
         assert isinstance(obj.allocated_cpu_time_ms, float)
+
+
+# ---------------------------------------------------------------------------
+# Workspace.collation — null/empty coalesces to FABRIC_DEFAULT_COLLATION
+# ---------------------------------------------------------------------------
+
+_WS_BASE: dict = {
+    "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "displayName": "MyWorkspace",
+    "capacityId": "b2c3d4e5-f6a7-8901-bcde-f01234567891",
+}
+
+_EXPLICIT_COLLATION = "Latin1_General_100_CI_AS_KS_WS_SC_UTF8"
+
+
+class TestWorkspaceCollationDefault:
+    """Workspace.collation coalesces missing/null/empty to FABRIC_DEFAULT_COLLATION."""
+
+    def test_missing_key_defaults_to_fabric_default(self) -> None:
+        obj = Workspace.model_validate(_WS_BASE)
+        assert obj.collation == FABRIC_DEFAULT_COLLATION
+
+    def test_explicit_null_defaults_to_fabric_default(self) -> None:
+        obj = Workspace.model_validate({**_WS_BASE, "defaultDataWarehouseCollation": None})
+        assert obj.collation == FABRIC_DEFAULT_COLLATION
+
+    def test_empty_string_defaults_to_fabric_default(self) -> None:
+        obj = Workspace.model_validate({**_WS_BASE, "defaultDataWarehouseCollation": ""})
+        assert obj.collation == FABRIC_DEFAULT_COLLATION
+
+    def test_whitespace_only_defaults_to_fabric_default(self) -> None:
+        obj = Workspace.model_validate({**_WS_BASE, "defaultDataWarehouseCollation": "   "})
+        assert obj.collation == FABRIC_DEFAULT_COLLATION
+
+    def test_explicit_collation_preserved(self) -> None:
+        obj = Workspace.model_validate(
+            {**_WS_BASE, "defaultDataWarehouseCollation": _EXPLICIT_COLLATION}
+        )
+        assert obj.collation == _EXPLICIT_COLLATION
+
+    def test_collation_is_never_none(self) -> None:
+        """collation must be a str on the read path — never None."""
+        obj = Workspace.model_validate(_WS_BASE)
+        assert obj.collation is not None
+        assert isinstance(obj.collation, str)
+
+
+# ---------------------------------------------------------------------------
+# Warehouse.collation — null/empty coalesces to FABRIC_DEFAULT_COLLATION
+# ---------------------------------------------------------------------------
+
+_WH_BASE: dict = {
+    "id": "c3d4e5f6-a7b8-9012-cdef-012345678901",
+    "displayName": "MySalesWarehouse",
+    "workspaceId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "kind": WarehouseKind.WAREHOUSE,
+    "connectionString": "saleswarehouse.datawarehouse.fabric.microsoft.com",
+}
+
+_WH_API_BASE: dict = {
+    "id": "c3d4e5f6-a7b8-9012-cdef-012345678901",
+    "displayName": "MySalesWarehouse",
+    "workspaceId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "properties": {
+        "connectionString": "saleswarehouse.datawarehouse.fabric.microsoft.com",
+        "createdDate": "2024-03-15T10:00:00Z",
+    },
+}
+
+
+class TestWarehouseCollationDefault:
+    """Warehouse.collation coalesces missing/null/empty to FABRIC_DEFAULT_COLLATION."""
+
+    # --- flat dict (already-processed / manual construction) path ---
+
+    def test_missing_key_flat_dict_defaults_to_fabric_default(self) -> None:
+        obj = Warehouse.model_validate(_WH_BASE)
+        assert obj.collation == FABRIC_DEFAULT_COLLATION
+
+    def test_explicit_null_flat_dict_defaults_to_fabric_default(self) -> None:
+        obj = Warehouse.model_validate({**_WH_BASE, "defaultCollation": None})
+        assert obj.collation == FABRIC_DEFAULT_COLLATION
+
+    def test_empty_string_flat_dict_defaults_to_fabric_default(self) -> None:
+        obj = Warehouse.model_validate({**_WH_BASE, "defaultCollation": ""})
+        assert obj.collation == FABRIC_DEFAULT_COLLATION
+
+    def test_whitespace_only_flat_dict_defaults_to_fabric_default(self) -> None:
+        obj = Warehouse.model_validate({**_WH_BASE, "defaultCollation": "   "})
+        assert obj.collation == FABRIC_DEFAULT_COLLATION
+
+    def test_explicit_collation_flat_dict_preserved(self) -> None:
+        obj = Warehouse.model_validate({**_WH_BASE, "defaultCollation": _EXPLICIT_COLLATION})
+        assert obj.collation == _EXPLICIT_COLLATION
+
+    # --- from_api / props construction path ---
+
+    def test_missing_collation_in_props_defaults_to_fabric_default(self) -> None:
+        obj = Warehouse.from_api(_WH_API_BASE, kind=WarehouseKind.WAREHOUSE)
+        assert obj.collation == FABRIC_DEFAULT_COLLATION
+
+    def test_null_collation_in_props_defaults_to_fabric_default(self) -> None:
+        payload = {
+            **_WH_API_BASE,
+            "properties": {**_WH_API_BASE["properties"], "defaultCollation": None},
+        }
+        obj = Warehouse.from_api(payload, kind=WarehouseKind.WAREHOUSE)
+        assert obj.collation == FABRIC_DEFAULT_COLLATION
+
+    def test_empty_collation_in_props_defaults_to_fabric_default(self) -> None:
+        payload = {
+            **_WH_API_BASE,
+            "properties": {**_WH_API_BASE["properties"], "defaultCollation": ""},
+        }
+        obj = Warehouse.from_api(payload, kind=WarehouseKind.WAREHOUSE)
+        assert obj.collation == FABRIC_DEFAULT_COLLATION
+
+    def test_whitespace_collation_in_props_defaults_to_fabric_default(self) -> None:
+        payload = {
+            **_WH_API_BASE,
+            "properties": {**_WH_API_BASE["properties"], "defaultCollation": "  "},
+        }
+        obj = Warehouse.from_api(payload, kind=WarehouseKind.WAREHOUSE)
+        assert obj.collation == FABRIC_DEFAULT_COLLATION
+
+    def test_explicit_collation_in_props_preserved(self) -> None:
+        payload = {
+            **_WH_API_BASE,
+            "properties": {
+                **_WH_API_BASE["properties"],
+                "defaultCollation": _EXPLICIT_COLLATION,
+            },
+        }
+        obj = Warehouse.from_api(payload, kind=WarehouseKind.WAREHOUSE)
+        assert obj.collation == _EXPLICIT_COLLATION
+
+    def test_collation_is_never_none(self) -> None:
+        """collation must be a str on the read path — never None."""
+        obj = Warehouse.model_validate(_WH_BASE)
+        assert obj.collation is not None
+        assert isinstance(obj.collation, str)

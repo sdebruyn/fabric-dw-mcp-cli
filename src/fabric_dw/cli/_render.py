@@ -11,46 +11,14 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from fabric_dw.models import FABRIC_DEFAULT_COLLATION, ItemAccess, TableSyncStatus
+from fabric_dw.models import ItemAccess, TableSyncStatus
 
 __all__ = [
     "confirm",
     "render",
     "render_permissions_table",
     "render_refresh_table",
-    "with_default_collation_for_display",
 ]
-
-#: API alias for the warehouse / SQL-endpoint collation field.
-_COLLATION_KEY = "defaultCollation"
-
-
-def with_default_collation_for_display(dump: dict[str, object]) -> dict[str, object]:
-    """Return a copy of a warehouse/SQL-endpoint dump with the collation filled in.
-
-    When the Fabric REST API returns ``null``/empty for ``defaultCollation``
-    (i.e. the item was created without an explicit collation), Fabric still
-    applies an effective default — :data:`~fabric_dw.models.FABRIC_DEFAULT_COLLATION`.
-    For **human** output we substitute that value, clearly marked as the default
-    (``"<value> (default)"``), instead of showing a misleading ``NULL``.
-
-    This helper is intended for the human/Rich rendering path **only**.  The
-    ``--json`` path must keep the raw API value (``None``) so machine consumers
-    are not fed a fabricated value; the ``(default)`` suffix would also break
-    callers that compare the string against a real collation name.
-
-    Args:
-        dump: A warehouse/SQL-endpoint dict (``model_dump(by_alias=True)``).
-
-    Returns:
-        A shallow copy of *dump*.  If ``defaultCollation`` is present and
-        null/empty, it is replaced with ``"<FABRIC_DEFAULT_COLLATION> (default)"``;
-        otherwise *dump* is returned unchanged (as a copy).
-    """
-    result = dict(dump)
-    if _COLLATION_KEY in result and not result.get(_COLLATION_KEY):
-        result[_COLLATION_KEY] = f"{FABRIC_DEFAULT_COLLATION} (default)"
-    return result
 
 
 # ---------------------------------------------------------------------------

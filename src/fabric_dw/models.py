@@ -53,6 +53,36 @@ class Capacity(_FabricBase):
     state: str
 
 
+#: The collation Fabric applies to a workspace / warehouse when no explicit collation is
+#: configured.  The Fabric REST API may return ``null``/empty for the collation fields
+#: (``defaultDataWarehouseCollation``, ``defaultCollation``) when the workspace or warehouse
+#: was created without an explicit setting, but Fabric still applies this case-sensitive (CS)
+#: collation as the effective default.
+#:
+#: Source (verified via Microsoft Learn):
+#:  - https://learn.microsoft.com/fabric/data-warehouse/collation
+#:    "New warehouses and all SQL analytics endpoints are configured based on the
+#:     workspace's Data Warehouse default collation setting, which by default is
+#:     the case-sensitive collation ``Latin1_General_100_BIN2_UTF8``."
+FABRIC_DEFAULT_COLLATION = "Latin1_General_100_BIN2_UTF8"
+
+
+def _coerce_collation_str(v: object) -> str:
+    """Coerce a raw collation value to a non-empty string.
+
+    Maps ``None``, non-string values, empty strings, and whitespace-only
+    strings to :data:`FABRIC_DEFAULT_COLLATION`.  Any other non-empty string
+    is returned unchanged (stripped of surrounding whitespace).
+
+    Used as the shared implementation for the ``collation`` field validators
+    on :class:`Workspace` and :class:`Warehouse`.  Mirrors the :func:`_as_dict`
+    precedent of extracting common validator logic to a module-level helper.
+    """
+    if not isinstance(v, str):
+        return FABRIC_DEFAULT_COLLATION
+    return v.strip() or FABRIC_DEFAULT_COLLATION
+
+
 class Workspace(_FabricBase):
     """A Microsoft Fabric workspace."""
 
@@ -64,7 +94,14 @@ class Workspace(_FabricBase):
         default=None, alias="defaultDatasetStorageFormat"
     )
     # Undocumented in WorkspaceInfo; the GET endpoint returns it in practice.
-    collation: str | None = Field(default=None, alias="defaultDataWarehouseCollation")
+    # The API may return null/empty; we coalesce to FABRIC_DEFAULT_COLLATION below.
+    collation: str = Field(default=FABRIC_DEFAULT_COLLATION, alias="defaultDataWarehouseCollation")
+
+    @field_validator("collation", mode="before")
+    @classmethod
+    def _coerce_collation(cls, v: object) -> str:
+        """Return the effective collation, defaulting to FABRIC_DEFAULT_COLLATION when absent."""
+        return _coerce_collation_str(v)
 
 
 class WarehouseKind(StrEnum):
@@ -88,21 +125,6 @@ class WarehouseKind(StrEnum):
         }[self]
 
 
-#: The collation Fabric applies to a warehouse / SQL analytics endpoint when no
-#: explicit collation is specified at creation time.  The Fabric REST API may
-#: return ``null``/empty for ``defaultCollation`` in that case, but Fabric still
-#: applies this case-sensitive (CS) collation as the effective default, derived
-#: from the workspace's Data Warehouse collation setting (whose own default is
-#: this value).
-#:
-#: Source (verified via Microsoft Learn):
-#:  - https://learn.microsoft.com/fabric/data-warehouse/collation
-#:    "New warehouses and all SQL analytics endpoints are configured based on the
-#:     workspace's Data Warehouse default collation setting, which by default is
-#:     the case-sensitive collation ``Latin1_General_100_BIN2_UTF8``."
-FABRIC_DEFAULT_COLLATION = "Latin1_General_100_BIN2_UTF8"
-
-
 class Warehouse(_FabricBase):
     """A Microsoft Fabric Data Warehouse or SQL analytics endpoint."""
 
@@ -112,8 +134,15 @@ class Warehouse(_FabricBase):
     workspace_id: UUID = Field(alias="workspaceId")
     kind: WarehouseKind
     connection_string: str | None = Field(default=None, alias="connectionString")
-    collation: str | None = Field(default=None, alias="defaultCollation")
+    # The API may return null/empty; we coalesce to FABRIC_DEFAULT_COLLATION below.
+    collation: str = Field(default=FABRIC_DEFAULT_COLLATION, alias="defaultCollation")
     created_date: datetime | None = Field(default=None, alias="createdDate")
+
+    @field_validator("collation", mode="before")
+    @classmethod
+    def _coerce_collation(cls, v: object) -> str:
+        """Return the effective collation, defaulting to FABRIC_DEFAULT_COLLATION when absent."""
+        return _coerce_collation_str(v)
 
     @model_validator(mode="before")
     @classmethod
