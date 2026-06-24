@@ -2087,60 +2087,128 @@ class TestLoadCreateAndLoad:
         assert result.exit_code == 0, result.output
         assert "2" in result.output
 
-    def test_if_exists_truncate_without_create_raises_usage_error(
+    def test_if_exists_truncate_without_create_invokes_truncate(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
-        """--if-exists truncate without --create raises UsageError."""
+        """--if-exists truncate without --create truncates the table then loads (fix #711).
+
+        truncate/replace operate on an existing table and do not require --create.
+        """
+        from fabric_dw.http_client import FabricHttpClient  # noqa: PLC0415
+
         csv_file = tmp_path / "data.csv"
         csv_file.write_text("id\n1\n", encoding="utf-8")
 
-        result = runner.invoke(
-            cli,
-            [
-                "-w",
-                "ws",
-                "tables",
-                "load",
-                "wh",
-                "dbo.sales",
-                "--file",
-                str(csv_file),
-                "--if-exists",
-                "truncate",
-            ],
-            catch_exceptions=False,
-        )
-        assert result.exit_code != 0
-        assert "truncate" in result.output.lower() or "create" in result.output.lower()
+        mock_result = CopyIntoResult(rows_loaded=1, rows_rejected=0, target="dbo.sales")
+        mock_http = AsyncMock(spec=FabricHttpClient)
+        mock_entry = _make_item_entry()
 
-    def test_if_exists_replace_without_create_raises_usage_error(
+        with (
+            patch("fabric_dw.cli.commands.tables.build_http_client", new=_make_http_cm(mock_http)),
+            patch(
+                "fabric_dw.cli.commands.tables.resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, mock_entry)),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.load_local_file",
+                new=AsyncMock(return_value=mock_result),
+            ),
+            patch(
+                "fabric_dw.auth.get_credential",
+                return_value=MagicMock(close=AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.infer_file_format",
+                return_value="csv",
+            ),
+            patch(
+                "fabric_dw.services.load._truncate_table_sql",
+                new=AsyncMock(),
+            ) as mock_trunc,
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "--yes",
+                    "-w",
+                    "ws",
+                    "tables",
+                    "load",
+                    "wh",
+                    "dbo.sales",
+                    "--file",
+                    str(csv_file),
+                    "--if-exists",
+                    "truncate",
+                ],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        mock_trunc.assert_awaited_once()
+
+    def test_if_exists_replace_without_create_invokes_drop(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
-        """--if-exists replace without --create raises UsageError."""
+        """--if-exists replace without --create drops the table then loads (fix #711).
+
+        truncate/replace operate on an existing table and do not require --create.
+        """
+        from fabric_dw.http_client import FabricHttpClient  # noqa: PLC0415
+
         csv_file = tmp_path / "data.csv"
         csv_file.write_text("id\n1\n", encoding="utf-8")
 
-        result = runner.invoke(
-            cli,
-            [
-                "-w",
-                "ws",
-                "tables",
-                "load",
-                "wh",
-                "dbo.sales",
-                "--file",
-                str(csv_file),
-                "--if-exists",
-                "replace",
-            ],
-            catch_exceptions=False,
-        )
-        assert result.exit_code != 0
-        assert "replace" in result.output.lower() or "create" in result.output.lower()
+        mock_result = CopyIntoResult(rows_loaded=1, rows_rejected=0, target="dbo.sales")
+        mock_http = AsyncMock(spec=FabricHttpClient)
+        mock_entry = _make_item_entry()
+
+        with (
+            patch("fabric_dw.cli.commands.tables.build_http_client", new=_make_http_cm(mock_http)),
+            patch(
+                "fabric_dw.cli.commands.tables.resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, mock_entry)),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.load_local_file",
+                new=AsyncMock(return_value=mock_result),
+            ),
+            patch(
+                "fabric_dw.auth.get_credential",
+                return_value=MagicMock(close=AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.infer_file_format",
+                return_value="csv",
+            ),
+            patch(
+                "fabric_dw.services.load._drop_table_sql",
+                new=AsyncMock(),
+            ) as mock_drop,
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "--yes",
+                    "-w",
+                    "ws",
+                    "tables",
+                    "load",
+                    "wh",
+                    "dbo.sales",
+                    "--file",
+                    str(csv_file),
+                    "--if-exists",
+                    "replace",
+                ],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        mock_drop.assert_awaited_once()
 
     def test_if_exists_truncate_with_url_raises_usage_error(self, runner: CliRunner) -> None:
-        """--if-exists truncate with --url raises UsageError (no --create for URL path)."""
+        """--if-exists truncate with --url raises UsageError (not supported for URL path)."""
         result = runner.invoke(
             cli,
             [

@@ -857,7 +857,10 @@ def _resolve_url_file_type(fmt: str | None, url: str) -> str:
     help=(
         "What to do when the target table already exists. "
         "Default: 'fail' with --create; 'append' without --create. "
-        "'truncate' and 'replace' are destructive and require confirmation."
+        "'truncate' TRUNCATEs the existing table then loads (destructive). "
+        "'replace' DROPs the existing table; combine with --create to "
+        "auto-recreate from the inferred schema (destructive). "
+        "Both 'truncate' and 'replace' require confirmation."
     ),
 )
 @click.option(
@@ -939,13 +942,15 @@ async def load_cmd(  # noqa: PLR0912, PLR0915
     JSON files are converted to Parquet client-side before staging.
 
     \b
+    Use --if-exists to control behaviour when the target table already exists:
+      fail      Error if table exists (default with --create).
+      append    Load into existing table without modifying it (default).
+      truncate  TRUNCATE the existing table, then load.  [DESTRUCTIVE]
+      replace   DROP the existing table, then load.  [DESTRUCTIVE]
+                Combine with --create to auto-recreate from the source schema.
+    \b
     With --create, the target table is auto-created from the source schema
     before loading (local files only, requires pyarrow).
-    Use --if-exists to control behaviour when the table already exists:
-      fail      Error if table exists (default with --create).
-      append    Load into existing table without modifying it.
-      truncate  TRUNCATE the existing table, then load.  [DESTRUCTIVE]
-      replace   DROP + recreate from inferred schema, then load.  [DESTRUCTIVE]
 
     \b
     Examples:
@@ -991,13 +996,12 @@ async def load_cmd(  # noqa: PLR0912, PLR0915
     if is_destructive:
         click.get_current_context().meta[_CLI_CONDITIONAL_DESTRUCTIVE_KEY] = True
 
-    # truncate/replace are only meaningful on the --create path (local files).
-    # For --url there is no schema to infer, and for --file without --create the
-    # destructive policies are undefined.  Reject early with a clear message.
-    if is_destructive and not create:
+    # truncate/replace on the --url path are not supported: there is no schema
+    # to infer and no pre-load DDL hook.  Reject early with a clear message.
+    if is_destructive and url:
         raise click.UsageError(
-            f"--if-exists {effective_if_exists} requires --create "
-            "(destructive policies only apply to the auto-create load path)."
+            f"--if-exists {effective_if_exists} is not supported with --url. "
+            "Use --file and apply the policy against the local file."
         )
 
     # Destructive confirmation for truncate / replace.
@@ -1069,6 +1073,7 @@ async def load_cmd(  # noqa: PLR0912, PLR0915
                         keep_staging,
                         max_errors,
                         rejected_row_location,
+                        if_exists=effective_if_exists,
                     )
             else:
                 assert url is not None  # noqa: S101 — checked above
@@ -1114,10 +1119,26 @@ async def _load_cmd_local(
     keep_staging: bool,
     max_errors: int | None,
     rejected_row_location: str | None,
+    *,
+    if_exists: IfExistsPolicy = "append",
 ) -> CopyIntoResult:
-    """Dispatch the local-file load sub-path."""
+    """Dispatch the local-file load sub-path.
+
+    When *if_exists* is ``"truncate"`` or ``"replace"``, the target table is
+    pre-processed before the COPY INTO:
+
+    - ``"truncate"`` — ``TRUNCATE TABLE`` (data gone, schema kept).
+    - ``"replace"`` — ``DROP TABLE`` then re-create from the existing schema
+      via a transactional CTAS-swap (same as ``tables cluster-by``).  Without
+      ``--create`` the column list is read from ``sys.columns`` rather than
+      inferred from the source file.
+    """
     from fabric_dw import auth as _auth  # noqa: PLC0415
-    from fabric_dw.services.load import FileFormat  # noqa: PLC0415
+    from fabric_dw.services.load import (  # noqa: PLC0415
+        FileFormat,
+        _drop_table_sql,
+        _truncate_table_sql,
+    )
 
     local = Path(file_path)
     if not local.exists():
@@ -1140,6 +1161,20 @@ async def _load_cmd_local(
         if file_format == "csv"
         else None
     )
+
+    # Pre-load destructive operations (only when NOT using --create, which
+    # handles these policies itself via create_and_load).
+    if if_exists == "truncate":
+        await _truncate_table_sql(sql_target, schema, table_name, mode=ctx.auth)
+    elif if_exists == "replace":
+        # Without --create there is no schema to infer — fall back to a plain
+        # DROP so the existing table is removed and COPY INTO can re-create it
+        # via its own implicit behaviour.  COPY INTO on Fabric DW does NOT
+        # auto-create tables, so this will fail if the table does not exist;
+        # that is the caller's responsibility when using --if-exists replace
+        # without --create.
+        await _drop_table_sql(sql_target, schema, table_name, mode=ctx.auth)
+
     credential = _auth.get_credential(ctx.auth)
     try:
         return await load_local_file(
