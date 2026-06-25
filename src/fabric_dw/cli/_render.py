@@ -287,11 +287,9 @@ def _render_table(
     dropped: frozenset[str] = frozenset(drop_columns or ())
 
     if not rows:
-        table = Table(
-            title=_escape_markup(title) if title else title,
-            show_header=True,
-            header_style="bold",
-        )
+        if title is not None:
+            console.print(f"[bold]{_escape_markup(title)}[/bold]")
+        table = Table(show_header=True, header_style="bold")
         console.print(table)
         return
 
@@ -324,11 +322,9 @@ def _render_table(
         _render_vertical(norm_rows, visible_columns, console=console, title=title)
         return
 
-    table = Table(
-        title=_escape_markup(title) if title else title,
-        show_header=True,
-        header_style="bold",
-    )
+    if title is not None:
+        console.print(f"[bold]{_escape_markup(title)}[/bold]")
+    table = Table(show_header=True, header_style="bold")
     _add_columns(table, visible_columns, norm_rows)
 
     for row in norm_rows:
