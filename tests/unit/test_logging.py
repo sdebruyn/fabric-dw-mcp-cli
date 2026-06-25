@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 
-from fabric_dw.logging import _JsonFormatter, redact_auth_header, setup_logging
+from fabric_dw.logging import _JsonFormatter, redact_auth_header, redact_sql, setup_logging
 
 
 class TestSetupLogging:
@@ -205,3 +205,103 @@ class TestJsonFormatterExtraFields:
         record = self._make_record(extra={"request_id": "fabric-req-id-001"})
         parsed = json.loads(formatter.format(record))
         assert parsed.get("request_id") == "fabric-req-id-001"
+
+
+class TestRedactSql:
+    """Tests for redact_sql — SQL secret redaction helper."""
+
+    def test_secret_clause_value_is_replaced(self) -> None:
+        """SECRET = '<token>' must become SECRET = '***'."""
+        sql = (
+            "COPY INTO [dbo].[t] FROM 'https://x.blob.core.windows.net/c/f.parquet'"
+            " WITH (CREDENTIAL = (IDENTITY = 'Shared Access Signature',"
+            " SECRET = 'sv=2024&sig=ABC123xyz'))"
+        )
+        result = redact_sql(sql)
+        assert "ABC123xyz" not in result
+        assert "SECRET = '***'" in result
+
+    def test_secret_clause_case_insensitive(self) -> None:
+        """secret = and Secret = must also be redacted."""
+        sql = (
+            "COPY INTO [t] FROM 'x' WITH (CREDENTIAL = (IDENTITY = 'y', secret = 'mysecrettoken'))"
+        )
+        result = redact_sql(sql)
+        assert "mysecrettoken" not in result
+        assert "***" in result
+
+    def test_secret_with_doubled_quotes_redacted(self) -> None:
+        """Values that contain '' (doubled single-quote escaping via _sq) must be redacted."""
+        sql = (
+            "COPY INTO [t] FROM 'x'"
+            " WITH (CREDENTIAL = (IDENTITY = 'y', SECRET = 'token''with''quotes'))"
+        )
+        result = redact_sql(sql)
+        assert "token''with''quotes" not in result
+        assert "***" in result
+
+    def test_sas_url_query_string_redacted(self) -> None:
+        """https://... URLs with query strings must have ?... replaced with ?***."""
+        sql = (
+            "COPY INTO [t] FROM"
+            " 'https://myaccount.blob.core.windows.net/c/f.parquet"
+            "?sv=2024-01-01&sig=ABCSECRET&se=2025&sp=r'"
+        )
+        result = redact_sql(sql)
+        assert "ABCSECRET" not in result
+        assert "https://myaccount.blob.core.windows.net/c/f.parquet?***" in result
+
+    def test_copy_into_with_secret_and_sas_url_both_redacted(self) -> None:
+        """A realistic COPY INTO with both SECRET and a SAS URL must have both redacted."""
+        sql = (
+            "COPY INTO [dbo].[target] "
+            "FROM 'https://storage.dfs.core.windows.net/container/data.parquet"
+            "?sv=2022&sig=TOKEN&sp=r' "
+            "WITH (CREDENTIAL = (IDENTITY = 'Shared Access Signature',"
+            " SECRET = 'sv=2022&sig=TOKEN'))"
+        )
+        result = redact_sql(sql)
+        assert "TOKEN" not in result
+        assert "SECRET = '***'" in result
+        assert "?***" in result
+
+    def test_sql_without_secrets_unchanged(self) -> None:
+        """A plain SELECT without secrets is returned unchanged."""
+        sql = "SELECT TOP 10 * FROM [dbo].[mytable]"
+        result = redact_sql(sql)
+        assert result == sql
+
+    def test_original_string_not_mutated(self) -> None:
+        """redact_sql must not mutate the input string."""
+        sql = "COPY INTO [t] FROM 'x' WITH (CREDENTIAL = (IDENTITY = 'y', SECRET = 'tok'))"
+        original = sql
+        redact_sql(sql)
+        assert sql == original
+
+    def test_url_without_query_string_unchanged(self) -> None:
+        """An https:// URL without a query string must not be modified."""
+        sql = "COPY INTO [t] FROM 'https://myaccount.blob.core.windows.net/c/f.parquet'"
+        result = redact_sql(sql)
+        assert result == sql
+
+    def test_abfss_url_query_string_redacted(self) -> None:
+        """abfss:// Azure Data Lake Storage URLs with query strings must be redacted."""
+        sql = (
+            "COPY INTO [t] FROM"
+            " 'abfss://container@account.dfs.core.windows.net/data.parquet"
+            "?sv=2024-01-01&sig=ABCSECRET&se=2025&sp=r'"
+        )
+        result = redact_sql(sql)
+        assert "ABCSECRET" not in result
+        assert "abfss://container@account.dfs.core.windows.net/data.parquet?***" in result
+
+    def test_wasbs_url_query_string_redacted(self) -> None:
+        """wasbs:// Azure Blob Storage URLs with query strings must be redacted."""
+        sql = (
+            "COPY INTO [t] FROM"
+            " 'wasbs://container@account.blob.core.windows.net/data.parquet"
+            "?sv=2024&sig=WASB_SECRET'"
+        )
+        result = redact_sql(sql)
+        assert "WASB_SECRET" not in result
+        assert "?***" in result

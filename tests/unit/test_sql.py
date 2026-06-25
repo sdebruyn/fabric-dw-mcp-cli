@@ -3461,3 +3461,127 @@ class TestRunQueryUnmappedDriverError:
 
         # Must NOT be wrapped as FabricServerError.
         assert not isinstance(exc_info.value, FabricServerError)
+
+
+# ---------------------------------------------------------------------------
+# SQL DEBUG logging
+# ---------------------------------------------------------------------------
+
+
+class TestSqlDebugLogging:
+    """DEBUG-level logging for executed SQL statements."""
+
+    def test_run_query_emits_debug_log_with_sql(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """run_query must emit a DEBUG record containing the SQL text when DEBUG is enabled."""
+        mock_mssql, _conn, _cursor = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with caplog.at_level("DEBUG", logger="fabric_dw.sql"):
+            run_query(_make_target(), "SELECT 1 AS n")
+
+        debug_records = [r for r in caplog.records if r.levelno == 10]  # logging.DEBUG == 10
+        sql_seen = any(
+            "SELECT 1 AS n" in r.getMessage() or getattr(r, "sql", None) == "SELECT 1 AS n"
+            for r in debug_records
+        )
+        assert sql_seen, (
+            f"Expected SQL in DEBUG records; got: {[r.getMessage() for r in debug_records]}"
+        )
+
+    def test_run_query_no_debug_log_when_level_is_info(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """run_query must NOT emit any record from fabric_dw.sql when DEBUG is disabled."""
+        mock_mssql, _conn, _cursor = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with caplog.at_level("INFO", logger="fabric_dw.sql"):
+            run_query(_make_target(), "SELECT 1 AS n")
+
+        sql_records = [r for r in caplog.records if r.name == "fabric_dw.sql"]
+        assert sql_records == [], (
+            f"Expected no fabric_dw.sql records at INFO level; got: {sql_records}"
+        )
+
+    def test_run_statements_emits_debug_log_per_statement(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """run_statements must emit a DEBUG record for each executed statement."""
+        mock_mssql, _conn, _cursor = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        stmts = ["DROP TABLE [dbo].[t1]", "DROP VIEW [dbo].[v1]"]
+        with caplog.at_level("DEBUG", logger="fabric_dw.sql"):
+            run_statements(_make_target(), stmts)
+
+        debug_records = [r for r in caplog.records if r.levelno == 10 and r.name == "fabric_dw.sql"]
+        logged_sqls = [getattr(r, "sql", r.getMessage()) for r in debug_records]
+        assert any("DROP TABLE [dbo].[t1]" in s for s in logged_sqls), (
+            f"Expected first statement in DEBUG records; got: {logged_sqls}"
+        )
+        assert any("DROP VIEW [dbo].[v1]" in s for s in logged_sqls), (
+            f"Expected second statement in DEBUG records; got: {logged_sqls}"
+        )
+
+    def test_run_statements_no_debug_log_when_level_is_info(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """run_statements must NOT emit fabric_dw.sql records when DEBUG is disabled."""
+        mock_mssql, _conn, _cursor = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with caplog.at_level("INFO", logger="fabric_dw.sql"):
+            run_statements(_make_target(), ["DROP TABLE [dbo].[t]"])
+
+        sql_records = [r for r in caplog.records if r.name == "fabric_dw.sql"]
+        assert sql_records == [], (
+            f"Expected no fabric_dw.sql records at INFO level; got: {sql_records}"
+        )
+
+    def test_secret_not_logged_raw(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A COPY INTO with SECRET = '<token>' must not log the raw secret value."""
+        mock_mssql, _conn, _cursor = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        raw_secret = "sv=2024&sig=TOPSECRETTOKEN"  # noqa: S105
+        copy_sql = (
+            f"COPY INTO [dbo].[t] FROM 'https://x.blob.core.windows.net/c/f.parquet' "
+            f"WITH (CREDENTIAL = (IDENTITY = 'Shared Access Signature', SECRET = '{raw_secret}'))"
+        )
+
+        with caplog.at_level("DEBUG", logger="fabric_dw.sql"):
+            run_query(_make_target(), copy_sql)
+
+        # The raw secret must NOT appear anywhere in any log record.
+        all_log_text = " ".join(
+            str(r.getMessage()) + str(getattr(r, "sql", "")) for r in caplog.records
+        )
+        assert "TOPSECRETTOKEN" not in all_log_text, (
+            "Raw secret token must not appear in any log record"
+        )
+        assert "***" in all_log_text, "Redacted placeholder '***' must appear in log records"
+
+    def test_bound_param_values_not_logged(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Bound parameter VALUES must not appear in logs — only the count may be logged."""
+        mock_mssql, _conn, _cursor = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        sentinel_secret = "VERYSECRETPARAMVALUE"  # noqa: S105
+        sql = "SELECT * FROM [dbo].[t] WHERE col = ?"
+
+        with caplog.at_level("DEBUG", logger="fabric_dw.sql"):
+            run_query(_make_target(), sql, params=[sentinel_secret])
+
+        all_log_text = " ".join(
+            str(r.getMessage()) + str(getattr(r, "sql", "")) + str(getattr(r, "param_count", ""))
+            for r in caplog.records
+        )
+        assert sentinel_secret not in all_log_text, (
+            "Bound parameter value must not appear in any log record"
+        )

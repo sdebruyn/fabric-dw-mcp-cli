@@ -1,17 +1,19 @@
 """Structured logging helpers for fabric_dw.
 
-Provides a JSON-emitting stdlib logging setup and a utility to redact
-sensitive values (Bearer tokens) from HTTP headers before logging.
+Provides a JSON-emitting stdlib logging setup and utilities to redact
+sensitive values (Bearer tokens, SQL secrets, SAS URLs) before logging.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 
 __all__ = [
     "redact_auth_header",
+    "redact_sql",
     "setup_logging",
 ]
 
@@ -109,6 +111,61 @@ def setup_logging(level: int = logging.INFO) -> None:
     handler.setLevel(level)
     handler.setFormatter(_JsonFormatter())
     pkg_logger.addHandler(handler)
+
+
+# ---------------------------------------------------------------------------
+# SQL secret redaction
+# ---------------------------------------------------------------------------
+
+# Matches SECRET = '...' (case-insensitive).  The value may contain doubled
+# single-quotes (the _sq() escaping used by load.py), so we match a quoted
+# string that may contain '' (two consecutive single-quotes) inside.
+_RE_SQL_SECRET: re.Pattern[str] = re.compile(
+    r"(SECRET\s*=\s*')" r"(?:[^']|'')*" r"'",
+    re.IGNORECASE,
+)
+
+# Matches any URL scheme that can carry SAS/query secrets and contains a query
+# string — replaces ?... with ?***.  Covers https://, http://, and Azure blob/
+# dfs/OneLake schemes (abfss://, abfs://, wasbs://, wasb://) that can also
+# appear inside SQL statements such as COPY INTO.
+_RE_SAS_URL: re.Pattern[str] = re.compile(
+    r"((?:https?|abfss?|wasbs?)://[^\s'\"]*)\?[^\s'\"]*",
+    re.IGNORECASE,
+)
+
+
+def redact_sql(sql: str) -> str:
+    """Return *sql* with embedded secrets replaced by ``***``.
+
+    Two categories of secrets are redacted:
+
+    1. **SQL credential literals** — ``SECRET = '<value>'`` (case-insensitive).
+       The ``<value>`` is replaced with ``***``, giving ``SECRET = '***'``.
+       The ``_sq()`` helper in :mod:`fabric_dw.services.load` escapes
+       single-quotes by doubling them (``''``), so the regex handles values
+       that contain ``''`` inside the quoted string.
+
+    2. **SAS URL query strings** — any URL with a query string embedded in the
+       SQL has the ``?<query-string>`` replaced with ``?***``.  Covers
+       ``https://``, ``http://``, and Azure blob/dfs/OneLake schemes
+       (``abfss://``, ``abfs://``, ``wasbs://``, ``wasb://``).  This masks
+       ``sig=``, ``sv=``, and all other SAS parameters without enumerating
+       them individually.
+
+    The function is intentionally conservative (over-redacts rather than
+    leaks).  It must be applied to the SQL string before emitting any log
+    record so that no credential ever reaches a log sink.
+
+    Args:
+        sql: The raw SQL statement string.
+
+    Returns:
+        A copy of *sql* with secrets redacted.  The original string is not
+        mutated.
+    """
+    # Step 1: redact SECRET = '...' values; step 2: strip SAS query strings.
+    return _RE_SAS_URL.sub(r"\1?***", _RE_SQL_SECRET.sub(r"\g<1>***'", sql))
 
 
 _SENSITIVE_HEADERS: frozenset[str] = frozenset(
