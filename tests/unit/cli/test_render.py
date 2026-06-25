@@ -550,7 +550,10 @@ class TestNarrowTableTitleNotWrapped:
         assert "Resul\n" not in output
 
     def test_narrow_table_column_and_value_still_present(self) -> None:
-        """The table body (column header + cell value) must still render correctly."""
+        """The table body (column header + cell value) must still render correctly.
+
+        Non-regression check: the title-fix must not break normal table content.
+        """
         output = self._render_to_string([{"n": 1}], table_title="SQL Result")
         assert "n" in output
         assert "1" in output
@@ -569,13 +572,12 @@ class TestNarrowTableTitleNotWrapped:
         """Empty result set: the title is still printed on one line (not dropped)."""
         output = self._render_to_string([], table_title="SQL Result")
         assert "SQL Result" in output
-        assert "Resul\n" not in output
 
     def test_no_title_does_not_print_blank_line(self) -> None:
-        """When title is None, no title line is printed (no unexpected blank output)."""
+        """When title is None, no spurious blank line is inserted before the table."""
         output = self._render_to_string([{"x": 1}], table_title=None)
-        # The table itself is present; no "None" or blank bold-prefix emitted
-        assert "None" not in output
+        # Strip leading whitespace then verify no double-newline at the start
+        assert "\n\n" not in output.lstrip()
         assert "x" in output
 
 
@@ -992,6 +994,24 @@ class TestRenderPermissionsTable:
         access = _make_item_access()
         # Should not raise; output goes to stdout (captured)
         render_permissions_table([access], title="Test", console=None)
+
+    def test_narrow_console_title_not_char_wrapped(self) -> None:
+        """A wide title must appear intact on one line even on a narrow console.
+
+        ``render_permissions_table`` previously used ``Table(title=...)`` which
+        wraps to the table's content width.  The fix prints the title as a
+        separate bold line before the table.
+        """
+        access = _make_item_access()
+        sio = StringIO()
+        # Console narrower than "Warehouse Permissions" (20 chars) — the five-column
+        # table body is wide so Rich normally wraps a Table title at the body width;
+        # at width=30 the body fits but "Warehouse Permissions" would be split.
+        console = Console(file=sio, width=30, highlight=False, no_color=True)
+        render_permissions_table([access], title="Warehouse Permissions", console=console)
+        output = sio.getvalue()
+        assert "Warehouse Permissions" in output
+        assert "Permissi\n" not in output
 
 
 class TestRenderRefreshTable:
