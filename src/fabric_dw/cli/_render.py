@@ -196,12 +196,9 @@ def _add_columns(
     primary_guid_assigned = False
     for col in visible_columns:
         escaped_col = _escape_markup(col)
-        if _is_guid_column(col, norm_rows):
-            if not primary_guid_assigned:
-                table.add_column(escaped_col, no_wrap=True, min_width=_GUID_WIDTH)
-                primary_guid_assigned = True
-            else:
-                table.add_column(escaped_col)
+        if _is_guid_column(col, norm_rows) and not primary_guid_assigned:
+            table.add_column(escaped_col, no_wrap=True, min_width=_GUID_WIDTH)
+            primary_guid_assigned = True
         else:
             table.add_column(escaped_col)
 
