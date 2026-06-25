@@ -334,14 +334,12 @@ _QUERIES_ROWS: list[dict[str, object]] = [
 class TestWideTableVerticalFallback:
     """Wide-schema tables fall back to a vertical layout when they cannot fit horizontally.
 
-    When a table has so many columns that each one would be squeezed below
-    ``_MIN_COLUMN_WIDTH`` characters at the current console width, the renderer
-    switches to a vertical, record-oriented layout.  This is the real fix for
-    issue #745: the health-check table with ~16 columns cannot fit in 80 columns
-    and so all headers were collapsed to 1-2 characters and appeared blank.
-
-    Tables that DO fit at the given console width keep the normal horizontal layout
-    (including the GUID-column no_wrap behaviour from PR #743).
+    The fallback criterion is header-legibility based: ``_table_fits`` estimates
+    the minimum width needed to show each column header (GUID columns get their
+    fixed width; non-GUID columns get ``min(len(header), _HEADER_MAX_WIDTH)``
+    chars) and triggers vertical rendering when that estimate exceeds the console
+    width.  This correctly catches 10-, 12-, 14-, and 16-column shapes at width=80
+    while leaving the #743 GUID-heavy shape (2 GUIDs + displayName + kind) horizontal.
     """
 
     def _render_at_width(
@@ -391,44 +389,82 @@ class TestWideTableVerticalFallback:
         assert "Table Health Metrics" in output
 
     def test_health_check_no_truncated_header_artifacts(self) -> None:
-        """At width=80 the vertical output must NOT contain the truncation artifact
-        of narrow horizontal tables (three consecutive column separators)."""
+        """At width=80 the vertical output must NOT contain the three-separator artifact."""
         output = self._render_at_width(
             [_HEALTH_CHECK_ROW], width=80, table_title="Table Health Metrics"
         )
         assert "┃┃┃" not in output
 
     # ------------------------------------------------------------------
-    # 2. Wide queries shape (~12 cols, multiple rows) at a narrow width → vertical
-    #
-    #    The ``blocking_session_id`` column is all-null and is pruned, leaving 11
-    #    visible columns.  11 x 4 min-width + 12 border chars = 56 total, so
-    #    width=50 reliably triggers the vertical fallback for this shape.
+    # 2. 10-col and 14-col health-check shapes → vertical at width=80
     # ------------------------------------------------------------------
 
-    def test_queries_vertical_at_narrow_width_shows_all_field_names(self) -> None:
-        """All non-null field names appear in the vertical layout for a multi-row wide table."""
-        output = self._render_at_width(_QUERIES_ROWS, width=50)
+    def test_10col_health_check_vertical_at_width_80(self) -> None:
+        """A 10-column health-check subset goes vertical at width=80."""
+        data = [dict(list(_HEALTH_CHECK_ROW.items())[:10])]
+        output = self._render_at_width(data, width=80, table_title="Health Check")
+        for col in data[0]:
+            assert col in output, f"Field '{col}' missing from 10-col vertical output"
+
+    def test_14col_health_check_vertical_at_width_80(self) -> None:
+        """A 14-column health-check subset goes vertical at width=80."""
+        data = [dict(list(_HEALTH_CHECK_ROW.items())[:14])]
+        output = self._render_at_width(data, width=80, table_title="Health Check")
+        for col in data[0]:
+            assert col in output, f"Field '{col}' missing from 14-col vertical output"
+
+    # ------------------------------------------------------------------
+    # 3. 12-col queries shape at width=80 → vertical (issue #749)
+    # ------------------------------------------------------------------
+
+    def test_queries_vertical_at_width_80_shows_all_field_names(self) -> None:
+        """All non-null field names appear in the vertical layout at width=80.
+
+        With the header-based threshold, the 11 visible columns (blocking_session_id
+        is all-null and pruned) have headers averaging ~10 chars, which far exceeds
+        80 columns, triggering the vertical fallback.
+        """
+        output = self._render_at_width(_QUERIES_ROWS, width=80)
         # blocking_session_id is all-null → pruned; check the non-null columns only
         visible_cols = [c for c in _QUERIES_ROWS[0] if c != "blocking_session_id"]
         for col in visible_cols:
             assert col in output, f"Field '{col}' missing from vertical output"
 
-    def test_queries_vertical_at_narrow_width_shows_values(self) -> None:
-        """Cell values appear in the vertical output at a narrow console width."""
-        output = self._render_at_width(_QUERIES_ROWS, width=50)
+    def test_queries_vertical_at_width_80_shows_values(self) -> None:
+        """Cell values from multiple rows appear in the vertical output at width=80."""
+        output = self._render_at_width(_QUERIES_ROWS, width=80)
         assert "abc123" in output
         assert "user@example.com" in output
 
     # ------------------------------------------------------------------
-    # 3. Normal (fits) tables keep horizontal layout — no regression
+    # 4. #743 shape stays horizontal — regression guard
+    # ------------------------------------------------------------------
+
+    def test_guid_shape_stays_horizontal_at_width_80(self) -> None:
+        """The #743 GUID-heavy shape (2 GUIDs + displayName + kind) stays horizontal.
+
+        Estimated fit: primary GUID (36) + secondary GUID (10) + displayName (11)
+        + kind (4) + borders (3*4+1=13) = 74 <= 80, so the horizontal layout is kept.
+        """
+        guid1 = "eb85cc99-5ad8-4f89-85b8-2a46eaa410d6"
+        guid2 = "4c18bf4e-86dd-47da-8602-87184ff16c13"
+        data = [
+            {"id": guid1, "displayName": "My Workspace", "workspaceId": guid2, "kind": "Warehouse"}
+        ]
+        output = self._render_at_width(data, width=80)
+        # Horizontal table uses box-drawing column separators
+        assert "┃" in output or "│" in output
+        # Primary GUID must appear in full (no_wrap)
+        assert guid1 in output
+
+    # ------------------------------------------------------------------
+    # 5. Small (fits) tables keep horizontal layout — regression guard
     # ------------------------------------------------------------------
 
     def test_small_table_stays_horizontal(self) -> None:
         """A 2-column table at width=80 stays horizontal (no panel-style output)."""
         data = [{"id": "1", "name": "foo"}, {"id": "2", "name": "bar"}]
         output = self._render_at_width(data, width=80)
-        # Horizontal table has column separator characters
         assert "┃" in output or "│" in output
 
     def test_small_table_headers_present(self) -> None:
@@ -439,7 +475,7 @@ class TestWideTableVerticalFallback:
         assert "name" in output
 
     # ------------------------------------------------------------------
-    # 4. Existing multi-GUID width tests are unaffected (PR #743 regression guard)
+    # 6. Existing multi-GUID width tests are unaffected (PR #743 regression guard)
     # ------------------------------------------------------------------
 
     def test_two_guid_columns_still_work_at_width_120(self) -> None:

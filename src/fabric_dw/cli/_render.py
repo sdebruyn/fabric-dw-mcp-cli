@@ -36,10 +36,15 @@ _GUID_RE: re.Pattern[str] = re.compile(
 #: Fixed width for GUID columns — a GUID is exactly 36 characters.
 _GUID_WIDTH = 36
 
-#: Minimum usable character width per column before the table is considered
-#: un-fittable and the vertical fallback is triggered.  A column squeezed to
-#: fewer characters than this cannot show meaningful content.
-_MIN_COLUMN_WIDTH = 4
+#: Estimated width for secondary (non-primary) GUID columns in the fit
+#: heuristic.  Secondary GUIDs are allowed to truncate (no forced min_width),
+#: but they still occupy at least this many chars in practice before wrapping.
+_GUID_SECONDARY_WIDTH = 10
+
+#: Cap applied to non-GUID header names when estimating required table width.
+#: Headers longer than this are assumed to truncate gracefully (Rich ellipsis)
+#: rather than needing their full length to be legible.
+_HEADER_MAX_WIDTH = 24
 
 
 def _is_guid_column(col: str, norm_rows: list[dict[str, object] | object]) -> bool:
@@ -201,25 +206,55 @@ def _add_columns(
             table.add_column(escaped_col)
 
 
-def _table_fits(visible_columns: list[str], console_width: int) -> bool:
+def _table_fits(
+    visible_columns: list[str],
+    norm_rows: list[dict[str, object] | object],
+    console_width: int,
+) -> bool:
     """Return *True* when *visible_columns* can fit legibly in *console_width*.
 
-    The heuristic: each column needs at least ``_MIN_COLUMN_WIDTH`` characters
-    of usable space.  The table borders add 1 char per column separator plus 2
-    for the outer frame.  When a GUID column is present it requires its full
-    ``_GUID_WIDTH`` chars (``no_wrap``), which is added to the minimum instead.
+    The heuristic mirrors what :func:`_add_columns` actually does at render time:
 
-    This is intentionally conservative — the fallback is only triggered when
-    the table would genuinely become unreadable (headers squeezed to 1-2
-    chars), not for mild wrapping or truncation.
+    * The **primary GUID column** (first column whose every non-null value is a
+      canonical GUID) needs its full ``_GUID_WIDTH`` (36) chars — it is rendered
+      ``no_wrap`` so it is never truncated.
+    * **Secondary GUID columns** are given a floor of ``_GUID_SECONDARY_WIDTH``
+      (10) chars — they can truncate, but they still consume visible space.
+    * **Non-GUID columns** need ``min(len(header), _HEADER_MAX_WIDTH)`` chars —
+      a 20-char header like ``PotentialAnomalyType`` needs its full length to be
+      readable; a very long header (>24) is assumed to truncate gracefully.
+    * **Rich border overhead**: 2 chars padding per column (1 space each side)
+      plus 1 separator char between each pair of columns (``len(cols) - 1``)
+      plus 2 outer border chars.  Total: ``3 * len(cols) + 1``.
+
+    Calibration examples at ``console_width = 80``:
+    * #743 shape — ``id``(GUID/36) + ``workspaceId``(GUID/10) +
+      ``displayName``(11) + ``kind``(4) + borders ≈ 36+10+11+4 + 3*4+1 = 74 ≤ 80
+      → **horizontal** ✓
+    * 12-col queries shape — headers avg ~10 chars → 12*10 + 3*12+1 = 157 > 80
+      → **vertical** ✓
+    * 16-col health-check shape — headers avg ~15 chars → 16*15 + 3*16+1 = 289 > 80
+      → **vertical** ✓
     """
     if not visible_columns:
         return True
-    # Border overhead: 1 separator between each column + 2 outer chars
-    border_chars = len(visible_columns) + 1
-    # Sum of minimum widths: _MIN_COLUMN_WIDTH per column
-    min_content = _MIN_COLUMN_WIDTH * len(visible_columns)
-    return border_chars + min_content <= console_width
+
+    primary_guid_assigned = False
+    content_width = 0
+    for col in visible_columns:
+        if _is_guid_column(col, norm_rows):
+            if not primary_guid_assigned:
+                content_width += _GUID_WIDTH
+                primary_guid_assigned = True
+            else:
+                content_width += _GUID_SECONDARY_WIDTH
+        else:
+            content_width += min(len(col), _HEADER_MAX_WIDTH)
+
+    # Rich border: 1 left-padding + 1 right-padding per column + 1 separator
+    # between each adjacent pair + 2 outer frame chars → 3 * N + 1.
+    border_chars = 3 * len(visible_columns) + 1
+    return content_width + border_chars <= console_width
 
 
 def _render_table(
@@ -231,13 +266,13 @@ def _render_table(
 ) -> None:
     """Render a list of dicts as a Rich Table (or vertical fallback).
 
-    When the number of visible columns would squeeze each header below
-    ``_MIN_COLUMN_WIDTH`` characters at the current console width, the
-    renderer switches to a vertical, record-oriented layout — one panel per
-    row listing ``key: value`` pairs.  This keeps wide-schema tables (e.g.
-    ``tables health-check`` with ~16 metrics) fully legible on an 80-column
-    terminal.  Tables that fit normally keep the horizontal layout and the
-    existing GUID-column width behaviour from PR #743.
+    When the estimated minimum width required to show all visible column headers
+    legibly exceeds the current console width, the renderer switches to a
+    vertical, record-oriented layout — one panel per row listing ``key: value``
+    pairs.  This keeps wide-schema tables (e.g. ``tables health-check`` with
+    ~16 metrics) fully legible on an 80-column terminal.  Tables that fit
+    normally keep the horizontal layout and the existing GUID-column width
+    behaviour from PR #743.  See :func:`_table_fits` for the exact criterion.
 
     Columns whose value is ``None`` in **every** row are omitted from the
     output — they only clutter list views (e.g. ``definition`` for
@@ -281,10 +316,10 @@ def _render_table(
     all_null = {col for col in columns if _column_is_all_null(col, norm_rows)}
     visible_columns = [col for col in columns if col not in all_null and col not in dropped]
 
-    # Wide-table fallback: when columns would be squeezed below _MIN_COLUMN_WIDTH
-    # characters each, switch to a vertical key: value layout per row so that
-    # every field name and value is fully readable.
-    if not _table_fits(visible_columns, console.width):
+    # Wide-table fallback: when the estimated minimum width for all visible
+    # columns exceeds the console width, switch to a vertical key: value layout
+    # per row so that every field name and value is fully readable.
+    if not _table_fits(visible_columns, norm_rows, console.width):
         _render_vertical(norm_rows, visible_columns, console=console, title=title)
         return
 
