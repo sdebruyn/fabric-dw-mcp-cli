@@ -287,11 +287,9 @@ def _render_table(
     dropped: frozenset[str] = frozenset(drop_columns or ())
 
     if not rows:
-        table = Table(
-            title=_escape_markup(title) if title else title,
-            show_header=True,
-            header_style="bold",
-        )
+        if title:
+            console.print(f"[bold]{_escape_markup(title)}[/bold]")
+        table = Table(show_header=True, header_style="bold")
         console.print(table)
         return
 
@@ -324,11 +322,9 @@ def _render_table(
         _render_vertical(norm_rows, visible_columns, console=console, title=title)
         return
 
-    table = Table(
-        title=_escape_markup(title) if title else title,
-        show_header=True,
-        header_style="bold",
-    )
+    if title:
+        console.print(f"[bold]{_escape_markup(title)}[/bold]")
+    table = Table(show_header=True, header_style="bold")
     _add_columns(table, visible_columns, norm_rows)
 
     for row in norm_rows:
@@ -402,7 +398,9 @@ def render_permissions_table(
         return
 
     con = console if console is not None else _DEFAULT_CONSOLE
-    table = Table(title=title, show_header=True, header_style="bold")
+    if title:
+        con.print(f"[bold]{_escape_markup(title)}[/bold]")
+    table = Table(show_header=True, header_style="bold")
     table.add_column("Display Name", no_wrap=True)
     table.add_column("UPN / App ID")
     table.add_column("Type")
@@ -428,7 +426,8 @@ def render_refresh_table(
 ) -> None:
     """Render a list of :class:`~fabric_dw.models.TableSyncStatus` as a Rich table."""
     con = console if console is not None else _DEFAULT_CONSOLE
-    table = Table(title="Metadata Refresh Results", show_header=True, header_style="bold")
+    con.print("[bold]Metadata Refresh Results[/bold]")
+    table = Table(show_header=True, header_style="bold")
     table.add_column("Table", no_wrap=True)
     table.add_column("Status")
     table.add_column("End Time")

@@ -514,6 +514,73 @@ class TestWideTableVerticalFallback:
         assert "displayName" in output
 
 
+class TestNarrowTableTitleNotWrapped:
+    """_render_table prints a wide title on one line even when the table is narrower.
+
+    Regression tests for issue #756: Rich wraps ``Table(title=...)`` to the
+    table's content width, producing multi-line title fragments for narrow tables.
+    The fix prints the title as a separate bold line above a title-less ``Table``.
+    """
+
+    def _render_to_string(
+        self,
+        data: object,
+        *,
+        table_title: str | None,
+        width: int = 120,
+    ) -> str:
+        sio = StringIO()
+        console = Console(file=sio, width=width, highlight=False, no_color=True)
+        render(data, json_output=False, console=console, table_title=table_title)
+        return sio.getvalue()
+
+    def test_narrow_table_title_appears_intact(self) -> None:
+        """A 1-column table with a wide title renders the title as a single intact string.
+
+        ``SELECT 1 AS n`` produces a 5-char-wide table body.  ``"SQL Result"``
+        (10 chars) would be wrapped char-by-char by Rich when passed as
+        ``Table(title=...)``.  The fix prints it on one line before the table.
+        """
+        output = self._render_to_string([{"n": 1}], table_title="SQL Result")
+        assert "SQL Result" in output
+
+    def test_narrow_table_title_not_char_wrapped(self) -> None:
+        """The title must NOT appear split across lines (e.g. ``Resul\\n``)."""
+        output = self._render_to_string([{"n": 1}], table_title="SQL Result")
+        assert "Resul\n" not in output
+
+    def test_narrow_table_column_and_value_still_present(self) -> None:
+        """The table body (column header + cell value) must still render correctly.
+
+        Non-regression check: the title-fix must not break normal table content.
+        """
+        output = self._render_to_string([{"n": 1}], table_title="SQL Result")
+        assert "n" in output
+        assert "1" in output
+
+    def test_bracket_title_intact_in_horizontal_table(self) -> None:
+        """A bracket title (e.g. ``Stats [2024]``) renders verbatim without stripping.
+
+        This verifies that the markup-escape behaviour introduced in #753 is
+        preserved now that the title is printed as a separate line instead of
+        being passed to ``Table(title=...)``.
+        """
+        output = self._render_to_string([{"n": 1}], table_title="Stats [2024]")
+        assert "Stats [2024]" in output
+
+    def test_empty_rows_with_title_prints_title_on_one_line(self) -> None:
+        """Empty result set: the title is still printed on one line (not dropped)."""
+        output = self._render_to_string([], table_title="SQL Result")
+        assert "SQL Result" in output
+
+    def test_no_title_does_not_print_blank_line(self) -> None:
+        """When title is None, no spurious blank line is inserted before the table."""
+        output = self._render_to_string([{"x": 1}], table_title=None)
+        # Strip leading whitespace then verify no double-newline at the start
+        assert "\n\n" not in output.lstrip()
+        assert "x" in output
+
+
 class TestNullRendering:
     """NULL values in table and panel output are rendered as dim 'NULL', not 'None'."""
 
@@ -927,6 +994,24 @@ class TestRenderPermissionsTable:
         access = _make_item_access()
         # Should not raise; output goes to stdout (captured)
         render_permissions_table([access], title="Test", console=None)
+
+    def test_narrow_console_title_not_char_wrapped(self) -> None:
+        """A wide title must appear intact on one line even on a narrow console.
+
+        ``render_permissions_table`` previously used ``Table(title=...)`` which
+        wraps to the table's content width.  The fix prints the title as a
+        separate bold line before the table.
+        """
+        access = _make_item_access()
+        sio = StringIO()
+        # Console narrower than "Warehouse Permissions" (20 chars) — the five-column
+        # table body is wide so Rich normally wraps a Table title at the body width;
+        # at width=30 the body fits but "Warehouse Permissions" would be split.
+        console = Console(file=sio, width=30, highlight=False, no_color=True)
+        render_permissions_table([access], title="Warehouse Permissions", console=console)
+        output = sio.getvalue()
+        assert "Warehouse Permissions" in output
+        assert "Permissi\n" not in output
 
 
 class TestRenderRefreshTable:
