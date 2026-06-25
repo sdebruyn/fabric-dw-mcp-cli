@@ -374,11 +374,19 @@ class TestWideTableVerticalFallback:
             assert col in output, f"Field '{col}' missing from vertical output"
 
     def test_health_check_vertical_at_width_80_shows_bracketed_field_names(self) -> None:
-        """Bracketed column names like ``FileRowCount[1,10)`` appear verbatim at width=80."""
+        """Alpha-bracket column names appear verbatim in the vertical fallback at width=80.
+
+        ``FileRowCount[ten_thousand_plus]`` has alpha-prefixed bracket content —
+        Rich strips ``[ten_thousand_plus]`` as a (failed) markup tag on unpatched code,
+        making this a genuine guard for the ``_escape_markup`` call on column names.
+        ``FileRowCount[1,10)`` is digit-prefixed and also checked for completeness.
+        """
         output = self._render_at_width(
             [_HEALTH_CHECK_ROW], width=80, table_title="Table Health Metrics"
         )
-        assert "FileRowCount[0]" in output
+        # Alpha-bracket — stripped by unpatched Rich, so this guards the escape fix
+        assert "FileRowCount[ten_thousand_plus]" in output
+        # Also present for completeness (digit-bracket, not stripped by Rich)
         assert "FileRowCount[1,10)" in output
 
     def test_health_check_vertical_at_width_80_shows_title(self) -> None:
@@ -394,6 +402,24 @@ class TestWideTableVerticalFallback:
             [_HEALTH_CHECK_ROW], width=80, table_title="Table Health Metrics"
         )
         assert "┃┃┃" not in output
+
+    def test_bracket_title_renders_verbatim_in_vertical_fallback(self) -> None:
+        """A table title containing brackets appears verbatim in the vertical fallback.
+
+        Rich parses ``Table(title=...)`` as markup.  Without ``_escape_markup`` a
+        title like ``Stats [2024]`` would render as ``Stats`` with ``[2024]`` dropped.
+        """
+        output = self._render_at_width([_HEALTH_CHECK_ROW], width=80, table_title="Stats [2024]")
+        assert "Stats [2024]" in output
+
+    def test_bracket_title_renders_verbatim_in_horizontal_table(self) -> None:
+        """A table title containing brackets appears verbatim in the horizontal layout.
+
+        Uses a 2-column table that fits at width=200 to stay in the horizontal path.
+        """
+        data = [{"id": "1", "name": "foo"}]
+        output = self._render_at_width(data, width=200, table_title="Stats [2024]")
+        assert "Stats [2024]" in output
 
     # ------------------------------------------------------------------
     # 2. 10-col and 14-col health-check shapes → vertical at width=80
