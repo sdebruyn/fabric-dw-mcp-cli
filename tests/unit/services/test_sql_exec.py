@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -1326,3 +1327,150 @@ async def test_get_plan_invalid_column_raises_fabric_server_error() -> None:
         await sql_exec.get_plan(target, "SELECT y FROM t")
 
     assert "Invalid column name 'y'" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# Verbose SQL logging — execute() and get_plan() (#758)
+# ---------------------------------------------------------------------------
+
+
+async def test_execute_emits_debug_log_with_sql(caplog: pytest.LogCaptureFixture) -> None:
+    """execute() must emit a DEBUG record from fabric_dw.sql containing the query."""
+    target = _make_target()
+    conn = _make_conn([(1,)], ["n"])
+
+    with _patch_connect(conn), caplog.at_level(logging.DEBUG, logger="fabric_dw.sql"):
+        await sql_exec.execute(target, "SELECT 1 AS n")
+
+    debug_records = [
+        r for r in caplog.records if r.levelno == logging.DEBUG and r.name == "fabric_dw.sql"
+    ]
+    sql_seen = any(
+        "SELECT 1 AS n" in r.getMessage() or getattr(r, "sql", None) == "SELECT 1 AS n"
+        for r in debug_records
+    )
+    msgs = [r.getMessage() for r in debug_records]
+    assert sql_seen, f"Expected SQL in DEBUG records; got: {msgs}"
+
+
+async def test_execute_no_debug_log_when_level_is_info(caplog: pytest.LogCaptureFixture) -> None:
+    """execute() must NOT emit any fabric_dw.sql records when DEBUG is disabled."""
+    target = _make_target()
+    conn = _make_conn([(1,)], ["n"])
+
+    with _patch_connect(conn), caplog.at_level(logging.INFO, logger="fabric_dw.sql"):
+        await sql_exec.execute(target, "SELECT 1 AS n")
+
+    sql_records = [r for r in caplog.records if r.name == "fabric_dw.sql"]
+    assert sql_records == [], f"Expected no fabric_dw.sql records at INFO level; got: {sql_records}"
+
+
+async def test_execute_secret_logged_redacted(caplog: pytest.LogCaptureFixture) -> None:
+    """execute() must log SQL with secrets redacted, not in raw form."""
+    target = _make_target()
+    raw_secret = "sv=2024&sig=TOPSECRETTOKEN"  # noqa: S105
+    copy_sql = (
+        f"COPY INTO [dbo].[t] FROM 'https://x.blob.core.windows.net/c/f.parquet' "
+        f"WITH (CREDENTIAL = (IDENTITY = 'Shared Access Signature', SECRET = '{raw_secret}'))"
+    )
+    conn = _make_no_result_conn()
+
+    with _patch_connect(conn), caplog.at_level(logging.DEBUG, logger="fabric_dw.sql"):
+        await sql_exec.execute(target, copy_sql)
+
+    all_log_text = " ".join(
+        str(r.getMessage()) + str(getattr(r, "sql", "")) for r in caplog.records
+    )
+    assert "TOPSECRETTOKEN" not in all_log_text, "Raw secret must not appear in any log record"
+    assert "***" in all_log_text, "Redacted placeholder '***' must appear in log records"
+
+
+async def test_get_plan_emits_debug_log_with_sql(caplog: pytest.LogCaptureFixture) -> None:
+    """get_plan() must emit a DEBUG record from fabric_dw.sql containing the user's query."""
+    target = _make_target()
+    conn = _make_plan_conn([(_PLAN_XML,)])
+
+    with (
+        patch("fabric_dw.sql._with_connect_retry", return_value=(conn, 0, 1, None)),
+        caplog.at_level(logging.DEBUG, logger="fabric_dw.sql"),
+    ):
+        await sql_exec.get_plan(target, "SELECT 1 AS n")
+
+    debug_records = [
+        r for r in caplog.records if r.levelno == logging.DEBUG and r.name == "fabric_dw.sql"
+    ]
+    sql_seen = any(
+        "SELECT 1 AS n" in r.getMessage() or getattr(r, "sql", None) == "SELECT 1 AS n"
+        for r in debug_records
+    )
+    msgs = [r.getMessage() for r in debug_records]
+    assert sql_seen, f"Expected SQL in DEBUG records; got: {msgs}"
+
+
+async def test_get_plan_no_debug_log_when_level_is_info(caplog: pytest.LogCaptureFixture) -> None:
+    """get_plan() must NOT emit any fabric_dw.sql records when DEBUG is disabled."""
+    target = _make_target()
+    conn = _make_plan_conn([(_PLAN_XML,)])
+
+    with (
+        patch("fabric_dw.sql._with_connect_retry", return_value=(conn, 0, 1, None)),
+        caplog.at_level(logging.INFO, logger="fabric_dw.sql"),
+    ):
+        await sql_exec.get_plan(target, "SELECT 1 AS n")
+
+    sql_records = [r for r in caplog.records if r.name == "fabric_dw.sql"]
+    assert sql_records == [], f"Expected no fabric_dw.sql records at INFO level; got: {sql_records}"
+
+
+async def test_get_plan_logs_user_query_not_showplan_control_statements(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """get_plan() must log the user's query exactly once, not the SET SHOWPLAN wrappers."""
+    target = _make_target()
+    conn = _make_plan_conn([(_PLAN_XML,)])
+
+    with (
+        patch("fabric_dw.sql._with_connect_retry", return_value=(conn, 0, 1, None)),
+        caplog.at_level(logging.DEBUG, logger="fabric_dw.sql"),
+    ):
+        await sql_exec.get_plan(target, "SELECT 42 AS answer")
+
+    debug_records = [
+        r for r in caplog.records if r.levelno == logging.DEBUG and r.name == "fabric_dw.sql"
+    ]
+    logged_sqls = [getattr(r, "sql", r.getMessage()) for r in debug_records]
+
+    # The user's query must appear exactly once.
+    user_query_count = sum(1 for s in logged_sqls if "SELECT 42 AS answer" in s)
+    assert user_query_count == 1, (
+        f"Expected user query logged once; got {user_query_count}: {logged_sqls}"
+    )
+
+    # The control statements must NOT be logged.
+    control_seen = any("SHOWPLAN_XML" in s for s in logged_sqls)
+    assert not control_seen, (
+        f"SET SHOWPLAN_XML control statements must not be logged; got: {logged_sqls}"
+    )
+
+
+async def test_get_plan_secret_logged_redacted(caplog: pytest.LogCaptureFixture) -> None:
+    """get_plan() must log SQL with secrets redacted, not in raw form."""
+    target = _make_target()
+    raw_secret = "sv=2024&sig=TOPSECRETTOKEN"  # noqa: S105
+    copy_sql = (
+        f"COPY INTO [dbo].[t] FROM 'https://x.blob.core.windows.net/c/f.parquet' "
+        f"WITH (CREDENTIAL = (IDENTITY = 'Shared Access Signature', SECRET = '{raw_secret}'))"
+    )
+    conn = _make_plan_conn([(_PLAN_XML,)])
+
+    with (
+        patch("fabric_dw.sql._with_connect_retry", return_value=(conn, 0, 1, None)),
+        caplog.at_level(logging.DEBUG, logger="fabric_dw.sql"),
+    ):
+        await sql_exec.get_plan(target, copy_sql)
+
+    all_log_text = " ".join(
+        str(r.getMessage()) + str(getattr(r, "sql", "")) for r in caplog.records
+    )
+    assert "TOPSECRETTOKEN" not in all_log_text, "Raw secret must not appear in any log record"
+    assert "***" in all_log_text, "Redacted placeholder '***' must appear in log records"

@@ -19,7 +19,7 @@ from fabric_dw import sql
 from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import FabricError, PermissionDeniedError
 from fabric_dw.models import SqlResult
-from fabric_dw.sql import SqlTarget
+from fabric_dw.sql import SqlTarget, _log_sql_execute
 
 __all__ = ["execute", "get_plan"]
 
@@ -199,6 +199,7 @@ async def execute(
             cursor = conn.cursor()
             with closing(cursor):
                 try:
+                    _log_sql_execute(query)
                     cursor.execute(query)
                 except Exception as exc:
                     mapped = sql.map_driver_error(exc)
@@ -317,6 +318,7 @@ async def get_plan(
                 plan_parts: list[str] = []
                 try:
                     cursor.execute("SET SHOWPLAN_XML ON")
+                    _log_sql_execute(query)
                     cursor.execute(query)
                     # Normalise to real tuples so the list[tuple[...]] annotation
                     # is honest regardless of which driver Row type is returned
