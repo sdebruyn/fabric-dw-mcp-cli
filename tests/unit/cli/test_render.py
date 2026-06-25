@@ -150,6 +150,370 @@ class TestCellHelper:
         assert _cell(0.0) == "0"
 
 
+class TestRichMarkupEscape:
+    """Column names and cell values containing Rich markup characters render verbatim.
+
+    Rich interprets ``[<alpha>...]`` sequences as markup tags and strips them.
+    Column names like ``FileRowCount[avg]`` or ``Status[current]`` (alpha-prefixed
+    bracket content) are silently stripped without escaping — leaving blank headers.
+
+    Regression tests for issue #745.
+    """
+
+    def _render_to_string(self, data: object, *, width: int = 200) -> str:
+        sio = StringIO()
+        console = Console(file=sio, width=width, highlight=False, no_color=True)
+        render(data, json_output=False, console=console, table_title="Table Health Metrics")
+        return sio.getvalue()
+
+    # ------------------------------------------------------------------
+    # 1. Column names with alpha-prefixed brackets ARE stripped by Rich without escaping
+    # ------------------------------------------------------------------
+
+    def test_alpha_bracket_column_name_renders_verbatim(self) -> None:
+        """Column headers like ``FileRowCount[avg]`` must appear verbatim, not stripped.
+
+        Rich treats ``[avg]`` as a (failed) markup tag and strips it, leaving
+        ``FileRowCount`` without the bracket suffix — or an empty string if the
+        whole name is ``[something]``.  Without ``_escape_markup`` the bracket
+        content disappears silently.
+        """
+        data = [
+            {
+                "FileRowCount[avg]": 0,
+                "Status[current]": "ok",
+                "PhysicalRowCount": 1000000,
+            }
+        ]
+        output = self._render_to_string(data)
+        assert "FileRowCount[avg]" in output
+        assert "Status[current]" in output
+
+    def test_plain_column_name_still_renders(self) -> None:
+        """Non-bracket column names must continue to render correctly after the fix."""
+        data = [{"PhysicalRowCount": 1000000, "FileRowCount[avg]": 0}]
+        output = self._render_to_string(data)
+        assert "PhysicalRowCount" in output
+
+    # ------------------------------------------------------------------
+    # 2. Cell values with alpha-bracketed content render verbatim
+    # ------------------------------------------------------------------
+
+    def test_bracket_cell_value_renders_verbatim(self) -> None:
+        """A string cell value like ``[redacted]`` must appear verbatim, not stripped."""
+        data = [{"label": "[redacted]", "count": 5}]
+        output = self._render_to_string(data)
+        assert "[redacted]" in output
+
+    # ------------------------------------------------------------------
+    # 3. Intentional NULL styling is preserved (no double-escape)
+    # ------------------------------------------------------------------
+
+    def test_null_cell_still_renders_as_dim_null(self) -> None:
+        """Escaping data strings must not break the intentional ``[dim]NULL[/dim]`` styling.
+
+        A ``None`` value in a kept column must still render as the visible text
+        ``NULL`` (styled dim) — not as the literal tag string ``[dim]NULL[/dim]``.
+        Two rows are used so the column is not all-null and is therefore kept.
+        """
+        data = [
+            {"FileRowCount[avg]": None, "PhysicalRowCount": 1000000},
+            {"FileRowCount[avg]": 42, "PhysicalRowCount": 2000000},
+        ]
+        output = self._render_to_string(data)
+        # The visible rendered text "NULL" must appear (dim styling applied by Rich)
+        assert "NULL" in output
+        # The raw tag must NOT appear literally (that would mean escaping went wrong)
+        assert "[dim]NULL[/dim]" not in output
+
+    # ------------------------------------------------------------------
+    # 4. render_permissions_table escapes data-derived values
+    # ------------------------------------------------------------------
+
+    def test_permissions_table_escapes_group_name_in_display(self) -> None:
+        """A principal display name containing brackets must appear verbatim."""
+        principal = ItemAccessPrincipal.model_validate(
+            {
+                "id": "12345678-1234-5678-1234-567812345678",
+                "displayName": "[sg-devs]",
+                "type": "Group",
+                "userDetails": {"userPrincipalName": ""},
+            }
+        )
+        detail = ItemAccessDetail.model_validate(
+            {"permissions": ["Read"], "additionalPermissions": []}
+        )
+        access = ItemAccess.model_validate(
+            {
+                "principal": principal.model_dump(by_alias=True, mode="json"),
+                "itemAccessDetails": detail.model_dump(by_alias=True, mode="json"),
+            }
+        )
+        sio = StringIO()
+        console = Console(file=sio, width=200, highlight=False, no_color=True)
+        render_permissions_table([access], title="Test", console=console)
+        output = sio.getvalue()
+        assert "[sg-devs]" in output
+
+    def test_refresh_table_escapes_table_name(self) -> None:
+        """A table name containing brackets must appear verbatim in the refresh table."""
+        s = TableSyncStatus.model_validate(
+            {
+                "tableName": "dbo.[weird table]",
+                "status": "Success",
+                "endDateTime": None,
+                "error": None,
+            }
+        )
+        sio = StringIO()
+        console = Console(file=sio, width=200, highlight=False, no_color=True)
+        render_refresh_table([s], console=console)
+        output = sio.getvalue()
+        assert "dbo.[weird table]" in output
+
+
+# ---------------------------------------------------------------------------
+# Wide-table vertical fallback (issue #745 / #749)
+# ---------------------------------------------------------------------------
+
+#: Simulated health-check row (~16 columns) — the real sp_get_table_health_metrics
+#: shape that triggered #745.  Width-starvation at 80 cols, not markup, was the
+#: cause of all-blank headers in practice.
+_HEALTH_CHECK_ROW: dict[str, object] = {
+    "PotentialAnomalyType": 0,
+    "PhysicalRowCount": 1000000,
+    "FileRowCount[0]": 0,
+    "FileRowCount[1,10)": 0,
+    "FileRowCount[10,100)": 5,
+    "FileRowCount[100,1000)": 12,
+    "FileRowCount[1000,10000)": 40,
+    "FileRowCount[ten_thousand_plus]": 0,
+    "DeletedRowCount": 3,
+    "TotalFileCount": 57,
+    "ActiveFileCount": 57,
+    "InactiveFileCount": 0,
+    "CompressedFileSize": 4096000,
+    "UncompressedFileSize": 8192000,
+    "TableName": "dbo.taxi_trips",
+    "SchemaName": "dbo",
+}
+
+#: Simulated queries/sessions shape (~12 columns).
+_QUERIES_ROWS: list[dict[str, object]] = [
+    {
+        "session_id": "abc123",
+        "login_name": "user@example.com",
+        "status": "running",
+        "command": "SELECT",
+        "start_time": "2026-06-25T10:00:00",
+        "cpu_time": 1200,
+        "total_elapsed_time": 1500,
+        "reads": 9000,
+        "writes": 0,
+        "logical_reads": 18000,
+        "blocking_session_id": None,
+        "wait_type": "ASYNC_NETWORK_IO",
+    },
+    {
+        "session_id": "def456",
+        "login_name": "svc@example.com",
+        "status": "sleeping",
+        "command": "AWAITING COMMAND",
+        "start_time": "2026-06-25T09:55:00",
+        "cpu_time": 0,
+        "total_elapsed_time": 300000,
+        "reads": 0,
+        "writes": 0,
+        "logical_reads": 0,
+        "blocking_session_id": None,
+        "wait_type": None,
+    },
+]
+
+
+class TestWideTableVerticalFallback:
+    """Wide-schema tables fall back to a vertical layout when they cannot fit horizontally.
+
+    The fallback criterion is header-legibility based: ``_table_fits`` estimates
+    the minimum width needed to show each column header (GUID columns get their
+    fixed width; non-GUID columns get ``min(len(header), _HEADER_MAX_WIDTH)``
+    chars) and triggers vertical rendering when that estimate exceeds the console
+    width.  This correctly catches 10-, 12-, 14-, and 16-column shapes at width=80
+    while leaving the #743 GUID-heavy shape (2 GUIDs + displayName + kind) horizontal.
+    """
+
+    def _render_at_width(
+        self,
+        data: object,
+        width: int,
+        *,
+        table_title: str | None = None,
+        drop_columns: tuple[str, ...] | None = None,
+    ) -> str:
+        sio = StringIO()
+        console = Console(file=sio, width=width, highlight=False, no_color=True)
+        render(
+            data,
+            json_output=False,
+            console=console,
+            table_title=table_title,
+            drop_columns=drop_columns,
+        )
+        return sio.getvalue()
+
+    # ------------------------------------------------------------------
+    # 1. Health-check shape (~16 cols, 1 row) at width=80 → vertical
+    # ------------------------------------------------------------------
+
+    def test_health_check_vertical_at_width_80_shows_all_field_names(self) -> None:
+        """All ~16 field names appear in full in the vertical layout at width=80."""
+        output = self._render_at_width(
+            [_HEALTH_CHECK_ROW], width=80, table_title="Table Health Metrics"
+        )
+        for col in _HEALTH_CHECK_ROW:
+            assert col in output, f"Field '{col}' missing from vertical output"
+
+    def test_health_check_vertical_at_width_80_shows_bracketed_field_names(self) -> None:
+        """Alpha-bracket column names appear verbatim in the vertical fallback at width=80.
+
+        ``FileRowCount[ten_thousand_plus]`` has alpha-prefixed bracket content —
+        Rich strips ``[ten_thousand_plus]`` as a (failed) markup tag on unpatched code,
+        making this a genuine guard for the ``_escape_markup`` call on column names.
+        ``FileRowCount[1,10)`` is digit-prefixed and also checked for completeness.
+        """
+        output = self._render_at_width(
+            [_HEALTH_CHECK_ROW], width=80, table_title="Table Health Metrics"
+        )
+        # Alpha-bracket — stripped by unpatched Rich, so this guards the escape fix
+        assert "FileRowCount[ten_thousand_plus]" in output
+        # Also present for completeness (digit-bracket, not stripped by Rich)
+        assert "FileRowCount[1,10)" in output
+
+    def test_health_check_vertical_at_width_80_shows_title(self) -> None:
+        """The table title is printed in the vertical fallback output."""
+        output = self._render_at_width(
+            [_HEALTH_CHECK_ROW], width=80, table_title="Table Health Metrics"
+        )
+        assert "Table Health Metrics" in output
+
+    def test_health_check_no_truncated_header_artifacts(self) -> None:
+        """At width=80 the vertical output must NOT contain the three-separator artifact."""
+        output = self._render_at_width(
+            [_HEALTH_CHECK_ROW], width=80, table_title="Table Health Metrics"
+        )
+        assert "┃┃┃" not in output
+
+    def test_bracket_title_renders_verbatim_in_vertical_fallback(self) -> None:
+        """A table title containing brackets appears verbatim in the vertical fallback.
+
+        Rich parses ``Table(title=...)`` as markup.  Without ``_escape_markup`` a
+        title like ``Stats [2024]`` would render as ``Stats`` with ``[2024]`` dropped.
+        """
+        output = self._render_at_width([_HEALTH_CHECK_ROW], width=80, table_title="Stats [2024]")
+        assert "Stats [2024]" in output
+
+    def test_bracket_title_renders_verbatim_in_horizontal_table(self) -> None:
+        """A table title containing brackets appears verbatim in the horizontal layout.
+
+        Uses a 2-column table that fits at width=200 to stay in the horizontal path.
+        """
+        data = [{"id": "1", "name": "foo"}]
+        output = self._render_at_width(data, width=200, table_title="Stats [2024]")
+        assert "Stats [2024]" in output
+
+    # ------------------------------------------------------------------
+    # 2. 10-col and 14-col health-check shapes → vertical at width=80
+    # ------------------------------------------------------------------
+
+    def test_10col_health_check_vertical_at_width_80(self) -> None:
+        """A 10-column health-check subset goes vertical at width=80."""
+        data = [dict(list(_HEALTH_CHECK_ROW.items())[:10])]
+        output = self._render_at_width(data, width=80, table_title="Health Check")
+        for col in data[0]:
+            assert col in output, f"Field '{col}' missing from 10-col vertical output"
+
+    def test_14col_health_check_vertical_at_width_80(self) -> None:
+        """A 14-column health-check subset goes vertical at width=80."""
+        data = [dict(list(_HEALTH_CHECK_ROW.items())[:14])]
+        output = self._render_at_width(data, width=80, table_title="Health Check")
+        for col in data[0]:
+            assert col in output, f"Field '{col}' missing from 14-col vertical output"
+
+    # ------------------------------------------------------------------
+    # 3. 12-col queries shape at width=80 → vertical (issue #749)
+    # ------------------------------------------------------------------
+
+    def test_queries_vertical_at_width_80_shows_all_field_names(self) -> None:
+        """All non-null field names appear in the vertical layout at width=80.
+
+        With the header-based threshold, the 11 visible columns (blocking_session_id
+        is all-null and pruned) have headers averaging ~10 chars, which far exceeds
+        80 columns, triggering the vertical fallback.
+        """
+        output = self._render_at_width(_QUERIES_ROWS, width=80)
+        # blocking_session_id is all-null → pruned; check the non-null columns only
+        visible_cols = [c for c in _QUERIES_ROWS[0] if c != "blocking_session_id"]
+        for col in visible_cols:
+            assert col in output, f"Field '{col}' missing from vertical output"
+
+    def test_queries_vertical_at_width_80_shows_values(self) -> None:
+        """Cell values from multiple rows appear in the vertical output at width=80."""
+        output = self._render_at_width(_QUERIES_ROWS, width=80)
+        assert "abc123" in output
+        assert "user@example.com" in output
+
+    # ------------------------------------------------------------------
+    # 4. #743 shape stays horizontal — regression guard
+    # ------------------------------------------------------------------
+
+    def test_guid_shape_stays_horizontal_at_width_80(self) -> None:
+        """The #743 GUID-heavy shape (2 GUIDs + displayName + kind) stays horizontal.
+
+        Estimated fit: primary GUID (36) + secondary GUID (10) + displayName (11)
+        + kind (4) + borders (3*4+1=13) = 74 <= 80, so the horizontal layout is kept.
+        """
+        guid1 = "eb85cc99-5ad8-4f89-85b8-2a46eaa410d6"
+        guid2 = "4c18bf4e-86dd-47da-8602-87184ff16c13"
+        data = [
+            {"id": guid1, "displayName": "My Workspace", "workspaceId": guid2, "kind": "Warehouse"}
+        ]
+        output = self._render_at_width(data, width=80)
+        # Horizontal table uses box-drawing column separators
+        assert "┃" in output or "│" in output
+        # Primary GUID must appear in full (no_wrap)
+        assert guid1 in output
+
+    # ------------------------------------------------------------------
+    # 5. Small (fits) tables keep horizontal layout — regression guard
+    # ------------------------------------------------------------------
+
+    def test_small_table_stays_horizontal(self) -> None:
+        """A 2-column table at width=80 stays horizontal (no panel-style output)."""
+        data = [{"id": "1", "name": "foo"}, {"id": "2", "name": "bar"}]
+        output = self._render_at_width(data, width=80)
+        assert "┃" in output or "│" in output
+
+    def test_small_table_headers_present(self) -> None:
+        """Column headers appear in the horizontal layout for small tables."""
+        data = [{"id": "1", "name": "foo"}]
+        output = self._render_at_width(data, width=120)
+        assert "id" in output
+        assert "name" in output
+
+    # ------------------------------------------------------------------
+    # 6. Existing multi-GUID width tests are unaffected (PR #743 regression guard)
+    # ------------------------------------------------------------------
+
+    def test_two_guid_columns_still_work_at_width_120(self) -> None:
+        """Two-GUID-column table renders correctly at width=120 (horizontal layout)."""
+        guid1 = "eb85cc99-5ad8-4f89-85b8-2a46eaa410d6"
+        guid2 = "4c18bf4e-86dd-47da-8602-87184ff16c13"
+        data = [{"id": guid1, "displayName": "Adventure Works Finance", "capacityId": guid2}]
+        output = self._render_at_width(data, width=120)
+        assert guid1 in output
+        assert "displayName" in output
+
+
 class TestNullRendering:
     """NULL values in table and panel output are rendered as dim 'NULL', not 'None'."""
 

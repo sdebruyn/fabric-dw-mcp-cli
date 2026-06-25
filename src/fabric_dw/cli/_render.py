@@ -8,6 +8,7 @@ from collections.abc import Sequence
 
 import click
 from rich.console import Console
+from rich.markup import escape as _escape_markup
 from rich.panel import Panel
 from rich.table import Table
 
@@ -34,6 +35,16 @@ _GUID_RE: re.Pattern[str] = re.compile(
 
 #: Fixed width for GUID columns — a GUID is exactly 36 characters.
 _GUID_WIDTH = 36
+
+#: Estimated width for secondary (non-primary) GUID columns in the fit
+#: heuristic.  Secondary GUIDs are allowed to truncate (no forced min_width),
+#: but they still occupy at least this many chars in practice before wrapping.
+_GUID_SECONDARY_WIDTH = 10
+
+#: Cap applied to non-GUID header names when estimating required table width.
+#: Headers longer than this are assumed to truncate gracefully (Rich ellipsis)
+#: rather than needing their full length to be legible.
+_HEADER_MAX_WIDTH = 24
 
 
 def _is_guid_column(col: str, norm_rows: list[dict[str, object] | object]) -> bool:
@@ -130,12 +141,16 @@ def _cell(value: object) -> str:
     spurious ``.0`` suffix (e.g. ``"1500"``), matching the appearance of the
     underlying integer.  Fractional floats (e.g. ``1234.5``) are rendered
     as-is via ``str()``.
+
+    All data-derived string values are escaped with :func:`rich.markup.escape`
+    so that bracket characters (``[``, ``]``) in the data are rendered
+    verbatim and never interpreted as Rich markup tags.
     """
     if value is None:
         return "[dim]NULL[/dim]"
     if isinstance(value, float) and value.is_integer():
-        return str(int(value))
-    return str(value)
+        return _escape_markup(str(int(value)))
+    return _escape_markup(str(value))
 
 
 def _column_is_all_null(col: str, norm_rows: list[dict[str, object] | object]) -> bool:
@@ -167,6 +182,10 @@ def _add_columns(
     width on a narrow terminal (e.g. the 80-col default for piped/non-TTY
     output).
 
+    Column names are escaped with :func:`rich.markup.escape` so that bracket
+    characters (e.g. ``FileRowCount[avg]``) are rendered verbatim instead of
+    being silently stripped as markup tags.
+
     .. note::
         "First" is determined by insertion order of *visible_columns*, which
         mirrors API-response field order.  All current Fabric API models place
@@ -176,14 +195,63 @@ def _add_columns(
     """
     primary_guid_assigned = False
     for col in visible_columns:
+        escaped_col = _escape_markup(col)
+        if _is_guid_column(col, norm_rows) and not primary_guid_assigned:
+            table.add_column(escaped_col, no_wrap=True, min_width=_GUID_WIDTH)
+            primary_guid_assigned = True
+        else:
+            table.add_column(escaped_col)
+
+
+def _table_fits(
+    visible_columns: list[str],
+    norm_rows: list[dict[str, object] | object],
+    console_width: int,
+) -> bool:
+    """Return *True* when *visible_columns* can fit legibly in *console_width*.
+
+    The heuristic mirrors what :func:`_add_columns` actually does at render time:
+
+    * The **primary GUID column** (first column whose every non-null value is a
+      canonical GUID) needs its full ``_GUID_WIDTH`` (36) chars — it is rendered
+      ``no_wrap`` so it is never truncated.
+    * **Secondary GUID columns** are given a floor of ``_GUID_SECONDARY_WIDTH``
+      (10) chars — they can truncate, but they still consume visible space.
+    * **Non-GUID columns** need ``min(len(header), _HEADER_MAX_WIDTH)`` chars —
+      a 20-char header like ``PotentialAnomalyType`` needs its full length to be
+      readable; a very long header (>24) is assumed to truncate gracefully.
+    * **Rich border overhead**: 2 chars padding per column (1 space each side)
+      plus 1 separator char between each pair of columns (``len(cols) - 1``)
+      plus 2 outer border chars.  Total: ``3 * len(cols) + 1``.
+
+    Calibration examples at ``console_width = 80``:
+    * #743 shape — ``id``(GUID/36) + ``workspaceId``(GUID/10) +
+      ``displayName``(11) + ``kind``(4) + borders ≈ 36+10+11+4 + 3*4+1 = 74 ≤ 80
+      → **horizontal** ✓
+    * 12-col queries shape — headers avg ~10 chars → 12*10 + 3*12+1 = 157 > 80
+      → **vertical** ✓
+    * 16-col health-check shape — headers avg ~15 chars → 16*15 + 3*16+1 = 289 > 80
+      → **vertical** ✓
+    """
+    if not visible_columns:
+        return True
+
+    primary_guid_assigned = False
+    content_width = 0
+    for col in visible_columns:
         if _is_guid_column(col, norm_rows):
             if not primary_guid_assigned:
-                table.add_column(col, no_wrap=True, min_width=_GUID_WIDTH)
+                content_width += _GUID_WIDTH
                 primary_guid_assigned = True
             else:
-                table.add_column(col)
+                content_width += _GUID_SECONDARY_WIDTH
         else:
-            table.add_column(col)
+            content_width += min(len(col), _HEADER_MAX_WIDTH)
+
+    # Rich border: 1 left-padding + 1 right-padding per column + 1 separator
+    # between each adjacent pair + 2 outer frame chars → 3 * N + 1.
+    border_chars = 3 * len(visible_columns) + 1
+    return content_width + border_chars <= console_width
 
 
 def _render_table(
@@ -193,7 +261,15 @@ def _render_table(
     title: str | None,
     drop_columns: tuple[str, ...] | list[str] | None = None,
 ) -> None:
-    """Render a list of dicts as a Rich Table.
+    """Render a list of dicts as a Rich Table (or vertical fallback).
+
+    When the estimated minimum width required to show all visible column headers
+    legibly exceeds the current console width, the renderer switches to a
+    vertical, record-oriented layout — one panel per row listing ``key: value``
+    pairs.  This keeps wide-schema tables (e.g. ``tables health-check`` with
+    ~16 metrics) fully legible on an 80-column terminal.  Tables that fit
+    normally keep the horizontal layout and the existing GUID-column width
+    behaviour from PR #743.  See :func:`_table_fits` for the exact criterion.
 
     Columns whose value is ``None`` in **every** row are omitted from the
     output — they only clutter list views (e.g. ``definition`` for
@@ -209,9 +285,13 @@ def _render_table(
             that is redundant in a given context (e.g. a shared workspace id).
     """
     dropped: frozenset[str] = frozenset(drop_columns or ())
-    table = Table(title=title, show_header=True, header_style="bold")
 
     if not rows:
+        table = Table(
+            title=_escape_markup(title) if title else title,
+            show_header=True,
+            header_style="bold",
+        )
         console.print(table)
         return
 
@@ -237,6 +317,18 @@ def _render_table(
     all_null = {col for col in columns if _column_is_all_null(col, norm_rows)}
     visible_columns = [col for col in columns if col not in all_null and col not in dropped]
 
+    # Wide-table fallback: when the estimated minimum width for all visible
+    # columns exceeds the console width, switch to a vertical key: value layout
+    # per row so that every field name and value is fully readable.
+    if not _table_fits(visible_columns, norm_rows, console.width):
+        _render_vertical(norm_rows, visible_columns, console=console, title=title)
+        return
+
+    table = Table(
+        title=_escape_markup(title) if title else title,
+        show_header=True,
+        header_style="bold",
+    )
     _add_columns(table, visible_columns, norm_rows)
 
     for row in norm_rows:
@@ -248,9 +340,37 @@ def _render_table(
     console.print(table)
 
 
+def _render_vertical(
+    norm_rows: list[dict[str, object] | object],
+    visible_columns: list[str],
+    *,
+    console: Console,
+    title: str | None,
+) -> None:
+    """Render *norm_rows* as a sequence of vertical key: value panels.
+
+    Used as a fallback when the horizontal table would be too wide for the
+    console.  Each dict row is rendered as a ``_render_panel``-style block;
+    scalar rows are printed as plain text.  The overall title is printed once
+    before the first row.
+    """
+    if title:
+        console.print(f"[bold]{_escape_markup(title)}[/bold]")
+
+    for i, row in enumerate(norm_rows):
+        if i > 0:
+            # Light separator between rows
+            console.rule(style="dim")
+        if isinstance(row, dict):
+            panel_data = {col: row.get(col) for col in visible_columns}
+            _render_panel(panel_data, console=console, title=None)
+        else:
+            console.print(_cell(row))
+
+
 def _render_panel(data: dict[str, object], *, console: Console, title: str | None) -> None:
     """Render a single dict as a Rich Panel with key: value lines."""
-    lines = "\n".join(f"[bold]{k}[/bold]: {_cell(v)}" for k, v in data.items())
+    lines = "\n".join(f"[bold]{_escape_markup(k)}[/bold]: {_cell(v)}" for k, v in data.items())
     panel = Panel(lines, title=title)
     console.print(panel)
 
@@ -291,11 +411,13 @@ def render_permissions_table(
 
     for entry in accesses:
         p = entry.principal
-        display = p.display_name or ""
-        identity = p.user_principal_name or (str(p.aad_app_id) if p.aad_app_id else "")
-        ptype = p.type
-        perms = ", ".join(entry.item_access_details.permissions)
-        additional = ", ".join(entry.item_access_details.additional_permissions)
+        display = _escape_markup(p.display_name or "")
+        identity = _escape_markup(
+            p.user_principal_name or (str(p.aad_app_id) if p.aad_app_id else "")
+        )
+        ptype = _escape_markup(p.type)
+        perms = _escape_markup(", ".join(entry.item_access_details.permissions))
+        additional = _escape_markup(", ".join(entry.item_access_details.additional_permissions))
         table.add_row(display, identity, ptype, perms, additional)
 
     con.print(table)
@@ -313,9 +435,9 @@ def render_refresh_table(
     table.add_column("Error", max_width=ERROR_MAX_LEN)
 
     for s in statuses:
-        status_text = s.status
+        status_text = _escape_markup(s.status)
         style = STATUS_STYLES.get(s.status, "")
-        end_dt = s.end_date_time.isoformat() if s.end_date_time else ""
+        end_dt = _escape_markup(s.end_date_time.isoformat() if s.end_date_time else "")
 
         error_text = ""
         if s.error:
@@ -324,10 +446,10 @@ def render_refresh_table(
                 parts.append(s.error.error_code)
             if s.error.message:
                 parts.append(s.error.message)
-            error_text = ": ".join(parts)
+            error_text = _escape_markup(": ".join(parts))
 
         table.add_row(
-            s.table_name,
+            _escape_markup(s.table_name),
             f"[{style}]{status_text}[/{style}]" if style else status_text,
             end_dt,
             error_text,
