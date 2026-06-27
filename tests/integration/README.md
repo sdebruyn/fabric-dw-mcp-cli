@@ -2,7 +2,7 @@
 
 This document describes the fixture rule that governs which SQL target(s) each
 integration test must run against.  **Violations of this rule mean silent
-coverage drift** — a dual-target operation can break on SQL Analytics Endpoints
+coverage drift**. A dual-target operation can break on SQL Analytics Endpoints
 without any failing CI test.  A unit-level meta-guard
 (`tests/unit/test_dual_target_coverage.py`) enforces the rule automatically.
 
@@ -11,9 +11,9 @@ without any failing CI test.  A unit-level meta-guard
 The single source of truth for whether an operation is DWH-only or dual-target
 is the **service guard** `_assert_not_sql_endpoint(kind)` in the service layer:
 
-- **DWH-only** — the service calls `_assert_not_sql_endpoint`; the operation is
+- **DWH-only**: the service calls `_assert_not_sql_endpoint`; the operation is
   rejected on SQL Analytics Endpoints at the service layer.
-- **Dual-target** — no such guard; the operation works on both Fabric Data
+- **Dual-target**: no such guard; the operation works on both Fabric Data
   Warehouses and SQL Analytics Endpoints.
 
 ## Fixture rule
@@ -28,9 +28,9 @@ is the **service guard** `_assert_not_sql_endpoint(kind)` in the service layer:
 
 ### Dual-target read tests (`read_target`)
 
-Any test that only **reads** data — `list_*`, `get_*`, `count_*`, `execute_sql`,
+Any test that only **reads** data (`list_*`, `get_*`, `count_*`, `execute_sql`,
 `get_query_plan`, query-insights views, audit settings read, statistics read,
-`generate_dbt_profile`, column metadata — must use `read_target`.  This fixture
+`generate_dbt_profile`, column metadata) must use `read_target`.  This fixture
 is parametrized over `["warehouse", "sql_endpoint"]` so the test body runs once
 per target automatically.
 
@@ -53,10 +53,10 @@ dual-target, so teardown works identically on both targets.
 
 ### DWH-only tests (`warehouse_schema` / `shared_warehouse`)
 
-Base-table data writes — `create_table`, `create_empty_table`, `create_table_from_parquet`,
+Base-table data writes (`create_table`, `create_empty_table`, `create_table_from_parquet`,
 `create_table_from_csv`, `clone_table`, `delete_table`, `clear_table`, `rename_table`,
 `set_cluster_columns`, `copy_into_from_url`, `import_table_from_url`, `load_local_file`,
-`create_statistics`, `update_statistics`, `drop_statistics` — are rejected by the service
+`create_statistics`, `update_statistics`, `drop_statistics`) are rejected by the service
 layer on SQL Analytics Endpoints.  Their tests use `warehouse_schema` (for per-test
 schema isolation) or `shared_warehouse` directly and do NOT need `read_target` or
 `mutable_schema_target`.
@@ -87,12 +87,12 @@ pytest -m "integration and sql_endpoint" -n0 -v tests/integration/
 `request.getfixturevalue("shared_sql_endpoint")` only on the `sql_endpoint`
 leg.  This prevents pytest from provisioning the SQL analytics endpoint
 (~6 min: Lakehouse create + poll + seed) during local runs or during the
-`[warehouse]` leg — provisioning is paid only when the endpoint leg actually
+`[warehouse]` leg. Provisioning is paid only when the endpoint leg actually
 runs.
 
 `read_target` is a sync fixture, so its `getfixturevalue` runs outside any
 event loop.  `mutable_schema_target` is async, so it **must not** call
-`getfixturevalue` on the async `shared_sql_endpoint` itself — doing so makes
+`getfixturevalue` on the async `shared_sql_endpoint` itself. Doing so makes
 pytest-asyncio call `runner.run()` nested inside the running loop and raises
 `RuntimeError: Runner.run() cannot be called from a running event loop`.
 Instead, the parametrisation and the lazy resolution live on a **sync**
