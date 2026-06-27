@@ -1224,9 +1224,7 @@ def _invoke_cli_capture_exit_status(
     return mock_record.call_args.kwargs["exit_status"]  # type: ignore[no-any-return]
 
 
-def test_on_close_no_exception_maps_to_ok(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_on_close_no_exception_maps_to_ok(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """_on_close records exit_status='ok' when the command exits without raising.
 
     CliRunner uses standalone_mode=False internally, so a clean run exits the
@@ -1256,9 +1254,7 @@ def test_on_close_usage_error_maps_to_user_error(
     An unknown subcommand raises UsageError; _on_close inspects sys.exc_info()
     before Click's handler converts it to SystemExit(2), and maps it to 'user_error'.
     """
-    status = _invoke_cli_capture_exit_status(
-        ["cache", "no-such-subcommand"], monkeypatch, tmp_path
-    )
+    status = _invoke_cli_capture_exit_status(["cache", "no-such-subcommand"], monkeypatch, tmp_path)
     assert status == "user_error"
 
 
