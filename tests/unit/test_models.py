@@ -106,7 +106,7 @@ class TestWarehouse:
     def test_from_api_warehouse_collation_and_created_date(self) -> None:
         payload = json.loads(WAREHOUSE_GET_PAYLOAD)
         obj = Warehouse.from_api(payload, kind=WarehouseKind.WAREHOUSE)
-        assert obj.collation == payload["properties"]["defaultCollation"]
+        assert obj.collation == payload["properties"]["collationType"]
         assert obj.created_date is not None
 
     def test_extra_fields_ignored(self) -> None:
@@ -394,7 +394,7 @@ class TestWarehouseModelValidator:
     def test_model_validate_collation_and_created_date(self) -> None:
         payload = json.loads(WAREHOUSE_GET_PAYLOAD)
         obj = Warehouse.model_validate({**payload, "kind": WarehouseKind.WAREHOUSE})
-        assert obj.collation == payload["properties"]["defaultCollation"]
+        assert obj.collation == payload["properties"]["collationType"]
         assert obj.created_date is not None
 
     def test_from_api_shim_warehouse(self) -> None:
@@ -690,6 +690,18 @@ class TestWarehouseFlatteningParametric:
         payload = json.loads(WAREHOUSE_GET_PAYLOAD)
         with pytest.raises(ValueError, match="from_api does not support kind="):
             Warehouse.from_api(payload, kind=WarehouseKind.SNAPSHOT)
+
+    def test_collation_parsed_from_properties_collation_type(self) -> None:
+        """Regression: collation must be read from properties.collationType (real API field).
+
+        The Fabric REST API returns the collation under properties.collationType.
+        Previously the model read properties.defaultCollation (which the API never sends),
+        causing the collation to always fall back to FABRIC_DEFAULT_COLLATION.
+        """
+        payload = json.loads(WAREHOUSE_GET_PAYLOAD)
+        expected_collation = payload["properties"]["collationType"]
+        obj = Warehouse.from_api(payload, kind=WarehouseKind.WAREHOUSE)
+        assert obj.collation == expected_collation
 
 
 # ---------------------------------------------------------------------------

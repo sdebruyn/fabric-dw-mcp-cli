@@ -28,7 +28,7 @@ WAREHOUSE_GET_PAYLOAD = """{
   "workspaceId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "properties": {
     "connectionString": "saleswarehouse.datawarehouse.fabric.microsoft.com",
-    "defaultCollation": "Latin1_General_100_BIN2_UTF8",
+    "collationType": "Latin1_General_100_BIN2_UTF8",
     "createdDate": "2024-03-15T10:30:00Z",
     "oneLakeFilesPath": "https://onelake.dfs.fabric.microsoft.com/a1b2c3d4-e5f6-7890-abcd-ef1234567890/d4e5f6a7-b8c9-0123-def0-123456789abc/Files",
     "oneLakeTablesPath": "https://onelake.dfs.fabric.microsoft.com/a1b2c3d4-e5f6-7890-abcd-ef1234567890/d4e5f6a7-b8c9-0123-def0-123456789abc/Tables",
@@ -153,7 +153,7 @@ WAREHOUSE_LIST_PAYLOAD = """{
       "workspaceId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
       "properties": {
         "connectionString": "saleswarehouse.datawarehouse.fabric.microsoft.com",
-        "defaultCollation": "Latin1_General_100_BIN2_UTF8",
+        "collationType": "Latin1_General_100_BIN2_UTF8",
         "createdDate": "2024-03-15T10:30:00Z"
       }
     },
@@ -165,7 +165,7 @@ WAREHOUSE_LIST_PAYLOAD = """{
       "workspaceId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
       "properties": {
         "connectionString": "financewarehouse.datawarehouse.fabric.microsoft.com",
-        "defaultCollation": "Latin1_General_100_CI_AS_KS_WS_SC_UTF8",
+        "collationType": "Latin1_General_100_CI_AS_KS_WS_SC_UTF8",
         "createdDate": "2024-04-01T09:00:00Z"
       }
     }
@@ -184,7 +184,7 @@ WAREHOUSE_LIST_PAGE2_PAYLOAD = """{
       "workspaceId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
       "properties": {
         "connectionString": "hrwarehouse.datawarehouse.fabric.microsoft.com",
-        "defaultCollation": "Latin1_General_100_BIN2_UTF8",
+        "collationType": "Latin1_General_100_BIN2_UTF8",
         "createdDate": "2024-05-10T12:00:00Z"
       }
     }
