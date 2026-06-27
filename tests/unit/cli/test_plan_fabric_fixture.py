@@ -11,7 +11,7 @@ Also covers two additional live-captured plans (sanitized, tenant identifiers
 removed):
 - ``plan508_move.sqlplan``:  simple GROUP BY exercising Compute To Control
   Node (LogicalOp "Move") and Hash Match/Aggregate.
-- ``plan508_parallelism.sqlplan``:  complex query on sys catalog tables,
+- ``plan508_complex.sqlplan``:  complex query on sys catalog tables,
   exercising Concatenation, Filter, Index Scan, Clustered Index Seek, and
   TopN Sort — a broader operator surface than the TPC-H plans.
 
@@ -545,7 +545,7 @@ class TestPlan508MoveHtmlRenderer:
 
 
 # ---------------------------------------------------------------------------
-# plan508_parallelism: complex-surface fixture (Concatenation, Filter, etc.)
+# plan508_complex: complex-surface fixture (Concatenation, Filter, etc.)
 # ---------------------------------------------------------------------------
 
 
@@ -567,7 +567,7 @@ _PARA_EXPECTED_OPS: frozenset[str] = frozenset(
 
 
 class TestPlan508ParallelismParse:
-    """Parser tests for the plan508_parallelism.sqlplan fixture.
+    """Parser tests for the plan508_complex.sqlplan fixture.
 
     This plan exercises Concatenation, Filter, Clustered Index Seek, Index
     Scan, and TopN Sort — operators not all covered by the TPC-H fixtures.
