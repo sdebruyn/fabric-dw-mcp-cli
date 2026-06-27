@@ -7,6 +7,7 @@ import logging
 from typing import Annotated, Any, Literal, assert_never
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 from pydantic import Field
 
 from fabric_dw.cli._plan_mermaid import render_plan_mermaid
@@ -15,7 +16,7 @@ from fabric_dw.cli._plan_render import operator_to_dict
 from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
 from fabric_dw.mcp._guards import assert_readonly_sql, assert_workspace_allowed, env_flag
-from fabric_dw.mcp._helpers import fabric_err, make_sql_target, resolve_item
+from fabric_dw.mcp._helpers import make_sql_target, resolve_item, tool_err
 from fabric_dw.services import sql_exec as _sql_exec_svc
 
 __all__ = ["register"]
@@ -81,8 +82,19 @@ def register(mcp: FastMCP) -> None:
             result = await _sql_exec_svc.execute(
                 target, query, mode=ctx.auth_mode, row_limit=max_rows
             )
-        except FabricError as exc:
-            raise fabric_err(exc) from exc
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        except Exception as exc:
+            # Re-raise ToolError instances unchanged — they are already structured
+            # (e.g. from make_sql_target when the item has no connection string).
+            if isinstance(exc, ToolError):
+                raise
+            # The service execute() re-raises unmapped driver errors unchanged
+            # (documented bare `raise`). These can contain internal connection
+            # detail, ODBC state, or query text — they must not reach the MCP
+            # client. Convert to a generic safe message here at the trust boundary.
+            _log.debug("execute_sql: unhandled driver exception (suppressed)", exc_info=True)
+            raise ToolError("SQL execution failed due to a driver or network error.") from exc
         # The service fetches max_rows+1 rows so we can detect truncation without
         # pulling the entire result set over the wire.  Slice back to max_rows here.
         truncated = len(result.rows) > max_rows
@@ -158,8 +170,18 @@ def register(mcp: FastMCP) -> None:
             _log.debug("get_query_plan ws=%s item=%s format=%s", ws_id, entry.id, format)
             target = make_sql_target(ws_id, entry, item)
             plan_xml = await _sql_exec_svc.get_plan(target, query, mode=ctx.auth_mode)
-        except FabricError as exc:
-            raise fabric_err(exc) from exc
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        except Exception as exc:
+            if isinstance(exc, ToolError):
+                raise
+            # The service get_plan() re-raises unmapped driver errors unchanged
+            # (documented bare `raise`). These can contain internal connection
+            # detail or ODBC state — they must not reach the MCP client.
+            _log.debug("get_query_plan: unhandled driver exception (suppressed)", exc_info=True)
+            raise ToolError(
+                "Query plan retrieval failed due to a driver or network error."
+            ) from exc
 
         if format == "xml":
             return {"format": "xml", "plan_xml": plan_xml}

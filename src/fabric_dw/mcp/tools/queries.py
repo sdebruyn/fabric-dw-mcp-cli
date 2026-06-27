@@ -6,13 +6,13 @@ import logging
 from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 from pydantic import Field
 
 from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
 from fabric_dw.mcp._guards import assert_workspace_allowed, assert_writes_allowed
 from fabric_dw.mcp._helpers import (
-    fabric_err,
     make_sql_target,
     parse_iso8601,
     resolve_item,
@@ -47,8 +47,17 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             _log.debug("list_running_queries ws=%s item=%s", ws_id, entry.id)
             target = make_sql_target(ws_id, entry, item)
             result = await queries.list_running(target, mode=ctx.auth_mode)
-        except FabricError as exc:
-            raise fabric_err(exc) from exc
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        except Exception as exc:
+            if isinstance(exc, ToolError):
+                raise
+            _log.debug(
+                "list_running_queries: unhandled driver exception (suppressed)", exc_info=True
+            )
+            raise ToolError(
+                "Listing running queries failed due to a driver or network error."
+            ) from exc
         return [q.model_dump(by_alias=True, mode="json") for q in result]
 
     @mcp.tool(name="list_connections")
@@ -69,8 +78,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             _log.debug("list_connections ws=%s item=%s", ws_id, entry.id)
             target = make_sql_target(ws_id, entry, item)
             result = await queries.list_connections(target, mode=ctx.auth_mode)
-        except FabricError as exc:
-            raise fabric_err(exc) from exc
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        except Exception as exc:
+            if isinstance(exc, ToolError):
+                raise
+            _log.debug("list_connections: unhandled driver exception (suppressed)", exc_info=True)
+            raise ToolError("Listing connections failed due to a driver or network error.") from exc
         return [c.model_dump(by_alias=True, mode="json") for c in result]
 
     @mcp.tool(name="kill_session")
@@ -132,8 +146,17 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             result = await _qi_svc.list_request_history(
                 target, limit=limit, since=since_dt, until=until_dt, mode=ctx.auth_mode
             )
-        except FabricError as exc:
-            raise fabric_err(exc) from exc
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        except Exception as exc:
+            if isinstance(exc, ToolError):
+                raise
+            _log.debug(
+                "list_request_history: unhandled driver exception (suppressed)", exc_info=True
+            )
+            raise ToolError(
+                "Request history query failed due to a driver or network error."
+            ) from exc
         return [q.model_dump(by_alias=True, mode="json") for q in result]
 
     @mcp.tool(name="list_session_history")
@@ -167,8 +190,17 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             result = await _qi_svc.list_session_history(
                 target, limit=limit, since=since_dt, until=until_dt, mode=ctx.auth_mode
             )
-        except FabricError as exc:
-            raise fabric_err(exc) from exc
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        except Exception as exc:
+            if isinstance(exc, ToolError):
+                raise
+            _log.debug(
+                "list_session_history: unhandled driver exception (suppressed)", exc_info=True
+            )
+            raise ToolError(
+                "Session history query failed due to a driver or network error."
+            ) from exc
         return [q.model_dump(by_alias=True, mode="json") for q in result]
 
     @mcp.tool(name="list_frequent_queries")
@@ -202,8 +234,17 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             result = await _qi_svc.list_frequent_queries(
                 target, limit=limit, since=since_dt, until=until_dt, mode=ctx.auth_mode
             )
-        except FabricError as exc:
-            raise fabric_err(exc) from exc
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        except Exception as exc:
+            if isinstance(exc, ToolError):
+                raise
+            _log.debug(
+                "list_frequent_queries: unhandled driver exception (suppressed)", exc_info=True
+            )
+            raise ToolError(
+                "Frequent queries lookup failed due to a driver or network error."
+            ) from exc
         return [q.model_dump(by_alias=True, mode="json") for q in result]
 
     @mcp.tool(name="list_long_running_queries")
@@ -237,6 +278,15 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             result = await _qi_svc.list_long_running_queries(
                 target, limit=limit, since=since_dt, until=until_dt, mode=ctx.auth_mode
             )
-        except FabricError as exc:
-            raise fabric_err(exc) from exc
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        except Exception as exc:
+            if isinstance(exc, ToolError):
+                raise
+            _log.debug(
+                "list_long_running_queries: unhandled driver exception (suppressed)", exc_info=True
+            )
+            raise ToolError(
+                "Long-running queries lookup failed due to a driver or network error."
+            ) from exc
         return [q.model_dump(by_alias=True, mode="json") for q in result]
