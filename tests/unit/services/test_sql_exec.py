@@ -1350,8 +1350,11 @@ async def test_execute_emits_debug_log_with_sql(caplog: pytest.LogCaptureFixture
     )
 
 
-async def test_execute_secret_logged_redacted(caplog: pytest.LogCaptureFixture) -> None:
-    """execute() must store the redacted SQL in r.sql, with the raw secret absent."""
+async def test_execute_sql_logged_verbatim(caplog: pytest.LogCaptureFixture) -> None:
+    """execute() logs SQL verbatim at DEBUG level - no redaction is applied.
+
+    Operators using -v must treat log output as sensitive.
+    """
     target = _make_target()
     raw_secret = "sv=2024&sig=TOPSECRETTOKEN"  # noqa: S105
     copy_sql = (
@@ -1363,10 +1366,13 @@ async def test_execute_secret_logged_redacted(caplog: pytest.LogCaptureFixture) 
     with _patch_connect(conn), caplog.at_level(logging.DEBUG, logger="fabric_dw.sql"):
         await sql_exec.execute(target, copy_sql)
 
-    sql_attrs = [str(getattr(r, "sql", "")) for r in caplog.records if r.name == "fabric_dw.sql"]
+    sql_attrs = [
+        str(getattr(r, "sql", ""))
+        for r in caplog.records
+        if r.name == "fabric_dw.sql" and r.levelno == logging.DEBUG
+    ]
     combined = " ".join(sql_attrs)
-    assert "TOPSECRETTOKEN" not in combined, "Raw secret must not appear in r.sql"
-    assert "***" in combined, "Redacted placeholder '***' must appear in r.sql"
+    assert "TOPSECRETTOKEN" in combined, "SQL must be logged verbatim at DEBUG"
 
 
 async def test_get_plan_emits_debug_log_with_sql(caplog: pytest.LogCaptureFixture) -> None:
@@ -1425,8 +1431,11 @@ async def test_get_plan_logs_user_query_not_showplan_control_statements(
     )
 
 
-async def test_get_plan_secret_logged_redacted(caplog: pytest.LogCaptureFixture) -> None:
-    """get_plan() must store the redacted SQL in r.sql, with the raw secret absent."""
+async def test_get_plan_sql_logged_verbatim(caplog: pytest.LogCaptureFixture) -> None:
+    """get_plan() logs SQL verbatim at DEBUG level - no redaction is applied.
+
+    Operators using -v must treat log output as sensitive.
+    """
     target = _make_target()
     raw_secret = "sv=2024&sig=TOPSECRETTOKEN"  # noqa: S105
     copy_sql = (
@@ -1441,7 +1450,10 @@ async def test_get_plan_secret_logged_redacted(caplog: pytest.LogCaptureFixture)
     ):
         await sql_exec.get_plan(target, copy_sql)
 
-    sql_attrs = [str(getattr(r, "sql", "")) for r in caplog.records if r.name == "fabric_dw.sql"]
+    sql_attrs = [
+        str(getattr(r, "sql", ""))
+        for r in caplog.records
+        if r.name == "fabric_dw.sql" and r.levelno == logging.DEBUG
+    ]
     combined = " ".join(sql_attrs)
-    assert "TOPSECRETTOKEN" not in combined, "Raw secret must not appear in r.sql"
-    assert "***" in combined, "Redacted placeholder '***' must appear in r.sql"
+    assert "TOPSECRETTOKEN" in combined, "SQL must be logged verbatim at DEBUG"

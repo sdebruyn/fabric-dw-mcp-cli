@@ -58,7 +58,6 @@ from typing import Any, Literal, Protocol
 
 from fabric_dw.auth import CredentialMode, get_sql_token_struct
 from fabric_dw.exceptions import AuthError, FabricServerError, NotFoundError, PermissionDeniedError
-from fabric_dw.logging import redact_sql
 
 _log = logging.getLogger(__name__)
 
@@ -1285,19 +1284,24 @@ def _with_connect_retry(
 def _log_sql_execute(sql: str, *, param_count: int = 0) -> None:
     """Emit a DEBUG record for an SQL statement about to be executed.
 
-    Guards the :func:`redact_sql` call and the log emission behind a single
-    :meth:`logging.Logger.isEnabledFor` check so there is zero overhead when
-    the ``fabric_dw.sql`` logger is not at DEBUG level.  Centralises the
-    redact-then-log idiom shared by :func:`run_query` and
+    Guards the log emission behind a single :meth:`logging.Logger.isEnabledFor`
+    check so there is zero overhead when the ``fabric_dw.sql`` logger is not at
+    DEBUG level.  Centralises the log call shared by :func:`run_query` and
     :func:`run_statements` to prevent drift.
 
+    The SQL is logged verbatim at DEBUG level - no redaction is applied.
+    Bound parameter VALUES are never logged; only the count appears in the
+    log record.  Because verbose/DEBUG output may contain literal SQL
+    (including embedded credentials such as SAS tokens or COPY INTO secrets),
+    treat ``-v`` log output as sensitive and do not share it.
+
     Args:
-        sql: The raw SQL statement (will be redacted before logging).
+        sql: The raw SQL statement.
         param_count: Number of bound parameters being passed (values are never
-            logged; only the count may appear in the log record).
+            logged; only the count appears in the log record).
     """
     if _log.isEnabledFor(logging.DEBUG):
-        _log.debug("sql execute", extra={"sql": redact_sql(sql), "param_count": param_count})
+        _log.debug("sql execute", extra={"sql": sql, "param_count": param_count})
 
 
 def run_query(  # noqa: PLR0913, PLR0915
@@ -1424,7 +1428,8 @@ def run_query(  # noqa: PLR0913, PLR0915
         """
         cur = c.cursor()
         _debug = _log.isEnabledFor(logging.DEBUG)
-        _log_sql_execute(statement, param_count=len(params) if params else 0)
+        if _debug:
+            _log_sql_execute(statement, param_count=len(params) if params else 0)
         _t0 = time.monotonic() if _debug else 0.0
         if params:
             cur.execute(statement, params)
