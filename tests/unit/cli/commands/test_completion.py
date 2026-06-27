@@ -191,6 +191,22 @@ class TestAppendIdempotent:
         assert "# new completion" in content
         assert "# old completion" not in content
 
+    def test_non_ascii_rc_content_round_trips_without_corruption(self, tmp_path: Path) -> None:
+        """Non-ASCII characters in an rc-file survive a read-then-append cycle intact."""
+        target = tmp_path / ".bashrc"
+        # Write a file with non-ASCII content using utf-8 so the test is
+        # independent of the locale default encoding.
+        non_ascii_line = "# Ångström, Ünit, 文字\n"  # Ångström, Ünit, 文字
+        target.write_text(non_ascii_line, encoding="utf-8")
+
+        script = "# completion script\n"
+        _append_idempotent(target, script)
+
+        content = target.read_text(encoding="utf-8")
+        # Original non-ASCII content must be intact after the append.
+        assert non_ascii_line.strip() in content
+        assert script.strip() in content
+
 
 class TestCompletionScript:
     """Unit tests for _completion_script helper."""

@@ -93,7 +93,7 @@ def install(shell: str, print_only: bool) -> None:
         _append_idempotent(target, script)
     else:  # "write"
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(script)
+        target.write_text(script, encoding="utf-8")
         click.echo(f"Completion script written to {target}. Reload with: source {target}")
 
 
@@ -113,7 +113,7 @@ def _append_idempotent(path: Path, script: str) -> None:
     ``_SENTINEL_START`` and replace the block correctly.
     """
     block = f"\n{_SENTINEL_START}\n{script.strip()}\n{_SENTINEL_END}\n"
-    existing = path.read_text() if path.exists() else ""
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
 
     if _SENTINEL_START in existing:
         # Replace the existing managed block in-place.
@@ -123,9 +123,9 @@ def _append_idempotent(path: Path, script: str) -> None:
             existing,
             flags=re.DOTALL,
         )
-        path.write_text(new_content)
+        path.write_text(new_content, encoding="utf-8")
         click.echo(f"Completion script updated in {path}. Reload with: source {path}")
     else:
-        with path.open("a") as fh:
+        with path.open("a", encoding="utf-8") as fh:
             fh.write(block)
         click.echo(f"Completion script appended to {path}. Reload with: source {path}")
