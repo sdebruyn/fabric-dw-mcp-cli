@@ -180,7 +180,10 @@ class Warehouse(_FabricBase):
         return {
             **d,
             "connectionString": d.get("connectionString", conn_string),
-            "defaultCollation": d.get("defaultCollation", props_dict.get("defaultCollation")),
+            "defaultCollation": d.get(
+                "defaultCollation",
+                props_dict.get("collationType", props_dict.get("defaultCollation")),
+            ),
             "createdDate": d.get("createdDate", props_dict.get("createdDate")),
         }
 
