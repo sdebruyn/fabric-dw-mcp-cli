@@ -265,7 +265,7 @@ def _parse_mcp_section(data: dict[str, object]) -> McpConfig:
         raw = {}
     raw_allowlist = raw.get("workspace_allowlist")
     if isinstance(raw_allowlist, list) and all(isinstance(x, str) for x in raw_allowlist):
-        allowlist: list[str] | None = typing.cast(list[str], raw_allowlist)
+        allowlist: list[str] | None = typing.cast("list[str]", raw_allowlist)
     else:
         allowlist = None
     return McpConfig(workspace_allowlist=allowlist)
