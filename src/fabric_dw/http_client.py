@@ -523,7 +523,8 @@ class FabricHttpClient:
         429-induced pause was.  Token fetch happens BEFORE acquiring the
         rate-limiter slot so that a cache-miss refresh does not consume RPS budget.
         """
-        assert self._http is not None  # noqa: S101 — enforced by _do_request
+        if self._http is None:
+            raise RuntimeError("HTTP client is not open; call it via its async context manager")
 
         # Honour the 429 pause deadline (aggregated across all concurrent callers).
         # This must happen before token fetch so the token is always fresh at send time.

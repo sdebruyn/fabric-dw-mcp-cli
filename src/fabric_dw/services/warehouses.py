@@ -290,7 +290,10 @@ async def create(
     # endpoint with a bounded retry.
     # location is non-None here because _post_create_with_retry only returns (None, body)
     # for the synchronous 201 path (handled above) or (location_str, None) for LRO.
-    assert location is not None  # noqa: S101
+    if location is None:
+        raise RuntimeError(
+            "LRO location is unexpectedly None; internal error in _post_create_with_retry"
+        )
     lro_result = await http.poll_operation(location)
     new_id = _resolve_warehouse_id_from_lro(lro_result)
     if new_id is None:

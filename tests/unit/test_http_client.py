@@ -2037,3 +2037,17 @@ async def test_get_5xx_envelope_not_retriable_not_retried() -> None:
     assert call_count == 1, (
         f"GET 503 with isRetriable: false must not be retried; expected 1 call but got {call_count}"
     )
+
+
+async def test_send_once_raises_runtime_error_when_client_not_open() -> None:
+    """_send_once must raise RuntimeError with a clear message when _http is None.
+
+    Under python -O, assert statements are stripped, so replacing the assert with
+    an explicit raise ensures the guard survives optimised builds and produces a
+    readable error rather than an opaque AttributeError.
+    """
+    cred = MagicMock(spec=AsyncTokenCredential)
+    client = FabricHttpClient(credential=cred, rps=10)
+    # Do NOT enter the async context manager - _http stays None.
+    with pytest.raises(RuntimeError, match="not open"):
+        await client._send_once("GET", "https://example.com")  # type: ignore[attr-defined]
