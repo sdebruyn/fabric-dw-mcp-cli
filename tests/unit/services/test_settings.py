@@ -10,7 +10,7 @@ import pytest
 from fabric_dw.exceptions import FabricError, ItemKindError
 from fabric_dw.models import WarehouseKind, WarehouseSettings
 from fabric_dw.services import settings
-from tests.unit.services._helpers import _make_conn, _make_conn_for_ddl, _make_target
+from tests.unit.services._helpers import _make_conn, _make_conn_for_ddl, _make_target, _NoOffsetTz
 
 # ---------------------------------------------------------------------------
 # Fixture data
@@ -130,6 +130,19 @@ class TestGetSettings:
         with patch("fabric_dw.sql.open_connection", return_value=conn):
             result = await settings.get_settings(target)
         assert result.time_travel_retention_cutoff_date == datetime(2024, 6, 1, tzinfo=UTC)
+
+    async def test_quasi_naive_cutoff_treated_as_utc(self) -> None:
+        """A quasi-naive cutoff (tzinfo present but utcoffset() returns None) is treated as UTC."""
+        quasi_naive = datetime(2024, 6, 1, 12, 0, 0, tzinfo=_NoOffsetTz())
+        row: tuple[object, ...] = ("SalesWarehouse", True, 7, quasi_naive)
+        target = _make_target()
+        conn = _make_conn([row], _SETTINGS_COLS)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await settings.get_settings(target)
+        assert result.time_travel_retention_cutoff_date is not None
+        assert result.time_travel_retention_cutoff_date.tzinfo == UTC
+        cutoff = result.time_travel_retention_cutoff_date
+        assert cutoff == datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC)
 
 
 # ===========================================================================

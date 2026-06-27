@@ -51,6 +51,7 @@ from typing import cast
 from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import FabricError, ItemKindError
 from fabric_dw.models import WarehouseKind, WarehouseSettings
+from fabric_dw.services._helpers import coerce_to_utc
 from fabric_dw.sql import SqlTarget, run_query
 
 __all__ = [
@@ -125,29 +126,24 @@ _SET_RETENTION_SQL_TEMPLATE = "ALTER DATABASE CURRENT SET TIME_TRAVEL_RETENTION_
 # ---------------------------------------------------------------------------
 
 
-def _normalize_ts(ts: object) -> datetime | None:
-    """Normalise a ``sys.databases`` timestamp column to UTC-aware datetime or None."""
-    if ts is None:
-        return None
-    if isinstance(ts, datetime):
-        return ts.replace(tzinfo=UTC) if ts.tzinfo is None else ts.astimezone(UTC)
-    if isinstance(ts, _date):
-        # Bare date (not datetime) — promote to midnight UTC.
-        return datetime(ts.year, ts.month, ts.day, tzinfo=UTC)
-    return None
-
-
 def _row_to_settings(cols: list[str], row: tuple[object, ...]) -> WarehouseSettings:
     """Build a :class:`~fabric_dw.models.WarehouseSettings` from a column-name list and a row."""
     data = dict(zip(cols, row, strict=True))
     raw_days = data["time_travel_retention_period_days"]
+    raw_ts = data.get("time_travel_retention_cutoff_date")
+    # datetime is a subclass of date; the datetime branch must come first.
+    if isinstance(raw_ts, datetime):
+        cutoff: datetime | None = coerce_to_utc(raw_ts)
+    elif isinstance(raw_ts, _date):
+        # Bare date (not datetime) — promote to midnight UTC.
+        cutoff = datetime(raw_ts.year, raw_ts.month, raw_ts.day, tzinfo=UTC)
+    else:
+        cutoff = None
     return WarehouseSettings(
         database=str(data["name"]),
         result_set_caching=bool(data["is_result_set_caching_on"]),
         time_travel_retention_days=int(cast("int", raw_days)) if raw_days is not None else None,
-        time_travel_retention_cutoff_date=_normalize_ts(
-            data.get("time_travel_retention_cutoff_date")
-        ),
+        time_travel_retention_cutoff_date=cutoff,
     )
 
 

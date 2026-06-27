@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import cast
 
 from fabric_dw.auth import CredentialMode
@@ -60,6 +60,7 @@ from fabric_dw.models import (
     StatisticHistogramStep,
     WarehouseKind,
 )
+from fabric_dw.services._helpers import coerce_to_utc
 from fabric_dw.sql import SqlTarget, run_query
 
 __all__ = [
@@ -190,15 +191,6 @@ WHERE s.name = ? AND t.name = ? AND st.name = ?;
 # ---------------------------------------------------------------------------
 
 
-def _normalize_ts(ts: object) -> datetime | None:
-    """Normalize a ``STATS_DATE`` value to UTC-aware datetime or None."""
-    if ts is None:
-        return None
-    if isinstance(ts, datetime):
-        return ts.replace(tzinfo=UTC) if ts.tzinfo is None else ts.astimezone(UTC)
-    return None
-
-
 def _coalesce(data: dict[str, object], *keys: str) -> object:
     """Return the value of the first key in *data* whose value is not ``None``.
 
@@ -228,13 +220,14 @@ def _row_to_statistic(cols: list[str], row: tuple[object, ...]) -> Statistic:
     data = dict(zip(cols, row, strict=True))
     schema_name = str(data["schema_name"])
     table_name = str(data["table_name"])
+    last_updated = data.get("last_updated")
     return Statistic(
         name=str(data["stat_name"]),
         qualified_table=f"{schema_name}.{table_name}",
         column=str(data["column_name"]),
         auto_created=bool(data["auto_created"]),
         user_created=bool(data["user_created"]),
-        last_updated=_normalize_ts(data.get("last_updated")),
+        last_updated=coerce_to_utc(last_updated) if isinstance(last_updated, datetime) else None,
         generation_method=(
             str(data["generation_method"]) if data.get("generation_method") is not None else None
         ),
@@ -252,9 +245,10 @@ def _row_to_header(cols: list[str], row: tuple[object, ...]) -> StatisticHeaderR
     data: dict[str, object] = {
         k.lower().replace(" ", "_"): v for k, v in zip(cols, row, strict=True)
     }
+    updated = data.get("updated")
     return StatisticHeaderRow(
         name=str(data.get("name") or ""),
-        updated=_normalize_ts(data.get("updated")),
+        updated=coerce_to_utc(updated) if isinstance(updated, datetime) else None,
         rows=cast("int | None", _coalesce(data, "rows")),
         rows_sampled=cast("int | None", _coalesce(data, "rows_sampled")),
         steps=cast("int | None", _coalesce(data, "steps")),
