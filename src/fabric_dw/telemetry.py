@@ -568,6 +568,10 @@ def _build_otel_resource(surface: str) -> object | None:
 _otel_logger: object | None = None
 _tracer: object | None = None  # alias kept for backward-compat with existing tests
 _sdk_initialised: bool = False
+# Lock that guards the lazy SDK init.  Double-checked locking: the outer
+# fast-path check (no lock) handles the common case; the inner re-check
+# inside the lock makes init idempotent under concurrent first calls.
+_sdk_init_lock: threading.Lock = threading.Lock()
 _current_surface: str = "cli"
 
 # Instrumentation options passed to configure_azure_monitor.
@@ -675,76 +679,90 @@ def _get_tracer() -> object | None:
     """
     global _otel_logger, _tracer, _sdk_initialised  # noqa: PLW0603
 
+    # Fast path (no lock): already initialised by a previous call.
     if _sdk_initialised:
         return _otel_logger
 
-    _sdk_initialised = True
+    # Slow path: acquire the init lock and re-check under it (double-checked
+    # locking).  A concurrent first call blocks here until the winner finishes;
+    # the re-check then short-circuits so init runs at most once.
+    with _sdk_init_lock:
+        if _sdk_initialised:
+            return _otel_logger
 
-    try:
-        from azure.monitor.opentelemetry import configure_azure_monitor  # noqa: PLC0415
-        from opentelemetry._logs import get_logger  # noqa: PLC0415
+        try:
+            from azure.monitor.opentelemetry import configure_azure_monitor  # noqa: PLC0415
+            from opentelemetry._logs import get_logger  # noqa: PLC0415
 
-        # A2/A3: silence Azure SDK logger trees before any network attempt (#411).
-        _harden_azure_sdk_logging()
+            # A2/A3: silence Azure SDK logger trees before any network attempt (#411).
+            _harden_azure_sdk_logging()
 
-        # A4: disable statsbeat (Azure Monitor internal telemetry-about-telemetry).
-        # Statsbeat creates two sources of unclosed-socket ResourceWarnings on
-        # short-lived CLI processes (#418):
-        #   1. An urllib3 connection pool is allocated immediately in the statsbeat
-        #      exporter __init__ (during StatsbeatManager initialisation).  On
-        #      processes that exit in under ~15 s the pool is destroyed by the GC
-        #      rather than closed cleanly, producing "Exception ignored in: ..." at
-        #      interpreter shutdown.
-        #   2. After a ~15 s warmup timer the statsbeat exporter probes the Azure
-        #      IMDS endpoint (169.254.169.254:80) to detect whether the process runs
-        #      on an Azure VM.  That probe socket is also left unclosed on exit.
-        # Disabling statsbeat prevents both.  Use setdefault so an explicit operator
-        # override (e.g. APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL=false) is still
-        # respected.
-        os.environ.setdefault("APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL", "true")
+            # A4: disable statsbeat (Azure Monitor internal telemetry-about-telemetry).
+            # Statsbeat creates two sources of unclosed-socket ResourceWarnings on
+            # short-lived CLI processes (#418):
+            #   1. An urllib3 connection pool is allocated immediately in the statsbeat
+            #      exporter __init__ (during StatsbeatManager initialisation).  On
+            #      processes that exit in under ~15 s the pool is destroyed by the GC
+            #      rather than closed cleanly, producing "Exception ignored in: ..." at
+            #      interpreter shutdown.
+            #   2. After a ~15 s warmup timer the statsbeat exporter probes the Azure
+            #      IMDS endpoint (169.254.169.254:80) to detect whether the process runs
+            #      on an Azure VM.  That probe socket is also left unclosed on exit.
+            # Disabling statsbeat prevents both.  Use setdefault so an explicit operator
+            # override (e.g. APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL=false) is still
+            # respected.
+            os.environ.setdefault("APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL", "true")
 
-        # Build the OTel Resource that populates native Part A fields and prevents
-        # hostname fallback for cloud_RoleInstance / ai.device.id (#477).
-        resource = _build_otel_resource(_current_surface)
+            # Build the OTel Resource that populates native Part A fields and prevents
+            # hostname fallback for cloud_RoleInstance / ai.device.id (#477).
+            resource = _build_otel_resource(_current_surface)
 
-        configure_kwargs: dict[str, object] = {
-            "connection_string": _DEFAULT_CONNECTION_STRING,
-            "logger_name": "fabric_dw.telemetry",
-            # disable_logging=False (default) is intentional: the log/event
-            # exporter must be active so customEvents land in the customEvents
-            # table.  Without the logs pipeline, log records carrying
-            # microsoft.custom_event.name are silently dropped and events never
-            # appear in the App Insights "Usage → Events" or "Usage → Users" blades.
-            "disable_logging": False,
-            "disable_metrics": True,
-            # A1: disable PerformanceCounters — not covered by disable_metrics in
-            # azure-monitor-opentelemetry 1.8+; its _get_processor_time callback
-            # divides by zero on short-lived processes and logs a traceback (#399).
-            "enable_performance_counters": False,
-            # A2: belt-and-suspenders — QuickPulse must never ping the LiveEndpoint.
-            # Suppresses _quickpulse/_exporter.py::_ping tracebacks on connection
-            # refused even if the default changes in a future SDK version (#411).
-            "enable_live_metrics": False,
-            # B2: disable unbounded (30 s) atexit flush — we do our own bounded flush.
-            "shutdown_on_exit": False,
-            # B1: disable all auto-HTTP / Azure SDK instrumentors (privacy).
-            "instrumentation_options": _INSTRUMENTATION_OPTIONS,
-        }
-        # Pass the resource when available so native Part A fields are populated
-        # (cloud_RoleName, cloud_RoleInstance, application_Version, ai.device.id).
-        if resource is not None:
-            configure_kwargs["resource"] = resource
+            configure_kwargs: dict[str, object] = {
+                "connection_string": _DEFAULT_CONNECTION_STRING,
+                "logger_name": "fabric_dw.telemetry",
+                # disable_logging=False (default) is intentional: the log/event
+                # exporter must be active so customEvents land in the customEvents
+                # table.  Without the logs pipeline, log records carrying
+                # microsoft.custom_event.name are silently dropped and events never
+                # appear in the App Insights "Usage → Events" or "Usage → Users" blades.
+                "disable_logging": False,
+                "disable_metrics": True,
+                # A1: disable PerformanceCounters — not covered by disable_metrics in
+                # azure-monitor-opentelemetry 1.8+; its _get_processor_time callback
+                # divides by zero on short-lived processes and logs a traceback (#399).
+                "enable_performance_counters": False,
+                # A2: belt-and-suspenders — QuickPulse must never ping the LiveEndpoint.
+                # Suppresses _quickpulse/_exporter.py::_ping tracebacks on connection
+                # refused even if the default changes in a future SDK version (#411).
+                "enable_live_metrics": False,
+                # B2: disable unbounded (30 s) atexit flush — we do our own bounded flush.
+                "shutdown_on_exit": False,
+                # B1: disable all auto-HTTP / Azure SDK instrumentors (privacy).
+                "instrumentation_options": _INSTRUMENTATION_OPTIONS,
+            }
+            # Pass the resource when available so native Part A fields are populated
+            # (cloud_RoleName, cloud_RoleInstance, application_Version, ai.device.id).
+            if resource is not None:
+                configure_kwargs["resource"] = resource
 
-        configure_azure_monitor(**configure_kwargs)
-        # Obtain the OTel Logger via the global LoggerProvider set up by
-        # configure_azure_monitor.  This logger is used in emit_event to fire
-        # customEvents as log records (not spans).
-        _otel_logger = get_logger("fabric_dw.telemetry")
-        _tracer = _otel_logger  # alias: existing tests check _tracer is not None
-    except Exception:
-        _log.debug("Failed to initialise Azure Monitor OpenTelemetry SDK", exc_info=True)
-        _otel_logger = None
-        _tracer = None
+            configure_azure_monitor(**configure_kwargs)
+            # Obtain the OTel Logger via the global LoggerProvider set up by
+            # configure_azure_monitor.  This logger is used in emit_event to fire
+            # customEvents as log records (not spans).
+            #
+            # Assign _otel_logger and _tracer BEFORE flipping _sdk_initialised so
+            # that a concurrent emit which observes _sdk_initialised=True always
+            # finds a valid logger (never None due to a lost race on the flag).
+            _otel_logger = get_logger("fabric_dw.telemetry")
+            _tracer = _otel_logger  # alias: existing tests check _tracer is not None
+        except Exception:
+            _log.debug("Failed to initialise Azure Monitor OpenTelemetry SDK", exc_info=True)
+            _otel_logger = None
+            _tracer = None
+        finally:
+            # Always flip the flag last, whether init succeeded or failed, so
+            # it is never True while _otel_logger is in an intermediate state.
+            _sdk_initialised = True
 
     return _otel_logger
 
