@@ -259,7 +259,7 @@ async def create(
         "displayName": name,
     }
     if collation is not None:
-        body["creationPayload"] = {"collationType": collation}
+        body["creationPayload"] = {"defaultCollation": collation}
 
     # Use the type-specific endpoint (POST /workspaces/{id}/warehouses).
     # Any 4xx is raised by the HTTP client as BadRequestError before reaching here.
