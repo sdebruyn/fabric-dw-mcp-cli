@@ -1448,10 +1448,12 @@ def test_config_disabled_cached_across_telemetry_enabled_calls(
     read_calls: list[int] = []
     original_read_text = Path.read_text
 
-    def counting_read_text(self: Path, **kwargs: object) -> str:
+    def counting_read_text(
+        self: Path, encoding: str | None = None, errors: str | None = None
+    ) -> str:
         if self.name == "config.toml":
             read_calls.append(1)
-        return original_read_text(self, **kwargs)  # type: ignore[arg-type]
+        return original_read_text(self, encoding=encoding, errors=errors)
 
     with patch.object(Path, "read_text", counting_read_text):
         for _ in range(3):
