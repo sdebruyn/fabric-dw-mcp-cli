@@ -11,7 +11,9 @@ Module-global mutable state:
 Import graph (no cycle):
     sql_pool <- {fabric_dw.auth (CredentialMode, get_sql_token_struct),
                  fabric_dw.config (UserConfig, load_config)}
-    sql      <- sql_pool, sql_errors, fabric_dw.auth (get_sql_token_struct)
+    sql      <- sql_pool, sql_errors
+    (sql no longer imports fabric_dw.auth directly; get_sql_token_struct lives
+    in sql_pool alongside open_connection which calls it)
 
 :class:`~fabric_dw.sql.SqlTarget` is only referenced under ``TYPE_CHECKING``
 in this module (safe because ``fabric_dw.sql`` has
