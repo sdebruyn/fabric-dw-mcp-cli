@@ -321,6 +321,68 @@ async def test_create_posts_correct_body_with_snapshot_dt() -> None:
     assert body["creationPayload"]["snapshotDateTime"] == "2024-03-15T08:00:00Z"
 
 
+# ---------------------------------------------------------------------------
+# create - naive datetime handling (regression guard for #774)
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+async def test_create_naive_snapshot_dt_treated_as_utc() -> None:
+    """create accepts a naive snapshot_dt and treats it as UTC (no ValueError)."""
+    naive_dt = datetime(2026, 3, 1, 12, 0, 0)  # noqa: DTZ001 - intentionally naive
+    captured: list[Any] = []
+
+    def _capture(request: Any) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(202, headers={"Location": _LRO_LOCATION})
+
+    respx.post(_ITEMS_URL).mock(side_effect=_capture)
+    respx.get(_TYPED_SNAP_URL).mock(
+        return_value=httpx.Response(200, json=WAREHOUSE_SNAPSHOT_TYPED_PAYLOAD)
+    )
+
+    async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
+        with patch.object(http, "poll_operation", new_callable=AsyncMock) as mock_poll:
+            mock_poll.return_value = {"status": "Succeeded", "resourceId": str(_SNAP_ID)}
+            await snapshots.create(http, _WS_ID, _PARENT_WH_ID, "MySnap", snapshot_dt=naive_dt)
+
+    body = _json.loads(captured[0].content)
+    # naive 2026-03-01T12:00:00 is treated as UTC and emitted with Z suffix
+    assert body["creationPayload"]["snapshotDateTime"] == "2026-03-01T12:00:00Z"
+
+
+@respx.mock
+async def test_create_aware_non_utc_snapshot_dt_normalized_to_utc() -> None:
+    """create normalizes a tz-aware non-UTC snapshot_dt to UTC before emitting.
+
+    This exercises the pre-existing aware-datetime conversion path (present before #774).
+    The naive-datetime test immediately above is the actual #774 regression guard.
+    """
+    from datetime import timedelta, timezone  # noqa: PLC0415
+
+    plus2 = timezone(timedelta(hours=2))
+    aware_dt = datetime(2026, 3, 1, 14, 0, 0, tzinfo=plus2)  # 14:00+02:00 = 12:00 UTC
+    captured: list[Any] = []
+
+    def _capture(request: Any) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(202, headers={"Location": _LRO_LOCATION})
+
+    respx.post(_ITEMS_URL).mock(side_effect=_capture)
+    respx.get(_TYPED_SNAP_URL).mock(
+        return_value=httpx.Response(200, json=WAREHOUSE_SNAPSHOT_TYPED_PAYLOAD)
+    )
+
+    async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
+        with patch.object(http, "poll_operation", new_callable=AsyncMock) as mock_poll:
+            mock_poll.return_value = {"status": "Succeeded", "resourceId": str(_SNAP_ID)}
+            await snapshots.create(http, _WS_ID, _PARENT_WH_ID, "MySnap", snapshot_dt=aware_dt)
+
+    body = _json.loads(captured[0].content)
+    # 14:00+02:00 is normalized to 12:00 UTC
+    assert body["creationPayload"]["snapshotDateTime"] == "2026-03-01T12:00:00Z"
+
+
 @respx.mock
 async def test_create_polls_lro_and_fetches_result() -> None:
     """create should call poll_operation with the Location header URL."""
@@ -680,6 +742,51 @@ async def test_roll_timestamp_with_new_dt_formats_correctly() -> None:
     executed_sql = cursor.execute.call_args_list[0][0][0]
     assert "ALTER DATABASE [MySnapshot] SET TIMESTAMP = '2024-03-15T08:30:45.00';" in executed_sql
     assert "SET IMPLICIT_TRANSACTIONS" not in executed_sql
+
+
+# ---------------------------------------------------------------------------
+# roll_timestamp - naive datetime handling (regression guard for #774)
+# ---------------------------------------------------------------------------
+
+
+async def test_roll_timestamp_naive_new_dt_treated_as_utc() -> None:
+    """roll_timestamp accepts a naive new_dt and treats it as UTC (no ValueError)."""
+    target = _make_sql_target()
+    conn = _make_mock_conn()
+    naive_dt = datetime(2024, 3, 15, 8, 30, 45)  # noqa: DTZ001 - intentionally naive
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await snapshots.roll_timestamp(target, "MySnapshot", new_dt=naive_dt)
+
+    cursor = conn.cursor.return_value
+    sql = cursor.execute.call_args_list[0][0][0]
+    # naive datetime formatted the same way as a UTC-aware datetime
+    assert "ALTER DATABASE [MySnapshot] SET TIMESTAMP = '2024-03-15T08:30:45.00';" in sql
+    # The returned datetime is UTC-aware (naive coerced to UTC)
+    assert result == naive_dt.replace(tzinfo=UTC)
+
+
+async def test_roll_timestamp_aware_non_utc_new_dt_normalized_to_utc() -> None:
+    """roll_timestamp normalizes a tz-aware non-UTC new_dt to UTC.
+
+    This exercises the pre-existing aware-datetime conversion path (present before #774).
+    The naive-datetime test immediately above is the actual #774 regression guard.
+    """
+    from datetime import timedelta, timezone  # noqa: PLC0415
+
+    target = _make_sql_target()
+    conn = _make_mock_conn()
+    plus2 = timezone(timedelta(hours=2))
+    aware_dt = datetime(2024, 3, 15, 10, 30, 45, tzinfo=plus2)  # 10:30+02:00 = 08:30 UTC
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await snapshots.roll_timestamp(target, "MySnapshot", new_dt=aware_dt)
+
+    cursor = conn.cursor.return_value
+    sql = cursor.execute.call_args_list[0][0][0]
+    # 10:30+02:00 is normalized to 08:30 UTC
+    assert "ALTER DATABASE [MySnapshot] SET TIMESTAMP = '2024-03-15T08:30:45.00';" in sql
+    assert result == datetime(2024, 3, 15, 8, 30, 45, tzinfo=UTC)
 
 
 async def test_roll_timestamp_name_injection_bracket() -> None:

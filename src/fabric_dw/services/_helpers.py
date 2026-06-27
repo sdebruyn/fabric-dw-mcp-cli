@@ -5,16 +5,48 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Callable, Coroutine, Mapping, Sequence
+from datetime import UTC, datetime
 from typing import Protocol, TypeVar
 from uuid import UUID
 
 from fabric_dw.services.capacities import ACTIVE_STATE
 
-__all__ = ["compact", "normalize_object_definition", "reject_non_select", "scan_all_workspaces"]
+__all__ = [
+    "coerce_to_utc",
+    "compact",
+    "normalize_object_definition",
+    "reject_non_select",
+    "scan_all_workspaces",
+]
 
 _log = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
+
+
+# ---------------------------------------------------------------------------
+# Datetime coercion
+# ---------------------------------------------------------------------------
+
+
+def coerce_to_utc(dt: datetime) -> datetime:
+    """Return *dt* as a UTC-aware datetime.
+
+    Naive datetimes (no tzinfo) are assumed to be UTC and returned with
+    ``tzinfo=UTC``.  Already-aware datetimes are converted to UTC.
+
+    Use this at service-layer boundaries where callers may pass either a naive
+    or tz-aware datetime; the convention is that naive means UTC.
+
+    Args:
+        dt: A :class:`~datetime.datetime` object, naive or tz-aware.
+
+    Returns:
+        A UTC-aware :class:`~datetime.datetime`.
+    """
+    if dt.tzinfo is None or dt.tzinfo.utcoffset(dt) is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 class _HasNameAndId(Protocol):

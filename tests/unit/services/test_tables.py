@@ -1013,6 +1013,20 @@ class TestCloneTable:
             "clone DDL with AT must not pass commit=True (autocommit handles it)"
         )
 
+    async def test_at_clause_naive_datetime_treated_as_utc(self) -> None:
+        """Regression guard (#774): naive at datetime is accepted and formatted as UTC."""
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        naive_dt = datetime(2024, 5, 20, 14, 0, 0)  # noqa: DTZ001 - intentionally naive
+        mock_oc = patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn])
+        with mock_oc:
+            await tables.clone_table(target, "dbo.source_tbl", "dbo.sales", at=naive_dt)
+        cursor = ddl_conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        # Naive datetime with same wall-clock value as UTC - literal must match
+        assert "AT '2024-05-20T14:00:00.000'" in call_sql
+
     async def test_rejects_sql_endpoint(self) -> None:
         target = _make_target()
         with pytest.raises(ItemKindError, match="read-only"):
