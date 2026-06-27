@@ -135,7 +135,7 @@ fdw -w MyWorkspace restore-points rename SalesWH 1726617378000 "Post-migration b
 
 **Targets:** Data Warehouse only
 
-Restore a warehouse in-place to a restore point. **This is a destructive operation** — the warehouse will be unavailable for approximately 10 minutes. You will be asked to confirm unless `--yes` is passed.
+Restore a warehouse in-place to a restore point. **This is a destructive operation**: the warehouse will be unavailable for approximately 10 minutes. You will be asked to confirm unless `--yes` is passed.
 
 **Synopsis**
 
@@ -161,12 +161,12 @@ Create a restore point for a warehouse at the current timestamp.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse name or GUID.
-- `name` (`str | null`, optional) — display name (max 128 chars).
-- `description` (`str | null`, optional) — description (max 512 chars).
+- `workspace` (`str`): workspace name or GUID.
+- `warehouse` (`str`): warehouse name or GUID.
+- `name` (`str | null`, optional): display name (max 128 chars).
+- `description` (`str | null`, optional): description (max 512 chars).
 
-**Returns:** `RestorePoint` — the newly-created restore point object.
+**Returns:** `RestorePoint`: the newly-created restore point object.
 
 ---
 
@@ -178,11 +178,11 @@ Delete a user-defined restore point. System-created restore points cannot be del
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse name or GUID.
-- `restore_point_id` (`str`) — the restore point ID string.
+- `workspace` (`str`): workspace name or GUID.
+- `warehouse` (`str`): warehouse name or GUID.
+- `restore_point_id` (`str`): the restore point ID string.
 
-**Returns:** `{ "deleted": true, "restore_point_id": str }` — confirmation.
+**Returns:** `{ "deleted": true, "restore_point_id": str }`: confirmation.
 
 ---
 
@@ -194,11 +194,11 @@ Return a single restore point by ID.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse name or GUID.
-- `restore_point_id` (`str`) — the restore point ID string (e.g. `"1726617378000"`).
+- `workspace` (`str`): workspace name or GUID.
+- `warehouse` (`str`): warehouse name or GUID.
+- `restore_point_id` (`str`): the restore point ID string (e.g. `"1726617378000"`).
 
-**Returns:** `RestorePoint` — the restore point object.
+**Returns:** `RestorePoint`: the restore point object.
 
 ---
 
@@ -210,10 +210,10 @@ Return all restore points for a warehouse.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse name or GUID.
+- `workspace` (`str`): workspace name or GUID.
+- `warehouse` (`str`): warehouse name or GUID.
 
-**Returns:** `list[RestorePoint]` — array of restore point objects.
+**Returns:** `list[RestorePoint]`: array of restore point objects.
 
 ---
 
@@ -221,15 +221,15 @@ Return all restore points for a warehouse.
 
 **Targets:** Data Warehouse only
 
-Restore a warehouse in-place to a restore point. **This is a destructive, long-running operation** — the warehouse will be unavailable for approximately 10 minutes while the restore completes.
+Restore a warehouse in-place to a restore point. **This is a destructive, long-running operation**: the warehouse will be unavailable for approximately 10 minutes while the restore completes.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse name or GUID.
-- `restore_point_id` (`str`) — the restore point ID string to restore to.
+- `workspace` (`str`): workspace name or GUID.
+- `warehouse` (`str`): warehouse name or GUID.
+- `restore_point_id` (`str`): the restore point ID string to restore to.
 
-**Returns:** `{ "restored": true, "restore_point_id": str }` — confirmation.
+**Returns:** `{ "restored": true, "restore_point_id": str }`: confirmation.
 
 ---
 
@@ -241,10 +241,10 @@ Rename and/or update the description of a restore point. At least one of `name` 
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse name or GUID.
-- `restore_point_id` (`str`) — the restore point ID string.
-- `name` (`str | null`, optional) — new display name (max 128 chars).
-- `description` (`str | null`, optional) — new description (max 512 chars).
+- `workspace` (`str`): workspace name or GUID.
+- `warehouse` (`str`): warehouse name or GUID.
+- `restore_point_id` (`str`): the restore point ID string.
+- `name` (`str | null`, optional): new display name (max 128 chars).
+- `description` (`str | null`, optional): new description (max 512 chars).
 
-**Returns:** `RestorePoint` — the updated restore point object.
+**Returns:** `RestorePoint`: the updated restore point object.

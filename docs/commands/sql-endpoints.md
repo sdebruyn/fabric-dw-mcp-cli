@@ -122,12 +122,12 @@ fdw [-w WORKSPACE] sql-endpoints refresh [--recreate-tables] ENDPOINT
 
 | Flag | Description |
 |------|-------------|
-| `--recreate-tables` | Drop and recreate all tables during the refresh. Use to resolve inconsistencies or force a clean rebuild. **Destructive** — use with caution. |
+| `--recreate-tables` | Drop and recreate all tables during the refresh. Use to resolve inconsistencies or force a clean rebuild. **Destructive**: use with caution. |
 
 **Example**
 
 ```shell
-# Standard refresh — shows a per-table Rich table
+# Standard refresh - shows a per-table Rich table
 fdw -w MyWorkspace sql-endpoints refresh MyLakehouseEP
 
 # Force a full table recreate
@@ -149,10 +149,10 @@ Return details for a single SQL analytics endpoint.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `endpoint` (`str`) — endpoint name or GUID.
+- `workspace` (`str`): workspace name or GUID.
+- `endpoint` (`str`): endpoint name or GUID.
 
-**Returns:** `Warehouse` — single SQL analytics endpoint object.
+**Returns:** `Warehouse`: single SQL analytics endpoint object.
 
 ---
 
@@ -168,10 +168,10 @@ Return all principals (users, groups, service principals) with access to a SQL A
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `sql_endpoint` (`str`) — SQL analytics endpoint name or GUID.
+- `workspace` (`str`): workspace name or GUID.
+- `sql_endpoint` (`str`): SQL analytics endpoint name or GUID.
 
-**Returns:** `list[ItemAccess]` — array of access records, each with `principal` (containing `id`, `displayName`, `type`, and type-specific fields such as `userPrincipalName` or `aadAppId`) and `itemAccessDetails` (containing `type`, `permissions`, and `additionalPermissions`).
+**Returns:** `list[ItemAccess]`: array of access records, each with `principal` (containing `id`, `displayName`, `type`, and type-specific fields such as `userPrincipalName` or `aadAppId`) and `itemAccessDetails` (containing `type`, `permissions`, and `additionalPermissions`).
 
 ---
 
@@ -183,10 +183,10 @@ List all SQL analytics endpoints in a workspace, or across all visible workspace
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID; required when `all_workspaces` is `false`; ignored when `true`.
-- `all_workspaces` (`bool`, default `false`) — when `true`, aggregate results across every workspace the caller can see.
+- `workspace` (`str`): workspace name or GUID; required when `all_workspaces` is `false`; ignored when `true`.
+- `all_workspaces` (`bool`, default `false`): when `true`, aggregate results across every workspace the caller can see.
 
-**Returns:** `list[Warehouse]` — array of SQL analytics endpoint objects (same fields as Warehouse, `kind` is always `SQLEndpoint`).
+**Returns:** `list[Warehouse]`: array of SQL analytics endpoint objects (same fields as Warehouse, `kind` is always `SQLEndpoint`).
 
 ---
 
@@ -198,8 +198,8 @@ Refresh metadata for a SQL analytics endpoint by syncing from the underlying Lak
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `endpoint` (`str`) — endpoint name or GUID.
-- `recreate_tables` (`bool`, default `False`) — drop and recreate all tables during the refresh. Use to resolve inconsistencies or force a clean rebuild. DESTRUCTIVE — use with caution.
+- `workspace` (`str`): workspace name or GUID.
+- `endpoint` (`str`): endpoint name or GUID.
+- `recreate_tables` (`bool`, default `False`): drop and recreate all tables during the refresh. Use to resolve inconsistencies or force a clean rebuild. DESTRUCTIVE - use with caution.
 
-**Returns:** `list[TableSyncStatus]` — array of per-table sync results, each with `tableName`, `status`, `startDateTime`, `endDateTime`, `lastSuccessfulSyncDateTime`, and `error`.
+**Returns:** `list[TableSyncStatus]`: array of per-table sync results, each with `tableName`, `status`, `startDateTime`, `endDateTime`, `lastSuccessfulSyncDateTime`, and `error`.

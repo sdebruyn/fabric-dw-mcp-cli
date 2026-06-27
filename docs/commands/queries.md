@@ -56,9 +56,9 @@ fdw [-w WORKSPACE] queries frequent [OPTIONS] [WAREHOUSE]
 | Option | Description | Default |
 | --- | --- | --- |
 | `--limit INTEGER` | Maximum rows to return (1–10 000). | `100` |
-| `--since ISO8601` | Return rows with last_run_start_time >= this value. Mutually exclusive with `--ago`. | — |
-| `--until ISO8601` | Return rows with last_run_start_time <= this value. | — |
-| `--ago DURATION` | Relative alternative to `--since`: rows newer than now minus this duration (e.g. `1h`, `90m`, `3600s`, `2d`). Mutually exclusive with `--since`. | — |
+| `--since ISO8601` | Return rows with last_run_start_time >= this value. Mutually exclusive with `--ago`. | - |
+| `--until ISO8601` | Return rows with last_run_start_time <= this value. | - |
+| `--ago DURATION` | Relative alternative to `--since`: rows newer than now minus this duration (e.g. `1h`, `90m`, `3600s`, `2d`). Mutually exclusive with `--since`. | - |
 
 **Example**
 
@@ -86,9 +86,9 @@ fdw [-w WORKSPACE] queries history [OPTIONS] [WAREHOUSE]
 | Option | Description | Default |
 | --- | --- | --- |
 | `--limit INTEGER` | Maximum rows to return (1–10 000). | `100` |
-| `--since ISO8601` | Return rows with timestamp >= this value. Mutually exclusive with `--ago`. | — |
-| `--until ISO8601` | Return rows with timestamp <= this value. | — |
-| `--ago DURATION` | Relative alternative to `--since`: rows newer than now minus this duration (e.g. `1h`, `90m`, `3600s`, `2d`). Mutually exclusive with `--since`. | — |
+| `--since ISO8601` | Return rows with timestamp >= this value. Mutually exclusive with `--ago`. | - |
+| `--until ISO8601` | Return rows with timestamp <= this value. | - |
+| `--ago DURATION` | Relative alternative to `--since`: rows newer than now minus this duration (e.g. `1h`, `90m`, `3600s`, `2d`). Mutually exclusive with `--since`. | - |
 
 **Example**
 
@@ -136,9 +136,9 @@ fdw [-w WORKSPACE] queries long-running [OPTIONS] [WAREHOUSE]
 | Option | Description | Default |
 | --- | --- | --- |
 | `--limit INTEGER` | Maximum rows to return (1–10 000). | `100` |
-| `--since ISO8601` | Return rows with last_run_start_time >= this value. Mutually exclusive with `--ago`. | — |
-| `--until ISO8601` | Return rows with last_run_start_time <= this value. | — |
-| `--ago DURATION` | Relative alternative to `--since`: rows newer than now minus this duration (e.g. `1h`, `90m`, `3600s`, `2d`). Mutually exclusive with `--since`. | — |
+| `--since ISO8601` | Return rows with last_run_start_time >= this value. Mutually exclusive with `--ago`. | - |
+| `--until ISO8601` | Return rows with last_run_start_time <= this value. | - |
+| `--ago DURATION` | Relative alternative to `--since`: rows newer than now minus this duration (e.g. `1h`, `90m`, `3600s`, `2d`). Mutually exclusive with `--since`. | - |
 
 **Example**
 
@@ -192,9 +192,9 @@ fdw [-w WORKSPACE] queries sessions [OPTIONS] [WAREHOUSE]
 | Option | Description | Default |
 | --- | --- | --- |
 | `--limit INTEGER` | Maximum rows to return (1–10 000). | `100` |
-| `--since ISO8601` | Return rows with session_start_time >= this value. Mutually exclusive with `--ago`. | — |
-| `--until ISO8601` | Return rows with session_start_time <= this value. | — |
-| `--ago DURATION` | Relative alternative to `--since`: rows newer than now minus this duration (e.g. `1h`, `90m`, `3600s`, `2d`). Mutually exclusive with `--since`. | — |
+| `--since ISO8601` | Return rows with session_start_time >= this value. Mutually exclusive with `--ago`. | - |
+| `--until ISO8601` | Return rows with session_start_time <= this value. | - |
+| `--ago DURATION` | Relative alternative to `--since`: rows newer than now minus this duration (e.g. `1h`, `90m`, `3600s`, `2d`). Mutually exclusive with `--since`. | - |
 
 **Example**
 
@@ -207,7 +207,7 @@ fdw -w MyWorkspace queries sessions SalesWH --ago 90m
 
 ## MCP tools
 
-The following four tools query the `queryinsights` schema DMVs via TDS. They share the same parameter shape — `workspace`, `warehouse`, optional `limit`, optional `since`, and optional `until`.
+The following four tools query the `queryinsights` schema DMVs via TDS. They share the same parameter shape - `workspace`, `warehouse`, optional `limit`, optional `since`, and optional `until`.
 
 ### kill_session
 
@@ -217,11 +217,11 @@ Terminate a session on a warehouse.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse name or GUID.
-- `session_id` (`int`) — the session ID to terminate.
+- `workspace` (`str`): workspace name or GUID.
+- `warehouse` (`str`): warehouse name or GUID.
+- `session_id` (`int`): the session ID to terminate.
 
-**Returns:** `{ "killed": true, "session_id": int }` — confirmation with the terminated session ID.
+**Returns:** `{ "killed": true, "session_id": int }`: confirmation with the terminated session ID.
 
 ---
 
@@ -233,10 +233,10 @@ Return all active SQL connections on a warehouse or SQL Analytics Endpoint. Quer
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse name or GUID.
+- `workspace` (`str`): workspace name or GUID.
+- `warehouse` (`str`): warehouse name or GUID.
 
-**Returns:** `list[Connection]` — array of connection objects, each with `session_id`, `connect_time`, `client_net_address`, `auth_scheme`, `encrypt_option`, and `net_transport`.
+**Returns:** `list[Connection]`: array of connection objects, each with `session_id`, `connect_time`, `client_net_address`, `auth_scheme`, `encrypt_option`, and `net_transport`.
 
 ---
 
@@ -248,13 +248,13 @@ Return frequently-run queries from `queryinsights.frequently_run_queries`.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
-- `limit` (`int`, default `100`) — maximum rows to return (1–10 000).
-- `since` (`str | null`, optional) — ISO-8601 lower bound on `last_run_start_time`.
-- `until` (`str | null`, optional) — ISO-8601 upper bound on `last_run_start_time`.
+- `workspace` (`str`): workspace name or GUID.
+- `warehouse` (`str`): warehouse or SQL Analytics Endpoint name or GUID.
+- `limit` (`int`, default `100`): maximum rows to return (1–10 000).
+- `since` (`str | null`, optional): ISO-8601 lower bound on `last_run_start_time`.
+- `until` (`str | null`, optional): ISO-8601 upper bound on `last_run_start_time`.
 
-**Returns:** `list[dict]` — array of frequently-run query row objects. Elapsed-time fields (e.g. `avg_total_elapsed_time_ms`, `min_run_total_elapsed_time_ms`, `max_run_total_elapsed_time_ms`, `last_run_total_elapsed_time_ms`) are JSON `number` (float); count fields remain `integer`.
+**Returns:** `list[dict]`: array of frequently-run query row objects. Elapsed-time fields (e.g. `avg_total_elapsed_time_ms`, `min_run_total_elapsed_time_ms`, `max_run_total_elapsed_time_ms`, `last_run_total_elapsed_time_ms`) are JSON `number` (float); count fields remain `integer`.
 
 ---
 
@@ -266,13 +266,13 @@ Return long-running queries from `queryinsights.long_running_queries`.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
-- `limit` (`int`, default `100`) — maximum rows to return (1–10 000).
-- `since` (`str | null`, optional) — ISO-8601 lower bound on `last_run_start_time`.
-- `until` (`str | null`, optional) — ISO-8601 upper bound on `last_run_start_time`.
+- `workspace` (`str`): workspace name or GUID.
+- `warehouse` (`str`): warehouse or SQL Analytics Endpoint name or GUID.
+- `limit` (`int`, default `100`): maximum rows to return (1–10 000).
+- `since` (`str | null`, optional): ISO-8601 lower bound on `last_run_start_time`.
+- `until` (`str | null`, optional): ISO-8601 upper bound on `last_run_start_time`.
 
-**Returns:** `list[dict]` — array of long-running query row objects. `median_total_elapsed_time_ms` and `last_run_total_elapsed_time_ms` are JSON `number` (float); `number_of_runs` remains `integer`.
+**Returns:** `list[dict]`: array of long-running query row objects. `median_total_elapsed_time_ms` and `last_run_total_elapsed_time_ms` are JSON `number` (float); `number_of_runs` remains `integer`.
 
 ---
 
@@ -284,13 +284,13 @@ Return completed SQL requests from `queryinsights.exec_requests_history`.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
-- `limit` (`int`, default `100`) — maximum rows to return (1–10 000).
-- `since` (`str | null`, optional) — ISO-8601 lower bound on `submit_time`.
-- `until` (`str | null`, optional) — ISO-8601 upper bound on `submit_time`.
+- `workspace` (`str`): workspace name or GUID.
+- `warehouse` (`str`): warehouse or SQL Analytics Endpoint name or GUID.
+- `limit` (`int`, default `100`): maximum rows to return (1–10 000).
+- `since` (`str | null`, optional): ISO-8601 lower bound on `submit_time`.
+- `until` (`str | null`, optional): ISO-8601 upper bound on `submit_time`.
 
-**Returns:** `list[dict]` — array of request-history row objects. Elapsed-time and CPU-time fields (e.g. `total_elapsed_time_ms`, `allocated_cpu_time_ms`) are JSON `number` (float) because Fabric returns fractional millisecond values.
+**Returns:** `list[dict]`: array of request-history row objects. Elapsed-time and CPU-time fields (e.g. `total_elapsed_time_ms`, `allocated_cpu_time_ms`) are JSON `number` (float) because Fabric returns fractional millisecond values.
 
 ---
 
@@ -302,10 +302,10 @@ Return all currently-executing queries on a warehouse.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse name or GUID.
+- `workspace` (`str`): workspace name or GUID.
+- `warehouse` (`str`): warehouse name or GUID.
 
-**Returns:** `list[RunningQuery]` — array of query objects, each with `session_id`, `request_id`, `status`, `start_time`, `total_elapsed_time` (ms), `login_name`, `command`, and `query_text`.
+**Returns:** `list[RunningQuery]`: array of query objects, each with `session_id`, `request_id`, `status`, `start_time`, `total_elapsed_time` (ms), `login_name`, `command`, and `query_text`.
 
 ---
 
@@ -317,10 +317,10 @@ Return completed sessions from `queryinsights.exec_sessions_history`.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
-- `limit` (`int`, default `100`) — maximum rows to return (1–10 000).
-- `since` (`str | null`, optional) — ISO-8601 lower bound on `session_start_time`.
-- `until` (`str | null`, optional) — ISO-8601 upper bound on `session_start_time`.
+- `workspace` (`str`): workspace name or GUID.
+- `warehouse` (`str`): warehouse or SQL Analytics Endpoint name or GUID.
+- `limit` (`int`, default `100`): maximum rows to return (1–10 000).
+- `since` (`str | null`, optional): ISO-8601 lower bound on `session_start_time`.
+- `until` (`str | null`, optional): ISO-8601 upper bound on `session_start_time`.
 
-**Returns:** `list[dict]` — array of session-history row objects. `total_query_elapsed_time_ms` is JSON `number` (float) because Fabric returns fractional millisecond values.
+**Returns:** `list[dict]`: array of session-history row objects. `total_query_elapsed_time_ms` is JSON `number` (float) because Fabric returns fractional millisecond values.

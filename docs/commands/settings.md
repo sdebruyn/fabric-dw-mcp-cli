@@ -10,7 +10,7 @@ Manage **server-side** database settings on a Fabric Data Warehouse or SQL Analy
 
     `settings` manages server-side warehouse/database configuration. For client-side CLI defaults (workspace, warehouse) use [`fdw config`](config.md) instead.
 
-`show` works on both Data Warehouses and SQL Analytics Endpoints. `result-set-caching` and `retention` issue `ALTER DATABASE CURRENT SET …`, which is **not supported on SQL Analytics Endpoints** — running either command against one returns a clean error.
+`show` works on both Data Warehouses and SQL Analytics Endpoints. `result-set-caching` and `retention` issue `ALTER DATABASE CURRENT SET …`, which is **not supported on SQL Analytics Endpoints**: running either command against one returns a clean error.
 
 The workspace is resolved from the global `-w/--workspace` option, the `FABRIC_DW_DEFAULT_WORKSPACE` environment variable, or the client-side config default. `ITEM` may be a display name or GUID.
 
@@ -58,7 +58,7 @@ fdw -w <workspace> settings retention [ITEM] --days DAYS
 
 | Option | Description | Default |
 | --- | --- | --- |
-| `--days N` | Retention period in days (1-120, required). | — |
+| `--days N` | Retention period in days (1-120, required). | - |
 
 **Example:**
 
@@ -105,7 +105,7 @@ Return the current server-side database settings for a warehouse. Reads `result_
 | `workspace` | `str` | Workspace name or GUID. |
 | `item` | `str` | Warehouse or SQL Analytics Endpoint name or GUID. |
 
-**Returns:** `WarehouseSettings` — `{ database, result_set_caching, time_travel_retention_days, time_travel_retention_cutoff_date }`.
+**Returns:** `WarehouseSettings`: `{ database, result_set_caching, time_travel_retention_days, time_travel_retention_cutoff_date }`.
 
 ---
 
@@ -125,7 +125,7 @@ Enable or disable result-set caching on a warehouse. Executes `ALTER DATABASE CU
 | `item` | `str` | Warehouse or SQL Analytics Endpoint name or GUID. |
 | `enabled` | `bool` | `true` to enable result-set caching, `false` to disable it. |
 
-**Returns:** `WarehouseSettings` — the effective settings after the change.
+**Returns:** `WarehouseSettings`: the effective settings after the change.
 
 ---
 
@@ -145,4 +145,4 @@ Set the time-travel retention period on a warehouse. Executes `ALTER DATABASE CU
 | `item` | `str` | Warehouse or SQL Analytics Endpoint name or GUID. |
 | `days` | `int` | Retention period in days. Must be in the range 1–120 (inclusive). |
 
-**Returns:** `WarehouseSettings` — the effective settings after the change.
+**Returns:** `WarehouseSettings`: the effective settings after the change.

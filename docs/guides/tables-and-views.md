@@ -4,7 +4,7 @@ title: Tables & views
 
 # Creating & managing tables and views
 
-This guide walks through building out a schema model on a Microsoft Fabric Data Warehouse with `fabric-dw` — from an empty schema, through populated tables, to reporting views and the statistics that keep the optimizer honest. Every step shows a runnable CLI example (`fdw …`) and names the equivalent MCP tool, so the same workflow applies whether you drive it from a terminal or from an AI assistant wired to the [MCP server](../install.md#mcp).
+This guide walks through building out a schema model on a Microsoft Fabric Data Warehouse with `fabric-dw`: from an empty schema, through populated tables, to reporting views and the statistics that keep the optimizer honest. Every step shows a runnable CLI example (`fdw …`) and names the equivalent MCP tool, so the same workflow applies whether you drive it from a terminal or from an AI assistant wired to the [MCP server](../install.md#mcp).
 
 The flat per-command references stay the source of truth for every flag and parameter: [Schemas](../commands/schemas.md), [Tables](../commands/tables.md), [Views](../commands/views.md), and [Statistics](../commands/statistics.md). This guide ties them together as a single narrative.
 
@@ -20,9 +20,9 @@ A small star-schema-style model in one warehouse:
 - a reporting view (`sales.vw_orders_by_month`) kept under version control as a `.sql` file,
 - single-column statistics so the optimizer can plan joins and filters.
 
-You'll then maintain and iterate on the model — clone, rename, re-cluster, clear, and finally tear it down.
+You'll then maintain and iterate on the model - clone, rename, re-cluster, clear, and finally tear it down.
 
-### CLI vs MCP — when to use which
+### CLI vs MCP - when to use which
 
 - **CLI** (`fdw …`) is the full surface. File-based schema inference (`--from-parquet` / `--from-csv` / `--from-json`), `tables load`, and `if-exists replace` are **CLI-only** because they need reliable local file access.
 - **MCP tools** mirror the CLI for everything that doesn't depend on server-side file access, so an AI assistant can author and inspect the same objects. Where an MCP equivalent exists it's named in each step; where it doesn't (notably `tables load`), the gap is called out.
@@ -31,13 +31,13 @@ You'll then maintain and iterate on the model — clone, rename, re-cluster, cle
 
 ## Prerequisites
 
-- `fabric-dw` [installed](../install.md) and [authenticated](../authentication.md) (the Azure credential chain — Azure CLI, managed identity, service principal, and more).
+- `fabric-dw` [installed](../install.md) and [authenticated](../authentication.md) (the Azure credential chain - Azure CLI, managed identity, service principal, and more).
 - A target warehouse you can write to. The examples use a workspace `MyWorkspace` and a warehouse `SalesWH`; substitute your own (both are resolvable by **name or GUID**, and both default from your [configuration](../commands/config.md), so `-w`/the item argument can be omitted once defaults are set).
 - For MCP usage, the [MCP server](../install.md#mcp) registered with your assistant. Mutating and destructive tools have their own opt-in guards (see [Destructive operations](#destructive-operations-and-the-yes-flag) below).
 
 !!! warning "Data Warehouse vs SQL Analytics Endpoint"
 
-    A **SQL Analytics Endpoint** (the read query surface over a Lakehouse) cannot create, alter, or drop **tables** — that's a Warehouse-only capability. On a SQL Analytics Endpoint you can still create **views**, list/read/inspect everything, and manage schemas. The capability split is spelled out under [The SQL Analytics Endpoint read-only guard](#the-sql-analytics-endpoint-read-only-guard); each step below marks its **Targets**.
+    A **SQL Analytics Endpoint** (the read query surface over a Lakehouse) cannot create, alter, or drop **tables**: that's a Warehouse-only capability. On a SQL Analytics Endpoint you can still create **views**, list/read/inspect everything, and manage schemas. The capability split is spelled out under [The SQL Analytics Endpoint read-only guard](#the-sql-analytics-endpoint-read-only-guard); each step below marks its **Targets**.
 
 ---
 
@@ -54,14 +54,14 @@ The rest of this guide assumes these defaults are set, so the examples omit `-w 
 
 ---
 
-## Step 1 — Create a schema
+## Step 1 - Create a schema
 
 Schemas are the namespace for your tables and views. `dbo` always exists; create custom schemas to group related objects.
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
 ```shell
-# Create the schema (warehouse positional kept — schema NAME follows)
+# Create the schema (warehouse positional kept - schema NAME follows)
 fdw schemas create SalesWH sales
 
 # Confirm it exists (system schemas like sys / INFORMATION_SCHEMA are excluded; dbo is shown)
@@ -72,13 +72,13 @@ fdw schemas list
 
 !!! note "Schema names are case-sensitive"
 
-    Fabric warehouses use a fixed, case-sensitive default collation (`Latin1_General_100_BIN2_UTF8`), and **schema names are case-sensitive**. `Sales` and `sales` are different schemas. See [Limitations & gotchas](#fixed-case-sensitive-collation) before you settle on a naming convention — collation can't be changed after the warehouse is created.
+    Fabric warehouses use a fixed, case-sensitive default collation (`Latin1_General_100_BIN2_UTF8`), and **schema names are case-sensitive**. `Sales` and `sales` are different schemas. See [Limitations & gotchas](#fixed-case-sensitive-collation) before you settle on a naming convention - collation can't be changed after the warehouse is created.
 
 ---
 
-## Step 2 — Create tables
+## Step 2 - Create tables
 
-`tables create` is a single command with mutually-exclusive source modes (validated client-side before any DDL runs). All of them are **Data Warehouse only** — tables can't be created on a SQL Analytics Endpoint.
+`tables create` is a single command with mutually-exclusive source modes (validated client-side before any DDL runs). All of them are **Data Warehouse only**: tables can't be created on a SQL Analytics Endpoint.
 
 **Targets:** Data Warehouse only · **MCP:** `create_table` (CTAS), `create_empty_table` (explicit columns)
 
@@ -95,7 +95,7 @@ fdw tables create \
   --column "signed_up:DATE"
 ```
 
-**MCP** (`create_empty_table`) takes an explicit `columns` list — each entry is `{name, sql_type, nullable?}`:
+**MCP** (`create_empty_table`) takes an explicit `columns` list - each entry is `{name, sql_type, nullable?}`:
 
 ```json
 {
@@ -113,11 +113,11 @@ fdw tables create \
 
 ### Infer a table from a data file (Parquet, CSV, or JSON)
 
-All three file-based flags — `--from-parquet`, `--from-csv`, and `--from-json` — do the same thing conceptually: read only the schema from a data file and scaffold an **empty** table (no rows are read or inserted). How much of the file each flag reads differs by format:
+All three file-based flags - `--from-parquet`, `--from-csv`, and `--from-json`: do the same thing conceptually: read only the schema from a data file and scaffold an **empty** table (no rows are read or inserted). How much of the file each flag reads differs by format:
 
-- **Parquet** — reads only the Parquet footer, which encodes exact column names and types; no row-group data is touched.
-- **CSV** — reads the header row plus a bounded sample of rows (controlled by `--sample-rows`) to infer types; accepts `--delimiter` and `--encoding` for non-default files.
-- **JSON** — reads a bounded sample of records from a JSONL file (one JSON object per line) or a JSON file containing an array of objects.
+- **Parquet**: reads only the Parquet footer, which encodes exact column names and types; no row-group data is touched.
+- **CSV**: reads the header row plus a bounded sample of rows (controlled by `--sample-rows`) to infer types; accepts `--delimiter` and `--encoding` for non-default files.
+- **JSON**: reads a bounded sample of records from a JSONL file (one JSON object per line) or a JSON file containing an array of objects.
 
 **Shared options** (available on all three paths unless noted):
 
@@ -129,7 +129,7 @@ All three file-based flags — `--from-parquet`, `--from-csv`, and `--from-json`
 | `--delimiter CHAR` | CSV only | Field delimiter (default `,`) |
 | `--encoding ENC` | CSV only | File encoding (default `utf-8`) |
 
-**Mutual exclusivity:** `--from-parquet`, `--from-csv`, `--from-json`, `--column`, and the CTAS flags `--select`/`--from-file` are all mutually exclusive — pick exactly one column source per `tables create` invocation.
+**Mutual exclusivity:** `--from-parquet`, `--from-csv`, `--from-json`, `--column`, and the CTAS flags `--select`/`--from-file` are all mutually exclusive - pick exactly one column source per `tables create` invocation.
 
 ```shell
 # From a Parquet footer (exact types, no sampling)
@@ -153,9 +153,9 @@ Once the table is created, load data into it with `tables load --format <parquet
 
 !!! note "File inference is CLI-only"
 
-    The MCP `create_empty_table` tool deliberately takes an explicit `columns` list and does **not** do Parquet/CSV/JSON inference — server-side file access is unreliable in MCP deployments. Use the CLI for file-based inference, or pass the resolved columns to `create_empty_table`.
+    The MCP `create_empty_table` tool deliberately takes an explicit `columns` list and does **not** do Parquet/CSV/JSON inference - server-side file access is unreliable in MCP deployments. Use the CLI for file-based inference, or pass the resolved columns to `create_empty_table`.
 
-### CTAS — create a table from a query
+### CTAS - create a table from a query
 
 `CREATE TABLE … AS SELECT` materialises a query result into a new table. Supply the SELECT inline with `--select`, or keep the body under version control and pass `--from-file body.sql`. The body is rejected client-side if its first non-comment keyword isn't `SELECT`.
 
@@ -193,7 +193,7 @@ fdw tables list --schema sales
 
 ---
 
-## Step 3 — Populate the tables
+## Step 3 - Populate the tables
 
 Loading data is its own topic. The bridge from "empty table" to "populated table" is **`tables load`**, which issues `COPY INTO` from a local file or a remote URL (and can auto-create the table from the source schema with `--create`):
 
@@ -201,13 +201,13 @@ Loading data is its own topic. The bridge from "empty table" to "populated table
 fdw tables load SalesWH sales.orders --file ./data/orders.parquet
 ```
 
-**Targets:** Data Warehouse only. There is **no MCP `load` tool for local files**; the MCP server exposes `load_table_from_url` / `import_table_from_url` for remote URLs only (local staging needs reliable file access). For the full loading surface — `--create`, `--if-exists`, credentials for secured external URLs, CSV options — see the [`tables load`](../commands/tables.md#tables-load) reference rather than this guide.
+**Targets:** Data Warehouse only. There is **no MCP `load` tool for local files**; the MCP server exposes `load_table_from_url` / `import_table_from_url` for remote URLs only (local staging needs reliable file access). For the full loading surface - `--create`, `--if-exists`, credentials for secured external URLs, CSV options - see the [`tables load`](../commands/tables.md#tables-load) reference rather than this guide.
 
 ---
 
-## Step 4 — Create views
+## Step 4 - Create views
 
-Views give consumers a stable, named query. Unlike tables, **views are creatable on both a Data Warehouse and a SQL Analytics Endpoint** — there's no Warehouse-only guard.
+Views give consumers a stable, named query. Unlike tables, **views are creatable on both a Data Warehouse and a SQL Analytics Endpoint**: there's no Warehouse-only guard.
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint · **MCP:** `create_view`, `update_view`, `get_view`, `get_view_columns`, `rename_view`, `list_views`
 
@@ -234,7 +234,7 @@ You can also create inline with `--select "<SELECT>"`. **MCP:** `create_view` (p
 ### Inspect and update a view
 
 ```shell
-# Full definition (from sys.sql_modules) — warehouse positional kept, view name follows
+# Full definition (from sys.sql_modules) - warehouse positional kept, view name follows
 fdw views get SalesWH sales.vw_orders_by_month
 
 # Column metadata
@@ -253,9 +253,9 @@ fdw views update SalesWH sales.vw_orders_by_month \
 
 ---
 
-## Step 5 — Help the optimizer
+## Step 5 - Help the optimizer
 
-After you load data, give the query optimizer the statistics it needs. `fabric-dw` manages **single-column** statistics (a Fabric limitation — multi-column statistics aren't supported), and you must pass an explicit `--name` (Fabric requires an explicit statistic name — there is no auto-generated default).
+After you load data, give the query optimizer the statistics it needs. `fabric-dw` manages **single-column** statistics (a Fabric limitation - multi-column statistics aren't supported), and you must pass an explicit `--name` (Fabric requires an explicit statistic name - there is no auto-generated default).
 
 **Targets:** Data Warehouse only (create/update/delete) · Data Warehouse · SQL Analytics Endpoint (list/show) · **MCP:** `create_statistics`, `update_statistics`, `list_statistics`, `show_statistics`
 
@@ -264,7 +264,7 @@ After you load data, give the query optimizer the statistics it needs. `fabric-d
 fdw statistics create \
   --table sales.orders --column region --name stat_orders_region
 
-# Refresh it after a load (warehouse positional kept — table/stat names follow)
+# Refresh it after a load (warehouse positional kept - table/stat names follow)
 fdw statistics update SalesWH sales.orders stat_orders_region
 
 # List / inspect
@@ -290,7 +290,7 @@ fdw --yes tables cluster-by SalesWH sales.orders
 fdw tables cluster-columns SalesWH sales.orders
 ```
 
-**Targets:** Data Warehouse only · **MCP:** `set_cluster_columns` (destructive — copies the full table), `get_cluster_columns`.
+**Targets:** Data Warehouse only · **MCP:** `set_cluster_columns` (destructive - copies the full table), `get_cluster_columns`.
 
 !!! tip "Diagnosing slow queries"
 
@@ -298,7 +298,7 @@ fdw tables cluster-columns SalesWH sales.orders
 
 ---
 
-## Step 6 — Maintain & iterate
+## Step 6 - Maintain & iterate
 
 **Clone** a table (zero-copy, near-instant, independent of the source). Add `--at` for a point-in-time clone within the warehouse's data-retention window:
 
@@ -312,20 +312,20 @@ fdw tables clone \
   --at 2026-05-20T14:00:00
 ```
 
-**Rename** a table or view (`sp_rename`; the new name must be **unqualified** — you can't move objects across schemas):
+**Rename** a table or view (`sp_rename`; the new name must be **unqualified**: you can't move objects across schemas):
 
 ```shell
 fdw tables rename SalesWH sales.orders_2025 --new-name orders_archive_2025
 fdw views rename SalesWH sales.vw_recent --new-name vw_revenue
 ```
 
-**Clear** a table (`TRUNCATE TABLE` — removes all rows, keeps the structure):
+**Clear** a table (`TRUNCATE TABLE`: removes all rows, keeps the structure):
 
 ```shell
 fdw --yes tables clear SalesWH staging.raw_products
 ```
 
-**Health-check** a table on a **SQL Analytics Endpoint** — this is the inverse of the usual guard: `tables health-check` runs `sp_get_table_health_metrics` (Delta/Parquet layout diagnostics) and is **rejected on a Data Warehouse**:
+**Health-check** a table on a **SQL Analytics Endpoint**: this is the inverse of the usual guard: `tables health-check` runs `sp_get_table_health_metrics` (Delta/Parquet layout diagnostics) and is **rejected on a Data Warehouse**:
 
 ```shell
 fdw tables health-check MySqlEndpoint dbo.FactSales
@@ -339,7 +339,7 @@ fdw --yes tables delete SalesWH sales.orders
 fdw --yes schemas delete SalesWH sales --cascade
 ```
 
-`schemas delete --cascade` first drops **all tables, views, functions, and stored procedures** in the schema. Without `--cascade`, the engine rejects `DROP SCHEMA` on a non-empty schema. On a SQL Analytics Endpoint, cascade can't drop tables (no `DROP TABLE` there), so a schema still holding tables won't drop — remove them from the warehouse first.
+`schemas delete --cascade` first drops **all tables, views, functions, and stored procedures** in the schema. Without `--cascade`, the engine rejects `DROP SCHEMA` on a non-empty schema. On a SQL Analytics Endpoint, cascade can't drop tables (no `DROP TABLE` there), so a schema still holding tables won't drop - remove them from the warehouse first.
 
 **MCP equivalents:** `clone_table`, `rename_table` / `rename_view`, `clear_table`, `get_table_health_metrics`, `drop_view`, `delete_table`, `delete_schema(..., cascade=True)`.
 
@@ -351,7 +351,7 @@ These commands prompt for confirmation before they run; pass `--yes` / `-y` to s
 
 `tables clear`, `tables delete`, `tables cluster-by`, `views drop`, `views update`, `schemas delete`, `statistics delete`, and `tables load --if-exists truncate|replace`.
 
-The matching MCP tools are marked `destructive=True`. An assistant must satisfy the server's destructive-operations guard before they execute — see the [MCP server install](../install.md#mcp) page.
+The matching MCP tools are marked `destructive=True`. An assistant must satisfy the server's destructive-operations guard before they execute - see the [MCP server install](../install.md#mcp) page.
 
 ### The SQL Analytics Endpoint read-only guard
 
@@ -372,7 +372,7 @@ Fabric's T-SQL surface differs from SQL Server. The points below most often trip
 
 ### Unsupported data types
 
-`tables create --column` accepts any type string you give it, but the **engine** rejects persisting columns whose type isn't supported for warehouse tables/views. Notably **unsupported**: `money` / `smallmoney`, `datetime` / `smalldatetime`, `datetimeoffset`, `nchar` / `nvarchar`, `text` / `ntext`, `image`, `tinyint`, `geography` / `geometry`, `json`, `xml`, CLR UDTs, and `Vector`. Use the documented alternatives instead — `decimal`, `datetime2`, `char` / `varchar`, `varbinary`, `smallint`, and so on. See [Data types in Fabric Data Warehouse](https://learn.microsoft.com/fabric/data-warehouse/data-types?WT.mc_id=MVP_310840#data-types-in-fabric-data-warehouse).
+`tables create --column` accepts any type string you give it, but the **engine** rejects persisting columns whose type isn't supported for warehouse tables/views. Notably **unsupported**: `money` / `smallmoney`, `datetime` / `smalldatetime`, `datetimeoffset`, `nchar` / `nvarchar`, `text` / `ntext`, `image`, `tinyint`, `geography` / `geometry`, `json`, `xml`, CLR UDTs, and `Vector`. Use the documented alternatives instead - `decimal`, `datetime2`, `char` / `varchar`, `varbinary`, `smallint`, and so on. See [Data types in Fabric Data Warehouse](https://learn.microsoft.com/fabric/data-warehouse/data-types?WT.mc_id=MVP_310840#data-types-in-fabric-data-warehouse).
 
 ### Constraints require `NOT ENFORCED`, and can't be inline
 
@@ -380,17 +380,17 @@ Fabric's T-SQL surface differs from SQL Server. The points below most often trip
 
 - `PRIMARY KEY` / `UNIQUE` are only allowed when both `NONCLUSTERED` **and** `NOT ENFORCED`; `FOREIGN KEY` only when `NOT ENFORCED`.
 - **No default constraints.**
-- Constraints **can't be declared inline** in `CREATE TABLE` — add them afterwards with `ALTER TABLE`.
+- Constraints **can't be declared inline** in `CREATE TABLE`: add them afterwards with `ALTER TABLE`.
 
-Because the keys are unenforced, the engine trusts them but doesn't validate them — don't treat an unenforced key as a guaranteed-unique JOIN candidate. See [Table constraints](https://learn.microsoft.com/fabric/data-warehouse/table-constraints?WT.mc_id=MVP_310840) and the [performance guidelines](https://learn.microsoft.com/fabric/data-warehouse/guidelines-warehouse-performance?WT.mc_id=MVP_310840#query-performance).
+Because the keys are unenforced, the engine trusts them but doesn't validate them - don't treat an unenforced key as a guaranteed-unique JOIN candidate. See [Table constraints](https://learn.microsoft.com/fabric/data-warehouse/table-constraints?WT.mc_id=MVP_310840) and the [performance guidelines](https://learn.microsoft.com/fabric/data-warehouse/guidelines-warehouse-performance?WT.mc_id=MVP_310840#query-performance).
 
 ### T-SQL surface area
 
-The Warehouse supports tables, views, procedures, and functions; `TRUNCATE TABLE`, `sp_rename`, CTAS, and a **limited** `ALTER TABLE` (add a nullable column, drop a column, add/drop `NOT ENFORCED` constraints) are supported. Creating, altering, or dropping **tables** and running **DML** are **not** supported on a Lakehouse SQL Analytics Endpoint — only views, table-valued functions, and stored procedures. This grounds the read-only-endpoint guard above. See [T-SQL surface area](https://learn.microsoft.com/fabric/data-warehouse/tsql-surface-area?WT.mc_id=MVP_310840#t-sql-surface-area).
+The Warehouse supports tables, views, procedures, and functions; `TRUNCATE TABLE`, `sp_rename`, CTAS, and a **limited** `ALTER TABLE` (add a nullable column, drop a column, add/drop `NOT ENFORCED` constraints) are supported. Creating, altering, or dropping **tables** and running **DML** are **not** supported on a Lakehouse SQL Analytics Endpoint - only views, table-valued functions, and stored procedures. This grounds the read-only-endpoint guard above. See [T-SQL surface area](https://learn.microsoft.com/fabric/data-warehouse/tsql-surface-area?WT.mc_id=MVP_310840#t-sql-surface-area).
 
 ### Fixed, case-sensitive collation
 
-A warehouse is created with the default `Latin1_General_100_BIN2_UTF8` collation (case-sensitive), and **collation can't be changed after creation**. This makes **schema and object names case-sensitive** — `sales.Orders` and `sales.orders` are different. Settle your naming convention up front. See [Collation in Fabric Data Warehouse](https://learn.microsoft.com/fabric/data-warehouse/collation?WT.mc_id=MVP_310840).
+A warehouse is created with the default `Latin1_General_100_BIN2_UTF8` collation (case-sensitive), and **collation can't be changed after creation**. This makes **schema and object names case-sensitive**: `sales.Orders` and `sales.orders` are different. Settle your naming convention up front. See [Collation in Fabric Data Warehouse](https://learn.microsoft.com/fabric/data-warehouse/collation?WT.mc_id=MVP_310840).
 
 ### Naming rules
 
@@ -402,7 +402,7 @@ Table and schema names **can't contain `/` or `\`, and can't end with a `.`**. S
 
 ### Table design
 
-For the schema model itself, follow the [dimensional-modeling](https://learn.microsoft.com/fabric/data-warehouse/dimensional-modeling-overview?WT.mc_id=MVP_310840#star-schema-design) and [table design](https://learn.microsoft.com/fabric/data-warehouse/tables?WT.mc_id=MVP_310840) guidance: fact / dimension / integration table categories, surrogate keys, types matched to semantics (`date` / `datetime2`, integer types for whole numbers, the smallest viable `decimal` precision — see [data-type optimization](https://learn.microsoft.com/fabric/data-warehouse/guidelines-warehouse-performance?WT.mc_id=MVP_310840#data-type-optimization)), and [statistics](https://learn.microsoft.com/fabric/data-warehouse/statistics?WT.mc_id=MVP_310840) refreshed after loads. The canonical DDL references are [CREATE TABLE](https://learn.microsoft.com/fabric/data-warehouse/create-table?WT.mc_id=MVP_310840) and [CREATE TABLE AS SELECT](https://learn.microsoft.com/sql/t-sql/statements/create-table-azure-sql-data-warehouse?view=fabric&WT.mc_id=MVP_310840).
+For the schema model itself, follow the [dimensional-modeling](https://learn.microsoft.com/fabric/data-warehouse/dimensional-modeling-overview?WT.mc_id=MVP_310840#star-schema-design) and [table design](https://learn.microsoft.com/fabric/data-warehouse/tables?WT.mc_id=MVP_310840) guidance: fact / dimension / integration table categories, surrogate keys, types matched to semantics (`date` / `datetime2`, integer types for whole numbers, the smallest viable `decimal` precision - see [data-type optimization](https://learn.microsoft.com/fabric/data-warehouse/guidelines-warehouse-performance?WT.mc_id=MVP_310840#data-type-optimization)), and [statistics](https://learn.microsoft.com/fabric/data-warehouse/statistics?WT.mc_id=MVP_310840) refreshed after loads. The canonical DDL references are [CREATE TABLE](https://learn.microsoft.com/fabric/data-warehouse/create-table?WT.mc_id=MVP_310840) and [CREATE TABLE AS SELECT](https://learn.microsoft.com/sql/t-sql/statements/create-table-azure-sql-data-warehouse?view=fabric&WT.mc_id=MVP_310840).
 
 ---
 

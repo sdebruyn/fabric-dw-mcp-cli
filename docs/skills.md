@@ -56,8 +56,8 @@ Place each file at one of the Claude Code personal or project skill paths:
 
 | Path | Scope |
 | --- | --- |
-| `~/.claude/skills/<name>/SKILL.md` | Personal — applies to all projects |
-| `.claude/skills/<name>/SKILL.md` | Project-scoped — committed to repo |
+| `~/.claude/skills/<name>/SKILL.md` | Personal - applies to all projects |
+| `.claude/skills/<name>/SKILL.md` | Project-scoped - committed to repo |
 
 For example, to install `query-optimizer` at project scope:
 
@@ -88,7 +88,7 @@ fdw sql plan <warehouse> -q "<query>" --format html -o plan.html   # writes self
 fdw sql plan <workspace>/<warehouse> -q "<query>" --format svg -o plan.svg   # renders SVG via system dot binary (requires Graphviz)
 ```
 
-`--format html` requires `-o/--output` and writes a file — it does not open the browser automatically.
+`--format html` requires `-o/--output` and writes a file - it does not open the browser automatically.
 
 ### warehouse-performance
 
@@ -96,7 +96,7 @@ Runs a warehouse-wide performance investigation on a Fabric Data Warehouse (the 
 
 1. Finds query hotspots via `queries long-running` and `queries frequent` (server-ordered; "top N" is `--limit N`, no `--order-by`), plus resource-pressure events via `sql-pools insights`; drills down with `queries history` / `queries sessions` (MCP `list_long_running_queries`, `list_frequent_queries`, `list_sql_pool_insights`, `list_request_history`, `list_session_history`). Degrades gracefully when Query Insights is unavailable or permission-denied (needs Contributor+)
 2. Audits statistics health with `statistics list` and `statistics show --histogram`, flagging missing or likely-stale statistics as a heuristic (reads work on both surfaces; DDL is DWH-only)
-3. Checks result-set caching via `settings show`, and recommends `settings result-set-caching on` when frequent identical queries justify it (toggle is DWH-only and mutating — kept distinct from the local `cache clear` lookup cache and from cache cooldown)
+3. Checks result-set caching via `settings show`, and recommends `settings result-set-caching on` when frequent identical queries justify it (toggle is DWH-only and mutating - kept distinct from the local `cache clear` lookup cache and from cache cooldown)
 4. Reviews and tunes SQL pool configuration via `sql-pools get`/`list`/`show`, with actionable `create`/`update` levers (`--max-percent`, `--optimize-for-reads`, application-name classifier) against the default 50/50 baseline (workspace-scoped, workspace admin)
 5. Synthesizes a prioritized findings report with each cost driver's `query_hash` so a specific query can be handed to `query-optimizer`
 
@@ -104,10 +104,10 @@ Every mutating action (result-set-caching toggle, statistics DDL, `sql-pools cre
 
 ### dbt-setup
 
-Bootstraps a dbt-fabric project for a Fabric Data Warehouse. For the human, copy-pasteable CLI walkthrough of the same provision → inspect → scaffold → verify flow, see the [Set up a dbt environment](guides/dbt-setup.md) guide — this skill is the AI-assistant-driven equivalent.
+Bootstraps a dbt-fabric project for a Fabric Data Warehouse. For the human, copy-pasteable CLI walkthrough of the same provision → inspect → scaffold → verify flow, see the [Set up a dbt environment](guides/dbt-setup.md) guide - this skill is the AI-assistant-driven equivalent.
 
 1. Resolves the warehouse connection string via `get_warehouse`
 2. Lists schemas and tables with `list_schemas` and `list_tables` to confirm connectivity
-3. Generates all scaffold files with `generate_dbt_profile` using `with_sources=true` — the tool performs a bulk column fetch and emits a `models/staging/_sources.yml` with `columns:` blocks (name and formatted `data_type`) for every table, ready for dbt contract enforcement
+3. Generates all scaffold files with `generate_dbt_profile` using `with_sources=true`: the tool performs a bulk column fetch and emits a `models/staging/_sources.yml` with `columns:` blocks (name and formatted `data_type`) for every table, ready for dbt contract enforcement
 4. Writes `profiles.yml`, `dbt_project.yml`, `models/staging/_sources.yml`, `requirements.txt`, and `.gitignore` to disk; confirms before overwriting existing files
 5. Provides next steps: `pip install -r requirements.txt`, `dbt debug`, `dbt run`

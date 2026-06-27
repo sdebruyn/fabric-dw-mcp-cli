@@ -6,7 +6,7 @@ title: dbt
 
 Scaffold a [dbt](https://docs.getdbt.com/) project pre-wired to a Microsoft Fabric Data Warehouse using the [dbt-fabric](https://docs.getdbt.com/docs/core/connect-data-platform/fabric-setup) adapter.
 
-No dbt installation is required to run these commands — `fabric-dw` generates all project files itself. A `requirements.txt` inside the scaffolded project lists the required pip packages (`dbt-core`, `dbt-fabric`) so you can install them in a separate environment when you are ready to run dbt.
+No dbt installation is required to run these commands - `fabric-dw` generates all project files itself. A `requirements.txt` inside the scaffolded project lists the required pip packages (`dbt-core`, `dbt-fabric`) so you can install them in a separate environment when you are ready to run dbt.
 
 **Targets:** Data Warehouse
 
@@ -54,7 +54,7 @@ fdw [-w WORKSPACE] dbt init [OPTIONS] [ITEM] FOLDER
 **Examples**
 
 ```shell
-# Minimal — uses configured default workspace and warehouse
+# Minimal - uses configured default workspace and warehouse
 fdw dbt init SalesWH ./my_dbt_project
 
 # Explicit workspace via -w
@@ -109,20 +109,20 @@ Return the contents of all files needed to bootstrap a dbt project that connects
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — Data Warehouse name or GUID.
-- `project_name` (`str`, optional) — dbt project name. Defaults to the warehouse display name (sanitised to lowercase + underscores).
-- `profile_name` (`str`, optional) — dbt profile name. Defaults to the project name.
-- `schema` (`str`, default `"dbo"`) — default target schema for dbt models.
-- `target` (`str`, default `"dev"`) — dbt target name.
-- `threads` (`int`, default `4`) — number of dbt threads (1–64).
-- `authentication` (`str`, optional) — authentication method (`"auto"`, `"CLI"`, `"ServicePrincipal"`). Defaults to the MCP server's active credential mode.
-- `with_sources` (`bool`, default `False`) — when `True`, introspect the live warehouse and include all schemas/tables in the returned `sources_yml`.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): Data Warehouse name or GUID.
+- `project_name` (`str`, optional): dbt project name. Defaults to the warehouse display name (sanitised to lowercase + underscores).
+- `profile_name` (`str`, optional): dbt profile name. Defaults to the project name.
+- `schema` (`str`, default `"dbo"`): default target schema for dbt models.
+- `target` (`str`, default `"dev"`): dbt target name.
+- `threads` (`int`, default `4`): number of dbt threads (1–64).
+- `authentication` (`str`, optional): authentication method (`"auto"`, `"CLI"`, `"ServicePrincipal"`). Defaults to the MCP server's active credential mode.
+- `with_sources` (`bool`, default `False`): when `True`, introspect the live warehouse and include all schemas/tables in the returned `sources_yml`.
 
 **Returns:** object with:
 
-- `profiles_yml` (`str`) — contents for `profiles.yml` (write next to `dbt_project.yml` or into `~/.dbt/profiles.yml`).
-- `dbt_project_yml` (`str`) — contents for `dbt_project.yml`.
-- `sources_yml` (`str`) — contents for `models/staging/_sources.yml` (placeholder or real entries when `with_sources=True`).
-- `requirements_txt` (`str`) — pip requirements listing `dbt-core` and `dbt-fabric`.
-- `gitignore` (`str`) — contents for `.gitignore`, pre-configured for dbt projects.
+- `profiles_yml` (`str`): contents for `profiles.yml` (write next to `dbt_project.yml` or into `~/.dbt/profiles.yml`).
+- `dbt_project_yml` (`str`): contents for `dbt_project.yml`.
+- `sources_yml` (`str`): contents for `models/staging/_sources.yml` (placeholder or real entries when `with_sources=True`).
+- `requirements_txt` (`str`): pip requirements listing `dbt-core` and `dbt-fabric`.
+- `gitignore` (`str`): contents for `.gitignore`, pre-configured for dbt projects.

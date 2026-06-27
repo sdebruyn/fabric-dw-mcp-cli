@@ -16,7 +16,7 @@ Manage SQL audit settings for Microsoft Fabric Data Warehouses and SQL Analytics
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
-Add a single audit action group without overwriting the others. Idempotent — if the group is already present the command succeeds without modifying the configuration. Auditing must already be enabled.
+Add a single audit action group without overwriting the others. Idempotent - if the group is already present the command succeeds without modifying the configuration. Auditing must already be enabled.
 
 **Synopsis**
 
@@ -66,10 +66,10 @@ fdw [-w WORKSPACE] audit enable [OPTIONS] [WAREHOUSE]
 
 | Option | Description | Default |
 | --- | --- | --- |
-| `--retention-days INTEGER` | Audit log retention in days (>= 1). Mutually exclusive with `--unlimited`. | — |
+| `--retention-days INTEGER` | Audit log retention in days (>= 1). Mutually exclusive with `--unlimited`. | - |
 | `--unlimited` | Set unlimited audit log retention (service value 0). Mutually exclusive with `--retention-days`. | off |
 
-Omitting both `--retention-days` and `--unlimited` defaults to unlimited retention. Passing `0` for `--retention-days` is rejected — use `--unlimited` for no-limit retention.
+Omitting both `--retention-days` and `--unlimited` defaults to unlimited retention. Passing `0` for `--retention-days` is rejected - use `--unlimited` for no-limit retention.
 
 **Example**
 
@@ -113,7 +113,7 @@ actionGroups     BATCH_COMPLETED_GROUP
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
-Remove a single audit action group without overwriting the others. Idempotent — if the group is not present the command succeeds without modifying the configuration. Auditing must already be enabled.
+Remove a single audit action group without overwriting the others. Idempotent - if the group is not present the command succeeds without modifying the configuration. Auditing must already be enabled.
 
 **Synopsis**
 
@@ -186,15 +186,15 @@ fdw -w MyWorkspace audit set-retention --days 90 SalesWH
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
-Add a single audit action group without overwriting the others. Idempotent — if the group is already present the current settings are returned unchanged. Auditing must already be enabled.
+Add a single audit action group without overwriting the others. Idempotent - if the group is already present the current settings are returned unchanged. Auditing must already be enabled.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `group` (`str`) — action group name (e.g. `"BATCH_COMPLETED_GROUP"`).
+- `workspace` (`str`): workspace name or GUID.
+- `warehouse` (`str`): warehouse or SQL analytics endpoint name or GUID.
+- `group` (`str`): action group name (e.g. `"BATCH_COMPLETED_GROUP"`).
 
-**Returns:** `AuditSettings` — the updated audit settings.
+**Returns:** `AuditSettings`: the updated audit settings.
 
 ---
 
@@ -206,10 +206,10 @@ Disable SQL auditing on a warehouse or SQL analytics endpoint.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse or SQL analytics endpoint name or GUID.
+- `workspace` (`str`): workspace name or GUID.
+- `warehouse` (`str`): warehouse or SQL analytics endpoint name or GUID.
 
-**Returns:** `AuditSettings` — the updated audit settings.
+**Returns:** `AuditSettings`: the updated audit settings.
 
 ---
 
@@ -221,11 +221,11 @@ Enable SQL auditing on a warehouse or SQL analytics endpoint.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `retention_days` (`int`, default `0`) — audit log retention in days; `0` means unlimited.
+- `workspace` (`str`): workspace name or GUID.
+- `warehouse` (`str`): warehouse or SQL analytics endpoint name or GUID.
+- `retention_days` (`int`, default `0`): audit log retention in days; `0` means unlimited.
 
-**Returns:** `AuditSettings` — the updated audit settings.
+**Returns:** `AuditSettings`: the updated audit settings.
 
 ---
 
@@ -237,10 +237,10 @@ Fetch the current SQL audit settings for a warehouse or SQL analytics endpoint.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse or SQL analytics endpoint name or GUID.
+- `workspace` (`str`): workspace name or GUID.
+- `warehouse` (`str`): warehouse or SQL analytics endpoint name or GUID.
 
-**Returns:** `AuditSettings` — object with `state` (`Enabled` or `Disabled`), `retentionDays`, and `auditActionsAndGroups`.
+**Returns:** `AuditSettings`: object with `state` (`Enabled` or `Disabled`), `retentionDays`, and `auditActionsAndGroups`.
 
 ---
 
@@ -248,15 +248,15 @@ Fetch the current SQL audit settings for a warehouse or SQL analytics endpoint.
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
-Remove a single audit action group without overwriting the others. Idempotent — if the group is not present the current settings are returned unchanged. Auditing must already be enabled.
+Remove a single audit action group without overwriting the others. Idempotent - if the group is not present the current settings are returned unchanged. Auditing must already be enabled.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `group` (`str`) — action group name (e.g. `"BATCH_COMPLETED_GROUP"`).
+- `workspace` (`str`): workspace name or GUID.
+- `warehouse` (`str`): warehouse or SQL analytics endpoint name or GUID.
+- `group` (`str`): action group name (e.g. `"BATCH_COMPLETED_GROUP"`).
 
-**Returns:** `AuditSettings` — the updated audit settings.
+**Returns:** `AuditSettings`: the updated audit settings.
 
 ---
 
@@ -268,11 +268,11 @@ Replace the audited action groups for a warehouse or SQL analytics endpoint. Thi
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `action_groups` (`list[str]`) — list of audit action group names (e.g. `["BATCH_COMPLETED_GROUP"]`).
+- `workspace` (`str`): workspace name or GUID.
+- `warehouse` (`str`): warehouse or SQL analytics endpoint name or GUID.
+- `action_groups` (`list[str]`): list of audit action group names (e.g. `["BATCH_COMPLETED_GROUP"]`).
 
-**Returns:** `AuditSettings` — the updated audit settings.
+**Returns:** `AuditSettings`: the updated audit settings.
 
 ---
 
@@ -284,8 +284,8 @@ Update the audit log retention period without changing the audit enabled/disable
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `days` (`int`) — retention period in days (1–3650; 3650 ≈ 10 years).
+- `workspace` (`str`): workspace name or GUID.
+- `warehouse` (`str`): warehouse or SQL analytics endpoint name or GUID.
+- `days` (`int`): retention period in days (1–3650; 3650 ≈ 10 years).
 
-**Returns:** `AuditSettings` — the updated audit settings.
+**Returns:** `AuditSettings`: the updated audit settings.

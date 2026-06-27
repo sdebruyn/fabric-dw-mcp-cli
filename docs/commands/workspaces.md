@@ -4,7 +4,7 @@ title: Workspaces
 
 # Workspaces
 
-Manage Microsoft Fabric workspaces — list all workspaces the authenticated principal can see, inspect a single workspace's details (including its default Data Warehouse collation), and update that collation. All workspace commands operate at the workspace level and do not target a specific Data Warehouse or SQL Analytics Endpoint item.
+Manage Microsoft Fabric workspaces - list all workspaces the authenticated principal can see, inspect a single workspace's details (including its default Data Warehouse collation), and update that collation. All workspace commands operate at the workspace level and do not target a specific Data Warehouse or SQL Analytics Endpoint item.
 
 **Targets:** Workspace (not item-specific)
 
@@ -34,7 +34,7 @@ fdw workspaces assign-capacity [WORKSPACE] --capacity-id <UUID>
 
 **Options**
 
-- `--capacity-id` (`UUID`, required) — UUID of the capacity to assign the workspace to.
+- `--capacity-id` (`UUID`, required): UUID of the capacity to assign the workspace to.
 
 **Example**
 
@@ -161,10 +161,10 @@ Assign a workspace to a Fabric capacity. This is a mutating operation and is blo
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `capacity_id` (`str`) — UUID of the capacity to assign the workspace to.
+- `workspace` (`str`): workspace name or GUID.
+- `capacity_id` (`str`): UUID of the capacity to assign the workspace to.
 
-**Returns:** `{ "workspace_id": str, "capacity_id": str }` — the workspace GUID and the capacity GUID.
+**Returns:** `{ "workspace_id": str, "capacity_id": str }`: the workspace GUID and the capacity GUID.
 
 ---
 
@@ -176,9 +176,9 @@ Return details for a single workspace.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
+- `workspace` (`str`): workspace name or GUID.
 
-**Returns:** `Workspace` — single workspace object (fields as above).
+**Returns:** `Workspace`: single workspace object (fields as above).
 
 ---
 
@@ -190,7 +190,7 @@ List all Fabric capacities the authenticated principal has access to. Requires t
 
 **Parameters:** None
 
-**Returns:** `list[Capacity]` — array of capacity objects, each with `id`, `displayName`, `sku`, `region`, and `state`.
+**Returns:** `list[Capacity]`: array of capacity objects, each with `id`, `displayName`, `sku`, `region`, and `state`.
 
 ---
 
@@ -202,7 +202,7 @@ List all Fabric workspaces the authenticated principal has access to.
 
 **Parameters:** None
 
-**Returns:** `list[Workspace]` — array of workspace objects, each with `id`, `displayName`, `description`, `capacityId`, and `defaultDatasetStorageFormat`.
+**Returns:** `list[Workspace]`: array of workspace objects, each with `id`, `displayName`, `description`, `capacityId`, and `defaultDatasetStorageFormat`.
 
 ---
 
@@ -214,7 +214,7 @@ Set the default Data Warehouse collation for a workspace.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `collation` (`str`) — collation name (must be a supported Fabric collation).
+- `workspace` (`str`): workspace name or GUID.
+- `collation` (`str`): collation name (must be a supported Fabric collation).
 
-**Returns:** `{ "workspace_id": str, "collation": str }` — the workspace GUID and the newly-set collation.
+**Returns:** `{ "workspace_id": str, "collation": str }`: the workspace GUID and the newly-set collation.

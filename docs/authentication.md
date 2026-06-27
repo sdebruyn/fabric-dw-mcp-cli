@@ -6,7 +6,7 @@ title: Authentication
 
 ## TL;DR
 
-If you are already signed in via [Azure CLI](https://learn.microsoft.com/cli/azure/reference-index?view=azure-cli-latest&WT.mc_id=MVP_310840#az-login) or [Azure PowerShell](https://learn.microsoft.com/powershell/module/az.accounts/connect-azaccount?WT.mc_id=MVP_310840), you don't need to configure anything — `fabric-dw` picks up your session automatically.
+If you are already signed in via [Azure CLI](https://learn.microsoft.com/cli/azure/reference-index?view=azure-cli-latest&WT.mc_id=MVP_310840#az-login) or [Azure PowerShell](https://learn.microsoft.com/powershell/module/az.accounts/connect-azaccount?WT.mc_id=MVP_310840), you don't need to configure anything - `fabric-dw` picks up your session automatically.
 
 ```bash
 az login          # or: az login --tenant <tenant-id>
@@ -34,9 +34,9 @@ Valid values: `default`, `interactive`, `sp` (case-insensitive).
 
 | Value | What it uses |
 | --- | --- |
-| `default` | [`azure-identity` `DefaultAzureCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.defaultazurecredential?WT.mc_id=MVP_310840) — see [credential chain](#fabric_authdefault-defaultazurecredential-chain) below |
-| `interactive` | Browser pop-up — see [interactive sign-in](#interactive-browser-sign-in-zero-setup) below |
-| `sp` | Service-principal — see [service principal](#fabric_authsp-service-principal) below |
+| `default` | [`azure-identity` `DefaultAzureCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.defaultazurecredential?WT.mc_id=MVP_310840) - see [credential chain](#fabric_authdefault-defaultazurecredential-chain) below |
+| `interactive` | Browser pop-up - see [interactive sign-in](#interactive-browser-sign-in-zero-setup) below |
+| `sp` | Service-principal - see [service principal](#fabric_authsp-service-principal) below |
 
 !!! note "Empty-value semantics"
     An empty or whitespace-only `FABRIC_AUTH` (e.g. `FABRIC_AUTH=`) is treated as absent and falls through to `config.toml` / the built-in default. An unrecognised non-empty value (e.g. `FABRIC_AUTH=typo`) raises a configuration error immediately at server start so the credential is never silently wrong.
@@ -45,7 +45,7 @@ Valid values: `default`, `interactive`, `sp` (case-insensitive).
 
 ## Interactive browser sign-in (zero setup)
 
-`FABRIC_AUTH=interactive` (and the default-mode browser fallback) uses a shared multi-tenant app — no registration needed:
+`FABRIC_AUTH=interactive` (and the default-mode browser fallback) uses a shared multi-tenant app - no registration needed:
 
 | | |
 | --- | --- |
@@ -56,8 +56,8 @@ Valid values: `default`, `interactive`, `sp` (case-insensitive).
 
 On first sign-in:
 
-- **Non-admin users** — the consent prompt asks for the delegated scopes the app needs (Workspace, Item, Tenant.Read, SQL user_impersonation). If your tenant policy requires admin consent for any of them, sign-in will fail until an admin grants it.
-- **Admins** — choose "Consent on behalf of your organization" once; subsequent sign-ins from anyone in the tenant just work.
+- **Non-admin users**: the consent prompt asks for the delegated scopes the app needs (Workspace, Item, Tenant.Read, SQL user_impersonation). If your tenant policy requires admin consent for any of them, sign-in will fail until an admin grants it.
+- **Admins**: choose "Consent on behalf of your organization" once; subsequent sign-ins from anyone in the tenant just work.
 
 Pre-consent admin URL:
 
@@ -91,22 +91,22 @@ Then grant the same delegated permissions as the shared app:
 
 ---
 
-## `FABRIC_AUTH=default` — DefaultAzureCredential chain
+## `FABRIC_AUTH=default`: DefaultAzureCredential chain
 
 When `FABRIC_AUTH` is `default` (or unset), the package delegates to [`azure-identity`'s `DefaultAzureCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.defaultazurecredential?WT.mc_id=MVP_310840). It walks the following sources **in order** and stops at the first one that returns a usable token:
 
-1. **Environment variables** — `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` / `AZURE_CLIENT_CERTIFICATE_PATH`, `AZURE_TENANT_ID` — see [`EnvironmentCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.environmentcredential?WT.mc_id=MVP_310840)
-2. **Workload Identity** — injected in Kubernetes / AKS workloads — see [`WorkloadIdentityCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.workloadidentitycredential?WT.mc_id=MVP_310840)
-3. **Managed Identity** — Azure VMs, App Service, Container Apps, etc. — see [`ManagedIdentityCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.managedidentitycredential?WT.mc_id=MVP_310840)
-4. **Shared token cache** — the MSAL cache shared between Azure tools — see [`SharedTokenCacheCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.sharedtokencachecredential?WT.mc_id=MVP_310840)
-5. **Azure CLI** — token from `az login` — see [`AzureCliCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.azureclicredential?WT.mc_id=MVP_310840)
-6. **Azure Developer CLI** — token from `azd auth login` — see [`AzureDeveloperCliCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.azuredeveloperclicredential?WT.mc_id=MVP_310840)
-7. **Azure PowerShell** — token from `Connect-AzAccount` — see [`AzurePowerShellCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.azurepowershellcredential?WT.mc_id=MVP_310840)
-8. **Interactive browser** — falls back to browser sign-in using the [shared app](#interactive-browser-sign-in-zero-setup) (or your override via `FABRIC_INTERACTIVE_CLIENT_ID`) — see [`InteractiveBrowserCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.interactivebrowsercredential?WT.mc_id=MVP_310840)
+1. **Environment variables**: `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` / `AZURE_CLIENT_CERTIFICATE_PATH`, `AZURE_TENANT_ID` - see [`EnvironmentCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.environmentcredential?WT.mc_id=MVP_310840)
+2. **Workload Identity**: injected in Kubernetes / AKS workloads - see [`WorkloadIdentityCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.workloadidentitycredential?WT.mc_id=MVP_310840)
+3. **Managed Identity**: Azure VMs, App Service, Container Apps, etc. - see [`ManagedIdentityCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.managedidentitycredential?WT.mc_id=MVP_310840)
+4. **Shared token cache**: the MSAL cache shared between Azure tools - see [`SharedTokenCacheCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.sharedtokencachecredential?WT.mc_id=MVP_310840)
+5. **Azure CLI**: token from `az login` - see [`AzureCliCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.azureclicredential?WT.mc_id=MVP_310840)
+6. **Azure Developer CLI**: token from `azd auth login` - see [`AzureDeveloperCliCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.azuredeveloperclicredential?WT.mc_id=MVP_310840)
+7. **Azure PowerShell**: token from `Connect-AzAccount` - see [`AzurePowerShellCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.azurepowershellcredential?WT.mc_id=MVP_310840)
+8. **Interactive browser**: falls back to browser sign-in using the [shared app](#interactive-browser-sign-in-zero-setup) (or your override via `FABRIC_INTERACTIVE_CLIENT_ID`) - see [`InteractiveBrowserCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.interactivebrowsercredential?WT.mc_id=MVP_310840)
 
 ---
 
-## `FABRIC_AUTH=sp` — Service principal
+## `FABRIC_AUTH=sp`: Service principal
 
 Set the following environment variables:
 
@@ -116,7 +116,7 @@ Set the following environment variables:
 | `AZURE_CLIENT_ID` | Application (client) ID of your registered app |
 | `AZURE_CLIENT_SECRET` | A client secret for the app |
 
-The package uses [`ClientSecretCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.clientsecretcredential?WT.mc_id=MVP_310840) with these values. The shared `fabric-dw` app is **not** used in SP mode — you must supply your own app registration and secret.
+The package uses [`ClientSecretCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.clientsecretcredential?WT.mc_id=MVP_310840) with these values. The shared `fabric-dw` app is **not** used in SP mode - you must supply your own app registration and secret.
 
 ---
 
@@ -124,7 +124,7 @@ The package uses [`ClientSecretCredential`](https://learn.microsoft.com/python/a
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `FABRIC_AUTH` | _(unset — falls through to config / built-in default)_ | Credential mode: `default`, `interactive`, or `sp`. Empty/whitespace falls through; unrecognised non-empty value raises an error at startup. |
+| `FABRIC_AUTH` | _(unset - falls through to config / built-in default)_ | Credential mode: `default`, `interactive`, or `sp`. Empty/whitespace falls through; unrecognised non-empty value raises an error at startup. |
 | `FABRIC_INTERACTIVE_CLIENT_ID` | `f666e5ee-2149-4c6a-87eb-13c9e1fdc70d` | Override the shared app client ID for browser sign-in |
 | `FABRIC_INTERACTIVE_TENANT_ID` | _(unset)_ | Pin a specific Entra tenant for browser sign-in |
 | `AZURE_TENANT_ID` | _(unset)_ | Required for `FABRIC_AUTH=sp` |

@@ -51,7 +51,7 @@ fdw -w MyWorkspace --json sql exec SalesWH -f ./queries/report.sql
 
 ### sql plan
 
-Capture the **estimated** SHOWPLAN_XML execution plan for a SQL statement without executing it. The query is **not** run — only the plan is returned. This means DDL/DML query text is safe to plan without modifying any data.
+Capture the **estimated** SHOWPLAN_XML execution plan for a SQL statement without executing it. The query is **not** run - only the plan is returned. This means DDL/DML query text is safe to plan without modifying any data.
 
 By default the plan is rendered as a **Rich terminal tree**: each operator is shown with its physical/logical op name, estimated row count, cost percentage (colour-coded), and badges for parallel execution or warnings. For multi-statement batches, one tree is printed per statement.
 
@@ -73,7 +73,7 @@ fdw [-w WORKSPACE] sql plan [OPTIONS] [ITEM]
 
 Pass the root `--json` flag to emit the parsed operator tree as machine-readable JSON instead of the Rich tree.
 
-**Representation vs. destination** — these two axes are orthogonal:
+**Representation vs. destination**: these two axes are orthogonal:
 
 | | no `-o` | `-o FILE` |
 | --- | --- | --- |
@@ -148,7 +148,7 @@ Unknown operators degrade gracefully; the library renders what it knows and skip
 
 !!! note "System dependency"
 
-    This format requires [Graphviz](https://graphviz.org/download/) to be installed on your system — it is **not** a Python package.  Install it via your package manager (e.g. `brew install graphviz` on macOS, `apt install graphviz` on Debian/Ubuntu) or download it from [graphviz.org](https://graphviz.org/download/).
+    This format requires [Graphviz](https://graphviz.org/download/) to be installed on your system - it is **not** a Python package.  Install it via your package manager (e.g. `brew install graphviz` on macOS, `apt install graphviz` on Debian/Ubuntu) or download it from [graphviz.org](https://graphviz.org/download/).
 
     When the `dot` binary is not found, the command exits with a clear error and an install hint rather than crashing.
 
@@ -223,11 +223,11 @@ Multi-statement batches are supported; only the **last** result set is returned.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
-- `query` (`str`) — SQL statement or batch to execute.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL Analytics Endpoint name or GUID.
+- `query` (`str`): SQL statement or batch to execute.
 
-**Returns:** `{ "columns": list[str], "rows": list[list[Any]], "rowcount": int }` — `rowcount` is `-1` when the driver does not report a count.
+**Returns:** `{ "columns": list[str], "rows": list[list[Any]], "rowcount": int }`: `rowcount` is `-1` when the driver does not report a count.
 
 ---
 
@@ -237,22 +237,22 @@ Multi-statement batches are supported; only the **last** result set is returned.
 
 Capture the **estimated** SHOWPLAN_XML execution plan for a SQL query without executing it.
 
-This tool does **not** execute the query — it only retrieves the estimated plan. Because no data is modified, this tool is permitted even when `FABRIC_MCP_READONLY=1`. DDL/DML query text is safe to plan without modifying any data.
+This tool does **not** execute the query - it only retrieves the estimated plan. Because no data is modified, this tool is permitted even when `FABRIC_MCP_READONLY=1`. DDL/DML query text is safe to plan without modifying any data.
 
 The plan XML uses the standard namespace `http://schemas.microsoft.com/sqlserver/2004/07/showplan` and can be opened in SSMS or Azure Data Studio.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
-- `query` (`str`) — SQL statement to generate an estimated execution plan for.
-- `format` (`"xml" | "tree" | "json" | "mermaid"`, default `"xml"`) — output format. See [Format options](#format-options) below.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL Analytics Endpoint name or GUID.
+- `query` (`str`): SQL statement to generate an estimated execution plan for.
+- `format` (`"xml" | "tree" | "json" | "mermaid"`, default `"xml"`): output format. See [Format options](#format-options) below.
 
 #### Format options
 
 | `format` | Return key | Value type | Description |
 | --- | --- | --- | --- |
-| `"xml"` *(default)* | `plan_xml` | `str` | Raw SHOWPLAN_XML string. Backwards-compatible — existing callers relying on `{"plan_xml": str}` continue to work unchanged. |
+| `"xml"` *(default)* | `plan_xml` | `str` | Raw SHOWPLAN_XML string. Backwards-compatible - existing callers relying on `{"plan_xml": str}` continue to work unchanged. |
 | `"tree"` | `plan` | `list[dict]` | Native nested list of dicts, one entry per statement. Best for agent reasoning over the plan structure. |
 | `"json"` | `plan_json` | `str` | Same tree as `"tree"`, serialised to an indented JSON string. Ready to write out or pass through as compact text. |
 | `"mermaid"` | `mermaid` | `str` | Mermaid `flowchart TD` diagram. Paste into [mermaid.live](https://mermaid.live) or embed in GitHub Markdown. |
