@@ -179,8 +179,8 @@ def build_context(
 
     http = FabricHttpClient(
         credential=credential,
-        **({"max_429_retries": retries} if retries is not None else {}),  # type: ignore[arg-type]
-        **({"combined_deadline_s": deadline} if deadline is not None else {}),  # type: ignore[arg-type]
+        **({"max_429_retries": retries} if retries is not None else {}),
+        **({"combined_deadline_s": deadline} if deadline is not None else {}),
     )
     cache = LookupCache()
     resolver = Resolver(http=http, cache=cache)

@@ -197,7 +197,7 @@ def _patch_command_for_global_options(cmd: click.Command) -> None:
     """
     if getattr(cmd, "_global_opts_patched", False):
         return
-    cmd._global_opts_patched = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    cmd._global_opts_patched = True  # ty: ignore[unresolved-attribute]
 
     _inject_global_options(cmd)
 
@@ -207,10 +207,10 @@ def _patch_command_for_global_options(cmd: click.Command) -> None:
         _apply_meta_global_params(ctx)
         return original_invoke(ctx)
 
-    cmd.invoke = _wrapped_invoke  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    cmd.invoke = _wrapped_invoke  # ty: ignore[invalid-assignment]
 
     if isinstance(cmd, click.Group):
-        for sub in cmd.commands.values():  # type: ignore[attr-defined]
+        for sub in cmd.commands.values():
             _patch_command_for_global_options(sub)
 
 
@@ -430,10 +430,10 @@ def _patch_group_for_telemetry(group: click.Group) -> None:
     """
     if getattr(group, "_telemetry_patched", False):
         return
-    group._telemetry_patched = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    group._telemetry_patched = True  # ty: ignore[unresolved-attribute]
 
     # Recursively patch any sub-groups already registered.
-    for sub_cmd in group.commands.values():  # type: ignore[attr-defined]
+    for sub_cmd in group.commands.values():
         if isinstance(sub_cmd, click.Group):
             _patch_group_for_telemetry(sub_cmd)
 
@@ -459,7 +459,7 @@ def _patch_group_for_telemetry(group: click.Group) -> None:
                 segs.append((depth, group_name, sub_name))
                 root_ctx.meta[_CLI_SEGMENTS_KEY] = segs
 
-    group.invoke = _patched_invoke  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    group.invoke = _patched_invoke  # ty: ignore[invalid-assignment]
 
 
 class _LazyGroup(_InstrumentedGroup):
@@ -476,7 +476,7 @@ class _LazyGroup(_InstrumentedGroup):
     in :meth:`get_command` after the lazy import.
     """
 
-    def list_commands(self, ctx: click.Context) -> list[str]:  # type: ignore[override]  # noqa: ARG002
+    def list_commands(self, ctx: click.Context) -> list[str]:  # noqa: ARG002
         """Return all registered command names in alphabetical order."""
         return sorted(_COMMAND_MAP)
 
@@ -514,12 +514,12 @@ class _LazyGroup(_InstrumentedGroup):
         # compute "Did you mean?" possibilities without triggering real imports.
         # We restore the empty dict immediately after resolution.
         dummy_cmds = {name: click.Command(name) for name in _COMMAND_MAP}
-        original_commands = self.commands  # type: ignore[attr-defined]
-        self.commands = dummy_cmds  # type: ignore[attr-defined]
+        original_commands = self.commands
+        self.commands = dummy_cmds
         try:
             return super().resolve_command(ctx, args)
         finally:
-            self.commands = original_commands  # type: ignore[attr-defined]
+            self.commands = original_commands
 
     def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         """Render the command list from :data:`_SHORT_HELP_MAP` without importing modules."""

@@ -173,7 +173,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
-        return result  # type: ignore[return-value]
+        return result
 
     @mcp.tool(name="get_view")
     async def get_view(workspace: str, item: str, qualified_name: str) -> dict[str, Any]:

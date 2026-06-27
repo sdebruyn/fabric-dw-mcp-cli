@@ -231,7 +231,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
-        return result  # type: ignore[return-value]
+        return result
 
     @mutating_tool(mcp, "create_table")
     async def create_table(

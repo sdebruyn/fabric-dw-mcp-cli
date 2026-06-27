@@ -211,12 +211,12 @@ async def get_object_columns(
         for row in rows:
             data = dict(zip(cols, row, strict=True))
             type_name = str(data["type_name"])
-            max_length = int(data["max_length"])  # type: ignore[arg-type]
-            precision = int(data["precision"])  # type: ignore[arg-type]
-            scale = int(data["scale"])  # type: ignore[arg-type]
+            max_length = int(data["max_length"])
+            precision = int(data["precision"])
+            scale = int(data["scale"])
             results.append(
                 {
-                    "ordinal": int(data["ordinal"]),  # type: ignore[arg-type]
+                    "ordinal": int(data["ordinal"]),
                     "name": str(data["name"]),
                     "data_type": format_data_type(type_name, max_length, precision, scale),
                     "nullable": bool(data["nullable"]),
@@ -319,11 +319,11 @@ async def get_columns_for_schemas(
             schema_name = str(data["schema_name"])
             object_name = str(data["object_name"])
             type_name = str(data["type_name"])
-            max_length = int(data["max_length"])  # type: ignore[arg-type]
-            precision = int(data["precision"])  # type: ignore[arg-type]
-            scale = int(data["scale"])  # type: ignore[arg-type]
+            max_length = int(data["max_length"])
+            precision = int(data["precision"])
+            scale = int(data["scale"])
             col_dict: dict[str, object] = {
-                "ordinal": int(data["ordinal"]),  # type: ignore[arg-type]
+                "ordinal": int(data["ordinal"]),
                 "name": str(data["name"]),
                 "data_type": format_data_type(type_name, max_length, precision, scale),
                 "nullable": bool(data["nullable"]),
