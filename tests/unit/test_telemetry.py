@@ -16,7 +16,7 @@ import uuid
 from collections.abc import Generator
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -1389,6 +1389,128 @@ def test_detect_install_method_no_false_uv_for_plain_venv(
 
     # Must NOT return "uv" just because the path contains ".venv"
     assert method != "uv", "Must not return 'uv' for a plain pip-in-venv interpreter"
+
+
+# ---------------------------------------------------------------------------
+# #844: per-process caching — detection/parse runs at most once
+# ---------------------------------------------------------------------------
+
+
+def test_install_method_cached_across_envelope_calls(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """importlib.metadata.distribution must be called at most once per process.
+
+    Subsequent _build_envelope() calls must reuse the cached install_method
+    value and never re-invoke the underlying importlib.metadata lookup (#844).
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    # Clear uv/pipx env vars so the importlib.metadata branch is exercised.
+    monkeypatch.delenv("UV", raising=False)
+    monkeypatch.delenv("UV_VIRTUAL_ENV", raising=False)
+    monkeypatch.delenv("PIPX_HOME", raising=False)
+
+    mod = _reload_telemetry()
+
+    import importlib.metadata as _meta  # noqa: PLC0415
+
+    fake_dist = MagicMock()
+    fake_dist.read_text.return_value = None  # no direct_url.json present
+
+    with patch.object(_meta, "distribution", return_value=fake_dist) as mock_dist:
+        for _ in range(3):
+            mod._build_envelope()  # type: ignore[attr-defined]
+
+    assert mock_dist.call_count == 1, (
+        "importlib.metadata.distribution must be called exactly once; "
+        "subsequent _build_envelope() calls must reuse the cached install_method"
+    )
+
+
+def test_config_disabled_cached_across_telemetry_enabled_calls(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """config.toml must be read at most once per process.
+
+    Subsequent telemetry_enabled() calls must reuse the cached disabled flag
+    and never re-read the config file (#844).
+    """
+    config_dir = tmp_path / "fabric-dw"
+    config_dir.mkdir()
+    config_file = config_dir / "config.toml"
+    config_file.write_text("[telemetry]\ndisabled = false\n", encoding="utf-8")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+
+    mod = _reload_telemetry()
+
+    read_calls: list[int] = []
+    original_read_text = Path.read_text
+
+    def counting_read_text(
+        self: Path, encoding: str | None = None, errors: str | None = None
+    ) -> str:
+        if self.name == "config.toml":
+            read_calls.append(1)
+        return original_read_text(self, encoding=encoding, errors=errors)
+
+    with patch.object(Path, "read_text", counting_read_text):
+        for _ in range(3):
+            mod.telemetry_enabled()  # type: ignore[attr-defined]
+
+    assert len(read_calls) == 1, (
+        "config.toml must be read exactly once; "
+        "subsequent telemetry_enabled() calls must reuse the cached result"
+    )
+
+
+def test_config_disabled_transient_error_not_cached(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A transient read error on the first call must not permanently latch fail-closed.
+
+    If _is_disabled_by_config() raises on the first call (IO error, TOCTOU race
+    between exists() and read_text()), it must return the fail-closed value (True)
+    for that call only and leave _config_disabled_cache unset.  A subsequent call
+    that succeeds must return the real computed value and cache it (#844).
+    """
+    config_dir = tmp_path / "fabric-dw"
+    config_dir.mkdir()
+    config_file = config_dir / "config.toml"
+    # Config file has disabled = false so a successful read returns False (not disabled).
+    config_file.write_text("[telemetry]\ndisabled = false\n", encoding="utf-8")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+
+    mod = _reload_telemetry()
+
+    original_read_text = Path.read_text
+    call_count = 0
+
+    def flaky_read_text(self: Path, encoding: str | None = None, errors: str | None = None) -> str:
+        nonlocal call_count
+        if self.name == "config.toml":
+            call_count += 1
+            if call_count == 1:
+                raise OSError("simulated transient read failure")
+        return original_read_text(self, encoding=encoding, errors=errors)
+
+    with patch.object(Path, "read_text", flaky_read_text):
+        # First call: transient error -> fail-closed (disabled), cache NOT set.
+        first_result = mod._is_disabled_by_config()  # type: ignore[attr-defined]
+        assert first_result is True, "transient error must return fail-closed (True)"
+        assert vars(mod)["_config_disabled_cache"] is None, (
+            "transient error must NOT populate the cache"
+        )
+
+        # Second call: read succeeds -> real computed value (file has disabled=false).
+        second_result = mod._is_disabled_by_config()  # type: ignore[attr-defined]
+        assert second_result is False, "successful retry must return the real value (False)"
+        assert vars(mod)["_config_disabled_cache"] is False, (
+            "successful read must populate the cache"
+        )
 
 
 # ---------------------------------------------------------------------------
