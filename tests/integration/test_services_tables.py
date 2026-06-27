@@ -43,20 +43,20 @@ async def test_read_table_returns_seeded_rows(
     read_target: SqlTarget,
 ) -> None:
     """read_table against sample.colors must return the three seeded rows."""
-    cols, rows = await tables.read_table(read_target, SEED_SCHEMA_NAME, "colors", count=10)
-    assert "id" in cols
-    assert "name" in cols
+    result = await tables.read_table(read_target, SEED_SCHEMA_NAME, "colors", count=10)
+    assert "id" in result.columns
+    assert "name" in result.columns
     # Exactly three rows were seeded (red / green / blue).
-    assert len(rows) == 3
+    assert len(result.rows) == 3
 
 
 async def test_count_table_rows_on_seeded_table(
     read_target: SqlTarget,
 ) -> None:
     """count_table_rows on sample.colors must return 3 (the seeded row count)."""
-    count = await tables.count_table_rows(read_target, SEED_SCHEMA_NAME, "colors")
-    assert isinstance(count, int)
-    assert count == 3
+    result = await tables.count_table_rows(read_target, SEED_SCHEMA_NAME, "colors")
+    assert isinstance(result.row_count, int)
+    assert result.row_count == 3
 
 
 async def test_get_table_columns_on_seeded_table(
@@ -108,17 +108,17 @@ async def test_create_read_clear_delete_roundtrip(
         assert created.schema_name == schema
         assert created.name == table_name
 
-        cols, rows = await tables.read_table(sql_target, schema, table_name, count=5)
-        assert "id" in cols or len(cols) > 0
-        assert isinstance(rows, list)
+        read_result = await tables.read_table(sql_target, schema, table_name, count=5)
+        assert "id" in read_result.columns or len(read_result.columns) > 0
+        assert isinstance(read_result.rows, list)
 
         all_tables = await tables.list_tables(sql_target)
         names = {t.name for t in all_tables}
         assert table_name in names
 
         await tables.clear_table(sql_target, schema, table_name)
-        _, rows_after_clear = await tables.read_table(sql_target, schema, table_name, count=5)
-        assert rows_after_clear == []
+        after_clear = await tables.read_table(sql_target, schema, table_name, count=5)
+        assert after_clear.rows == []
 
     finally:
         with contextlib.suppress(Exception):
@@ -154,10 +154,10 @@ async def test_clone_table_creates_identical_rows(
         names = {t.name for t in all_tables}
         assert clone_name in names
 
-        src_cols, src_rows = await tables.read_table(sql_target, schema, source_name, count=100)
-        cln_cols, cln_rows = await tables.read_table(sql_target, schema, clone_name, count=100)
-        assert src_cols == cln_cols
-        assert cln_rows == src_rows
+        src_result = await tables.read_table(sql_target, schema, source_name, count=100)
+        cln_result = await tables.read_table(sql_target, schema, clone_name, count=100)
+        assert src_result.columns == cln_result.columns
+        assert cln_result.rows == src_result.rows
     finally:
         with contextlib.suppress(Exception):
             await tables.delete_table(sql_target, schema, source_name)
@@ -292,10 +292,10 @@ async def test_count_table_rows_returns_nonnegative_int(
 
     try:
         await tables.create_table(sql_target, schema, table_name, select_body)
-        count = await tables.count_table_rows(sql_target, schema, table_name)
-        assert isinstance(count, int)
-        assert count >= 0
-        assert count == 3
+        result = await tables.count_table_rows(sql_target, schema, table_name)
+        assert isinstance(result.row_count, int)
+        assert result.row_count >= 0
+        assert result.row_count == 3
     finally:
         with contextlib.suppress(Exception):
             await tables.delete_table(sql_target, schema, table_name)
@@ -364,7 +364,7 @@ async def test_get_table_health_metrics_on_sql_endpoint(
 
     sql_target = shared_sql_endpoint.sql_target
     try:
-        columns, rows = await tables.get_table_health_metrics(
+        metrics = await tables.get_table_health_metrics(
             sql_target,
             SEED_SCHEMA_NAME,
             "colors",
@@ -397,12 +397,14 @@ async def test_get_table_health_metrics_on_sql_endpoint(
 
     # The proc must return at least one column (output schema is undocumented
     # but the proc is GA and always yields a result set when available).
-    assert isinstance(columns, list), f"expected list of column names, got {type(columns)}"
-    assert columns, f"expected non-empty columns list, got {columns!r}"
-    for col in columns:
+    assert isinstance(metrics.columns, list), (
+        f"expected list of column names, got {type(metrics.columns)}"
+    )
+    assert metrics.columns, f"expected non-empty columns list, got {metrics.columns!r}"
+    for col in metrics.columns:
         assert isinstance(col, str), f"column name must be str, got {type(col)}: {col!r}"
 
     # rows is a list of tuples; may be empty for a freshly-seeded table.
-    assert isinstance(rows, list), f"expected list of row tuples, got {type(rows)}"
-    for row in rows:
+    assert isinstance(metrics.rows, list), f"expected list of row tuples, got {type(metrics.rows)}"
+    for row in metrics.rows:
         assert isinstance(row, tuple), f"each row must be a tuple, got {type(row)}: {row!r}"

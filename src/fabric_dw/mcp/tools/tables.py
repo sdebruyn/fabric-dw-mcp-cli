@@ -109,14 +109,14 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 count,
             )
             target = make_sql_target(ws_id, entry, item)
-            columns, rows = await tables_svc.read_table(
+            result = await tables_svc.read_table(
                 target, schema, table_name, count=count, mode=ctx.auth_mode
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
         return {
-            "columns": columns,
-            "rows": safe_rows(rows),
+            "columns": result.columns,
+            "rows": safe_rows(result.rows),
         }
 
     @mcp.tool(name="count_table_rows")
@@ -150,12 +150,12 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 table_name,
             )
             target = make_sql_target(ws_id, entry, item)
-            row_count = await tables_svc.count_table_rows(
+            result = await tables_svc.count_table_rows(
                 target, schema, table_name, mode=ctx.auth_mode
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
-        return {"schema": schema, "name": table_name, "row_count": row_count}
+        return result.model_dump(mode="json")
 
     @mcp.tool(name="get_cluster_columns")
     async def get_cluster_columns(
@@ -189,11 +189,12 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 table_name,
             )
             target = make_sql_target(ws_id, entry, item)
-            return await tables_svc.get_cluster_columns(
+            result = await tables_svc.get_cluster_columns(
                 target, schema, table_name, kind=entry.kind, mode=ctx.auth_mode
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
+        return [c.model_dump(mode="json") for c in result]
 
     @mcp.tool(name="get_table_columns")
     async def get_table_columns(
@@ -527,14 +528,14 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 table_name,
             )
             target = make_sql_target(ws_id, entry, item)
-            columns, rows = await tables_svc.get_table_health_metrics(
+            result = await tables_svc.get_table_health_metrics(
                 target, schema, table_name, kind=entry.kind, mode=ctx.auth_mode
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
         return {
-            "columns": columns,
-            "rows": safe_rows(rows),
+            "columns": result.columns,
+            "rows": safe_rows(result.rows),
         }
 
     @mutating_tool(mcp, "rename_table")

@@ -22,7 +22,7 @@ from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._main import cli
 from fabric_dw.cli.commands.tables import _load_cmd_local, _parse_column_spec
 from fabric_dw.exceptions import FabricError, ItemKindError, NotFoundError, PermissionDeniedError
-from fabric_dw.models import CopyIntoResult, Table, WarehouseKind
+from fabric_dw.models import CopyIntoResult, ResultSet, Table, TableRowCount, WarehouseKind
 from fabric_dw.sql import SqlTarget
 
 SE_GUID = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"
@@ -193,7 +193,7 @@ class TestTablesRead:
             ),
             patch(
                 "fabric_dw.services.tables.read_table",
-                new=AsyncMock(return_value=(["id", "name"], [(1, "Alice")])),
+                new=AsyncMock(return_value=ResultSet(columns=["id", "name"], rows=[(1, "Alice")])),
             ),
         ):
             result = runner.invoke(cli, ["-w", WS_GUID, "tables", "read", WH_GUID, "dbo.sales"])
@@ -217,7 +217,7 @@ class TestTablesRead:
             ),
             patch(
                 "fabric_dw.services.tables.read_table",
-                new=AsyncMock(return_value=(["id"], [(42,)])),
+                new=AsyncMock(return_value=ResultSet(columns=["id"], rows=[(42,)])),
             ),
         ):
             result = runner.invoke(cli, ["-w", WS_GUID, "tables", "read", WH_GUID, "dbo.sales"])
@@ -254,7 +254,7 @@ class TestTablesRead:
             ),
             patch(
                 "fabric_dw.services.tables.read_table",
-                new=AsyncMock(return_value=(["id"], [(1,)])),
+                new=AsyncMock(return_value=ResultSet(columns=["id"], rows=[(1,)])),
             ),
         ):
             result = runner.invoke(
@@ -295,7 +295,7 @@ class TestTablesRead:
             ),
             patch(
                 "fabric_dw.services.tables.read_table",
-                new=AsyncMock(return_value=(["id"], [(1,)])),
+                new=AsyncMock(return_value=ResultSet(columns=["id"], rows=[(1,)])),
             ),
         ):
             result = runner.invoke(
@@ -369,7 +369,9 @@ class TestTablesCount:
             ),
             patch(
                 "fabric_dw.services.tables.count_table_rows",
-                new=AsyncMock(return_value=42),
+                new=AsyncMock(
+                    return_value=TableRowCount(schema_name="dbo", name="sales", row_count=42)
+                ),
             ),
         ):
             result = runner.invoke(cli, ["-w", WS_GUID, "tables", "count", WH_GUID, "dbo.sales"])
@@ -389,7 +391,9 @@ class TestTablesCount:
             ),
             patch(
                 "fabric_dw.services.tables.count_table_rows",
-                new=AsyncMock(return_value=99),
+                new=AsyncMock(
+                    return_value=TableRowCount(schema_name="dbo", name="sales", row_count=99)
+                ),
             ),
         ):
             result = runner.invoke(
@@ -397,7 +401,8 @@ class TestTablesCount:
             )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
-        assert parsed["schema"] == "dbo"
+        # schema_name replaces the legacy "schema" key (deliberate behaviour change)
+        assert parsed["schema_name"] == "dbo"
         assert parsed["name"] == "sales"
         assert parsed["row_count"] == 99
 
@@ -3001,7 +3006,7 @@ class TestTablesHealthCheck:
             ),
             patch(
                 "fabric_dw.services.tables.get_table_health_metrics",
-                new=AsyncMock(return_value=(fake_cols, fake_rows)),
+                new=AsyncMock(return_value=ResultSet(columns=fake_cols, rows=fake_rows)),
             ),
         ):
             result = runner.invoke(
@@ -3026,7 +3031,7 @@ class TestTablesHealthCheck:
             ),
             patch(
                 "fabric_dw.services.tables.get_table_health_metrics",
-                new=AsyncMock(return_value=(fake_cols, fake_rows)),
+                new=AsyncMock(return_value=ResultSet(columns=fake_cols, rows=fake_rows)),
             ),
         ):
             result = runner.invoke(
@@ -3086,7 +3091,7 @@ class TestTablesHealthCheck:
             ),
             patch(
                 "fabric_dw.services.tables.get_table_health_metrics",
-                new=AsyncMock(return_value=([], [])),
+                new=AsyncMock(return_value=ResultSet(columns=[], rows=[])),
             ),
         ):
             result = runner.invoke(
@@ -3124,7 +3129,7 @@ class TestTablesHealthCheckDuplicateColumns:
             ),
             patch(
                 "fabric_dw.services.tables.get_table_health_metrics",
-                new=AsyncMock(return_value=(fake_cols, fake_rows)),
+                new=AsyncMock(return_value=ResultSet(columns=fake_cols, rows=fake_rows)),
             ),
         ):
             result = runner.invoke(
@@ -3153,7 +3158,7 @@ class TestTablesHealthCheckDuplicateColumns:
             ),
             patch(
                 "fabric_dw.services.tables.get_table_health_metrics",
-                new=AsyncMock(return_value=(fake_cols, fake_rows)),
+                new=AsyncMock(return_value=ResultSet(columns=fake_cols, rows=fake_rows)),
             ),
         ):
             result = runner.invoke(

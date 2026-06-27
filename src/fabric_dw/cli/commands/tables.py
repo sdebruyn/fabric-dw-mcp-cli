@@ -112,10 +112,10 @@ async def read_cmd(
     try:
         async with build_http_client(ctx) as http:
             target, _entry = await build_sql_target(http, ws, wh)
-            columns, rows = await _tables_svc.read_table(
+            result = await _tables_svc.read_table(
                 target, schema, table_name, count=count, mode=ctx.auth
             )
-            arrow_table = columns_rows_to_arrow(columns, rows)
+            arrow_table = columns_rows_to_arrow(result.columns, result.rows)
             write_arrow(arrow_table, effective_fmt, output_path)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -200,11 +200,9 @@ async def count_cmd(
     try:
         async with build_http_client(ctx) as http:
             target, _entry = await build_sql_target(http, ws, wh)
-            row_count = await _tables_svc.count_table_rows(
-                target, schema, table_name, mode=ctx.auth
-            )
+            result = await _tables_svc.count_table_rows(target, schema, table_name, mode=ctx.auth)
             render(
-                {"schema": schema, "name": table_name, "row_count": row_count},
+                result.model_dump(mode="json"),
                 json_output=ctx.json_output,
                 table_title="Row Count",
             )
@@ -236,12 +234,12 @@ async def health_check_cmd(
     try:
         async with build_http_client(ctx) as http:
             target, entry = await build_sql_target(http, ws, wh)
-            columns, rows = await _tables_svc.get_table_health_metrics(
+            result = await _tables_svc.get_table_health_metrics(
                 target, schema, table_name, kind=entry.kind, mode=ctx.auth
             )
             render_result_rows(
-                columns,
-                rows,
+                result.columns,
+                result.rows,
                 json_output=ctx.json_output,
                 table_title="Table Health Metrics",
                 prune_null_columns=True,
@@ -678,11 +676,11 @@ async def cluster_columns_cmd(
     try:
         async with build_http_client(ctx) as http:
             target, entry = await build_sql_target(http, ws, wh)
-            rows = await _tables_svc.get_cluster_columns(
+            result = await _tables_svc.get_cluster_columns(
                 target, schema, table_name, kind=entry.kind, mode=ctx.auth
             )
             render(
-                rows,
+                [c.model_dump(mode="json") for c in result],
                 json_output=ctx.json_output,
                 table_title="Cluster Columns",
                 prune_null_columns=True,
