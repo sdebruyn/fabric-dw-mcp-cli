@@ -8,7 +8,6 @@ Public API
 - :func:`create_function`     — issue CREATE FUNCTION [<schema>].[<name>] AS <body>.
 - :func:`update_function`     — issue CREATE OR ALTER FUNCTION [<schema>].[<name>] AS <body>.
 - :func:`drop_function`       — issue DROP FUNCTION; no-op on missing when if_exists=True.
-- :func:`rename_function`     — rename via sp_rename (objtype OBJECT).
 
 Note: User-defined functions are supported on **both** Fabric Data Warehouses and
 SQL Analytics Endpoints — no endpoint guard is applied here.  The CREATE FUNCTION,
@@ -28,7 +27,7 @@ from typing import Literal, cast
 
 from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import NotFoundError
-from fabric_dw.identifiers import parse_qualified_name, quote_identifier, validate_identifier
+from fabric_dw.identifiers import quote_identifier, validate_identifier
 from fabric_dw.models import Function, FunctionDetails, FunctionKind, FunctionParameter
 from fabric_dw.sql import SqlTarget, run_query
 
@@ -41,7 +40,6 @@ __all__ = [
     "drop_function",
     "get_function",
     "list_functions",
-    "rename_function",
     "update_function",
     "validate_identifier",
     "validate_kind",
@@ -96,12 +94,6 @@ JOIN sys.schemas s ON s.schema_id = o.schema_id
 WHERE s.name = ? AND o.name = ?
 ORDER BY p.parameter_id;
 """
-
-
-# sp_rename takes string arguments (not identifiers) — bind as ? parameters.
-# @objname = qualified old name ('schema.old_fn'), @newname = bare new name.
-# sp_rename cannot move across schemas, so @newname must be unqualified.
-_SP_RENAME_SQL = "EXEC sp_rename ?, ?, 'OBJECT'"
 
 
 # ---------------------------------------------------------------------------
@@ -477,76 +469,3 @@ async def drop_function(
             return False
         raise
     return True
-
-
-async def rename_function(
-    target: SqlTarget,
-    qualified: str,
-    new_name: str,
-    *,
-    mode: CredentialMode = CredentialMode.DEFAULT,
-) -> FunctionDetails:
-    """Rename a user-defined function via ``EXEC sp_rename @objname, @newname, 'OBJECT'``.
-
-    Works on both Data Warehouses and SQL Analytics Endpoints — no DW-only guard
-    is applied.
-
-    ``sp_rename`` takes names as STRING ARGUMENTS (not SQL identifiers), so both
-    the old qualified name and the new bare name are bound as ``?`` parameters.
-    The new name must be unqualified (no dot) because ``sp_rename`` cannot move
-    a function across schemas.
-
-    Note: ``sp_rename`` does not update the object name embedded in the stored
-    definition in ``sys.sql_modules``.  The ``CREATE FUNCTION`` text retrieved
-    by :func:`get_function` will still show the old name after rename.  This is
-    the accepted trade-off and matches the existing behaviour of :func:`rename_view`.
-
-    Args:
-        target: The warehouse or SQL Analytics Endpoint to connect to.
-        qualified: Current qualified name of the function, e.g. ``dbo.fn_clean``.
-            Parsed via :func:`~fabric_dw.identifiers.parse_qualified_name`.
-        new_name: New bare (unqualified) function name.  Must pass
-            :func:`validate_identifier` and must not contain a dot.
-        mode: The credential mode for Entra authentication.
-
-    Returns:
-        The renamed :class:`~fabric_dw.models.FunctionDetails` (fetched after
-        rename using the original schema and the new name).
-
-    Raises:
-        ValueError: If *qualified* cannot be parsed, if either identifier part
-            fails validation, or if *new_name* is schema-qualified (contains a dot).
-        NotFoundError: If the renamed function cannot be found after the rename.
-        PermissionDeniedError: If the driver reports a permission error.
-    """
-    schema, old_fn = parse_qualified_name(qualified)
-    validate_identifier(schema)
-    validate_identifier(old_fn)
-
-    if "." in new_name:
-        msg = (
-            f"New name {new_name!r} must not be schema-qualified; "
-            "sp_rename cannot move a function to a different schema"
-        )
-        raise ValueError(msg)
-    validate_identifier(new_name)
-
-    # @objname = 'schema.old_fn', @newname = 'new_fn' — bound as ? params.
-    old_qualified = f"{schema}.{old_fn}"
-
-    def _run() -> None:
-        run_query(
-            target,
-            _SP_RENAME_SQL,
-            params=[old_qualified, new_name],
-            mode=mode,
-            commit=True,
-            fetch="none",
-        )
-
-    await asyncio.to_thread(_run)
-    try:
-        return await get_function(target, schema, new_name, mode=mode)
-    except NotFoundError:
-        msg = f"Function [{schema}].[{new_name}] not found after rename"
-        raise NotFoundError(msg) from None

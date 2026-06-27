@@ -109,29 +109,6 @@ fdw -w MyWorkspace functions list SalesWH --schema dbo --kind scalar
  dbo          fn_clean_input  scalar  True           2026-06-01T08:00:00Z  2026-06-10T12:00:00Z
 ```
 
-### functions rename
-
-**Targets:** Data Warehouse / SQL Analytics Endpoint
-
-Rename a T-SQL user-defined function via `EXEC sp_rename`. The new name must be a bare (unqualified) identifier - `sp_rename` cannot move a function to a different schema. You will be asked to confirm unless `--yes` is passed.
-
-**Synopsis**
-
-```
-fdw [-w WORKSPACE] functions rename [OPTIONS] [ITEM] QUALIFIED_NAME
-```
-
-| Option | Description |
-| --- | --- |
-| `--new-name TEXT` | **Required.** New bare (unqualified) function name. |
-
-**Example**
-
-```shell
-fdw -w MyWorkspace --yes functions rename SalesWH dbo.fn_clean_input \
-  --new-name fn_sanitize_input
-```
-
 ### functions update
 
 **Targets:** Data Warehouse / SQL Analytics Endpoint
@@ -228,21 +205,6 @@ List T-SQL user-defined functions on a warehouse or SQL Analytics Endpoint, opti
 - `kind` (`str`, optional): filter by function kind: `"scalar"` (FN only), `"inline-tvf"` (IF only), or `"all"` (FN + IF + TF, the default).
 
 **Returns:** `list[Function]`: array of function objects, each with `schema_name`, `name`, `qualified_name`, `kind`, `is_inlineable`, `created`, and `modified`.
-
-### rename_function
-
-**Targets:** Data Warehouse / SQL Analytics Endpoint
-
-Rename a T-SQL user-defined function via `sp_rename`. The new name must be a bare (unqualified) identifier - `sp_rename` cannot move a function across schemas.
-
-**Parameters:**
-
-- `workspace` (`str`): workspace name or GUID.
-- `item` (`str`): warehouse or SQL Analytics Endpoint name or GUID.
-- `qualified_name` (`str`): current dot-separated qualified function name, e.g. `dbo.fn_clean_input`.
-- `new_name` (`str`): new bare function name (no schema prefix), e.g. `fn_sanitize_input`.
-
-**Returns:** `FunctionDetails`: the renamed function record.
 
 ### update_function
 
