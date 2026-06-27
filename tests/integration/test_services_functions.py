@@ -214,40 +214,12 @@ async def test_drop_function_removes_function(
         await functions.get_function(sql_target, schema, fn_name)
 
 
-async def test_rename_function_roundtrip(
-    mutable_schema_target: tuple[SqlTarget, str],
-) -> None:
-    """rename_function must rename the function and return updated details."""
-    sql_target, schema = mutable_schema_target
-    fn_name = "pytest_fns_rename_src"
-    new_name = "pytest_fns_rename_dst"
-
-    try:
-        await functions.create_function(sql_target, schema, fn_name, _SCALAR_INLINEABLE_BODY)
-
-        renamed = await functions.rename_function(sql_target, f"{schema}.{fn_name}", new_name)
-        assert isinstance(renamed, FunctionDetails)
-        assert renamed.name == new_name
-        assert renamed.schema_name == schema
-
-        # Old name must be gone, new name must appear
-        after = await functions.list_functions(sql_target, schema=schema)
-        assert not any(f.name == fn_name for f in after)
-        assert any(f.name == new_name for f in after)
-    finally:
-        with contextlib.suppress(Exception):
-            await functions.drop_function(sql_target, schema, fn_name)
-        with contextlib.suppress(Exception):
-            await functions.drop_function(sql_target, schema, new_name)
-
-
 async def test_create_function_full_roundtrip(
     mutable_schema_target: tuple[SqlTarget, str],
 ) -> None:
-    """End-to-end: create -> list -> get -> update -> rename -> drop."""
+    """End-to-end: create -> list -> get -> update -> drop."""
     sql_target, schema = mutable_schema_target
     fn_name = "pytest_fns_roundtrip"
-    renamed = "pytest_fns_roundtrip_v2"
 
     try:
         # --- create ---
@@ -271,20 +243,14 @@ async def test_create_function_full_roundtrip(
         assert updated.definition is not None
         assert "lower" in updated.definition.lower() or "LOWER" in updated.definition
 
-        # --- rename ---
-        rn = await functions.rename_function(sql_target, f"{schema}.{fn_name}", renamed)
-        assert rn.name == renamed
-
-        # --- drop renamed ---
-        await functions.drop_function(sql_target, schema, renamed)
+        # --- drop ---
+        await functions.drop_function(sql_target, schema, fn_name)
         after = await functions.list_functions(sql_target, schema=schema)
-        assert not any(f.name == renamed for f in after)
+        assert not any(f.name == fn_name for f in after)
 
     finally:
         with contextlib.suppress(Exception):
             await functions.drop_function(sql_target, schema, fn_name)
-        with contextlib.suppress(Exception):
-            await functions.drop_function(sql_target, schema, renamed)
 
 
 async def test_create_inline_tvf_and_list_by_kind(
