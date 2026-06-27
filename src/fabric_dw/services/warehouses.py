@@ -9,7 +9,7 @@ from uuid import UUID
 
 from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.exceptions import FabricServerError, NotFoundError, PermissionDeniedError
-from fabric_dw.http_client import FabricHttpClient, HttpBase
+from fabric_dw.http_client import FabricHttpClient, HttpBase, _parse_json_body
 from fabric_dw.models import Warehouse, WarehouseKind
 from fabric_dw.services._helpers import compact, scan_all_workspaces
 from fabric_dw.services._lro import extract_operation_id, resolve_lro_item_id
@@ -18,6 +18,11 @@ from fabric_dw.services.workspaces import SUPPORTED_COLLATIONS
 from fabric_dw.services.workspaces import list_all as _list_all_workspaces
 
 _logger = logging.getLogger("fabric_dw.warehouses")
+
+# Backoff schedule (seconds) for the GET-by-name retry after an empty 2xx create response.
+# Two retries (after the initial attempt) tolerate brief eventual-consistency lag without
+# adding the old retry loop's ~26 s worst-case delay for truly empty responses.
+_GET_BY_NAME_BACKOFF = (2, 6)
 
 
 async def _post_create(
@@ -45,11 +50,13 @@ async def _post_create(
         return location, None
 
     # Fabric occasionally returns 201 with the new warehouse directly in the body.
-    resp_body = resp.json()
-    resp_id = resp_body.get("id")
-    resp_name = resp_body.get("displayName") or resp_body.get("name")
-    if resp_id and resp_name:
-        return None, resp_body
+    # Use _parse_json_body to handle truly empty or non-JSON bodies without crashing.
+    resp_body = _parse_json_body(resp)
+    if resp_body is not None:
+        resp_id = resp_body.get("id")
+        resp_name = resp_body.get("displayName") or resp_body.get("name")
+        if resp_id and resp_name:
+            return None, resp_body
 
     # 2xx + no Location + no usable body: object is assumed created (2xx = success).
     # Do NOT re-POST — that risks a duplicate.  The caller resolves via a read instead.
@@ -266,11 +273,29 @@ async def create(
 
     if location is None:
         # 2xx with no Location and no usable body: object is assumed created.
-        # Resolve via an idempotent name-existence GET, never a re-POST.
-        all_warehouses = await list_warehouses(http, workspace_id, warehouses_only=True)
-        found = next((wh for wh in all_warehouses if wh.name == name), None)
-        if found is not None:
-            return found
+        # Resolve via bounded GET-by-name retries — never a re-POST.
+        # Short backoff tolerates brief eventual-consistency lag after the create.
+        found_id: UUID | None = None
+        for attempt, backoff in enumerate([None, *_GET_BY_NAME_BACKOFF], start=0):
+            if backoff is not None:
+                _logger.debug(
+                    "create warehouse: GET-by-name attempt %d/%d — waiting %ss for propagation",
+                    attempt + 1,
+                    len(_GET_BY_NAME_BACKOFF) + 1,
+                    backoff,
+                )
+                await asyncio.sleep(backoff)
+            all_warehouses = await list_warehouses(http, workspace_id, warehouses_only=True)
+            match = next((wh for wh in all_warehouses if wh.name == name), None)
+            if match is not None:
+                found_id = match.id
+                break
+
+        if found_id is not None:
+            # Follow up with a GET to return a fully-populated Warehouse (list payload
+            # omits fields such as connectionString that get_warehouse returns).
+            return await get_warehouse(http, workspace_id, found_id)
+
         msg = (
             f"create warehouse '{name}': 2xx response with no Location and no usable body; "
             f"warehouse is assumed created (issue #861) but could not be confirmed by name "

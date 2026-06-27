@@ -454,10 +454,12 @@ async def test_create_empty_2xx_yields_exactly_one_post_and_success() -> None:
     """Regression test for issue #861: empty 2xx must yield exactly ONE POST and a success result.
 
     A 2xx response means the warehouse was created.  The old code re-posted on an empty
-    2xx, risking duplicates.  The new code issues one POST, then resolves via GET by name.
+    2xx, risking duplicates.  The new code issues one POST, resolves via GET by name, then
+    does a follow-up GET by ID to return a fully-populated Warehouse.
     """
     wh_list = json.loads(WAREHOUSE_LIST_PAYLOAD)
     wh_list.pop("continuationUri", None)  # single-page response
+    wh_payload = json.loads(WAREHOUSE_GET_PAYLOAD)
 
     with respx.mock:
         post_route = respx.post(_WAREHOUSES_URL).mock(
@@ -465,6 +467,8 @@ async def test_create_empty_2xx_yields_exactly_one_post_and_success() -> None:
         )
         # GET by name: list_warehouses returns "SalesWarehouse" so the create can resolve it.
         respx.get(_WAREHOUSES_URL).mock(return_value=httpx.Response(200, json=wh_list))
+        # Follow-up GET by ID to return the fully-populated Warehouse (with connectionString).
+        respx.get(_WAREHOUSE_URL).mock(return_value=httpx.Response(200, json=wh_payload))
 
         client = await _make_client()
         async with client:
@@ -475,28 +479,99 @@ async def test_create_empty_2xx_yields_exactly_one_post_and_success() -> None:
     assert isinstance(result, Warehouse)
     assert result.name == "SalesWarehouse"
     assert result.kind == WarehouseKind.WAREHOUSE
+    # Fully populated: connection_string comes from the follow-up GET, not the list payload.
+    assert result.connection_string == "saleswarehouse.datawarehouse.fabric.microsoft.com"
+
+
+async def test_create_truly_empty_body_does_not_crash_and_resolves_by_name() -> None:
+    """create must not crash when the 2xx response has a genuinely empty body (zero bytes).
+
+    A truly empty body causes resp.json() to raise JSONDecodeError.  The fix uses
+    _parse_json_body() which returns None for such bodies, so the GET-by-name recovery
+    path is taken instead of crashing.
+    """
+    wh_list = json.loads(WAREHOUSE_LIST_PAYLOAD)
+    wh_list.pop("continuationUri", None)
+    wh_payload = json.loads(WAREHOUSE_GET_PAYLOAD)
+
+    with respx.mock:
+        post_route = respx.post(_WAREHOUSES_URL).mock(
+            # content=b"" produces a genuinely empty body — resp.json() would raise here.
+            return_value=httpx.Response(202, content=b"")
+        )
+        respx.get(_WAREHOUSES_URL).mock(return_value=httpx.Response(200, json=wh_list))
+        respx.get(_WAREHOUSE_URL).mock(return_value=httpx.Response(200, json=wh_payload))
+
+        client = await _make_client()
+        async with client:
+            result = await warehouses.create(client, _WORKSPACE_ID, "SalesWarehouse")
+
+    assert post_route.call_count == 1
+    assert isinstance(result, Warehouse)
+    assert result.name == "SalesWarehouse"
+    assert result.connection_string == "saleswarehouse.datawarehouse.fabric.microsoft.com"
+
+
+async def test_create_empty_2xx_get_by_name_retries_on_propagation_lag() -> None:
+    """create must retry GET-by-name when the warehouse is not yet visible after the create.
+
+    Mocks the list returning empty on the first call, then the warehouse on the second.
+    Asserts exactly 1 POST and 2 list calls (initial + 1 retry), with sleep between them.
+    """
+    wh_list = json.loads(WAREHOUSE_LIST_PAYLOAD)
+    wh_list.pop("continuationUri", None)
+    wh_payload = json.loads(WAREHOUSE_GET_PAYLOAD)
+    list_call_count = 0
+
+    def list_side_effect(_request: httpx.Request) -> httpx.Response:
+        nonlocal list_call_count
+        list_call_count += 1
+        if list_call_count == 1:
+            return httpx.Response(200, json={"value": []})  # not yet visible
+        return httpx.Response(200, json=wh_list)  # visible on retry
+
+    with respx.mock:
+        post_route = respx.post(_WAREHOUSES_URL).mock(return_value=httpx.Response(202, json={}))
+        respx.get(_WAREHOUSES_URL).mock(side_effect=list_side_effect)
+        respx.get(_WAREHOUSE_URL).mock(return_value=httpx.Response(200, json=wh_payload))
+
+        client = await _make_client()
+        async with client:
+            with patch("fabric_dw.services.warehouses.asyncio.sleep") as mock_sleep:
+                result = await warehouses.create(client, _WORKSPACE_ID, "SalesWarehouse")
+
+    assert post_route.call_count == 1  # never re-POSTs
+    assert list_call_count == 2  # initial + 1 retry
+    mock_sleep.assert_called_once()  # slept once between the two list calls
+    assert isinstance(result, Warehouse)
+    assert result.connection_string == "saleswarehouse.datawarehouse.fabric.microsoft.com"
 
 
 async def test_create_empty_2xx_get_by_name_not_found_raises_fabric_server_error() -> None:
     """create must raise FabricServerError when the 2xx body is empty and GET by name finds nothing.
 
-    This is the last-resort path: the warehouse is assumed created but cannot be confirmed.
-    Exactly ONE POST must be issued (no retry), then the error is raised.
+    This is the last-resort path: the warehouse is assumed created but cannot be confirmed
+    even after all GET-by-name retries.  Exactly ONE POST must be issued.
     """
     with respx.mock:
         post_route = respx.post(_WAREHOUSES_URL).mock(
             return_value=httpx.Response(202, json={})  # no Location header, empty body
         )
-        # list_warehouses returns an empty value list — warehouse not visible yet.
-        respx.get(_WAREHOUSES_URL).mock(return_value=httpx.Response(200, json={"value": []}))
+        # list_warehouses always returns an empty value list — warehouse never becomes visible.
+        list_route = respx.get(_WAREHOUSES_URL).mock(
+            return_value=httpx.Response(200, json={"value": []})
+        )
 
         client = await _make_client()
         async with client:
-            with pytest.raises(FabricServerError, match="861"):
-                await warehouses.create(client, _WORKSPACE_ID, "SalesWarehouse")
+            with patch("fabric_dw.services.warehouses.asyncio.sleep"):
+                with pytest.raises(FabricServerError, match="861"):
+                    await warehouses.create(client, _WORKSPACE_ID, "SalesWarehouse")
 
-    # Exactly one POST — no retry.
+    # Exactly one POST — no duplicate create.
     assert post_route.call_count == 1
+    # All GET-by-name attempts were made (initial + len(_GET_BY_NAME_BACKOFF) retries).
+    assert list_route.call_count == 3
 
 
 async def test_create_4xx_is_not_retried() -> None:
