@@ -232,6 +232,19 @@ async def disable(
 ) -> AuditSettings:
     """Disable SQL auditing on a Data Warehouse or SQL Analytics Endpoint.
 
+    Performs a pre-flight ``GET /settings/sqlAudit`` to read the current
+    ``retentionDays`` and ``auditActionsAndGroups`` before sending the PATCH.
+    The Fabric API resets any field omitted from a partial PATCH to its default
+    value, so both fields are always round-tripped alongside ``state=Disabled``.
+    This preserves the configured retention period and action-group list so a
+    subsequent re-enable restores them rather than wiping the prior configuration.
+
+    Note:
+        This function performs a read-modify-write (GET then PATCH) without
+        optimistic concurrency control.  The Fabric REST API does not expose
+        ETags or ``If-Match`` on the ``/settings/sqlAudit`` endpoint.  Under
+        concurrent modification the last writer wins silently.
+
     Args:
         http: Authenticated Fabric HTTP client.
         workspace_id: GUID of the Fabric workspace.
@@ -245,9 +258,24 @@ async def disable(
 
     Raises:
         PermissionDeniedError: If the caller lacks the required permission (HTTP 403).
+        NotFoundError: If the item does not exist (HTTP 404) -- raised by the
+            pre-flight GET or the final re-fetch.
     """
     path = _audit_path(workspace_id, item_id, kind)
-    await http.request("PATCH", HttpBase.FABRIC, path, json={"state": "Disabled"})
+    # Pre-flight GET to preserve retentionDays and auditActionsAndGroups in the
+    # PATCH body.  Omitting either field causes the Fabric API to silently reset
+    # it to its default value, wiping custom retention and group configuration.
+    current = await get_settings(http, workspace_id, item_id, kind)
+    await http.request(
+        "PATCH",
+        HttpBase.FABRIC,
+        path,
+        json={
+            "state": "Disabled",
+            "retentionDays": current.retention_days,
+            "auditActionsAndGroups": current.action_groups,
+        },
+    )
     # PATCH returns empty/partial body on this endpoint; re-fetch required.
     return await get_settings(http, workspace_id, item_id, kind)
 
@@ -399,9 +427,16 @@ async def set_action_groups(
     # alongside ``state`` and ``retentionDays``.  Using PATCH to set the action groups
     # avoids the EntityNotFound (404) that the POST method returns on freshly-created
     # warehouses, since PATCH with state=Enabled is idempotent and always works.
-    patch_body: dict[str, object] = {"auditActionsAndGroups": action_groups}
-    if ensure_enabled:
-        patch_body["state"] = "Enabled"
+    # retentionDays is always round-tripped: omitting it from a partial PATCH causes
+    # the Fabric API to silently reset it to its default value (data-loss bug).
+    # state is always "Enabled" on both paths: ensure_enabled=True forces it explicitly;
+    # ensure_enabled=False reaches here only after _require_enabled() confirmed state is
+    # "Enabled" (it raises ValueError for "Disabled").
+    patch_body: dict[str, object] = {
+        "state": "Enabled",
+        "auditActionsAndGroups": action_groups,
+        "retentionDays": current.retention_days,
+    }
 
     await http.request(
         "PATCH",
@@ -412,8 +447,7 @@ async def set_action_groups(
     # Return the authoritative post-PATCH state constructed locally.
     # Do NOT poll GET: the GET endpoint lags the PATCH by minutes; the PATCH
     # itself is the authoritative source of truth.
-    new_state = "Enabled" if ensure_enabled else current.state
-    return current.model_copy(update={"action_groups": list(action_groups), "state": new_state})
+    return current.model_copy(update={"action_groups": list(action_groups), "state": "Enabled"})
 
 
 async def add_action_group(
@@ -476,11 +510,18 @@ async def add_action_group(
 
     new_groups = [*current.action_groups, group]
     path = _audit_path(workspace_id, item_id, kind)
+    # Round-trip state and retentionDays alongside the updated group list.
+    # Omitting either field from a partial PATCH causes the Fabric API to
+    # silently reset it to its default value (data-loss bug).
     await http.request(
         "PATCH",
         HttpBase.FABRIC,
         path,
-        json={"auditActionsAndGroups": new_groups},
+        json={
+            "state": current.state,
+            "retentionDays": current.retention_days,
+            "auditActionsAndGroups": new_groups,
+        },
     )
     # Return the authoritative post-PATCH state constructed locally.
     # Do NOT poll GET: the GET endpoint lags the PATCH by minutes; the PATCH
@@ -551,11 +592,18 @@ async def remove_action_group(
 
     new_groups = [g for g in current.action_groups if g != group]
     path = _audit_path(workspace_id, item_id, kind)
+    # Round-trip state and retentionDays alongside the updated group list.
+    # Omitting either field from a partial PATCH causes the Fabric API to
+    # silently reset it to its default value (data-loss bug).
     await http.request(
         "PATCH",
         HttpBase.FABRIC,
         path,
-        json={"auditActionsAndGroups": new_groups},
+        json={
+            "state": current.state,
+            "retentionDays": current.retention_days,
+            "auditActionsAndGroups": new_groups,
+        },
     )
     # Return the authoritative post-PATCH state constructed locally.
     # Do NOT poll GET: the GET endpoint lags the PATCH by minutes; the PATCH
