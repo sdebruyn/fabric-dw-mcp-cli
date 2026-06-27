@@ -25,7 +25,7 @@ import types
 from collections.abc import Mapping
 from uuid import UUID
 
-from fabric_dw.exceptions import AlreadyExistsError, BadRequestError, NotFoundError
+from fabric_dw.exceptions import AlreadyExistsError, BadRequestError, FabricError, NotFoundError
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import SqlPool, SqlPoolsConfiguration
 
@@ -35,6 +35,7 @@ __all__ = [
     "disable",
     "enable",
     "get_configuration",
+    "get_status",
     "update_configuration",
     "update_pool",
 ]
@@ -69,6 +70,47 @@ def _rebuild_config(*, enabled: bool, pools: list[SqlPool]) -> SqlPoolsConfigura
             "customSQLPools": [p.model_dump(by_alias=True, mode="json") for p in pools],
         }
     )
+
+
+async def get_status(
+    http: FabricHttpClient,
+    workspace_id: UUID,
+) -> bool:
+    """Fetch only the ``customSQLPoolsEnabled`` flag for a workspace.
+
+    Unlike :func:`get_configuration`, this function does **not** validate or
+    deserialise the nested ``customSQLPools`` list.  Beta API schema drift in
+    a pool field (renamed or added required attribute) therefore cannot crash
+    a simple enabled/disabled status check.  See issue #905.
+
+    Args:
+        http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
+        workspace_id: The Fabric workspace UUID.
+
+    Returns:
+        ``True`` if custom SQL pools are enabled, ``False`` otherwise.
+
+    Raises:
+        FabricError: If the top-level ``customSQLPoolsEnabled`` key is absent
+            from the response (unexpected API response shape).
+        PermissionDeniedError: If the caller does not have the workspace admin role
+            (HTTP 403).
+    """
+    resp = await http.request(
+        "GET",
+        HttpBase.FABRIC,
+        _config_path(workspace_id),
+        params=_BETA_PARAMS,
+    )
+    data = resp.json()
+    try:
+        return bool(data["customSQLPoolsEnabled"])
+    except (KeyError, TypeError) as exc:
+        msg = (
+            "Unexpected API response: 'customSQLPoolsEnabled' key is missing. "
+            "The Fabric SQL Pools beta API may have changed."
+        )
+        raise FabricError(msg) from exc
 
 
 async def get_configuration(

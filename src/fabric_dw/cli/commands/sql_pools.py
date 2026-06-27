@@ -101,9 +101,9 @@ async def status_cmd(ctx: CliContext) -> None:
     try:
         async with build_http_client(ctx) as http:
             ws_id = await resolve_workspace_id(http, ws)
-            config = await _svc.get_configuration(http, ws_id)
+            enabled = await _svc.get_status(http, ws_id)
             render(
-                {"customSQLPoolsEnabled": config.custom_sql_pools_enabled},
+                {"customSQLPoolsEnabled": enabled},
                 json_output=ctx.json_output,
             )
     except PermissionDeniedError as exc:

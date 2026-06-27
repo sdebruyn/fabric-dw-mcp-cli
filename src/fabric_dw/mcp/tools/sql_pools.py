@@ -52,10 +52,10 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
             )
             _log.debug("get_sql_pools_status ws=%s", ws_id)
-            result = await sql_pools_svc.get_configuration(ctx.http, ws_id)
+            enabled = await sql_pools_svc.get_status(ctx.http, ws_id)
         except FabricError as exc:
             raise fabric_err(exc) from exc
-        return {"customSQLPoolsEnabled": result.custom_sql_pools_enabled}
+        return {"customSQLPoolsEnabled": enabled}
 
     @mcp.tool(name="list_sql_pools")
     async def list_sql_pools(workspace: str) -> list[dict[str, Any]]:

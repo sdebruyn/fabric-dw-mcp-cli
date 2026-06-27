@@ -84,6 +84,117 @@ POOLS_EMPTY_PAYLOAD: dict[str, Any] = {
 
 
 # ---------------------------------------------------------------------------
+# get_status
+# ---------------------------------------------------------------------------
+
+# A response payload where a nested pool entry is missing required fields
+# ('name' and 'maxResourcePercentage').  model_validate on SqlPoolsConfiguration
+# would raise ValidationError here, but get_status must succeed regardless.
+POOLS_ENABLED_BROKEN_POOL_PAYLOAD: dict[str, object] = {
+    "customSQLPoolsEnabled": True,
+    "customSQLPools": [
+        {
+            # 'name' and 'maxResourcePercentage' are intentionally absent
+            # to simulate beta API schema drift.
+            "isDefault": True,
+            "optimizeForReads": False,
+        }
+    ],
+}
+
+POOLS_DISABLED_BROKEN_POOL_PAYLOAD: dict[str, object] = {
+    "customSQLPoolsEnabled": False,
+    "customSQLPools": [
+        {
+            # Same broken pool entry as above.
+            "isDefault": False,
+        }
+    ],
+}
+
+
+async def test_get_status_returns_true_when_enabled() -> None:
+    """get_status returns True when customSQLPoolsEnabled is true."""
+    with respx.mock:
+        route = respx.get(_CONFIG_URL).mock(
+            return_value=httpx.Response(200, json=POOLS_ENABLED_PAYLOAD)
+        )
+        client = await _make_client()
+        async with client:
+            result = await sql_pools.get_status(client, _WS_ID)
+
+    assert route.called
+    assert "beta=True" in str(route.calls[0].request.url)
+    assert result is True
+
+
+async def test_get_status_returns_false_when_disabled() -> None:
+    """get_status returns False when customSQLPoolsEnabled is false."""
+    with respx.mock:
+        respx.get(_CONFIG_URL).mock(return_value=httpx.Response(200, json=POOLS_DISABLED_PAYLOAD))
+        client = await _make_client()
+        async with client:
+            result = await sql_pools.get_status(client, _WS_ID)
+
+    assert result is False
+
+
+async def test_get_status_ignores_broken_nested_pool_fields_when_enabled() -> None:
+    """get_status does not raise ValidationError when nested pool fields are missing.
+
+    This is the key regression test for issue #905: if the beta API renames or
+    drops a required pool field, full SqlPoolsConfiguration.model_validate would
+    raise ValidationError.  get_status reads only the top-level flag and must
+    therefore succeed even when the pool list is malformed.
+    """
+    with respx.mock:
+        respx.get(_CONFIG_URL).mock(
+            return_value=httpx.Response(200, json=POOLS_ENABLED_BROKEN_POOL_PAYLOAD)
+        )
+        client = await _make_client()
+        async with client:
+            result = await sql_pools.get_status(client, _WS_ID)
+
+    # The flag is readable even though the nested pool entry is missing fields.
+    assert result is True
+
+
+async def test_get_status_ignores_broken_nested_pool_fields_when_disabled() -> None:
+    """get_status returns False and does not raise when pool entries are malformed."""
+    with respx.mock:
+        respx.get(_CONFIG_URL).mock(
+            return_value=httpx.Response(200, json=POOLS_DISABLED_BROKEN_POOL_PAYLOAD)
+        )
+        client = await _make_client()
+        async with client:
+            result = await sql_pools.get_status(client, _WS_ID)
+
+    assert result is False
+
+
+async def test_get_status_raises_fabric_error_when_flag_key_missing() -> None:
+    """get_status raises FabricError when customSQLPoolsEnabled is absent."""
+    from fabric_dw.exceptions import FabricError  # noqa: PLC0415
+
+    with respx.mock:
+        respx.get(_CONFIG_URL).mock(return_value=httpx.Response(200, json={"customSQLPools": []}))
+        client = await _make_client()
+        async with client:
+            with pytest.raises(FabricError, match="customSQLPoolsEnabled"):
+                await sql_pools.get_status(client, _WS_ID)
+
+
+async def test_get_status_403_raises_permission_denied() -> None:
+    """get_status propagates PermissionDeniedError on 403."""
+    with respx.mock:
+        respx.get(_CONFIG_URL).mock(return_value=httpx.Response(403, json={"error": "forbidden"}))
+        client = await _make_client()
+        async with client:
+            with pytest.raises(PermissionDeniedError):
+                await sql_pools.get_status(client, _WS_ID)
+
+
+# ---------------------------------------------------------------------------
 # get_configuration
 # ---------------------------------------------------------------------------
 
