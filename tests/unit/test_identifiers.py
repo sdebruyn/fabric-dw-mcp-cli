@@ -69,6 +69,22 @@ class TestValidateIdentifier:
         with pytest.raises(ValueError, match="must match"):
             validate_identifier("tëst")
 
+    def test_trailing_newline_raises(self) -> None:
+        with pytest.raises(ValueError, match="must match"):
+            validate_identifier("mytable\n")
+
+    def test_embedded_newline_raises(self) -> None:
+        with pytest.raises(ValueError, match="must match"):
+            validate_identifier("my\ntable")
+
+    def test_embedded_carriage_return_raises(self) -> None:
+        with pytest.raises(ValueError, match="must match"):
+            validate_identifier("my\rtable")
+
+    def test_trailing_carriage_return_raises(self) -> None:
+        with pytest.raises(ValueError, match="must match"):
+            validate_identifier("mytable\r")
+
 
 # ---------------------------------------------------------------------------
 # quote_identifier
