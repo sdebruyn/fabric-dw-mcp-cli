@@ -456,31 +456,6 @@ async def test_create_view_happy_path(mock_ctx, ctx_patch) -> None:
     assert result["name"] == "vw_sales"
 
 
-async def test_create_view_clears_negative_cache(mock_ctx, ctx_patch) -> None:
-    """create_view must call resolver.clear_negative_cache() after success."""
-    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
-
-    view = _make_view()
-    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
-    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
-
-    with (
-        ctx_patch,
-        patch("fabric_dw.services.views.create_view", new=AsyncMock(return_value=view)),
-    ):
-        await mcp._tool_manager.call_tool(
-            "create_view",
-            {
-                "workspace": WS_NAME,
-                "item": WH_NAME,
-                "qualified_name": "dbo.vw_sales",
-                "select_body": "SELECT 1 AS col",
-            },
-        )
-
-    mock_ctx.resolver.clear_negative_cache.assert_called_once()
-
-
 # ---------------------------------------------------------------------------
 # create_view — error / guard paths
 # ---------------------------------------------------------------------------
@@ -981,85 +956,6 @@ async def test_rename_view_value_error_becomes_tool_error(mock_ctx, ctx_patch) -
                 "new_name": "vw_revenue",
             },
         )
-
-
-# ---------------------------------------------------------------------------
-# M09 — negative cache cleared on view mutations
-# ---------------------------------------------------------------------------
-
-
-async def test_update_view_clears_negative_cache(mock_ctx, ctx_patch) -> None:
-    """update_view must call resolver.clear_negative_cache() after success (M09)."""
-    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
-
-    view = _make_view()
-    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
-    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
-
-    with (
-        ctx_patch,
-        patch("fabric_dw.services.views.update_view", new=AsyncMock(return_value=view)),
-    ):
-        await mcp._tool_manager.call_tool(
-            "update_view",
-            {
-                "workspace": WS_NAME,
-                "item": WH_NAME,
-                "qualified_name": "dbo.vw_sales",
-                "select_body": "SELECT 2 AS col",
-            },
-        )
-
-    mock_ctx.resolver.clear_negative_cache.assert_called_once()
-
-
-async def test_drop_view_clears_negative_cache(mock_ctx, ctx_patch) -> None:
-    """drop_view must call resolver.clear_negative_cache() after success (M09)."""
-    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
-
-    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
-    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
-
-    with (
-        ctx_patch,
-        patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
-        patch("fabric_dw.services.views.drop_view", new=AsyncMock(return_value=None)),
-    ):
-        await mcp._tool_manager.call_tool(
-            "drop_view",
-            {
-                "workspace": WS_NAME,
-                "item": WH_NAME,
-                "qualified_name": "dbo.vw_sales",
-            },
-        )
-
-    mock_ctx.resolver.clear_negative_cache.assert_called_once()
-
-
-async def test_rename_view_clears_negative_cache(mock_ctx, ctx_patch) -> None:
-    """rename_view must call resolver.clear_negative_cache() after success (M09)."""
-    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
-
-    view = _make_view()
-    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
-    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
-
-    with (
-        ctx_patch,
-        patch("fabric_dw.services.views.rename_view", new=AsyncMock(return_value=view)),
-    ):
-        await mcp._tool_manager.call_tool(
-            "rename_view",
-            {
-                "workspace": WS_NAME,
-                "item": WH_NAME,
-                "qualified_name": "dbo.vw_sales",
-                "new_name": "vw_revenue",
-            },
-        )
-
-    mock_ctx.resolver.clear_negative_cache.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

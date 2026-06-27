@@ -11,7 +11,6 @@ Coverage
 7. Int param bounds — FastMCP rejects out-of-range values.
 8. ``next()`` fallback in create_sql_pool / update_sql_pool.
 9. ``clear_cache`` scope + stats.
-10. ``clear_negative_cache`` called after mutating tool (create_warehouse).
 """
 
 from __future__ import annotations
@@ -70,7 +69,6 @@ def _make_ctx() -> ServerContext:
     mock_resolver = AsyncMock()
     mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
     mock_resolver.item = AsyncMock(return_value=_make_entry())
-    mock_resolver.clear_negative_cache = MagicMock()
     return ServerContext(
         http=mock_http,
         cache=mock_cache,
@@ -453,7 +451,6 @@ def _make_ctx_with_real_cache(tmp_path: Any) -> ServerContext:
     mock_resolver = AsyncMock()
     mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
     mock_resolver.item = AsyncMock(return_value=_make_entry())
-    mock_resolver.clear_negative_cache = MagicMock()
     return ServerContext(
         http=mock_http,
         cache=real_cache,
@@ -463,7 +460,7 @@ def _make_ctx_with_real_cache(tmp_path: Any) -> ServerContext:
 
 
 async def test_clear_cache_all_returns_stats(tmp_path: Any) -> None:
-    """clear_cache(scope='all') reports 0 counts on an empty cache and calls resolver.clear."""
+    """clear_cache(scope='all') reports 0 counts on an empty cache."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     ctx = _make_ctx_with_real_cache(tmp_path)
@@ -474,12 +471,7 @@ async def test_clear_cache_all_returns_stats(tmp_path: Any) -> None:
     assert result["scope"] == "all"
     assert result["workspaces_cleared"] == 0
     assert result["items_cleared"] == 0
-    assert result["negative_cache_cleared"] is True
-    # ctx.resolver is an AsyncMock; cast to Any so static checkers don't flag
-    # the assertion methods that are only available on Mock objects.
-    from typing import cast as _cast  # noqa: PLC0415
-
-    _cast(Any, ctx.resolver).clear_negative_cache.assert_called_once()
+    assert "negative_cache_cleared" not in result
 
 
 async def test_clear_cache_workspaces_scope(tmp_path: Any) -> None:
@@ -497,7 +489,6 @@ async def test_clear_cache_workspaces_scope(tmp_path: Any) -> None:
 
     mock_http = AsyncMock()
     mock_resolver = AsyncMock()
-    mock_resolver.clear_negative_cache = MagicMock()
     ctx = ServerContext(
         http=mock_http,
         cache=real_cache,
@@ -511,8 +502,7 @@ async def test_clear_cache_workspaces_scope(tmp_path: Any) -> None:
     assert result["scope"] == "workspaces"
     assert result["workspaces_cleared"] == 2
     assert result["items_cleared"] == 0
-    assert result["negative_cache_cleared"] is False
-    mock_resolver.clear_negative_cache.assert_not_called()
+    assert "negative_cache_cleared" not in result
 
     # Verify the workspace entries are actually gone.
     assert real_cache.get_workspace("ws1") is None
@@ -544,7 +534,6 @@ async def test_clear_cache_items_scope(tmp_path: Any) -> None:
 
     mock_http = AsyncMock()
     mock_resolver = AsyncMock()
-    mock_resolver.clear_negative_cache = MagicMock()
     ctx = ServerContext(
         http=mock_http,
         cache=real_cache,
@@ -558,108 +547,11 @@ async def test_clear_cache_items_scope(tmp_path: Any) -> None:
     assert result["scope"] == "items"
     assert result["workspaces_cleared"] == 0
     assert result["items_cleared"] == 2
-    assert result["negative_cache_cleared"] is False
-    mock_resolver.clear_negative_cache.assert_not_called()
+    assert "negative_cache_cleared" not in result
 
     # Verify the item entries are actually gone.
     assert real_cache.get_item(ws_a, "item-x") is None
     assert real_cache.get_item(ws_b, "item-y") is None
-
-
-# ---------------------------------------------------------------------------
-# 10. clear_negative_cache called after successful create (create_warehouse)
-# ---------------------------------------------------------------------------
-
-
-async def test_create_warehouse_clears_negative_cache() -> None:
-    """create_warehouse must call resolver.clear_negative_cache() on success."""
-    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
-    from fabric_dw.models import Warehouse, WarehouseKind  # noqa: PLC0415
-
-    ctx = _make_ctx()
-    wh = Warehouse.model_validate(
-        {
-            "id": str(_WH_ID),
-            "displayName": "new-wh",
-            "workspaceId": str(_WS_ID),
-            "kind": WarehouseKind.WAREHOUSE,
-            "connectionString": _CONN_STRING,
-        }
-    )
-    with (
-        patch("fabric_dw.services.warehouses.create", new=AsyncMock(return_value=wh)),
-        patch("fabric_dw.mcp._context._SERVER_CTX", ctx),
-        patch.dict("os.environ", {}, clear=False),
-    ):
-        result = await mcp._tool_manager.call_tool(
-            "create_warehouse",
-            {"workspace": _WS_NAME, "name": "new-wh"},
-        )
-
-    from typing import cast as _cast  # noqa: PLC0415
-
-    resolver_mock: Any = _cast(Any, ctx.resolver)
-    assert result["displayName"] == "new-wh"
-    resolver_mock.clear_negative_cache.assert_called_once()
-
-
-async def test_create_table_clears_negative_cache() -> None:
-    """create_table must call resolver.clear_negative_cache() on success."""
-    from typing import cast as _cast  # noqa: PLC0415
-
-    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
-
-    ctx = _make_ctx()
-    resolver_mock: Any = _cast(Any, ctx.resolver)
-    # Simulate what tables_svc.create_table returns (a Pydantic model with model_dump)
-    mock_table = MagicMock()
-    mock_table.model_dump.return_value = {"schema": "dbo", "name": "new_table"}
-
-    with (
-        patch("fabric_dw.services.tables.create_table", new=AsyncMock(return_value=mock_table)),
-        patch("fabric_dw.mcp._context._SERVER_CTX", ctx),
-        patch.dict("os.environ", {}, clear=False),
-    ):
-        await mcp._tool_manager.call_tool(
-            "create_table",
-            {
-                "workspace": _WS_NAME,
-                "item": _WH_NAME,
-                "qualified_name": "dbo.new_table",
-                "select_body": "SELECT 1 AS id",
-            },
-        )
-
-    resolver_mock.clear_negative_cache.assert_called_once()
-
-
-async def test_create_view_clears_negative_cache() -> None:
-    """create_view must call resolver.clear_negative_cache() on success."""
-    from typing import cast as _cast  # noqa: PLC0415
-
-    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
-
-    ctx = _make_ctx()
-    resolver_mock: Any = _cast(Any, ctx.resolver)
-    mock_view = MagicMock()
-    mock_view.model_dump.return_value = {"schema": "dbo", "name": "new_view"}
-
-    with (
-        patch("fabric_dw.services.views.create_view", new=AsyncMock(return_value=mock_view)),
-        patch("fabric_dw.mcp._context._SERVER_CTX", ctx),
-        patch.dict("os.environ", {}, clear=False),
-    ):
-        await mcp._tool_manager.call_tool(
-            "create_view",
-            {
-                "workspace": _WS_NAME,
-                "item": _WH_NAME,
-                "qualified_name": "dbo.new_view",
-                "select_body": "SELECT 1 AS id",
-            },
-        )
-
-    resolver_mock.clear_negative_cache.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

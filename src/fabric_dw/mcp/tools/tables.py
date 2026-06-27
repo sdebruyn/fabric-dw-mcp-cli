@@ -286,7 +286,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
-        ctx.resolver.clear_negative_cache()
         return result.model_dump(mode="json")
 
     @mutating_tool(mcp, "delete_table", destructive=True)
@@ -418,7 +417,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             )
         except (TypeError, ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
-        ctx.resolver.clear_negative_cache()
         return result.model_dump(mode="json")
 
     @mutating_tool(mcp, "clone_table")
@@ -481,7 +479,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
-        ctx.resolver.clear_negative_cache()
         return result.model_dump(mode="json")
 
     @mcp.tool(name="get_table_health_metrics")
@@ -574,7 +571,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
-        ctx.resolver.clear_negative_cache()
         return result.model_dump(mode="json")
 
     @mutating_tool(mcp, "set_cluster_columns", destructive=True)
@@ -638,5 +634,4 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
-        ctx.resolver.clear_negative_cache()
         return result.model_dump(mode="json")

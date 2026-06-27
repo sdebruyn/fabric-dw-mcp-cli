@@ -20,7 +20,6 @@ from fabric_dw.models import WarehouseKind
 from fabric_dw.resolver import (
     _ITEM_TYPE_INFO,
     _ITEM_TYPES,
-    _NEGATIVE_TTL,
     ItemTypeInfo,
     Resolver,
     _odata_escape,
@@ -537,12 +536,12 @@ async def test_item_guid_unknown_type_raises_fabric_error(tmp_path: Path) -> Non
 
 
 # ---------------------------------------------------------------------------
-# Negative cache: repeated NotFoundError avoids API call
+# Miss-then-create: a NotFoundError followed by a successful lookup resolves correctly
 # ---------------------------------------------------------------------------
 
 
-async def test_workspace_negative_cache_avoids_second_api_call(tmp_path: Path) -> None:
-    """Second lookup of a missing workspace must not hit the API (negative cache)."""
+async def test_workspace_miss_then_found_resolves(tmp_path: Path) -> None:
+    """A workspace absent on the first call must resolve on a subsequent call once created."""
     resolver, client, _ = _make_resolver(tmp_path)
     with respx.mock:
         route = respx.get(_PBI_GROUPS_URL).mock(
@@ -551,65 +550,40 @@ async def test_workspace_negative_cache_avoids_second_api_call(tmp_path: Path) -
         async with client:
             with pytest.raises(NotFoundError):
                 await resolver.workspace_id("GhostWorkspace")
-            # Second call: negative cache should fire before the HTTP route
-            with pytest.raises(NotFoundError):
-                await resolver.workspace_id("GhostWorkspace")
-    # The real API should only have been called once
-    assert route.call_count == 1, "negative cache must suppress the second API call"
-
-
-async def test_workspace_negative_cache_clears_on_success(tmp_path: Path) -> None:
-    """After a successful lookup the negative cache entry must be cleared.
-
-    This test verifies that when workspace_id() finds the workspace via the API
-    (positive result), it calls _negative_clear() and removes any stale negative
-    entry for that key — WITHOUT relying on manual cache manipulation.
-    """
-    resolver, client, _ = _make_resolver(tmp_path)
-    with respx.mock:
-        # First call: not found → recorded in negative cache
-        route = respx.get(_PBI_GROUPS_URL).mock(
-            return_value=httpx.Response(200, json=_pbi_empty_response())
-        )
-        async with client:
-            with pytest.raises(NotFoundError):
-                await resolver.workspace_id("GhostWorkspace")
-
-        # Verify the entry was recorded
-        assert ("workspace", "ghostworkspace") in resolver._negative
-
-        # Now the workspace "appears" — but the negative TTL (5s) is still active,
-        # so we back-date the negative entry timestamp to simulate TTL expiry.
-        resolver._negative[("workspace", "ghostworkspace")] = time.monotonic() - 10.0
-
-        route.side_effect = None  # type: ignore[attr-defined]
+        # Simulate the workspace being created; next call must hit the API and succeed.
         route.mock(
             return_value=httpx.Response(200, json=_pbi_group_response(WS_GUID, "GhostWorkspace"))
         )
         async with client:
             result = await resolver.workspace_id("GhostWorkspace")
-
-    # Successful lookup must have cleared the negative entry
-    assert ("workspace", "ghostworkspace") not in resolver._negative
     assert result == WS_UUID
+    # The API was called twice: once for the miss, once for the subsequent hit.
+    assert route.call_count == 2
 
 
-async def test_item_negative_cache_avoids_second_api_call(tmp_path: Path) -> None:
-    """Second lookup of a missing item must not page through items again."""
+async def test_item_miss_then_found_resolves(tmp_path: Path) -> None:
+    """An item that is absent on the first call must resolve on a subsequent call once created."""
     resolver, client, _ = _make_resolver(tmp_path)
-    # Items list returns nothing matching the name
-    list_payload = _items_list_payload(_warehouse_list_item(ITEM_GUID, "OtherWarehouse"))
+    list_payload_empty = _items_list_payload(_warehouse_list_item(ITEM_GUID, "OtherWarehouse"))
+    list_payload_found = _items_list_payload(_warehouse_list_item(ITEM_GUID, "GhostItem"))
+    generic_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "GhostItem")
+    specific_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "GhostItem")
     with respx.mock:
-        route = respx.get(_FABRIC_ITEMS_URL).mock(
-            return_value=httpx.Response(200, json=list_payload)
+        list_route = respx.get(_FABRIC_ITEMS_URL).mock(
+            return_value=httpx.Response(200, json=list_payload_empty)
         )
+        respx.get(_FABRIC_ITEM_URL).mock(return_value=httpx.Response(200, json=generic_payload))
+        respx.get(
+            f"https://api.fabric.microsoft.com/v1/workspaces/{WS_GUID}/warehouses/{ITEM_GUID}"
+        ).mock(return_value=httpx.Response(200, json=specific_payload))
         async with client:
             with pytest.raises(NotFoundError):
                 await resolver.item(WS_GUID, "GhostItem")
-            # Second call: negative cache should fire before hitting the list endpoint
-            with pytest.raises(NotFoundError):
-                await resolver.item(WS_GUID, "GhostItem")
-    assert route.call_count == 1, "negative cache must suppress the second items-list call"
+        # Simulate the item being created; next call must hit the API and succeed.
+        list_route.mock(return_value=httpx.Response(200, json=list_payload_found))
+        async with client:
+            result = await resolver.item(WS_GUID, "GhostItem")
+    assert result.id == ITEM_UUID
 
 
 # ---------------------------------------------------------------------------
@@ -717,80 +691,6 @@ async def test_fetch_item_detail_uses_put_items(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Negative cache: TTL constant, expired-entry pruning, clear-on-put
-# ---------------------------------------------------------------------------
-
-
-def test_negative_ttl_is_five_seconds() -> None:
-    """_NEGATIVE_TTL must be 5 seconds (not 60) to avoid masking newly created items."""
-    assert _NEGATIVE_TTL == 5.0, (
-        f"_NEGATIVE_TTL should be 5.0 s but is {_NEGATIVE_TTL}; "
-        "a longer window masks newly created resources in the MCP singleton"
-    )
-
-
-async def test_negative_cache_expired_entry_pruned_on_check(tmp_path: Path) -> None:
-    """_negative_check must prune expired entries to keep the dict bounded."""
-    resolver, client, _ = _make_resolver(tmp_path)
-    # Manually insert an expired negative entry
-    resolver._negative[("workspace", "ghost")] = time.monotonic() - (_NEGATIVE_TTL + 1)
-    with respx.mock:
-        respx.get(_PBI_GROUPS_URL).mock(
-            return_value=httpx.Response(200, json=_pbi_group_response(WS_GUID, "ghost"))
-        )
-        async with client:
-            # Should NOT raise NotFoundError (entry is expired), and must prune it
-            result = await resolver.workspace_id("ghost")
-    assert result == WS_UUID
-    # Expired entry must have been pruned
-    assert ("workspace", "ghost") not in resolver._negative
-
-
-async def test_clear_negative_cache_empties_all_entries(tmp_path: Path) -> None:
-    """clear_negative_cache() must discard all in-memory negative entries."""
-    resolver, client, _ = _make_resolver(tmp_path)
-    with respx.mock:
-        respx.get(_PBI_GROUPS_URL).mock(
-            return_value=httpx.Response(200, json=_pbi_empty_response())
-        )
-        async with client:
-            with pytest.raises(NotFoundError):
-                await resolver.workspace_id("Ghost1")
-            with pytest.raises(NotFoundError):
-                await resolver.workspace_id("Ghost2")
-    assert len(resolver._negative) == 2
-    resolver.clear_negative_cache()
-    assert len(resolver._negative) == 0
-
-
-async def test_item_fetch_clears_workspace_negative_entries(tmp_path: Path) -> None:
-    """After _fetch_item_detail succeeds, negative entries for that workspace are cleared."""
-    resolver, client, _ = _make_resolver(tmp_path)
-    # Pre-seed negative cache entries for the workspace scope
-    ws_key = str(WS_UUID)
-    resolver._negative[(ws_key, "saleswarehouse")] = time.monotonic()
-    resolver._negative[(ws_key, "otherwarehouse")] = time.monotonic()
-    # An unrelated workspace entry must not be touched
-    resolver._negative[("otherws", "something")] = time.monotonic()
-
-    generic_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "SalesWarehouse")
-    specific_payload = _warehouse_detail_payload(ITEM_GUID, WS_GUID, "SalesWarehouse")
-    with respx.mock:
-        respx.get(_FABRIC_ITEM_URL).mock(return_value=httpx.Response(200, json=generic_payload))
-        respx.get(
-            f"https://api.fabric.microsoft.com/v1/workspaces/{WS_GUID}/warehouses/{ITEM_GUID}"
-        ).mock(return_value=httpx.Response(200, json=specific_payload))
-        async with client:
-            await resolver.item(WS_GUID, ITEM_GUID)
-
-    # Workspace-scoped negative entries must have been cleared
-    assert (ws_key, "saleswarehouse") not in resolver._negative
-    assert (ws_key, "otherwarehouse") not in resolver._negative
-    # Unrelated workspace entries must be untouched
-    assert ("otherws", "something") in resolver._negative
-
-
-# ---------------------------------------------------------------------------
 # _ITEM_TYPE_INFO consolidation
 # ---------------------------------------------------------------------------
 
@@ -842,84 +742,6 @@ class TestD22InvalidItemType:
 
         # The HTTP layer must NOT have been called -- error raised before pagination.
         mock_http.iter_paginated.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# D13 — negative cache casing consistency
-# ---------------------------------------------------------------------------
-
-
-def test_negative_cache_normalises_keys_to_lowercase(tmp_path: Path) -> None:
-    """Negative-cache helpers must normalise keys to lower-case (D13).
-
-    _negative_record, _negative_check, and _negative_clear must all use the
-    same lower-cased key so that lookups are case-insensitive and consistent
-    with the positive LookupCache (which also stores names lower-cased).
-    """
-    from fabric_dw.cache import LookupCache  # noqa: PLC0415
-
-    cache = LookupCache(path=tmp_path / "dummy.json")
-    mock_http = MagicMock()
-    resolver = Resolver(http=mock_http, cache=cache)
-
-    # Record under mixed case
-    resolver._negative_record("workspace", "MyWorkspace")
-    # The internal key must be lower-cased regardless of input casing
-    assert ("workspace", "myworkspace") in resolver._negative
-
-    # Check must recognise it under different casing
-    with pytest.raises(NotFoundError):
-        resolver._negative_check("workspace", "MYWORKSPACE")
-
-    # Clear must also normalise
-    resolver._negative_clear("workspace", "MYWORKSPACE")
-    assert ("workspace", "myworkspace") not in resolver._negative
-
-
-def test_negative_cache_strips_whitespace(tmp_path: Path) -> None:
-    """Negative-cache helpers must strip leading/trailing whitespace from keys."""
-    from fabric_dw.cache import LookupCache  # noqa: PLC0415
-
-    cache = LookupCache(path=tmp_path / "dummy.json")
-    mock_http = MagicMock()
-    resolver = Resolver(http=mock_http, cache=cache)
-
-    resolver._negative_record("workspace", "  My WS  ")
-    assert ("workspace", "my ws") in resolver._negative
-
-    with pytest.raises(NotFoundError):
-        resolver._negative_check("workspace", "  My WS  ")
-
-    resolver._negative_clear("workspace", "  My WS  ")
-    assert ("workspace", "my ws") not in resolver._negative
-
-
-# ---------------------------------------------------------------------------
-# D12 — _negative_clear_scope
-# ---------------------------------------------------------------------------
-
-
-def test_negative_clear_scope_removes_matching_scope_only(tmp_path: Path) -> None:
-    """_negative_clear_scope must remove all entries for the given scope and leave others."""
-    from fabric_dw.cache import LookupCache  # noqa: PLC0415
-
-    cache = LookupCache(path=tmp_path / "dummy.json")
-    mock_http = MagicMock()
-    resolver = Resolver(http=mock_http, cache=cache)
-
-    ws_id = "ws-uuid-1234"
-    other_ws_id = "ws-other-5678"
-
-    resolver._negative[(ws_id, "item_a")] = time.monotonic()
-    resolver._negative[(ws_id, "item_b")] = time.monotonic()
-    resolver._negative[(other_ws_id, "item_c")] = time.monotonic()
-
-    resolver._negative_clear_scope(ws_id)
-
-    assert (ws_id, "item_a") not in resolver._negative
-    assert (ws_id, "item_b") not in resolver._negative
-    # Entries from a different scope must be preserved
-    assert (other_ws_id, "item_c") in resolver._negative
 
 
 # ---------------------------------------------------------------------------
@@ -1134,76 +956,3 @@ async def test_item_sql_endpoint_unresolved_conn_not_cached_and_retries(
     assert second.connection_string == "mysqlep.datawarehouse.fabric.microsoft.com"
     # The /sqlEndpoints resource was fetched twice — no stale cache short-circuit.
     assert sql_ep_calls["n"] == 2
-
-
-# ---------------------------------------------------------------------------
-# D13 cross-layer parity — positive cache hit is not blocked by negative cache
-# ---------------------------------------------------------------------------
-
-
-async def test_positive_cache_hit_not_blocked_by_negative_cache_same_mixed_case(
-    tmp_path: Path,
-) -> None:
-    """A positive-cache hit must win over a stale negative entry for the same name.
-
-    Scenario (D13 parity):
-    1. Record a negative entry under mixed case ``'MYWS'``.
-    2. Put the same workspace into the *positive* LookupCache under the same
-       name (simulating a successful resolution that now populates the cache).
-    3. After clearing the stale negative entry (as a mutating tool would), assert
-       that ``workspace_id('myws')`` returns the cached UUID without an HTTP call.
-    4. Verify parity: recording a negative entry under any casing of the same
-       name uses the same normalised key, so negative and positive caches never
-       disagree on which key represents the workspace name.
-
-    This test exercises the public resolver API only (not internal helpers) and
-    confirms that both layers normalise case identically, closing the gap
-    identified in the D13 review comment.
-    """
-    from uuid import UUID  # noqa: PLC0415
-
-    from fabric_dw.cache import LookupCache  # noqa: PLC0415
-    from fabric_dw.exceptions import NotFoundError  # noqa: PLC0415
-
-    ws_uuid = UUID("aaaabbbb-cccc-dddd-eeee-ffff00001111")
-
-    cache = LookupCache(path=tmp_path / "ws_cache.json")
-    mock_http = MagicMock()
-    resolver = Resolver(http=mock_http, cache=cache)
-
-    # Step 1: record a negative entry under mixed case.
-    resolver._negative_record("workspace", "MYWS")
-    # Confirm it is recorded (normalised to lowercase).
-    assert ("workspace", "myws") in resolver._negative
-
-    # Step 2: put the workspace into the positive cache under the same
-    # (mixed-case) name — put_workspace normalises to lowercase internally.
-    cache.put_workspace("MYWS", ws_uuid)
-
-    # Step 3: clear the stale negative entry (as a successful mutating call
-    # would do via clear_negative_cache), then verify the positive cache wins.
-    # The lookup order in workspace_id is:
-    #   1. GUID fast-path
-    #   2. _negative_check  ← would raise if still set
-    #   3. cache.get_workspace  ← positive hit
-    resolver._negative_clear("workspace", "MYWS")
-    assert ("workspace", "myws") not in resolver._negative
-
-    # Positive-cache hit — no HTTP call expected.
-    result = await resolver.workspace_id("myws")
-    assert result == ws_uuid
-    mock_http.request.assert_not_called()
-
-    # Step 4: Verify parity: recording a negative entry under a *different*
-    # casing of the same name uses the same normalised key.  Both caches agree
-    # on the key, so there is no scenario where one accepts a name the other
-    # rejects due to different normalisation.
-    resolver._negative_record("workspace", "MyWS")  # mixed case, same key after normalise
-    assert ("workspace", "myws") in resolver._negative
-
-    # Now workspace_id hits the negative cache (step 2) before the positive
-    # cache (step 3), raising NotFoundError.  This demonstrates that both
-    # layers share the same normalised key — whichever casing was stored, the
-    # lookup is consistent.
-    with pytest.raises(NotFoundError):
-        await resolver.workspace_id("MYWS")

@@ -104,9 +104,6 @@ def mock_ctx() -> ServerContext:
     # Sensible defaults so tests that don't care about internals still work.
     mock_resolver.workspace_id = AsyncMock(return_value=WS_ID)
     mock_resolver.item = AsyncMock(return_value=make_item_entry())
-    # clear_negative_cache is a synchronous method on the real Resolver.
-    mock_resolver.clear_negative_cache = MagicMock()
-
     return ServerContext(
         http=mock_http,
         cache=mock_cache,

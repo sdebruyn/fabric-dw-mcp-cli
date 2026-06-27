@@ -322,7 +322,7 @@ async def test_list_workspaces_happy_path(ctx_patch) -> None:
 
 
 async def test_clear_cache_side_effect(mock_ctx, ctx_patch) -> None:
-    """clear_cache(scope='all') must call LookupCache.clear() and clear_negative_cache."""
+    """clear_cache(scope='all') must call LookupCache.clear()."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     mock_ctx.cache.counts.return_value = (2, 3)
@@ -332,15 +332,14 @@ async def test_clear_cache_side_effect(mock_ctx, ctx_patch) -> None:
 
     mock_ctx.cache.counts.assert_called_once()
     mock_ctx.cache.clear.assert_called_once()
-    mock_ctx.resolver.clear_negative_cache.assert_called_once()
     assert result["scope"] == "all"
     assert result["workspaces_cleared"] == 2
     assert result["items_cleared"] == 3
-    assert result["negative_cache_cleared"] is True
+    assert "negative_cache_cleared" not in result
 
 
 async def test_clear_cache_scope_workspaces(mock_ctx, ctx_patch) -> None:
-    """clear_cache(scope='workspaces') must NOT call full clear() or clear_negative_cache."""
+    """clear_cache(scope='workspaces') must NOT call full clear()."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     # Configure the public counts() API to return (1 workspace, 0 item buckets).
@@ -352,15 +351,14 @@ async def test_clear_cache_scope_workspaces(mock_ctx, ctx_patch) -> None:
     mock_ctx.cache.counts.assert_called_once()
     mock_ctx.cache.clear_scope.assert_called_once_with("workspaces")
     mock_ctx.cache.clear.assert_not_called()
-    mock_ctx.resolver.clear_negative_cache.assert_not_called()
     assert result["scope"] == "workspaces"
     assert result["workspaces_cleared"] == 1
     assert result["items_cleared"] == 0
-    assert result["negative_cache_cleared"] is False
+    assert "negative_cache_cleared" not in result
 
 
 async def test_clear_cache_scope_items(mock_ctx, ctx_patch) -> None:
-    """clear_cache(scope='items') must NOT call full clear() or clear_negative_cache."""
+    """clear_cache(scope='items') must NOT call full clear()."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     # Configure the public counts() API to return (0 workspaces, 1 item bucket).
@@ -372,11 +370,10 @@ async def test_clear_cache_scope_items(mock_ctx, ctx_patch) -> None:
     mock_ctx.cache.counts.assert_called_once()
     mock_ctx.cache.clear_scope.assert_called_once_with("items")
     mock_ctx.cache.clear.assert_not_called()
-    mock_ctx.resolver.clear_negative_cache.assert_not_called()
     assert result["scope"] == "items"
     assert result["workspaces_cleared"] == 0
     assert result["items_cleared"] == 1
-    assert result["negative_cache_cleared"] is False
+    assert "negative_cache_cleared" not in result
 
 
 # ---------------------------------------------------------------------------

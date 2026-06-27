@@ -298,31 +298,6 @@ async def test_create_function_on_sql_endpoint_succeeds(mock_ctx, ctx_patch) -> 
     assert isinstance(result, dict)
 
 
-async def test_create_function_clears_negative_cache(mock_ctx, ctx_patch) -> None:
-    """create_function calls clear_negative_cache after creation."""
-    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
-
-    fn = _make_fn_details()
-    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
-    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
-
-    with (
-        ctx_patch,
-        patch("fabric_dw.services.functions.create_function", new=AsyncMock(return_value=fn)),
-    ):
-        await mcp._tool_manager.call_tool(
-            "create_function",
-            {
-                "workspace": WS_NAME,
-                "item": WH_NAME,
-                "qualified_name": "dbo.fn_clean",
-                "body": "...",
-            },
-        )
-
-    mock_ctx.resolver.clear_negative_cache.assert_called_once()
-
-
 # ---------------------------------------------------------------------------
 # update_function — mutating tool
 # ---------------------------------------------------------------------------
@@ -484,31 +459,6 @@ async def test_rename_function_not_found_raises(mock_ctx, ctx_patch) -> None:
                 "new_name": "fn_whatever",
             },
         )
-
-
-async def test_rename_function_clears_negative_cache(mock_ctx, ctx_patch) -> None:
-    """rename_function calls clear_negative_cache after rename."""
-    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
-
-    fn = _make_fn_details(name="fn_sanitize")
-    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
-    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
-
-    with (
-        ctx_patch,
-        patch("fabric_dw.services.functions.rename_function", new=AsyncMock(return_value=fn)),
-    ):
-        await mcp._tool_manager.call_tool(
-            "rename_function",
-            {
-                "workspace": WS_NAME,
-                "item": WH_NAME,
-                "qualified_name": "dbo.fn_clean",
-                "new_name": "fn_sanitize",
-            },
-        )
-
-    mock_ctx.resolver.clear_negative_cache.assert_called_once()
 
 
 async def test_rename_function_invalid_qualified_name_raises(ctx_patch) -> None:
