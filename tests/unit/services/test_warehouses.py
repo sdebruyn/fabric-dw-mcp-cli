@@ -263,7 +263,7 @@ async def test_create_with_collation_polls_lro_and_returns_warehouse() -> None:
     sent_body = json.loads(post_route.calls[0].request.content)
     assert "type" not in sent_body  # type-specific endpoint — no type field needed
     assert sent_body["displayName"] == "SalesWarehouse"
-    assert sent_body["creationPayload"]["collationType"] == "Latin1_General_100_BIN2_UTF8"
+    assert sent_body["creationPayload"]["defaultCollation"] == "Latin1_General_100_BIN2_UTF8"
 
 
 async def test_create_without_collation_omits_creation_payload() -> None:
