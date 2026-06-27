@@ -17,7 +17,7 @@ class CliContext:
 
     json_output: bool = False
     yes: bool = False
-    auth: CredentialMode = field(default_factory=lambda: CredentialMode.DEFAULT)
+    auth: CredentialMode = CredentialMode.DEFAULT
     workspace: str | None = None
     max_429_retries: int | None = None
     retry_deadline_s: int | None = None
