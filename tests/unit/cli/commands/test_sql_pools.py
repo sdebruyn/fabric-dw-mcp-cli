@@ -90,29 +90,6 @@ def _make_http_cm(http: object) -> object:
 
 
 class TestSqlPoolsStatus:
-    def test_status_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
-        _ = cache_env
-        with (
-            patch(
-                "fabric_dw.cli.commands.sql_pools.build_http_client",
-                new=_make_http_cm(AsyncMock()),
-            ),
-            patch(
-                "fabric_dw.cli.commands.sql_pools.resolve_workspace_id",
-                new=AsyncMock(return_value=WS_UUID),
-            ),
-            patch(
-                "fabric_dw.cli.commands.sql_pools._svc.get_configuration",
-                new=AsyncMock(return_value=_CONFIG),
-            ),
-        ):
-            result = runner.invoke(cli, ["-w", WS_GUID, "--json", "sql-pools", "status"])
-        assert result.exit_code == 0
-        data = json.loads(result.output)
-        assert data["customSQLPoolsEnabled"] is True
-        # status returns only the enabled flag, not the pool list
-        assert "customSQLPools" not in data
-
     def test_status_json_output_flag_only(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         with (

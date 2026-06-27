@@ -106,12 +106,12 @@ MCP equivalent: `set_result_set_caching`. SQL Analytics Endpoints are **rejected
 Read the current configuration first:
 
 ```bash
-fdw sql-pools get  <workspace>   # autonomous configuration (enabled/disabled, defaults)
-fdw sql-pools list <workspace>   # custom pools, or the default 50/50 baseline if none exist
-fdw sql-pools show <workspace> --name <pool>   # one pool's detail
+fdw sql-pools status <workspace>                # whether custom SQL pools are enabled (enabled/disabled)
+fdw sql-pools list   <workspace>                # custom pools, or the default 50/50 baseline if none exist
+fdw sql-pools show   <workspace> --name <pool>  # one pool's detail
 ```
 
-MCP equivalents: `get_sql_pools_configuration`, `list_sql_pools`, `get_sql_pool`.
+MCP equivalents: `get_sql_pools_status`, `list_sql_pools`, `get_sql_pool`.
 
 When no custom pools exist, `list` shows the **default autonomous 50/50 split**: one pool at 50% `maxResourcePercentage` for SELECT (read/analytics) and one at 50% for non-SELECT (DML/DDL/ETL/ingestion). Treat this as the baseline.
 
