@@ -164,6 +164,17 @@ async def enable(
 ) -> AuditSettings:
     """Enable SQL auditing on a Data Warehouse or SQL Analytics Endpoint.
 
+    Performs a pre-flight ``GET /settings/sqlAudit`` to read the current audit
+    state before sending the PATCH.  This is required to avoid silently wiping
+    the ``auditActionsAndGroups`` when auditing is already active:
+
+    - **First-time enable** (current ``state == "Disabled"``): the PATCH sends
+      only ``{state, retentionDays}``; there are no custom groups to preserve
+      and the API applies its own defaults.
+    - **Re-enable** (current ``state == "Enabled"``): the PATCH also includes
+      the current ``auditActionsAndGroups`` so the Fabric API does not reset
+      them to defaults on the partial update.
+
     Args:
         http: Authenticated Fabric HTTP client.
         workspace_id: GUID of the Fabric workspace.
@@ -186,12 +197,20 @@ async def enable(
         raise ValueError(msg)
 
     path = _audit_path(workspace_id, item_id, kind)
-    await http.request(
-        "PATCH",
-        HttpBase.FABRIC,
-        path,
-        json={"state": "Enabled", "retentionDays": retention_days},
-    )
+
+    # Fetch current settings to detect whether auditing is already active.
+    # When re-enabling an already-enabled audit (e.g. to bump retention), the
+    # Fabric API resets auditActionsAndGroups to defaults if the field is
+    # omitted from the PATCH body.  Round-tripping the current groups prevents
+    # that silent data-loss.  On a first-time enable (state == "Disabled") there
+    # are no custom groups to preserve, so the field is intentionally omitted
+    # and the API applies its own defaults.
+    current = await get_settings(http, workspace_id, item_id, kind)
+    patch_body: dict[str, object] = {"state": "Enabled", "retentionDays": retention_days}
+    if current.state == "Enabled":
+        patch_body["auditActionsAndGroups"] = current.action_groups
+
+    await http.request("PATCH", HttpBase.FABRIC, path, json=patch_body)
     # PATCH returns empty/partial body on this endpoint; re-fetch required.
     return await get_settings(http, workspace_id, item_id, kind)
 
@@ -265,7 +284,11 @@ async def set_retention(
         msg = f"days must be >= 1; got {days}"
         raise ValueError(msg)
 
-    await _require_enabled(
+    # _require_enabled performs a GET and returns the current settings.
+    # Reuse the fetched settings to include state and auditActionsAndGroups
+    # in the PATCH body — omitting them causes the Fabric API to silently
+    # reset auditActionsAndGroups to defaults (the data-loss bug this fixes).
+    current = await _require_enabled(
         http,
         workspace_id,
         item_id,
@@ -274,7 +297,16 @@ async def set_retention(
     )
 
     path = _audit_path(workspace_id, item_id, kind)
-    await http.request("PATCH", HttpBase.FABRIC, path, json={"retentionDays": days})
+    await http.request(
+        "PATCH",
+        HttpBase.FABRIC,
+        path,
+        json={
+            "state": current.state,
+            "retentionDays": days,
+            "auditActionsAndGroups": current.action_groups,
+        },
+    )
     # PATCH returns empty/partial body on this endpoint; re-fetch required.
     return await get_settings(http, workspace_id, item_id, kind)
 
