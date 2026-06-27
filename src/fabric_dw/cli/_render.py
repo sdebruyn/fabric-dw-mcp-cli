@@ -203,6 +203,38 @@ def _cell(value: object) -> str:
     return _escape_markup(str(value))
 
 
+def _format_nested(value: object, *, _depth: int = 0) -> str:
+    """Recursively format a value for panel display.
+
+    Scalars are rendered via ``_cell()``.  Dicts and lists are expanded into
+    indented multi-line blocks so nested structures appear readable rather than
+    as Python ``repr`` strings (e.g. ``{'workspace': None, ...}``).
+
+    Empty dict renders as ``{}``.  Empty list renders as ``[]``.
+    """
+    indent = "  " * (_depth + 1)
+    if isinstance(value, dict):
+        if not value:
+            return "{}"
+        parts = [
+            f"{indent}[bold]{_escape_markup(str(k))}[/bold]: {_format_nested(v, _depth=_depth + 1)}"
+            for k, v in value.items()
+        ]
+        return "\n" + "\n".join(parts)
+    if isinstance(value, list):
+        if not value:
+            return "[]"
+        parts = []
+        for item in value:
+            child = _format_nested(item, _depth=_depth + 1)
+            # When item is itself a dict/list, child starts with "\n"; strip
+            # it so the indent is applied to the first content line rather
+            # than producing a blank line of trailing spaces before the content.
+            parts.append(f"{indent}{child.lstrip(chr(10))}")
+        return "\n" + "\n".join(parts)
+    return _cell(value)
+
+
 def _column_is_all_null(col: str, norm_rows: list[dict[str, object] | object]) -> bool:
     """Return *True* when every dict-row in *norm_rows* has a ``None`` value for *col*.
 
@@ -430,8 +462,16 @@ def _render_vertical(
 
 
 def _render_panel(data: dict[str, object], *, console: Console, title: str | None) -> None:
-    """Render a single dict as a Rich Panel with key: value lines."""
-    lines = "\n".join(f"[bold]{_escape_markup(k)}[/bold]: {_cell(v)}" for k, v in data.items())
+    """Render a single dict as a Rich Panel with key: value lines.
+
+    Nested dict and list values are expanded recursively via
+    :func:`_format_nested` so they appear as readable indented blocks rather
+    than raw Python repr strings.  Scalar values are rendered via
+    :func:`_cell` as before.
+    """
+    lines = "\n".join(
+        f"[bold]{_escape_markup(k)}[/bold]: {_format_nested(v)}" for k, v in data.items()
+    )
     panel = Panel(lines, title=title)
     console.print(panel)
 
@@ -571,6 +611,7 @@ def _render_positional_table(
     *,
     console: Console,
     title: str | None,
+    prune_null_columns: bool = True,
 ) -> None:
     """Render *columns* and *rows* as a Rich table using positional access.
 
@@ -579,7 +620,11 @@ def _render_positional_table(
     (e.g. ``SELECT 1 AS id, 2 AS id``) each keep their own header and value
     instead of being collapsed by dict keying.
 
-    All-null columns (every row has ``None`` at that position) are omitted.
+    When *prune_null_columns* is *True* (default), columns whose value is
+    ``None`` in every row are omitted.  Pass *False* to keep all columns,
+    e.g. for raw SQL output where every column must appear regardless of
+    nullability.
+
     The wide-table vertical fallback uses the same heuristic as
     :func:`_render_table`.
     """
@@ -596,10 +641,12 @@ def _render_positional_table(
         [row[i] if i < len(row) else None for row in rows] for i in range(n)
     ]
 
-    # Drop positions where every row has None.
-    all_null_idx: set[int] = {
-        i for i, vals in enumerate(col_values) if all(v is None for v in vals)
-    }
+    # Drop positions where every row has None, unless the caller opts out.
+    all_null_idx: set[int] = (
+        {i for i, vals in enumerate(col_values) if all(v is None for v in vals)}
+        if prune_null_columns
+        else set()
+    )
     visible: list[int] = [i for i in range(n) if i not in all_null_idx]
 
     # Estimate horizontal fit using the same heuristic as _table_fits().
@@ -644,6 +691,7 @@ def render_result_rows(
     json_output: bool,
     console: Console | None = None,
     table_title: str | None = None,
+    prune_null_columns: bool = False,
 ) -> None:
     """Render SQL result columns and rows, preserving duplicate column names.
 
@@ -666,6 +714,10 @@ def render_result_rows(
             *json_output=True*.
         table_title: Optional title shown above the Rich table.  Ignored when
             *json_output=True*.
+        prune_null_columns: When *True*, columns whose value is ``None`` in
+            every row are omitted from the human-readable table.  Defaults to
+            *False* so raw SQL output retains every column regardless of
+            nullability.  Ignored when *json_output=True*.
     """
     if json_output:
         click.echo(
@@ -678,7 +730,13 @@ def render_result_rows(
         return
 
     con = console if console is not None else _DEFAULT_CONSOLE
-    _render_positional_table(columns, list(rows), console=con, title=table_title)
+    _render_positional_table(
+        columns,
+        list(rows),
+        console=con,
+        title=table_title,
+        prune_null_columns=prune_null_columns,
+    )
 
 
 def confirm(message: str, *, yes: bool) -> bool:
