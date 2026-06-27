@@ -159,11 +159,11 @@ class TestParseQualifiedName:
     # ------------------------------------------------------------------
 
     def test_kind_appears_in_missing_dot_message(self) -> None:
-        with pytest.raises(ValueError, match="<schema>.<table>"):
+        with pytest.raises(ValueError, match=r"<schema>\.<table>"):
             parse_qualified_name("nodot", kind="table")
 
     def test_kind_appears_in_missing_dot_message_view(self) -> None:
-        with pytest.raises(ValueError, match="<schema>.<view>"):
+        with pytest.raises(ValueError, match=r"<schema>\.<view>"):
             parse_qualified_name("nodot", kind="view")
 
     def test_kind_appears_in_object_part_empty_message(self) -> None:
@@ -171,7 +171,7 @@ class TestParseQualifiedName:
             parse_qualified_name("schema.", kind="table")
 
     def test_kind_default_is_object(self) -> None:
-        with pytest.raises(ValueError, match="<schema>.<object>"):
+        with pytest.raises(ValueError, match=r"<schema>\.<object>"):
             parse_qualified_name("nodot")
 
     def test_kind_does_not_affect_successful_parse(self) -> None:

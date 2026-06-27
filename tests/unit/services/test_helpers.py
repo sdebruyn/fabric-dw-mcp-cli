@@ -383,9 +383,15 @@ class TestAssertNotSqlEndpoint:
         its own local copy would not be caught by import-time checks alone.
         """
         from fabric_dw.services.load import _assert_not_sql_endpoint as load_guard  # noqa: PLC0415
-        from fabric_dw.services.settings import _assert_not_sql_endpoint as settings_guard  # noqa: PLC0415
-        from fabric_dw.services.statistics import _assert_not_sql_endpoint as stats_guard  # noqa: PLC0415
-        from fabric_dw.services.tables import _assert_not_sql_endpoint as tables_guard  # noqa: PLC0415
+        from fabric_dw.services.settings import (  # noqa: PLC0415
+            _assert_not_sql_endpoint as settings_guard,
+        )
+        from fabric_dw.services.statistics import (  # noqa: PLC0415
+            _assert_not_sql_endpoint as stats_guard,
+        )
+        from fabric_dw.services.tables import (  # noqa: PLC0415
+            _assert_not_sql_endpoint as tables_guard,
+        )
 
         assert load_guard is _assert_not_sql_endpoint
         assert settings_guard is _assert_not_sql_endpoint
