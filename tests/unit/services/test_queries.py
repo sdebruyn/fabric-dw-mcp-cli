@@ -229,8 +229,25 @@ async def test_kill_issues_kill_statement() -> None:
     assert call_sql.strip() == "KILL 42"
 
 
-async def test_kill_commits_after_execute() -> None:
-    """run_query with commit=True issues commit via the shared execution path."""
+async def test_kill_uses_autocommit_mode() -> None:
+    """KILL must be issued in autocommit mode, not inside a user transaction.
+
+    T-SQL forbids KILL inside an explicit transaction.  run_query must be
+    called with autocommit=True so the ODBC driver does not wrap the KILL
+    in BEGIN TRANSACTION / COMMIT.
+    """
+    target = _make_target()
+
+    with patch("fabric_dw.services.queries.run_query") as mock_run_query:
+        mock_run_query.return_value = ([], [])
+        await queries.kill(target, 42)
+
+    call_kwargs = mock_run_query.call_args
+    assert call_kwargs.kwargs.get("autocommit") is True
+
+
+async def test_kill_does_not_commit_manually_in_autocommit_mode() -> None:
+    """With autocommit, the driver handles commit; run_query must not call conn.commit()."""
     target = _make_target()
     conn = MagicMock()
     cursor = MagicMock()
@@ -239,7 +256,7 @@ async def test_kill_commits_after_execute() -> None:
     with patch("fabric_dw.sql.open_connection", return_value=conn):
         await queries.kill(target, 42)
 
-    conn.commit.assert_called_once()
+    conn.commit.assert_not_called()
 
 
 async def test_kill_closes_connection_after_success() -> None:
@@ -372,8 +389,8 @@ async def test_kill_uses_run_query_not_direct_connection() -> None:
     sql_arg: str = call_kwargs.args[1]
     assert "KILL" in sql_arg
     assert "99" in sql_arg
-    # Verify commit=True and fetch="none" are set
-    assert call_kwargs.kwargs.get("commit") is True
+    # Verify autocommit=True (KILL is forbidden inside a user transaction) and fetch="none"
+    assert call_kwargs.kwargs.get("autocommit") is True
     assert call_kwargs.kwargs.get("fetch") == "none"
 
 
