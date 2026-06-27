@@ -183,15 +183,6 @@ _BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 # Line comment: -- to end of line.
 _LINE_COMMENT_RE = re.compile(r"--[^\n]*")
 
-# String literal: 'content' with '' as escape for single quote.
-_STRING_LITERAL_RE = re.compile(r"'(?:[^']|'')*'")
-
-# Bracket-quoted identifier: [name] with ]] as escape.
-_BRACKET_IDENT_RE = re.compile(r"\[(?:[^\]]|\]\])*\]")
-
-# Double-quoted identifier: "name" with "" as escape.
-_DQUOTE_IDENT_RE = re.compile(r'"(?:[^"]|"")*"')
-
 # Tokens that must never appear in a read-only statement (case-insensitive).
 _FORBIDDEN_TOKENS = frozenset(
     {
@@ -253,21 +244,21 @@ def _strip_block_comments(sql: str) -> str:
 
 
 def _sanitise(statement: str) -> str:
-    """Return a sanitised copy of *statement* suitable for token inspection.
+    """Return a comment-stripped copy of *statement* for token inspection.
 
     Steps (in order):
-    1. Iteratively strip block comments.
+    1. Iteratively strip block comments (space replacement, never empty string).
     2. Strip line comments (``--`` to EOL).
-    3. Replace string literals with ``''`` so semicolons/keywords inside
-       strings do not trigger false positives.
-    4. Replace bracket-quoted identifiers (``[delete]``) with ``[x]``.
-    5. Replace double-quoted identifiers with ``[x]``.
+
+    String literals and quoted identifiers are intentionally NOT masked.
+    All checks run on the raw comment-stripped text so that forbidden keywords
+    are physically present in the scanned text regardless of the context they
+    appear in.  This fails closed: a query that embeds a write keyword or a
+    semicolon inside a string literal or quoted identifier will be rejected.
+    Unset FABRIC_MCP_READONLY for such queries.
     """
     text = _strip_block_comments(statement)
-    text = _LINE_COMMENT_RE.sub(" ", text)
-    text = _STRING_LITERAL_RE.sub("''", text)
-    text = _BRACKET_IDENT_RE.sub("[x]", text)
-    return _DQUOTE_IDENT_RE.sub("[x]", text)
+    return _LINE_COMMENT_RE.sub(" ", text)
 
 
 def assert_readonly_sql(statement: str) -> None:
@@ -277,24 +268,30 @@ def assert_readonly_sql(statement: str) -> None:
 
     Design
     ------
-    The classifier is **conservative-by-design**: it rejects anything it cannot
-    prove is a plain read-only query, rather than trying to exhaustively parse
-    T-SQL.  Legitimate bracket-quoted identifiers that collide with forbidden
-    keywords (e.g. ``SELECT [delete] FROM t``) are preserved because bracketed
-    names are replaced with ``[x]`` before the token scan.
+    The classifier is **conservative-by-design** (fail-closed): it rejects
+    anything it cannot prove is a plain read-only query, rather than trying to
+    exhaustively parse T-SQL.  All checks run on the raw comment-stripped text,
+    so forbidden keywords are physically present in the scanned text regardless
+    of whether they appear inside a string literal, a bracket-quoted identifier,
+    or a double-quoted identifier.
+
+    This means read-only mode may also reject otherwise-harmless reads that
+    embed a write keyword or a ``;`` inside a string literal or quoted
+    identifier (e.g. ``SELECT * FROM cdc WHERE op='DELETE'``,
+    ``SELECT [delete] FROM t``).  This is by design.  Unset
+    ``FABRIC_MCP_READONLY`` to run such queries.
 
     Sanitisation pipeline
     ~~~~~~~~~~~~~~~~~~~~~
-    1. Iteratively strip block comments (non-greedy sub loop until stable).
-       Residual ``/*`` or ``*/`` → rejected ("unbalanced comment").
+    1. Iteratively strip block comments (non-greedy sub loop until stable,
+       replacing with a space so adjacent tokens cannot merge into a keyword).
+       Residual ``/*`` or ``*/`` after stabilisation → rejected.
     2. Strip ``--`` line comments.
-    3. Replace string literals ``'(?:[^']|'')*'`` → ``''`` (preserves
-       semicolons inside strings from triggering the multi-statement check).
-    4. Replace bracketed identifiers ``[…]`` → ``[x]``; double-quoted
-       identifiers ``"…"`` likewise.
 
-    Checks (all on the sanitised text)
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    String literals and quoted identifiers are NOT masked.
+
+    Checks (all on the comment-stripped raw text)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     (a) First token must be ``SELECT`` or ``WITH``.
     (b) A ``;`` followed by any non-whitespace character is rejected as a
         multi-statement batch.
@@ -306,7 +303,7 @@ def assert_readonly_sql(statement: str) -> None:
         statement to be rejected — regardless of where it appears.  This
         catches ``WITH x AS (SELECT 1) DELETE …``, ``SELECT * INTO backup FROM
         t``, and newline-separated DoS/context-switch payloads such as
-        ``SELECT 1\nWAITFOR DELAY '99:0:0'`` or ``SELECT 1\nUSE master``.
+        ``SELECT 1\\nWAITFOR DELAY '99:0:0'`` or ``SELECT 1\\nUSE master``.
 
     Args:
         statement: The raw SQL string supplied by the caller.
