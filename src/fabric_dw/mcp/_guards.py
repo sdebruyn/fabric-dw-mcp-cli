@@ -54,11 +54,12 @@ effect without materialising the full set.
 from __future__ import annotations
 
 import os
-import re
 import uuid as _uuid_mod
 from collections.abc import Sequence
 
 from mcp.server.fastmcp.exceptions import ToolError
+
+from fabric_dw.services._helpers import SelectBodyError, _validate_select_body
 
 __all__ = [
     "assert_destructive_allowed",
@@ -176,50 +177,10 @@ def workspace_allowlist_active(config_allowlist: Sequence[str] | None = None) ->
 # ---------------------------------------------------------------------------
 # SQL classifier
 # ---------------------------------------------------------------------------
-
-# Tokens that must never appear in a read-only statement (case-insensitive).
-_FORBIDDEN_TOKENS = frozenset(
-    {
-        "INSERT",
-        "UPDATE",
-        "DELETE",
-        "MERGE",
-        "INTO",
-        "EXEC",
-        "EXECUTE",
-        "DROP",
-        "ALTER",
-        "CREATE",
-        "TRUNCATE",
-        "GRANT",
-        "REVOKE",
-        "DENY",
-        "KILL",
-        "BACKUP",
-        "RESTORE",
-        "OPENROWSET",
-        "OPENQUERY",
-        "WRITETEXT",
-        "UPDATETEXT",
-        "SP_EXECUTESQL",
-        "XP_CMDSHELL",
-        # DoS / context-switch tokens — T-SQL batches don't require semicolons,
-        # so these can appear after a newline following a valid SELECT and still
-        # execute.  WAITFOR can hang a connection for hours; USE switches the
-        # database context; SHUTDOWN, RECONFIGURE, and DBCC are admin-only
-        # commands with no place in a read-only query.
-        "WAITFOR",
-        "USE",
-        "SHUTDOWN",
-        "RECONFIGURE",
-        "DBCC",
-    }
-)
-
-_ALLOWED_FIRST_TOKENS = frozenset({"SELECT", "WITH"})
-
-# Simple word-token splitter (sequences of word characters).
-_TOKEN_RE = re.compile(r"\w+")
+# The forbidden-token denylist, allowed-first-tokens set, and the shared
+# validator function are defined in services/_helpers.py and imported above.
+# assert_readonly_sql delegates to _validate_select_body and translates
+# SelectBodyError to ToolError with FABRIC_MCP_READONLY context messages.
 
 
 def assert_readonly_sql(statement: str) -> None:
@@ -229,12 +190,11 @@ def assert_readonly_sql(statement: str) -> None:
 
     Design: fully-raw, fail-closed scan
     ------------------------------------
-    All checks run on the COMPLETELY RAW ``statement`` text (after stripping
-    leading and trailing whitespace only).  No comment stripping, no string-
-    literal masking, no SQL parsing.  Because comment delimiters and string
-    quotes are never touched, a forbidden keyword or a semicolon-separated
-    rider is always physically present in the scanned text and is always
-    caught -- regardless of how it is wrapped in comments or string literals.
+    Delegates to :func:`~fabric_dw.services._helpers._validate_select_body`,
+    which applies the same three-check fully-raw scan used by the CTAS and
+    view-body validators.  All checks run on the completely raw ``statement``
+    text (after stripping leading and trailing whitespace only).  No comment
+    stripping, no string-literal masking, no SQL parsing.
 
     This is fail-closed by design and deliberately accepts certain false
     positives.  The following otherwise-harmless queries are REJECTED and
@@ -271,29 +231,23 @@ def assert_readonly_sql(statement: str) -> None:
     Raises:
         ToolError: When the statement does not pass all read-only checks.
     """
-    statement = statement.strip()
-
-    # (a) Reject multi-statement batches: a ';' followed by non-whitespace.
-    if re.search(r";\s*\S", statement):
-        raise ToolError("read-only mode (FABRIC_MCP_READONLY) blocks multi-statement batches")
-
-    tokens = _TOKEN_RE.findall(statement)
-    first_token = tokens[0].upper() if tokens else ""
-
-    # (b) First token must be SELECT or WITH.
-    if first_token not in _ALLOWED_FIRST_TOKENS:
-        raise ToolError(
-            f"read-only mode (FABRIC_MCP_READONLY) blocks non-SELECT statements "
-            f"(got {first_token!r})"
-        )
-
-    # (c) Scan every token for forbidden keywords.
-    for tok in tokens:
-        if tok.upper() in _FORBIDDEN_TOKENS:
+    try:
+        _validate_select_body(statement.strip())
+    except SelectBodyError as exc:
+        if exc.kind == "multi_statement":
             raise ToolError(
-                f"read-only mode (FABRIC_MCP_READONLY) blocks statements containing "
-                f"forbidden keyword {tok.upper()!r}"
-            )
+                "read-only mode (FABRIC_MCP_READONLY) blocks multi-statement batches"
+            ) from exc
+        if exc.kind == "non_select":
+            raise ToolError(
+                f"read-only mode (FABRIC_MCP_READONLY) blocks non-SELECT statements "
+                f"(got {exc.token!r})"
+            ) from exc
+        # forbidden_token
+        raise ToolError(
+            f"read-only mode (FABRIC_MCP_READONLY) blocks statements containing "
+            f"forbidden keyword {exc.token!r}"
+        ) from exc
 
 
 # ---------------------------------------------------------------------------

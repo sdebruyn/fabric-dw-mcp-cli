@@ -69,11 +69,22 @@ class TestRejectNonSelect:
     def test_select_with_leading_whitespace(self) -> None:
         tables.reject_non_select("   SELECT id FROM dbo.foo")
 
-    def test_select_with_leading_block_comment(self) -> None:
-        tables.reject_non_select("/* comment */ SELECT id FROM dbo.foo")
+    def test_rejects_leading_block_comment(self) -> None:
+        """FLIPPED: leading block comment is now REJECTED (fail-closed raw scan).
 
-    def test_select_with_leading_line_comment(self) -> None:
-        tables.reject_non_select("-- comment\nSELECT id FROM dbo.foo")
+        The first raw word token is 'comment' (from inside the block comment),
+        not SELECT or WITH.  Reformulate the body to omit the leading comment.
+        """
+        with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
+            tables.reject_non_select("/* comment */ SELECT id FROM dbo.foo")
+
+    def test_rejects_leading_line_comment(self) -> None:
+        """FLIPPED: leading line comment is now REJECTED (fail-closed raw scan).
+
+        The first raw word token is 'comment', not SELECT or WITH.
+        """
+        with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
+            tables.reject_non_select("-- comment\nSELECT id FROM dbo.foo")
 
     def test_select_case_insensitive(self) -> None:
         tables.reject_non_select("select id from dbo.foo")
@@ -92,8 +103,10 @@ class TestRejectNonSelect:
     def test_with_leading_whitespace_passes(self) -> None:
         tables.reject_non_select("   WITH cte AS (SELECT 1) SELECT * FROM cte")
 
-    def test_with_leading_comment_passes(self) -> None:
-        tables.reject_non_select("-- build cte\nWITH cte AS (SELECT 1) SELECT * FROM cte")
+    def test_rejects_with_leading_comment(self) -> None:
+        """FLIPPED: leading line comment before WITH is now REJECTED (fail-closed raw scan)."""
+        with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
+            tables.reject_non_select("-- build cte\nWITH cte AS (SELECT 1) SELECT * FROM cte")
 
     def test_insert_rejected(self) -> None:
         with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
@@ -115,11 +128,15 @@ class TestRejectNonSelect:
         with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
             tables.reject_non_select("/* only a comment */")
 
-    def test_multiple_block_comments_then_select(self) -> None:
-        tables.reject_non_select("/* a */ /* b */ SELECT 1")
+    def test_rejects_multiple_block_comments_then_select(self) -> None:
+        """FLIPPED: multiple leading block comments now REJECTED (first token is 'a')."""
+        with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
+            tables.reject_non_select("/* a */ /* b */ SELECT 1")
 
-    def test_mixed_comments_then_select(self) -> None:
-        tables.reject_non_select("-- line\n/* block */ SELECT 1")
+    def test_rejects_mixed_comments_then_select(self) -> None:
+        """FLIPPED: mixed leading comments now REJECTED (first token is 'line')."""
+        with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
+            tables.reject_non_select("-- line\n/* block */ SELECT 1")
 
     # -----------------------------------------------------------------------
     # ReDoS regression tests (CodeQL py/redos — must complete in < 2 s)
@@ -150,14 +167,86 @@ class TestRejectNonSelect:
         elapsed = time.monotonic() - start
         assert elapsed < 2.0, f"ReDoS: took {elapsed:.3f}s (expected < 2s)"
 
-    def test_redos_many_whitespace_and_comments_select_accepted_fast(self) -> None:
-        """Many leading whitespace + closed block comments before SELECT must PASS fast."""
+    def test_redos_many_whitespace_and_comments_select_rejected_fast(self) -> None:
+        """FLIPPED: many leading comments now REJECTED fast (first token is 'ok', not SELECT).
+
+        The fully-raw scan still completes in O(n) time: _TOKEN_RE.findall is
+        linear.  The body is rejected because the first extracted word token is
+        'ok' (from inside the comment), not SELECT or WITH.
+        """
         preamble = "/* ok */ " * 5_000
         body = preamble + "SELECT 1"
         start = time.monotonic()
-        tables.reject_non_select(body)  # must not raise
+        with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
+            tables.reject_non_select(body)
         elapsed = time.monotonic() - start
-        assert elapsed < 2.0, f"ReDoS: took {elapsed:.3f}s (expected < 2s)"
+        assert elapsed < 2.0, f"took {elapsed:.3f}s (expected < 2s)"
+
+    # -----------------------------------------------------------------------
+    # Bypass regression tests (#790) - must FAIL before fix, PASS after
+    # -----------------------------------------------------------------------
+
+    def test_rejects_multi_statement_body(self) -> None:
+        """CRITICAL #790: semicolon-rider injection via CTAS body."""
+        with pytest.raises(ValueError, match="multi-statement"):
+            tables.reject_non_select("SELECT 1 AS x; DROP TABLE dbo.orders")
+
+    def test_rejects_multi_statement_body_select_select(self) -> None:
+        """CRITICAL #790: two SELECTs joined by semicolon - still a multi-statement batch."""
+        with pytest.raises(ValueError, match="multi-statement"):
+            tables.reject_non_select("SELECT 1; SELECT 2")
+
+    def test_rejects_bracket_quote_trick_in_ctas_body(self) -> None:
+        """CRITICAL #790: bracket-identifier quote trick hides DROP in CTAS body.
+
+        The raw ';' after [a' trips the multi-statement guard before any token scan.
+        """
+        with pytest.raises(ValueError, match="multi-statement"):
+            tables.reject_non_select("SELECT [a'];DROP TABLE dbo.orders WHERE c='x'")
+
+    def test_rejects_string_literal_hides_delete_in_ctas_body(self) -> None:
+        """CRITICAL #790: forbidden keyword in string literal is caught by raw scan."""
+        with pytest.raises(ValueError, match="DELETE"):
+            tables.reject_non_select("SELECT * FROM t WHERE op='DELETE'")
+
+    def test_rejects_forbidden_keyword_delete_in_body(self) -> None:
+        """CRITICAL #790: DELETE anywhere in body is rejected."""
+        with pytest.raises(ValueError, match="DELETE"):
+            tables.reject_non_select("SELECT id FROM t WHERE 1=0 DELETE FROM t")
+
+    def test_rejects_forbidden_keyword_exec_in_body(self) -> None:
+        """CRITICAL #790: EXEC anywhere in body is rejected."""
+        with pytest.raises(ValueError, match="EXEC"):
+            tables.reject_non_select("SELECT EXEC xp_cmdshell('dir')")
+
+    def test_rejects_forbidden_keyword_into_in_body(self) -> None:
+        """CRITICAL #790: INTO (SELECT ... INTO) is rejected."""
+        with pytest.raises(ValueError, match="INTO"):
+            tables.reject_non_select("SELECT * INTO dbo.backup FROM dbo.source")
+
+    def test_rejects_forbidden_keyword_update_in_body(self) -> None:
+        """CRITICAL #790: UPDATE anywhere in body is rejected."""
+        with pytest.raises(ValueError, match="UPDATE"):
+            tables.reject_non_select("SELECT id FROM t WHERE 1=0 UPDATE t SET x=1")
+
+    # -----------------------------------------------------------------------
+    # Legitimate plain reads that must still PASS after fix
+    # -----------------------------------------------------------------------
+
+    def test_plain_select_star_passes(self) -> None:
+        tables.reject_non_select("SELECT * FROM t")
+
+    def test_select_with_where_passes(self) -> None:
+        tables.reject_non_select("SELECT id FROM t WHERE active = 1")
+
+    def test_with_cte_then_select_passes(self) -> None:
+        tables.reject_non_select("WITH cte AS (SELECT 1) SELECT * FROM cte")
+
+    def test_multiline_select_passes(self) -> None:
+        tables.reject_non_select("SELECT\n    id,\n    name\nFROM dbo.users\nWHERE active = 1")
+
+    def test_trailing_semicolon_passes(self) -> None:
+        tables.reject_non_select("SELECT 1;")
 
 
 # ===========================================================================

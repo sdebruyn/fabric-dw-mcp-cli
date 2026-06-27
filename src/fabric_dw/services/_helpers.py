@@ -12,6 +12,7 @@ from uuid import UUID
 from fabric_dw.services.capacities import ACTIVE_STATE
 
 __all__ = [
+    "SelectBodyError",
     "coerce_to_utc",
     "compact",
     "normalize_object_definition",
@@ -362,71 +363,171 @@ def normalize_object_definition(definition: str, schema_name: str, name: str) ->
 
 
 # ---------------------------------------------------------------------------
-# SELECT-lead validator (shared by tables CTAS and view DDL paths)
+# Single-read-only-statement validator (shared core)
+#
+# Used by:
+#   - reject_non_select()  (services layer, raises ValueError)
+#   - mcp/_guards.py assert_readonly_sql()  (mcp layer, wraps as ToolError)
+#
+# Design: fully-raw, fail-closed scan.  No comment stripping, no string-literal
+# masking, no SQL parsing.  All three checks run on the completely raw body text
+# so that a forbidden keyword or a `;`-separated rider is always physically
+# present in the scanned text and is always caught.
+#
+# Fail-closed tradeoffs (by design, documented in tool descriptions):
+#   - A body with a leading comment is rejected because the first raw word token
+#     comes from inside the comment, not from SELECT or WITH.
+#   - A forbidden keyword embedded in a string literal or quoted identifier
+#     (e.g. WHERE op = 'DELETE', column [delete]) is also rejected.
+#   - A semicolon inside a string literal trips the multi-statement guard.
 # ---------------------------------------------------------------------------
 
-# Pre-compiled patterns used by reject_non_select — each anchored at the
-# current scan position (used with re.match, not re.search).
-#
-# Block-comment pattern uses the "unrolled loop" technique to stay linear:
-#   /\*          — opening delimiter
-#   [^*]*        — any non-star characters (fast, no backtracking with *)
-#   (?:\*+[^*/][^*]*)* — one-or-more stars NOT followed by /: consume the star
-#                        run plus the next non-star character and repeat
-#   \*+/         — the closing *+/
-# This is equivalent to /\*.*?\*/ with re.DOTALL but avoids catastrophic
-# backtracking on inputs like "/*" + "*//*" * N.
-_BLOCK_COMMENT_RE = re.compile(r"/\*[^*]*(?:\*+[^*/][^*]*)*\*+/")
-_LINE_COMMENT_RE = re.compile(r"--[^\n]*")
-_WHITESPACE_RE = re.compile(r"\s+")
-_SELECT_OR_WITH_RE = re.compile(r"(?:WITH|SELECT)\b", re.IGNORECASE)
+# Tokens that must never appear in a CTAS or view body (case-insensitive).
+# Mirrors the denylist in mcp/_guards.py assert_readonly_sql exactly; both
+# import from this module so they cannot drift.
+_FORBIDDEN_TOKENS: frozenset[str] = frozenset(
+    {
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "MERGE",
+        "INTO",
+        "EXEC",
+        "EXECUTE",
+        "DROP",
+        "ALTER",
+        "CREATE",
+        "TRUNCATE",
+        "GRANT",
+        "REVOKE",
+        "DENY",
+        "KILL",
+        "BACKUP",
+        "RESTORE",
+        "OPENROWSET",
+        "OPENQUERY",
+        "WRITETEXT",
+        "UPDATETEXT",
+        "SP_EXECUTESQL",
+        "XP_CMDSHELL",
+        "WAITFOR",
+        "USE",
+        "SHUTDOWN",
+        "RECONFIGURE",
+        "DBCC",
+    }
+)
+
+_ALLOWED_FIRST_TOKENS: frozenset[str] = frozenset({"SELECT", "WITH"})
+
+# Extracts all word-character sequences from the raw body text.
+_TOKEN_RE = re.compile(r"\w+")
+
+# Detects a ';' followed (after optional whitespace) by any non-whitespace
+# character — i.e. a second statement following the first.
+_MULTI_STMT_RE = re.compile(r";\s*\S")
+
+
+class SelectBodyError(ValueError):
+    """Raised when a SQL body fails single-read-only-statement validation.
+
+    Subclasses :class:`ValueError` so callers that catch ``ValueError`` still
+    work.  The ``kind`` attribute lets the MCP layer translate this to a
+    :class:`~mcp.server.fastmcp.exceptions.ToolError` with a context-specific
+    message without re-parsing the string.
+
+    Attributes:
+        kind: One of ``"multi_statement"``, ``"non_select"``, or
+            ``"forbidden_token"``.
+        token: The problematic token string (first token for ``"non_select"``,
+            forbidden keyword for ``"forbidden_token"``, empty string for
+            ``"multi_statement"``).
+    """
+
+    def __init__(self, kind: str, message: str, token: str = "") -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.token = token
+
+
+def _validate_select_body(body: str) -> None:
+    """Validate that *body* is a single read-only SELECT/WITH statement.
+
+    Performs a fully-raw, fail-closed scan: no comment stripping, no string-
+    literal masking, no SQL parsing.  Checks (in order):
+
+    1. No ``;`` followed by a non-whitespace character (multi-statement batch).
+    2. First ``\\w+`` token must be ``SELECT`` or ``WITH``.
+    3. No ``\\w+`` token (case-insensitive) from the forbidden-keyword denylist
+       (INSERT, UPDATE, DELETE, MERGE, INTO, EXEC, EXECUTE, DROP, ALTER, CREATE,
+       TRUNCATE, GRANT, REVOKE, DENY, KILL, BACKUP, RESTORE, OPENROWSET,
+       OPENQUERY, WRITETEXT, UPDATETEXT, SP_EXECUTESQL, XP_CMDSHELL, WAITFOR,
+       USE, SHUTDOWN, RECONFIGURE, DBCC).
+
+    This is fail-closed by design: a body that embeds a write keyword or a
+    ``;`` inside a string literal or quoted identifier, or that starts with a
+    comment, is also rejected.  This is intentional.
+
+    Args:
+        body: The raw SQL body string to validate.
+
+    Raises:
+        SelectBodyError: When any check fails.  The ``kind`` attribute
+            identifies which check fired.
+    """
+    # Check 1: multi-statement batch (';' followed by more tokens).
+    if _MULTI_STMT_RE.search(body):
+        raise SelectBodyError(
+            "multi_statement",
+            "body must not contain a multi-statement batch (';' followed by more tokens)",
+        )
+
+    tokens = _TOKEN_RE.findall(body)
+    first_token = tokens[0].upper() if tokens else ""
+
+    # Check 2: first token must be SELECT or WITH.
+    if first_token not in _ALLOWED_FIRST_TOKENS:
+        raise SelectBodyError(
+            "non_select",
+            f"body must begin with SELECT or WITH (got {first_token!r})",
+            token=first_token,
+        )
+
+    # Check 3: no forbidden keyword anywhere in the body.
+    for tok in tokens:
+        upper = tok.upper()
+        if upper in _FORBIDDEN_TOKENS:
+            raise SelectBodyError(
+                "forbidden_token",
+                f"body must not contain forbidden keyword {upper!r}",
+                token=upper,
+            )
 
 
 def reject_non_select(body: str) -> None:
-    """Raise ValueError if *body* does not start with SELECT or WITH (after comments).
+    """Raise :class:`ValueError` when *body* is not a single read-only SELECT statement.
 
-    Only the first non-comment keyword is checked.  Single-line (``--``) and
-    block (``/* … */``) comments are stripped before the check.
+    Applies a fully-raw, fail-closed scan: no comment stripping, no string-
+    literal masking, no SQL parsing.  All checks run on the completely raw text.
 
-    ``WITH`` is allowed to support Common Table Expressions (CTEs) of the form
-    ``WITH cte AS (...) SELECT ...``.  A ``WITH … UPDATE`` body is *not* caught
-    here — the Fabric API will reject non-SELECT bodies at the server side.
-    This validator is an inexpensive first-line filter only.
+    ``WITH`` is allowed to support Common Table Expressions (CTEs).  Three
+    checks are applied in order:
 
-    Implementation note: the check is done procedurally — consuming leading
-    whitespace and comments token-by-token — rather than with a single nested
-    quantifier regex.  The old ``(?:\\s*(?:/\\*.*?\\*/|--[^\\n]*\\n))*``
-    pattern caused catastrophic (exponential) backtracking on adversarial
-    inputs such as ``"/*" + "*//*" * N`` (CodeQL py/redos, high severity).
-    Each sub-pattern used here is linear and unambiguous.
+    1. No ``;`` followed by a non-whitespace character (multi-statement batch).
+    2. First raw ``\\w+`` token must be ``SELECT`` or ``WITH``.
+    3. No token from the forbidden-keyword denylist (same denylist used by the
+       ``FABRIC_MCP_READONLY`` read-only mode guard).
+
+    Fail-closed tradeoffs (by design): a body with a leading comment, a
+    forbidden keyword in a string literal (``WHERE op = 'DELETE'``), a
+    forbidden keyword as a quoted identifier (``[delete]``, ``"drop"``), or a
+    ``;`` inside a string literal is also rejected.  To run such a body,
+    reformulate it to avoid the literal keyword or semicolon.
 
     Args:
         body: The raw SQL supplied as the DDL body (CTAS or CREATE VIEW AS body).
 
     Raises:
-        ValueError: If the first keyword is not SELECT or WITH (CTE).
+        ValueError: When any check fails.
     """
-    pos = 0
-    length = len(body)
-    while pos < length:
-        # Consume leading whitespace.
-        m = _WHITESPACE_RE.match(body, pos)
-        if m:
-            pos = m.end()
-            continue
-        # Consume a block comment /* ... */.
-        m = _BLOCK_COMMENT_RE.match(body, pos)
-        if m:
-            pos = m.end()
-            continue
-        # Consume a line comment -- ...\n (or -- ... at end of string).
-        m = _LINE_COMMENT_RE.match(body, pos)
-        if m:
-            pos = m.end()
-            continue
-        # Nothing consumed — we are at the first real token.
-        break
-
-    if not _SELECT_OR_WITH_RE.match(body, pos):
-        msg = "body must begin with SELECT or WITH (CTE) (leading comments are allowed)"
-        raise ValueError(msg)
+    _validate_select_body(body)
