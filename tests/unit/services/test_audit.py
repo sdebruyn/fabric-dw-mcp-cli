@@ -420,28 +420,36 @@ async def test_set_action_groups_get_403_raises_permission_denied() -> None:
                 await audit.set_action_groups(client, _WS_ID, _WH_ID, ["BATCH_COMPLETED_GROUP"])
 
 
-async def test_set_action_groups_disabled_audit_raises_when_ensure_enabled_false() -> None:
-    """set_action_groups with ensure_enabled=False should raise ValueError when audit is Disabled.
+async def test_set_action_groups_ensure_enabled_false_disabled_preserves_disabled_state() -> None:
+    """set_action_groups with ensure_enabled=False preserves Disabled state in PATCH and return.
 
-    Consistent with add_action_group and remove_action_group which also raise
-    ValueError("audit is disabled; enable first") when the current state is Disabled.
-    When ensure_enabled=True (default) the function enables auditing, so the guard
-    only applies to the ensure_enabled=False path.
+    Regression guard for #876: the tool calls ensure_enabled=False so it must NOT
+    silently enable auditing on a Disabled warehouse.  The PATCH body must forward
+    state="Disabled" and the returned AuditSettings must also carry state="Disabled".
     """
+    groups = ["BATCH_COMPLETED_GROUP"]
+
     with respx.mock:
-        # Pre-flight GET returns disabled state; PATCH should never be reached.
-        respx.get(_AUDIT_URL).mock(
+        get_route = respx.get(_AUDIT_URL).mock(
             return_value=httpx.Response(200, json=AUDIT_SETTINGS_DISABLED_PAYLOAD)
         )
         patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
         client = await _make_client()
         async with client:
-            with pytest.raises(ValueError, match="audit is disabled; enable first"):
-                await audit.set_action_groups(
-                    client, _WS_ID, _WH_ID, ["BATCH_COMPLETED_GROUP"], ensure_enabled=False
-                )
+            result = await audit.set_action_groups(
+                client, _WS_ID, _WH_ID, groups, ensure_enabled=False
+            )
 
-    assert not patch_route.called
+    assert get_route.call_count == 1
+    assert patch_route.called
+    sent_body = json.loads(patch_route.calls[0].request.content)
+    # state must be round-tripped as "Disabled" — must not silently enable auditing.
+    assert sent_body.get("state") == "Disabled"
+    assert sent_body["auditActionsAndGroups"] == groups
+    assert sent_body.get("retentionDays") == AUDIT_SETTINGS_DISABLED_PAYLOAD["retentionDays"]
+    assert isinstance(result, AuditSettings)
+    assert result.state == "Disabled"
+    assert result.action_groups == groups
 
 
 async def test_set_action_groups_works_on_fresh_warehouse() -> None:
