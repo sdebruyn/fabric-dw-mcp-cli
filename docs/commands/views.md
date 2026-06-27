@@ -6,13 +6,13 @@ title: Views
 
 Manage SQL views on Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 ## CLI
 
 ### views columns
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 List the columns of a view, including name, formatted data type, nullability, ordinal position, collation, identity, and computed flags.
 
@@ -39,7 +39,7 @@ fdw -w MyWorkspace views columns SalesWH dbo.vw_sales
 
 ### views count
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Return the total row count of a view using `SELECT COUNT_BIG(*)`.
 
@@ -61,7 +61,7 @@ fdw -w MyWorkspace --json views count SalesWH dbo.vw_sales
 
 ### views create
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Create a new SQL view.
 
@@ -89,7 +89,7 @@ fdw -w MyWorkspace views create SalesWH \
 
 ### views drop
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Drop a SQL view. You will be asked to confirm unless `--yes` is passed.
 
@@ -107,7 +107,7 @@ fdw -w MyWorkspace --yes views drop SalesWH dbo.vw_recent
 
 ### views get
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Get the full definition of a single view.
 
@@ -136,7 +136,7 @@ definition     SELECT id, amount FROM dbo.sales
 
 ### views list
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 List all views on a warehouse or SQL Analytics Endpoint. Pass `--schema` to filter to a single schema.
 
@@ -165,7 +165,7 @@ fdw -w MyWorkspace views list SalesWH --schema dbo
 
 ### views read
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Read up to `--count` rows from a view and emit them as JSON (default), CSV, or Parquet.
 
@@ -198,7 +198,7 @@ fdw -w MyWorkspace views read SalesWH dbo.vw_sales --count 5
 
 ### views rename
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Rename a SQL view via `sp_rename`. The new name must be an unqualified (bare) identifier - `sp_rename` cannot move a view to a different schema.
 
@@ -222,7 +222,7 @@ fdw -w MyWorkspace views rename SalesWH dbo.vw_recent --new-name vw_revenue
 
 ### views update
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Redefine an existing view using `CREATE OR ALTER VIEW`.
 
@@ -252,7 +252,7 @@ fdw -w MyWorkspace views update SalesWH dbo.vw_recent \
 
 ### count_view_rows
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Return the total row count of a view via `SELECT COUNT_BIG(*)`.
 
@@ -266,7 +266,7 @@ Return the total row count of a view via `SELECT COUNT_BIG(*)`.
 
 ### create_view
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Create a new SQL view.
 
@@ -281,7 +281,7 @@ Create a new SQL view.
 
 ### drop_view
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Drop a SQL view.
 
@@ -295,7 +295,7 @@ Drop a SQL view.
 
 ### get_view
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Fetch the full definition of a single SQL view.
 
@@ -309,7 +309,7 @@ Fetch the full definition of a single SQL view.
 
 ### get_view_columns
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Return column metadata for a SQL view via `sys.columns`. Works on both Fabric Data Warehouses and SQL Analytics Endpoints.
 
@@ -333,7 +333,7 @@ Results are ordered by ordinal position. Raises a `ToolError` if the view does n
 
 ### list_views
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 List SQL views on a warehouse or SQL Analytics Endpoint, optionally filtered to a single schema.
 
@@ -347,7 +347,7 @@ List SQL views on a warehouse or SQL Analytics Endpoint, optionally filtered to 
 
 ### read_view
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Return up to `count` rows from a view as JSON-serialisable columns and rows.
 
@@ -362,7 +362,7 @@ Return up to `count` rows from a view as JSON-serialisable columns and rows.
 
 ### rename_view
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Rename a SQL view via `sp_rename`. Works on both Data Warehouses and SQL Analytics Endpoints. The new name must be a bare (unqualified) identifier - `sp_rename` cannot move a view across schemas.
 
@@ -377,7 +377,7 @@ Rename a SQL view via `sp_rename`. Works on both Data Warehouses and SQL Analyti
 
 ### update_view
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Redefine an existing SQL view using `CREATE OR ALTER VIEW`.
 

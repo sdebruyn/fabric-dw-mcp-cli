@@ -6,7 +6,7 @@ title: Query performance
 
 A task-oriented walkthrough for using `fabric-dw` (binary alias **`fdw`**) to find and fix slow queries on a Microsoft Fabric Data Warehouse or SQL Analytics Endpoint. It threads a single loop (**investigate → diagnose → improve → verify**) across the `queries`, `sql`, `statistics`, `sql-pools`, and `settings` command groups, and grounds each step in Microsoft Learn guidance.
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 !!! tip "Driving `fabric-dw` from an AI assistant?"
 
@@ -333,8 +333,8 @@ The mutating MCP tools (`create_statistics`, `update_statistics`, `delete_statis
 
 ## See also
 
-- [Queries](../commands/queries.md) · [Running SQL](../commands/sql.md) · [Statistics](../commands/statistics.md) · [Settings](../commands/settings.md) · [SQL Pools](../commands/sql-pools.md)
+- [Queries](../commands/queries.md) / [Running SQL](../commands/sql.md) / [Statistics](../commands/statistics.md) / [Settings](../commands/settings.md) / [SQL Pools](../commands/sql-pools.md)
 - [Agent Skills](../skills.md) - `query-optimizer` (single-query automation of this loop) and `warehouse-performance` (warehouse-wide).
-- [Performance guidelines for Fabric Data Warehouse](https://learn.microsoft.com/fabric/data-warehouse/guidelines-warehouse-performance?WT.mc_id=MVP_310840) · [Query insights](https://learn.microsoft.com/fabric/data-warehouse/query-insights?WT.mc_id=MVP_310840) · [Monitoring overview](https://learn.microsoft.com/fabric/data-warehouse/monitoring-overview?WT.mc_id=MVP_310840)
+- [Performance guidelines for Fabric Data Warehouse](https://learn.microsoft.com/fabric/data-warehouse/guidelines-warehouse-performance?WT.mc_id=MVP_310840) / [Query insights](https://learn.microsoft.com/fabric/data-warehouse/query-insights?WT.mc_id=MVP_310840) / [Monitoring overview](https://learn.microsoft.com/fabric/data-warehouse/monitoring-overview?WT.mc_id=MVP_310840)
 </content>
 </invoke>

@@ -394,7 +394,7 @@ For a real capacity decision you have two levers, only one of which `fabric-dw` 
 
 | Lever | Tool support |
 | --- | --- |
-| **Move the workspace to another capacity** (load-balance across capacities) | [`fdw workspaces assign-capacity <workspace> --capacity-id <uuid>`](../commands/workspaces.md#workspaces-assign-capacity) · MCP `assign_workspace_to_capacity` |
+| **Move the workspace to another capacity** (load-balance across capacities) | [`fdw workspaces assign-capacity <workspace> --capacity-id <uuid>`](../commands/workspaces.md#workspaces-assign-capacity) / MCP `assign_workspace_to_capacity` |
 | **Resize the capacity SKU** (e.g. F64 → F128) | **Out of CLI scope**: a capacity-admin action in the Fabric/Azure portal |
 
 ```shell
@@ -473,6 +473,6 @@ of scope:
 - [`warehouse-performance` Agent Skill](../skills.md#warehouse-performance) - the AI-assistant
   automation of this workflow.
 - [`query-optimizer` Agent Skill](../skills.md#query-optimizer) - single-query tuning.
-- Command pages: [Queries](../commands/queries.md) · [SQL Pools](../commands/sql-pools.md) ·
-  [Settings](../commands/settings.md) · [Statistics](../commands/statistics.md) ·
-  [Warehouses](../commands/warehouses.md) · [Workspaces](../commands/workspaces.md)
+- Command pages: [Queries](../commands/queries.md) / [SQL Pools](../commands/sql-pools.md) /
+  [Settings](../commands/settings.md) / [Statistics](../commands/statistics.md) /
+  [Warehouses](../commands/warehouses.md) / [Workspaces](../commands/workspaces.md)

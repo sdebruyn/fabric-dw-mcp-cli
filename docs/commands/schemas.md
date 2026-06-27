@@ -6,7 +6,7 @@ title: Schemas
 
 Manage SQL schemas on Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 !!! note "SQL Analytics Endpoints"
 
@@ -16,7 +16,7 @@ Manage SQL schemas on Microsoft Fabric Data Warehouses and SQL Analytics Endpoin
 
 ### schemas create
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Create a new SQL schema on a warehouse.
 
@@ -34,7 +34,7 @@ fdw -w MyWorkspace schemas create SalesWH reporting
 
 ### schemas delete
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Drop a schema from a warehouse. You will be asked to confirm unless `--yes` is passed.
 
@@ -62,7 +62,7 @@ fdw -w MyWorkspace --yes schemas delete SalesWH staging --cascade
 
 ### schemas list
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 List all user-defined schemas on a warehouse or SQL Analytics Endpoint. System schemas are excluded.
 
@@ -90,7 +90,7 @@ fdw -w MyWorkspace schemas list SalesWH
 
 ### create_schema
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Create a new SQL schema on a Fabric Data Warehouse or SQL Analytics Endpoint.
 
@@ -104,7 +104,7 @@ Create a new SQL schema on a Fabric Data Warehouse or SQL Analytics Endpoint.
 
 ### delete_schema
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Drop a SQL schema from a Fabric Data Warehouse or SQL Analytics Endpoint.
 
@@ -123,7 +123,7 @@ Drop a SQL schema from a Fabric Data Warehouse or SQL Analytics Endpoint.
 
 ### list_schemas
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 List user-defined SQL schemas on a warehouse or SQL Analytics Endpoint. System schemas are excluded automatically.
 
