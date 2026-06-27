@@ -862,42 +862,151 @@ def test_clear_scope_invalid_raises_value_error(tmp_path: Path) -> None:
 
 
 async def test_async_get_workspace_dispatches_via_to_thread(tmp_path: Path) -> None:
-    """async_get_workspace must run through asyncio.to_thread, not on the event loop."""
+    """async_get_workspace must dispatch get_workspace through asyncio.to_thread."""
     cache = _make_cache(tmp_path)
     with patch("asyncio.to_thread", wraps=asyncio.to_thread) as mock_thread:
         result = await cache.async_get_workspace("NonExistent")
     mock_thread.assert_called_once()
+    # Verify the correct underlying callable was dispatched.
+    assert mock_thread.call_args[0][0] == cache.get_workspace
     assert result is None
 
 
 async def test_async_put_workspace_dispatches_via_to_thread(tmp_path: Path) -> None:
-    """async_put_workspace must run through asyncio.to_thread, not on the event loop."""
+    """async_put_workspace must dispatch put_workspace through asyncio.to_thread."""
     cache = _make_cache(tmp_path)
     with patch("asyncio.to_thread", wraps=asyncio.to_thread) as mock_thread:
         await cache.async_put_workspace("ws", WS_ID)
     mock_thread.assert_called_once()
-    # Verify the write actually happened (sync read works after async write)
+    assert mock_thread.call_args[0][0] == cache.put_workspace
+    # Verify the write actually happened (sync read works after async write).
     assert cache.get_workspace("ws") is not None
 
 
 async def test_async_get_item_dispatches_via_to_thread(tmp_path: Path) -> None:
-    """async_get_item must run through asyncio.to_thread, not on the event loop."""
+    """async_get_item must dispatch get_item through asyncio.to_thread."""
     cache = _make_cache(tmp_path)
     with patch("asyncio.to_thread", wraps=asyncio.to_thread) as mock_thread:
         result = await cache.async_get_item(WS_ID, "NonExistent")
     mock_thread.assert_called_once()
+    assert mock_thread.call_args[0][0] == cache.get_item
     assert result is None
 
 
 async def test_async_put_items_dispatches_via_to_thread(tmp_path: Path) -> None:
-    """async_put_items must run through asyncio.to_thread, not on the event loop."""
+    """async_put_items must dispatch put_items through asyncio.to_thread."""
     cache = _make_cache(tmp_path)
     entry = _make_item_entry()
     with patch("asyncio.to_thread", wraps=asyncio.to_thread) as mock_thread:
         await cache.async_put_items(WS_ID, [("wh", entry)])
     mock_thread.assert_called_once()
-    # Verify the write actually happened (sync read works after async write)
+    assert mock_thread.call_args[0][0] == cache.put_items
+    # Verify the write actually happened (sync read works after async write).
     assert cache.get_item(WS_ID, "wh") is not None
+
+
+async def test_async_put_items_materialises_iterable_before_thread(tmp_path: Path) -> None:
+    """async_put_items must materialise the entries iterable before entering the thread.
+
+    A lazy generator must not be consumed inside the worker thread; it is
+    materialised to a list on the calling coroutine so that the generator's
+    iterator is driven on the correct thread.
+    """
+    cache = _make_cache(tmp_path)
+    entry = _make_item_entry()
+
+    consumed: list[bool] = []
+
+    def _gen() -> Any:
+        consumed.append(True)
+        yield "wh", entry
+
+    with patch("asyncio.to_thread", wraps=asyncio.to_thread) as mock_thread:
+        await cache.async_put_items(WS_ID, _gen())
+
+    # The iterable was consumed (materialised) before to_thread was entered.
+    assert consumed == [True]
+    # The second positional arg (items) passed to to_thread must be a list.
+    items_arg = mock_thread.call_args[0][2]
+    assert isinstance(items_arg, list)
+
+
+async def test_async_counts_dispatches_via_to_thread(tmp_path: Path) -> None:
+    """async_counts must dispatch counts through asyncio.to_thread."""
+    cache = _make_cache(tmp_path)
+    cache.put_workspace("ws", WS_ID)
+    with patch("asyncio.to_thread", wraps=asyncio.to_thread) as mock_thread:
+        ws_count, items_count = await cache.async_counts()
+    mock_thread.assert_called_once()
+    assert mock_thread.call_args[0][0] == cache.counts
+    assert ws_count == 1
+    assert items_count == 0
+
+
+async def test_async_clear_dispatches_via_to_thread(tmp_path: Path) -> None:
+    """async_clear must dispatch clear through asyncio.to_thread."""
+    cache = _make_cache(tmp_path)
+    cache.put_workspace("ws", WS_ID)
+    with patch("asyncio.to_thread", wraps=asyncio.to_thread) as mock_thread:
+        await cache.async_clear()
+    mock_thread.assert_called_once()
+    assert mock_thread.call_args[0][0] == cache.clear
+    assert cache.get_workspace("ws") is None
+
+
+async def test_async_clear_scope_dispatches_via_to_thread(tmp_path: Path) -> None:
+    """async_clear_scope must dispatch clear_scope through asyncio.to_thread."""
+    cache = _make_cache(tmp_path)
+    cache.put_workspace("ws", WS_ID)
+    cache.put_item(WS_ID, "wh", _make_item_entry())
+    with patch("asyncio.to_thread", wraps=asyncio.to_thread) as mock_thread:
+        await cache.async_clear_scope("workspaces")
+    mock_thread.assert_called_once()
+    assert mock_thread.call_args[0][0] == cache.clear_scope
+    # Only workspaces cleared; items intact.
+    assert cache.get_workspace("ws") is None
+    assert cache.get_item(WS_ID, "wh") is not None
+
+
+async def test_async_counts_returns_correct_values(tmp_path: Path) -> None:
+    """async_counts returns the same (ws_count, items_count) as the sync counts()."""
+    cache = _make_cache(tmp_path)
+    cache.put_workspace("ws1", WS_ID)
+    cache.put_workspace("ws2", WS_ID_2)
+    cache.put_item(WS_ID, "wh", _make_item_entry())
+    ws_count, items_count = await cache.async_counts()
+    assert ws_count == 2
+    assert items_count == 1
+
+
+async def test_async_clear_empties_cache(tmp_path: Path) -> None:
+    """async_clear erases all entries (same semantics as sync clear())."""
+    cache = _make_cache(tmp_path)
+    cache.put_workspace("ws", WS_ID)
+    cache.put_item(WS_ID, "wh", _make_item_entry())
+    await cache.async_clear()
+    assert cache.get_workspace("ws") is None
+    assert cache.get_item(WS_ID, "wh") is None
+
+
+async def test_async_clear_scope_workspaces_leaves_items(tmp_path: Path) -> None:
+    """async_clear_scope('workspaces') removes only workspace entries."""
+    cache = _make_cache(tmp_path)
+    cache.put_workspace("ws", WS_ID)
+    cache.put_item(WS_ID, "wh", _make_item_entry())
+    await cache.async_clear_scope("workspaces")
+    assert cache.get_workspace("ws") is None
+    assert cache.get_item(WS_ID, "wh") is not None
+
+
+async def test_async_clear_scope_items_leaves_workspaces(tmp_path: Path) -> None:
+    """async_clear_scope('items') removes only item entries."""
+    cache = _make_cache(tmp_path)
+    cache.put_workspace("ws", WS_ID)
+    cache.put_item(WS_ID, "wh", _make_item_entry())
+    await cache.async_clear_scope("items")
+    assert cache.get_workspace("ws") is not None
+    assert cache.get_item(WS_ID, "wh") is None
 
 
 async def test_async_get_workspace_returns_stored_entry(tmp_path: Path) -> None:

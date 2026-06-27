@@ -462,7 +462,23 @@ class LookupCache:
     ) -> None:
         """Run :meth:`put_items` off the event loop via asyncio.to_thread.
 
-        Pass a list (not a lazy generator) when possible; the iterable is
-        consumed inside the worker thread, not on the calling coroutine.
+        The *entries* iterable is materialised into a list on the calling
+        coroutine before the worker thread is entered.  This prevents a lazy
+        generator from being consumed inside the thread (where the generator
+        would have been created on a different thread than the one iterating it,
+        which is unsafe for most non-thread-safe generators).
         """
-        await asyncio.to_thread(self.put_items, workspace_id, entries)
+        items = list(entries)
+        await asyncio.to_thread(self.put_items, workspace_id, items)
+
+    async def async_counts(self) -> tuple[int, int]:
+        """Run :meth:`counts` off the event loop via asyncio.to_thread."""
+        return await asyncio.to_thread(self.counts)
+
+    async def async_clear(self) -> None:
+        """Run :meth:`clear` off the event loop via asyncio.to_thread."""
+        await asyncio.to_thread(self.clear)
+
+    async def async_clear_scope(self, scope: str) -> None:
+        """Run :meth:`clear_scope` off the event loop via asyncio.to_thread."""
+        await asyncio.to_thread(self.clear_scope, scope)

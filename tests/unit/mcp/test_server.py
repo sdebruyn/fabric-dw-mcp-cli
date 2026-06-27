@@ -322,16 +322,19 @@ async def test_list_workspaces_happy_path(ctx_patch) -> None:
 
 
 async def test_clear_cache_side_effect(mock_ctx, ctx_patch) -> None:
-    """clear_cache(scope='all') must call LookupCache.clear()."""
+    """clear_cache(scope='all') must call LookupCache.async_clear() off the loop."""
+    from unittest.mock import AsyncMock  # noqa: PLC0415
+
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
-    mock_ctx.cache.counts.return_value = (2, 3)
+    mock_ctx.cache.async_counts = AsyncMock(return_value=(2, 3))
+    mock_ctx.cache.async_clear = AsyncMock()
 
     with ctx_patch:
         result = await mcp._tool_manager.call_tool("clear_cache", {})
 
-    mock_ctx.cache.counts.assert_called_once()
-    mock_ctx.cache.clear.assert_called_once()
+    mock_ctx.cache.async_counts.assert_called_once()
+    mock_ctx.cache.async_clear.assert_called_once()
     assert result["scope"] == "all"
     assert result["workspaces_cleared"] == 2
     assert result["items_cleared"] == 3
@@ -339,18 +342,21 @@ async def test_clear_cache_side_effect(mock_ctx, ctx_patch) -> None:
 
 
 async def test_clear_cache_scope_workspaces(mock_ctx, ctx_patch) -> None:
-    """clear_cache(scope='workspaces') must NOT call full clear()."""
+    """clear_cache(scope='workspaces') must NOT call async_clear()."""
+    from unittest.mock import AsyncMock  # noqa: PLC0415
+
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
-    # Configure the public counts() API to return (1 workspace, 0 item buckets).
-    mock_ctx.cache.counts.return_value = (1, 0)
+    mock_ctx.cache.async_counts = AsyncMock(return_value=(1, 0))
+    mock_ctx.cache.async_clear_scope = AsyncMock()
+    mock_ctx.cache.async_clear = AsyncMock()
 
     with ctx_patch:
         result = await mcp._tool_manager.call_tool("clear_cache", {"scope": "workspaces"})
 
-    mock_ctx.cache.counts.assert_called_once()
-    mock_ctx.cache.clear_scope.assert_called_once_with("workspaces")
-    mock_ctx.cache.clear.assert_not_called()
+    mock_ctx.cache.async_counts.assert_called_once()
+    mock_ctx.cache.async_clear_scope.assert_called_once_with("workspaces")
+    mock_ctx.cache.async_clear.assert_not_called()
     assert result["scope"] == "workspaces"
     assert result["workspaces_cleared"] == 1
     assert result["items_cleared"] == 0
@@ -358,18 +364,21 @@ async def test_clear_cache_scope_workspaces(mock_ctx, ctx_patch) -> None:
 
 
 async def test_clear_cache_scope_items(mock_ctx, ctx_patch) -> None:
-    """clear_cache(scope='items') must NOT call full clear()."""
+    """clear_cache(scope='items') must NOT call async_clear()."""
+    from unittest.mock import AsyncMock  # noqa: PLC0415
+
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
-    # Configure the public counts() API to return (0 workspaces, 1 item bucket).
-    mock_ctx.cache.counts.return_value = (0, 1)
+    mock_ctx.cache.async_counts = AsyncMock(return_value=(0, 1))
+    mock_ctx.cache.async_clear_scope = AsyncMock()
+    mock_ctx.cache.async_clear = AsyncMock()
 
     with ctx_patch:
         result = await mcp._tool_manager.call_tool("clear_cache", {"scope": "items"})
 
-    mock_ctx.cache.counts.assert_called_once()
-    mock_ctx.cache.clear_scope.assert_called_once_with("items")
-    mock_ctx.cache.clear.assert_not_called()
+    mock_ctx.cache.async_counts.assert_called_once()
+    mock_ctx.cache.async_clear_scope.assert_called_once_with("items")
+    mock_ctx.cache.async_clear.assert_not_called()
     assert result["scope"] == "items"
     assert result["workspaces_cleared"] == 0
     assert result["items_cleared"] == 1
