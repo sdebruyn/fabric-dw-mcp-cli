@@ -1,25 +1,24 @@
 """Rich terminal tree renderer for SHOWPLAN_XML execution plans.
 
-Converts a list of :class:`~fabric_dw.cli._plan_parse.PlanOperator` trees
-(produced by :func:`~fabric_dw.cli._plan_parse.parse_showplan`) into Rich
+Converts a list of :class:`~fabric_dw.plan._parse.PlanOperator` trees
+(produced by :func:`~fabric_dw.plan._parse.parse_showplan`) into Rich
 ``Tree`` objects and prints them to a console.
 
 Public API
 ----------
-- :func:`render_plan_tree` — build and print Rich trees for all statements.
-- :func:`operator_to_dict` — convert a :class:`PlanOperator` to a plain dict
-  for JSON output.
+- :func:`render_plan_tree`: build and print Rich trees for all statements.
+- :func:`operator_to_dict`: re-exported from :mod:`fabric_dw.plan._render`
+  for backward compatibility; new code should import from there directly.
 """
 
 from __future__ import annotations
-
-from typing import Any
 
 from rich.console import Console
 from rich.markup import escape
 from rich.tree import Tree
 
-from fabric_dw.cli._plan_parse import PlanOperator, humanise_rows
+from fabric_dw.plan._parse import PlanOperator, humanise_rows
+from fabric_dw.plan._render import operator_to_dict  # re-export
 
 __all__ = [
     "operator_to_dict",
@@ -130,7 +129,7 @@ def render_plan_tree(
 
     Args:
         operators: The list of root operator nodes returned by
-            :func:`~fabric_dw.cli._plan_parse.parse_showplan`.
+            :func:`~fabric_dw.plan._parse.parse_showplan`.
         console: Optional Rich ``Console`` to print to; defaults to stdout.
     """
     con = console if console is not None else Console()
@@ -149,29 +148,3 @@ def render_plan_tree(
 
         tree = _build_rich_tree(root)
         con.print(tree)
-
-
-def operator_to_dict(node: PlanOperator) -> dict[str, Any]:
-    """Convert a :class:`PlanOperator` tree to a plain JSON-serialisable dict.
-
-    Used by the ``--json`` output path of ``sql plan``.
-
-    Args:
-        node: The operator node to serialise.
-
-    Returns:
-        A nested dict with keys matching the :class:`PlanOperator` attributes.
-        The ``children`` key contains a list of similarly-structured dicts.
-    """
-    return {
-        "physicalOp": node.physical_op,
-        "logicalOp": node.logical_op,
-        "nodeId": node.node_id,
-        "estimateRows": node.estimate_rows,
-        "estimatedTotalSubtreeCost": node.estimated_total_subtree_cost,
-        "parallel": node.parallel,
-        "hasWarnings": node.has_warnings,
-        "costPct": round(node.cost_pct, 2),
-        "stmtText": node.stmt_text,
-        "children": [operator_to_dict(c) for c in node.children],
-    }

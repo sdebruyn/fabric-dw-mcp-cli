@@ -17,7 +17,7 @@ Viewing the output
 
 from __future__ import annotations
 
-from fabric_dw.cli._plan_parse import PlanOperator, humanise_rows
+from fabric_dw.plan._parse import PlanOperator, humanise_rows
 
 __all__ = ["render_plan_dot"]
 
