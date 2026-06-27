@@ -1119,6 +1119,25 @@ async def load_cmd(  # noqa: PLR0912, PLR0915
         raise click.ClickException(str(exc)) from exc
 
 
+async def _close_credential(credential: object) -> None:
+    """Close an azure.identity-style async credential, suppressing teardown errors.
+
+    Many azure.identity.aio credential objects hold an aiohttp.ClientSession
+    internally.  Calling close() and awaiting the result releases that session;
+    without this call the session leaks and emits an 'Unclosed client session'
+    ResourceWarning.  Errors during teardown are suppressed — a failed close
+    must not shadow the original exception from the load path.
+    """
+    _close = getattr(credential, "close", None)
+    if callable(_close):
+        try:
+            _close_result = _close()
+            if asyncio.iscoroutine(_close_result):
+                await _close_result
+        except Exception:  # noqa: S110
+            pass
+
+
 async def _load_cmd_local(
     ctx: CliContext,
     http: FabricHttpClient,
@@ -1148,7 +1167,7 @@ async def _load_cmd_local(
     guard), so it never reaches this helper.
     """
     from fabric_dw import auth as _auth  # noqa: PLC0415
-    from fabric_dw.services.load import FileFormat, _truncate_table_sql  # noqa: PLC0415
+    from fabric_dw.services.load import FileFormat  # noqa: PLC0415
 
     local = Path(file_path)
     if not local.exists():
@@ -1177,7 +1196,9 @@ async def _load_cmd_local(
     # Note: "replace" always requires --create (enforced earlier) so only
     # "truncate" can arrive here.
     if if_exists == "truncate":
-        await _truncate_table_sql(sql_target, schema, table_name, mode=ctx.auth)
+        await _tables_svc.clear_table(
+            sql_target, schema, table_name, kind=entry.kind, mode=ctx.auth
+        )
 
     credential = _auth.get_credential(ctx.auth)
     try:
@@ -1199,18 +1220,7 @@ async def _load_cmd_local(
             mode=ctx.auth,
         )
     finally:
-        # Close the storage-scope credential to release its internal aiohttp
-        # session (azure.identity.aio credentials hold one).  Mirror the same
-        # robust pattern used in FabricHttpClient.__aexit__: call close(),
-        # await if it returns a coroutine, suppress any teardown error.
-        _close = getattr(credential, "close", None)
-        if callable(_close):
-            try:
-                _close_result = _close()
-                if asyncio.iscoroutine(_close_result):
-                    await _close_result
-            except Exception:  # noqa: S110
-                pass
+        await _close_credential(credential)
 
 
 async def _load_cmd_create_and_load(
@@ -1295,18 +1305,7 @@ async def _load_cmd_create_and_load(
             cluster_by=cluster_by,
         )
     finally:
-        # Close the storage-scope credential to release its internal aiohttp
-        # session (azure.identity.aio credentials hold one).  Same pattern as
-        # _load_cmd_local — without this close() call the session leaks and
-        # emits an 'Unclosed client session' ResourceWarning on every load.
-        _close = getattr(credential, "close", None)
-        if callable(_close):
-            try:
-                _close_result = _close()
-                if asyncio.iscoroutine(_close_result):
-                    await _close_result
-            except Exception:  # noqa: S110
-                pass
+        await _close_credential(credential)
 
 
 async def _load_cmd_url(

@@ -2168,7 +2168,7 @@ class TestLoadCreateAndLoad:
                 return_value="csv",
             ),
             patch(
-                "fabric_dw.services.load._truncate_table_sql",
+                "fabric_dw.services.tables.clear_table",
                 new=AsyncMock(),
             ) as mock_trunc,
         ):
@@ -2471,6 +2471,60 @@ class TestLoadCmdCreateAndLoadStorageCredential:
             )
 
         close_spy.assert_awaited_once()
+
+
+# ===========================================================================
+# _close_credential — shared credential teardown helper (#824)
+# ===========================================================================
+
+
+class TestCloseCredential:
+    """Verify the shared _close_credential helper correctly tears down credentials."""
+
+    @pytest.mark.asyncio
+    async def test_awaits_async_close(self) -> None:
+        """_close_credential awaits a coroutine returned by close()."""
+        from fabric_dw.cli.commands.tables import _close_credential  # noqa: PLC0415
+
+        close_spy = AsyncMock()
+        mock_cred = MagicMock()
+        mock_cred.close = close_spy
+
+        await _close_credential(mock_cred)
+
+        close_spy.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_calls_sync_close(self) -> None:
+        """_close_credential calls a synchronous close() without error."""
+        from fabric_dw.cli.commands.tables import _close_credential  # noqa: PLC0415
+
+        close_spy = MagicMock(return_value=None)  # sync: returns None, not a coroutine
+        mock_cred = MagicMock()
+        mock_cred.close = close_spy
+
+        await _close_credential(mock_cred)
+
+        close_spy.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_suppresses_teardown_error(self) -> None:
+        """_close_credential swallows exceptions from close() so they do not shadow load errors."""
+        from fabric_dw.cli.commands.tables import _close_credential  # noqa: PLC0415
+
+        mock_cred = MagicMock()
+        mock_cred.close = MagicMock(side_effect=RuntimeError("teardown boom"))
+
+        # Must not raise.
+        await _close_credential(mock_cred)
+
+    @pytest.mark.asyncio
+    async def test_noop_when_close_absent(self) -> None:
+        """_close_credential is a no-op when the credential has no close() method."""
+        from fabric_dw.cli.commands.tables import _close_credential  # noqa: PLC0415
+
+        # A plain object with no close attribute.
+        await _close_credential(object())
 
 
 # ===========================================================================
