@@ -10,6 +10,7 @@ import importlib
 import logging
 import os
 import sys
+import threading
 import types
 import uuid
 from collections.abc import Generator
@@ -1111,6 +1112,91 @@ def test_get_tracer_passes_enable_performance_counters_false(
     assert captured_kwargs.get("enable_performance_counters") is False, (
         "configure_azure_monitor must receive enable_performance_counters=False "
         "to suppress PerformanceCounters ZeroDivisionError on short-lived processes (#399)"
+    )
+
+    # Reset SDK state so the module is clean for any subsequent tests.
+    mod._sdk_initialised = False
+    mod._tracer = None
+    mod._otel_logger = None
+
+
+# ---------------------------------------------------------------------------
+# Concurrency: logger assigned before init flag, under a lock (#846)
+# ---------------------------------------------------------------------------
+
+
+def test_sdk_init_assigns_logger_before_flag_thread_safe(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """_otel_logger must be assigned before _sdk_initialised is flipped to True.
+
+    A concurrent emit that observes _sdk_initialised=True must never find
+    _otel_logger=None.  The fix uses double-checked locking: logger and tracer
+    are written inside the lock before the flag is set in the finally clause.
+
+    This test pauses inside fake configure_azure_monitor (while the init lock
+    is held) and asserts the flag is still False at that point.  With the old
+    code the flag was True immediately after the outer check, so this assertion
+    would have failed.  After init the test verifies both the flag and the
+    logger are consistent.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+
+    mod = _reload_telemetry()
+
+    configure_entered = threading.Event()
+    configure_proceed = threading.Event()
+
+    def slow_configure(**_kwargs: object) -> None:
+        # Signal that we are inside configure_azure_monitor (lock held, but
+        # logger not yet assigned and flag not yet flipped).
+        configure_entered.set()
+        configure_proceed.wait(timeout=5.0)
+
+    fake_otel_logger = object()
+
+    fake_azure_mod: Any = types.ModuleType("azure.monitor.opentelemetry")
+    fake_azure_mod.configure_azure_monitor = slow_configure
+
+    fake_logs_mod: Any = types.ModuleType("opentelemetry._logs")
+    fake_logs_mod.get_logger = lambda *_a, **_kw: fake_otel_logger
+    fake_logs_mod.LogRecord = object
+    fake_logs_mod.SeverityNumber = object
+
+    mod._sdk_initialised = False
+    mod._tracer = None
+    mod._otel_logger = None
+
+    monkeypatch.setitem(sys.modules, "azure.monitor.opentelemetry", fake_azure_mod)
+    monkeypatch.setitem(sys.modules, "opentelemetry._logs", fake_logs_mod)
+
+    # Thread A: performs the slow init (blocks inside slow_configure).
+    def thread_a() -> None:
+        mod._get_tracer()  # type: ignore[attr-defined]
+
+    t_a = threading.Thread(target=thread_a, daemon=True)
+    t_a.start()
+
+    # Wait until thread A is inside configure_azure_monitor (holds the lock,
+    # partway through init).  With the fix, the flag must still be False here
+    # because it is only set in the finally clause after logger assignment.
+    assert configure_entered.wait(timeout=5.0), "configure_azure_monitor was never entered"
+    assert mod._sdk_initialised is False, (  # type: ignore[attr-defined]
+        "_sdk_initialised must not be True before _otel_logger is assigned"
+    )
+    assert mod._otel_logger is None  # type: ignore[attr-defined]
+
+    # Let thread A finish.
+    configure_proceed.set()
+    t_a.join(timeout=5.0)
+
+    # After init completes both the flag and the logger must be consistent.
+    assert mod._sdk_initialised is True  # type: ignore[attr-defined]
+    assert mod._otel_logger is fake_otel_logger  # type: ignore[attr-defined]
+    # Core invariant: whenever flag is True, logger is not None (success path).
+    assert not (mod._sdk_initialised and mod._otel_logger is None), (  # type: ignore[attr-defined]
+        "_otel_logger must not be None when _sdk_initialised is True"
     )
 
     # Reset SDK state so the module is clean for any subsequent tests.
