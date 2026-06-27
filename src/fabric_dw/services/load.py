@@ -1111,18 +1111,18 @@ async def _infer_columns_from_local(
 ) -> list:
     """Infer :class:`~fabric_dw.models.ColumnSpec` list from a local file.
 
-    Delegates to the public helpers in :mod:`fabric_dw.services.tables`:
+    Delegates to the public helpers in :mod:`fabric_dw.services.schema_infer`:
 
-    - Parquet: :func:`~fabric_dw.services.tables.infer_columns_from_parquet`
-      (reads the Parquet footer only — no data rows).
-    - CSV: :func:`~fabric_dw.services.tables.infer_columns_from_csv`
+    - Parquet: :func:`~fabric_dw.services.schema_infer.infer_columns_from_parquet`
+      (reads the Parquet footer only -- no data rows).
+    - CSV: :func:`~fabric_dw.services.schema_infer.infer_columns_from_csv`
       (header + bounded sample via ``pyarrow.csv``).
     - JSON: converts to Parquet via :func:`_json_to_parquet`, then delegates
       to the Parquet path above.
 
     Returns a list of :class:`~fabric_dw.models.ColumnSpec`.
     """
-    from fabric_dw.services.tables import (  # noqa: PLC0415
+    from fabric_dw.services.schema_infer import (  # noqa: PLC0415
         infer_columns_from_csv,
         infer_columns_from_parquet,
     )
