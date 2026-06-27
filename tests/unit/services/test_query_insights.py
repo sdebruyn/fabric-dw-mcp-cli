@@ -98,6 +98,21 @@ async def test_list_request_history_parses_fields() -> None:
     assert row.total_elapsed_time_ms == 1500
 
 
+async def test_list_request_history_null_row_count_batch() -> None:
+    """A batch containing a NULL row_count row (DDL/failed/cancelled) must
+    return all rows without raising ValidationError."""
+    # Build a second row identical to _REQ_HIST_ROW but with row_count=None.
+    # The column list keeps the same order; row_count is at index 9.
+    null_row_count_row = _REQ_HIST_ROW[:9] + (None,) + _REQ_HIST_ROW[10:]
+    target = _make_target()
+    conn = _make_conn([_REQ_HIST_ROW, null_row_count_row], _REQ_HIST_COLS)
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await query_insights.list_request_history(target)
+    assert len(result) == 2
+    assert result[0].row_count == 100
+    assert result[1].row_count is None
+
+
 async def test_list_request_history_sql_references_exec_requests_history() -> None:
     target = _make_target()
     conn = _make_conn([], _REQ_HIST_COLS)

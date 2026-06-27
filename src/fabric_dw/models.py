@@ -357,7 +357,7 @@ class ExecRequestHistory(_FabricBase):
     is_distributed: int | None = None
     statement_type: str | None = None
     login_name: str | None = None
-    row_count: int
+    row_count: int | None = None
     status: str | None = None
     program_name: str | None = None
     query_hash: str | None = None
