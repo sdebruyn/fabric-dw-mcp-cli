@@ -16,6 +16,7 @@ from uuid import UUID
 import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 
+from fabric_dw.exceptions import NotFoundError
 from fabric_dw.models import Warehouse, WarehouseKind
 from tests.unit.mcp.conftest import (
     WS_ID,
@@ -111,6 +112,28 @@ async def test_list_sql_endpoints_workspace_provided_succeeds(mock_ctx, ctx_patc
 
     assert isinstance(result, list)
     assert result[0]["id"] == str(_EP_ID)
+
+
+async def test_list_sql_endpoints_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
+    """list_sql_endpoints wraps FabricError into ToolError."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.sql_endpoints.list_endpoints",
+            new=AsyncMock(side_effect=NotFoundError("workspace not found")),
+        ),
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "list_sql_endpoints",
+            {"workspace": WS_NAME},
+        )
+
+    assert "NotFoundError" in str(exc_info.value) or "not found" in str(exc_info.value).lower()
 
 
 async def test_list_sql_endpoints_all_workspaces_with_allowlist_raises(ctx_patch) -> None:

@@ -82,7 +82,7 @@ async def test_list_warehouses_all_workspaces_with_allowlist_raises(ctx_patch) -
     ):
         await mcp._tool_manager.call_tool(
             "list_warehouses",
-            {"workspace": "", "all_workspaces": True},
+            {"all_workspaces": True},
         )
 
     assert "FABRIC_MCP_WORKSPACES" in str(exc_info.value)

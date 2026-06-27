@@ -48,7 +48,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 "specify an individual workspace instead"
             )
         if not all_workspaces:
-            if not workspace:
+            if not workspace or not workspace.strip():
                 raise ToolError("workspace is required unless all_workspaces=True")
             assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
@@ -56,10 +56,10 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 _log.debug("list_warehouses all_workspaces=True")
                 result = await warehouses.list_all_workspaces(ctx.http)
             else:
-                # workspace is non-None/non-empty: guard above raised ToolError otherwise.
-                ws_id = await ctx.resolver.workspace_id(workspace)  # ty: ignore[invalid-argument-type]
+                assert workspace is not None  # noqa: S101 — guard above raised ToolError otherwise
+                ws_id = await ctx.resolver.workspace_id(workspace)
                 assert_workspace_allowed(
-                    workspace,  # ty: ignore[invalid-argument-type]
+                    workspace,
                     str(ws_id),
                     config_allowlist=ctx.workspace_allowlist,
                 )
