@@ -95,14 +95,14 @@ Then grant the same delegated permissions as the shared app:
 
 When `FABRIC_AUTH` is `default` (or unset), the package delegates to [`azure-identity`'s `DefaultAzureCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.defaultazurecredential?WT.mc_id=MVP_310840). It walks the following sources **in order** and stops at the first one that returns a usable token:
 
-1. **Environment variables**: `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` / `AZURE_CLIENT_CERTIFICATE_PATH`, `AZURE_TENANT_ID`: see [`EnvironmentCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.environmentcredential?WT.mc_id=MVP_310840)
+1. **Environment variables**: `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` / `AZURE_CLIENT_CERTIFICATE_PATH`, `AZURE_TENANT_ID` - see [`EnvironmentCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.environmentcredential?WT.mc_id=MVP_310840)
 2. **Workload Identity**: injected in Kubernetes / AKS workloads - see [`WorkloadIdentityCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.workloadidentitycredential?WT.mc_id=MVP_310840)
 3. **Managed Identity**: Azure VMs, App Service, Container Apps, etc. - see [`ManagedIdentityCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.managedidentitycredential?WT.mc_id=MVP_310840)
 4. **Shared token cache**: the MSAL cache shared between Azure tools - see [`SharedTokenCacheCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.sharedtokencachecredential?WT.mc_id=MVP_310840)
-5. **Azure CLI**: token from `az login`: see [`AzureCliCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.azureclicredential?WT.mc_id=MVP_310840)
-6. **Azure Developer CLI**: token from `azd auth login`: see [`AzureDeveloperCliCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.azuredeveloperclicredential?WT.mc_id=MVP_310840)
-7. **Azure PowerShell**: token from `Connect-AzAccount`: see [`AzurePowerShellCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.azurepowershellcredential?WT.mc_id=MVP_310840)
-8. **Interactive browser**: falls back to browser sign-in using the [shared app](#interactive-browser-sign-in-zero-setup) (or your override via `FABRIC_INTERACTIVE_CLIENT_ID`): see [`InteractiveBrowserCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.interactivebrowsercredential?WT.mc_id=MVP_310840)
+5. **Azure CLI**: token from `az login` - see [`AzureCliCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.azureclicredential?WT.mc_id=MVP_310840)
+6. **Azure Developer CLI**: token from `azd auth login` - see [`AzureDeveloperCliCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.azuredeveloperclicredential?WT.mc_id=MVP_310840)
+7. **Azure PowerShell**: token from `Connect-AzAccount` - see [`AzurePowerShellCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.azurepowershellcredential?WT.mc_id=MVP_310840)
+8. **Interactive browser**: falls back to browser sign-in using the [shared app](#interactive-browser-sign-in-zero-setup) (or your override via `FABRIC_INTERACTIVE_CLIENT_ID`) - see [`InteractiveBrowserCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.interactivebrowsercredential?WT.mc_id=MVP_310840)
 
 ---
 

@@ -108,7 +108,7 @@ If a service principal or team needs access (for example, the identity that will
 fdw dbt init SalesWH ./sales_dbt
 ```
 
-This writes `dbt_project.yml`, `profiles.yml`, `requirements.txt`, `.gitignore`, the standard dbt directories, a sample model, a `README.md`, and a `models/staging/_sources.yml` (a placeholder, or **real source definitions** with `--with-sources`: see [Step 4](#step-4-provision-all-your-dbt-sources)). If `git` is on your PATH and the folder is not already a repository, `git init` runs automatically. No dbt installation is required to scaffold - `fabric-dw` writes every file itself.
+This writes `dbt_project.yml`, `profiles.yml`, `requirements.txt`, `.gitignore`, the standard dbt directories, a sample model, a `README.md`, and a `models/staging/_sources.yml` (a placeholder, or **real source definitions** with `--with-sources` - see [Step 4](#step-4-provision-all-your-dbt-sources)). If `git` is on your PATH and the folder is not already a repository, `git init` runs automatically. No dbt installation is required to scaffold - `fabric-dw` writes every file itself.
 
 ### The connection is configured for you
 
