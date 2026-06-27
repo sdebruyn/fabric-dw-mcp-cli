@@ -8,8 +8,6 @@ Manage custom SQL Pools at the workspace level with sub-resource commands that m
 
 **Targets:** Workspace (not item-specific)
 
----
-
 ## CLI
 
 ### sql-pools create
@@ -45,8 +43,6 @@ fdw -w MyWorkspace sql-pools create \
   --classifier-value "Load"
 ```
 
----
-
 ### sql-pools delete
 
 **Targets:** Workspace (not item-specific)
@@ -70,8 +66,6 @@ fdw [-w WORKSPACE] sql-pools delete [OPTIONS]
 fdw -w MyWorkspace --yes sql-pools delete --name ETL
 ```
 
----
-
 ### sql-pools disable
 
 **Targets:** Workspace (not item-specific)
@@ -89,8 +83,6 @@ fdw [-w WORKSPACE] sql-pools disable
 ```shell
 fdw -w MyWorkspace sql-pools disable
 ```
-
----
 
 ### sql-pools enable
 
@@ -110,8 +102,6 @@ fdw [-w WORKSPACE] sql-pools enable
 fdw -w MyWorkspace sql-pools enable
 ```
 
----
-
 ### sql-pools get
 
 **Targets:** Workspace (not item-specific)
@@ -129,8 +119,6 @@ fdw [-w WORKSPACE] sql-pools get
 ```shell
 fdw -w MyWorkspace sql-pools get
 ```
-
----
 
 ### sql-pools insights
 
@@ -157,8 +145,6 @@ fdw [-w WORKSPACE] sql-pools insights [OPTIONS] [WAREHOUSE]
 fdw -w MyWorkspace sql-pools insights SalesWH
 fdw -w MyWorkspace sql-pools insights SalesWH --ago 1h
 ```
-
----
 
 ### sql-pools list
 
@@ -204,8 +190,6 @@ about there being no custom pools:
 }
 ```
 
----
-
 ### sql-pools show
 
 **Targets:** Workspace (not item-specific)
@@ -227,8 +211,6 @@ fdw [-w WORKSPACE] sql-pools show --name POOL
 ```shell
 fdw -w MyWorkspace sql-pools show --name ETL
 ```
-
----
 
 ### sql-pools update
 
@@ -257,8 +239,6 @@ fdw [-w WORKSPACE] sql-pools update [OPTIONS]
 fdw -w MyWorkspace sql-pools update --name ETL --max-percent 40
 ```
 
----
-
 ## MCP tools
 
 All callers must hold the **workspace admin role**.
@@ -281,8 +261,6 @@ Add a new SQL pool to a workspace.
 
 **Returns:** `SqlPool`: the newly-created pool object.
 
----
-
 ### delete_sql_pool
 
 **Targets:** Workspace (not item-specific)
@@ -296,8 +274,6 @@ Delete an SQL pool from a workspace.
 
 **Returns:** `{ "deleted": true, "pool_name": str }`: confirmation.
 
----
-
 ### disable_sql_pools
 
 **Targets:** Workspace (not item-specific)
@@ -310,8 +286,6 @@ Disable custom SQL Pools for a workspace, preserving the pool configuration. Re-
 
 **Returns:** `SqlPoolsConfiguration`: the updated configuration.
 
----
-
 ### enable_sql_pools
 
 **Targets:** Workspace (not item-specific)
@@ -323,8 +297,6 @@ Enable custom SQL Pools for a workspace without modifying pool definitions.
 - `workspace` (`str`): workspace name or GUID.
 
 **Returns:** `SqlPoolsConfiguration`: the updated configuration.
-
----
 
 ### get_sql_pool
 
@@ -339,8 +311,6 @@ Return details for a single SQL pool by name.
 
 **Returns:** `SqlPool`: single pool object (fields as above).
 
----
-
 ### get_sql_pools_configuration
 
 **Targets:** Workspace (not item-specific)
@@ -352,8 +322,6 @@ Fetch the full SQL Pools configuration (enabled flag + pool list) for a workspac
 - `workspace` (`str`): workspace name or GUID.
 
 **Returns:** `SqlPoolsConfiguration`: object with `customSQLPoolsEnabled` (bool) and `customSQLPools` (list of pool objects, each with `name`, `maxResourcePercentage`, `isDefault`, `optimizeForReads`, and optional `classifier`).
-
----
 
 ### list_sql_pool_insights
 
@@ -371,8 +339,6 @@ Return SQL pool insight events from `queryinsights.sql_pool_insights`.
 
 **Returns:** `list[dict]`: array of SQL pool insight row objects.
 
----
-
 ### list_sql_pools
 
 **Targets:** Workspace (not item-specific)
@@ -384,8 +350,6 @@ Return the list of SQL pools for a workspace.
 - `workspace` (`str`): workspace name or GUID.
 
 **Returns:** `list[SqlPool]`: array of pool objects, each with `name`, `isDefault`, `maxResourcePercentage`, `optimizeForReads`, and optional `classifier`.
-
----
 
 ### update_sql_pool
 

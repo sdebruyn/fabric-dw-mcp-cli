@@ -8,8 +8,6 @@ Manage SQL tables on Microsoft Fabric Data Warehouses and SQL Analytics Endpoint
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
----
-
 ## CLI
 
 ### tables clear
@@ -29,8 +27,6 @@ fdw [-w WORKSPACE] tables clear [OPTIONS] [WAREHOUSE] QUALIFIED_NAME
 ```shell
 fdw -w MyWorkspace --yes tables clear SalesWH dbo.staging_load
 ```
-
----
 
 ### tables columns
 
@@ -60,8 +56,6 @@ fdw -w MyWorkspace tables columns SalesWH dbo.Sales
  3        label   NVARCHAR(100) True      False        False        Latin1_General_CI_AS
 ```
 
----
-
 ### tables clear
 
 **Targets:** Data Warehouse only
@@ -79,8 +73,6 @@ fdw [-w WORKSPACE] tables clear [OPTIONS] [WAREHOUSE] QUALIFIED_NAME
 ```shell
 fdw -w MyWorkspace --yes tables clear SalesWH dbo.staging_load
 ```
-
----
 
 ### tables cluster-by
 
@@ -118,8 +110,6 @@ fdw -w MyWorkspace --yes tables cluster-by SalesWH dbo.orders \
 fdw -w MyWorkspace --yes tables cluster-by SalesWH dbo.orders
 ```
 
----
-
 ### tables cluster-columns
 
 **Targets:** Data Warehouse only
@@ -144,9 +134,6 @@ fdw -w MyWorkspace --json tables cluster-columns SalesWH dbo.orders
   {"column_name": "country", "clustering_ordinal": 2}
 ]
 ```
-
----
-
 
 ### tables clone
 
@@ -181,8 +168,6 @@ fdw -w MyWorkspace tables clone SalesWH \
   --at 2024-05-20T14:00:00
 ```
 
----
-
 ### tables count
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -204,8 +189,6 @@ fdw -w MyWorkspace --json tables count SalesWH dbo.orders
 ```json
 {"schema": "dbo", "name": "orders", "row_count": 999999}
 ```
-
----
 
 ### tables create
 
@@ -319,8 +302,6 @@ fdw -w MyWorkspace tables create SalesWH \
   --cluster-by CustomerID --cluster-by SaleDate
 ```
 
----
-
 ### tables delete
 
 **Targets:** Data Warehouse only
@@ -338,8 +319,6 @@ fdw [-w WORKSPACE] tables delete [OPTIONS] [WAREHOUSE] QUALIFIED_NAME
 ```shell
 fdw -w MyWorkspace --yes tables delete SalesWH dbo.orders_2026
 ```
-
----
 
 ### tables health-check
 
@@ -361,8 +340,6 @@ fdw [-w WORKSPACE] tables health-check [ENDPOINT] QUALIFIED_NAME
 fdw -w MyWorkspace tables health-check MySqlEndpoint dbo.FactSales
 fdw -w MyWorkspace --json tables health-check MySqlEndpoint dbo.FactSales
 ```
-
----
 
 ### tables list
 
@@ -392,8 +369,6 @@ fdw -w MyWorkspace tables list SalesWH --schema dbo
  dbo          customers 2026-01-10T08:00:00Z  2026-06-01T12:00:00Z
  dbo          orders    2026-02-01T09:00:00Z  2026-05-15T14:00:00Z
 ```
-
----
 
 ### tables load
 
@@ -502,8 +477,6 @@ fdw -w MyWorkspace tables load SalesWH dbo.events \
     --format csv --credential-type sas --secret "?sv=2021&..."
 ```
 
----
-
 ### tables read
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -537,8 +510,6 @@ fdw -w MyWorkspace tables read SalesWH dbo.orders --count 5
 ]
 ```
 
----
-
 ### tables rename
 
 **Targets:** Data Warehouse only
@@ -563,8 +534,6 @@ fdw [-w WORKSPACE] tables rename [OPTIONS] [ITEM] QUALIFIED_NAME
 fdw -w MyWorkspace tables rename SalesWH dbo.orders_2025 --new-name orders_archive_2025
 ```
 
----
-
 ## MCP tools
 
 ### clear_table
@@ -583,8 +552,6 @@ Truncate a SQL table (remove all rows, preserve structure).
 
 **Returns:** `{ "truncated": true }`: confirmation.
 
----
-
 ### clone_table
 
 **Targets:** Data Warehouse only
@@ -600,8 +567,6 @@ Create a zero-copy clone of a table using `CREATE TABLE … AS CLONE OF …`. On
 - `at` (`str | null`, optional): ISO-8601 UTC timestamp for a point-in-time clone (e.g. `2024-05-20T14:00:00`). Must be within the data-retention window. When omitted, the clone reflects the current state of the source table.
 
 **Returns:** `Table`: the newly-created cloned table record.
-
----
 
 ### get_table_columns
 
@@ -627,8 +592,6 @@ Return column metadata for a SQL table via `sys.columns`. Works on both Fabric D
 
 Results are ordered by ordinal position. Raises a `ToolError` if the table does not exist.
 
----
-
 ### count_table_rows
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -642,8 +605,6 @@ Return the total row count of a table via `SELECT COUNT_BIG(*)`.
 - `qualified_name` (`str`): dot-separated table name, e.g. `dbo.sales`.
 
 **Returns:** `{ "schema": str, "name": str, "row_count": int }`: the schema name, table name, and total row count.
-
----
 
 ### create_empty_table
 
@@ -681,8 +642,6 @@ Server-side file access is unreliable in MCP deployments, so CSV/Parquet schema 
 }
 ```
 
----
-
 ### create_table
 
 **Targets:** Data Warehouse only
@@ -703,8 +662,6 @@ When `cluster_by` is supplied the DDL becomes `CREATE TABLE … WITH (CLUSTER BY
 
 **Returns:** `Table`: the newly-created table record.
 
----
-
 ### delete_table
 
 **Targets:** Data Warehouse only
@@ -721,8 +678,6 @@ Drop a SQL table.
 
 **Returns:** `{ "dropped": true }`: confirmation.
 
----
-
 ### get_cluster_columns
 
 **Targets:** Data Warehouse only
@@ -736,8 +691,6 @@ Return the data-clustering columns of a table, ordered by clustering ordinal. Re
 - `qualified_name` (`str`): dot-separated table name, e.g. `dbo.sales`.
 
 **Returns:** `list[{ "column_name": str, "clustering_ordinal": int }]`: ordered by ascending `clustering_ordinal`.
-
----
 
 ### get_table_health_metrics
 
@@ -756,8 +709,6 @@ The proc is Generally Available (announced at Build 2026) but its output column 
 - `qualified_name` (`str`): dot-separated table name, e.g. `dbo.FactSales`.
 
 **Returns:** `{ "columns": list[str], "rows": list[list] }`: column names and rows passed through verbatim from the proc.
-
----
 
 ### import_table_from_url
 
@@ -807,8 +758,6 @@ Load data from a remote URL into an existing Data Warehouse table with control o
 
 **Returns:** `CopyIntoResult`: `{ "rows_loaded": int, "rows_rejected": int, "target": "schema.table" }`.
 
----
-
 ### list_tables
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -822,8 +771,6 @@ List SQL tables on a warehouse or SQL Analytics Endpoint.
 - `schema` (`str | null`, optional): when provided, only tables in this schema are returned.
 
 **Returns:** `list[Table]`: each with `schema_name`, `name`, `qualified_name`, `created`, `modified`.
-
----
 
 ### load_table_from_url
 
@@ -863,8 +810,6 @@ Load data into a Data Warehouse table via `COPY INTO` from a remote URL. For One
 
 **Returns:** `CopyIntoResult`: `{ "rows_loaded": int, "rows_rejected": int, "target": "schema.table" }`.
 
----
-
 ### read_table
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -880,8 +825,6 @@ Return up to `count` rows from a table as JSON-serialisable columns and rows.
 
 **Returns:** `{ "columns": list[str], "rows": list[list] }`: column names and row arrays.
 
----
-
 ### rename_table
 
 **Targets:** Data Warehouse only
@@ -896,8 +839,6 @@ Rename a SQL table via `sp_rename`. Only supported on Fabric Data Warehouses (SQ
 - `new_name` (`str`): new bare table name (no schema prefix), e.g. `sales_v2`.
 
 **Returns:** `Table`: the updated table record.
-
----
 
 ### set_cluster_columns
 

@@ -8,8 +8,6 @@ Inspect and manage running queries on Microsoft Fabric Data Warehouses and SQL A
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
----
-
 ## CLI
 
 ### queries connections
@@ -36,8 +34,6 @@ fdw -w MyWorkspace queries connections SalesWH
  10          2026-06-08T10:00:00Z  192.168.1.100       NTLM         TRUE            TCP            10
  20          2026-06-08T10:01:00Z  192.168.1.101       KERBEROS     FALSE           TCP            20
 ```
-
----
 
 ### queries frequent
 
@@ -67,8 +63,6 @@ fdw -w MyWorkspace queries frequent SalesWH --limit 20
 fdw -w MyWorkspace queries frequent SalesWH --ago 1h
 ```
 
----
-
 ### queries history
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -97,8 +91,6 @@ fdw -w MyWorkspace queries history SalesWH --limit 50 --since 2026-06-01T00:00:0
 fdw -w MyWorkspace queries history SalesWH --ago 1h
 ```
 
----
-
 ### queries kill
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -116,8 +108,6 @@ fdw [-w WORKSPACE] queries kill [WAREHOUSE] SESSION_ID
 ```shell
 fdw -w MyWorkspace --yes queries kill SalesWH 42
 ```
-
----
 
 ### queries long-running
 
@@ -147,8 +137,6 @@ fdw -w MyWorkspace queries long-running SalesWH
 fdw -w MyWorkspace queries long-running SalesWH --ago 2d
 ```
 
----
-
 ### queries running
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -172,8 +160,6 @@ fdw -w MyWorkspace queries running SalesWH
  ----------- ----------- --------------------- -------------------------
  42          user@co.io  2026-06-08T10:01:00Z  SELECT * FROM sales ...
 ```
-
----
 
 ### queries sessions
 
@@ -203,8 +189,6 @@ fdw -w MyWorkspace queries sessions SalesWH
 fdw -w MyWorkspace queries sessions SalesWH --ago 90m
 ```
 
----
-
 ## MCP tools
 
 The following four tools query the `queryinsights` schema DMVs via TDS. They share the same parameter shape - `workspace`, `warehouse`, optional `limit`, optional `since`, and optional `until`.
@@ -223,8 +207,6 @@ Terminate a session on a warehouse.
 
 **Returns:** `{ "killed": true, "session_id": int }`: confirmation with the terminated session ID.
 
----
-
 ### list_connections
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -237,8 +219,6 @@ Return all active SQL connections on a warehouse or SQL Analytics Endpoint. Quer
 - `warehouse` (`str`): warehouse name or GUID.
 
 **Returns:** `list[Connection]`: array of connection objects, each with `session_id`, `connect_time`, `client_net_address`, `auth_scheme`, `encrypt_option`, and `net_transport`.
-
----
 
 ### list_frequent_queries
 
@@ -256,8 +236,6 @@ Return frequently-run queries from `queryinsights.frequently_run_queries`.
 
 **Returns:** `list[dict]`: array of frequently-run query row objects. Elapsed-time fields (e.g. `avg_total_elapsed_time_ms`, `min_run_total_elapsed_time_ms`, `max_run_total_elapsed_time_ms`, `last_run_total_elapsed_time_ms`) are JSON `number` (float); count fields remain `integer`.
 
----
-
 ### list_long_running_queries
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -273,8 +251,6 @@ Return long-running queries from `queryinsights.long_running_queries`.
 - `until` (`str | null`, optional): ISO-8601 upper bound on `last_run_start_time`.
 
 **Returns:** `list[dict]`: array of long-running query row objects. `median_total_elapsed_time_ms` and `last_run_total_elapsed_time_ms` are JSON `number` (float); `number_of_runs` remains `integer`.
-
----
 
 ### list_request_history
 
@@ -292,8 +268,6 @@ Return completed SQL requests from `queryinsights.exec_requests_history`.
 
 **Returns:** `list[dict]`: array of request-history row objects. Elapsed-time and CPU-time fields (e.g. `total_elapsed_time_ms`, `allocated_cpu_time_ms`) are JSON `number` (float) because Fabric returns fractional millisecond values.
 
----
-
 ### list_running_queries
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -306,8 +280,6 @@ Return all currently-executing queries on a warehouse.
 - `warehouse` (`str`): warehouse name or GUID.
 
 **Returns:** `list[RunningQuery]`: array of query objects, each with `session_id`, `request_id`, `status`, `start_time`, `total_elapsed_time` (ms), `login_name`, `command`, and `query_text`.
-
----
 
 ### list_session_history
 

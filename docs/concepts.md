@@ -6,8 +6,6 @@ title: Concepts
 
 The sections below describe cross-cutting concepts that apply to all `fdw`/`fabric-dw` commands: how the CLI distinguishes between item kinds, which global flags are available on every invocation, and how the target workspace is resolved.
 
----
-
 ## Item targets: Data Warehouse vs SQL Analytics Endpoint
 
 Fabric has two SQL-surface item kinds:
@@ -21,8 +19,6 @@ Each command below is labelled with one of:
 - **`Targets: Data Warehouse only`**: the command is blocked on SQL Analytics Endpoints (either by an explicit client-side guard in the source code, because it requires write/DDL capability that endpoints do not have, or because it calls warehouse-scoped REST API paths that are not available for SQL Analytics Endpoints).
 - **`Targets: SQL Analytics Endpoint`**: the command operates on SQL Analytics Endpoints specifically (not on Data Warehouses).
 - **`Targets: Workspace (not item-specific)`**: the command operates at the workspace level and does not target a specific DW or SQL Analytics Endpoint item.
-
----
 
 ## Global options
 
@@ -39,8 +35,6 @@ These options are placed immediately after `fabric-dw` (or `fdw`), before the co
 
 The `--auth` flag and the `FABRIC_AUTH` environment variable accept the same three values. See [Authentication](install.md#authentication) for the full credential chain.
 
----
-
 ## Selecting a workspace
 
 Every command that operates on a workspace (everything except `workspaces list` and `cache clear`) resolves the target workspace from the following sources, in priority order:
@@ -55,8 +49,6 @@ The `workspaces` command group is an exception: `workspaces get` and `workspaces
 !!! note "-A / --all-workspaces interaction"
 
     Passing `-A` on the two list commands that support it (`warehouses list`, `sql-endpoints list`) explicitly scans every visible workspace. This flag is mutually exclusive with `-w` (an explicit `-w` conflicts with scanning all workspaces), but it does **not** conflict with a configured default workspace or `FABRIC_DW_DEFAULT_WORKSPACE`: the configured default is silently ignored when `-A` is used.
-
----
 
 ## Name-or-GUID resolution
 

@@ -6,8 +6,6 @@ title: Troubleshooting
 
 This page collects failure modes that real users have encountered, with the exact error message and the resolution.
 
----
-
 ## `az login` expired / no token
 
 **Error you see:**
@@ -40,8 +38,6 @@ Then retry your `fabric-dw` command. The credential chain picks up the refreshed
 
 Or use any other source listed in [Authentication](authentication.md). Set `AZURE_LOG_LEVEL=debug` to see which source the chain tried.
 
----
-
 ## 403 PermissionDenied on a workspace call
 
 **Error you see:**
@@ -59,8 +55,6 @@ fabric_dw.exceptions.PermissionDenied: permission was denied on the object ...
 **What happened:** Your account does not have the required role in the Fabric workspace. Workspace-level REST calls require at least the **Contributor** role; some write operations require **Member** or **Admin**.
 
 **Resolution:** Ask the workspace owner to grant you Contributor (or Member) access in the Fabric portal under **Workspace settings → People and groups**.
-
----
 
 ## Capacity paused - cryptic 5xx or 404 errors
 
@@ -87,8 +81,6 @@ az resource show \
 ```
 
 Alternatively, resume from the [Fabric portal](https://app.fabric.microsoft.com) under **Capacity settings**.
-
----
 
 ## mssql-python "authentication failed"
 
@@ -135,8 +127,6 @@ Re-authenticate via whichever credential source your chain ended up using:
 
 After re-authenticating, retry your command. `FabricSqlClient` opens a fresh connection and picks up the new token automatically. Set `AZURE_LOG_LEVEL=debug` if you are unsure which credential source the chain selected.
 
----
-
 ## 429 RateLimitedError
 
 **Error you see:**
@@ -155,8 +145,6 @@ fabric_dw.exceptions.RateLimitedError: Received 429 10 consecutive times for htt
 
 The client automatically retries on each 429 and waits exactly as long as the server requests, so transient throttling is usually transparent.
 
----
-
 ## Restore points not appearing
 
 **Symptom:** `fdw snapshots list` returns an empty list, or user-defined restore points that you created are not visible.
@@ -171,8 +159,6 @@ The client automatically retries on each 429 and waits exactly as long as the se
 1. Confirm the capacity is Active (see [Capacity paused](#capacity-paused-cryptic-5xx-or-404-errors) above).
 2. Create a new user-defined restore point while the capacity is Active.
 3. If you expected a system restore point from a period when the capacity was paused, that point does not exist - it was not created.
-
----
 
 ## MCP server doesn't show tools
 

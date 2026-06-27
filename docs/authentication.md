@@ -20,8 +20,6 @@ fdw -w "Sales Workspace" warehouses list
 
 If neither of those works for you, read on for the alternatives.
 
----
-
 `fabric-dw` selects a credential source via a 3-layer resolution stack:
 
 | Layer | Mechanism | Description |
@@ -40,8 +38,6 @@ Valid values: `default`, `interactive`, `sp` (case-insensitive).
 
 !!! note "Empty-value semantics"
     An empty or whitespace-only `FABRIC_AUTH` (e.g. `FABRIC_AUTH=`) is treated as absent and falls through to `config.toml` / the built-in default. An unrecognised non-empty value (e.g. `FABRIC_AUTH=typo`) raises a configuration error immediately at server start so the credential is never silently wrong.
-
----
 
 ## Interactive browser sign-in (zero setup)
 
@@ -89,8 +85,6 @@ Then grant the same delegated permissions as the shared app:
 !!! note "Tenant pinning"
     When `FABRIC_INTERACTIVE_TENANT_ID` is set, `FABRIC_AUTH=interactive` passes it as `tenant_id` to [`InteractiveBrowserCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.interactivebrowsercredential?WT.mc_id=MVP_310840) and the default-mode browser fallback also receives it as `interactive_browser_tenant_id`. Useful when your tenant policy requires a specific tenant context at sign-in time.
 
----
-
 ## `FABRIC_AUTH=default`: DefaultAzureCredential chain
 
 When `FABRIC_AUTH` is `default` (or unset), the package delegates to [`azure-identity`'s `DefaultAzureCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.defaultazurecredential?WT.mc_id=MVP_310840). It walks the following sources **in order** and stops at the first one that returns a usable token:
@@ -104,8 +98,6 @@ When `FABRIC_AUTH` is `default` (or unset), the package delegates to [`azure-ide
 7. **Azure PowerShell**: token from `Connect-AzAccount` - see [`AzurePowerShellCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.azurepowershellcredential?WT.mc_id=MVP_310840)
 8. **Interactive browser**: falls back to browser sign-in using the [shared app](#interactive-browser-sign-in-zero-setup) (or your override via `FABRIC_INTERACTIVE_CLIENT_ID`) - see [`InteractiveBrowserCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.interactivebrowsercredential?WT.mc_id=MVP_310840)
 
----
-
 ## `FABRIC_AUTH=sp`: Service principal
 
 Set the following environment variables:
@@ -117,8 +109,6 @@ Set the following environment variables:
 | `AZURE_CLIENT_SECRET` | A client secret for the app |
 
 The package uses [`ClientSecretCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.clientsecretcredential?WT.mc_id=MVP_310840) with these values. The shared `fabric-dw` app is **not** used in SP mode - you must supply your own app registration and secret.
-
----
 
 ## Environment variable reference
 
@@ -144,8 +134,6 @@ the CLI, an explicit `--auth` flag on the command line takes the highest priorit
 ```shell
 fdw --auth sp warehouses list   # override: use service-principal for this invocation
 ```
-
----
 
 ## Debugging
 

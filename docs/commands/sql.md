@@ -8,8 +8,6 @@ SQL execution and query-plan capture against a Fabric Data Warehouse or SQL Anal
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
----
-
 ## CLI
 
 ### sql exec
@@ -46,8 +44,6 @@ fdw -w MyWorkspace --json sql exec SalesWH -f ./queries/report.sql
 ```json
 {"columns": ["id", "name"], "rows": [[1, "Alice"], [2, "Bob"]], "rowcount": 2}
 ```
-
----
 
 ### sql plan
 
@@ -140,8 +136,6 @@ Unknown operators degrade gracefully; the library renders what it knows and skip
 
 **Attribution:** The vendored assets (JS and CSS) are from [html-query-plan 2.6.1](https://github.com/JustinPealing/html-query-plan) by Justin Pealing, released under the MIT licence.  A copy of the licence is included in `src/fabric_dw/assets/html_query_plan/LICENSE.txt`.
 
----
-
 ##### svg
 
 `--format svg` renders the execution plan to an **SVG image** by piping the generated DOT through the system `dot` binary (`dot -Tsvg`).
@@ -153,8 +147,6 @@ Unknown operators degrade gracefully; the library renders what it knows and skip
     When the `dot` binary is not found, the command exits with a clear error and an install hint rather than crashing.
 
 A `.svg` extension is recommended for the `-o`/`--output` file.  SVG can be opened directly in any web browser or vector graphics editor.
-
----
 
 ##### dot
 
@@ -179,8 +171,6 @@ digraph stmt0 {
 }
 ```
 
----
-
 ##### mermaid
 
 `--format mermaid` renders the execution plan as a [Mermaid](https://mermaid.js.org/) `flowchart TD` diagram (plain text, no extra dependencies).
@@ -202,8 +192,6 @@ Each operator appears as a node labelled with its physical op name (and logical 
       S0N0 --> S0N2
   ```
   ````
-
----
 
 ## MCP tools
 
@@ -228,8 +216,6 @@ Multi-statement batches are supported; only the **last** result set is returned.
 - `query` (`str`): SQL statement or batch to execute.
 
 **Returns:** `{ "columns": list[str], "rows": list[list[Any]], "rowcount": int }`: `rowcount` is `-1` when the driver does not report a count.
-
----
 
 ### get_query_plan
 

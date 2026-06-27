@@ -10,8 +10,6 @@ A restore point captures the state of a warehouse at a point in time. User-defin
 
 **Targets:** Data Warehouse only
 
----
-
 ## CLI
 
 ### restore-points create
@@ -39,8 +37,6 @@ fdw -w MyWorkspace restore-points create SalesWH \
   --description "Pre-migration checkpoint"
 ```
 
----
-
 ### restore-points delete
 
 **Targets:** Data Warehouse only
@@ -59,8 +55,6 @@ fdw [-w WORKSPACE] restore-points delete WAREHOUSE RESTORE_POINT_ID
 fdw -w MyWorkspace --yes restore-points delete SalesWH 1726617378000
 ```
 
----
-
 ### restore-points get
 
 **Targets:** Data Warehouse only
@@ -78,8 +72,6 @@ fdw [-w WORKSPACE] restore-points get WAREHOUSE RESTORE_POINT_ID
 ```shell
 fdw -w MyWorkspace restore-points get SalesWH 1726617378000
 ```
-
----
 
 ### restore-points list
 
@@ -105,8 +97,6 @@ fdw -w MyWorkspace restore-points list SalesWH
  1726617378000   Before migration   UserDefined    2024-10-18T22:17:09Z
 ```
 
----
-
 ### restore-points rename
 
 **Targets:** Data Warehouse only
@@ -129,8 +119,6 @@ fdw [-w WORKSPACE] restore-points rename [OPTIONS] WAREHOUSE RESTORE_POINT_ID NE
 fdw -w MyWorkspace restore-points rename SalesWH 1726617378000 "Post-migration backup"
 ```
 
----
-
 ### restore-points restore
 
 **Targets:** Data Warehouse only
@@ -149,8 +137,6 @@ fdw [-w WORKSPACE] restore-points restore WAREHOUSE RESTORE_POINT_ID
 fdw -w MyWorkspace --yes restore-points restore SalesWH 1726617378000
 ```
 
----
-
 ## MCP tools
 
 ### create_restore_point
@@ -168,8 +154,6 @@ Create a restore point for a warehouse at the current timestamp.
 
 **Returns:** `RestorePoint`: the newly-created restore point object.
 
----
-
 ### delete_restore_point
 
 **Targets:** Data Warehouse only
@@ -183,8 +167,6 @@ Delete a user-defined restore point. System-created restore points cannot be del
 - `restore_point_id` (`str`): the restore point ID string.
 
 **Returns:** `{ "deleted": true, "restore_point_id": str }`: confirmation.
-
----
 
 ### get_restore_point
 
@@ -200,8 +182,6 @@ Return a single restore point by ID.
 
 **Returns:** `RestorePoint`: the restore point object.
 
----
-
 ### list_restore_points
 
 **Targets:** Data Warehouse only
@@ -214,8 +194,6 @@ Return all restore points for a warehouse.
 - `warehouse` (`str`): warehouse name or GUID.
 
 **Returns:** `list[RestorePoint]`: array of restore point objects.
-
----
 
 ### restore_warehouse_in_place
 
@@ -230,8 +208,6 @@ Restore a warehouse in-place to a restore point. **This is a destructive, long-r
 - `restore_point_id` (`str`): the restore point ID string to restore to.
 
 **Returns:** `{ "restored": true, "restore_point_id": str }`: confirmation.
-
----
 
 ### update_restore_point
 

@@ -8,8 +8,6 @@ Manage shell completion scripts. See [Shell Completion](../completion.md) for fu
 
 **Targets:** Workspace (not item-specific)
 
----
-
 ## CLI
 
 ### completion install

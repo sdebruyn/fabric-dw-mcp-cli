@@ -219,8 +219,6 @@ fdw --auth sp warehouses list
 
 See [Authentication](../authentication.md) for the full list of valid modes and their requirements.
 
----
-
 ## CLI
 
 ### config clear
@@ -232,8 +230,6 @@ Wipe **all** configuration defaults.
 ```
 fdw config clear
 ```
-
----
 
 ### config set
 
@@ -271,8 +267,6 @@ fdw config set logging level DEBUG
 fdw config set mcp workspace-allowlist "Sales WS,Finance WS"
 ```
 
----
-
 ### config show
 
 Print the current defaults.
@@ -294,8 +288,6 @@ fdw config show
 workspace  MyWorkspace
 warehouse  MyWarehouse
 ```
-
----
 
 ### config unset
 

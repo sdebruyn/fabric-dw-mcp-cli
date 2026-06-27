@@ -8,8 +8,6 @@ Manage Microsoft Fabric Data Warehouse snapshots.
 
 **Targets:** Data Warehouse only
 
----
-
 ## CLI
 
 ### snapshots create
@@ -36,8 +34,6 @@ fdw -w MyWorkspace snapshots create SalesWH snap-2026-06-08 \
   --snapshot-dt 2026-06-08T00:00:00Z
 ```
 
----
-
 ### snapshots delete
 
 **Targets:** Data Warehouse only
@@ -55,8 +51,6 @@ fdw [-w WORKSPACE] snapshots delete SNAPSHOT
 ```shell
 fdw -w MyWorkspace --yes snapshots delete snap-old
 ```
-
----
 
 ### snapshots list
 
@@ -82,8 +76,6 @@ fdw -w MyWorkspace snapshots list SalesWH
  snap-2026-06-01  d1e2...      2026-06-01T00:00:00Z
 ```
 
----
-
 ### snapshots rename
 
 **Targets:** Data Warehouse only
@@ -105,8 +97,6 @@ fdw [-w WORKSPACE] snapshots rename [OPTIONS] SNAPSHOT NEW_NAME
 ```shell
 fdw -w MyWorkspace snapshots rename snap-2026-06-01 snap-june-2026
 ```
-
----
 
 ### snapshots roll
 
@@ -131,8 +121,6 @@ fdw -w MyWorkspace snapshots roll SalesWH snap-june-2026 \
   --at 2026-06-08T12:00:00Z
 ```
 
----
-
 ## MCP tools
 
 ### create_snapshot
@@ -151,8 +139,6 @@ Create a new warehouse snapshot.
 
 **Returns:** `WarehouseSnapshot`: the newly-created snapshot object.
 
----
-
 ### delete_snapshot
 
 **Targets:** Data Warehouse only
@@ -166,8 +152,6 @@ Delete a warehouse snapshot.
 
 **Returns:** `{ "deleted": true, "snapshot_id": str }`: confirmation with the snapshot GUID.
 
----
-
 ### list_snapshots
 
 **Targets:** Data Warehouse only
@@ -180,8 +164,6 @@ Return all snapshots belonging to a warehouse.
 - `warehouse` (`str`): warehouse name or GUID.
 
 **Returns:** `list[WarehouseSnapshot]`: array of snapshot objects, each with `id`, `displayName`, `parentWarehouseId`, and `snapshotDateTime`.
-
----
 
 ### rename_snapshot
 
@@ -197,8 +179,6 @@ Rename a warehouse snapshot and optionally update its description.
 - `description` (`str | null`, optional): new description; omit to leave unchanged.
 
 **Returns:** `WarehouseSnapshot`: the updated snapshot object.
-
----
 
 ### roll_snapshot_timestamp
 

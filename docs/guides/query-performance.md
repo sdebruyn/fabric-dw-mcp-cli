@@ -12,8 +12,6 @@ A task-oriented walkthrough for using `fabric-dw` (binary alias **`fdw`**) to fi
 
     The [`query-optimizer`](../skills.md#query-optimizer) Agent Skill automates exactly this single-query workflow - capture the plan, pull history, audit statistics, inspect clustering, then propose or apply fixes. This page is the human-facing version of the same loop, followed by hand at the terminal. For the **warehouse-wide** angle (hotspots across every query, SQL-pool pressure, caching health) see the [`warehouse-performance`](../skills.md#warehouse-performance) skill and its companion [Warehouse performance guide](warehouse-performance.md).
 
----
-
 ## Overview & when to use this guide
 
 Reach for this guide when a query, report, or dashboard is slow and you want a repeatable method to find out *why* and make it faster. The loop is:
@@ -31,8 +29,6 @@ Every command works both from the CLI and from the MCP server; the MCP tool that
 
 Throughout, the workspace comes from the global `-w`/`--workspace` option (or `FABRIC_DW_DEFAULT_WORKSPACE`, or the configured default; see [Selecting a workspace](../concepts.md#selecting-a-workspace)). The warehouse or endpoint is an **optional positional** `[WAREHOUSE]`/`[ITEM]` that falls back to the configured default - there is no positional `<workspace>` argument.
 
----
-
 ## Prerequisites & permissions
 
 | You want to… | You need |
@@ -48,8 +44,6 @@ The `queryinsights` views are documented in [Query insights in Fabric Data Wareh
 
     The `queryinsights.*` views are **not populated immediately** on a brand-new warehouse and completed queries lag behind real time. If a view comes back empty on a fresh item, give it time and re-run. See [Caveats & limits](#caveats-limits).
 
----
-
 ## Set your defaults
 
 Store the workspace and warehouse once so you do not repeat them on every command:
@@ -60,8 +54,6 @@ fdw config set warehouse SalesWH
 ```
 
 The rest of this guide assumes these defaults are set, so the examples omit `-w MyWorkspace` and the warehouse positional. Any command still accepts an explicit `-w`/`--workspace` or a positional `[WAREHOUSE]`/`[ITEM]` to override them. See [Configuration & defaults](../commands/config.md).
-
----
 
 ## Step 1 - Investigate live activity
 
@@ -79,8 +71,6 @@ fdw queries connections
 
 If a live query is clearly runaway and you have Admin rights, jump straight to [Step 9 - Mitigate runaway queries](#step-9-mitigate-runaway-queries). Otherwise, move on to the history views to build a picture over time.
 
----
-
 ## Step 2 - Review query history
 
 Live DMVs only show the present moment. To see what *happened*, read the per-request and per-session history from Query Insights.
@@ -96,8 +86,6 @@ fdw queries sessions --since 2026-06-01T00:00:00 --until 2026-06-08T00:00:00
 Both commands accept `--limit` (1–10 000, default 100), `--since`, and `--until` (ISO-8601). `queries history` (MCP [`list_request_history`](../commands/queries.md#list_request_history)) is the raw per-request feed - one row per execution - carrying the columns you will lean on for diagnosis: `total_elapsed_time_ms`, `data_scanned_remote_storage_mb`, `data_scanned_memory_mb`, `data_scanned_disk_mb`, `result_cache_hit`, `query_hash`, and `label`. `queries sessions` (MCP [`list_session_history`](../commands/queries.md#list_session_history)) rolls the same activity up per session.
 
 These are the **raw** insight views. Step 3 uses the **aggregated** views that rank queries server-side. The distinction matters - see [aggregated vs raw views](https://learn.microsoft.com/fabric/data-warehouse/guidelines-warehouse-performance?WT.mc_id=MVP_310840#query-metadata-views).
-
----
 
 ## Step 3 - Find the worst offenders
 
@@ -121,8 +109,6 @@ fdw sql-pools insights
 Microsoft Learn shows how to combine these views to find top consumers - top CPU via `allocated_cpu_time_ms`, most-data-scanned via `data_scanned_remote_storage_mb`, and frequent/long-running by command substring: see the [Query insights examples](https://learn.microsoft.com/fabric/data-warehouse/query-insights?WT.mc_id=MVP_310840#examples) and the [performance guidelines](https://learn.microsoft.com/fabric/data-warehouse/guidelines-warehouse-performance?WT.mc_id=MVP_310840#query-performance).
 
 Pick one query from the top of these lists and carry it through the rest of the loop.
-
----
 
 ## Step 4 - Capture & read the execution plan
 
@@ -158,8 +144,6 @@ Representation (`--raw`/`--xml`, root `--json`, `--format mermaid|dot|svg|html`)
 
 Microsoft recommends reading `SHOWPLAN_XML` to understand a query and reserving query hints (e.g. `OPTION (FORCE DISTRIBUTED PLAN)`) as a last resort. Clustering inspection (`get_cluster_columns` / `set_cluster_columns`) is a deeper-dive lever beyond this guide's scope - the [`query-optimizer`](../skills.md#query-optimizer) skill handles it, and the cluster columns concept is covered in the [performance guidelines](https://learn.microsoft.com/fabric/data-warehouse/guidelines-warehouse-performance?WT.mc_id=MVP_310840#query-performance).
 
----
-
 ## Step 5 - Diagnose root cause from history columns
 
 Cross-reference the plan with the numbers from `queries history`. The key columns:
@@ -186,8 +170,6 @@ fdw sql exec -q "SELECT TOP 20 submit_time, total_elapsed_time_ms, data_scanned_
 ```
 
 Using a **query label** to track and compare one query across executions is a first-class Microsoft pattern - see [Query labeling](https://learn.microsoft.com/fabric/data-warehouse/query-label?WT.mc_id=MVP_310840).
-
----
 
 ## Step 6 - Check & fix statistics
 
@@ -220,8 +202,6 @@ These map to MCP [`create_statistics`](../commands/statistics.md#create_statisti
 
 Microsoft recommends creating/updating single-column histogram statistics **during maintenance windows**, so user `SELECT`s do not pay for synchronous auto-stats creation, focusing on columns used in `GROUP BY` / `ORDER BY` / `WHERE` / `JOIN`, and refreshing after big data changes. See [Statistics in Fabric Data Warehouse](https://learn.microsoft.com/fabric/data-warehouse/statistics?WT.mc_id=MVP_310840).
 
----
-
 ## Step 7 - Improve the query
 
 With statistics healthy, turn to the query text itself. Common, high-leverage rewrites:
@@ -235,8 +215,6 @@ Re-run the improved query through `sql exec` with a label (and any hint):
 ```shell
 fdw sql exec -q "SELECT s.id, s.amount FROM dbo.Sales s JOIN dbo.Customer c ON s.cust_id = c.id WHERE c.region = 'EU' OPTION (LABEL='sales-eu-report')"
 ```
-
----
 
 ## Step 8 - Verify the improvement
 
@@ -265,8 +243,6 @@ Confirm the fix actually helped, on the **warm** path.
 
 A `result_cache_hit = true` in `queries history` on the second and later runs confirms the cache is doing its job.
 
----
-
 ## Step 9 - Mitigate runaway queries
 
 When a live query is clearly out of control and you have Admin rights, terminate its session. `KILL` is **Admin-only** and **destructive**: `queries kill` prompts unless `-y` is passed.
@@ -280,8 +256,6 @@ fdw --yes queries kill SalesWH 42
 ```
 
 `queries kill` maps to MCP [`kill_session`](../commands/queries.md#kill_session), which is write-gated. Identifying and killing a long-running query via DMVs is the documented incident path - see [Monitor using DMVs](https://learn.microsoft.com/fabric/data-warehouse/monitor-using-dmv?WT.mc_id=MVP_310840).
-
----
 
 ## Worked example - end to end
 
@@ -316,8 +290,6 @@ fdw sql exec -q "SELECT TOP 10 submit_time, total_elapsed_time_ms, data_scanned_
 
 Median elapsed time on the warm runs drops once the statistic gives the optimizer an accurate estimate and the implicit conversion is gone. Because the report runs identically every night, enabling `settings result-set-caching SalesWH on` lets unchanged re-runs return instantly.
 
----
-
 ## MCP equivalents
 
 The same loop, driven by an AI assistant. Every step above maps to one MCP tool - the [`query-optimizer`](../skills.md#query-optimizer) skill chains exactly these.
@@ -344,8 +316,6 @@ The same loop, driven by an AI assistant. Every step above maps to one MCP tool 
 
 The mutating MCP tools (`create_statistics`, `update_statistics`, `delete_statistics`, `set_result_set_caching`, `kill_session`) are gated behind the server's write-guard (`FABRIC_MCP_ALLOW_WRITES` / `FABRIC_MCP_ALLOW_DESTRUCTIVE`) and do **not** raise a user dialog, so an AI assistant must confirm with you before calling them.
 
----
-
 ## Caveats & limits
 
 - **Query Insights lag.** Completed queries do not appear in `queryinsights.*` instantly, and the views are empty for a period on a new warehouse. Re-run if a view comes back empty.
@@ -360,8 +330,6 @@ The mutating MCP tools (`create_statistics`, `update_statistics`, `delete_statis
 - **Result-set cache cooldown has no API** ([#595](https://github.com/sdebruyn/fabric-dw-mcp-cli/issues/595)). This is distinct from the result-set-caching toggle and from the local lookup cache.
 - **Statement-type SQL-pool routing does not exist** ([#596](https://github.com/sdebruyn/fabric-dw-mcp-cli/issues/596)). The only routing key is the application-name classifier; do not imply statement-type routing.
 - **Data clustering** (`get_cluster_columns` / `set_cluster_columns`) is a deeper-dive topic handled by the [`query-optimizer`](../skills.md#query-optimizer) skill rather than expanded here.
-
----
 
 ## See also
 
