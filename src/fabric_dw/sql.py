@@ -800,7 +800,8 @@ def build_connection_string(
         raw = _set_key(raw, "Authentication", _MODE_TO_AD_AUTH[mode])
     cs = _set_key(raw, "Encrypt", "yes")
     cs = _set_key(cs, "TrustServerCertificate", "no")
-    return _set_key(cs, "Database", target.database)
+    cs = _set_key(cs, "Database", target.database)
+    return _set_key(cs, "APP", "fdw.debruyn.dev")
 
 
 def open_connection(

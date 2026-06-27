@@ -208,6 +208,28 @@ class TestBuildConnectionString:
         result = build_connection_string(target)
         assert result.count("Server=") == 1
 
+    def test_adds_app_name(self) -> None:
+        result = build_connection_string(_make_target())
+        assert "APP=fdw.debruyn.dev" in result
+        assert ";;" not in result
+
+    def test_app_name_not_duplicated_when_already_present(self) -> None:
+        target = _make_target(connection_string="Server=srv;APP=fdw.debruyn.dev")
+        result = build_connection_string(target)
+        assert result.count("APP=") == 1
+
+    def test_app_name_idempotent(self) -> None:
+        target = _make_target()
+        first = build_connection_string(target)
+        target2 = SqlTarget(
+            workspace_id=target.workspace_id,
+            database=target.database,
+            connection_string=first,
+        )
+        second = build_connection_string(target2)
+        assert first == second
+        assert first.count("APP=") == 1
+
 
 # ---------------------------------------------------------------------------
 # open_connection — sync, caller closes
