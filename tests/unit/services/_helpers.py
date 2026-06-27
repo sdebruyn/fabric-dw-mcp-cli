@@ -18,6 +18,7 @@ centralising here ensures that improvements to the mock contract (e.g. adding
 from __future__ import annotations
 
 import time
+from datetime import tzinfo
 from unittest.mock import AsyncMock, MagicMock
 
 from azure.core.credentials import AccessToken
@@ -106,6 +107,23 @@ def _make_conn_for_ddl() -> MagicMock:
     compatibility with the modules that already import it by name.
     """
     return _make_no_result_conn(rowcount=0)
+
+
+class _NoOffsetTz(tzinfo):
+    """Quasi-naive tzinfo: tzinfo is set but utcoffset() returns None.
+
+    Used in tests to exercise the quasi-naive guard in coerce_to_utc, which
+    treats such datetimes the same as naive ones (i.e. stamps them as UTC).
+    """
+
+    def utcoffset(self, _dt: object) -> None:
+        return None
+
+    def tzname(self, _dt: object) -> str:
+        return "NoOffset"
+
+    def dst(self, _dt: object) -> None:
+        return None
 
 
 class _FakeRow:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, tzinfo
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,7 +10,12 @@ import pytest
 from fabric_dw.exceptions import ItemKindError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import Statistic, StatisticDetails, WarehouseKind
 from fabric_dw.services import statistics
-from tests.unit.services._helpers import _make_conn, _make_conn_for_ddl, _make_target
+from tests.unit.services._helpers import (
+    _make_conn,
+    _make_conn_for_ddl,
+    _make_target,
+    _NoOffsetTz,
+)
 
 # ---------------------------------------------------------------------------
 # Fixture data
@@ -229,17 +234,6 @@ class TestListStatistics:
 
     async def test_quasi_naive_last_updated_treated_as_utc(self) -> None:
         """Quasi-naive last_updated (tzinfo present but utcoffset() is None) is treated as UTC."""
-
-        class _NoOffsetTz(tzinfo):
-            def utcoffset(self, _dt: object) -> None:
-                return None
-
-            def tzname(self, _dt: object) -> str:
-                return "NoOffset"
-
-            def dst(self, _dt: object) -> None:
-                return None
-
         quasi_naive = datetime(2024, 6, 1, 12, 0, 0, tzinfo=_NoOffsetTz())
         row: tuple[object, ...] = (
             "stat_sales_id",
@@ -365,19 +359,36 @@ class TestShowStatistics:
                 f"{label}: bracket-quoted stat name found in SQL (regression): {call_sql!r}"
             )
 
+    async def test_naive_updated_converted_to_utc(self) -> None:
+        """A naive (tzinfo=None) STAT_HEADER Updated value is stamped as UTC."""
+        naive_dt = datetime(2024, 6, 1, 12, 0, 0)  # noqa: DTZ001
+        naive_header_row: tuple[object, ...] = (
+            "stat_sales_id",
+            naive_dt,
+            1000,
+            500,
+            10,
+            0.001,
+            4.0,
+            "NO",
+            None,
+            None,
+        )
+        target = _make_target()
+        header_conn = _make_conn([naive_header_row], _HEADER_COLS)
+        density_conn = _make_conn([_DENSITY_ROW], _DENSITY_COLS)
+        hist_conn = _make_conn([_HISTOGRAM_ROW], _HISTOGRAM_COLS)
+        with patch(
+            "fabric_dw.sql.open_connection",
+            side_effect=[header_conn, density_conn, hist_conn],
+        ):
+            result = await statistics.show_statistics(target, "dbo.sales", "stat_sales_id")
+        assert result.stat_header is not None
+        assert result.stat_header.updated is not None
+        assert result.stat_header.updated.tzinfo == UTC
+
     async def test_quasi_naive_updated_treated_as_utc(self) -> None:
         """Quasi-naive header Updated (tzinfo present but utcoffset() is None) is treated as UTC."""
-
-        class _NoOffsetTz(tzinfo):
-            def utcoffset(self, _dt: object) -> None:
-                return None
-
-            def tzname(self, _dt: object) -> str:
-                return "NoOffset"
-
-            def dst(self, _dt: object) -> None:
-                return None
-
         quasi_naive = datetime(2024, 6, 1, 12, 0, 0, tzinfo=_NoOffsetTz())
         quasi_header_row: tuple[object, ...] = (
             "stat_sales_id",

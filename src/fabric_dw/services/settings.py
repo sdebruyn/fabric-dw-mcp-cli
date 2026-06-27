@@ -131,6 +131,7 @@ def _row_to_settings(cols: list[str], row: tuple[object, ...]) -> WarehouseSetti
     data = dict(zip(cols, row, strict=True))
     raw_days = data["time_travel_retention_period_days"]
     raw_ts = data.get("time_travel_retention_cutoff_date")
+    # datetime is a subclass of date; the datetime branch must come first.
     if isinstance(raw_ts, datetime):
         cutoff: datetime | None = coerce_to_utc(raw_ts)
     elif isinstance(raw_ts, _date):
