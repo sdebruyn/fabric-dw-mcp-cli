@@ -28,6 +28,7 @@ string form is lower-case hex with hyphens).
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -429,3 +430,55 @@ class LookupCache:
             data = self._read()
             data[scope] = {}
             self._write(data)
+
+    # ------------------------------------------------------------------
+    # Async wrappers (off-loop dispatch via asyncio.to_thread)
+    # ------------------------------------------------------------------
+    # The sync public methods above acquire a FileLock (timeout=5 s) and do
+    # blocking file I/O.  Calling them directly from a coroutine on the shared
+    # MCP event loop can freeze the loop for up to 5 s when a concurrent
+    # process holds the OS lock.  The wrappers below push every blocking
+    # operation into a worker thread so the event loop stays responsive.
+    #
+    # The sync internals (locking, atomic replace, freshness checks) are
+    # unchanged; only the call path from async callers changes.
+
+    async def async_get_workspace(self, name: str) -> WorkspaceEntry | None:
+        """Run :meth:`get_workspace` off the event loop via asyncio.to_thread."""
+        return await asyncio.to_thread(self.get_workspace, name)
+
+    async def async_put_workspace(self, name: str, workspace_id: UUID) -> None:
+        """Run :meth:`put_workspace` off the event loop via asyncio.to_thread."""
+        await asyncio.to_thread(self.put_workspace, name, workspace_id)
+
+    async def async_get_item(self, workspace_id: UUID, name: str) -> ItemEntry | None:
+        """Run :meth:`get_item` off the event loop via asyncio.to_thread."""
+        return await asyncio.to_thread(self.get_item, workspace_id, name)
+
+    async def async_put_items(
+        self,
+        workspace_id: UUID,
+        entries: Iterable[tuple[str, ItemEntry]],
+    ) -> None:
+        """Run :meth:`put_items` off the event loop via asyncio.to_thread.
+
+        The *entries* iterable is materialised into a list on the calling
+        coroutine before the worker thread is entered.  This prevents a lazy
+        generator from being consumed inside the thread (where the generator
+        would have been created on a different thread than the one iterating it,
+        which is unsafe for most non-thread-safe generators).
+        """
+        items = list(entries)
+        await asyncio.to_thread(self.put_items, workspace_id, items)
+
+    async def async_counts(self) -> tuple[int, int]:
+        """Run :meth:`counts` off the event loop via asyncio.to_thread."""
+        return await asyncio.to_thread(self.counts)
+
+    async def async_clear(self) -> None:
+        """Run :meth:`clear` off the event loop via asyncio.to_thread."""
+        await asyncio.to_thread(self.clear)
+
+    async def async_clear_scope(self, scope: str) -> None:
+        """Run :meth:`clear_scope` off the event loop via asyncio.to_thread."""
+        await asyncio.to_thread(self.clear_scope, scope)

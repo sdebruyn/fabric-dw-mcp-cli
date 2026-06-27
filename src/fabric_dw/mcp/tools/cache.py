@@ -39,17 +39,18 @@ def register(mcp: FastMCP) -> None:
         ctx = get_context()
         cache = ctx.cache
 
-        # Read current counts via the public API before clearing.
-        ws_count, items_count = cache.counts()
+        # Read current counts via the async public API before clearing so the
+        # FileLock acquisition runs off the event loop.
+        ws_count, items_count = await cache.async_counts()
 
         if scope == "workspaces":
-            cache.clear_scope("workspaces")
+            await cache.async_clear_scope("workspaces")
             items_count = 0  # items not touched
         elif scope == "items":
-            cache.clear_scope("items")
+            await cache.async_clear_scope("items")
             ws_count = 0  # workspaces not touched
         else:  # "all"
-            cache.clear()
+            await cache.async_clear()
 
         _log.info(
             "clear_cache complete: scope=%r ws=%d items=%d",
