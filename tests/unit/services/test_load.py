@@ -380,6 +380,93 @@ class TestCopyIntoFromUrl:
         assert result.rows_loaded == 0
         assert result.rows_rejected == 0
 
+    async def test_truncate_first_runs_truncate_and_copy_in_one_transaction(self) -> None:
+        """#863: truncate_first=True runs TRUNCATE + COPY INTO via a single
+        deferred-commit transaction (run_statements), not two committed calls.
+
+        The reported rows_loaded is the COPY INTO rowcount, and run_query is not
+        used at all for this path.
+        """
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+
+        with (
+            patch("fabric_dw.services.load.run_statements") as mock_stmts,
+            patch("fabric_dw.services.load.run_query") as mock_query,
+        ):
+            mock_stmts.return_value = 42
+            result = await copy_into_from_url(
+                target,
+                "dbo",
+                "sales",
+                "https://example.com/f.parquet",
+                file_type="PARQUET",
+                truncate_first=True,
+            )
+
+        assert result.rows_loaded == 42
+        assert result.rows_rejected == 0
+        # run_query (separate commit per statement) must NOT be used here.
+        mock_query.assert_not_called()
+        # A single atomic batch: TRUNCATE then COPY INTO, deferred single commit.
+        mock_stmts.assert_called_once()
+        stmts = mock_stmts.call_args.args[1]
+        assert stmts[0] == "TRUNCATE TABLE [dbo].[sales]"
+        assert stmts[1].startswith("COPY INTO [dbo].[sales]")
+        assert mock_stmts.call_args.kwargs["commit_per_statement"] is False
+        assert mock_stmts.call_args.kwargs["fetch_last_rowcount"] is True
+
+    async def test_truncate_first_rowcount_none_treated_as_zero(self) -> None:
+        """run_statements returning None (driver could not report a count) → 0."""
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+
+        with patch("fabric_dw.services.load.run_statements", return_value=None):
+            result = await copy_into_from_url(
+                target,
+                "dbo",
+                "sales",
+                "https://example.com/f.parquet",
+                file_type="PARQUET",
+                truncate_first=True,
+            )
+
+        assert result.rows_loaded == 0
+
+    async def test_truncate_first_copy_failure_propagates_without_separate_commit(self) -> None:
+        """#863: a failed COPY (run_statements raises) surfaces as a FabricError.
+
+        Because TRUNCATE and COPY INTO share one deferred-commit transaction, a
+        COPY failure rolls the TRUNCATE back — the table keeps its existing rows.
+        """
+        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
+
+        target = SqlTarget(
+            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
+        )
+
+        driver_exc = FabricServerError("Invalid column name 'foo'", is_retriable=False)
+        with (
+            patch("fabric_dw.services.load.run_statements", side_effect=driver_exc),
+            pytest.raises(FabricError) as exc_info,
+        ):
+            await copy_into_from_url(
+                target,
+                "dbo",
+                "sales",
+                "https://example.com/f.parquet",
+                file_type="PARQUET",
+                truncate_first=True,
+            )
+
+        assert "COPY INTO [dbo].[sales] failed" in str(exc_info.value)
+
     async def test_secret_not_logged(self, caplog: pytest.LogCaptureFixture) -> None:
         """Secret values must never appear in log output (happy path)."""
         from fabric_dw.sql import SqlTarget  # noqa: PLC0415

@@ -86,9 +86,6 @@ _WAREHOUSE_HEALTH_CHECK_MSG = (
 )
 
 
-# _assert_not_sql_endpoint is imported from fabric_dw.services._helpers above.
-
-
 def _assert_sql_endpoint(kind: WarehouseKind) -> None:
     """Raise :class:`~fabric_dw.exceptions.ItemKindError` for non-SQL-Endpoint items.
 

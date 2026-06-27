@@ -229,7 +229,14 @@ class Resolver:
             display_name = str(raw_item.get("displayName", ""))
             if display_name.lower() != value.lower():
                 continue
-            # Found a name match — fetch full detail to get connection_string.
+            # Enforce the requested type client-side.  The server-side type
+            # filter narrows the result set but is not a hard guarantee: a
+            # same-named item of a different type (e.g. a lakehouse SQL
+            # endpoint alongside a warehouse) must be skipped so the first
+            # qualifying (name + type) match is returned.
+            if item_type and raw_type != item_type:
+                continue
+            # Found a name+type match — fetch full detail to get connection_string.
             # Break out of pagination immediately; no need to fetch remaining pages.
             item_id = UUID(str(raw_item["id"]))
             return await self._fetch_item_detail(ws_id, item_id)

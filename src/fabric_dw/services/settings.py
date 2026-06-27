@@ -75,8 +75,6 @@ RETENTION_MAX = 120
 _RETENTION_MIN = RETENTION_MIN
 _RETENTION_MAX = RETENTION_MAX
 
-# _assert_not_sql_endpoint is imported from fabric_dw.services._helpers above.
-
 # ---------------------------------------------------------------------------
 # SQL templates
 # ---------------------------------------------------------------------------

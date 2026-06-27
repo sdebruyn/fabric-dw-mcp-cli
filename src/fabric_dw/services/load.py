@@ -50,7 +50,7 @@ from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.identifiers import quote_identifier, validate_identifier
 from fabric_dw.models import CopyIntoResult, WarehouseKind
 from fabric_dw.services._helpers import _assert_not_sql_endpoint
-from fabric_dw.sql import SqlTarget, run_query
+from fabric_dw.sql import SqlTarget, run_query, run_statements
 
 __all__ = [
     "CopyIntoCredentialType",
@@ -150,9 +150,6 @@ class CopyIntoCsvOptions:
         self.encoding = encoding
         self.field_quote = field_quote
         self.row_terminator = row_terminator
-
-
-# _assert_not_sql_endpoint is imported from fabric_dw.services._helpers above.
 
 
 def _validate_staging_name(name: str) -> str:
@@ -662,10 +659,21 @@ async def copy_into_from_url(
     rejected_row_location: str | None = None,
     kind: WarehouseKind = WarehouseKind.WAREHOUSE,
     mode: object = None,
+    truncate_first: bool = False,
 ) -> CopyIntoResult:
     """Run ``COPY INTO`` from *url* into ``[schema].[table]``.
 
     This is the remote-URL path; no local staging is performed.
+
+    Atomic truncate-and-load (#863)
+    -------------------------------
+    When *truncate_first* is ``True``, a ``TRUNCATE TABLE`` and the ``COPY INTO``
+    run inside a **single explicit transaction on one connection** (no commit
+    between them).  If the ``COPY INTO`` fails, the ``TRUNCATE`` is rolled back
+    and the table keeps its existing rows — there is no window in which the
+    table is left empty by a failed load.  Fabric Data Warehouse supports both
+    ``TRUNCATE TABLE`` and ``COPY INTO`` (a DML statement) inside an explicit
+    transaction; any statement failure rolls back the whole transaction.
 
     Args:
         target: SQL connection target (warehouse connection string).
@@ -684,6 +692,10 @@ async def copy_into_from_url(
         rejected_row_location: URL for rejected row output.
         kind: Warehouse item kind.  SQL Endpoint items are rejected.
         mode: Credential mode for SQL authentication.
+        truncate_first: When ``True``, ``TRUNCATE TABLE [schema].[table]`` runs in
+            the same transaction as the ``COPY INTO`` so a failed load rolls the
+            truncate back (atomic replace-the-rows semantics).  The caller is
+            responsible for any destructive-operation authorization gate.
 
     Returns:
         A :class:`~fabric_dw.models.CopyIntoResult`.
@@ -735,7 +747,26 @@ async def copy_into_from_url(
 
         _mode = mode if isinstance(mode, CredentialMode) else CredentialMode.DEFAULT
         try:
-            _cols, rows = run_query(target, sql, mode=_mode, commit=True, fetch="rowcount")
+            if truncate_first:
+                # Atomic replace (#863): TRUNCATE + COPY INTO in ONE transaction
+                # on ONE connection.  commit_per_statement=False defers the single
+                # commit until both statements succeed, so a COPY failure rolls
+                # back the TRUNCATE and the table keeps its existing rows.
+                truncate_sql = (
+                    f"TRUNCATE TABLE {quote_identifier(schema)}.{quote_identifier(table)}"
+                )
+                raw_rowcount = run_statements(
+                    target,
+                    [truncate_sql, sql],
+                    mode=_mode,
+                    commit_per_statement=False,
+                    fetch_last_rowcount=True,
+                )
+            else:
+                # mssql-python rowcount path: run_query(fetch="rowcount") returns
+                # ([], [(N,)]) where N is cursor.rowcount.
+                _cols, rows = run_query(target, sql, mode=_mode, commit=True, fetch="rowcount")
+                raw_rowcount = rows[0][0] if rows and rows[0] else None
         except FabricServerError as exc:
             # run_query now wraps unmapped driver SQL errors (e.g. a column-type
             # mismatch in the COPY INTO target) as FabricServerError.  Re-raise
@@ -771,14 +802,10 @@ async def copy_into_from_url(
                     f"{type(exc).__name__} (details suppressed to protect credentials)"
                 )
             raise FabricError(safe_msg) from exc
-        # rows[0][0] is cursor.rowcount from run_query fetch="rowcount".
+        # raw_rowcount is cursor.rowcount from the COPY INTO (rows loaded).
         # ODBC rowcount is -1 when the driver cannot determine the count;
-        # treat any negative value as 0.
-        rows_loaded = (
-            int(rows[0][0])
-            if rows and rows[0] and rows[0][0] is not None and rows[0][0] >= 0
-            else 0
-        )
+        # treat any negative or missing value as 0.
+        rows_loaded = int(raw_rowcount) if raw_rowcount is not None and raw_rowcount >= 0 else 0
         rows_rejected = 0
         return rows_loaded, rows_rejected
 

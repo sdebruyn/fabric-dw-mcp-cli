@@ -306,7 +306,11 @@ async def test_import_table_from_url_append_table_exists_happy_path(
 async def test_import_table_from_url_truncate_with_flag_succeeds(
     mock_ctx, ctx_patch, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """import_table_from_url with if_exists=truncate + flag set → TRUNCATE + load."""
+    """import_table_from_url with if_exists=truncate + flag set → atomic TRUNCATE + load.
+
+    #863: the TRUNCATE is folded into the COPY INTO transaction (truncate_first=True)
+    rather than committed separately, so there is no destructive standalone truncate.
+    """
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     monkeypatch.delenv("FABRIC_MCP_READONLY", raising=False)
@@ -328,7 +332,7 @@ async def test_import_table_from_url_truncate_with_flag_succeeds(
         patch(
             "fabric_dw.mcp.tools.load.copy_into_from_url",
             new=AsyncMock(return_value=_make_result()),
-        ),
+        ) as mock_copy,
     ):
         result = await mcp._tool_manager.call_tool(
             "import_table_from_url",
@@ -342,8 +346,62 @@ async def test_import_table_from_url_truncate_with_flag_succeeds(
             },
         )
 
-    mock_truncate.assert_called_once()
+    # No separate committed TRUNCATE — it is part of the atomic COPY transaction.
+    mock_truncate.assert_not_called()
+    assert mock_copy.call_args.kwargs["truncate_first"] is True
     assert result["rows_loaded"] == 3
+
+
+async def test_import_table_from_url_truncate_failed_copy_leaves_table_intact(
+    mock_ctx, ctx_patch, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#863: a failed COPY in truncate mode must not separately truncate the table.
+
+    The COPY runs with truncate_first=True, so the TRUNCATE shares the COPY's
+    transaction and rolls back on failure; truncate_table is never called and the
+    error surfaces to the caller.
+    """
+    from fabric_dw.exceptions import FabricError  # noqa: PLC0415
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    monkeypatch.delenv("FABRIC_MCP_READONLY", raising=False)
+    monkeypatch.setenv("FABRIC_MCP_ALLOW_DESTRUCTIVE", "1")
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.load.table_exists",
+            new=AsyncMock(return_value=True),
+        ),
+        patch(
+            "fabric_dw.services.load.truncate_table",
+            new=AsyncMock(),
+        ) as mock_truncate,
+        patch(
+            "fabric_dw.mcp.tools.load.copy_into_from_url",
+            new=AsyncMock(
+                side_effect=FabricError("COPY INTO [dbo].[sales] failed: schema mismatch")
+            ),
+        ) as mock_copy,
+        pytest.raises(ToolError, match="failed"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "import_table_from_url",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "qualified_name": "dbo.sales",
+                "url": "https://onelake.dfs.fabric.microsoft.com/ws/lh/Files/f.parquet",
+                "file_type": "PARQUET",
+                "if_exists": "truncate",
+            },
+        )
+
+    mock_truncate.assert_not_called()
+    assert mock_copy.call_args.kwargs["truncate_first"] is True
 
 
 # ---------------------------------------------------------------------------

@@ -410,16 +410,10 @@ async def set_action_groups(
             that auditing is active after the call even if it was previously
             disabled — this is the typical "set groups and start auditing" path.
             When ``False``, only the action-group list is changed and the current
-            audit state is preserved; a :exc:`ValueError` is raised if the audit
-            is currently disabled (consistent with :func:`add_action_group` and
-            :func:`remove_action_group`).
-
-            Note:
-                This is an intentional design choice: ``set_action_groups``
-                doubles as "initialise auditing" (default) and "update groups
-                on a live audit" (``ensure_enabled=False``).  When only
-                updating groups is desired, pass ``ensure_enabled=False`` to
-                preserve the current audit state.
+            audit state (``Enabled`` or ``Disabled``) is round-tripped unchanged.
+            Use this path when replacing groups must not alter the audit on/off
+            state — for example, the MCP tool ``set_audit_action_groups`` which
+            advertises only group replacement.
 
     Note:
         This function performs a read-modify-write (GET then PATCH) without
@@ -443,8 +437,6 @@ async def set_action_groups(
 
     Raises:
         ValueError: If any name in *action_groups* does not match ``^[A-Z0-9_]+$``.
-        ValueError: If *ensure_enabled* is ``False`` and auditing is currently disabled
-            (``state == "Disabled"``).  Enable auditing first with :func:`enable`.
         PermissionDeniedError: If the caller lacks the required permission (HTTP 403).
     """
     for name in action_groups:
@@ -452,25 +444,21 @@ async def set_action_groups(
 
     # Pre-flight GET to obtain current settings so we can construct the
     # authoritative post-PATCH state without a stale re-fetch.
-    if not ensure_enabled:
-        # ensure_enabled=False: guard against writing to a disabled audit config.
-        current = await _require_enabled(http, workspace_id, item_id, kind)
-    else:
-        current = await get_settings(http, workspace_id, item_id, kind)
+    current = await get_settings(http, workspace_id, item_id, kind)
 
     path = _audit_path(workspace_id, item_id, kind)
 
-    # Fabric's PATCH /settings/sqlAudit accepts an ``auditActionsAndGroups`` field
-    # alongside ``state`` and ``retentionDays``.  Using PATCH to set the action groups
-    # avoids the EntityNotFound (404) that the POST method returns on freshly-created
-    # warehouses, since PATCH with state=Enabled is idempotent and always works.
-    # retentionDays is always round-tripped: omitting it from a partial PATCH causes
-    # the Fabric API to silently reset it to its default value (data-loss bug).
-    # state is always "Enabled" on both paths: ensure_enabled=True forces it explicitly;
-    # ensure_enabled=False reaches here only after _require_enabled() confirmed state is
-    # "Enabled" (it raises ValueError for "Disabled").
+    # Determine the state to write back.  When ensure_enabled=True (default),
+    # always activate auditing; this is the typical "set groups and start
+    # auditing" path.  When ensure_enabled=False, round-trip the current state
+    # unchanged so only the action-group list is replaced and the audit
+    # enabled/disabled state is left as-is — callers that must not silently
+    # enable a Disabled audit (e.g. the MCP tool) use this path.
+    # retentionDays is always round-tripped: omitting it from a partial PATCH
+    # causes the Fabric API to silently reset it to its default value (data-loss).
+    patch_state = "Enabled" if ensure_enabled else current.state
     patch_body: dict[str, object] = {
-        "state": "Enabled",
+        "state": patch_state,
         "auditActionsAndGroups": action_groups,
         "retentionDays": current.retention_days,
     }
@@ -484,7 +472,7 @@ async def set_action_groups(
     # Return the authoritative post-PATCH state constructed locally.
     # Do NOT poll GET: the GET endpoint lags the PATCH by minutes; the PATCH
     # itself is the authoritative source of truth.
-    return current.model_copy(update={"action_groups": list(action_groups), "state": "Enabled"})
+    return current.model_copy(update={"action_groups": list(action_groups), "state": patch_state})
 
 
 async def add_action_group(

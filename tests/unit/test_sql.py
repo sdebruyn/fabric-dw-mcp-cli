@@ -685,6 +685,72 @@ class TestRunStatements:
         assert mock_mssql.connect.call_count == 1
         mock_conn.close.assert_called_once()
 
+    def test_returns_none_without_fetch_last_rowcount(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Default (fetch_last_rowcount=False) returns None."""
+        mock_mssql, _, _ = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        assert run_statements(_make_target(), ["DROP TABLE [a]"]) is None
+
+    def test_fetch_last_rowcount_returns_last_statement_rowcount(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """fetch_last_rowcount=True returns cursor.rowcount of the LAST statement.
+
+        Models the atomic truncate-and-load (#863): TRUNCATE then COPY INTO in a
+        single deferred-commit transaction, where the reported row count is the
+        COPY INTO rowcount, not the TRUNCATE's.
+        """
+        mock_mssql, mock_conn, mock_cursor = _make_mock_mssql()
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        # TRUNCATE reports -1 (no rows), COPY INTO reports 7 rows loaded.
+        rowcounts = iter([-1, 7])
+
+        def _execute(_stmt: str) -> None:
+            mock_cursor.rowcount = next(rowcounts)
+
+        mock_cursor.execute.side_effect = _execute
+
+        result = run_statements(
+            _make_target(),
+            ["TRUNCATE TABLE [dbo].[t]", "COPY INTO [dbo].[t] FROM 'x' WITH (FILE_TYPE = 'CSV')"],
+            commit_per_statement=False,
+            fetch_last_rowcount=True,
+        )
+
+        assert result == 7
+        # One deferred commit for the whole transaction (not one per statement).
+        assert mock_conn.commit.call_count == 1
+
+    def test_deferred_transaction_not_committed_when_later_statement_fails(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#863: with commit_per_statement=False a failing later statement must NOT
+        commit earlier ones — a failed COPY INTO must not commit the TRUNCATE."""
+
+        class _BoomError(Exception):
+            """Unmapped driver error (no ddbc_error) — re-raised as-is."""
+
+        mock_mssql, mock_conn, mock_cursor = _make_mock_mssql()
+        # TRUNCATE succeeds, COPY INTO fails.
+        mock_cursor.execute.side_effect = [None, _BoomError("copy failed")]
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with pytest.raises(_BoomError):
+            run_statements(
+                _make_target(),
+                ["TRUNCATE TABLE [dbo].[t]", "COPY INTO [dbo].[t] FROM 'x'"],
+                commit_per_statement=False,
+            )
+
+        # No commit was issued: the transaction rolls back on connection close,
+        # so the TRUNCATE never persists.
+        mock_conn.commit.assert_not_called()
+        mock_conn.close.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # Connection pool tests

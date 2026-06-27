@@ -116,6 +116,10 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
     ) -> dict[str, Any]:
         """Replace the audited action groups for a warehouse or SQL analytics endpoint.
 
+        Only replaces the action groups. Does not toggle the audit enabled or
+        disabled state; if auditing was Disabled before the call it remains Disabled
+        afterwards.
+
         CAUTION: Each audit write reads current settings via an eventually-consistent
         GET that may lag a recent PATCH by several minutes. The retention period
         read from that GET is round-tripped; if retention was changed within the lag
@@ -143,7 +147,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 action_groups,
             )
             result = await audit.set_action_groups(
-                ctx.http, ws_id, item.id, action_groups, item.kind
+                ctx.http, ws_id, item.id, action_groups, item.kind, ensure_enabled=False
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
