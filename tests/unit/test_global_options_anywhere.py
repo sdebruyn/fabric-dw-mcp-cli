@@ -1,4 +1,4 @@
-"""Tests for global options (--json, -y/--yes, -v/--verbose) accepted after subcommand.
+"""Tests for global options accepted after the subcommand.
 
 Covers:
 - Before-position (existing behaviour, regression test)
@@ -6,10 +6,12 @@ Covers:
 - After/with a sub-group
 - Help still renders global flags in command help
 - -h / --help still work
+- Collision: dbt init --auth is dbt's own option (global injection skipped)
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -17,6 +19,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
+from fabric_dw.auth import CredentialMode
+from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._main import cli
 
 
@@ -252,12 +256,24 @@ class TestHelpOutput:
         assert result.exit_code == 0, result.output
         assert "Usage:" in result.output
 
-    def test_auth_not_in_leaf_help(self, runner: CliRunner) -> None:
-        """--auth is intentionally NOT injected into leaf commands."""
+    def test_auth_in_leaf_help(self, runner: CliRunner) -> None:
+        """--auth is injected into leaf commands that do not already declare it."""
         result = runner.invoke(cli, ["workspaces", "list", "--help"])
         assert result.exit_code == 0, result.output
-        # --auth only appears at the root level; not injected into leaves
-        assert "--auth" not in result.output
+        assert "--auth" in result.output
+
+    def test_workspace_flag_in_leaf_help(self, runner: CliRunner) -> None:
+        """-w / --workspace appears in leaf command help."""
+        result = runner.invoke(cli, ["workspaces", "list", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "--workspace" in result.output
+
+    def test_retry_flags_in_leaf_help(self, runner: CliRunner) -> None:
+        """--max-429-retries and --retry-deadline appear in leaf command help."""
+        result = runner.invoke(cli, ["workspaces", "list", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "--max-429-retries" in result.output
+        assert "--retry-deadline" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -283,3 +299,262 @@ class TestIdempotency:
         assert result.exit_code == 0, result.output
         parsed = json.loads(result.output)
         assert isinstance(parsed, list)
+
+
+# ---------------------------------------------------------------------------
+# -w / --workspace: BEFORE (regression) and AFTER the leaf command
+# ---------------------------------------------------------------------------
+
+
+class TestWorkspaceFlag:
+    """-w / --workspace can appear before or after the subcommand."""
+
+    @pytest.fixture(autouse=True)
+    def _mock_warehouses_list(self) -> object:
+        """Patch the service layer so warehouses list runs without live HTTP."""
+        with (
+            patch(
+                "fabric_dw.cli.commands.warehouses.build_http_client",
+            ) as mock_http_cm,
+            patch(
+                "fabric_dw.cli.commands.warehouses.make_resolver",
+            ) as mock_make_resolver,
+            patch(
+                "fabric_dw.cli.commands.warehouses._warehouses_svc.list_warehouses",
+                new=AsyncMock(return_value=[]),
+            ),
+        ):
+            mock_http = AsyncMock()
+            mock_http_cm.return_value.__aenter__ = AsyncMock(return_value=mock_http)
+            mock_http_cm.return_value.__aexit__ = AsyncMock(return_value=None)
+            mock_resolver = MagicMock()
+            mock_resolver.workspace_id = AsyncMock(return_value="fake-ws-uuid")
+            mock_make_resolver.return_value = (mock_resolver, MagicMock())
+            yield
+
+    def test_workspace_before_subcommand(self, runner: CliRunner) -> None:
+        """-w BEFORE the subcommand sets the workspace (regression)."""
+        result = runner.invoke(cli, ["-w", "myws", "warehouses", "list"], catch_exceptions=False)
+        assert result.exit_code == 0, result.output
+
+    def test_workspace_short_after_leaf(self, runner: CliRunner) -> None:
+        """-w AFTER the leaf command sets ctx.obj.workspace identically.
+
+        warehouses list calls resolve_workspace(ctx), which raises UsageError
+        if ctx.workspace is None and no default is configured.  Passing -w in
+        trailing position must set ctx.obj.workspace so the command succeeds.
+        """
+        captured: dict[str, str | None] = {}
+
+        def _capture_resolve_workspace(ctx: CliContext) -> str:
+            captured["workspace"] = ctx.workspace
+            return "fake-ws-name"
+
+        with patch(
+            "fabric_dw.cli.commands.warehouses.resolve_workspace",
+            side_effect=_capture_resolve_workspace,
+        ):
+            result = runner.invoke(
+                cli, ["warehouses", "list", "-w", "myws"], catch_exceptions=False
+            )
+        assert result.exit_code == 0, result.output
+        assert captured["workspace"] == "myws"
+
+    def test_workspace_long_after_leaf(self, runner: CliRunner) -> None:
+        """--workspace AFTER the leaf command resolves identically to the before form."""
+        captured: dict[str, str | None] = {}
+
+        def _capture_resolve_workspace(ctx: CliContext) -> str:
+            captured["workspace"] = ctx.workspace
+            return "fake-ws-name"
+
+        with patch(
+            "fabric_dw.cli.commands.warehouses.resolve_workspace",
+            side_effect=_capture_resolve_workspace,
+        ):
+            result = runner.invoke(
+                cli, ["warehouses", "list", "--workspace", "myws"], catch_exceptions=False
+            )
+        assert result.exit_code == 0, result.output
+        assert captured["workspace"] == "myws"
+
+    def test_workspace_both_positions(self, runner: CliRunner) -> None:
+        """-w before AND after the subcommand does not cause a parse error."""
+        with patch(
+            "fabric_dw.cli.commands.warehouses.resolve_workspace",
+            return_value="fake-ws-name",
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", "first", "warehouses", "list", "-w", "second"],
+                catch_exceptions=False,
+            )
+        # Trailing value wins over the root-level value (last-writer semantics).
+        assert result.exit_code == 0, result.output
+
+
+# ---------------------------------------------------------------------------
+# --auth: BEFORE (regression) and AFTER the leaf command
+# ---------------------------------------------------------------------------
+
+
+class TestAuthFlag:
+    """--auth can appear before or after the subcommand (except on dbt init)."""
+
+    @pytest.fixture(autouse=True)
+    def _mock_list(self) -> object:
+        mock_ws = MagicMock()
+        mock_ws.model_dump.return_value = {"id": "ws-1", "displayName": "Test"}
+        with patch(
+            "fabric_dw.cli.commands.workspaces._workspaces_svc.list_all",
+            new=AsyncMock(return_value=[mock_ws]),
+        ):
+            yield
+
+    def test_auth_before_subcommand(self, runner: CliRunner) -> None:
+        """--auth BEFORE the subcommand resolves the auth mode (regression)."""
+        result = runner.invoke(
+            cli, ["--auth", "default", "workspaces", "list"], catch_exceptions=False
+        )
+        assert result.exit_code == 0, result.output
+
+    def test_auth_after_leaf_command(self, runner: CliRunner) -> None:
+        """--auth AFTER the leaf command sets ctx.obj.auth identically.
+
+        The resolved CredentialMode must match what the before-position form
+        produces.
+        """
+        ctx_holder: list[CliContext] = []
+
+        @contextlib.asynccontextmanager
+        async def _fake_build_http_client(ctx: CliContext) -> object:  # type: ignore[misc]
+            ctx_holder.append(ctx)
+            yield AsyncMock()
+
+        with patch(
+            "fabric_dw.cli.commands.workspaces.build_http_client",
+            side_effect=_fake_build_http_client,
+        ):
+            result = runner.invoke(
+                cli, ["workspaces", "list", "--auth", "default"], catch_exceptions=False
+            )
+
+        assert result.exit_code == 0, result.output
+        assert len(ctx_holder) == 1
+        assert ctx_holder[0].auth == CredentialMode.DEFAULT
+
+    def test_auth_invalid_value_after_leaf(self, runner: CliRunner) -> None:
+        """--auth with an invalid value after the subcommand yields a usage error."""
+        result = runner.invoke(cli, ["workspaces", "list", "--auth", "notamode"])
+        # Click rejects invalid Choice values with exit code 2.
+        assert result.exit_code == 2, result.output
+
+
+# ---------------------------------------------------------------------------
+# --max-429-retries / --retry-deadline: BEFORE (regression) and AFTER
+# ---------------------------------------------------------------------------
+
+
+class TestRetryOptionsFlag:
+    """--max-429-retries and --retry-deadline can appear after the subcommand."""
+
+    @pytest.fixture(autouse=True)
+    def _mock_list(self) -> object:
+        mock_ws = MagicMock()
+        mock_ws.model_dump.return_value = {"id": "ws-1", "displayName": "Test"}
+        with patch(
+            "fabric_dw.cli.commands.workspaces._workspaces_svc.list_all",
+            new=AsyncMock(return_value=[mock_ws]),
+        ):
+            yield
+
+    @staticmethod
+    def _make_capturing_http(ctx_holder: list[CliContext]) -> object:
+        """Return an async-context-manager factory that records the CliContext."""
+
+        @contextlib.asynccontextmanager
+        async def _fake(ctx: CliContext) -> object:  # type: ignore[misc]
+            ctx_holder.append(ctx)
+            yield AsyncMock()
+
+        return _fake
+
+    def test_max_429_retries_before_subcommand(self, runner: CliRunner) -> None:
+        """--max-429-retries BEFORE the subcommand sets the retry count (regression)."""
+        result = runner.invoke(
+            cli, ["--max-429-retries", "3", "workspaces", "list"], catch_exceptions=False
+        )
+        assert result.exit_code == 0, result.output
+
+    def test_max_429_retries_after_leaf(self, runner: CliRunner) -> None:
+        """--max-429-retries AFTER the leaf command sets ctx.obj.max_429_retries."""
+        ctx_holder: list[CliContext] = []
+        with patch(
+            "fabric_dw.cli.commands.workspaces.build_http_client",
+            side_effect=self._make_capturing_http(ctx_holder),
+        ):
+            result = runner.invoke(
+                cli, ["workspaces", "list", "--max-429-retries", "7"], catch_exceptions=False
+            )
+        assert result.exit_code == 0, result.output
+        assert len(ctx_holder) == 1
+        assert ctx_holder[0].max_429_retries == 7
+
+    def test_retry_deadline_before_subcommand(self, runner: CliRunner) -> None:
+        """--retry-deadline BEFORE the subcommand sets the deadline (regression)."""
+        result = runner.invoke(
+            cli, ["--retry-deadline", "60", "workspaces", "list"], catch_exceptions=False
+        )
+        assert result.exit_code == 0, result.output
+
+    def test_retry_deadline_after_leaf(self, runner: CliRunner) -> None:
+        """--retry-deadline AFTER the leaf command sets ctx.obj.retry_deadline_s."""
+        ctx_holder: list[CliContext] = []
+        with patch(
+            "fabric_dw.cli.commands.workspaces.build_http_client",
+            side_effect=self._make_capturing_http(ctx_holder),
+        ):
+            result = runner.invoke(
+                cli, ["workspaces", "list", "--retry-deadline", "120"], catch_exceptions=False
+            )
+        assert result.exit_code == 0, result.output
+        assert len(ctx_holder) == 1
+        assert ctx_holder[0].retry_deadline_s == 120
+
+
+# ---------------------------------------------------------------------------
+# Collision: dbt init --auth is dbt's own option, not the global auth flag
+# ---------------------------------------------------------------------------
+
+
+class TestDbtAuthCollision:
+    """The global --auth is not injected into dbt init (collision with dbt's own --auth).
+
+    dbt init declares "--auth" with destination "dbt_auth_override" (a dbt-
+    specific auth mode selector with a different Choice set).  The injection
+    logic skips "--auth" for that command.  Users who need to set the global
+    auth mode for dbt commands must use the pre-subcommand position:
+    "fabric-dw --auth <mode> dbt init ...".
+    """
+
+    def test_dbt_auth_not_injected_as_global(self, runner: CliRunner) -> None:
+        """dbt init --help shows its own --auth only -- global injection is skipped.
+
+        The dbt-local --auth shows choices like [auto|cli|serviceprincipal|...].
+        If the global --auth were also injected, a second option block would
+        appear with the global CredentialMode choices.  Exactly one --auth
+        option block must appear in the output.
+        """
+        result = runner.invoke(cli, ["dbt", "init", "--help"])
+        assert result.exit_code == 0, result.output
+        # Count option-header occurrences: "--auth [" marks an option block line.
+        # The dbt help text also contains "--auth mode" in the description text,
+        # but that does not start a new option block and does not include "[".
+        assert result.output.count("--auth [") == 1
+
+    def test_global_auth_before_dbt_init(self, runner: CliRunner) -> None:
+        """The global --auth in pre-subcommand position still works for dbt init."""
+        # We only verify that Click does not reject the argument; we do not
+        # actually run the dbt scaffold (no mocks for the full dbt init flow).
+        result = runner.invoke(cli, ["--auth", "default", "dbt", "--help"])
+        assert result.exit_code == 0, result.output

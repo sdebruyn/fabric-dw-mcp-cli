@@ -76,25 +76,38 @@ _HELP_MAX_WIDTH = max(80, min(shutil.get_terminal_size(fallback=(120, 24)).colum
 # Global-options injection
 # ---------------------------------------------------------------------------
 # These option definitions are injected into every leaf command and sub-group
-# so that --json, -y/--yes, and -v/--verbose work regardless of whether they
-# appear before or after the subcommand on the command line.
+# so that all global options work regardless of whether they appear before or
+# after the subcommand on the command line.
 #
-# --auth is intentionally excluded: it is consumed in the root group callback
-# before any subcommand runs, so positional placement there is load-bearing.
+# Collision handling: if a leaf command already declares a flag with the same
+# name (e.g. "--auth" in "dbt init" which has its own dbt-specific auth mode),
+# injection for that flag is silently skipped on that command.  The pre-
+# subcommand form of the global option is unaffected; only the trailing form
+# is unavailable for that specific command.
 #
-# Design note — expose_value=False for all commands (groups and leaves):
+# Known collision: "dbt init --auth" is dbt's own auth-mode selector
+# (destination: dbt_auth_override).  The global "--auth" is therefore not
+# injected into "dbt init"; users who need to set the global auth mode for
+# that command must use the pre-subcommand form: "fabric-dw --auth <mode>
+# dbt init ...".
+#
+# Design note -- expose_value=False for all commands (groups and leaves):
 #   All injected options use expose_value=False so Click parses the option but
 #   does NOT pass it as a keyword argument to any command callback.  Instead,
-#   an option callback (see _make_meta_callback) stores the value in ctx.meta
-#   when the flag is set.  Before the command body runs, _apply_meta_global_params
-#   reads ctx.meta and OR-merges the stored flags into ctx.obj (the shared
-#   CliContext).  This uniform approach avoids having to distinguish between
-#   group callbacks and leaf-command callbacks.
+#   an option callback (see _make_meta_callback / _make_meta_value_callback)
+#   stores the value in ctx.meta when the flag is set.  Before the command body
+#   runs, _apply_meta_global_params reads ctx.meta and merges the stored values
+#   into ctx.obj (the shared CliContext).  This uniform approach avoids having
+#   to distinguish between group callbacks and leaf-command callbacks.
 # ---------------------------------------------------------------------------
 
 _META_KEY_JSON = "fabric_dw_global_json_output"
 _META_KEY_YES = "fabric_dw_global_yes"
 _META_KEY_VERBOSE = "fabric_dw_global_verbose"
+_META_KEY_WORKSPACE = "fabric_dw_global_workspace"
+_META_KEY_AUTH = "fabric_dw_global_auth_mode"
+_META_KEY_MAX_429_RETRIES = "fabric_dw_global_max_429_retries"
+_META_KEY_RETRY_DEADLINE = "fabric_dw_global_retry_deadline"
 
 
 def _make_meta_callback(meta_key: str) -> Any:  # noqa: ANN401
@@ -108,14 +121,29 @@ def _make_meta_callback(meta_key: str) -> Any:  # noqa: ANN401
     return _cb
 
 
+def _make_meta_value_callback(meta_key: str) -> Any:  # noqa: ANN401
+    """Return an option callback that stores a non-None value in ``ctx.meta``."""
+
+    def _cb(ctx: click.Context, _param: click.Parameter, value: Any) -> Any:  # noqa: ANN401
+        if value is not None:
+            ctx.meta[meta_key] = value
+        return value
+
+    return _cb
+
+
 def _inject_global_options(cmd: click.Command) -> None:
-    """Add the three global options to *cmd*, skipping any that already exist.
+    """Add all global options to *cmd*, skipping any that already exist.
 
     All injected options use ``expose_value=False`` so they are never passed
     as keyword arguments to the command's own callback (which may not declare
     them).  Instead, an option callback stores the value in ``ctx.meta`` so
     the ``_wrapped_invoke`` can read it and fold it into the shared
     :class:`CliContext` before the command body runs.
+
+    Collision policy: if a command already declares an option with the same
+    flag string (e.g. ``--auth`` on ``dbt init``), that option is skipped for
+    that command.  See the module-level comment for details.
     """
     existing_names: set[str] = set()
     existing_dests: set[str] = set()
@@ -125,8 +153,8 @@ def _inject_global_options(cmd: click.Command) -> None:
         if param.name is not None:
             existing_dests.add(param.name)
 
-    # Tuples of (opts, dest, meta_key, help_text).
-    _specs: list[tuple[list[str], str, str, str]] = [
+    # Boolean flag specs: (opts, dest, meta_key, help_text).
+    _flag_specs: list[tuple[list[str], str, str, str]] = [
         (
             ["--json", "json_output"],
             "json_output",
@@ -137,7 +165,7 @@ def _inject_global_options(cmd: click.Command) -> None:
         (["--verbose", "-v", "verbose"], "verbose", _META_KEY_VERBOSE, "Enable debug logging."),
     ]
 
-    for opts, dest, meta_key, help_text in _specs:
+    for opts, dest, meta_key, help_text in _flag_specs:
         # Skip if any declared option string already exists on this command.
         if existing_names.intersection(opts):
             continue
@@ -160,19 +188,90 @@ def _inject_global_options(cmd: click.Command) -> None:
         # include the Click destination name (e.g. "json_output").
         existing_names.update(option.opts)
 
+    # Value option specs: (opts, dest, meta_key, param_type, metavar, help_text).
+    # Each is skipped if a flag with the same name already exists on the command
+    # (collision policy -- see module-level comment).
+    _value_specs: list[tuple[list[str], str, str, Any, str | None, str]] = [
+        (
+            ["-w", "--workspace", "workspace"],
+            "workspace",
+            _META_KEY_WORKSPACE,
+            str,
+            "NAME|GUID",
+            "Target workspace (name or GUID). Falls back to the configured default.",
+        ),
+        (
+            ["--auth", "auth_mode"],
+            "auth_mode",
+            _META_KEY_AUTH,
+            click.Choice([m.value for m in CredentialMode], case_sensitive=False),
+            None,
+            (
+                "Authentication mode (default: 'default', or as configured by "
+                "FABRIC_AUTH / config file [defaults] auth_mode)."
+            ),
+        ),
+        (
+            ["--max-429-retries", "max_429_retries"],
+            "max_429_retries",
+            _META_KEY_MAX_429_RETRIES,
+            click.IntRange(min=1),
+            "N",
+            (
+                "Maximum consecutive 429 responses before raising RateLimitedError "
+                "(default: 10, or as configured by FABRIC_DW_MAX_429_RETRIES / config file)."
+            ),
+        ),
+        (
+            ["--retry-deadline", "retry_deadline"],
+            "retry_deadline",
+            _META_KEY_RETRY_DEADLINE,
+            click.IntRange(min=1),
+            "SECONDS",
+            (
+                "Combined wall-clock deadline in seconds for the 429-loop and 5xx-retry "
+                "budget (default: 300, or as configured by FABRIC_DW_RETRY_DEADLINE_S / "
+                "config file)."
+            ),
+        ),
+    ]
+
+    for opts, dest, meta_key, param_type, metavar, help_text in _value_specs:
+        if existing_names.intersection(opts):
+            continue
+        if dest in existing_dests:
+            continue
+
+        option = click.Option(
+            opts,
+            type=param_type,
+            default=None,
+            expose_value=False,
+            callback=_make_meta_value_callback(meta_key),
+            metavar=metavar,
+            help=help_text,
+        )
+        cmd.params.append(option)
+        existing_dests.add(dest)
+        existing_names.update(option.opts)
+
 
 def _apply_meta_global_params(ctx: click.Context) -> None:
-    """Apply global flags stored in ``ctx.meta`` to the shared :class:`CliContext`.
+    """Apply global options stored in ``ctx.meta`` to the shared :class:`CliContext`.
 
-    The option callbacks (set up via :func:`_inject_global_options`) store flag
-    values in ``ctx.meta`` when the flag is set.  This function merges those
+    The option callbacks (set up via :func:`_inject_global_options`) store
+    values in ``ctx.meta`` when the option is set.  This function merges those
     stored values into ``ctx.obj`` (the shared :class:`CliContext`) before the
     command body runs.
 
-    Merge semantics (OR-merge — the most-permissive position wins):
-    - ``json_output`` → ``ctx.obj.json_output = True``
-    - ``yes``         → ``ctx.obj.yes = True``
-    - ``verbose``     → re-applies ``setup_logging(DEBUG)``
+    Merge semantics:
+    - ``json_output``     → ``ctx.obj.json_output = True`` (OR-merge)
+    - ``yes``             → ``ctx.obj.yes = True`` (OR-merge)
+    - ``verbose``         → re-applies ``setup_logging(DEBUG)`` (OR-merge)
+    - ``workspace``       → ``ctx.obj.workspace`` (trailing value wins over None)
+    - ``auth_mode``       → re-resolves and updates ``ctx.obj.auth``
+    - ``max_429_retries`` → ``ctx.obj.max_429_retries`` (trailing value wins over None)
+    - ``retry_deadline``  → ``ctx.obj.retry_deadline_s`` (trailing value wins over None)
     """
     obj: CliContext | None = ctx.obj
     if obj is None:
@@ -183,6 +282,23 @@ def _apply_meta_global_params(ctx: click.Context) -> None:
         obj.yes = True
     if ctx.meta.get(_META_KEY_VERBOSE):
         setup_logging(logging.DEBUG)
+    if (ws := ctx.meta.get(_META_KEY_WORKSPACE)) is not None:
+        obj.workspace = ws
+    if (auth_val := ctx.meta.get(_META_KEY_AUTH)) is not None:
+        cfg = load_config()
+        try:
+            resolved = resolve_auth_mode(
+                cli_value=auth_val,
+                config_value=cfg.defaults.auth_mode,
+                valid_modes=VALID_AUTH_MODES,
+            )
+            obj.auth = CredentialMode(resolved)
+        except ValueError as exc:
+            raise click.UsageError(str(exc)) from exc
+    if (retries := ctx.meta.get(_META_KEY_MAX_429_RETRIES)) is not None:
+        obj.max_429_retries = retries
+    if (deadline := ctx.meta.get(_META_KEY_RETRY_DEADLINE)) is not None:
+        obj.retry_deadline_s = deadline
 
 
 def _patch_command_for_global_options(cmd: click.Command) -> None:
