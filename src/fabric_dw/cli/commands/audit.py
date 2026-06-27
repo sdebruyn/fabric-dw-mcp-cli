@@ -68,9 +68,10 @@ async def enable_cmd(
 
     Omitting both --retention-days and --unlimited defaults to unlimited retention.
 
-    NOTE: Each audit write reads current settings via an eventually-consistent GET
-    that lags PATCHes by minutes. Two rapid writes may silently revert the first.
-    Space audit writes at least a few minutes apart.
+    NOTE: The pre-flight GET used to round-trip the existing action-group list
+    lags PATCHes by minutes; if the action-group list was changed within that
+    window, this call may silently revert it. Space audit writes at least a few
+    minutes apart.
     """
     if retention_days is not None and unlimited:
         raise click.UsageError("--retention-days and --unlimited are mutually exclusive.")
@@ -146,9 +147,10 @@ async def set_retention_cmd(
     Audit must already be enabled; if disabled, enable it first with
     ``audit enable``.  This command does NOT change the audit state.
 
-    NOTE: Each audit write reads current settings via an eventually-consistent GET
-    that lags PATCHes by minutes. Two rapid writes may silently revert the first.
-    Space audit writes at least a few minutes apart.
+    NOTE: The pre-flight GET used to round-trip the existing action-group list
+    lags PATCHes by minutes; if the action-group list was changed within that
+    window, this call may silently revert it. Space audit writes at least a few
+    minutes apart.
     """
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)

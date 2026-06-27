@@ -422,6 +422,11 @@ async def set_action_groups(
                 preserve the current audit state.
 
     Note:
+        This function performs a read-modify-write (GET then PATCH) without
+        optimistic concurrency control.  The Fabric REST API does not expose
+        ETags or ``If-Match`` on the ``/settings/sqlAudit`` endpoint.  Under
+        concurrent modification the last writer wins silently.
+
         The pre-flight GET used to obtain ``retentionDays`` is eventually
         consistent and may lag a recent PATCH by several minutes.  If another
         audit write changed the retention period within that window, this call

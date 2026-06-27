@@ -51,10 +51,10 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
     ) -> dict[str, Any]:
         """Enable SQL auditing on a warehouse or SQL analytics endpoint.
 
-        CAUTION: Each audit write reads current settings via an eventually-consistent
-        GET that may lag a recent PATCH by several minutes. Two audit writes issued
-        within that window can cause the second to silently revert the first.
-        Space audit writes at least a few minutes apart.
+        CAUTION: The pre-flight GET used to round-trip the existing action-group
+        list is eventually consistent and may lag a recent PATCH by several minutes.
+        If the action-group list was changed within that window, this call may
+        silently revert it. Space audit writes at least a few minutes apart.
 
         Args:
             workspace: Workspace name or GUID.
@@ -233,10 +233,10 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
 
         Audit must already be enabled; if disabled, enable it first with ``enable_audit``.
 
-        CAUTION: Each audit write reads current settings via an eventually-consistent
-        GET that may lag a recent PATCH by several minutes. Two audit writes issued
-        within that window can cause the second to silently revert the first.
-        Space audit writes at least a few minutes apart.
+        CAUTION: The pre-flight GET used to round-trip the existing action-group
+        list is eventually consistent and may lag a recent PATCH by several minutes.
+        If the action-group list was changed within that window, this call may
+        silently revert it. Space audit writes at least a few minutes apart.
 
         Args:
             workspace: Workspace name or GUID.
