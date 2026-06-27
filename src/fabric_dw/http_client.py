@@ -649,21 +649,24 @@ class FabricHttpClient:
         """
         url: str | None = f"{base}{path}"
         first = True
-        # Apply the same combined wall-clock deadline used by request() so that
-        # 429 loops inside paginated fetches are time-bounded (C27).
-        combined_deadline = time.monotonic() + self._combined_deadline_s
 
         while url is not None:
+            # Compute a fresh per-page deadline so that each page gets its own
+            # 429 retry budget.  A single shared deadline spanning the entire
+            # walk would abort a healthy multi-page listing under throttling the
+            # moment the cumulative wait exceeded the budget (C27).
+            combined_deadline = time.monotonic() + self._combined_deadline_s
             # continuationUri is always a full URL; use _request_with_retry directly
             resp = await self._request_with_retry(
                 "GET", url, params=params if first else None, combined_deadline=combined_deadline
             )
             first = False
-            raw = resp.json()
-            if not isinstance(raw, dict):
-                # Non-dict page body (e.g. an array or null): no items, no continuation.
+            # Route through the guarded parser so that a non-JSON or empty 200
+            # body does not raise json.JSONDecodeError out of the generator.
+            data = _parse_json_body(resp)
+            if data is None:
+                # Non-JSON, non-dict, or empty page body: no items, no continuation.
                 break
-            data: dict[str, object] = raw
             raw_items = data.get(key, [])
             if isinstance(raw_items, list):
                 for item in raw_items:
