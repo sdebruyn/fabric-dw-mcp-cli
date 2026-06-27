@@ -611,6 +611,7 @@ def _render_positional_table(
     *,
     console: Console,
     title: str | None,
+    prune_null_columns: bool = True,
 ) -> None:
     """Render *columns* and *rows* as a Rich table using positional access.
 
@@ -619,7 +620,11 @@ def _render_positional_table(
     (e.g. ``SELECT 1 AS id, 2 AS id``) each keep their own header and value
     instead of being collapsed by dict keying.
 
-    All-null columns (every row has ``None`` at that position) are omitted.
+    When *prune_null_columns* is *True* (default), columns whose value is
+    ``None`` in every row are omitted.  Pass *False* to keep all columns,
+    e.g. for raw SQL output where every column must appear regardless of
+    nullability.
+
     The wide-table vertical fallback uses the same heuristic as
     :func:`_render_table`.
     """
@@ -636,10 +641,12 @@ def _render_positional_table(
         [row[i] if i < len(row) else None for row in rows] for i in range(n)
     ]
 
-    # Drop positions where every row has None.
-    all_null_idx: set[int] = {
-        i for i, vals in enumerate(col_values) if all(v is None for v in vals)
-    }
+    # Drop positions where every row has None, unless the caller opts out.
+    all_null_idx: set[int] = (
+        {i for i, vals in enumerate(col_values) if all(v is None for v in vals)}
+        if prune_null_columns
+        else set()
+    )
     visible: list[int] = [i for i in range(n) if i not in all_null_idx]
 
     # Estimate horizontal fit using the same heuristic as _table_fits().
@@ -684,6 +691,7 @@ def render_result_rows(
     json_output: bool,
     console: Console | None = None,
     table_title: str | None = None,
+    prune_null_columns: bool = False,
 ) -> None:
     """Render SQL result columns and rows, preserving duplicate column names.
 
@@ -706,6 +714,10 @@ def render_result_rows(
             *json_output=True*.
         table_title: Optional title shown above the Rich table.  Ignored when
             *json_output=True*.
+        prune_null_columns: When *True*, columns whose value is ``None`` in
+            every row are omitted from the human-readable table.  Defaults to
+            *False* so raw SQL output retains every column regardless of
+            nullability.  Ignored when *json_output=True*.
     """
     if json_output:
         click.echo(
@@ -718,7 +730,13 @@ def render_result_rows(
         return
 
     con = console if console is not None else _DEFAULT_CONSOLE
-    _render_positional_table(columns, list(rows), console=con, title=table_title)
+    _render_positional_table(
+        columns,
+        list(rows),
+        console=con,
+        title=table_title,
+        prune_null_columns=prune_null_columns,
+    )
 
 
 def confirm(message: str, *, yes: bool) -> bool:
