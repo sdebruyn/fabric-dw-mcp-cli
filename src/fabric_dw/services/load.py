@@ -44,12 +44,12 @@ from fabric_dw.auth import STORAGE_SCOPE
 from fabric_dw.exceptions import (
     FabricError,
     FabricServerError,
-    ItemKindError,
     auth_error_from_credential_exc,
 )
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.identifiers import quote_identifier, validate_identifier
 from fabric_dw.models import CopyIntoResult, WarehouseKind
+from fabric_dw.services._helpers import _assert_not_sql_endpoint
 from fabric_dw.sql import SqlTarget, run_query
 
 __all__ = [
@@ -116,9 +116,6 @@ _DFS_CREATE_RETRY_DELAY: float = 2.0
 #: - 5xx: server-side errors (502/503/504 are common transient gateway failures).
 _DFS_CREATE_RETRYABLE_STATUSES: frozenset[int] = frozenset({400, 408, 429, 500, 502, 503, 504})
 
-# SQL Endpoint rejection message.
-_SQL_ENDPOINT_READONLY_MSG = "SQL Endpoints are read-only; COPY INTO not supported"
-
 #: Staging lakehouse name: same alphabet as SQL identifier but allow hyphens.
 _STAGING_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_\-]{0,127}$")
 
@@ -155,14 +152,7 @@ class CopyIntoCsvOptions:
         self.row_terminator = row_terminator
 
 
-# ---------------------------------------------------------------------------
-# Guard
-# ---------------------------------------------------------------------------
-
-
-def _assert_not_sql_endpoint(kind: WarehouseKind) -> None:
-    if kind == WarehouseKind.SQL_ENDPOINT:
-        raise ItemKindError(_SQL_ENDPOINT_READONLY_MSG)
+# _assert_not_sql_endpoint is imported from fabric_dw.services._helpers above.
 
 
 def _validate_staging_name(name: str) -> str:

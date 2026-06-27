@@ -1036,7 +1036,7 @@ async def test_count_view_rows_bad_qualified_name_raises_tool_error(ctx_patch) -
 
     with (
         ctx_patch,
-        pytest.raises(ToolError, match="qualified_name"),
+        pytest.raises(ToolError, match="qualified name"),
     ):
         await mcp._tool_manager.call_tool(
             "count_view_rows",

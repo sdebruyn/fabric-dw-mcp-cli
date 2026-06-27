@@ -6,7 +6,10 @@ from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
+from fabric_dw.exceptions import ItemKindError
+from fabric_dw.models import WarehouseKind
 from fabric_dw.services._helpers import (
+    _assert_not_sql_endpoint,
     coerce_to_utc,
     compact,
     normalize_object_definition,
@@ -344,3 +347,47 @@ def test_normalize_regression_746_tester_captured_exact_raw() -> None:
     raw = "CREATE VIEW . AS SELECT 1 AS id"
     result = normalize_object_definition(raw, "dbo", "vw_probe746")
     assert result == "CREATE VIEW [dbo].[vw_probe746] AS SELECT 1 AS id"
+
+
+# ---------------------------------------------------------------------------
+# _assert_not_sql_endpoint (centralised from four service modules)
+# ---------------------------------------------------------------------------
+
+
+class TestAssertNotSqlEndpoint:
+    """_assert_not_sql_endpoint is the single guard for write-only operations."""
+
+    def test_warehouse_does_not_raise(self) -> None:
+        """WAREHOUSE kind must pass without raising."""
+        _assert_not_sql_endpoint(WarehouseKind.WAREHOUSE)  # no error
+
+    def test_sql_endpoint_raises_item_kind_error(self) -> None:
+        """SQL_ENDPOINT kind must raise ItemKindError."""
+        with pytest.raises(ItemKindError):
+            _assert_not_sql_endpoint(WarehouseKind.SQL_ENDPOINT)
+
+    def test_sql_endpoint_error_message_mentions_read_only(self) -> None:
+        """The error message must clearly state the endpoint is read-only."""
+        with pytest.raises(ItemKindError, match="read-only"):
+            _assert_not_sql_endpoint(WarehouseKind.SQL_ENDPOINT)
+
+    def test_sql_endpoint_error_message_mentions_data_warehouse(self) -> None:
+        """The error message must direct the user to a Fabric Data Warehouse."""
+        with pytest.raises(ItemKindError, match="Fabric Data Warehouse"):
+            _assert_not_sql_endpoint(WarehouseKind.SQL_ENDPOINT)
+
+    def test_all_four_callers_use_same_function(self) -> None:
+        """All four service modules must import the same guard function object.
+
+        This test pins the deduplication: a regression where a module defines
+        its own local copy would not be caught by import-time checks alone.
+        """
+        from fabric_dw.services.load import _assert_not_sql_endpoint as load_guard  # noqa: PLC0415
+        from fabric_dw.services.settings import _assert_not_sql_endpoint as settings_guard  # noqa: PLC0415
+        from fabric_dw.services.statistics import _assert_not_sql_endpoint as stats_guard  # noqa: PLC0415
+        from fabric_dw.services.tables import _assert_not_sql_endpoint as tables_guard  # noqa: PLC0415
+
+        assert load_guard is _assert_not_sql_endpoint
+        assert settings_guard is _assert_not_sql_endpoint
+        assert stats_guard is _assert_not_sql_endpoint
+        assert tables_guard is _assert_not_sql_endpoint

@@ -4,7 +4,8 @@ Public API
 ----------
 - :func:`validate_identifier` — allowlist-regex validator for SQL identifier segments.
 - :func:`quote_identifier`    — bracket-quote a validated identifier, escaping ``]``.
-- :func:`parse_qualified_name` — split ``schema.object`` on the first dot.
+- :func:`parse_qualified_name` — split ``schema.object`` on the first dot, raising
+  :class:`ValueError` for missing dot, empty parts, or whitespace-only parts.
 """
 
 from __future__ import annotations
@@ -88,35 +89,42 @@ def quote_identifier(name: str) -> str:
     return f"[{escaped}]"
 
 
-def parse_qualified_name(qualified: str) -> tuple[str, str]:
+def parse_qualified_name(qualified: str, kind: str = "object") -> tuple[str, str]:
     """Split *qualified* into ``(schema, object_name)`` on the **first** dot.
 
-    Only unquoted ``schema.object`` notation is supported.  Bracket-quoted
-    names containing a literal dot (e.g. ``[a.b].[c]``) are **not** parsed
-    correctly by this function — callers that need to handle such names must
-    pre-split them before calling this helper.
+    Canonical semantics (all callers must conform to these):
 
-    Multi-dot inputs (e.g. ``"a.b.c"``) split on the *first* dot, so the
-    returned object part may itself contain a dot (``"b.c"`` in the example).
-    Callers should validate each returned part via :func:`validate_identifier`
-    before using it in a SQL statement.
+    - Splits on the **first** dot only.  Multi-dot input ``"a.b.c"`` returns
+      ``("a", "b.c")`` — the remainder after the first dot is the object name.
+    - Bracket-quoted names containing a literal dot (e.g. ``[a.b].[c]``) are
+      **not** handled correctly — callers that receive such names must pre-split
+      them.
+    - Whitespace-only schema or object parts (e.g. ``"  .name"`` or
+      ``"schema.  "``) are rejected — the strip check catches them.
+    - Raises :class:`ValueError` for any invalid input; upper layers
+      (:func:`~fabric_dw.mcp._helpers.parse_qualified_name`,
+      :func:`~fabric_dw.cli.commands._utils.parse_qualified_name`) convert
+      that into their respective error types (:class:`~mcp.server.fastmcp.exceptions.ToolError`,
+      :class:`click.UsageError`).
 
     Args:
-        qualified: A qualified name of the form ``schema.object``.  The caller
+        qualified: A qualified name of the form ``schema.<kind>``.  The caller
             is responsible for validating each part via
             :func:`validate_identifier` before embedding it in SQL.
+        kind: Human-readable label for the object type used in the error
+            message (e.g. ``"view"`` or ``"table"``).  Defaults to
+            ``"object"``.
 
     Returns:
         A ``(schema, object_name)`` tuple.  **Neither part is validated** —
         call :func:`validate_identifier` on each before SQL use.
 
     Raises:
-        ValueError: If *qualified* does not contain a dot (clear message is
-            raised), or if either the schema part or the object part is empty
-            or whitespace-only.
+        ValueError: If *qualified* does not contain a dot, or if either the
+            schema part or the object part is empty or whitespace-only.
     """
     if "." not in qualified:
-        msg = f"Invalid qualified name {qualified!r}: expected <schema>.<object> (missing dot)"
+        msg = f"Invalid qualified name {qualified!r}: expected <schema>.<{kind}> (missing dot)"
         raise ValueError(msg)
     dot = qualified.index(".")
     schema = qualified[:dot]
@@ -125,6 +133,6 @@ def parse_qualified_name(qualified: str) -> tuple[str, str]:
         msg = f"Invalid qualified name {qualified!r}: schema part must not be empty"
         raise ValueError(msg)
     if not obj.strip():
-        msg = f"Invalid qualified name {qualified!r}: object part must not be empty"
+        msg = f"Invalid qualified name {qualified!r}: {kind} part must not be empty"
         raise ValueError(msg)
     return schema, obj

@@ -42,7 +42,7 @@ from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import FabricError, ItemKindError, NotFoundError
 from fabric_dw.identifiers import parse_qualified_name, quote_identifier, validate_identifier
 from fabric_dw.models import ColumnSpec, Table, WarehouseKind
-from fabric_dw.services._helpers import coerce_to_utc, reject_non_select
+from fabric_dw.services._helpers import _assert_not_sql_endpoint, coerce_to_utc, reject_non_select
 from fabric_dw.sql import SqlTarget, run_query, run_statements
 from fabric_dw.types import arrow_type_to_tsql, validate_tsql_type
 
@@ -71,10 +71,8 @@ __all__ = [
 _log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Guard
+# Guards
 # ---------------------------------------------------------------------------
-
-_SQL_ENDPOINT_READONLY_MSG = "SQL Endpoints are read-only; CREATE/DROP/TRUNCATE not supported"
 
 # Fragment from the Fabric TDS driver error when the AT timestamp predates the
 # object-creation time or falls outside the data-retention window.
@@ -88,17 +86,7 @@ _WAREHOUSE_HEALTH_CHECK_MSG = (
 )
 
 
-def _assert_not_sql_endpoint(kind: WarehouseKind) -> None:
-    """Raise :class:`~fabric_dw.exceptions.ItemKindError` for SQL Endpoint items.
-
-    Args:
-        kind: The :class:`~fabric_dw.models.WarehouseKind` of the resolved item.
-
-    Raises:
-        ItemKindError: If *kind* is :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
-    """
-    if kind == WarehouseKind.SQL_ENDPOINT:
-        raise ItemKindError(_SQL_ENDPOINT_READONLY_MSG)
+# _assert_not_sql_endpoint is imported from fabric_dw.services._helpers above.
 
 
 def _assert_sql_endpoint(kind: WarehouseKind) -> None:

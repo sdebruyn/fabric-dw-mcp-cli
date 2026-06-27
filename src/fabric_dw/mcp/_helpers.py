@@ -11,8 +11,9 @@ This module provides utilities imported by every domain tool module:
   the same name string, eliminating the duplication flagged by M21.
 - :func:`parse_iso8601` — parse an ISO-8601 string to :class:`~datetime.datetime`,
   raising :class:`~mcp.server.fastmcp.exceptions.ToolError` on bad input.
-- :func:`parse_qualified_name` — split ``"schema.object"`` strings, raising
-  :class:`~mcp.server.fastmcp.exceptions.ToolError` on bad input.
+- :func:`parse_qualified_name` — adapter around
+  :func:`~fabric_dw.identifiers.parse_qualified_name` that converts
+  :class:`ValueError` to :class:`~mcp.server.fastmcp.exceptions.ToolError`.
 - :func:`make_sql_target` — build a :class:`~fabric_dw.sql.SqlTarget` from a
   resolved item entry and workspace ID, including the connection-string guard.
 - :func:`resolve_item` — return ``(workspace_id, ItemEntry)`` in one resolver
@@ -42,6 +43,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw.cache import ItemEntry as _ItemEntry
 from fabric_dw.exceptions import FabricError
+from fabric_dw.identifiers import parse_qualified_name as _parse_qualified_name
 from fabric_dw.mcp import _guards
 from fabric_dw.resolver import Resolver
 from fabric_dw.sql import SqlTarget
@@ -350,6 +352,22 @@ def parse_iso8601(value: str | None, param: str) -> datetime | None:
 def parse_qualified_name(qualified_name: str, kind: str = "object") -> tuple[str, str]:
     """Split a ``"schema.name"`` qualified identifier.
 
+    Delegates to :func:`~fabric_dw.identifiers.parse_qualified_name` (the
+    canonical implementation) and converts :class:`ValueError` to
+    :class:`~mcp.server.fastmcp.exceptions.ToolError`.
+
+    Semantics match :func:`~fabric_dw.identifiers.parse_qualified_name`:
+
+    - Splits on the **first** dot only.
+    - Rejects missing dot, empty schema/object parts, and whitespace-only parts.
+    - Bracket-quoted names with embedded dots are not supported.
+
+    .. note::
+        Behaviour change from the previous standalone implementation: inputs
+        with whitespace-only parts (e.g. ``"  .table"`` or ``"schema.  "``)
+        now raise :class:`ToolError`.  The old implementation used a plain
+        truthiness check and would silently accept such inputs.
+
     Args:
         qualified_name: Dot-separated qualified name, e.g. ``dbo.vw_sales``.
         kind: Human-readable label for the object type used in the error
@@ -359,13 +377,13 @@ def parse_qualified_name(qualified_name: str, kind: str = "object") -> tuple[str
         A ``(schema, name)`` tuple.
 
     Raises:
-        ToolError: When *qualified_name* does not contain exactly one ``.``
-            with non-empty parts on both sides.
+        ToolError: When *qualified_name* is invalid (missing dot, empty or
+            whitespace-only schema/object part).
     """
-    schema, _, name = qualified_name.partition(".")
-    if not schema or not name:
-        raise ToolError(f"qualified_name must be <schema>.<{kind}>, got {qualified_name!r}")
-    return schema, name
+    try:
+        return _parse_qualified_name(qualified_name, kind)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
 
 
 def make_sql_target(ws_id: UUID, entry: _ItemEntry, item: str) -> SqlTarget:

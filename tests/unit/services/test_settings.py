@@ -294,7 +294,7 @@ class TestSqlEndpointGuard:
     async def test_set_result_set_caching_rejects_sql_endpoint(self) -> None:
         """set_result_set_caching must raise ItemKindError for SQL_ENDPOINT."""
         target = _make_target()
-        with pytest.raises(ItemKindError, match="ALTER DATABASE"):
+        with pytest.raises(ItemKindError, match="SQL Analytics Endpoints are read-only"):
             await settings.set_result_set_caching(
                 target, enabled=True, kind=WarehouseKind.SQL_ENDPOINT
             )
@@ -302,7 +302,7 @@ class TestSqlEndpointGuard:
     async def test_set_time_travel_retention_rejects_sql_endpoint(self) -> None:
         """set_time_travel_retention must raise ItemKindError for SQL_ENDPOINT."""
         target = _make_target()
-        with pytest.raises(ItemKindError, match="ALTER DATABASE"):
+        with pytest.raises(ItemKindError, match="SQL Analytics Endpoints are read-only"):
             await settings.set_time_travel_retention(
                 target, days=7, kind=WarehouseKind.SQL_ENDPOINT
             )

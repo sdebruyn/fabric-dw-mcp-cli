@@ -49,9 +49,9 @@ from datetime import date as _date
 from typing import cast
 
 from fabric_dw.auth import CredentialMode
-from fabric_dw.exceptions import FabricError, ItemKindError
+from fabric_dw.exceptions import FabricError
 from fabric_dw.models import WarehouseKind, WarehouseSettings
-from fabric_dw.services._helpers import coerce_to_utc
+from fabric_dw.services._helpers import _assert_not_sql_endpoint, coerce_to_utc
 from fabric_dw.sql import SqlTarget, run_query
 
 __all__ = [
@@ -75,28 +75,7 @@ RETENTION_MAX = 120
 _RETENTION_MIN = RETENTION_MIN
 _RETENTION_MAX = RETENTION_MAX
 
-# ---------------------------------------------------------------------------
-# Guard
-# ---------------------------------------------------------------------------
-
-_SQL_ENDPOINT_ALTER_MSG = (
-    "ALTER DATABASE is not supported on SQL Analytics Endpoints; "
-    "use a Fabric Data Warehouse to change settings"
-)
-
-
-def _assert_not_sql_endpoint(kind: WarehouseKind) -> None:
-    """Raise :class:`~fabric_dw.exceptions.ItemKindError` for SQL Endpoint items.
-
-    Args:
-        kind: The :class:`~fabric_dw.models.WarehouseKind` of the resolved item.
-
-    Raises:
-        ItemKindError: If *kind* is :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
-    """
-    if kind == WarehouseKind.SQL_ENDPOINT:
-        raise ItemKindError(_SQL_ENDPOINT_ALTER_MSG)
-
+# _assert_not_sql_endpoint is imported from fabric_dw.services._helpers above.
 
 # ---------------------------------------------------------------------------
 # SQL templates

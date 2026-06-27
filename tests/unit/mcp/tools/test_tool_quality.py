@@ -257,20 +257,42 @@ class TestParseQualifiedName:
         assert name == "vw_orders"
 
     def test_rejects_no_dot(self) -> None:
-        with pytest.raises(ToolError, match="qualified_name must be"):
+        with pytest.raises(ToolError, match="Invalid qualified name"):
             parse_qualified_name("nodot", kind="table")
 
     def test_rejects_empty_schema(self) -> None:
-        with pytest.raises(ToolError, match="qualified_name must be"):
+        with pytest.raises(ToolError, match="Invalid qualified name"):
             parse_qualified_name(".name", kind="table")
 
     def test_rejects_empty_name(self) -> None:
-        with pytest.raises(ToolError, match="qualified_name must be"):
+        with pytest.raises(ToolError, match="Invalid qualified name"):
             parse_qualified_name("schema.", kind="table")
 
     def test_kind_in_error_message(self) -> None:
         with pytest.raises(ToolError, match="view"):
             parse_qualified_name("nodot", kind="view")
+
+    def test_rejects_whitespace_only_schema(self) -> None:
+        """Whitespace-only schema now raises ToolError (behaviour change from #826).
+
+        The previous standalone implementation used a plain truthiness check
+        (``if not schema``) which accepted ``"  "`` as a truthy string.  The
+        canonical implementation in identifiers.py strips before checking,
+        so whitespace-only parts are now correctly rejected.
+        """
+        with pytest.raises(ToolError, match="schema part must not be empty"):
+            parse_qualified_name("  .name", kind="table")
+
+    def test_rejects_whitespace_only_object(self) -> None:
+        """Whitespace-only object part now raises ToolError (behaviour change from #826)."""
+        with pytest.raises(ToolError, match="table part must not be empty"):
+            parse_qualified_name("schema.  ", kind="table")
+
+    def test_multi_dot_splits_on_first_dot(self) -> None:
+        """Multi-dot input is split on the first dot; remainder is the object name."""
+        schema, name = parse_qualified_name("dbo.schema.table")
+        assert schema == "dbo"
+        assert name == "schema.table"
 
 
 # ---------------------------------------------------------------------------
