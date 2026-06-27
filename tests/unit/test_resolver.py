@@ -38,6 +38,10 @@ WS_GUID_2 = "b2c3d4e5-f6a7-8901-bcde-f01234567891"
 ITEM_GUID = "d4e5f6a7-b8c9-0123-def0-123456789abc"
 ITEM_UUID = UUID(ITEM_GUID)
 
+# Second item GUID -- used in tests where two distinct items share a display name.
+ITEM_GUID_2 = "e5f6a7b8-c9d0-1234-ef01-23456789abcd"
+ITEM_UUID_2 = UUID(ITEM_GUID_2)
+
 # Power BI OData group endpoint
 _PBI_GROUPS_URL = "https://api.powerbi.com/v1.0/myorg/groups"
 
@@ -956,3 +960,71 @@ async def test_item_sql_endpoint_unresolved_conn_not_cached_and_retries(
     assert second.connection_string == "mysqlep.datawarehouse.fabric.microsoft.com"
     # The /sqlEndpoints resource was fetched twice — no stale cache short-circuit.
     assert sql_ep_calls["n"] == 2
+
+
+# ---------------------------------------------------------------------------
+# #873 -- item_type enforcement: same-named items of different types
+# ---------------------------------------------------------------------------
+
+_FABRIC_ITEM_URL_2 = f"https://api.fabric.microsoft.com/v1/workspaces/{WS_GUID}/items/{ITEM_GUID_2}"
+_FABRIC_WAREHOUSE_URL_2 = (
+    f"https://api.fabric.microsoft.com/v1/workspaces/{WS_GUID}/warehouses/{ITEM_GUID_2}"
+)
+
+
+async def test_item_name_type_enforced_skips_sql_endpoint_returns_warehouse(
+    tmp_path: Path,
+) -> None:
+    """item_type="Warehouse": a same-named SQLEndpoint listed first must be skipped;
+    the Warehouse must be returned.  Fails before the fix, passes after.
+
+    This exercises the client-side raw_type == item_type guard added in #873.
+    The list response deliberately puts the SQLEndpoint first to expose the bug.
+    """
+    resolver, client, _ = _make_resolver(tmp_path)
+    # SQLEndpoint (ITEM_GUID) listed before Warehouse (ITEM_GUID_2); same display name.
+    list_payload = _items_list_payload(
+        _sql_endpoint_list_item(ITEM_GUID, "SharedName"),
+        _warehouse_list_item(ITEM_GUID_2, "SharedName"),
+    )
+    generic_payload = _warehouse_detail_payload(ITEM_GUID_2, WS_GUID, "SharedName")
+    specific_payload = _warehouse_detail_payload(ITEM_GUID_2, WS_GUID, "SharedName")
+    with respx.mock:
+        respx.get(_FABRIC_ITEMS_URL).mock(return_value=httpx.Response(200, json=list_payload))
+        # Only the Warehouse detail endpoints should be fetched; SQLEndpoint detail
+        # routes are intentionally not registered so any call to them causes a failure.
+        respx.get(_FABRIC_ITEM_URL_2).mock(return_value=httpx.Response(200, json=generic_payload))
+        respx.get(_FABRIC_WAREHOUSE_URL_2).mock(
+            return_value=httpx.Response(200, json=specific_payload)
+        )
+        async with client:
+            result = await resolver.item(WS_GUID, "SharedName", item_type="Warehouse")
+    assert result.id == ITEM_UUID_2
+    assert result.kind == WarehouseKind.WAREHOUSE
+
+
+async def test_item_name_type_enforced_skips_warehouse_returns_sql_endpoint(
+    tmp_path: Path,
+) -> None:
+    """item_type="SQLEndpoint": a same-named Warehouse listed first must be skipped;
+    the SQLEndpoint must be returned.  Fails before the fix, passes after.
+    """
+    resolver, client, _ = _make_resolver(tmp_path)
+    # Warehouse (ITEM_GUID_2) listed before SQLEndpoint (ITEM_GUID); same display name.
+    list_payload = _items_list_payload(
+        _warehouse_list_item(ITEM_GUID_2, "SharedName"),
+        _sql_endpoint_list_item(ITEM_GUID, "SharedName"),
+    )
+    generic_payload = _sql_endpoint_detail_payload(ITEM_GUID, WS_GUID, "SharedName")
+    specific_payload = _sql_endpoint_detail_payload(ITEM_GUID, WS_GUID, "SharedName")
+    with respx.mock:
+        respx.get(_FABRIC_ITEMS_URL).mock(return_value=httpx.Response(200, json=list_payload))
+        # Only the SQLEndpoint detail endpoints should be fetched.
+        respx.get(_FABRIC_ITEM_URL).mock(return_value=httpx.Response(200, json=generic_payload))
+        respx.get(
+            f"https://api.fabric.microsoft.com/v1/workspaces/{WS_GUID}/sqlEndpoints/{ITEM_GUID}"
+        ).mock(return_value=httpx.Response(200, json=specific_payload))
+        async with client:
+            result = await resolver.item(WS_GUID, "SharedName", item_type="SQLEndpoint")
+    assert result.id == ITEM_UUID
+    assert result.kind == WarehouseKind.SQL_ENDPOINT
