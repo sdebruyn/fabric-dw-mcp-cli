@@ -4,7 +4,7 @@ title: Query performance
 
 # Investigating and improving query performance
 
-A task-oriented walkthrough for using `fabric-dw` (binary alias **`fdw`**) to find and fix slow queries on a Microsoft Fabric Data Warehouse or SQL Analytics Endpoint. It threads a single loop - **investigate → diagnose → improve → verify**: across the `queries`, `sql`, `statistics`, `sql-pools`, and `settings` command groups, and grounds each step in Microsoft Learn guidance.
+A task-oriented walkthrough for using `fabric-dw` (binary alias **`fdw`**) to find and fix slow queries on a Microsoft Fabric Data Warehouse or SQL Analytics Endpoint. It threads a single loop (**investigate → diagnose → improve → verify**) across the `queries`, `sql`, `statistics`, `sql-pools`, and `settings` command groups, and grounds each step in Microsoft Learn guidance.
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
@@ -126,7 +126,7 @@ Pick one query from the top of these lists and carry it through the rest of the 
 
 ## Step 4 - Capture & read the execution plan
 
-With a specific slow query in hand, capture its **estimated** execution plan. `sql plan` (MCP [`get_query_plan`](../commands/sql.md#get_query_plan)) retrieves the estimated `SHOWPLAN_XML` **without executing the query**: so it is safe to plan even DDL/DML text, and reading it costs nothing.
+With a specific slow query in hand, capture its **estimated** execution plan. `sql plan` (MCP [`get_query_plan`](../commands/sql.md#get_query_plan)) retrieves the estimated `SHOWPLAN_XML` **without executing the query**, so it is safe to plan even DDL/DML text, and reading it costs nothing.
 
 ```shell
 # Default: a colour-coded Rich operator tree in the terminal
@@ -175,7 +175,7 @@ Cross-reference the plan with the numbers from `queries history`. The key column
 
 !!! tip "Don't judge a query by its first run"
 
-    A **non-zero `data_scanned_remote_storage_mb`** means the data was fetched from OneLake - a cold start. The first run after a cache eviction is *not* representative; **subsequent runs are**. Always discard the cold-start run before drawing conclusions. - [Query performance guidelines](https://learn.microsoft.com/fabric/data-warehouse/guidelines-warehouse-performance?WT.mc_id=MVP_310840#query-performance)
+    A **non-zero `data_scanned_remote_storage_mb`** means the data was fetched from OneLake - a cold start. The first run after a cache eviction is *not* representative; **subsequent runs are**. Always discard the cold-start run before drawing conclusions. See the [Query performance guidelines](https://learn.microsoft.com/fabric/data-warehouse/guidelines-warehouse-performance?WT.mc_id=MVP_310840#query-performance).
 
 Caching in Fabric is **automatic and not user-clearable**: the in-memory and disk caches are transparent, which is why you interpret cache columns rather than manage them. See [Caching in Fabric Data Warehouse](https://learn.microsoft.com/fabric/data-warehouse/caching?WT.mc_id=MVP_310840).
 
@@ -218,7 +218,7 @@ fdw statistics delete SalesWH dbo.Customer stat_customer_region
 
 These map to MCP [`create_statistics`](../commands/statistics.md#create_statistics), [`update_statistics`](../commands/statistics.md#update_statistics), and [`delete_statistics`](../commands/statistics.md#delete_statistics). All three are **mutating** MCP tools gated behind the write-guard (`delete_statistics` is additionally destructive-gated via `FABRIC_MCP_ALLOW_DESTRUCTIVE`); they do **not** pop a confirmation dialog, so an AI assistant must ask before calling them.
 
-Microsoft recommends creating/updating single-column histogram statistics **during maintenance windows**: so user `SELECT`s do not pay for synchronous auto-stats creation - focusing on columns used in `GROUP BY` / `ORDER BY` / `WHERE` / `JOIN`, and refreshing after big data changes. See [Statistics in Fabric Data Warehouse](https://learn.microsoft.com/fabric/data-warehouse/statistics?WT.mc_id=MVP_310840).
+Microsoft recommends creating/updating single-column histogram statistics **during maintenance windows**, so user `SELECT`s do not pay for synchronous auto-stats creation, focusing on columns used in `GROUP BY` / `ORDER BY` / `WHERE` / `JOIN`, and refreshing after big data changes. See [Statistics in Fabric Data Warehouse](https://learn.microsoft.com/fabric/data-warehouse/statistics?WT.mc_id=MVP_310840).
 
 ---
 
@@ -226,8 +226,8 @@ Microsoft recommends creating/updating single-column histogram statistics **duri
 
 With statistics healthy, turn to the query text itself. Common, high-leverage rewrites:
 
-- **Return less data**: avoid `SELECT *`, project only the columns you need, and apply `WHERE` filters *before* joins. Filtering on a low-cardinality column early shrinks everything downstream. - [Query performance guidelines](https://learn.microsoft.com/fabric/data-warehouse/guidelines-warehouse-performance?WT.mc_id=MVP_310840#query-performance)
-- **Match data types in comparisons**: eliminate the `CONVERT_IMPLICIT` you spotted in Step 4 by comparing like types, and use the smallest sufficient string lengths. - [Data type optimization](https://learn.microsoft.com/fabric/data-warehouse/guidelines-warehouse-performance?WT.mc_id=MVP_310840#data-type-optimization)
+- **Return less data**: avoid `SELECT *`, project only the columns you need, and apply `WHERE` filters *before* joins. Filtering on a low-cardinality column early shrinks everything downstream. See the [Query performance guidelines](https://learn.microsoft.com/fabric/data-warehouse/guidelines-warehouse-performance?WT.mc_id=MVP_310840#query-performance).
+- **Match data types in comparisons**: eliminate the `CONVERT_IMPLICIT` you spotted in Step 4 by comparing like types, and use the smallest sufficient string lengths. See [Data type optimization](https://learn.microsoft.com/fabric/data-warehouse/guidelines-warehouse-performance?WT.mc_id=MVP_310840#data-type-optimization).
 - **Tag the query with a label** so you can find every run of the improved version in `queries history`, and apply hints only as a last resort.
 
 Re-run the improved query through `sql exec` with a label (and any hint):

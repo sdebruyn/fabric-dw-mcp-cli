@@ -18,7 +18,7 @@ Use this guide when you have a target **Data Warehouse** and want to load file-b
 
     `COPY INTO` and table DDL (create / load / clear / statistics writes) are **Data Warehouse only**. SQL Analytics Endpoints are read-only here - listing, counting, and reading tables work, but you cannot create or load into them. If your `[ITEM]` is a SQL Analytics Endpoint the engine (or this tool) will reject the write.
 
-Fabric offers several ingestion mechanisms. `COPY INTO`: what this tool uses - is Microsoft's recommended high-throughput, code-rich path for getting files into a warehouse. For scheduled low-code ingestion use **pipelines**, for code-free transforms use **dataflows**, and for in-warehouse moves use T-SQL (`INSERT … SELECT`, `SELECT INTO`, `CTAS`). See [Ingest data into a Fabric warehouse](https://learn.microsoft.com/fabric/data-warehouse/ingest-data?WT.mc_id=MVP_310840) for the full picture.
+Fabric offers several ingestion mechanisms. `COPY INTO`, what this tool uses, is Microsoft's recommended high-throughput, code-rich path for getting files into a warehouse. For scheduled low-code ingestion use **pipelines**, for code-free transforms use **dataflows**, and for in-warehouse moves use T-SQL (`INSERT … SELECT`, `SELECT INTO`, `CTAS`). See [Ingest data into a Fabric warehouse](https://learn.microsoft.com/fabric/data-warehouse/ingest-data?WT.mc_id=MVP_310840) for the full picture.
 
 ---
 
