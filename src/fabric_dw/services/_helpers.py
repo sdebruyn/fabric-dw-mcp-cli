@@ -219,7 +219,7 @@ async def scan_all_workspaces(
     # not the total across all workspaces.
     fan_out_total = len(active_workspaces)
     raw = await bounded_gather(
-        [lambda ws=ws: fetch(ws) for ws in active_workspaces],  # type: ignore[misc]
+        [lambda ws=ws: fetch(ws) for ws in active_workspaces],
         return_exceptions=True,
     )
 
@@ -244,7 +244,7 @@ async def scan_all_workspaces(
         elif isinstance(result, BaseException):
             raise result
         else:
-            out.extend(result)  # type: ignore[arg-type]
+            out.extend(result)
 
     if access_skipped:
         logger.warning(

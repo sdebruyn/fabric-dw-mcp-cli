@@ -110,7 +110,7 @@ def _arrow_primitive_to_tsql(  # noqa: PLR0911,PLR0912
         return "BIT"
     # Decimal
     if pa.types.is_decimal(at):
-        dec = at  # type: ignore[assignment]
+        dec = at
         if dec.precision > 38:  # noqa: PLR2004
             msg = (
                 f"Decimal type has precision {dec.precision}, which exceeds the Fabric DW "
@@ -127,7 +127,7 @@ def _arrow_primitive_to_tsql(  # noqa: PLR0911,PLR0912
         # Preserve timezone offset when the Arrow type carries timezone info.
         # DATETIMEOFFSET stores the UTC value plus the original UTC offset,
         # while DATETIME2 silently drops the offset.
-        ts = at  # type: ignore[assignment]
+        ts = at
         if ts.tz is not None:
             return "DATETIMEOFFSET(7)"
         return "DATETIME2(7)"
@@ -138,7 +138,7 @@ def _arrow_primitive_to_tsql(  # noqa: PLR0911,PLR0912
         return f"VARCHAR({varchar_length})"
     # UTF-8 view (Arrow 12+)
     try:
-        if pa.types.is_string_view(at):  # type: ignore[attr-defined]
+        if pa.types.is_string_view(at):
             return f"VARCHAR({varchar_length})"
     except AttributeError:  # pragma: no cover — older pyarrow
         pass
@@ -189,7 +189,7 @@ def arrow_type_to_tsql(
 
     # Dictionary (categorical) — expand to value type.
     if pa.types.is_dictionary(at):
-        dict_type = at  # type: ignore[assignment]
+        dict_type = at
         return arrow_type_to_tsql(dict_type.value_type, field_name, varchar_length=varchar_length)
 
     # Everything else (list, struct, map, union, fixed_size_list, …) is unsupported.

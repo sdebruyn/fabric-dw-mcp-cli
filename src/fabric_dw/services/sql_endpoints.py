@@ -135,7 +135,7 @@ async def list_all_workspaces(http: FabricHttpClient) -> list[Warehouse]:
     )
     return await scan_all_workspaces(
         workspaces,
-        lambda ws: list_endpoints(http, ws.id),  # type: ignore[union-attr]  # mypy false-positive: Sequence[_HasNameIdAndCapacity] exposes id: UUID but mypy loses the concrete type through the Protocol abstraction
+        lambda ws: list_endpoints(http, ws.id),
         logger=_logger,
         skip_errors=(PermissionDeniedError, NotFoundError),
         capacity_states=capacity_states,
@@ -315,7 +315,7 @@ async def refresh_metadata(
             endpoint_id,
         )
         body: object = resp.json() if resp.content else {}
-        raw_value = body.get("value", []) if isinstance(body, dict) else []  # type: ignore[union-attr]
+        raw_value = body.get("value", []) if isinstance(body, dict) else []
 
     raw_items = raw_value if isinstance(raw_value, list) else []
     return [TableSyncStatus.model_validate(item) for item in raw_items]

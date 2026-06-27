@@ -986,7 +986,7 @@ def emit_event(
             merged["ai.operation.name"] = name
 
         record = LogRecord(  # ty: ignore[no-matching-overload]
-            attributes=merged,  # type: ignore[arg-type]
+            attributes=merged,
         )
 
         # getattr is intentional: `otel_logger` is typed as `object` to avoid

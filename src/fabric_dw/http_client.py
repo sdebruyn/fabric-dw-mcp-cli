@@ -182,7 +182,7 @@ def _parse_json_body(resp: httpx.Response) -> dict[str, object] | None:
     try:
         parsed = resp.json()
         if isinstance(parsed, dict):
-            return parsed  # type: ignore[return-value]
+            return parsed
     except (ValueError, json.JSONDecodeError):
         pass
     return None

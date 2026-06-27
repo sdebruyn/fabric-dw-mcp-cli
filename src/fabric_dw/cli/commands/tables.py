@@ -437,7 +437,7 @@ async def create_cmd(  # noqa: PLR0912, PLR0915
                     target,
                     schema,
                     table_name,
-                    Path(parquet_path),  # type: ignore[arg-type]
+                    Path(parquet_path),
                     cluster_by=cluster_by_list,
                     kind=entry.kind,
                     mode=ctx.auth,
@@ -449,7 +449,7 @@ async def create_cmd(  # noqa: PLR0912, PLR0915
                     target,
                     schema,
                     table_name,
-                    Path(csv_path),  # type: ignore[arg-type]
+                    Path(csv_path),
                     cluster_by=cluster_by_list,
                     kind=entry.kind,
                     mode=ctx.auth,
@@ -465,7 +465,7 @@ async def create_cmd(  # noqa: PLR0912, PLR0915
                     target,
                     schema,
                     table_name,
-                    Path(json_path),  # type: ignore[arg-type]
+                    Path(json_path),
                     cluster_by=cluster_by_list,
                     kind=entry.kind,
                     mode=ctx.auth,

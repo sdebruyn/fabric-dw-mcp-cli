@@ -224,7 +224,7 @@ class InstrumentedFastMCP(FastMCP):
     ``@mcp.tool(name=...)`` calls automatically gain instrumentation.
     """
 
-    def tool(  # type: ignore[override]  # noqa: PLR0913
+    def tool(  # noqa: PLR0913
         self,
         name: str | None = None,
         title: str | None = None,

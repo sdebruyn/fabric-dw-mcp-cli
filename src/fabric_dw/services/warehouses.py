@@ -199,7 +199,7 @@ async def list_all_workspaces(
     )
     return await scan_all_workspaces(
         workspaces,
-        lambda ws: list_warehouses(http, ws.id, warehouses_only=warehouses_only),  # type: ignore[union-attr]  # mypy false-positive: Sequence[_HasNameIdAndCapacity] exposes id: UUID but mypy loses the concrete type through the Protocol abstraction
+        lambda ws: list_warehouses(http, ws.id, warehouses_only=warehouses_only),
         logger=_logger,
         skip_errors=(PermissionDeniedError, NotFoundError),
         capacity_states=capacity_states,

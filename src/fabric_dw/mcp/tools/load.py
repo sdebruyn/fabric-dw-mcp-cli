@@ -214,7 +214,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 table_name,
                 url,
                 file_type=file_type,
-                credential_type=credential_type,  # type: ignore[arg-type]
+                credential_type=credential_type,
                 secret=secret,
                 identity=identity,
                 csv_options=csv_options,
@@ -477,7 +477,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 table_name,
                 url,
                 file_type=file_type,
-                credential_type=credential_type,  # type: ignore[arg-type]
+                credential_type=credential_type,
                 secret=secret,
                 identity=identity,
                 csv_options=csv_options,

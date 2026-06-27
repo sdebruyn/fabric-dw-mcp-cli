@@ -137,8 +137,8 @@ async def build_http_client(ctx: CliContext) -> AsyncIterator[FabricHttpClient]:
     # can apply its own built-in defaults for the rest.
     client = FabricHttpClient(
         credential,
-        **({"max_429_retries": retries} if retries is not None else {}),  # type: ignore[arg-type]
-        **({"combined_deadline_s": deadline} if deadline is not None else {}),  # type: ignore[arg-type]
+        **({"max_429_retries": retries} if retries is not None else {}),
+        **({"combined_deadline_s": deadline} if deadline is not None else {}),
     )
     async with client as http:
         yield http
