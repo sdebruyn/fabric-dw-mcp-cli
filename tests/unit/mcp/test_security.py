@@ -59,11 +59,28 @@ class TestAssertReadonlySql:
     def test_accepts_with_cte(self) -> None:
         self._call("WITH cte AS (SELECT 1) SELECT * FROM cte")
 
-    def test_accepts_select_after_line_comment(self) -> None:
-        self._call("-- get rows\nSELECT id FROM dbo.t")
+    def test_rejects_select_after_line_comment(self) -> None:
+        """FLIPPED (Option A): a leading '--' comment makes the first token 'get', not SELECT.
 
-    def test_accepts_select_after_block_comment(self) -> None:
-        self._call("/* admin query */ SELECT id FROM dbo.t")
+        The fully-raw scan has no comment-stripping step, so a statement that
+        begins with a line comment is rejected because its first word token is
+        not SELECT or WITH.  Unset FABRIC_MCP_READONLY for such queries.
+        """
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError, match="non-SELECT"):
+            self._call("-- get rows\nSELECT id FROM dbo.t")
+
+    def test_rejects_select_after_block_comment(self) -> None:
+        """FLIPPED (Option A): a leading block comment makes the first token 'admin', not SELECT.
+
+        No comment stripping means the raw first word is from the comment body.
+        Unset FABRIC_MCP_READONLY for such queries.
+        """
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError, match="non-SELECT"):
+            self._call("/* admin query */ SELECT id FROM dbo.t")
 
     def test_accepts_select_with_trailing_semicolon(self) -> None:
         """A single trailing ';' is OK (optional terminator)."""
@@ -416,6 +433,48 @@ class TestAssertReadonlySql:
             self._call("SELECT * FROM t WHERE x='DROP TABLE t--'")
 
     # ------------------------------------------------------------------
+    # #797 bypass regression tests -- string-aware comment delimiter bypass
+    # ------------------------------------------------------------------
+
+    def test_rejects_string_line_comment_hides_delete(self) -> None:
+        """CRITICAL #797: string literal containing '--' hides a ';DELETE' rider.
+
+        The old _sanitise stripped '--';DELETE FROM t as a line comment starting
+        at the '--' inside the string, removing the semicolon-separated DML.
+        The fully-raw scan catches the semicolon immediately.
+        """
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError, match="multi-statement"):
+            self._call("SELECT '--';DELETE FROM t")
+
+    def test_rejects_string_block_comment_hides_drop(self) -> None:
+        """CRITICAL #797: string literals forming fake block-comment delimiters hide DROP.
+
+        SELECT '/*' AS a;DROP TABLE t;SELECT '*/' AS b -- the old iterative
+        block-comment stripper consumed '/*' ... '*/' spanning the DML payload.
+        The fully-raw scan catches the first semicolon.
+        """
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError, match="multi-statement"):
+            self._call("SELECT '/*' AS a;DROP TABLE t;SELECT '*/' AS b")
+
+    def test_rejects_string_block_comment_hides_update(self) -> None:
+        """CRITICAL #797: fake block-comment delimiters in strings hide UPDATE."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError, match="multi-statement"):
+            self._call("SELECT '/*' AS a;UPDATE t SET x=1;SELECT '*/' AS b")
+
+    def test_rejects_string_block_comment_hides_insert(self) -> None:
+        """CRITICAL #797: fake block-comment delimiters in strings hide INSERT."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError, match="multi-statement"):
+            self._call("SELECT '/*' x;INSERT INTO t VALUES(1);SELECT '*/' y")
+
+    # ------------------------------------------------------------------
     # Legitimate plain reads that must still PASS after fix
     # ------------------------------------------------------------------
 
@@ -435,9 +494,18 @@ class TestAssertReadonlySql:
         """Regression: multi-line SELECT must still be allowed."""
         self._call("SELECT\n    id,\n    name\nFROM dbo.users\nWHERE active = 1")
 
-    def test_accepts_select_with_block_and_line_comments_after_fix(self) -> None:
-        """Regression: SELECT with both a block comment and a line comment must be allowed."""
-        self._call("/* admin */ SELECT id FROM t -- end")
+    def test_rejects_select_with_leading_block_comment_after_fix(self) -> None:
+        """FLIPPED (Option A): a leading block comment causes rejection.
+
+        '/* admin */ SELECT id FROM t -- end' has 'admin' as its first raw
+        token, which is not SELECT or WITH.  Rejected by the non-SELECT gate.
+        Trailing '-- end' contains no forbidden keyword so that part would pass,
+        but the leading comment fails first.  Unset FABRIC_MCP_READONLY to run.
+        """
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError, match="non-SELECT"):
+            self._call("/* admin */ SELECT id FROM t -- end")
 
 
 # ---------------------------------------------------------------------------

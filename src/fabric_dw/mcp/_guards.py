@@ -177,12 +177,6 @@ def workspace_allowlist_active(config_allowlist: Sequence[str] | None = None) ->
 # SQL classifier
 # ---------------------------------------------------------------------------
 
-# Single block-comment pass (non-greedy, no nesting).
-_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
-
-# Line comment: -- to end of line.
-_LINE_COMMENT_RE = re.compile(r"--[^\n]*")
-
 # Tokens that must never appear in a read-only statement (case-insensitive).
 _FORBIDDEN_TOKENS = frozenset(
     {
@@ -228,82 +222,48 @@ _ALLOWED_FIRST_TOKENS = frozenset({"SELECT", "WITH"})
 _TOKEN_RE = re.compile(r"\w+")
 
 
-def _strip_block_comments(sql: str) -> str:
-    """Iteratively remove C-style block comments until the text is stable.
-
-    Nested or malformed comments such as ``/* /* */ payload */`` are handled
-    by repeating the substitution until no further change occurs.  Any residual
-    ``/*`` or ``*/`` after stabilisation indicates unbalanced delimiters and
-    causes the caller to reject the statement.
-    """
-    prev = None
-    while prev != sql:
-        prev = sql
-        sql = _BLOCK_COMMENT_RE.sub(" ", sql)
-    return sql
-
-
-def _sanitise(statement: str) -> str:
-    """Return a comment-stripped copy of *statement* for token inspection.
-
-    Steps (in order):
-    1. Iteratively strip block comments (space replacement, never empty string).
-    2. Strip line comments (``--`` to EOL).
-
-    String literals and quoted identifiers are intentionally NOT masked.
-    All checks run on the raw comment-stripped text so that forbidden keywords
-    are physically present in the scanned text regardless of the context they
-    appear in.  This fails closed: a query that embeds a write keyword or a
-    semicolon inside a string literal or quoted identifier will be rejected.
-    Unset FABRIC_MCP_READONLY for such queries.
-    """
-    text = _strip_block_comments(statement)
-    return _LINE_COMMENT_RE.sub(" ", text)
-
-
 def assert_readonly_sql(statement: str) -> None:
     """Raise :class:`ToolError` when *statement* is not allowed in read-only mode.
 
     Called only when ``FABRIC_MCP_READONLY`` is truthy.
 
-    Design
-    ------
-    The classifier is **conservative-by-design** (fail-closed): it rejects
-    anything it cannot prove is a plain read-only query, rather than trying to
-    exhaustively parse T-SQL.  All checks run on the raw comment-stripped text,
-    so forbidden keywords are physically present in the scanned text regardless
-    of whether they appear inside a string literal, a bracket-quoted identifier,
-    or a double-quoted identifier.
+    Design: fully-raw, fail-closed scan
+    ------------------------------------
+    All checks run on the COMPLETELY RAW ``statement`` text (after stripping
+    leading and trailing whitespace only).  No comment stripping, no string-
+    literal masking, no SQL parsing.  Because comment delimiters and string
+    quotes are never touched, a forbidden keyword or a semicolon-separated
+    rider is always physically present in the scanned text and is always
+    caught -- regardless of how it is wrapped in comments or string literals.
 
-    This means read-only mode may also reject otherwise-harmless reads that
-    embed a write keyword or a ``;`` inside a string literal or quoted
-    identifier (e.g. ``SELECT * FROM cdc WHERE op='DELETE'``,
-    ``SELECT [delete] FROM t``).  This is by design.  Unset
-    ``FABRIC_MCP_READONLY`` to run such queries.
+    This is fail-closed by design and deliberately accepts certain false
+    positives.  The following otherwise-harmless queries are REJECTED and
+    require unsetting ``FABRIC_MCP_READONLY`` to run:
 
-    Sanitisation pipeline
-    ~~~~~~~~~~~~~~~~~~~~~
-    1. Iteratively strip block comments (non-greedy sub loop until stable,
-       replacing with a space so adjacent tokens cannot merge into a keyword).
-       Residual ``/*`` or ``*/`` after stabilisation → rejected.
-    2. Strip ``--`` line comments.
+    - A leading comment before SELECT (``-- comment\\nSELECT ...`` or
+      ``/* comment */ SELECT ...``): the first raw word token is a word
+      from the comment body, not SELECT or WITH, so the non-SELECT gate fires.
+    - A forbidden keyword inside a block comment or a string literal
+      (``SELECT * FROM cdc WHERE op='DELETE'``, ``SELECT [delete] FROM t``):
+      the token scanner sees the keyword regardless of context.
+    - A semicolon inside a string literal
+      (``SELECT id FROM t WHERE name = 'a;b'``): the multi-statement check
+      triggers on the bare semicolon character.
 
-    String literals and quoted identifiers are NOT masked.
+    These false positives are accepted by design.  Unset ``FABRIC_MCP_READONLY``
+    for such queries.
 
-    Checks (all on the comment-stripped raw text)
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    (a) First token must be ``SELECT`` or ``WITH``.
-    (b) A ``;`` followed by any non-whitespace character is rejected as a
+    Checks (all on the raw text, in order)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    (a) A ``;`` followed by any non-whitespace character is rejected as a
         multi-statement batch.
-    (c) Any word token (case-insensitive) that matches a forbidden keyword
+    (b) First ``\\w+`` token must be ``SELECT`` or ``WITH``.
+    (c) Any ``\\w+`` token (case-insensitive) that matches a forbidden keyword
         (INSERT, UPDATE, DELETE, MERGE, INTO, EXEC, EXECUTE, DROP, ALTER,
         CREATE, TRUNCATE, GRANT, REVOKE, DENY, KILL, BACKUP, RESTORE,
         OPENROWSET, OPENQUERY, WRITETEXT, UPDATETEXT, SP_EXECUTESQL,
         XP_CMDSHELL, WAITFOR, USE, SHUTDOWN, RECONFIGURE, DBCC) causes the
-        statement to be rejected — regardless of where it appears.  This
-        catches ``WITH x AS (SELECT 1) DELETE …``, ``SELECT * INTO backup FROM
-        t``, and newline-separated DoS/context-switch payloads such as
-        ``SELECT 1\\nWAITFOR DELAY '99:0:0'`` or ``SELECT 1\\nUSE master``.
+        statement to be rejected regardless of where it appears.
 
     Args:
         statement: The raw SQL string supplied by the caller.
@@ -311,30 +271,23 @@ def assert_readonly_sql(statement: str) -> None:
     Raises:
         ToolError: When the statement does not pass all read-only checks.
     """
-    sanitised = _sanitise(statement)
+    statement = statement.strip()
 
-    # Reject unbalanced block-comment delimiters left after stripping.
-    if "/*" in sanitised or "*/" in sanitised:
-        raise ToolError(
-            "read-only mode (FABRIC_MCP_READONLY) blocks statements with unbalanced block comments"
-        )
-
-    sanitised = sanitised.strip()
-
-    # Reject multi-statement batches: a ';' followed by non-whitespace.
-    if re.search(r";\s*\S", sanitised):
+    # (a) Reject multi-statement batches: a ';' followed by non-whitespace.
+    if re.search(r";\s*\S", statement):
         raise ToolError("read-only mode (FABRIC_MCP_READONLY) blocks multi-statement batches")
 
-    tokens = _TOKEN_RE.findall(sanitised)
+    tokens = _TOKEN_RE.findall(statement)
     first_token = tokens[0].upper() if tokens else ""
 
+    # (b) First token must be SELECT or WITH.
     if first_token not in _ALLOWED_FIRST_TOKENS:
         raise ToolError(
             f"read-only mode (FABRIC_MCP_READONLY) blocks non-SELECT statements "
             f"(got {first_token!r})"
         )
 
-    # Scan every token for forbidden keywords.
+    # (c) Scan every token for forbidden keywords.
     for tok in tokens:
         if tok.upper() in _FORBIDDEN_TOKENS:
             raise ToolError(
