@@ -12,6 +12,7 @@ from rich.console import Console
 
 from fabric_dw.cli._render import (
     _cell,
+    _format_nested,
     _is_guid_column,
     confirm,
     render,
@@ -1681,3 +1682,117 @@ class TestRenderJsonNonFinite:
         # json.loads raises if the output is not strict JSON
         parsed = json.loads(captured.out)
         assert parsed["c"] == 2.5
+
+
+# ---------------------------------------------------------------------------
+# Nested dict/list panel rendering (issue #830)
+# ---------------------------------------------------------------------------
+
+
+class TestNestedPanelRendering:
+    """Nested dict/list values in panel output render recursively, not as Python reprs.
+
+    Regression tests for issue #830: _render_panel previously called _cell()
+    on nested values, producing Python repr strings like ``{'workspace': None, ...}``.
+    The fix routes nested dict and list values through _format_nested(), which
+    expands them into indented key: value blocks.
+    """
+
+    def _render_to_string(self, data: object) -> str:
+        sio = StringIO()
+        console = Console(file=sio, width=120, highlight=False, no_color=True)
+        render(data, json_output=False, console=console)
+        return sio.getvalue()
+
+    def test_nested_dict_no_repr_substring(self) -> None:
+        """Nested dict values must not appear as Python dict repr strings."""
+        data = {"config": {"workspace": None, "server": "myserver"}}
+        output = self._render_to_string(data)
+        assert "{'workspace'" not in output
+        assert "{'workspace': None" not in output
+
+    def test_nested_dict_keys_appear_in_output(self) -> None:
+        """Keys inside a nested dict must appear in the panel output."""
+        data = {"config": {"workspace": None, "server": "myserver"}}
+        output = self._render_to_string(data)
+        assert "workspace" in output
+        assert "server" in output
+        assert "myserver" in output
+
+    def test_nested_dict_null_value_renders_as_null(self) -> None:
+        """A None value inside a nested dict must render as NULL, not None."""
+        data = {"config": {"workspace": None}}
+        output = self._render_to_string(data)
+        assert "NULL" in output
+        assert "None" not in output
+
+    def test_nested_list_no_repr_substring(self) -> None:
+        """Nested list values must not appear as Python list repr strings."""
+        data = {"items": ["alpha", "beta"]}
+        output = self._render_to_string(data)
+        assert "['alpha'" not in output
+        assert "alpha" in output
+        assert "beta" in output
+
+    def test_empty_nested_dict_renders_without_error(self) -> None:
+        """An empty nested dict must render without error."""
+        data = {"settings": {}}
+        output = self._render_to_string(data)
+        assert "settings" in output
+
+    def test_empty_nested_list_renders_without_error(self) -> None:
+        """An empty nested list must render without error."""
+        data = {"tags": []}
+        output = self._render_to_string(data)
+        assert "tags" in output
+
+    def test_deeply_nested_renders_without_error(self) -> None:
+        """Deeply nested structures must render without error and no Python reprs."""
+        data = {"a": {"b": {"c": {"d": 42}}}}
+        output = self._render_to_string(data)
+        assert "a" in output
+        assert "42" in output
+        assert "{'b'" not in output
+        assert "{'c'" not in output
+
+    def test_mixed_scalar_and_nested_render_correctly(self) -> None:
+        """A dict mixing scalar and nested values must render all of them."""
+        data = {"name": "test", "defaults": {"workspace": None}, "count": 5}
+        output = self._render_to_string(data)
+        assert "name" in output
+        assert "test" in output
+        assert "defaults" in output
+        assert "workspace" in output
+        assert "count" in output
+        assert "5" in output
+        assert "{'workspace'" not in output
+
+    def test_scalar_rendering_unchanged(self) -> None:
+        """Scalar panel values must still render correctly after the fix."""
+        data = {"id": "abc", "score": 42, "active": "true"}
+        output = self._render_to_string(data)
+        assert "abc" in output
+        assert "42" in output
+        assert "true" in output
+
+    def test_nested_list_with_dict_items_no_repr(self) -> None:
+        """A list containing dicts must render each item recursively, not as repr."""
+        data = {"servers": [{"host": "s1", "port": 5432}, {"host": "s2", "port": 5433}]}
+        output = self._render_to_string(data)
+        assert "{'host'" not in output
+        assert "s1" in output
+        assert "s2" in output
+
+    def test_list_of_dicts_no_blank_indent_lines(self) -> None:
+        """_format_nested must not produce lines that are only whitespace.
+
+        Before the fix, the list branch did ``f"{indent}{child}"`` where child
+        started with ``"\\n"`` for nested dict/list items, producing a line of
+        trailing indent spaces before the actual nested content.  Each such
+        line rendered as a blank line in the panel.
+        """
+        result = _format_nested([{"host": "s1", "port": 5432}, {"host": "s2", "port": 5433}])
+        lines = result.split("\n")
+        # No line should be non-empty but consist only of whitespace
+        blank_indent_lines = [line for line in lines if line and not line.strip()]
+        assert blank_indent_lines == [], f"Blank indent lines found: {blank_indent_lines!r}"
