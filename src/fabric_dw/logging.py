@@ -17,8 +17,6 @@ __all__ = [
     "setup_logging",
 ]
 
-_SENTINEL = object()
-
 # Build the set of "standard" LogRecord attribute names by inspecting a fresh
 # instance, then add the keys that are added during formatting.
 _STANDARD_LOGRECORD_ATTRS: frozenset[str] = frozenset(
