@@ -141,7 +141,7 @@ async def test_rps_limiter_timing() -> None:
     rps = 2
     token_interval = 1.0 / rps  # 0.5 s per token at 2 RPS
 
-    async def _spy_acquire(self: object, amount: float = 1) -> None:
+    async def _spy_acquire(_self: object, _amount: float = 1) -> None:
         await asyncio.sleep(token_interval)
 
     with respx.mock:
