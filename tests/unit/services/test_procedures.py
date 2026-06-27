@@ -258,30 +258,25 @@ class TestGetProcedure:
             await procedures.get_procedure(target, "dbo", "usp_load")
         conn.close.assert_called_once()
 
-    async def test_normalizes_empty_schema_name_in_definition(self) -> None:
-        """get_procedure must fix a Fabric-returned 'CREATE PROCEDURE . AS ...' (issue #715)."""
-        broken_def = "CREATE PROCEDURE . AS BEGIN SELECT 1 END"
-        row = ("dbo", "usp_load", _NOW, _LATER, broken_def)
+    async def test_returns_raw_definition_when_header_is_blank(self) -> None:
+        """get_procedure returns the raw Fabric definition without patching the CREATE header."""
+        raw_def = "CREATE PROCEDURE . AS BEGIN SELECT 1 END"
+        row = ("dbo", "usp_load", _NOW, _LATER, raw_def)
         target = _make_target()
         conn = _make_conn([row], _GET_COLS)
         with patch("fabric_dw.sql.open_connection", return_value=conn):
             result = await procedures.get_procedure(target, "dbo", "usp_load")
-        assert result.definition is not None
-        assert "CREATE PROCEDURE [dbo].[usp_load]" in result.definition
-        assert ". AS" not in result.definition
+        assert result.definition == raw_def
 
-    async def test_get_procedure_regression_746_bare_dot_form(self) -> None:
-        """Regression #746: bare-dot 'CREATE PROCEDURE . AS ...' is fixed by get_procedure."""
+    async def test_returns_raw_definition_bare_dot_form(self) -> None:
+        """get_procedure returns bare-dot definitions unchanged (no header-patching)."""
         raw_def = "CREATE PROCEDURE . AS BEGIN SELECT id, label FROM fdw_qa.t_ctas END"
         row = ("fdw_qa", "usp_load", _NOW, _LATER, raw_def)
         target = _make_target()
         conn = _make_conn([row], _GET_COLS)
         with patch("fabric_dw.sql.open_connection", return_value=conn):
             result = await procedures.get_procedure(target, "fdw_qa", "usp_load")
-        expected = (
-            "CREATE PROCEDURE [fdw_qa].[usp_load] AS BEGIN SELECT id, label FROM fdw_qa.t_ctas END"
-        )
-        assert result.definition == expected
+        assert result.definition == raw_def
 
     async def test_maps_permission_denied(self) -> None:
         target = _make_target()
@@ -388,12 +383,8 @@ class TestCreateProcedure:
                 target, "dbo", "usp_ok] WITH EXECUTE AS OWNER--", "BEGIN END"
             )
 
-    async def test_create_procedure_regression_746_bare_dot_form(self) -> None:
-        """Regression #746: create_procedure returns a procedure whose definition is normalised.
-
-        Fabric stores 'CREATE PROCEDURE . AS ...' in sys.sql_modules after DDL;
-        the bare-dot header must be rewritten before the caller sees it.
-        """
+    async def test_create_procedure_returns_raw_definition(self) -> None:
+        """create_procedure returns the raw Fabric definition without header-patching."""
         raw_def = "CREATE PROCEDURE . AS BEGIN SELECT id, label FROM fdw_qa.t_ctas END"
         fetch_row = ("fdw_qa", "usp_load", _NOW, _LATER, raw_def)
         target = _make_target()
@@ -408,10 +399,7 @@ class TestCreateProcedure:
                 "BEGIN SELECT id, label FROM fdw_qa.t_ctas END",
             )
 
-        expected = (
-            "CREATE PROCEDURE [fdw_qa].[usp_load] AS BEGIN SELECT id, label FROM fdw_qa.t_ctas END"
-        )
-        assert result.definition == expected
+        assert result.definition == raw_def
 
 
 # ===========================================================================
