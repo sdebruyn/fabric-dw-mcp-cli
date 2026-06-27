@@ -39,7 +39,12 @@ jobs:
           VERSION=$(uv run python -c "import fabric_dw; print(fabric_dw.__version__)")
           echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            echo "tags=ghcr.io/sdebruyn/fabric-dw:${VERSION},ghcr.io/sdebruyn/fabric-dw:latest" >> "${GITHUB_OUTPUT}"
+            TAGS="ghcr.io/sdebruyn/fabric-dw:${VERSION},ghcr.io/sdebruyn/fabric-dw:latest"
+            version_str="${GITHUB_REF_NAME#v}"
+            if ! echo "$version_str" | grep -qE '(a|b|rc)[0-9]*$|\.dev'; then
+              TAGS="${TAGS},ghcr.io/sdebruyn/fabric-dw:stable"
+            fi
+            echo "tags=${TAGS}" >> "${GITHUB_OUTPUT}"
           else
             echo "tags=ghcr.io/sdebruyn/fabric-dw:${VERSION},ghcr.io/sdebruyn/fabric-dw:main" >> "${GITHUB_OUTPUT}"
           fi
