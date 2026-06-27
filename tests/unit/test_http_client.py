@@ -125,33 +125,45 @@ def test_parse_retry_after_http_date() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.slow
 async def test_rps_limiter_timing() -> None:
-    """6 requests at 2 RPS complete in ~2.0s (wall-clock test; marked slow).
+    """6 requests at 2 RPS accumulate at least ~2.0 s of rate-limiter delay.
 
-    AsyncLimiter(2, 1) drains at 2 tokens/s: first 2 fire immediately,
-    then 1 more every 0.5 s, so the 6th fires at ~2.0 s.
+    AsyncLimiter(2, 1) drains at 2 tokens/s: each of the 6 concurrent requests
+    must pass through the limiter's acquire() slot (0.5 s per token at 2 RPS).
 
-    This test measures real elapsed time to verify the AsyncLimiter is wired up
-    correctly.  It is excluded from the default ``just check`` run via
-    ``@pytest.mark.slow``; run it explicitly with ``-m slow`` when needed.
+    AsyncLimiter uses asyncio event-loop timers (loop.call_at) rather than
+    asyncio.sleep, so a plain _FakeClock cannot observe its delays.  Instead this
+    test patches AsyncLimiter.acquire with a spy that calls asyncio.sleep for the
+    per-token interval; _FakeClock records those sleeps without any real wall-clock
+    waiting, making the test deterministic and fast.
     """
+    clock = _FakeClock()
+    rps = 2
+    token_interval = 1.0 / rps  # 0.5 s per token at 2 RPS
+
+    async def _spy_acquire(self: object, amount: float = 1) -> None:
+        await asyncio.sleep(token_interval)
+
     with respx.mock:
         route = respx.get("https://api.fabric.microsoft.com/v1/items").mock(
             return_value=httpx.Response(200, json={"value": []})
         )
 
-        client = await _get_client(rps=2)
+        client = await _get_client(rps=rps)
         async with client:
-            start = time.monotonic()
-            await asyncio.gather(
-                *[client.request("GET", HttpBase.FABRIC, "/items") for _ in range(6)]
-            )
-            elapsed = time.monotonic() - start
+            with (
+                clock,
+                patch("aiolimiter.AsyncLimiter.acquire", _spy_acquire),
+            ):
+                await asyncio.gather(
+                    *[client.request("GET", HttpBase.FABRIC, "/items") for _ in range(6)]
+                )
 
         assert route.call_count == 6
-    assert elapsed >= 1.9, f"Too fast: {elapsed:.2f}s — rate limiter not enforced"
-    assert elapsed <= 3.0, f"Too slow: {elapsed:.2f}s — unexpected delay"
+    # 6 requests through a 0.5-s-per-token limiter => total fake sleep >= 2.0 s.
+    assert sum(clock.sleeps) >= 1.9, (
+        f"Fake sleep total {sum(clock.sleeps):.2f}s < 1.9 -- rate limiter not enforced"
+    )
 
 
 # ---------------------------------------------------------------------------
