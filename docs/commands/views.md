@@ -216,7 +216,7 @@ fdw -w MyWorkspace views read SalesWH dbo.vw_sales --count 5
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
-Rename a SQL view via `sp_rename`. The new name must be an unqualified (bare) identifier — `sp_rename` cannot move a view to a different schema.
+Rename a SQL view via `sp_rename`. The new name must be an unqualified (bare) identifier - `sp_rename` cannot move a view to a different schema.
 
 **Synopsis**
 
@@ -278,11 +278,11 @@ Return the total row count of a view via `SELECT COUNT_BIG(*)`.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `qualified_name` (`str`) — dot-separated schema and view name, e.g. `dbo.vw_sales`.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`): dot-separated schema and view name, e.g. `dbo.vw_sales`.
 
-**Returns:** `{ "schema": str, "name": str, "row_count": int }` — the schema name, view name, and total row count.
+**Returns:** `{ "schema": str, "name": str, "row_count": int }`: the schema name, view name, and total row count.
 
 ---
 
@@ -294,12 +294,12 @@ Create a new SQL view.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `qualified_name` (`str`) — dot-separated schema and view name, e.g. `dbo.vw_sales`.
-- `select_body` (`str`) — the SELECT statement that forms the view body; executed verbatim as DDL.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`): dot-separated schema and view name, e.g. `dbo.vw_sales`.
+- `select_body` (`str`): the SELECT statement that forms the view body; executed verbatim as DDL.
 
-**Returns:** `View` — the newly-created view object (fetched after DDL, includes `definition`).
+**Returns:** `View`: the newly-created view object (fetched after DDL, includes `definition`).
 
 ---
 
@@ -311,11 +311,11 @@ Drop a SQL view.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `qualified_name` (`str`) — dot-separated schema and view name, e.g. `dbo.vw_sales`.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`): dot-separated schema and view name, e.g. `dbo.vw_sales`.
 
-**Returns:** `{ "dropped": true }` — confirmation.
+**Returns:** `{ "dropped": true }`: confirmation.
 
 ---
 
@@ -327,11 +327,11 @@ Fetch the full definition of a single SQL view.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `qualified_name` (`str`) — dot-separated schema and view name, e.g. `dbo.vw_sales`.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`): dot-separated schema and view name, e.g. `dbo.vw_sales`.
 
-**Returns:** `View` — single view object with `definition` populated from `sys.sql_modules`.
+**Returns:** `View`: single view object with `definition` populated from `sys.sql_modules`.
 
 ---
 
@@ -343,19 +343,19 @@ Return column metadata for a SQL view via `sys.columns`. Works on both Fabric Da
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `qualified_name` (`str`) — dot-separated view name, e.g. `dbo.vw_sales`.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`): dot-separated view name, e.g. `dbo.vw_sales`.
 
-**Returns:** `list[dict]` — one dict per column, each containing:
+**Returns:** `list[dict]`: one dict per column, each containing:
 
-- `ordinal` (`int`) — 1-based column position (`column_id`).
-- `name` (`str`) — column name.
-- `data_type` (`str`) — formatted T-SQL type string, e.g. `INT`, `NVARCHAR(MAX)`, `DECIMAL(18,2)`.
-- `nullable` (`bool`) — whether the column allows `NULL`.
-- `collation_name` (`str | null`) — collation name, if applicable.
-- `is_identity` (`bool`) — whether the column is an identity column.
-- `is_computed` (`bool`) — whether the column is a computed column.
+- `ordinal` (`int`): 1-based column position (`column_id`).
+- `name` (`str`): column name.
+- `data_type` (`str`): formatted T-SQL type string, e.g. `INT`, `NVARCHAR(MAX)`, `DECIMAL(18,2)`.
+- `nullable` (`bool`): whether the column allows `NULL`.
+- `collation_name` (`str | null`): collation name, if applicable.
+- `is_identity` (`bool`): whether the column is an identity column.
+- `is_computed` (`bool`): whether the column is a computed column.
 
 Results are ordered by ordinal position. Raises a `ToolError` if the view does not exist.
 
@@ -369,11 +369,11 @@ List SQL views on a warehouse or SQL Analytics Endpoint, optionally filtered to 
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `schema` (`str | null`, optional) — when provided, only views in this schema are returned; must be a valid SQL identifier.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL analytics endpoint name or GUID.
+- `schema` (`str | null`, optional): when provided, only views in this schema are returned; must be a valid SQL identifier.
 
-**Returns:** `list[View]` — array of view objects, each with `schema_name`, `name`, `qualified_name`, `created`, `modified`, and `definition` (always `null` for list results).
+**Returns:** `list[View]`: array of view objects, each with `schema_name`, `name`, `qualified_name`, `created`, `modified`, and `definition` (always `null` for list results).
 
 ---
 
@@ -385,12 +385,12 @@ Return up to `count` rows from a view as JSON-serialisable columns and rows.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `qualified_name` (`str`) — dot-separated schema and view name, e.g. `dbo.vw_sales`.
-- `count` (`int`, default `10`) — maximum rows to return.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`): dot-separated schema and view name, e.g. `dbo.vw_sales`.
+- `count` (`int`, default `10`): maximum rows to return.
 
-**Returns:** `{ "columns": list[str], "rows": list[list] }` — column names and row arrays.
+**Returns:** `{ "columns": list[str], "rows": list[list] }`: column names and row arrays.
 
 ---
 
@@ -398,16 +398,16 @@ Return up to `count` rows from a view as JSON-serialisable columns and rows.
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
-Rename a SQL view via `sp_rename`. Works on both Data Warehouses and SQL Analytics Endpoints. The new name must be a bare (unqualified) identifier — `sp_rename` cannot move a view across schemas.
+Rename a SQL view via `sp_rename`. Works on both Data Warehouses and SQL Analytics Endpoints. The new name must be a bare (unqualified) identifier - `sp_rename` cannot move a view across schemas.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `qualified_name` (`str`) — current dot-separated qualified view name, e.g. `dbo.vw_sales`.
-- `new_name` (`str`) — new bare view name (no schema prefix), e.g. `vw_revenue`.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`): current dot-separated qualified view name, e.g. `dbo.vw_sales`.
+- `new_name` (`str`): new bare view name (no schema prefix), e.g. `vw_revenue`.
 
-**Returns:** `View` — the updated view object (fetched after rename, includes `definition`).
+**Returns:** `View`: the updated view object (fetched after rename, includes `definition`).
 
 ---
 
@@ -419,9 +419,9 @@ Redefine an existing SQL view using `CREATE OR ALTER VIEW`.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `qualified_name` (`str`) — dot-separated schema and view name, e.g. `dbo.vw_sales`.
-- `select_body` (`str`) — the new SELECT statement; executed verbatim as DDL.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`): dot-separated schema and view name, e.g. `dbo.vw_sales`.
+- `select_body` (`str`): the new SELECT statement; executed verbatim as DDL.
 
-**Returns:** `View` — the updated view object (fetched after DDL, includes `definition`).
+**Returns:** `View`: the updated view object (fetched after DDL, includes `definition`).

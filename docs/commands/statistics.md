@@ -28,11 +28,11 @@ fdw [-w WORKSPACE] statistics create [ITEM] --table schema.table --column COL --
 
 | Option | Description | Default |
 | --- | --- | --- |
-| `--table schema.table` | Qualified table name (required). | — |
-| `--column COL` | Column name to build the statistic on (required). Single column only. | — |
-| `--name NAME` | Statistic name (required). | — |
+| `--table schema.table` | Qualified table name (required). | - |
+| `--column COL` | Column name to build the statistic on (required). Single column only. | - |
+| `--name NAME` | Statistic name (required). | - |
 | `--fullscan` | Use `WITH FULLSCAN` (default). Mutually exclusive with `--sample-percent`. | on |
-| `--sample-percent N` | Sample `N`% of the table (1–100). Overrides `--fullscan`. | — |
+| `--sample-percent N` | Sample `N`% of the table (1–100). Overrides `--fullscan`. | - |
 
 ---
 
@@ -98,7 +98,7 @@ fdw [-w WORKSPACE] statistics update [ITEM] QUALIFIED_TABLE STAT_NAME [OPTIONS]
 | Option | Description | Default |
 | --- | --- | --- |
 | `--fullscan` | Use `WITH FULLSCAN` (default). | on |
-| `--sample-percent N` | Sample `N`% of the table (1–100). Overrides `--fullscan`. | — |
+| `--sample-percent N` | Sample `N`% of the table (1–100). Overrides `--fullscan`. | - |
 
 ---
 
@@ -132,7 +132,7 @@ Create a single-column statistic on a table. Only single-column statistics are s
 | `fullscan` | `bool` | Use `WITH FULLSCAN` (default `true`). |
 | `sample_percent` | `int \| None` | Sample percentage (1–100). Overrides `fullscan`. |
 
-**Returns:** `Statistic` — the newly-created statistic.
+**Returns:** `Statistic`: the newly-created statistic.
 
 ---
 
@@ -153,7 +153,7 @@ Drop a statistic via `DROP STATISTICS`. **Destructive and irreversible.** Requir
 | `qualified_table` | `str` | Qualified table name, e.g. `dbo.sales`. |
 | `stat_name` | `str` | Name of the statistic to drop. |
 
-**Returns:** `{ "dropped": true }` — confirmation.
+**Returns:** `{ "dropped": true }`: confirmation.
 
 ---
 
@@ -176,7 +176,7 @@ List statistics on a warehouse or SQL Analytics Endpoint.
 | `user_only` | `bool` | Only return user-created statistics. |
 | `auto_only` | `bool` | Only return auto-created statistics. |
 
-**Returns:** `list[dict]` — array of `Statistic` objects.
+**Returns:** `list[dict]`: array of `Statistic` objects.
 
 ---
 
@@ -198,7 +198,7 @@ Show details of a statistic using `DBCC SHOW_STATISTICS`. Returns the stat heade
 | `stat_name` | `str` | Name of the statistic to show. |
 | `histogram_only` | `bool` | When `true`, return only the histogram steps. |
 
-**Returns:** `StatisticDetails` — `{ stat_header, density_vector, histogram }`.
+**Returns:** `StatisticDetails`: `{ stat_header, density_vector, histogram }`.
 
 ---
 
@@ -221,4 +221,4 @@ Update an existing statistic via `UPDATE STATISTICS`. SQL Analytics Endpoints ar
 | `fullscan` | `bool` | Use `WITH FULLSCAN` (default `true`). |
 | `sample_percent` | `int \| None` | Sample percentage (1–100). Overrides `fullscan`. |
 
-**Returns:** `{ "updated": true }` — confirmation.
+**Returns:** `{ "updated": true }`: confirmation.

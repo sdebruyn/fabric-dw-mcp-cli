@@ -46,4 +46,4 @@ Erase all cached workspace and item name-to-UUID mappings.
 
 **Parameters:** None
 
-**Returns:** `{ "cleared": true }` — confirmation.
+**Returns:** `{ "cleared": true }`: confirmation.

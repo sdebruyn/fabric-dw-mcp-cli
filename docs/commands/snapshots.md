@@ -143,13 +143,13 @@ Create a new warehouse snapshot.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse name or GUID.
-- `name` (`str`) — display name for the new snapshot.
-- `description` (`str | null`, optional) — optional description.
-- `snapshot_dt` (`str | null`, optional) — ISO-8601 datetime string for the snapshot point-in-time; defaults to the current timestamp when omitted.
+- `workspace` (`str`): workspace name or GUID.
+- `warehouse` (`str`): warehouse name or GUID.
+- `name` (`str`): display name for the new snapshot.
+- `description` (`str | null`, optional): optional description.
+- `snapshot_dt` (`str | null`, optional): ISO-8601 datetime string for the snapshot point-in-time; defaults to the current timestamp when omitted.
 
-**Returns:** `WarehouseSnapshot` — the newly-created snapshot object.
+**Returns:** `WarehouseSnapshot`: the newly-created snapshot object.
 
 ---
 
@@ -161,10 +161,10 @@ Delete a warehouse snapshot.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `snapshot` (`str`) — snapshot name or GUID.
+- `workspace` (`str`): workspace name or GUID.
+- `snapshot` (`str`): snapshot name or GUID.
 
-**Returns:** `{ "deleted": true, "snapshot_id": str }` — confirmation with the snapshot GUID.
+**Returns:** `{ "deleted": true, "snapshot_id": str }`: confirmation with the snapshot GUID.
 
 ---
 
@@ -176,10 +176,10 @@ Return all snapshots belonging to a warehouse.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse name or GUID.
+- `workspace` (`str`): workspace name or GUID.
+- `warehouse` (`str`): warehouse name or GUID.
 
-**Returns:** `list[WarehouseSnapshot]` — array of snapshot objects, each with `id`, `displayName`, `parentWarehouseId`, and `snapshotDateTime`.
+**Returns:** `list[WarehouseSnapshot]`: array of snapshot objects, each with `id`, `displayName`, `parentWarehouseId`, and `snapshotDateTime`.
 
 ---
 
@@ -191,12 +191,12 @@ Rename a warehouse snapshot and optionally update its description.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `snapshot` (`str`) — snapshot name or GUID.
-- `new_name` (`str`) — new display name.
-- `description` (`str | null`, optional) — new description; omit to leave unchanged.
+- `workspace` (`str`): workspace name or GUID.
+- `snapshot` (`str`): snapshot name or GUID.
+- `new_name` (`str`): new display name.
+- `description` (`str | null`, optional): new description; omit to leave unchanged.
 
-**Returns:** `WarehouseSnapshot` — the updated snapshot object.
+**Returns:** `WarehouseSnapshot`: the updated snapshot object.
 
 ---
 
@@ -208,9 +208,9 @@ Roll a snapshot's timestamp forward, or reset it to the current time.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — parent warehouse name or GUID (used for the SQL connection).
-- `snapshot_name` (`str`) — the snapshot database name to roll.
-- `new_dt` (`str | null`, optional) — target ISO-8601 datetime string; defaults to `CURRENT_TIMESTAMP` when omitted.
+- `workspace` (`str`): workspace name or GUID.
+- `warehouse` (`str`): parent warehouse name or GUID (used for the SQL connection).
+- `snapshot_name` (`str`): the snapshot database name to roll.
+- `new_dt` (`str | null`, optional): target ISO-8601 datetime string; defaults to `CURRENT_TIMESTAMP` when omitted.
 
-**Returns:** `{ "rolled": true, "snapshot_name": str, "new_dt": str | null }` — confirmation with the snapshot name and the target datetime.
+**Returns:** `{ "rolled": true, "snapshot_name": str, "new_dt": str | null }`: confirmation with the snapshot name and the target datetime.

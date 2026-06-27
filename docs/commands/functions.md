@@ -123,7 +123,7 @@ fdw -w MyWorkspace functions list SalesWH --schema dbo --kind scalar
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
-Rename a T-SQL user-defined function via `EXEC sp_rename`. The new name must be a bare (unqualified) identifier — `sp_rename` cannot move a function to a different schema. You will be asked to confirm unless `--yes` is passed.
+Rename a T-SQL user-defined function via `EXEC sp_rename`. The new name must be a bare (unqualified) identifier - `sp_rename` cannot move a function to a different schema. You will be asked to confirm unless `--yes` is passed.
 
 **Synopsis**
 
@@ -192,12 +192,12 @@ Create a new T-SQL user-defined function.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
-- `qualified_name` (`str`) — dot-separated qualified function name, e.g. `dbo.fn_clean_input`.
-- `body` (`str`) — the function body (parameter list, RETURNS clause, and implementation).
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL Analytics Endpoint name or GUID.
+- `qualified_name` (`str`): dot-separated qualified function name, e.g. `dbo.fn_clean_input`.
+- `body` (`str`): the function body (parameter list, RETURNS clause, and implementation).
 
-**Returns:** `FunctionDetails` — the newly-created function object.
+**Returns:** `FunctionDetails`: the newly-created function object.
 
 ---
 
@@ -209,12 +209,12 @@ Drop a T-SQL user-defined function.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
-- `qualified_name` (`str`) — dot-separated qualified function name, e.g. `dbo.fn_clean_input`.
-- `if_exists` (`bool`, optional) — when `true`, emits `DROP FUNCTION IF EXISTS` (no-op when function does not exist). Defaults to `false`.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL Analytics Endpoint name or GUID.
+- `qualified_name` (`str`): dot-separated qualified function name, e.g. `dbo.fn_clean_input`.
+- `if_exists` (`bool`, optional): when `true`, emits `DROP FUNCTION IF EXISTS` (no-op when function does not exist). Defaults to `false`.
 
-**Returns:** `{ "dropped": true }` — confirmation.
+**Returns:** `{ "dropped": true }`: confirmation.
 
 ---
 
@@ -226,11 +226,11 @@ Fetch the full definition of a single T-SQL user-defined function, including its
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
-- `qualified_name` (`str`) — dot-separated qualified function name, e.g. `dbo.fn_clean_input`.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL Analytics Endpoint name or GUID.
+- `qualified_name` (`str`): dot-separated qualified function name, e.g. `dbo.fn_clean_input`.
 
-**Returns:** `FunctionDetails` — single function object with `definition` (from `sys.sql_modules`) and `parameters` (from `sys.parameters`).
+**Returns:** `FunctionDetails`: single function object with `definition` (from `sys.sql_modules`) and `parameters` (from `sys.parameters`).
 
 ---
 
@@ -242,12 +242,12 @@ List T-SQL user-defined functions on a warehouse or SQL Analytics Endpoint, opti
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
-- `schema` (`str | null`, optional) — when provided, only functions in this schema are returned.
-- `kind` (`str`, optional) — filter by function kind: `"scalar"` (FN only), `"inline-tvf"` (IF only), or `"all"` (FN + IF + TF, the default).
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL Analytics Endpoint name or GUID.
+- `schema` (`str | null`, optional): when provided, only functions in this schema are returned.
+- `kind` (`str`, optional): filter by function kind: `"scalar"` (FN only), `"inline-tvf"` (IF only), or `"all"` (FN + IF + TF, the default).
 
-**Returns:** `list[Function]` — array of function objects, each with `schema_name`, `name`, `qualified_name`, `kind`, `is_inlineable`, `created`, and `modified`.
+**Returns:** `list[Function]`: array of function objects, each with `schema_name`, `name`, `qualified_name`, `kind`, `is_inlineable`, `created`, and `modified`.
 
 ---
 
@@ -255,16 +255,16 @@ List T-SQL user-defined functions on a warehouse or SQL Analytics Endpoint, opti
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
-Rename a T-SQL user-defined function via `sp_rename`. The new name must be a bare (unqualified) identifier — `sp_rename` cannot move a function across schemas.
+Rename a T-SQL user-defined function via `sp_rename`. The new name must be a bare (unqualified) identifier - `sp_rename` cannot move a function across schemas.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
-- `qualified_name` (`str`) — current dot-separated qualified function name, e.g. `dbo.fn_clean_input`.
-- `new_name` (`str`) — new bare function name (no schema prefix), e.g. `fn_sanitize_input`.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL Analytics Endpoint name or GUID.
+- `qualified_name` (`str`): current dot-separated qualified function name, e.g. `dbo.fn_clean_input`.
+- `new_name` (`str`): new bare function name (no schema prefix), e.g. `fn_sanitize_input`.
 
-**Returns:** `FunctionDetails` — the renamed function record.
+**Returns:** `FunctionDetails`: the renamed function record.
 
 ---
 
@@ -284,9 +284,9 @@ Redefine a T-SQL user-defined function via `CREATE OR ALTER FUNCTION`.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
-- `qualified_name` (`str`) — dot-separated qualified function name, e.g. `dbo.fn_clean_input`.
-- `body` (`str`) — the new function body (parameter list, RETURNS clause, and implementation).
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL Analytics Endpoint name or GUID.
+- `qualified_name` (`str`): dot-separated qualified function name, e.g. `dbo.fn_clean_input`.
+- `body` (`str`): the new function body (parameter list, RETURNS clause, and implementation).
 
-**Returns:** `FunctionDetails` — the updated function object.
+**Returns:** `FunctionDetails`: the updated function object.

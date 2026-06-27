@@ -85,9 +85,9 @@ The MCP server workspace allowlist restricts which workspaces the server may ope
 
 | Layer | Mechanism | Description |
 |---|---|---|
-| 1 | `FABRIC_MCP_WORKSPACES` env var | Comma-separated workspace names or GUIDs. An empty or whitespace-only value (including `FABRIC_MCP_WORKSPACES=`) is treated as **absent** and falls through to the next layer — it does **not** block all workspaces. |
-| 2 | `[mcp] workspace_allowlist` in `config.toml` | Stored with `fdw config set mcp workspace-allowlist`. An empty TOML array `[]` is treated as absent (no restriction) — consistent with the unset case. |
-| 3 | Built-in default | No restriction — all workspaces allowed. |
+| 1 | `FABRIC_MCP_WORKSPACES` env var | Comma-separated workspace names or GUIDs. An empty or whitespace-only value (including `FABRIC_MCP_WORKSPACES=`) is treated as **absent** and falls through to the next layer - it does **not** block all workspaces. |
+| 2 | `[mcp] workspace_allowlist` in `config.toml` | Stored with `fdw config set mcp workspace-allowlist`. An empty TOML array `[]` is treated as absent (no restriction) - consistent with the unset case. |
+| 3 | Built-in default | No restriction - all workspaces allowed. |
 
 Matching is case-insensitive and whitespace-trimmed. Both workspace names and GUIDs are accepted.
 
@@ -154,7 +154,7 @@ fdw config unset conn-pooling
 
 ## Telemetry
 
-`fabric-dw` collects **anonymous, opt-out** usage telemetry — it is **on by default**. Any of the following independently disables it — no events are emitted and the SDK is never imported:
+`fabric-dw` collects **anonymous, opt-out** usage telemetry - it is **on by default**. Any of the following independently disables it - no events are emitted and the SDK is never imported:
 
 | Mechanism | Type | Effect |
 |---|---|---|
@@ -286,7 +286,7 @@ fdw config show
 **Example**
 
 ```shell
-# Example — show current config
+# Example - show current config
 fdw config show
 ```
 

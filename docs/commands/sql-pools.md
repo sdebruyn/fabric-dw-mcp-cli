@@ -147,9 +147,9 @@ fdw [-w WORKSPACE] sql-pools insights [OPTIONS] [WAREHOUSE]
 | Option | Description | Default |
 | --- | --- | --- |
 | `--limit INTEGER` | Maximum rows to return (1–10 000). | `100` |
-| `--since ISO8601` | Return rows with timestamp >= this value. Mutually exclusive with `--ago`. | — |
-| `--until ISO8601` | Return rows with timestamp <= this value. | — |
-| `--ago DURATION` | Relative alternative to `--since`: rows newer than now minus this duration (e.g. `1h`, `90m`, `3600s`, `2d`). Mutually exclusive with `--since`. | — |
+| `--since ISO8601` | Return rows with timestamp >= this value. Mutually exclusive with `--ago`. | - |
+| `--until ISO8601` | Return rows with timestamp <= this value. | - |
+| `--ago DURATION` | Relative alternative to `--since`: rows newer than now minus this duration (e.g. `1h`, `90m`, `3600s`, `2d`). Mutually exclusive with `--since`. | - |
 
 **Example**
 
@@ -271,15 +271,15 @@ Add a new SQL pool to a workspace.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `name` (`str`) — pool name (must be unique within the workspace).
-- `max_percent` (`int`) — max resource percentage (1–100).
-- `is_default` (`bool`, default `false`) — whether this is the default pool.
-- `optimize_for_reads` (`bool`, default `true`) — enable read optimisation.
-- `classifier_type` (`str | null`, optional) — classifier type (e.g. `"Application Name"`).
-- `classifier_values` (`list[str] | null`, optional) — classifier value list.
+- `workspace` (`str`): workspace name or GUID.
+- `name` (`str`): pool name (must be unique within the workspace).
+- `max_percent` (`int`): max resource percentage (1–100).
+- `is_default` (`bool`, default `false`): whether this is the default pool.
+- `optimize_for_reads` (`bool`, default `true`): enable read optimisation.
+- `classifier_type` (`str | null`, optional): classifier type (e.g. `"Application Name"`).
+- `classifier_values` (`list[str] | null`, optional): classifier value list.
 
-**Returns:** `SqlPool` — the newly-created pool object.
+**Returns:** `SqlPool`: the newly-created pool object.
 
 ---
 
@@ -291,10 +291,10 @@ Delete an SQL pool from a workspace.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `pool_name` (`str`) — name of the pool to delete.
+- `workspace` (`str`): workspace name or GUID.
+- `pool_name` (`str`): name of the pool to delete.
 
-**Returns:** `{ "deleted": true, "pool_name": str }` — confirmation.
+**Returns:** `{ "deleted": true, "pool_name": str }`: confirmation.
 
 ---
 
@@ -306,9 +306,9 @@ Disable custom SQL Pools for a workspace, preserving the pool configuration. Re-
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
+- `workspace` (`str`): workspace name or GUID.
 
-**Returns:** `SqlPoolsConfiguration` — the updated configuration.
+**Returns:** `SqlPoolsConfiguration`: the updated configuration.
 
 ---
 
@@ -320,9 +320,9 @@ Enable custom SQL Pools for a workspace without modifying pool definitions.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
+- `workspace` (`str`): workspace name or GUID.
 
-**Returns:** `SqlPoolsConfiguration` — the updated configuration.
+**Returns:** `SqlPoolsConfiguration`: the updated configuration.
 
 ---
 
@@ -334,10 +334,10 @@ Return details for a single SQL pool by name.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `pool_name` (`str`) — pool name.
+- `workspace` (`str`): workspace name or GUID.
+- `pool_name` (`str`): pool name.
 
-**Returns:** `SqlPool` — single pool object (fields as above).
+**Returns:** `SqlPool`: single pool object (fields as above).
 
 ---
 
@@ -349,9 +349,9 @@ Fetch the full SQL Pools configuration (enabled flag + pool list) for a workspac
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
+- `workspace` (`str`): workspace name or GUID.
 
-**Returns:** `SqlPoolsConfiguration` — object with `customSQLPoolsEnabled` (bool) and `customSQLPools` (list of pool objects, each with `name`, `maxResourcePercentage`, `isDefault`, `optimizeForReads`, and optional `classifier`).
+**Returns:** `SqlPoolsConfiguration`: object with `customSQLPoolsEnabled` (bool) and `customSQLPools` (list of pool objects, each with `name`, `maxResourcePercentage`, `isDefault`, `optimizeForReads`, and optional `classifier`).
 
 ---
 
@@ -363,13 +363,13 @@ Return SQL pool insight events from `queryinsights.sql_pool_insights`.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
-- `limit` (`int`, default `100`) — maximum rows to return (1–10 000).
-- `since` (`str | null`, optional) — ISO-8601 lower bound on `timestamp`.
-- `until` (`str | null`, optional) — ISO-8601 upper bound on `timestamp`.
+- `workspace` (`str`): workspace name or GUID.
+- `warehouse` (`str`): warehouse or SQL Analytics Endpoint name or GUID.
+- `limit` (`int`, default `100`): maximum rows to return (1–10 000).
+- `since` (`str | null`, optional): ISO-8601 lower bound on `timestamp`.
+- `until` (`str | null`, optional): ISO-8601 upper bound on `timestamp`.
 
-**Returns:** `list[dict]` — array of SQL pool insight row objects.
+**Returns:** `list[dict]`: array of SQL pool insight row objects.
 
 ---
 
@@ -381,9 +381,9 @@ Return the list of SQL pools for a workspace.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
+- `workspace` (`str`): workspace name or GUID.
 
-**Returns:** `list[SqlPool]` — array of pool objects, each with `name`, `isDefault`, `maxResourcePercentage`, `optimizeForReads`, and optional `classifier`.
+**Returns:** `list[SqlPool]`: array of pool objects, each with `name`, `isDefault`, `maxResourcePercentage`, `optimizeForReads`, and optional `classifier`.
 
 ---
 
@@ -395,12 +395,12 @@ Update an existing SQL pool.  Only the parameters you supply are changed; all ot
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `name` (`str`) — name of the pool to update.
-- `max_percent` (`int | null`, optional) — new max resource percentage.
-- `is_default` (`bool | null`, optional) — set or clear the default flag.
-- `optimize_for_reads` (`bool | null`, optional) — enable or disable read optimisation.
-- `classifier_type` (`str | null`, optional) — new classifier type.
-- `classifier_values` (`list[str] | null`, optional) — new classifier value list (replaces all existing values).
+- `workspace` (`str`): workspace name or GUID.
+- `name` (`str`): name of the pool to update.
+- `max_percent` (`int | null`, optional): new max resource percentage.
+- `is_default` (`bool | null`, optional): set or clear the default flag.
+- `optimize_for_reads` (`bool | null`, optional): enable or disable read optimisation.
+- `classifier_type` (`str | null`, optional): new classifier type.
+- `classifier_values` (`list[str] | null`, optional): new classifier value list (replaces all existing values).
 
-**Returns:** `SqlPool` — the updated pool object.
+**Returns:** `SqlPool`: the updated pool object.

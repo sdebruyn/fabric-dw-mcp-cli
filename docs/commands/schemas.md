@@ -104,11 +104,11 @@ Create a new SQL schema on a Fabric Data Warehouse or SQL Analytics Endpoint.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `name` (`str`) — the schema name; must be a valid SQL identifier.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL analytics endpoint name or GUID.
+- `name` (`str`): the schema name; must be a valid SQL identifier.
 
-**Returns:** `Schema` — the newly-created schema record with `name` and `principal_id`.
+**Returns:** `Schema`: the newly-created schema record with `name` and `principal_id`.
 
 ---
 
@@ -124,12 +124,12 @@ Drop a SQL schema from a Fabric Data Warehouse or SQL Analytics Endpoint.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `name` (`str`) — the schema name to drop.
-- `cascade` (`bool`, default `False`) — when `True`, drop all tables, views, functions, and stored procedures in the schema first.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL analytics endpoint name or GUID.
+- `name` (`str`): the schema name to drop.
+- `cascade` (`bool`, default `False`): when `True`, drop all tables, views, functions, and stored procedures in the schema first.
 
-**Returns:** `{ "deleted": true }` — confirmation.
+**Returns:** `{ "deleted": true }`: confirmation.
 
 ---
 
@@ -141,7 +141,7 @@ List user-defined SQL schemas on a warehouse or SQL Analytics Endpoint. System s
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL Analytics Endpoint name or GUID.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL Analytics Endpoint name or GUID.
 
-**Returns:** `list[Schema]` — array of schema objects, each with `name` and `principal_id`.
+**Returns:** `list[Schema]`: array of schema objects, each with `name` and `principal_id`.

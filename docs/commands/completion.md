@@ -44,4 +44,4 @@ fdw completion install zsh
 fdw completion install bash --print
 ```
 
-For AI-assistant (MCP) usage there is no shell completion — see [MCP server](../install.md#mcp) instead.
+For AI-assistant (MCP) usage there is no shell completion - see [MCP server](../install.md#mcp) instead.

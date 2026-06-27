@@ -94,7 +94,7 @@ Change (or remove) the data-clustering columns of an existing table via a transa
 
     Dependent views and stored procedures that reference this table by name are **NOT** automatically updated by `sp_rename` and may need refreshing after the swap.
 
-The operation is atomic: all three steps run inside a single transaction. Any failure rolls back automatically — no orphan temp table is left behind.
+The operation is atomic: all three steps run inside a single transaction. Any failure rolls back automatically - no orphan temp table is left behind.
 
 **Synopsis**
 
@@ -213,8 +213,8 @@ fdw -w MyWorkspace --json tables count SalesWH dbo.orders
 
 Create a new table on a Fabric Data Warehouse. Two modes are available:
 
-- **CTAS** (`CREATE TABLE … AS SELECT`) — supply `--select` or `--from-file`. The body must start with `SELECT` (leading block/line comments are allowed).
-- **Empty DDL** (`CREATE TABLE … (col TYPE, …)`) — supply exactly one of `--from-parquet`, `--from-csv`, `--from-json`, or one-or-more `--column`. The schema is derived (Parquet/CSV/JSON inference) or listed explicitly; no data is ever read or inserted — this scaffolds the table structure only. To load data afterwards, use [`tables load`](#tables-load).
+- **CTAS** (`CREATE TABLE … AS SELECT`): supply `--select` or `--from-file`. The body must start with `SELECT` (leading block/line comments are allowed).
+- **Empty DDL** (`CREATE TABLE … (col TYPE, …)`): supply exactly one of `--from-parquet`, `--from-csv`, `--from-json`, or one-or-more `--column`. The schema is derived (Parquet/CSV/JSON inference) or listed explicitly; no data is ever read or inserted - this scaffolds the table structure only. To load data afterwards, use [`tables load`](#tables-load).
 
 **Synopsis**
 
@@ -238,9 +238,9 @@ Exactly one of `--select` or `--from-file` must be provided for the CTAS path. C
 | Option | Description |
 | --- | --- |
 | `--name SCHEMA.TABLE` | **Required.** Qualified table name. |
-| `--from-parquet PATH` | Derive schema from a Parquet file (reads footer only — no data loaded). |
+| `--from-parquet PATH` | Derive schema from a Parquet file (reads footer only - no data loaded). |
 | `--from-csv PATH` | Derive schema from a CSV header + bounded sample (no data loaded). |
-| `--from-json PATH` | Derive schema from JSON **data** — a JSONL file or a JSON file containing an array of objects; types are inferred from a bounded sample (no data loaded). JSONL streams; a JSON array is fully loaded into memory — for very large data prefer JSONL. |
+| `--from-json PATH` | Derive schema from JSON **data**: a JSONL file or a JSON file containing an array of objects; types are inferred from a bounded sample (no data loaded). JSONL streams; a JSON array is fully loaded into memory - for very large data prefer JSONL. |
 | `--column NAME:TYPE[:null\|notnull]` | Inline column definition (repeatable). |
 | `--cluster-by COL` | Column name for `CLUSTER BY` (repeatable, up to 4). Each name must appear in the table schema. |
 | `--all-varchar` | (CSV/JSON) Force all columns to `VARCHAR`; skip type inference. |
@@ -267,7 +267,7 @@ Exactly one of `--select` or `--from-file` must be provided for the CTAS path. C
 | `timestamp*` | `DATETIME2(7)` |
 | `string`, `large_string` | `VARCHAR(n)` |
 | `binary`, `large_binary` | `VARBINARY(n)` |
-| nested / list / struct | CSV/JSON: falls back to `VARCHAR(n)` with a warning (or use `--all-varchar`). Parquet: **Error** — define the column explicitly with `--column` instead. |
+| nested / list / struct | CSV/JSON: falls back to `VARCHAR(n)` with a warning (or use `--all-varchar`). Parquet: **Error**: define the column explicitly with `--column` instead. |
 
 **Examples**
 
@@ -294,12 +294,12 @@ fdw -w MyWorkspace tables create SalesWH \
   --column "event_type:VARCHAR(100)" \
   --column "occurred_at:DATETIME2(7)"
 
-# Empty table from JSON data — JSONL (schema inferred from the data)
+# Empty table from JSON data - JSONL (schema inferred from the data)
 fdw -w MyWorkspace tables create SalesWH \
   --name staging.events \
   --from-json ./data/events.jsonl
 
-# Empty table from JSON data — a JSON array of objects
+# Empty table from JSON data - a JSON array of objects
 fdw -w MyWorkspace tables create SalesWH \
   --name dbo.audit_log \
   --from-json ./data/audit_log.json --varchar-length 500
@@ -347,7 +347,7 @@ fdw -w MyWorkspace --yes tables delete SalesWH dbo.orders_2026
 
 Run `sp_get_table_health_metrics` against a single table to surface Delta/Parquet layout issues (small files, fragmentation, excessive deletes/updates, delayed checkpoints) and decide whether maintenance is needed.
 
-The proc is Generally Available (announced at Build 2026) but Microsoft Learn has no dedicated reference page yet. Output columns are passed through verbatim — the exact column names and types are determined by the proc and may change across Fabric releases.
+The proc is Generally Available (announced at Build 2026) but Microsoft Learn has no dedicated reference page yet. Output columns are passed through verbatim - the exact column names and types are determined by the proc and may change across Fabric releases.
 
 **Synopsis**
 
@@ -405,7 +405,7 @@ Load data into a warehouse table via `COPY INTO` from either a local file or a r
 
 **Remote URL** (`--url`): `COPY INTO` is issued directly from the given URL. For OneLake or same-tenant URLs no credential is needed. For secured external URLs (Azure Blob Storage, ADLS Gen2) supply `--credential-type` and `--secret`/`--identity` as appropriate.
 
-**Auto-create (create-and-load)** — Pass `--create` to auto-create the target table from the source schema before loading (local files only; requires `pyarrow`). The schema is inferred from the source:
+**Auto-create (create-and-load)**: Pass `--create` to auto-create the target table from the source schema before loading (local files only; requires `pyarrow`). The schema is inferred from the source:
 
 - **Parquet**: exact types are read from the Parquet footer (no row data is read).
 - **CSV**: the header row and up to `--sample-rows` rows are read for type inference. Use `--all-varchar` to skip inference and force every column to `VARCHAR`.
@@ -415,7 +415,7 @@ Use `--if-exists` to control behaviour when the table already exists:
 
 | `--if-exists` value | Table exists | Table absent |
 | --- | --- | --- |
-| `fail` (default with `--create`) | Error — table already exists | Create + load |
+| `fail` (default with `--create`) | Error - table already exists | Create + load |
 | `append` | Skip create, `COPY INTO` existing | Create + load |
 | `truncate` ⚠️ **DESTRUCTIVE** | `TRUNCATE` existing table, then load | Create + load |
 | `replace` ⚠️ **DESTRUCTIVE** | `DROP` + recreate from inferred schema, then load | Create + load |
@@ -438,28 +438,28 @@ fdw [-w WORKSPACE] tables load [OPTIONS] [ITEM] QUALIFIED_NAME
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `--file PATH` | — | Local file path (CSV, Parquet, or JSON). |
-| `--url TEXT` | — | Remote URL (OneLake DFS or external Azure Blob). |
+| `--file PATH` | - | Local file path (CSV, Parquet, or JSON). |
+| `--url TEXT` | - | Remote URL (OneLake DFS or external Azure Blob). |
 | `--format [csv\|parquet\|json]` | auto-detect | File format. For `--url`, only `csv` and `parquet` are supported. |
 | `--header/--no-header` | `--header` | Whether the CSV file contains a header row. |
 | `--delimiter TEXT` | `,` | CSV column delimiter. |
-| `--encoding TEXT` | — | CSV encoding (e.g. `UTF8`, `UTF8BOM`). |
-| `--field-quote TEXT` | — | CSV field-quote character. |
-| `--row-terminator TEXT` | — | CSV row terminator (e.g. `\n`, `\r\n`). |
+| `--encoding TEXT` | - | CSV encoding (e.g. `UTF8`, `UTF8BOM`). |
+| `--field-quote TEXT` | - | CSV field-quote character. |
+| `--row-terminator TEXT` | - | CSV row terminator (e.g. `\n`, `\r\n`). |
 | `--credential-type [none\|sas\|managed-identity\|service-principal\|account-key]` | `none` | Credential type for secured external URLs. |
-| `--secret TEXT` | — | Credential secret (SAS token / client secret / account key). Never echoed. |
-| `--identity TEXT` | — | Identity for `managed-identity` or `service-principal`. |
+| `--secret TEXT` | - | Credential secret (SAS token / client secret / account key). Never echoed. |
+| `--identity TEXT` | - | Identity for `managed-identity` or `service-principal`. |
 | `--staging-lakehouse TEXT` | auto-generated | Name for the temporary staging Lakehouse (local path only). |
 | `--keep-staging` | off | Keep the staging Lakehouse after load (for debugging). |
-| `--max-errors INT` | — | Maximum errors before aborting. |
-| `--rejected-row-location TEXT` | — | URL to write rejected rows to. |
+| `--max-errors INT` | - | Maximum errors before aborting. |
+| `--rejected-row-location TEXT` | - | URL to write rejected rows to. |
 | `--create` | off | Auto-create the target table from the source schema (local files only). |
 | `--if-exists [fail\|append\|truncate\|replace]` | `fail` (with `--create`) | What to do when the target table already exists. `truncate` and `replace` are destructive and require confirmation. |
 | `--all-varchar` | off | (CSV, `--create`) Force all columns to `VARCHAR`; skip type inference. |
 | `--varchar-length INT` | `8000` | (`--create`) Default VARCHAR/VARBINARY length for inferred columns. |
 | `--sample-rows INT` | `1000` | (CSV, `--create`) Maximum rows to sample for type inference. |
 | `--cleanup-on-failure` | off | Drop the table if WE created it and the load fails. Never drops a pre-existing table. |
-| `--cluster-by COL` | — | (`--create`) Column name for `CLUSTER BY` (repeatable, up to 4). Each name must appear in the inferred schema. |
+| `--cluster-by COL` | - | (`--create`) Column name for `CLUSTER BY` (repeatable, up to 4). Each name must appear in the inferred schema. |
 
 **Examples**
 
@@ -543,7 +543,7 @@ fdw -w MyWorkspace tables read SalesWH dbo.orders --count 5
 
 **Targets:** Data Warehouse only
 
-Rename a table via `sp_rename`. The new name must be an unqualified (bare) identifier — `sp_rename` cannot move a table to a different schema.
+Rename a table via `sp_rename`. The new name must be an unqualified (bare) identifier - `sp_rename` cannot move a table to a different schema.
 
 **Synopsis**
 
@@ -577,11 +577,11 @@ Truncate a SQL table (remove all rows, preserve structure).
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `qualified_name` (`str`) — dot-separated table name, e.g. `dbo.sales`.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`): dot-separated table name, e.g. `dbo.sales`.
 
-**Returns:** `{ "truncated": true }` — confirmation.
+**Returns:** `{ "truncated": true }`: confirmation.
 
 ---
 
@@ -593,13 +593,13 @@ Create a zero-copy clone of a table using `CREATE TABLE … AS CLONE OF …`. On
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse name or GUID.
-- `source` (`str`) — qualified source table name, e.g. `dbo.sales`.
-- `new_table` (`str`) — qualified name for the new cloned table, e.g. `dbo.sales_clone`.
-- `at` (`str | null`, optional) — ISO-8601 UTC timestamp for a point-in-time clone (e.g. `2024-05-20T14:00:00`). Must be within the data-retention window. When omitted, the clone reflects the current state of the source table.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse name or GUID.
+- `source` (`str`): qualified source table name, e.g. `dbo.sales`.
+- `new_table` (`str`): qualified name for the new cloned table, e.g. `dbo.sales_clone`.
+- `at` (`str | null`, optional): ISO-8601 UTC timestamp for a point-in-time clone (e.g. `2024-05-20T14:00:00`). Must be within the data-retention window. When omitted, the clone reflects the current state of the source table.
 
-**Returns:** `Table` — the newly-created cloned table record.
+**Returns:** `Table`: the newly-created cloned table record.
 
 ---
 
@@ -611,19 +611,19 @@ Return column metadata for a SQL table via `sys.columns`. Works on both Fabric D
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `qualified_name` (`str`) — dot-separated table name, e.g. `dbo.Sales`.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`): dot-separated table name, e.g. `dbo.Sales`.
 
-**Returns:** `list[dict]` — one dict per column, each containing:
+**Returns:** `list[dict]`: one dict per column, each containing:
 
-- `ordinal` (`int`) — 1-based column position (`column_id`).
-- `name` (`str`) — column name.
-- `data_type` (`str`) — formatted T-SQL type string, e.g. `INT`, `VARCHAR(50)`, `NVARCHAR(MAX)`, `DECIMAL(18,2)`, `DATETIME2(7)`.
-- `nullable` (`bool`) — whether the column allows `NULL`.
-- `collation_name` (`str | null`) — collation name, if applicable.
-- `is_identity` (`bool`) — whether the column is an identity column.
-- `is_computed` (`bool`) — whether the column is a computed column.
+- `ordinal` (`int`): 1-based column position (`column_id`).
+- `name` (`str`): column name.
+- `data_type` (`str`): formatted T-SQL type string, e.g. `INT`, `VARCHAR(50)`, `NVARCHAR(MAX)`, `DECIMAL(18,2)`, `DATETIME2(7)`.
+- `nullable` (`bool`): whether the column allows `NULL`.
+- `collation_name` (`str | null`): collation name, if applicable.
+- `is_identity` (`bool`): whether the column is an identity column.
+- `is_computed` (`bool`): whether the column is a computed column.
 
 Results are ordered by ordinal position. Raises a `ToolError` if the table does not exist.
 
@@ -637,11 +637,11 @@ Return the total row count of a table via `SELECT COUNT_BIG(*)`.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `qualified_name` (`str`) — dot-separated table name, e.g. `dbo.sales`.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`): dot-separated table name, e.g. `dbo.sales`.
 
-**Returns:** `{ "schema": str, "name": str, "row_count": int }` — the schema name, table name, and total row count.
+**Returns:** `{ "schema": str, "name": str, "row_count": int }`: the schema name, table name, and total row count.
 
 ---
 
@@ -649,22 +649,22 @@ Return the total row count of a table via `SELECT COUNT_BIG(*)`.
 
 **Targets:** Data Warehouse only
 
-Create an empty SQL table from an explicit column specification (DDL only — no data is ever read or inserted). This scaffolds the table structure so that data can be loaded separately.
+Create an empty SQL table from an explicit column specification (DDL only - no data is ever read or inserted). This scaffolds the table structure so that data can be loaded separately.
 
 Server-side file access is unreliable in MCP deployments, so CSV/Parquet schema inference is not available via this tool. Use `fdw tables create --from-parquet` or `--from-csv` (CLI) for file-based schema inference.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse name or GUID. SQL Analytics Endpoints are rejected.
-- `qualified_name` (`str`) — dot-separated table name, e.g. `dbo.sales`.
-- `columns` (`list[object]`) — non-empty list of column definitions, each an object with:
-  - `name` (`str`) — column identifier (must be a valid SQL identifier).
-  - `sql_type` (`str`) — Fabric-DW-supported T-SQL type, e.g. `"INT"`, `"VARCHAR(255)"`, `"DECIMAL(18,2)"`.
-  - `nullable` (`bool`, optional, default `true`) — whether the column allows `NULL`.
-- `cluster_by` (`list[str]`, optional) — column names for the `CLUSTER BY` clause (up to 4). Each name must appear in `columns`.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse name or GUID. SQL Analytics Endpoints are rejected.
+- `qualified_name` (`str`): dot-separated table name, e.g. `dbo.sales`.
+- `columns` (`list[object]`): non-empty list of column definitions, each an object with:
+  - `name` (`str`): column identifier (must be a valid SQL identifier).
+  - `sql_type` (`str`): Fabric-DW-supported T-SQL type, e.g. `"INT"`, `"VARCHAR(255)"`, `"DECIMAL(18,2)"`.
+  - `nullable` (`bool`, optional, default `true`): whether the column allows `NULL`.
+- `cluster_by` (`list[str]`, optional): column names for the `CLUSTER BY` clause (up to 4). Each name must appear in `columns`.
 
-**Returns:** `Table` — the newly-created table record.
+**Returns:** `Table`: the newly-created table record.
 
 **Example call:**
 
@@ -695,13 +695,13 @@ When `cluster_by` is supplied the DDL becomes `CREATE TABLE … WITH (CLUSTER BY
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `qualified_name` (`str`) — dot-separated table name, e.g. `dbo.sales`.
-- `select_body` (`str`) — the SELECT statement for the CTAS source.
-- `cluster_by` (`list[str]`, optional) — column names for the `CLUSTER BY` clause (up to 4). Column existence is not validated on the CTAS path.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`): dot-separated table name, e.g. `dbo.sales`.
+- `select_body` (`str`): the SELECT statement for the CTAS source.
+- `cluster_by` (`list[str]`, optional): column names for the `CLUSTER BY` clause (up to 4). Column existence is not validated on the CTAS path.
 
-**Returns:** `Table` — the newly-created table record.
+**Returns:** `Table`: the newly-created table record.
 
 ---
 
@@ -715,11 +715,11 @@ Drop a SQL table.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `qualified_name` (`str`) — dot-separated table name, e.g. `dbo.sales`.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`): dot-separated table name, e.g. `dbo.sales`.
 
-**Returns:** `{ "dropped": true }` — confirmation.
+**Returns:** `{ "dropped": true }`: confirmation.
 
 ---
 
@@ -731,11 +731,11 @@ Return the data-clustering columns of a table, ordered by clustering ordinal. Re
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse name or GUID. SQL Analytics Endpoints are rejected.
-- `qualified_name` (`str`) — dot-separated table name, e.g. `dbo.sales`.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse name or GUID. SQL Analytics Endpoints are rejected.
+- `qualified_name` (`str`): dot-separated table name, e.g. `dbo.sales`.
 
-**Returns:** `list[{ "column_name": str, "clustering_ordinal": int }]` — ordered by ascending `clustering_ordinal`.
+**Returns:** `list[{ "column_name": str, "clustering_ordinal": int }]`: ordered by ascending `clustering_ordinal`.
 
 ---
 
@@ -745,17 +745,17 @@ Return the data-clustering columns of a table, ordered by clustering ordinal. Re
 
 Return health metrics for a table via `sp_get_table_health_metrics`. Only supported on SQL Analytics Endpoints (not Data Warehouses).
 
-The proc surfaces Delta/Parquet layout issues such as small files, fragmentation, excessive deletes/updates, and delayed checkpoints — useful for deciding whether table maintenance is needed.
+The proc surfaces Delta/Parquet layout issues such as small files, fragmentation, excessive deletes/updates, and delayed checkpoints - useful for deciding whether table maintenance is needed.
 
 The proc is Generally Available (announced at Build 2026) but its output column schema is not yet documented by Microsoft. Columns and rows are passed through verbatim.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — SQL Analytics Endpoint name or GUID. Data Warehouses are rejected with a `ToolError`.
-- `qualified_name` (`str`) — dot-separated table name, e.g. `dbo.FactSales`.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): SQL Analytics Endpoint name or GUID. Data Warehouses are rejected with a `ToolError`.
+- `qualified_name` (`str`): dot-separated table name, e.g. `dbo.FactSales`.
 
-**Returns:** `{ "columns": list[str], "rows": list[list] }` — column names and rows passed through verbatim from the proc.
+**Returns:** `{ "columns": list[str], "rows": list[list] }`: column names and rows passed through verbatim from the proc.
 
 ---
 
@@ -781,31 +781,31 @@ Load data from a remote URL into an existing Data Warehouse table with control o
 
 | Value | Table exists | Table absent |
 | --- | --- | --- |
-| `"fail"` (default) | Error — table already exists | Load normally |
+| `"fail"` (default) | Error - table already exists | Load normally |
 | `"append"` | Load into existing table | Load normally |
 | `"truncate"` ⚠️ | `TRUNCATE` existing table, then load | Load normally |
-| `"replace"` ⚠️ | Not supported for remote URLs — use CLI | Load normally |
+| `"replace"` ⚠️ | Not supported for remote URLs - use CLI | Load normally |
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse name or GUID. SQL Analytics Endpoints are rejected.
-- `qualified_name` (`str`) — dot-separated qualified table name, e.g. `dbo.sales`.
-- `url` (`str`) — source URL (OneLake DFS URL or external Azure Blob URL).
-- `file_type` (`"CSV" | "PARQUET"`) — file type to load. JSON is not supported for remote URLs.
-- `if_exists` (`"fail" | "append" | "truncate" | "replace"`, default `"fail"`) — what to do when the target table already exists.
-- `credential_type` (`"none" | "sas" | "managed-identity" | "service-principal" | "account-key"`, default `"none"`) — credential type for secured external URLs.
-- `secret` (`str | null`, optional) — credential secret (SAS token, client secret, or account key). Never logged.
-- `identity` (`str | null`, optional) — identity for `managed-identity` or `service-principal`.
-- `delimiter` (`str | null`, optional) — CSV column delimiter (e.g. `,`, `\t`).
-- `has_header` (`bool`, default `true`) — when `true`, the first CSV row is a header and is skipped.
-- `encoding` (`str | null`, optional) — CSV encoding (e.g. `UTF8`, `UTF8BOM`).
-- `field_quote` (`str | null`, optional) — CSV field-quote character.
-- `row_terminator` (`str | null`, optional) — CSV row terminator (e.g. `\n`, `\r\n`).
-- `max_errors` (`int | null`, optional) — maximum errors before aborting.
-- `rejected_row_location` (`str | null`, optional) — URL to write rejected rows to.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse name or GUID. SQL Analytics Endpoints are rejected.
+- `qualified_name` (`str`): dot-separated qualified table name, e.g. `dbo.sales`.
+- `url` (`str`): source URL (OneLake DFS URL or external Azure Blob URL).
+- `file_type` (`"CSV" | "PARQUET"`): file type to load. JSON is not supported for remote URLs.
+- `if_exists` (`"fail" | "append" | "truncate" | "replace"`, default `"fail"`): what to do when the target table already exists.
+- `credential_type` (`"none" | "sas" | "managed-identity" | "service-principal" | "account-key"`, default `"none"`): credential type for secured external URLs.
+- `secret` (`str | null`, optional): credential secret (SAS token, client secret, or account key). Never logged.
+- `identity` (`str | null`, optional): identity for `managed-identity` or `service-principal`.
+- `delimiter` (`str | null`, optional): CSV column delimiter (e.g. `,`, `\t`).
+- `has_header` (`bool`, default `true`): when `true`, the first CSV row is a header and is skipped.
+- `encoding` (`str | null`, optional): CSV encoding (e.g. `UTF8`, `UTF8BOM`).
+- `field_quote` (`str | null`, optional): CSV field-quote character.
+- `row_terminator` (`str | null`, optional): CSV row terminator (e.g. `\n`, `\r\n`).
+- `max_errors` (`int | null`, optional): maximum errors before aborting.
+- `rejected_row_location` (`str | null`, optional): URL to write rejected rows to.
 
-**Returns:** `CopyIntoResult` — `{ "rows_loaded": int, "rows_rejected": int, "target": "schema.table" }`.
+**Returns:** `CopyIntoResult`: `{ "rows_loaded": int, "rows_rejected": int, "target": "schema.table" }`.
 
 ---
 
@@ -817,11 +817,11 @@ List SQL tables on a warehouse or SQL Analytics Endpoint.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `schema` (`str | null`, optional) — when provided, only tables in this schema are returned.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL analytics endpoint name or GUID.
+- `schema` (`str | null`, optional): when provided, only tables in this schema are returned.
 
-**Returns:** `list[Table]` — each with `schema_name`, `name`, `qualified_name`, `created`, `modified`.
+**Returns:** `list[Table]`: each with `schema_name`, `name`, `qualified_name`, `created`, `modified`.
 
 ---
 
@@ -845,23 +845,23 @@ Load data into a Data Warehouse table via `COPY INTO` from a remote URL. For One
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse name or GUID. SQL Analytics Endpoints are rejected.
-- `qualified_name` (`str`) — dot-separated qualified table name, e.g. `dbo.sales`.
-- `url` (`str`) — source URL (OneLake DFS URL or external Azure Blob URL).
-- `file_type` (`"CSV" | "PARQUET"`) — file type to load.
-- `credential_type` (`"none" | "sas" | "managed-identity" | "service-principal" | "account-key"`, default `"none"`) — credential type for secured external URLs.
-- `secret` (`str | null`, optional) — credential secret (SAS token, client secret, or account key). Never logged.
-- `identity` (`str | null`, optional) — identity for `managed-identity` or `service-principal`.
-- `delimiter` (`str | null`, optional) — CSV column delimiter (e.g. `,`, `\t`).
-- `has_header` (`bool`, default `true`) — when `true`, the first CSV row is a header and is skipped.
-- `encoding` (`str | null`, optional) — CSV encoding (e.g. `UTF8`, `UTF8BOM`).
-- `field_quote` (`str | null`, optional) — CSV field-quote character.
-- `row_terminator` (`str | null`, optional) — CSV row terminator (e.g. `\n`, `\r\n`).
-- `max_errors` (`int | null`, optional) — maximum errors before aborting.
-- `rejected_row_location` (`str | null`, optional) — URL to write rejected rows to.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse name or GUID. SQL Analytics Endpoints are rejected.
+- `qualified_name` (`str`): dot-separated qualified table name, e.g. `dbo.sales`.
+- `url` (`str`): source URL (OneLake DFS URL or external Azure Blob URL).
+- `file_type` (`"CSV" | "PARQUET"`): file type to load.
+- `credential_type` (`"none" | "sas" | "managed-identity" | "service-principal" | "account-key"`, default `"none"`): credential type for secured external URLs.
+- `secret` (`str | null`, optional): credential secret (SAS token, client secret, or account key). Never logged.
+- `identity` (`str | null`, optional): identity for `managed-identity` or `service-principal`.
+- `delimiter` (`str | null`, optional): CSV column delimiter (e.g. `,`, `\t`).
+- `has_header` (`bool`, default `true`): when `true`, the first CSV row is a header and is skipped.
+- `encoding` (`str | null`, optional): CSV encoding (e.g. `UTF8`, `UTF8BOM`).
+- `field_quote` (`str | null`, optional): CSV field-quote character.
+- `row_terminator` (`str | null`, optional): CSV row terminator (e.g. `\n`, `\r\n`).
+- `max_errors` (`int | null`, optional): maximum errors before aborting.
+- `rejected_row_location` (`str | null`, optional): URL to write rejected rows to.
 
-**Returns:** `CopyIntoResult` — `{ "rows_loaded": int, "rows_rejected": int, "target": "schema.table" }`.
+**Returns:** `CopyIntoResult`: `{ "rows_loaded": int, "rows_rejected": int, "target": "schema.table" }`.
 
 ---
 
@@ -873,12 +873,12 @@ Return up to `count` rows from a table as JSON-serialisable columns and rows.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `qualified_name` (`str`) — dot-separated table name, e.g. `dbo.sales`.
-- `count` (`int`, default `10`) — maximum rows to return.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`): dot-separated table name, e.g. `dbo.sales`.
+- `count` (`int`, default `10`): maximum rows to return.
 
-**Returns:** `{ "columns": list[str], "rows": list[list] }` — column names and row arrays.
+**Returns:** `{ "columns": list[str], "rows": list[list] }`: column names and row arrays.
 
 ---
 
@@ -886,16 +886,16 @@ Return up to `count` rows from a table as JSON-serialisable columns and rows.
 
 **Targets:** Data Warehouse only
 
-Rename a SQL table via `sp_rename`. Only supported on Fabric Data Warehouses (SQL Analytics Endpoints are rejected). The new name must be a bare (unqualified) identifier — `sp_rename` cannot move a table to a different schema.
+Rename a SQL table via `sp_rename`. Only supported on Fabric Data Warehouses (SQL Analytics Endpoints are rejected). The new name must be a bare (unqualified) identifier - `sp_rename` cannot move a table to a different schema.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse name or GUID.
-- `qualified_name` (`str`) — current dot-separated qualified table name, e.g. `dbo.sales`.
-- `new_name` (`str`) — new bare table name (no schema prefix), e.g. `sales_v2`.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse name or GUID.
+- `qualified_name` (`str`): current dot-separated qualified table name, e.g. `dbo.sales`.
+- `new_name` (`str`): new bare table name (no schema prefix), e.g. `sales_v2`.
 
-**Returns:** `Table` — the updated table record.
+**Returns:** `Table`: the updated table record.
 
 ---
 
@@ -909,13 +909,13 @@ Change (or remove) the data-clustering columns of an existing table via a transa
 
 **CAUTION:** Dependent views and stored procedures that reference this table by name are **NOT** automatically updated by `sp_rename` and may need refreshing after the swap.
 
-The operation is atomic: CTAS + DROP + sp_rename all run in one transaction. Any failure rolls back automatically — no orphan temp table is left behind.
+The operation is atomic: CTAS + DROP + sp_rename all run in one transaction. Any failure rolls back automatically - no orphan temp table is left behind.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse name or GUID. SQL Analytics Endpoints are rejected.
-- `qualified_name` (`str`) — dot-separated qualified table name, e.g. `dbo.sales`.
-- `cluster_by` (`list[str] | null`, optional) — new column names for the `CLUSTER BY` clause (up to 4). Pass `null` or an empty list to remove clustering (rebuilds table without `CLUSTER BY`).
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse name or GUID. SQL Analytics Endpoints are rejected.
+- `qualified_name` (`str`): dot-separated qualified table name, e.g. `dbo.sales`.
+- `cluster_by` (`list[str] | null`, optional): new column names for the `CLUSTER BY` clause (up to 4). Pass `null` or an empty list to remove clustering (rebuilds table without `CLUSTER BY`).
 
-**Returns:** `Table` — the re-clustered table record.
+**Returns:** `Table`: the re-clustered table record.

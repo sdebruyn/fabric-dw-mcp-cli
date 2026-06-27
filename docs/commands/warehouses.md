@@ -211,12 +211,12 @@ Create a new Warehouse in a workspace.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `name` (`str`) — display name for the new warehouse.
-- `collation` (`str | null`, optional) — default collation for the new warehouse.
-- `description` (`str | null`, optional) — description for the new warehouse.
+- `workspace` (`str`): workspace name or GUID.
+- `name` (`str`): display name for the new warehouse.
+- `collation` (`str | null`, optional): default collation for the new warehouse.
+- `description` (`str | null`, optional): description for the new warehouse.
 
-**Returns:** `Warehouse` — the newly-created warehouse object.
+**Returns:** `Warehouse`: the newly-created warehouse object.
 
 ---
 
@@ -228,10 +228,10 @@ Delete a Warehouse.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse name or GUID.
+- `workspace` (`str`): workspace name or GUID.
+- `warehouse` (`str`): warehouse name or GUID.
 
-**Returns:** `{ "deleted": true, "warehouse_id": str }` — confirmation with the warehouse GUID.
+**Returns:** `{ "deleted": true, "warehouse_id": str }`: confirmation with the warehouse GUID.
 
 ---
 
@@ -243,10 +243,10 @@ Return details for a single Data Warehouse. Uses the warehouse-scoped REST path 
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse name or GUID.
+- `workspace` (`str`): workspace name or GUID.
+- `warehouse` (`str`): warehouse name or GUID.
 
-**Returns:** `Warehouse` — single warehouse object (fields as above).
+**Returns:** `Warehouse`: single warehouse object (fields as above).
 
 ---
 
@@ -262,10 +262,10 @@ Return all principals (users, groups, service principals) with access to a Wareh
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse name or GUID.
+- `workspace` (`str`): workspace name or GUID.
+- `warehouse` (`str`): warehouse name or GUID.
 
-**Returns:** `list[ItemAccess]` — array of access records, each with `principal` (containing `id`, `displayName`, `type`, and type-specific fields such as `userPrincipalName` or `aadAppId`) and `itemAccessDetails` (containing `type`, `permissions`, and `additionalPermissions`).
+**Returns:** `list[ItemAccess]`: array of access records, each with `principal` (containing `id`, `displayName`, `type`, and type-specific fields such as `userPrincipalName` or `aadAppId`) and `itemAccessDetails` (containing `type`, `permissions`, and `additionalPermissions`).
 
 ---
 
@@ -277,10 +277,10 @@ List all warehouses and SQL analytics endpoints in a workspace, or across all vi
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID; required when `all_workspaces` is `false`; ignored when `true`.
-- `all_workspaces` (`bool`, default `false`) — when `true`, aggregate results across every workspace the caller can see.
+- `workspace` (`str`): workspace name or GUID; required when `all_workspaces` is `false`; ignored when `true`.
+- `all_workspaces` (`bool`, default `false`): when `true`, aggregate results across every workspace the caller can see.
 
-**Returns:** `list[Warehouse]` — array of warehouse objects, each with `id`, `displayName`, `description`, `workspaceId`, `kind` (`Warehouse` or `SQLEndpoint`), `connectionString`, `defaultCollation`, and `createdDate`.
+**Returns:** `list[Warehouse]`: array of warehouse objects, each with `id`, `displayName`, `description`, `workspaceId`, `kind` (`Warehouse` or `SQLEndpoint`), `connectionString`, `defaultCollation`, and `createdDate`.
 
 ---
 
@@ -292,12 +292,12 @@ Rename a Warehouse and optionally update its description.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse name or GUID.
-- `new_name` (`str`) — new display name.
-- `description` (`str | null`, optional) — new description; omit to leave unchanged.
+- `workspace` (`str`): workspace name or GUID.
+- `warehouse` (`str`): warehouse name or GUID.
+- `new_name` (`str`): new display name.
+- `description` (`str | null`, optional): new description; omit to leave unchanged.
 
-**Returns:** `Warehouse` — the updated warehouse object.
+**Returns:** `Warehouse`: the updated warehouse object.
 
 ---
 
@@ -309,7 +309,7 @@ Take ownership of a Warehouse. Not supported for SQL analytics endpoints.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `warehouse` (`str`) — warehouse name or GUID.
+- `workspace` (`str`): workspace name or GUID.
+- `warehouse` (`str`): warehouse name or GUID.
 
-**Returns:** `{ "taken_over": true, "warehouse_id": str }` — confirmation with the warehouse GUID.
+**Returns:** `{ "taken_over": true, "warehouse_id": str }`: confirmation with the warehouse GUID.

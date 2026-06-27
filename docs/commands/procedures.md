@@ -158,12 +158,12 @@ Create a new stored procedure.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `qualified_name` (`str`) — dot-separated qualified procedure name, e.g. `dbo.usp_load`.
-- `body` (`str`) — the procedure body (the `AS …` section).
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`): dot-separated qualified procedure name, e.g. `dbo.usp_load`.
+- `body` (`str`): the procedure body (the `AS …` section).
 
-**Returns:** `StoredProcedure` — the newly-created procedure object.
+**Returns:** `StoredProcedure`: the newly-created procedure object.
 
 ---
 
@@ -175,11 +175,11 @@ Drop a stored procedure.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `qualified_name` (`str`) — dot-separated qualified procedure name, e.g. `dbo.usp_load`.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`): dot-separated qualified procedure name, e.g. `dbo.usp_load`.
 
-**Returns:** `{ "dropped": true }` — confirmation.
+**Returns:** `{ "dropped": true }`: confirmation.
 
 ---
 
@@ -191,11 +191,11 @@ Fetch the full definition of a single stored procedure.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `qualified_name` (`str`) — dot-separated qualified procedure name, e.g. `dbo.usp_load`.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`): dot-separated qualified procedure name, e.g. `dbo.usp_load`.
 
-**Returns:** `StoredProcedure` — single procedure object with `definition` populated from `sys.sql_modules`.
+**Returns:** `StoredProcedure`: single procedure object with `definition` populated from `sys.sql_modules`.
 
 ---
 
@@ -207,11 +207,11 @@ List stored procedures on a warehouse or SQL Analytics Endpoint, optionally filt
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `schema` (`str | null`, optional) — when provided, only procedures in this schema are returned.
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL analytics endpoint name or GUID.
+- `schema` (`str | null`, optional): when provided, only procedures in this schema are returned.
 
-**Returns:** `list[StoredProcedure]` — array of procedure objects, each with `schema_name`, `name`, `qualified_name`, `created`, and `modified`.
+**Returns:** `list[StoredProcedure]`: array of procedure objects, each with `schema_name`, `name`, `qualified_name`, `created`, and `modified`.
 
 ---
 
@@ -227,9 +227,9 @@ Redefine a stored procedure via `CREATE OR ALTER PROCEDURE`.
 
 **Parameters:**
 
-- `workspace` (`str`) — workspace name or GUID.
-- `item` (`str`) — warehouse or SQL analytics endpoint name or GUID.
-- `qualified_name` (`str`) — dot-separated qualified procedure name, e.g. `dbo.usp_load`.
-- `body` (`str`) — the new procedure body (the `AS …` section).
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`): dot-separated qualified procedure name, e.g. `dbo.usp_load`.
+- `body` (`str`): the new procedure body (the `AS …` section).
 
-**Returns:** `StoredProcedure` — the updated procedure object.
+**Returns:** `StoredProcedure`: the updated procedure object.

@@ -15,7 +15,7 @@ Every telemetry event includes a shared envelope of anonymous fields:
 | `os` | Operating system (e.g. `linux`, `darwin`, `windows`). |
 | `arch` | CPU architecture (e.g. `arm64`, `x86_64`). |
 | `install_method` | Best-effort detection: `pip`, `uv`, `pipx`, or `source`. |
-| `surface` | `cli` or `mcp` — which interface was used. |
+| `surface` | `cli` or `mcp`: which interface was used. |
 | `auth_mode` | Categorical authentication mode: `service_principal`, `github_oidc`, `azure_cli`, `interactive`, or `managed_identity`. **Never credentials.** |
 | `tenant_id` | Your Azure (Entra) tenant ID. |
 
@@ -23,13 +23,13 @@ Every telemetry event includes a shared envelope of anonymous fields:
 
 | Event | When | Extra fields |
 |---|---|---|
-| `app_started` | Once per process | — (`auth_mode` omitted — see note below) |
-| `mcp_server_started` | When the MCP server boots | — (`auth_mode` omitted — see note below) |
+| `app_started` | Once per process | - (`auth_mode` omitted - see note below) |
+| `mcp_server_started` | When the MCP server boots | - (`auth_mode` omitted - see note below) |
 | `app_exited` | On process exit | `duration_ms`, `exit_status` (ok / user_error / api_error), `error_category` |
 
 > **Note on `auth_mode` in lifecycle-start events:** `app_started` and `mcp_server_started` fire at process start, before any token is acquired. Emitting `auth_mode` at that point would produce a possibly-wrong value derived from environment-variable heuristics (e.g. `interactive` for a plain `az login`). The accurate value is only available after the first token acquisition and is emitted on `command_invoked` and `app_exited`.
 
-### `command_invoked` — per-command usage
+### `command_invoked`: per-command usage
 
 One `command_invoked` event is emitted after every CLI command and every MCP tool call completes (success or failure).
 
@@ -63,8 +63,8 @@ One `command_invoked` event is emitted after every CLI command and every MCP too
 | `sql_pools` | `sql-pools` | `list_sql_pools`, `create_sql_pool`, `delete_sql_pool`, … |
 | `dbt` | `dbt` | `generate_dbt_profile` |
 | `cache` | `cache` | `clear_cache` |
-| `config` | `config` | — |
-| `completion` | `completion` | — |
+| `config` | `config` | - |
+| `completion` | `completion` | - |
 
 ### What is deliberately NOT collected
 
@@ -80,7 +80,7 @@ Events are sent to a private Azure Application Insights resource operated by the
 
 ## How to opt out
 
-Any of the following fully disables telemetry — no events are emitted and the SDK is never imported:
+Any of the following fully disables telemetry - no events are emitted and the SDK is never imported:
 
 | Method | How |
 |---|---|
