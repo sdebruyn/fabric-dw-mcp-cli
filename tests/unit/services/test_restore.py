@@ -442,6 +442,50 @@ async def test_create_point_path_c_absent_raises() -> None:
                     await restore.create_point(http, _WS_ID, _WH_ID)
 
 
+@respx.mock
+async def test_create_point_path_c_system_created_race_not_returned() -> None:
+    """Path C must NOT return a SystemCreated point that races in with a higher id.
+
+    Fabric generates SystemCreated checkpoints independently of user-initiated
+    creates. In the race window between LRO completion and list_points() there
+    can be a SystemCreated point whose epoch-millisecond id is higher than the
+    user's new point. The fallback must exclude confirmed-SystemCreated points
+    and return the user's point even when it has the lower id.
+
+    This test uses the existing fixture shapes:
+      - null-mode user point: id = _RP_ID  ("1726617378000", lower)
+      - SystemCreated point:  id = _RP_ID_2 ("1726617379000", higher)
+    """
+    # The freshly created user point has a null creation_mode (eventual
+    # consistency) and a LOWER epoch-ms id than the racing system checkpoint.
+    null_mode_user_payload: dict[str, Any] = {
+        "id": _RP_ID,
+        "displayName": "My new point",
+        "creationDetails": {"eventDateTime": "2024-10-18T22:17:09Z"},
+        # creationMode intentionally absent
+    }
+    respx.post(_RP_LIST_URL).mock(
+        return_value=httpx.Response(202, headers={"Location": _LRO_LOCATION})
+    )
+    # List returns both: system point first (higher id) to stress the ordering.
+    respx.get(url__regex=rf"{_RP_LIST_URL}(\?.*)?$").mock(
+        return_value=httpx.Response(200, json={"value": [RP_PAYLOAD_2, null_mode_user_payload]})
+    )
+
+    async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
+        with patch.object(http, "poll_operation", new_callable=AsyncMock) as mock_poll:
+            mock_poll.return_value = LRO_SUCCEEDED
+
+            with patch.object(http, "get_operation_result", new_callable=AsyncMock) as mock_result:
+                mock_result.return_value = {}
+                result = await restore.create_point(http, _WS_ID, _WH_ID)
+
+    # Must be the user's point, NOT the SystemCreated one with the higher id.
+    assert isinstance(result, RestorePoint)
+    assert result.id == _RP_ID
+    assert result.creation_mode is None
+
+
 # ---------------------------------------------------------------------------
 # update_point
 # ---------------------------------------------------------------------------
