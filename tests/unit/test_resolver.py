@@ -591,8 +591,6 @@ async def test_item_miss_then_found_resolves(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-
-
 def test_odata_escape_rejects_oversized_value() -> None:
     """_odata_escape must raise FabricError for values exceeding _ODATA_MAX_LEN."""
     ok_value = "A" * 256  # exactly at the limit
@@ -958,5 +956,3 @@ async def test_item_sql_endpoint_unresolved_conn_not_cached_and_retries(
     assert second.connection_string == "mysqlep.datawarehouse.fabric.microsoft.com"
     # The /sqlEndpoints resource was fetched twice — no stale cache short-circuit.
     assert sql_ep_calls["n"] == 2
-
-
