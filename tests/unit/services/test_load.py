@@ -2665,7 +2665,7 @@ class TestInferColumnsFromLocal:
 
         mock_columns = [object()]
         with patch(
-            "fabric_dw.services.tables.infer_columns_from_parquet",
+            "fabric_dw.services.schema_infer.infer_columns_from_parquet",
             return_value=mock_columns,
         ) as mock_fn:
             result = await _infer_columns_from_local(Path("data.parquet"), "parquet")
@@ -2678,7 +2678,7 @@ class TestInferColumnsFromLocal:
 
         mock_columns = [object()]
         with patch(
-            "fabric_dw.services.tables.infer_columns_from_csv",
+            "fabric_dw.services.schema_infer.infer_columns_from_csv",
             return_value=mock_columns,
         ) as mock_fn:
             result = await _infer_columns_from_local(Path("data.csv"), "csv")
@@ -2706,7 +2706,7 @@ class TestInferColumnsFromLocal:
         with (
             patch("fabric_dw.services.load._json_to_parquet", side_effect=_capture),
             patch(
-                "fabric_dw.services.tables.infer_columns_from_parquet",
+                "fabric_dw.services.schema_infer.infer_columns_from_parquet",
                 return_value=mock_columns,
             ),
         ):
