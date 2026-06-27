@@ -31,7 +31,7 @@ from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import NotFoundError
 from fabric_dw.identifiers import parse_qualified_name, quote_identifier, validate_identifier
 from fabric_dw.models import Function, FunctionDetails, FunctionKind, FunctionParameter
-from fabric_dw.services._helpers import normalize_object_definition
+from fabric_dw.services._helpers import find_statement_start, normalize_object_definition
 from fabric_dw.sql import SqlTarget, run_query
 
 # Valid values for the ``kind`` parameter of :func:`list_functions`.
@@ -190,21 +190,27 @@ def _extract_function_body(schema: str, name: str, definition: str) -> str:
     Handles both bracket-quoted (``[schema].[name]``) and unquoted
     (``schema.name``) forms, as well as single-part names without a schema.
 
-    Uses ``re.search`` for ``CREATE FUNCTION`` to skip any leading comment
-    blocks that contain the word ``FUNCTION`` before the actual DDL keyword.
+    Leading whitespace and comment blocks (single-line ``--`` and block
+    ``/* ... */``) are skipped via :func:`~fabric_dw.services._helpers.find_statement_start`
+    before the ``CREATE FUNCTION`` header is located, so a keyword that appears
+    inside a comment (e.g. ``-- CREATE FUNCTION helper``) is not mistaken for
+    the real DDL header.
 
     Raises:
         NotFoundError: If the ``CREATE FUNCTION`` keyword pair cannot be located
             in the definition string (indicates a corrupted or unexpected
             definition).
     """
-    m = re.search(r"\bCREATE\s+FUNCTION\b", definition, re.IGNORECASE)
+    # Skip leading whitespace and comments so that a "CREATE FUNCTION" token
+    # inside a comment is not matched instead of the real DDL header.
+    start = find_statement_start(definition)
+    m = re.search(r"\bCREATE\s+FUNCTION\b", definition[start:], re.IGNORECASE)
     if m is None:
         msg = f"Cannot parse definition for [{schema}].[{name}]: 'CREATE FUNCTION' not found"
         raise NotFoundError(msg)
 
     # Advance past "FUNCTION" and trailing whitespace.
-    pos = m.end()
+    pos = start + m.end()
     while pos < len(definition) and definition[pos] in (" ", "\t", "\n", "\r"):
         pos += 1
 

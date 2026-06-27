@@ -997,6 +997,87 @@ class TestRenameFunction:
         assert "fn_clean" not in before_params.lower()
         assert "fn_sanitize" in before_params.lower()
 
+    async def test_leading_line_comment_containing_create_function(self) -> None:
+        """A leading line comment whose text contains 'CREATE FUNCTION' must not
+        corrupt the reconstructed DDL.
+
+        Before the fix, re.search found the 'CREATE FUNCTION' inside the comment
+        first, causing the body to start mid-comment and the generated DDL to be
+        invalid.  After the fix, find_statement_start skips the comment and the
+        real header is located correctly.
+        """
+        definition_with_comment = (
+            "-- CREATE FUNCTION helper_do_not_use\n"
+            "CREATE FUNCTION [dbo].[fn_clean]"
+            "(@input NVARCHAR(100)) RETURNS NVARCHAR(100) AS BEGIN RETURN LTRIM(RTRIM(@input)) END"
+        )
+        row_with_comment = (
+            "dbo",
+            "fn_clean",
+            "FN",
+            "SQL_SCALAR_FUNCTION",
+            _NOW,
+            _LATER,
+            definition_with_comment,
+            1,
+        )
+        target = _make_target()
+        conns = self._make_rename_conns(old_row=row_with_comment)
+        conn_create_ddl = conns[2]
+
+        with patch("fabric_dw.sql.open_connection", side_effect=conns):
+            await functions.rename_function(target, "dbo.fn_clean", "fn_sanitize")
+
+        create_cursor = conn_create_ddl.cursor.return_value
+        create_sql: str = create_cursor.execute.call_args[0][0]
+        # The body must be preserved intact.
+        assert "LTRIM" in create_sql.upper() or "ltrim" in create_sql.lower()
+        # The generated DDL must name the new function, not the old one or the
+        # comment's dummy name.
+        after_fn_kw = create_sql.split("CREATE FUNCTION", 1)[-1]
+        before_params = after_fn_kw.split("(", maxsplit=1)[0]
+        assert "fn_clean" not in before_params.lower()
+        assert "helper_do_not_use" not in before_params.lower()
+        assert "fn_sanitize" in before_params.lower()
+
+    async def test_leading_block_comment_containing_create_function(self) -> None:
+        """A leading block comment whose text contains 'CREATE FUNCTION' must not
+        corrupt the reconstructed DDL.
+
+        Mirrors test_leading_line_comment_containing_create_function but uses a
+        block comment (/* ... */) instead of a line comment (-- ...).
+        """
+        definition_with_block_comment = (
+            "/* CREATE FUNCTION helper_do_not_use -- legacy stub */\n"
+            "CREATE FUNCTION [dbo].[fn_clean]"
+            "(@input NVARCHAR(100)) RETURNS NVARCHAR(100) AS BEGIN RETURN LTRIM(RTRIM(@input)) END"
+        )
+        row_with_block_comment = (
+            "dbo",
+            "fn_clean",
+            "FN",
+            "SQL_SCALAR_FUNCTION",
+            _NOW,
+            _LATER,
+            definition_with_block_comment,
+            1,
+        )
+        target = _make_target()
+        conns = self._make_rename_conns(old_row=row_with_block_comment)
+        conn_create_ddl = conns[2]
+
+        with patch("fabric_dw.sql.open_connection", side_effect=conns):
+            await functions.rename_function(target, "dbo.fn_clean", "fn_sanitize")
+
+        create_cursor = conn_create_ddl.cursor.return_value
+        create_sql: str = create_cursor.execute.call_args[0][0]
+        assert "LTRIM" in create_sql.upper() or "ltrim" in create_sql.lower()
+        after_fn_kw = create_sql.split("CREATE FUNCTION", 1)[-1]
+        before_params = after_fn_kw.split("(", maxsplit=1)[0]
+        assert "fn_clean" not in before_params.lower()
+        assert "helper_do_not_use" not in before_params.lower()
+        assert "fn_sanitize" in before_params.lower()
+
     async def test_create_fails_leaves_old_function_intact(self) -> None:
         """If create_function raises (e.g. new name already exists), the old function
         is never dropped.  The exception propagates and drop_function is not called.

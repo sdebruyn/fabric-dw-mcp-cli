@@ -14,6 +14,7 @@ from fabric_dw.services.capacities import ACTIVE_STATE
 __all__ = [
     "coerce_to_utc",
     "compact",
+    "find_statement_start",
     "normalize_object_definition",
     "reject_non_select",
     "scan_all_workspaces",
@@ -380,6 +381,44 @@ _BLOCK_COMMENT_RE = re.compile(r"/\*[^*]*(?:\*+[^*/][^*]*)*\*+/")
 _LINE_COMMENT_RE = re.compile(r"--[^\n]*")
 _WHITESPACE_RE = re.compile(r"\s+")
 _SELECT_OR_WITH_RE = re.compile(r"(?:WITH|SELECT)\b", re.IGNORECASE)
+
+
+def find_statement_start(definition: str) -> int:
+    """Return the index of the first non-comment, non-whitespace character.
+
+    Skips leading whitespace, single-line comments (``--``), and block comments
+    (``/* ... */``) so that callers can anchor searches to the real first SQL
+    token rather than to text inside a comment.
+
+    Used by rename operations to locate the real ``CREATE ...`` header even when
+    the stored definition begins with a documentation comment that contains object
+    keywords (e.g. ``-- CREATE FUNCTION helper``).
+
+    Args:
+        definition: A raw ``sys.sql_modules.definition`` string (or any SQL text).
+
+    Returns:
+        The index of the first character that is neither whitespace nor part of
+        a leading comment.  Returns ``len(definition)`` when the entire string
+        consists of whitespace and comments.
+    """
+    pos = 0
+    length = len(definition)
+    while pos < length:
+        m = _WHITESPACE_RE.match(definition, pos)
+        if m:
+            pos = m.end()
+            continue
+        m = _BLOCK_COMMENT_RE.match(definition, pos)
+        if m:
+            pos = m.end()
+            continue
+        m = _LINE_COMMENT_RE.match(definition, pos)
+        if m:
+            pos = m.end()
+            continue
+        break
+    return pos
 
 
 def reject_non_select(body: str) -> None:
