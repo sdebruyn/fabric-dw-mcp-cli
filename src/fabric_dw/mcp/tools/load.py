@@ -330,9 +330,10 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
           create_table).
         - ``"append"``: load rows into the existing table without modification.
           Raises an error if the table does not exist.
-        - ``"truncate"``: TRUNCATE the existing table first, then load.
-          Requires ``FABRIC_MCP_ALLOW_DESTRUCTIVE=1``.  Raises an error if the
-          table does **not** exist.
+        - ``"truncate"``: TRUNCATE the existing table, then load, both inside a
+          single transaction so a failed load leaves the existing rows intact
+          (atomic replace).  Requires ``FABRIC_MCP_ALLOW_DESTRUCTIVE=1``.  Raises
+          an error if the table does **not** exist.
         - ``"replace"``: not supported for remote URLs (schema inference requires
           downloading the file).  Use ``"truncate"`` to keep the current schema,
           or download locally and use the CLI with ``--create --if-exists replace``.
@@ -422,7 +423,12 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 ToolError as _ToolError,
             )
 
-            from fabric_dw.services.load import table_exists, truncate_table  # noqa: PLC0415
+            from fabric_dw.services.load import table_exists  # noqa: PLC0415
+
+            # When truncate is requested, the TRUNCATE is deferred into the same
+            # transaction as the COPY INTO (see copy_into_from_url truncate_first)
+            # so a failed load leaves the existing rows intact (#863).
+            truncate_first = False
 
             exists = await table_exists(sql_target, schema, table_name, mode=ctx.auth_mode)
             if exists:
@@ -436,7 +442,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                     from fabric_dw.mcp._guards import assert_destructive_allowed  # noqa: PLC0415
 
                     assert_destructive_allowed()
-                    await truncate_table(sql_target, schema, table_name, mode=ctx.auth_mode)
+                    truncate_first = True
                 elif if_exists == "replace":
                     # replace requires destructive flag even though it raises below —
                     # the intent is destructive regardless of the error.
@@ -485,6 +491,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 rejected_row_location=rejected_row_location,
                 kind=entry.kind,
                 mode=ctx.auth_mode,
+                truncate_first=truncate_first,
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
