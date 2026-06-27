@@ -28,6 +28,7 @@ string form is lower-case hex with hyphens).
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -429,3 +430,39 @@ class LookupCache:
             data = self._read()
             data[scope] = {}
             self._write(data)
+
+    # ------------------------------------------------------------------
+    # Async wrappers (off-loop dispatch via asyncio.to_thread)
+    # ------------------------------------------------------------------
+    # The sync public methods above acquire a FileLock (timeout=5 s) and do
+    # blocking file I/O.  Calling them directly from a coroutine on the shared
+    # MCP event loop can freeze the loop for up to 5 s when a concurrent
+    # process holds the OS lock.  The wrappers below push every blocking
+    # operation into a worker thread so the event loop stays responsive.
+    #
+    # The sync internals (locking, atomic replace, freshness checks) are
+    # unchanged; only the call path from async callers changes.
+
+    async def async_get_workspace(self, name: str) -> WorkspaceEntry | None:
+        """Run :meth:`get_workspace` off the event loop via asyncio.to_thread."""
+        return await asyncio.to_thread(self.get_workspace, name)
+
+    async def async_put_workspace(self, name: str, workspace_id: UUID) -> None:
+        """Run :meth:`put_workspace` off the event loop via asyncio.to_thread."""
+        await asyncio.to_thread(self.put_workspace, name, workspace_id)
+
+    async def async_get_item(self, workspace_id: UUID, name: str) -> ItemEntry | None:
+        """Run :meth:`get_item` off the event loop via asyncio.to_thread."""
+        return await asyncio.to_thread(self.get_item, workspace_id, name)
+
+    async def async_put_items(
+        self,
+        workspace_id: UUID,
+        entries: Iterable[tuple[str, ItemEntry]],
+    ) -> None:
+        """Run :meth:`put_items` off the event loop via asyncio.to_thread.
+
+        Pass a list (not a lazy generator) when possible; the iterable is
+        consumed inside the worker thread, not on the calling coroutine.
+        """
+        await asyncio.to_thread(self.put_items, workspace_id, entries)

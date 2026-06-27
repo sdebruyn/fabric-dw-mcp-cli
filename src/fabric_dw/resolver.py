@@ -145,7 +145,7 @@ class Resolver:
             return UUID(value)
 
         # 2. Cache hit
-        cached = self._cache.get_workspace(value)
+        cached = await self._cache.async_get_workspace(value)
         if cached is not None:
             return cached.id
 
@@ -167,7 +167,7 @@ class Resolver:
             raise FabricError(f"workspace name {value!r} is ambiguous: ids = {ids}")
 
         ws_id = UUID(str(results[0]["id"]))
-        self._cache.put_workspace(value, ws_id)
+        await self._cache.async_put_workspace(value, ws_id)
         return ws_id
 
     # ------------------------------------------------------------------
@@ -198,13 +198,13 @@ class Resolver:
         # 1. GUID fast-path: check cache first, then fetch detail
         if GUID_RE.match(value):
             item_uuid = UUID(value)
-            cached_item = self._cache.get_item(ws_id, value)
+            cached_item = await self._cache.async_get_item(ws_id, value)
             if cached_item is not None:
                 return cached_item
             return await self._fetch_item_detail(ws_id, item_uuid)
 
         # 2. Cache hit
-        cached_item = self._cache.get_item(ws_id, value)
+        cached_item = await self._cache.async_get_item(ws_id, value)
         if cached_item is not None:
             return cached_item
 
@@ -335,7 +335,7 @@ class Resolver:
         should_cache = not (kind == WarehouseKind.SQL_ENDPOINT and conn is None)
         if should_cache:
             # Store under display name and GUID string in a single lock+read+write cycle
-            self._cache.put_items(
+            await self._cache.async_put_items(
                 workspace_id,
                 [
                     (display_name, entry),

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import threading
@@ -853,3 +854,113 @@ def test_clear_scope_invalid_raises_value_error(tmp_path: Path) -> None:
     cache = _make_cache(tmp_path)
     with pytest.raises(ValueError, match="scope must be"):
         cache.clear_scope("all")
+
+
+# ---------------------------------------------------------------------------
+# Async wrappers: off-loop dispatch and preserved sync behaviour
+# ---------------------------------------------------------------------------
+
+
+async def test_async_get_workspace_dispatches_via_to_thread(tmp_path: Path) -> None:
+    """async_get_workspace must run through asyncio.to_thread, not on the event loop."""
+    cache = _make_cache(tmp_path)
+    with patch("asyncio.to_thread", wraps=asyncio.to_thread) as mock_thread:
+        result = await cache.async_get_workspace("NonExistent")
+    mock_thread.assert_called_once()
+    assert result is None
+
+
+async def test_async_put_workspace_dispatches_via_to_thread(tmp_path: Path) -> None:
+    """async_put_workspace must run through asyncio.to_thread, not on the event loop."""
+    cache = _make_cache(tmp_path)
+    with patch("asyncio.to_thread", wraps=asyncio.to_thread) as mock_thread:
+        await cache.async_put_workspace("ws", WS_ID)
+    mock_thread.assert_called_once()
+    # Verify the write actually happened (sync read works after async write)
+    assert cache.get_workspace("ws") is not None
+
+
+async def test_async_get_item_dispatches_via_to_thread(tmp_path: Path) -> None:
+    """async_get_item must run through asyncio.to_thread, not on the event loop."""
+    cache = _make_cache(tmp_path)
+    with patch("asyncio.to_thread", wraps=asyncio.to_thread) as mock_thread:
+        result = await cache.async_get_item(WS_ID, "NonExistent")
+    mock_thread.assert_called_once()
+    assert result is None
+
+
+async def test_async_put_items_dispatches_via_to_thread(tmp_path: Path) -> None:
+    """async_put_items must run through asyncio.to_thread, not on the event loop."""
+    cache = _make_cache(tmp_path)
+    entry = _make_item_entry()
+    with patch("asyncio.to_thread", wraps=asyncio.to_thread) as mock_thread:
+        await cache.async_put_items(WS_ID, [("wh", entry)])
+    mock_thread.assert_called_once()
+    # Verify the write actually happened (sync read works after async write)
+    assert cache.get_item(WS_ID, "wh") is not None
+
+
+async def test_async_get_workspace_returns_stored_entry(tmp_path: Path) -> None:
+    """async_get_workspace returns the entry written by the sync put_workspace."""
+    cache = _make_cache(tmp_path)
+    cache.put_workspace("MyWorkspace", WS_ID)
+    result = await cache.async_get_workspace("MyWorkspace")
+    assert result is not None
+    assert result.id == WS_ID
+
+
+async def test_async_put_workspace_readable_by_sync_get(tmp_path: Path) -> None:
+    """Entries written via async_put_workspace are readable by the sync get_workspace."""
+    cache = _make_cache(tmp_path)
+    await cache.async_put_workspace("MyWorkspace", WS_ID)
+    result = cache.get_workspace("MyWorkspace")
+    assert result is not None
+    assert result.id == WS_ID
+
+
+async def test_async_get_item_returns_stored_entry(tmp_path: Path) -> None:
+    """async_get_item returns the entry written by the sync put_item."""
+    cache = _make_cache(tmp_path)
+    entry = _make_item_entry()
+    cache.put_item(WS_ID, "wh", entry)
+    result = await cache.async_get_item(WS_ID, "wh")
+    assert result is not None
+    assert result.id == ITEM_ID
+    assert result.kind == WarehouseKind.WAREHOUSE
+
+
+async def test_async_put_items_readable_by_sync_get(tmp_path: Path) -> None:
+    """Entries written via async_put_items are readable by the sync get_item."""
+    cache = _make_cache(tmp_path)
+    entry = _make_item_entry()
+    await cache.async_put_items(WS_ID, [("wh", entry), (str(ITEM_ID), entry)])
+    assert cache.get_item(WS_ID, "wh") is not None
+    assert cache.get_item(WS_ID, str(ITEM_ID)) is not None
+
+
+async def test_async_get_workspace_miss_returns_none(tmp_path: Path) -> None:
+    """async_get_workspace returns None for a missing entry (same as sync get_workspace)."""
+    cache = _make_cache(tmp_path)
+    assert await cache.async_get_workspace("NonExistent") is None
+
+
+async def test_async_get_item_miss_returns_none(tmp_path: Path) -> None:
+    """async_get_item returns None for a missing entry (same as sync get_item)."""
+    cache = _make_cache(tmp_path)
+    assert await cache.async_get_item(WS_ID, "NonExistent") is None
+
+
+async def test_async_get_workspace_case_insensitive(tmp_path: Path) -> None:
+    """async_get_workspace inherits the case-insensitive lookup from get_workspace."""
+    cache = _make_cache(tmp_path)
+    cache.put_workspace("MyWorkspace", WS_ID)
+    assert await cache.async_get_workspace("MYWORKSPACE") is not None
+    assert await cache.async_get_workspace("myworkspace") is not None
+
+
+async def test_async_get_item_case_insensitive(tmp_path: Path) -> None:
+    """async_get_item inherits the case-insensitive lookup from get_item."""
+    cache = _make_cache(tmp_path)
+    cache.put_item(WS_ID, "SalesWarehouse", _make_item_entry())
+    assert await cache.async_get_item(WS_ID, "SALESWAREHOUSE") is not None
+    assert await cache.async_get_item(WS_ID, "saleswarehouse") is not None
