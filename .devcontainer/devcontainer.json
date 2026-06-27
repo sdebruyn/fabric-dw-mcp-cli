@@ -1,6 +1,6 @@
 {
   "name": "fabric-dw",
-  "image": "ghcr.io/astral-sh/uv:python3.13-trixie",
+  "image": "ghcr.io/astral-sh/uv:python3.14-trixie",
   "features": {
     "ghcr.io/devcontainers/features/azure-cli:1": {},
     "ghcr.io/devcontainers/features/github-cli:1": {},

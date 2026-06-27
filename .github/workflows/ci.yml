@@ -90,14 +90,14 @@ jobs:
           report_type: test_results
           files: junit.xml
       # Upload coverage to GitHub Code Quality (public preview).
-      # Only runs on Python 3.13 to avoid duplicate uploads across matrix entries.
+      # Only runs on Python 3.14 to avoid duplicate uploads across matrix entries.
       # Fork-PR guard: skip on PRs from forks (they lack write permissions).
       # continue-on-error: the feature requires the maintainer to first enable
       # "Code Quality" in repo Settings → Code security (public preview).
       # The step must not block CI/merges while that setting is pending.
       - name: Upload coverage to GitHub Code Quality
         if: >-
-          matrix.python-version == '3.13' &&
+          matrix.python-version == '3.14' &&
           (github.event_name != 'pull_request' ||
            github.event.pull_request.head.repo.full_name == github.repository)
         uses: actions/upload-code-coverage@v1
@@ -169,6 +169,6 @@ jobs:
           enable-cache: true
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.13"
+          python-version: "3.14"
       - run: uv sync --frozen
       - run: uv run pytest tests/unit -m slow -v

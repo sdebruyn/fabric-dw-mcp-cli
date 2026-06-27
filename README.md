@@ -132,7 +132,7 @@ Binding to non-loopback addresses requires `FABRIC_MCP_ALLOW_REMOTE=1`. The HTTP
 
 ## Develop in a container
 
-Open the repo in [GitHub Codespaces](https://github.com/codespaces) or VS Code's Remote-Containers extension. The devcontainer pre-installs Python 3.13, uv, Azure CLI, and the GitHub CLI.
+Open the repo in [GitHub Codespaces](https://github.com/codespaces) or VS Code's Remote-Containers extension. The devcontainer pre-installs Python 3.14, uv, Azure CLI, and the GitHub CLI.
 
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/sdebruyn/fabric-dw-mcp-cli)
 
