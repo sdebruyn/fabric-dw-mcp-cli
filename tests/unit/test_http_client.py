@@ -1741,6 +1741,98 @@ async def test_combined_deadline_aborts_paginated_429_loop() -> None:
                 _ = [item async for item in client.iter_paginated(HttpBase.FABRIC, "/items")]
 
 
+async def test_iter_paginated_per_page_budget_allows_multi_page_walk_under_throttling() -> None:
+    """A multi-page walk with per-page 429s must complete without a spurious RateLimitedError.
+
+    Bug: a single combined_deadline spanning the entire walk caused a mid-walk
+    RateLimitedError when throttling delays accumulated across pages.
+
+    Fix: each page gets its own retry budget (combined_deadline recomputed per
+    page), so only a genuinely stuck single page exhausts its budget.
+
+    Setup: 3 pages, each preceded by a single 429 (Retry-After: 3s).
+    combined_deadline_s=5 means one page's budget (5s) covers one 429 wait (3s)
+    but does NOT cover the cumulative wait of all three pages (9s total).
+
+    With the old shared deadline: page 3 fails because cumulative 6s of sleep
+    before it would make time.monotonic() >= combined_deadline.
+    With per-page deadlines: each page gets a fresh 5s budget and the walk
+    completes.
+    """
+    # Three pages; page 0 and page 1 carry a continuationUri.
+    page_urls = [
+        "https://api.fabric.microsoft.com/v1/items",
+        "https://api.fabric.microsoft.com/v1/items?page=1",
+        "https://api.fabric.microsoft.com/v1/items?page=2",
+    ]
+    pages = [
+        {"value": [{"id": "a"}], "continuationUri": page_urls[1]},
+        {"value": [{"id": "b"}], "continuationUri": page_urls[2]},
+        {"value": [{"id": "c"}]},
+    ]
+    # Track how many times each URL has been requested.
+    request_counts: dict[str, int] = {}
+
+    def side_effect(request: httpx.Request) -> httpx.Response:
+        raw_url = str(request.url)
+        request_counts[raw_url] = request_counts.get(raw_url, 0) + 1
+        # Find which page this URL corresponds to.
+        try:
+            page_idx = page_urls.index(raw_url)
+        except ValueError:
+            page_idx = 0
+        if request_counts[raw_url] == 1:
+            # First call to this page: return 429 with a 3s back-off.
+            return httpx.Response(429, headers={"Retry-After": "3"}, json={})
+        # Second call: return the actual page.
+        return httpx.Response(200, json=pages[page_idx])
+
+    clock = _FakeClock()
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(url__regex=r"https://api\.fabric\.microsoft\.com/v1/items.*").mock(
+            side_effect=side_effect
+        )
+
+        # combined_deadline_s=5: covers one page's 429 wait (3s), but not three
+        # pages' cumulative wait (9s).  Per-page budgets allow the walk to complete.
+        client = FabricHttpClient(
+            credential=_make_credential(),
+            rps=10,
+            combined_deadline_s=5,
+        )
+        async with client:
+            with clock:
+                items = [item async for item in client.iter_paginated(HttpBase.FABRIC, "/items")]
+
+    assert items == [{"id": "a"}, {"id": "b"}, {"id": "c"}], (
+        f"Expected all 3 pages of items; got {items}"
+    )
+
+
+async def test_iter_paginated_non_json_body_handled_gracefully() -> None:
+    """A 200 page response with a non-JSON body must not raise json.JSONDecodeError.
+
+    Bug: resp.json() in iter_paginated was unguarded, so a plain-text or empty
+    200 body raised json.JSONDecodeError straight out of the async generator.
+
+    Fix: the page body is routed through _parse_json_body, which catches
+    (ValueError, json.JSONDecodeError) and returns None.  iter_paginated then
+    yields no items and stops pagination cleanly.
+    """
+    with respx.mock:
+        # A plain-text response: resp.json() raises json.JSONDecodeError on this.
+        respx.get("https://api.fabric.microsoft.com/v1/items").mock(
+            return_value=httpx.Response(200, text="not-json")
+        )
+
+        client = await _get_client()
+        async with client:
+            # Must not raise json.JSONDecodeError; must yield nothing and return.
+            items = [item async for item in client.iter_paginated(HttpBase.FABRIC, "/items")]
+
+    assert items == [], f"Expected empty list for non-JSON page body; got {items}"
+
+
 # ---------------------------------------------------------------------------
 # Credential close on __aexit__ (issue-385)
 # ---------------------------------------------------------------------------
