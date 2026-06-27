@@ -18,7 +18,7 @@ from rich.markup import escape
 from rich.tree import Tree
 
 from fabric_dw.plan._parse import PlanOperator, humanise_rows
-from fabric_dw.plan._render import operator_to_dict  # noqa: F401  (re-export)
+from fabric_dw.plan._render import operator_to_dict  # re-export
 
 __all__ = [
     "operator_to_dict",
