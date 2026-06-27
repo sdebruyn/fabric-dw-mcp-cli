@@ -599,8 +599,10 @@ class TestAuditDisableRetentionPreservation:
         assert len(captured_bodies) == 1
         body = captured_bodies[0]
         assert body.get("state") == "Disabled"
-        assert "retentionDays" in body, (
-            f"retentionDays must be preserved in disable PATCH body: {body}"
+        # Check the VALUE, not just presence: an impl sending retentionDays=0 would
+        # pass a presence-only check while the GET mock returns retentionDays=30.
+        assert body.get("retentionDays") == _AUDIT_SETTINGS_ENABLED["retentionDays"], (
+            f"retentionDays must match the pre-flight GET value in disable PATCH body: {body}"
         )
         existing_groups: list[str] = _AUDIT_SETTINGS_ENABLED["auditActionsAndGroups"]  # type: ignore[assignment]
         assert body.get("auditActionsAndGroups") == existing_groups, (

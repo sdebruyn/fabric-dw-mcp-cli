@@ -429,16 +429,14 @@ async def set_action_groups(
     # warehouses, since PATCH with state=Enabled is idempotent and always works.
     # retentionDays is always round-tripped: omitting it from a partial PATCH causes
     # the Fabric API to silently reset it to its default value (data-loss bug).
+    # state is always "Enabled" on both paths: ensure_enabled=True forces it explicitly;
+    # ensure_enabled=False reaches here only after _require_enabled() confirmed state is
+    # "Enabled" (it raises ValueError for "Disabled").
     patch_body: dict[str, object] = {
+        "state": "Enabled",
         "auditActionsAndGroups": action_groups,
         "retentionDays": current.retention_days,
     }
-    if ensure_enabled:
-        patch_body["state"] = "Enabled"
-    else:
-        # Round-trip the current state so the Fabric API does not reset it to
-        # its default.  _require_enabled already confirmed state is "Enabled".
-        patch_body["state"] = current.state
 
     await http.request(
         "PATCH",
@@ -449,8 +447,7 @@ async def set_action_groups(
     # Return the authoritative post-PATCH state constructed locally.
     # Do NOT poll GET: the GET endpoint lags the PATCH by minutes; the PATCH
     # itself is the authoritative source of truth.
-    new_state = "Enabled" if ensure_enabled else current.state
-    return current.model_copy(update={"action_groups": list(action_groups), "state": new_state})
+    return current.model_copy(update={"action_groups": list(action_groups), "state": "Enabled"})
 
 
 async def add_action_group(

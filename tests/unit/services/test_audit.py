@@ -242,12 +242,27 @@ async def test_disable_patches_with_disabled_state() -> None:
     auditActionsAndGroups from that GET must appear in the PATCH body so the
     Fabric API does not silently reset them to defaults.  Two GETs are issued:
     one pre-flight and one re-fetch after PATCH.
+
+    Non-default values (retentionDays=90, one custom group) are used so that
+    a buggy implementation that hardcodes zeros/empty would fail the value assertions.
     """
+    # Non-default pre-PATCH state: currently Enabled with custom retention + groups.
+    _pre_patch = {
+        "state": "Enabled",
+        "retentionDays": 90,
+        "auditActionsAndGroups": ["BATCH_COMPLETED_GROUP"],
+    }
+    # Post-PATCH re-fetch returns the same retention/groups with state flipped.
+    _post_patch = {**_pre_patch, "state": "Disabled"}
+
     with respx.mock:
         patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
-        # Single mock handles both the pre-flight GET and the re-fetch GET.
+        # Two GETs: pre-flight reads current state, re-fetch reads post-PATCH state.
         get_route = respx.get(_AUDIT_URL).mock(
-            return_value=httpx.Response(200, json=AUDIT_SETTINGS_DISABLED_PAYLOAD)
+            side_effect=[
+                httpx.Response(200, json=_pre_patch),  # pre-flight GET
+                httpx.Response(200, json=_post_patch),  # re-fetch after PATCH
+            ]
         )
         client = await _make_client()
         async with client:
@@ -257,13 +272,15 @@ async def test_disable_patches_with_disabled_state() -> None:
     sent_body = json.loads(patch_route.calls[0].request.content)
     # Regression guard: retentionDays and auditActionsAndGroups must be preserved
     # (sourced from the pre-flight GET) so the Fabric API does not reset them.
+    # Non-default values prove the pre-flight GET is actually used.
     assert sent_body == {
         "state": "Disabled",
-        "retentionDays": AUDIT_SETTINGS_DISABLED_PAYLOAD["retentionDays"],
-        "auditActionsAndGroups": AUDIT_SETTINGS_DISABLED_PAYLOAD["auditActionsAndGroups"],
+        "retentionDays": 90,
+        "auditActionsAndGroups": ["BATCH_COMPLETED_GROUP"],
     }
 
-    assert get_route.call_count >= 1
+    # Two GETs must be issued: one pre-flight + one re-fetch after PATCH.
+    assert get_route.call_count == 2
     assert isinstance(result, AuditSettings)
     assert result.state == "Disabled"
 
@@ -1007,13 +1024,25 @@ async def test_endpoint_disable_uses_sql_endpoints_collection() -> None:
     """disable with SQL_ENDPOINT kind must PATCH /sqlEndpoints/{id}/settings/sqlAudit.
 
     Also verifies that the PATCH body preserves retentionDays and auditActionsAndGroups
-    sourced from the pre-flight GET (fix for #780).
+    sourced from the pre-flight GET (fix for #780).  Non-default values are used so a
+    buggy impl that hardcodes zeros/empty fails the value assertions.
     """
+    # Non-default pre-PATCH state: currently Enabled with custom retention + groups.
+    _ep_pre_patch = {
+        "state": "Enabled",
+        "retentionDays": 42,
+        "auditActionsAndGroups": ["BATCH_COMPLETED_GROUP"],
+    }
+    _ep_post_patch = {**_ep_pre_patch, "state": "Disabled"}
+
     with respx.mock:
         patch_route = respx.patch(_EP_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
-        # Single mock handles both the pre-flight GET and the re-fetch GET.
-        respx.get(_EP_AUDIT_URL).mock(
-            return_value=httpx.Response(200, json=AUDIT_SETTINGS_DISABLED_PAYLOAD)
+        # Two GETs: pre-flight reads current state, re-fetch reads post-PATCH state.
+        get_route = respx.get(_EP_AUDIT_URL).mock(
+            side_effect=[
+                httpx.Response(200, json=_ep_pre_patch),  # pre-flight GET
+                httpx.Response(200, json=_ep_post_patch),  # re-fetch after PATCH
+            ]
         )
         client = await _make_client()
         async with client:
@@ -1021,11 +1050,15 @@ async def test_endpoint_disable_uses_sql_endpoints_collection() -> None:
 
     assert patch_route.called
     sent_body = json.loads(patch_route.calls[0].request.content)
+    # Non-default values prove the pre-flight GET is actually used and the correct
+    # URL segment (/sqlEndpoints/) is used for both GET and PATCH.
     assert sent_body == {
         "state": "Disabled",
-        "retentionDays": AUDIT_SETTINGS_DISABLED_PAYLOAD["retentionDays"],
-        "auditActionsAndGroups": AUDIT_SETTINGS_DISABLED_PAYLOAD["auditActionsAndGroups"],
+        "retentionDays": 42,
+        "auditActionsAndGroups": ["BATCH_COMPLETED_GROUP"],
     }
+    # Two GETs must be issued: one pre-flight + one re-fetch after PATCH.
+    assert get_route.call_count == 2
     assert isinstance(result, AuditSettings)
     assert result.state == "Disabled"
 
