@@ -1465,6 +1465,54 @@ def test_config_disabled_cached_across_telemetry_enabled_calls(
     )
 
 
+def test_config_disabled_transient_error_not_cached(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A transient read error on the first call must not permanently latch fail-closed.
+
+    If _is_disabled_by_config() raises on the first call (IO error, TOCTOU race
+    between exists() and read_text()), it must return the fail-closed value (True)
+    for that call only and leave _config_disabled_cache unset.  A subsequent call
+    that succeeds must return the real computed value and cache it (#844).
+    """
+    config_dir = tmp_path / "fabric-dw"
+    config_dir.mkdir()
+    config_file = config_dir / "config.toml"
+    # Config file has disabled = false so a successful read returns False (not disabled).
+    config_file.write_text("[telemetry]\ndisabled = false\n", encoding="utf-8")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+
+    mod = _reload_telemetry()
+
+    original_read_text = Path.read_text
+    call_count = 0
+
+    def flaky_read_text(self: Path, encoding: str | None = None, errors: str | None = None) -> str:
+        nonlocal call_count
+        if self.name == "config.toml":
+            call_count += 1
+            if call_count == 1:
+                raise OSError("simulated transient read failure")
+        return original_read_text(self, encoding=encoding, errors=errors)
+
+    with patch.object(Path, "read_text", flaky_read_text):
+        # First call: transient error -> fail-closed (disabled), cache NOT set.
+        first_result = mod._is_disabled_by_config()  # type: ignore[attr-defined]
+        assert first_result is True, "transient error must return fail-closed (True)"
+        assert vars(mod)["_config_disabled_cache"] is None, (
+            "transient error must NOT populate the cache"
+        )
+
+        # Second call: read succeeds -> real computed value (file has disabled=false).
+        second_result = mod._is_disabled_by_config()  # type: ignore[attr-defined]
+        assert second_result is False, "successful retry must return the real value (False)"
+        assert vars(mod)["_config_disabled_cache"] is False, (
+            "successful read must populate the cache"
+        )
+
+
 # ---------------------------------------------------------------------------
 # A6: set_tenant_id wires to _tenant_id_override
 # ---------------------------------------------------------------------------

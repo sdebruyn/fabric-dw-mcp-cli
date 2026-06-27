@@ -207,7 +207,17 @@ def _reset_telemetry_module_globals(
             # Per-process caches (#844): reset for every test because any test that
             # calls telemetry_enabled() or _detect_install_method() on the live
             # module — even via an import-time reference — can populate these.
-            # KeyError here means the variable was renamed in telemetry.py — update both files.
+            # The asserts below verify the names still exist in the module so a
+            # rename in telemetry.py causes a loud failure here rather than a
+            # silent no-op that lets caches bleed between tests.
+            assert "_install_method_cache" in ns, (
+                "_install_method_cache not found in fabric_dw.telemetry — "
+                "update both telemetry.py and tests/conftest.py"
+            )
+            assert "_config_disabled_cache" in ns, (
+                "_config_disabled_cache not found in fabric_dw.telemetry — "
+                "update both telemetry.py and tests/conftest.py"
+            )
             ns["_install_method_cache"] = None
             ns["_config_disabled_cache"] = None
             if not is_self_managed:
@@ -215,7 +225,9 @@ def _reset_telemetry_module_globals(
             # Heavier globals: only needed for tests that exercise the telemetry
             # enabled-path directly (self-managed modules).
             ns["_tenant_id_override"] = None
-            # KeyError here means _UNSET was renamed in telemetry.py — update both files.
+            # _UNSET is a sentinel object; look it up by name to reset _tenant_id_cache.
+            # KeyError on ns["_UNSET"] (a dict lookup, not assignment) would mean
+            # _UNSET was renamed in telemetry.py — update both files if that happens.
             ns["_tenant_id_cache"] = ns["_UNSET"]
             ns["_sdk_initialised"] = False
             ns["_tracer"] = None

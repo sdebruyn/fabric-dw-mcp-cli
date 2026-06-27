@@ -190,8 +190,17 @@ def _is_disabled_by_config() -> bool:
     reads) keeps its lenient swallow-and-warn semantics; the opt-out
     decision is the sole caller that needs fail-closed behaviour.
 
-    The result is cached after the first read; config.toml does not change
-    within a process run so a one-time read is correct (#844).
+    The result is cached after the first SUCCESSFUL read; config.toml does
+    not change within a process run so a one-time read is correct (#844).
+    Transient failures (IO error, TOCTOU race between exists() and
+    read_text()) are NOT cached: the fail-closed value is returned for that
+    call only, and the next call retries from scratch so it can recover.
+
+    Concurrency note: two callers that race on the first read will both
+    compute the same value (config.toml is process-stable), and the last
+    write to ``_config_disabled_cache`` wins harmlessly.  A lock is not
+    needed because the values are always identical and the cached type is
+    ``bool``, which CPython assigns atomically on all supported platforms.
     """
     global _config_disabled_cache  # noqa: PLW0603
     if _config_disabled_cache is not None:
@@ -228,7 +237,11 @@ def _is_disabled_by_config() -> bool:
     except Exception:
         # Any read or parse failure when the file EXISTS is treated as
         # opt-out (fail-closed) to honour the user's declared intent.
-        _config_disabled_cache = True
+        # Do NOT cache this result: the error may be transient (IO error,
+        # TOCTOU race between exists() and read_text()).  Caching True here
+        # would permanently disable telemetry for the whole process after a
+        # single transient failure.  The next call will retry and can cache
+        # a successfully-computed result.
         return True
     else:
         _config_disabled_cache = disabled
