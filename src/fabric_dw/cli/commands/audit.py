@@ -67,6 +67,10 @@ async def enable_cmd(
     """Enable SQL auditing on ITEM (warehouse or SQL analytics endpoint).
 
     Omitting both --retention-days and --unlimited defaults to unlimited retention.
+
+    NOTE: Each audit write reads current settings via an eventually-consistent GET
+    that lags PATCHes by minutes. Two rapid writes may silently revert the first.
+    Space audit writes at least a few minutes apart.
     """
     if retention_days is not None and unlimited:
         raise click.UsageError("--retention-days and --unlimited are mutually exclusive.")
@@ -98,7 +102,12 @@ async def enable_cmd(
 @click.pass_obj
 @coro
 async def disable_cmd(ctx: CliContext, item: str | None) -> None:
-    """Disable SQL auditing on ITEM (warehouse or SQL analytics endpoint)."""
+    """Disable SQL auditing on ITEM (warehouse or SQL analytics endpoint).
+
+    NOTE: Each audit write reads current settings via an eventually-consistent GET
+    that lags PATCHes by minutes. Two rapid writes may silently revert the first.
+    Space audit writes at least a few minutes apart.
+    """
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
@@ -136,6 +145,10 @@ async def set_retention_cmd(
 
     Audit must already be enabled; if disabled, enable it first with
     ``audit enable``.  This command does NOT change the audit state.
+
+    NOTE: Each audit write reads current settings via an eventually-consistent GET
+    that lags PATCHes by minutes. Two rapid writes may silently revert the first.
+    Space audit writes at least a few minutes apart.
     """
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
@@ -165,6 +178,10 @@ async def set_groups_cmd(ctx: CliContext, item: str | None, groups: tuple[str, .
 
     Pass --group for each action group name, e.g.
     --group BATCH_COMPLETED_GROUP --group SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP.
+
+    NOTE: Each audit write reads current settings via an eventually-consistent GET
+    that lags PATCHes by minutes. Two rapid writes may silently revert the first.
+    Space audit writes at least a few minutes apart.
     """
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
@@ -187,8 +204,12 @@ async def set_groups_cmd(ctx: CliContext, item: str | None, groups: tuple[str, .
 async def add_group_cmd(ctx: CliContext, item: str | None, group: str) -> None:
     """Add GROUP to the audit action groups for ITEM (warehouse or SQL analytics endpoint).
 
-    Idempotent — if GROUP is already present the command succeeds without
+    Idempotent -- if GROUP is already present the command succeeds without
     modifying the configuration.  Auditing must already be enabled.
+
+    NOTE: Each audit write reads current settings via an eventually-consistent GET
+    that lags PATCHes by minutes. Two rapid writes may silently revert the first.
+    Space audit writes at least a few minutes apart.
     """
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
@@ -209,8 +230,12 @@ async def add_group_cmd(ctx: CliContext, item: str | None, group: str) -> None:
 async def remove_group_cmd(ctx: CliContext, item: str | None, group: str) -> None:
     """Remove GROUP from the audit action groups for ITEM (warehouse or SQL analytics endpoint).
 
-    Idempotent — if GROUP is not present the command succeeds without
+    Idempotent -- if GROUP is not present the command succeeds without
     modifying the configuration.  Auditing must already be enabled.
+
+    NOTE: Each audit write reads current settings via an eventually-consistent GET
+    that lags PATCHes by minutes. Two rapid writes may silently revert the first.
+    Space audit writes at least a few minutes apart.
     """
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)

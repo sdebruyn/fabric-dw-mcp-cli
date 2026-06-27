@@ -51,6 +51,11 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
     ) -> dict[str, Any]:
         """Enable SQL auditing on a warehouse or SQL analytics endpoint.
 
+        CAUTION: Each audit write reads current settings via an eventually-consistent
+        GET that may lag a recent PATCH by several minutes. Two audit writes issued
+        within that window can cause the second to silently revert the first.
+        Space audit writes at least a few minutes apart.
+
         Args:
             workspace: Workspace name or GUID.
             warehouse: Warehouse or SQL analytics endpoint name or GUID.
@@ -82,6 +87,11 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
     async def disable_audit(workspace: str, warehouse: str) -> dict[str, Any]:
         """Disable SQL auditing on a warehouse or SQL analytics endpoint.
 
+        CAUTION: Each audit write reads current settings via an eventually-consistent
+        GET that may lag a recent PATCH by several minutes. Two audit writes issued
+        within that window can cause the second to silently revert the first.
+        Space audit writes at least a few minutes apart.
+
         Args:
             workspace: Workspace name or GUID.
             warehouse: Warehouse or SQL analytics endpoint name or GUID.
@@ -105,6 +115,12 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         workspace: str, warehouse: str, action_groups: list[str]
     ) -> dict[str, Any]:
         """Replace the audited action groups for a warehouse or SQL analytics endpoint.
+
+        CAUTION: Each audit write reads current settings via an eventually-consistent
+        GET that may lag a recent PATCH by several minutes. The retention period
+        read from that GET is round-tripped; if retention was changed within the lag
+        window, this call may silently revert it. Space audit writes at least a few
+        minutes apart.
 
         Args:
             workspace: Workspace name or GUID.
@@ -137,10 +153,15 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
     async def add_audit_group(workspace: str, warehouse: str, group: str) -> dict[str, Any]:
         """Add a single audit action group without overwriting the others.
 
-        Idempotent — if *group* is already present the current settings are
+        Idempotent -- if the group is already present the current settings are
         returned unchanged.  Auditing must already be enabled.
 
         CAUTION: changes take effect immediately on the live audit policy.
+
+        CAUTION: Each audit write reads current settings via an eventually-consistent
+        GET that may lag a recent PATCH by several minutes. Two audit writes issued
+        within that window can cause the second to silently revert the first.
+        Space audit writes at least a few minutes apart.
 
         Args:
             workspace: Workspace name or GUID.
@@ -167,10 +188,15 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
     async def remove_audit_group(workspace: str, warehouse: str, group: str) -> dict[str, Any]:
         """Remove a single audit action group without overwriting the others.
 
-        Idempotent — if *group* is not present the current settings are returned
+        Idempotent -- if the group is not present the current settings are returned
         unchanged.  Auditing must already be enabled.
 
         CAUTION: changes take effect immediately on the live audit policy.
+
+        CAUTION: Each audit write reads current settings via an eventually-consistent
+        GET that may lag a recent PATCH by several minutes. Two audit writes issued
+        within that window can cause the second to silently revert the first.
+        Space audit writes at least a few minutes apart.
 
         Args:
             workspace: Workspace name or GUID.
@@ -206,6 +232,11 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         """Update the audit log retention period without changing the audit enabled/disabled state.
 
         Audit must already be enabled; if disabled, enable it first with ``enable_audit``.
+
+        CAUTION: Each audit write reads current settings via an eventually-consistent
+        GET that may lag a recent PATCH by several minutes. Two audit writes issued
+        within that window can cause the second to silently revert the first.
+        Space audit writes at least a few minutes apart.
 
         Args:
             workspace: Workspace name or GUID.

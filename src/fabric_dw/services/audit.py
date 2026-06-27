@@ -179,6 +179,12 @@ async def enable(
         ETags or ``If-Match`` on the ``/settings/sqlAudit`` endpoint.  Under
         concurrent modification the last writer wins silently.
 
+        The pre-flight GET is eventually consistent and may lag a recent PATCH
+        by several minutes.  If another audit write was issued within that lag
+        window, this call re-asserts the stale ``auditActionsAndGroups`` value
+        from the GET and silently reverts the earlier change.  Space audit
+        writes at least a few minutes apart to avoid this.
+
     Args:
         http: Authenticated Fabric HTTP client.
         workspace_id: GUID of the Fabric workspace.
@@ -195,7 +201,7 @@ async def enable(
     Raises:
         ValueError: If *retention_days* is negative.
         PermissionDeniedError: If the caller lacks the required permission (HTTP 403).
-        NotFoundError: If the item does not exist (HTTP 404) — raised by the
+        NotFoundError: If the item does not exist (HTTP 404) -- raised by the
             pre-flight GET or the final re-fetch.
     """
     if retention_days < 0:
@@ -244,6 +250,13 @@ async def disable(
         optimistic concurrency control.  The Fabric REST API does not expose
         ETags or ``If-Match`` on the ``/settings/sqlAudit`` endpoint.  Under
         concurrent modification the last writer wins silently.
+
+        The pre-flight GET is eventually consistent and may lag a recent PATCH
+        by several minutes.  If another audit write was issued within that lag
+        window, this call re-asserts stale ``retentionDays`` and/or
+        ``auditActionsAndGroups`` values from the GET and silently reverts the
+        earlier change.  Space audit writes at least a few minutes apart to
+        avoid this.
 
     Args:
         http: Authenticated Fabric HTTP client.
@@ -306,6 +319,18 @@ async def set_retention(
     The Fabric REST API does not document an upper bound for ``retentionDays``.
     Only the lower bound (>= 1) is enforced here; the API will reject any value
     it considers out of range and surface an appropriate error.
+
+    Note:
+        This function performs a read-modify-write (GET then PATCH) without
+        optimistic concurrency control.  The Fabric REST API does not expose
+        ETags or ``If-Match`` on the ``/settings/sqlAudit`` endpoint.  Under
+        concurrent modification the last writer wins silently.
+
+        The pre-flight GET is eventually consistent and may lag a recent PATCH
+        by several minutes.  If another audit write was issued within that lag
+        window, this call re-asserts a stale ``auditActionsAndGroups`` value
+        from the GET and silently reverts the earlier change.  Space audit
+        writes at least a few minutes apart to avoid this.
 
     Args:
         http: Authenticated Fabric HTTP client.
@@ -396,6 +421,13 @@ async def set_action_groups(
                 updating groups is desired, pass ``ensure_enabled=False`` to
                 preserve the current audit state.
 
+    Note:
+        The pre-flight GET used to obtain ``retentionDays`` is eventually
+        consistent and may lag a recent PATCH by several minutes.  If another
+        audit write changed the retention period within that window, this call
+        re-asserts the stale value and silently reverts it.  Space audit writes
+        at least a few minutes apart to avoid this.
+
     Returns:
         The authoritative :class:`~fabric_dw.models.AuditSettings` after the
         PATCH, constructed locally from the pre-PATCH settings and the supplied
@@ -476,6 +508,12 @@ async def add_action_group(
         ETags or ``If-Match`` on the ``/settings/sqlAudit`` endpoint.  Under
         concurrent modification the last writer wins silently.
 
+        The pre-flight GET is eventually consistent and may lag a recent PATCH
+        by several minutes.  If another audit write was issued within that lag
+        window, this call re-asserts stale ``retentionDays`` and/or existing
+        action-group values from the GET and silently reverts the earlier
+        change.  Space audit writes at least a few minutes apart to avoid this.
+
     Args:
         http: Authenticated Fabric HTTP client.
         workspace_id: GUID of the Fabric workspace.
@@ -554,6 +592,12 @@ async def remove_action_group(
         optimistic concurrency control.  The Fabric REST API does not expose
         ETags or ``If-Match`` on the ``/settings/sqlAudit`` endpoint.  Under
         concurrent modification the last writer wins silently.
+
+        The pre-flight GET is eventually consistent and may lag a recent PATCH
+        by several minutes.  If another audit write was issued within that lag
+        window, this call re-asserts stale ``retentionDays`` and/or existing
+        action-group values from the GET and silently reverts the earlier
+        change.  Space audit writes at least a few minutes apart to avoid this.
 
     The authoritative post-PATCH state is returned immediately after the PATCH
     succeeds, constructed locally from the pre-PATCH settings and the computed
