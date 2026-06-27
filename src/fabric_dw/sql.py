@@ -1554,14 +1554,15 @@ def run_query(  # noqa: PLR0913, PLR0915
             return result
 
 
-def run_statements(
+def run_statements(  # noqa: PLR0913
     target: SqlTarget,
     statements: Sequence[str],
     *,
     mode: CredentialMode = CredentialMode.DEFAULT,
     autocommit: bool = False,
     commit_per_statement: bool = True,
-) -> None:
+    fetch_last_rowcount: bool = False,
+) -> int | None:
     """Execute multiple DDL/DML *statements* on a **single** connection.
 
     Opens ONE connection, executes each statement in sequence, then closes the
@@ -1605,6 +1606,17 @@ def run_statements(
             defer the commit until all statements have executed, giving
             all-or-nothing transaction semantics.  Ignored when
             ``autocommit=True``.
+        fetch_last_rowcount: When ``True``, read ``cursor.rowcount`` after each
+            statement and return the value recorded for the LAST statement
+            (e.g. the rows loaded by a trailing ``COPY INTO``).  The rowcount is
+            read immediately after ``execute`` and before any deferred commit,
+            matching the ``fetch="rowcount"`` behaviour of :func:`run_query`.
+            When ``False`` (default) the function returns ``None``.
+
+    Returns:
+        The ``cursor.rowcount`` of the last executed statement when
+        *fetch_last_rowcount* is ``True`` (``None`` if *statements* is empty),
+        otherwise ``None``.
 
     Raises:
         PermissionDeniedError: If the driver reports a permission error on any statement.
@@ -1617,11 +1629,17 @@ def run_statements(
     conn, _attempt, _max, _ = _with_connect_retry(target, mode, autocommit)
 
     cursor = conn.cursor()
+    last_rowcount: int | None = None
     try:
         for stmt in statements:
             try:
                 _log_sql_execute(stmt)
                 cursor.execute(stmt)
+                if fetch_last_rowcount:
+                    # Read rowcount BEFORE any deferred commit — committing first
+                    # can invalidate the cursor state on mssql-python.  Mirrors
+                    # run_query(fetch="rowcount").
+                    last_rowcount = cursor.rowcount
                 if not autocommit and commit_per_statement:
                     conn.commit()
             except Exception as exc:
@@ -1641,3 +1659,4 @@ def run_statements(
             conn.commit()
     finally:
         conn.close()
+    return last_rowcount

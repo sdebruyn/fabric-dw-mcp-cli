@@ -23,7 +23,7 @@ from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import NotFoundError
 from fabric_dw.identifiers import parse_qualified_name, quote_identifier, validate_identifier
 from fabric_dw.models import View
-from fabric_dw.services._helpers import normalize_object_definition, reject_non_select
+from fabric_dw.services._helpers import reject_non_select
 from fabric_dw.sql import SqlTarget, run_query
 
 __all__ = [
@@ -91,8 +91,6 @@ def _row_to_view(cols: list[str], row: tuple[object, ...]) -> View:
     name = str(data["name"])
     raw_def = data.get("definition") if "definition" in data else None
     definition: str | None = cast("str | None", raw_def)
-    if definition is not None:
-        definition = normalize_object_definition(definition, schema_name, name)
     return View(
         schema_name=schema_name,
         name=name,

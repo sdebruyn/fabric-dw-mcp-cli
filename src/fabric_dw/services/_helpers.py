@@ -15,7 +15,6 @@ __all__ = [
     "SelectBodyError",
     "coerce_to_utc",
     "compact",
-    "normalize_object_definition",
     "reject_non_select",
     "scan_all_workspaces",
 ]
@@ -261,105 +260,6 @@ async def scan_all_workspaces(
         )
 
     return out
-
-
-# ---------------------------------------------------------------------------
-# Definition normaliser (shared by views, functions, and procedures)
-# ---------------------------------------------------------------------------
-
-# Fabric Data Warehouse can return a definition from sys.sql_modules where the
-# schema and/or object name in the CREATE <TYPE> header are empty (e.g.
-# "CREATE VIEW . AS ...", "CREATE FUNCTION . (...)" etc.).  The pattern
-# matches CREATE VIEW, CREATE FUNCTION, CREATE PROCEDURE (and their
-# CREATE OR ALTER variants), allowing either or both of the schema/name parts
-# to be empty or whitespace-only.
-#
-# The name-token alternation uses a bracket-first, plain-second strategy:
-#   bracket form: `\[([^\]]*)\]`              — matches `[anything]`
-#   plain form:   `([^\[.\s\(]*)`             — stops at `[`, `.`, whitespace, or `(`
-# For the bracket form, optional whitespace (`\s*`) before `[` handles the rare
-# case of extra spaces between the dot and the opening bracket
-# (e.g. `[dbo].  [vw_sales]`).  Plain-form names must not consume whitespace
-# to avoid greedily matching SQL keywords like `AS` in `CREATE PROCEDURE . AS`.
-_CREATE_OBJECT_HEADER_RE = re.compile(
-    r"(?i)^(\s*CREATE\s+(?:OR\s+ALTER\s+)?(?:VIEW|FUNCTION|PROCEDURE)\s+)"
-    r"(?:\[([^\]]*)\]|([^\[.\s]*))"  # schema: [schema] or plain
-    r"\."  # dot separator
-    r"(?:\s*\[([^\]]*)\]|([^\[.\s\(]*))",  # name: optional-ws [name] or plain
-)
-
-
-def _bracket_escape(s: str) -> str:
-    """Escape a T-SQL identifier for use in bracket-quoted form.
-
-    Replaces every ``]`` with ``]]`` so the result is safe to embed inside
-    ``[…]`` delimiters.
-    """
-    return s.replace("]", "]]")
-
-
-def normalize_object_definition(definition: str, schema_name: str, name: str) -> str:
-    """Replace an empty or missing schema/name in a CREATE … header.
-
-    Fabric's ``sys.sql_modules`` can store a definition where the object name
-    in the CREATE header is blank (e.g. ``CREATE VIEW . AS ...``).  This helper
-    detects that pattern and replaces the header with the correct bracket-quoted
-    ``[schema].[name]`` taken from the catalog columns (which are always
-    populated correctly via ``sys.views``/``sys.objects``/``sys.procedures``
-    JOINed with ``sys.schemas``).
-
-    Covers ``CREATE VIEW``, ``CREATE FUNCTION``, and ``CREATE PROCEDURE`` (and
-    their ``CREATE OR ALTER`` variants).  When both parts are already present
-    the definition is returned unchanged.
-
-    Returns the definition unchanged (with a ``DEBUG`` log) when:
-
-    * the CREATE header cannot be matched (e.g. leading comment block), or
-    * *schema_name* or *name* is empty/blank (would produce ``[].[x]``).
-
-    Args:
-        definition: The raw ``sys.sql_modules.definition`` string.
-        schema_name: The catalog schema name (from ``sys.schemas.name``).
-        name: The catalog object name (from ``sys.views/objects/procedures.name``).
-
-    Returns:
-        The definition with the CREATE header corrected, or the original string
-        when no correction is needed or is safe to apply.
-    """
-    # Guard: if the catalog values themselves are blank we cannot produce valid
-    # DDL — emit a debug log and return unchanged rather than ``[].[]``.
-    if not schema_name.strip() or not name.strip():
-        _log.debug(
-            "normalize_object_definition: catalog schema/name is blank — skipping normalisation"
-        )
-        return definition
-
-    m = _CREATE_OBJECT_HEADER_RE.match(definition)
-    if m is None:
-        # The header could not be matched — most likely a leading comment block
-        # (e.g. "-- ...") precedes CREATE.  Log and pass through unchanged.
-        _log.debug(
-            "normalize_object_definition: CREATE header not matched at position 0 "
-            "(possible leading comment) — returning definition unchanged"
-        )
-        return definition
-
-    prefix = m.group(1)  # "CREATE VIEW " (with leading whitespace)
-    # Bracket-quoted and plain alternations are mutually exclusive within each
-    # capture group pair; use `or ""` to collapse the None from the inactive branch.
-    stored_schema = (m.group(2) or m.group(3) or "").strip()
-    stored_name = (m.group(4) or m.group(5) or "").strip()
-
-    if stored_schema and stored_name:
-        # Both parts present — nothing to fix.
-        return definition
-
-    # At least one part is empty: substitute with the catalog values, escaping
-    # any `]` characters so the bracket-quoted form is valid T-SQL DDL.
-    effective_schema = stored_schema or _bracket_escape(schema_name)
-    effective_name = stored_name or _bracket_escape(name)
-    new_header = f"{prefix}[{effective_schema}].[{effective_name}]"
-    return new_header + definition[m.end() :]
 
 
 # ---------------------------------------------------------------------------

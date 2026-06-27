@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -147,7 +148,20 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         """
         ctx = get_context()
         assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
-        parsed_dt = parse_iso8601(new_dt, "new_dt")
+        parsed_dt_raw = parse_iso8601(new_dt, "new_dt")
+        # Normalise to UTC before passing to the service (mirrors clone_table).
+        # Naive datetimes (no tzinfo) are treated as UTC; offset-aware datetimes
+        # are converted.  This keeps the MCP boundary consistent and avoids
+        # surfacing a raw ValueError from the service layer on naive input.
+        parsed_dt: datetime | None = (
+            None
+            if parsed_dt_raw is None
+            else (
+                parsed_dt_raw.replace(tzinfo=UTC)
+                if parsed_dt_raw.tzinfo is None
+                else parsed_dt_raw.astimezone(UTC)
+            )
+        )
         try:
             ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
             assert_workspace_allowed(

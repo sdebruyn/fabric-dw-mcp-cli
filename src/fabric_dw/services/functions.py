@@ -8,7 +8,7 @@ Public API
 - :func:`create_function`     — issue CREATE FUNCTION [<schema>].[<name>] AS <body>.
 - :func:`update_function`     — issue CREATE OR ALTER FUNCTION [<schema>].[<name>] AS <body>.
 - :func:`drop_function`       — issue DROP FUNCTION; no-op on missing when if_exists=True.
-- :func:`rename_function`     — rename via DROP + CREATE (Fabric DW rejects sp_rename for UDFs).
+- :func:`rename_function`     — rename via sp_rename (objtype OBJECT).
 
 Note: User-defined functions are supported on **both** Fabric Data Warehouses and
 SQL Analytics Endpoints — no endpoint guard is applied here.  The CREATE FUNCTION,
@@ -23,7 +23,6 @@ appear in catalog listings on migrated warehouses.
 from __future__ import annotations
 
 import asyncio
-import re
 from datetime import datetime
 from typing import Literal, cast
 
@@ -31,7 +30,6 @@ from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import NotFoundError
 from fabric_dw.identifiers import parse_qualified_name, quote_identifier, validate_identifier
 from fabric_dw.models import Function, FunctionDetails, FunctionKind, FunctionParameter
-from fabric_dw.services._helpers import normalize_object_definition
 from fabric_dw.sql import SqlTarget, run_query
 
 # Valid values for the ``kind`` parameter of :func:`list_functions`.
@@ -100,14 +98,11 @@ ORDER BY p.parameter_id;
 """
 
 
-# Fabric DW does not support sp_rename for user-defined functions.
-# Microsoft docs explicitly state: "drop the object and re-create it with the
-# new name" for functions, triggers, views, and stored procedures.
-# See https://learn.microsoft.com/sql/relational-databases/system-stored-procedures/sp-rename-transact-sql#remarks
-#
-# rename_function therefore fetches the current definition and re-creates the
-# function under the new name before dropping the old one.  No sp_rename SQL
-# constant is needed for functions.
+# sp_rename takes string arguments (not identifiers) — bind as ? parameters.
+# @objname = qualified old name ('schema.old_fn'), @newname = bare new name.
+# sp_rename cannot move across schemas, so @newname must be unqualified.
+_SP_RENAME_SQL = "EXEC sp_rename ?, ?, 'OBJECT'"
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -163,8 +158,6 @@ def _row_to_function_details(
     kind = _KIND_MAP.get(type_code, FunctionKind.SCALAR)
     raw_def = data.get("definition")
     definition: str | None = cast("str | None", raw_def)
-    if definition is not None:
-        definition = normalize_object_definition(definition, schema_name, name)
     raw_inlineable = data.get("is_inlineable")
     is_inlineable: bool | None = bool(raw_inlineable) if raw_inlineable is not None else None
     return FunctionDetails(
@@ -178,76 +171,6 @@ def _row_to_function_details(
         created=cast(datetime, data["created"]),
         modified=cast(datetime, data["modified"]),
     )
-
-
-def _extract_function_body(schema: str, name: str, definition: str) -> str:
-    """Extract the parameter/RETURNS/body portion from a stored ``sys.sql_modules`` definition.
-
-    ``sys.sql_modules`` stores the full original ``CREATE FUNCTION`` statement.
-    For rename-via-recreate we need only the part after the qualified object
-    name so we can prepend a new ``CREATE FUNCTION [schema].[new_name]``.
-
-    Handles both bracket-quoted (``[schema].[name]``) and unquoted
-    (``schema.name``) forms, as well as single-part names without a schema.
-
-    Uses ``re.search`` for ``CREATE FUNCTION`` to skip any leading comment
-    blocks that contain the word ``FUNCTION`` before the actual DDL keyword.
-
-    Raises:
-        NotFoundError: If the ``CREATE FUNCTION`` keyword pair cannot be located
-            in the definition string (indicates a corrupted or unexpected
-            definition).
-    """
-    m = re.search(r"\bCREATE\s+FUNCTION\b", definition, re.IGNORECASE)
-    if m is None:
-        msg = f"Cannot parse definition for [{schema}].[{name}]: 'CREATE FUNCTION' not found"
-        raise NotFoundError(msg)
-
-    # Advance past "FUNCTION" and trailing whitespace.
-    pos = m.end()
-    while pos < len(definition) and definition[pos] in (" ", "\t", "\n", "\r"):
-        pos += 1
-
-    # Skip up to two name-tokens (schema + name) separated by a dot.
-    for _ in range(2):
-        if pos >= len(definition):
-            break
-        pos = _skip_name_token(definition, pos)
-        if pos < len(definition) and definition[pos] == ".":
-            pos += 1  # consume the dot between schema and name
-        else:
-            break  # single-part name or end of string
-
-    return definition[pos:]
-
-
-def _skip_name_token(definition: str, pos: int) -> int:
-    """Advance *pos* past one bracket-quoted or plain identifier token.
-
-    Returns the updated position (pointing to the first character after the
-    token).
-    """
-    if pos >= len(definition):
-        return pos
-
-    if definition[pos] == "[":
-        # Bracket-quoted token — find closing bracket, respecting escaped ']]'.
-        end = pos + 1
-        while end < len(definition):
-            if definition[end] == "]":
-                if end + 1 < len(definition) and definition[end + 1] == "]":
-                    end += 2  # escaped bracket
-                    continue
-                end += 1
-                break
-            end += 1
-        return end
-
-    # Unquoted token — stop at whitespace (including \r for CRLF), '(', or '.'.
-    end = pos
-    while end < len(definition) and definition[end] not in (" ", "\t", "\n", "\r", "(", "."):
-        end += 1
-    return end
 
 
 def _as_int(value: object) -> int:
@@ -563,37 +486,20 @@ async def rename_function(
     *,
     mode: CredentialMode = CredentialMode.DEFAULT,
 ) -> FunctionDetails:
-    """Rename a user-defined function via DROP + CREATE under the new name.
+    """Rename a user-defined function via ``EXEC sp_rename @objname, @newname, 'OBJECT'``.
 
     Works on both Data Warehouses and SQL Analytics Endpoints — no DW-only guard
     is applied.
 
-    **Why not ``sp_rename``?**
-    Fabric Warehouse rejects ``sp_rename`` for user-defined functions with
-    "An invalid parameter or option was specified for procedure 'sys.sp_rename'".
-    The Microsoft T-SQL reference explicitly states that ``sp_rename`` must not be
-    used to rename functions; the recommended approach is to drop and re-create the
-    object.  See https://learn.microsoft.com/sql/relational-databases/system-stored-procedures/sp-rename-transact-sql#remarks
+    ``sp_rename`` takes names as STRING ARGUMENTS (not SQL identifiers), so both
+    the old qualified name and the new bare name are bound as ``?`` parameters.
+    The new name must be unqualified (no dot) because ``sp_rename`` cannot move
+    a function across schemas.
 
-    The implementation:
-
-    1. Fetch the existing function details (definition from ``sys.sql_modules``).
-    2. Create a new function with the same schema, body, and the new name.
-    3. Drop the old function.
-
-    Partial-state behaviour:
-
-    - If step 2 fails (e.g. the new name already exists), the old function is
-      untouched and the error propagates cleanly — no state change occurs.
-    - If step 3 fails after step 2 has succeeded, **both** the old and the new
-      function exist simultaneously and an exception is raised.  The caller must
-      clean up the duplicate by manually dropping the old name.
-
-    The ordering (create-before-drop) is intentional: a failure must never
-    silently destroy the user's function.
-
-    The new name must be unqualified (no dot) because the function stays in the
-    same schema.
+    Note: ``sp_rename`` does not update the object name embedded in the stored
+    definition in ``sys.sql_modules``.  The ``CREATE FUNCTION`` text retrieved
+    by :func:`get_function` will still show the old name after rename.  This is
+    the accepted trade-off and matches the existing behaviour of :func:`rename_view`.
 
     Args:
         target: The warehouse or SQL Analytics Endpoint to connect to.
@@ -604,45 +510,43 @@ async def rename_function(
         mode: The credential mode for Entra authentication.
 
     Returns:
-        The newly-created :class:`~fabric_dw.models.FunctionDetails` under the
-        new name (fetched after the DDL sequence completes).
+        The renamed :class:`~fabric_dw.models.FunctionDetails` (fetched after
+        rename using the original schema and the new name).
 
     Raises:
         ValueError: If *qualified* cannot be parsed, if either identifier part
             fails validation, or if *new_name* is schema-qualified (contains a dot).
-        NotFoundError: If the source function does not exist, or if the newly
-            created function cannot be found after the DDL sequence.
+        NotFoundError: If the renamed function cannot be found after the rename.
         PermissionDeniedError: If the driver reports a permission error.
     """
-    schema, old_name = parse_qualified_name(qualified)
+    schema, old_fn = parse_qualified_name(qualified)
     validate_identifier(schema)
-    validate_identifier(old_name)
+    validate_identifier(old_fn)
 
     if "." in new_name:
         msg = (
             f"New name {new_name!r} must not be schema-qualified; "
-            "rename cannot move a function to a different schema"
+            "sp_rename cannot move a function to a different schema"
         )
         raise ValueError(msg)
     validate_identifier(new_name)
 
-    # Step 1: fetch the existing definition so we can re-create it.
-    existing = await get_function(target, schema, old_name, mode=mode)
+    # @objname = 'schema.old_fn', @newname = 'new_fn' — bound as ? params.
+    old_qualified = f"{schema}.{old_fn}"
 
-    if existing.definition is None:
-        msg = f"Function [{schema}].[{old_name}] has no definition in sys.sql_modules"
-        raise NotFoundError(msg)
+    def _run() -> None:
+        run_query(
+            target,
+            _SP_RENAME_SQL,
+            params=[old_qualified, new_name],
+            mode=mode,
+            commit=True,
+            fetch="none",
+        )
 
-    # sys.sql_modules stores the full original CREATE FUNCTION statement.
-    # Strip the preamble (CREATE FUNCTION [schema].[name]) so we can re-issue
-    # it under the new name.
-    body = _extract_function_body(schema, old_name, existing.definition)
-
-    # Step 2: create under the new name.  create_function() already calls
-    # get_function() internally and returns the FunctionDetails — reuse it.
-    new_details = await create_function(target, schema, new_name, body, mode=mode)
-
-    # Step 3: drop the old name.
-    await drop_function(target, schema, old_name, mode=mode)
-
-    return new_details
+    await asyncio.to_thread(_run)
+    try:
+        return await get_function(target, schema, new_name, mode=mode)
+    except NotFoundError:
+        msg = f"Function [{schema}].[{new_name}] not found after rename"
+        raise NotFoundError(msg) from None

@@ -954,9 +954,7 @@ class TestSqlResult:
 class TestExecRequestHistoryFieldParsing:
     """ExecRequestHistory is a 1-to-1 DMV projection — test required vs optional fields."""
 
-    _MINIMAL: ClassVar[dict] = {
-        "row_count": 0,
-    }
+    _MINIMAL: ClassVar[dict] = {}
 
     _FULL: ClassVar[dict] = {
         "distributed_statement_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
@@ -989,7 +987,7 @@ class TestExecRequestHistoryFieldParsing:
 
     def test_minimal_parses(self) -> None:
         obj = ExecRequestHistory.model_validate(self._MINIMAL)
-        assert obj.row_count == 0
+        assert obj.row_count is None
         assert obj.distributed_statement_id is None
         assert obj.session_id is None
 
@@ -999,6 +997,13 @@ class TestExecRequestHistoryFieldParsing:
         assert obj.row_count == 100
         assert obj.database_name == "SalesDB"
         assert obj.statement_type == "SELECT"
+
+    def test_null_row_count_parses(self) -> None:
+        """A row with row_count=NULL (DDL/failed/cancelled) must deserialize without error."""
+        payload = {**self._FULL, "row_count": None}
+        obj = ExecRequestHistory.model_validate(payload)
+        assert obj.row_count is None
+        assert obj.database_name == "SalesDB"
 
     def test_uuid_fields_parsed(self) -> None:
         obj = ExecRequestHistory.model_validate(self._FULL)
