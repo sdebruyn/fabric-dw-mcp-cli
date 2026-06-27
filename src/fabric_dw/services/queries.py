@@ -154,6 +154,4 @@ async def kill(
     # T-SQL forbids KILL inside a user transaction.  Pass autocommit=True so
     # the ODBC driver opens the connection without BEGIN TRANSACTION, which is
     # required for KILL to succeed on Fabric DW.
-    await asyncio.to_thread(
-        run_query, target, kill_sql, mode=mode, fetch="none", autocommit=True
-    )
+    await asyncio.to_thread(run_query, target, kill_sql, mode=mode, fetch="none", autocommit=True)
