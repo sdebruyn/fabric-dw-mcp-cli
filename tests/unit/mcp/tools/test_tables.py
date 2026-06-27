@@ -178,7 +178,7 @@ async def test_read_table_happy_path(mock_ctx, ctx_patch) -> None:
         patch(
             "fabric_dw.services.tables.read_table",
             new=AsyncMock(
-                return_value=ResultSet(columns=["id", "name"], rows=[[1, "foo"], [2, "bar"]])
+                return_value=ResultSet(columns=["id", "name"], rows=[(1, "foo"), (2, "bar")])
             ),
         ),
     ):
@@ -199,7 +199,7 @@ async def test_read_table_with_count(mock_ctx, ctx_patch) -> None:
     item = make_item_entry()
     mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
     mock_ctx.resolver.item = AsyncMock(return_value=item)
-    mock_read = AsyncMock(return_value=ResultSet(columns=["id"], rows=[[42]]))
+    mock_read = AsyncMock(return_value=ResultSet(columns=["id"], rows=[(42,)]))
 
     with (
         ctx_patch,
