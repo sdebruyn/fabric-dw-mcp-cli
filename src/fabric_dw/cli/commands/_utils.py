@@ -224,18 +224,21 @@ async def build_sql_target(
 def parse_qualified_name(qualified_name: str, *, kind: str = "object") -> tuple[str, str]:
     """Split ``<schema>.<object>`` into ``(schema, name)``.
 
-    Wraps :func:`fabric_dw.identifiers.parse_qualified_name` with a
-    :class:`click.UsageError` so the CLI shows a friendly message.
+    Adapter around :func:`fabric_dw.identifiers.parse_qualified_name` that
+    converts :class:`ValueError` to :class:`click.UsageError` so the CLI
+    shows a friendly message.
 
     Args:
         qualified_name: The qualified name string to parse.
-        kind: Human-readable label used in the error message (default ``"object"``).
+        kind: Human-readable label for the object type used in the error
+            message (default ``"object"``).
 
     Raises:
-        click.UsageError: If *qualified_name* does not contain a dot.
+        click.UsageError: If *qualified_name* is invalid (missing dot, empty
+            or whitespace-only schema/object part).
     """
     try:
-        return _parse_qn(qualified_name)
+        return _parse_qn(qualified_name, kind)
     except ValueError:
         raise click.UsageError(f"Expected <schema>.{kind}, got {qualified_name!r}") from None
 

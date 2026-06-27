@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 from typing import Protocol, TypeVar
 from uuid import UUID
 
+from fabric_dw.exceptions import ItemKindError
+from fabric_dw.models import WarehouseKind
 from fabric_dw.services.capacities import ACTIVE_STATE
 
 __all__ = [
@@ -22,6 +24,34 @@ __all__ = [
 _log = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
+
+# ---------------------------------------------------------------------------
+# SQL Analytics Endpoint guard
+# ---------------------------------------------------------------------------
+
+# Single canonical message used by _assert_not_sql_endpoint across all service
+# modules.  Previously each module carried its own copy with a different
+# operation-specific wording; this one message is clear, accurate, and
+# generic enough to apply to every write operation.
+_SQL_ENDPOINT_READONLY_MSG = (
+    "SQL Analytics Endpoints are read-only; use a Fabric Data Warehouse for this operation"
+)
+
+
+def _assert_not_sql_endpoint(kind: WarehouseKind) -> None:
+    """Raise :class:`~fabric_dw.exceptions.ItemKindError` for SQL Analytics Endpoint items.
+
+    All service-layer write operations that are unsupported on SQL Analytics
+    Endpoints call this guard before issuing any network I/O.
+
+    Args:
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the resolved item.
+
+    Raises:
+        ItemKindError: If *kind* is :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
+    """
+    if kind == WarehouseKind.SQL_ENDPOINT:
+        raise ItemKindError(_SQL_ENDPOINT_READONLY_MSG)
 
 
 # ---------------------------------------------------------------------------

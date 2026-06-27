@@ -50,7 +50,7 @@ from datetime import datetime
 from typing import cast
 
 from fabric_dw.auth import CredentialMode
-from fabric_dw.exceptions import ItemKindError, NotFoundError
+from fabric_dw.exceptions import NotFoundError
 from fabric_dw.identifiers import parse_qualified_name, quote_identifier, validate_identifier
 from fabric_dw.models import (
     Statistic,
@@ -60,7 +60,7 @@ from fabric_dw.models import (
     StatisticHistogramStep,
     WarehouseKind,
 )
-from fabric_dw.services._helpers import coerce_to_utc
+from fabric_dw.services._helpers import _assert_not_sql_endpoint, coerce_to_utc
 from fabric_dw.sql import SqlTarget, run_query
 
 __all__ = [
@@ -72,12 +72,8 @@ __all__ = [
 ]
 
 # ---------------------------------------------------------------------------
-# SQL Endpoint guard
+# Constants
 # ---------------------------------------------------------------------------
-
-_SQL_ENDPOINT_READONLY_MSG = (
-    "SQL Analytics Endpoints are read-only; CREATE/UPDATE/DROP STATISTICS not supported"
-)
 
 _SAMPLE_PERCENT_MIN = 1
 _SAMPLE_PERCENT_MAX = 100
@@ -92,20 +88,6 @@ _DBCC_STAT_TIMEOUT: float = 60.0
 # Substring matched (case-insensitive) against the exception message to
 # distinguish Fabric's eventual-consistency transient error from other errors.
 _DBCC_NOT_FOUND_MSG = "could not locate statistics"
-
-
-def _assert_not_sql_endpoint(kind: WarehouseKind) -> None:
-    """Raise :class:`~fabric_dw.exceptions.ItemKindError` for SQL Endpoint items.
-
-    Args:
-        kind: The :class:`~fabric_dw.models.WarehouseKind` of the resolved item.
-
-    Raises:
-        ItemKindError: If *kind* is :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
-    """
-    if kind == WarehouseKind.SQL_ENDPOINT:
-        raise ItemKindError(_SQL_ENDPOINT_READONLY_MSG)
-
 
 # ---------------------------------------------------------------------------
 # SQL templates

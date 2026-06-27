@@ -1748,7 +1748,7 @@ async def test_rename_table_undotted_qualified_name_raises_tool_error(
 
     with (
         ctx_patch,
-        pytest.raises(ToolError, match="qualified_name"),
+        pytest.raises(ToolError, match="qualified name"),
     ):
         await mcp._tool_manager.call_tool(
             "rename_table",

@@ -153,3 +153,34 @@ class TestParseQualifiedName:
         schema, obj = parse_qualified_name("dbo.t")
         assert schema == "dbo"
         assert obj == "t"
+
+    # ------------------------------------------------------------------
+    # kind parameter (added for #826 — single canonical parse_qualified_name)
+    # ------------------------------------------------------------------
+
+    def test_kind_appears_in_missing_dot_message(self) -> None:
+        with pytest.raises(ValueError, match=r"<schema>\.<table>"):
+            parse_qualified_name("nodot", kind="table")
+
+    def test_kind_appears_in_missing_dot_message_view(self) -> None:
+        with pytest.raises(ValueError, match=r"<schema>\.<view>"):
+            parse_qualified_name("nodot", kind="view")
+
+    def test_kind_appears_in_object_part_empty_message(self) -> None:
+        with pytest.raises(ValueError, match="table part must not be empty"):
+            parse_qualified_name("schema.", kind="table")
+
+    def test_kind_default_is_object(self) -> None:
+        with pytest.raises(ValueError, match=r"<schema>\.<object>"):
+            parse_qualified_name("nodot")
+
+    def test_kind_does_not_affect_successful_parse(self) -> None:
+        assert parse_qualified_name("dbo.my_table", kind="table") == ("dbo", "my_table")
+
+    def test_whitespace_schema_raises_regardless_of_kind(self) -> None:
+        with pytest.raises(ValueError, match="schema part must not be empty"):
+            parse_qualified_name("  .name", kind="view")
+
+    def test_whitespace_object_raises_with_kind_label(self) -> None:
+        with pytest.raises(ValueError, match="view part must not be empty"):
+            parse_qualified_name("dbo.  ", kind="view")
