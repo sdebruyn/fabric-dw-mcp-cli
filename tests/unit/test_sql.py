@@ -2921,6 +2921,26 @@ class TestSqlRetryConfig:
         _sql_module._sql_config_cache = cfg
         assert _sql_module._resolve_sql_retry_deadline_s() == 88
 
+    def test_deadline_config_zero_floored_to_default(self) -> None:
+        """A config.toml sql_retry_deadline_s of 0 is rejected and falls through to default."""
+        cfg = UserConfig(defaults=Defaults(sql_retry_deadline_s=0))
+        _sql_module._sql_config_cache = cfg
+        assert _sql_module._resolve_sql_retry_deadline_s() == 120
+
+    def test_deadline_config_below_min_floored_to_default(self) -> None:
+        """A config.toml sql_retry_deadline_s below the minimum is rejected and falls through."""
+        cfg = UserConfig(defaults=Defaults(sql_retry_deadline_s=-5))
+        _sql_module._sql_config_cache = cfg
+        # -5 < _MIN_SQL_RETRY_DEADLINE_S, so the built-in default is used
+        assert _sql_module._resolve_sql_retry_deadline_s() == 120
+
+    def test_deadline_valid_config_value_returned(self) -> None:
+        """A config.toml sql_retry_deadline_s at or above the minimum is returned as-is."""
+        min_val = _sql_module._MIN_SQL_RETRY_DEADLINE_S
+        cfg = UserConfig(defaults=Defaults(sql_retry_deadline_s=min_val))
+        _sql_module._sql_config_cache = cfg
+        assert _sql_module._resolve_sql_retry_deadline_s() == min_val
+
     def test_executes_env_wins_over_config_and_default(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

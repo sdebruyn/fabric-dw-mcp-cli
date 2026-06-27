@@ -202,6 +202,25 @@ def _sql_config_cache_clear() -> None:
         _sql_config_cache = None
 
 
+def _validate_sql_retry_deadline_s(value: int, source: str) -> int | None:
+    """Return *value* when it meets the minimum, else log a warning and return None.
+
+    Args:
+        value:  Candidate deadline in seconds (already parsed to int).
+        source: Human-readable label for the origin (e.g. the env-var name or
+                ``"sql_retry_deadline_s (config.toml)"``), used in the warning.
+    """
+    if value >= _MIN_SQL_RETRY_DEADLINE_S:
+        return value
+    _log.warning(
+        "%s=%r must be >= %s; ignoring",
+        source,
+        value,
+        _MIN_SQL_RETRY_DEADLINE_S,
+    )
+    return None
+
+
 def _resolve_sql_retry_deadline_s() -> int:
     """Return the effective SQL retry deadline in seconds.
 
@@ -209,7 +228,8 @@ def _resolve_sql_retry_deadline_s() -> int:
     1. ``FABRIC_SQL_RETRY_TIMEOUT_S`` env var — must be an integer (or float-formatted
        integer like ``"120.0"``) >= 1.  Invalid values are ignored (warning logged)
        and fall through to next layer.
-    2. ``config.toml`` ``[defaults].sql_retry_deadline_s``.
+    2. ``config.toml`` ``[defaults].sql_retry_deadline_s`` — same >= 1 floor applies;
+       values below the minimum are ignored (warning logged) and fall through.
     3. Built-in fallback: :data:`_SQL_RETRY_DEADLINE_S_DEFAULT` (120 s).
     """
     raw_env = os.environ.get("FABRIC_SQL_RETRY_TIMEOUT_S")
@@ -219,17 +239,15 @@ def _resolve_sql_retry_deadline_s() -> int:
         except (ValueError, OverflowError):
             _log.warning("FABRIC_SQL_RETRY_TIMEOUT_S=%r is not a valid integer; ignoring", raw_env)
         else:
-            if v >= _MIN_SQL_RETRY_DEADLINE_S:
-                return v
-            _log.warning(
-                "FABRIC_SQL_RETRY_TIMEOUT_S=%r must be >= %s; ignoring",
-                raw_env,
-                _MIN_SQL_RETRY_DEADLINE_S,
-            )
+            result = _validate_sql_retry_deadline_s(v, "FABRIC_SQL_RETRY_TIMEOUT_S")
+            if result is not None:
+                return result
 
     cfg_val = _load_sql_config().defaults.sql_retry_deadline_s
     if cfg_val is not None:
-        return cfg_val
+        result = _validate_sql_retry_deadline_s(cfg_val, "sql_retry_deadline_s (config.toml)")
+        if result is not None:
+            return result
 
     return _SQL_RETRY_DEADLINE_S_DEFAULT
 
