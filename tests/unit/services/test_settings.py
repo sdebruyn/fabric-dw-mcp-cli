@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, tzinfo
 from unittest.mock import patch
 
 import pytest
@@ -130,6 +130,30 @@ class TestGetSettings:
         with patch("fabric_dw.sql.open_connection", return_value=conn):
             result = await settings.get_settings(target)
         assert result.time_travel_retention_cutoff_date == datetime(2024, 6, 1, tzinfo=UTC)
+
+    async def test_quasi_naive_cutoff_treated_as_utc(self) -> None:
+        """A quasi-naive cutoff (tzinfo present but utcoffset() returns None) is treated as UTC."""
+
+        class _NoOffsetTz(tzinfo):
+            def utcoffset(self, _dt: object) -> None:
+                return None
+
+            def tzname(self, _dt: object) -> str:
+                return "NoOffset"
+
+            def dst(self, _dt: object) -> None:
+                return None
+
+        quasi_naive = datetime(2024, 6, 1, 12, 0, 0, tzinfo=_NoOffsetTz())
+        row: tuple[object, ...] = ("SalesWarehouse", True, 7, quasi_naive)
+        target = _make_target()
+        conn = _make_conn([row], _SETTINGS_COLS)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await settings.get_settings(target)
+        assert result.time_travel_retention_cutoff_date is not None
+        assert result.time_travel_retention_cutoff_date.tzinfo == UTC
+        cutoff = result.time_travel_retention_cutoff_date
+        assert cutoff == datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC)
 
 
 # ===========================================================================

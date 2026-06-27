@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, tzinfo
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -227,6 +227,38 @@ class TestListStatistics:
         assert result[0].last_updated is not None
         assert result[0].last_updated.tzinfo is not None
 
+    async def test_quasi_naive_last_updated_treated_as_utc(self) -> None:
+        """Quasi-naive last_updated (tzinfo present but utcoffset() is None) is treated as UTC."""
+
+        class _NoOffsetTz(tzinfo):
+            def utcoffset(self, _dt: object) -> None:
+                return None
+
+            def tzname(self, _dt: object) -> str:
+                return "NoOffset"
+
+            def dst(self, _dt: object) -> None:
+                return None
+
+        quasi_naive = datetime(2024, 6, 1, 12, 0, 0, tzinfo=_NoOffsetTz())
+        row: tuple[object, ...] = (
+            "stat_sales_id",
+            "dbo",
+            "sales",
+            "id",
+            False,
+            True,
+            quasi_naive,
+            None,
+        )
+        target = _make_target()
+        conn = _make_conn([row], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await statistics.list_statistics(target)
+        assert result[0].last_updated is not None
+        assert result[0].last_updated.tzinfo == UTC
+        assert result[0].last_updated == datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC)
+
 
 # ===========================================================================
 # show_statistics
@@ -332,6 +364,46 @@ class TestShowStatistics:
             assert "[stat_sales_id]" not in call_sql, (
                 f"{label}: bracket-quoted stat name found in SQL (regression): {call_sql!r}"
             )
+
+    async def test_quasi_naive_updated_treated_as_utc(self) -> None:
+        """Quasi-naive header Updated (tzinfo present but utcoffset() is None) is treated as UTC."""
+
+        class _NoOffsetTz(tzinfo):
+            def utcoffset(self, _dt: object) -> None:
+                return None
+
+            def tzname(self, _dt: object) -> str:
+                return "NoOffset"
+
+            def dst(self, _dt: object) -> None:
+                return None
+
+        quasi_naive = datetime(2024, 6, 1, 12, 0, 0, tzinfo=_NoOffsetTz())
+        quasi_header_row: tuple[object, ...] = (
+            "stat_sales_id",
+            quasi_naive,
+            1000,
+            500,
+            10,
+            0.001,
+            4.0,
+            "NO",
+            None,
+            None,
+        )
+        target = _make_target()
+        header_conn = _make_conn([quasi_header_row], _HEADER_COLS)
+        density_conn = _make_conn([_DENSITY_ROW], _DENSITY_COLS)
+        hist_conn = _make_conn([_HISTOGRAM_ROW], _HISTOGRAM_COLS)
+        with patch(
+            "fabric_dw.sql.open_connection",
+            side_effect=[header_conn, density_conn, hist_conn],
+        ):
+            result = await statistics.show_statistics(target, "dbo.sales", "stat_sales_id")
+        assert result.stat_header is not None
+        assert result.stat_header.updated is not None
+        assert result.stat_header.updated.tzinfo == UTC
+        assert result.stat_header.updated == datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC)
 
     async def test_raises_not_found_when_header_empty(self) -> None:
         target = _make_target()
