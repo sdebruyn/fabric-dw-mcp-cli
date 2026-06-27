@@ -272,6 +272,28 @@ class TestRenderDbtProjectYml:
         content = render_dbt_project_yml(cfg)
         assert "version:" in content
 
+    def test_malicious_profile_name_does_not_inject_yaml_key(self) -> None:
+        """A --profile value with YAML metacharacters must not inject a top-level key."""
+        malicious = "evil:\n  injected: true\nname"
+        cfg = _make_cfg(profile_name=malicious)
+        content = render_dbt_project_yml(cfg)
+        parsed = yaml.safe_load(content)
+        assert isinstance(parsed, dict)
+        # The injected stanza must not appear at the top level.
+        assert "injected" not in parsed
+        # The profile value must round-trip exactly.
+        assert parsed["profile"] == malicious
+
+    def test_malicious_project_name_does_not_inject_yaml_key(self) -> None:
+        """A project name with YAML metacharacters and a newline must not inject a top-level key."""
+        malicious = "evil:\n  injected: true\nproject"
+        cfg = _make_cfg(project_name=malicious, profile_name="ok_profile")
+        content = render_dbt_project_yml(cfg)
+        parsed = yaml.safe_load(content)
+        assert isinstance(parsed, dict)
+        assert "injected" not in parsed
+        assert parsed["name"] == malicious
+
 
 # ---------------------------------------------------------------------------
 # render_sources_yml
@@ -443,6 +465,28 @@ class TestRenderSourcesYml:
         content = render_sources_yml(cfg)
         parsed = yaml.safe_load(content)
         assert isinstance(parsed, dict)
+
+    def test_database_with_single_quote_in_placeholder_is_valid_yaml(self) -> None:
+        """A database name containing ' must not corrupt the Jinja env_var default."""
+        cfg = _make_cfg(database="O'Brien DW", with_sources=False)
+        content = render_sources_yml(cfg)
+        # Must produce valid YAML.
+        parsed = yaml.safe_load(content)
+        assert isinstance(parsed, dict)
+        # The database field must start with the env_var Jinja call.
+        db_field: str = parsed["sources"][0]["database"]
+        assert db_field.startswith("{{ env_var(")
+        # The escaped single quote must be present, preserving the database name.
+        assert r"O\'Brien DW" in db_field
+
+    def test_database_with_single_quote_in_placeholder_round_trips_name(self) -> None:
+        """The env_var default in the placeholder must embed the exact escaped database name."""
+        cfg = _make_cfg(database="O'Brien DW", with_sources=False)
+        content = render_sources_yml(cfg)
+        parsed = yaml.safe_load(content)
+        db_field: str = parsed["sources"][0]["database"]
+        # The field value (after YAML parse) must be the properly-escaped Jinja call.
+        assert db_field == r"{{ env_var('DBT_DATABASE', 'O\'Brien DW') }}"
 
 
 # ---------------------------------------------------------------------------
