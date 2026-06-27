@@ -97,6 +97,34 @@ _UNKNOWN_OP_XML = (
     f"</ShowPlanXML>"
 )
 
+# SQL Server-style Parallelism operators (Distribute / Gather / Repartition
+# Streams) do not appear in Fabric estimated plans, but may be produced by
+# SQL Server or Synapse.  The parser must handle them without crashing.
+_PARALLELISM_OPS_XML = (
+    f'<ShowPlanXML xmlns="{_NS}">'
+    f"<BatchSequence><Batch><Statements>"
+    f'<StmtSimple StatementText="SELECT 1" StatementId="1">'
+    f"<QueryPlan>"
+    f'<RelOp NodeId="0" PhysicalOp="Parallelism" LogicalOp="Gather Streams"'
+    f' EstimateRows="100" EstimatedTotalSubtreeCost="0.5" Parallel="0">'
+    f"<Parallelism>"
+    f'<RelOp NodeId="1" PhysicalOp="Parallelism" LogicalOp="Repartition Streams"'
+    f' EstimateRows="100" EstimatedTotalSubtreeCost="0.4" Parallel="1">'
+    f"<Parallelism>"
+    f'<RelOp NodeId="2" PhysicalOp="Parallelism" LogicalOp="Distribute Streams"'
+    f' EstimateRows="100" EstimatedTotalSubtreeCost="0.3" Parallel="1">'
+    f"<Parallelism/>"
+    f"</RelOp>"
+    f"</Parallelism>"
+    f"</RelOp>"
+    f"</Parallelism>"
+    f"</RelOp>"
+    f"</QueryPlan>"
+    f"</StmtSimple>"
+    f"</Statements></Batch></BatchSequence>"
+    f"</ShowPlanXML>"
+)
+
 _MISSING_ATTRS_XML = (
     f'<ShowPlanXML xmlns="{_NS}">'
     f"<BatchSequence><Batch><Statements>"
@@ -447,3 +475,54 @@ class TestHumaniseRowsEdgeCases:
         result = humanise_rows(float("-inf"))
         assert isinstance(result, str)
         # Must not raise
+
+
+class TestParallelismOperatorGracefulDegradation:
+    """Parser and renderer must handle SQL Server Parallelism operator subtypes
+    (Distribute Streams / Gather Streams / Repartition Streams) without crashing.
+
+    These operators appear in SQL Server and Synapse plans but not in Fabric
+    estimated plans.  The parser is generic: it reads PhysicalOp/LogicalOp
+    attributes and recurses into child RelOp nodes regardless of operator name,
+    so all three subtypes must round-trip correctly.
+    """
+
+    def test_parses_gather_streams_without_error(self) -> None:
+        operators = parse_showplan(_PARALLELISM_OPS_XML)
+        assert len(operators) == 1
+
+    def test_root_is_gather_streams(self) -> None:
+        root = parse_showplan(_PARALLELISM_OPS_XML)[0]
+        assert root.physical_op == "Parallelism"
+        assert root.logical_op == "Gather Streams"
+
+    def test_child_is_repartition_streams(self) -> None:
+        root = parse_showplan(_PARALLELISM_OPS_XML)[0]
+        assert len(root.children) == 1
+        child = root.children[0]
+        assert child.physical_op == "Parallelism"
+        assert child.logical_op == "Repartition Streams"
+
+    def test_grandchild_is_distribute_streams(self) -> None:
+        root = parse_showplan(_PARALLELISM_OPS_XML)[0]
+        grandchild = root.children[0].children[0]
+        assert grandchild.physical_op == "Parallelism"
+        assert grandchild.logical_op == "Distribute Streams"
+
+    def test_parallel_flag_propagated(self) -> None:
+        root = parse_showplan(_PARALLELISM_OPS_XML)[0]
+        # Outer Gather Streams has Parallel="0", inner nodes have Parallel="1".
+        assert root.parallel is False
+        assert root.children[0].parallel is True
+
+    def test_render_tree_does_not_crash(self) -> None:
+        operators = parse_showplan(_PARALLELISM_OPS_XML)
+        output = _render_to_str(operators)
+        assert "Parallelism" in output
+
+    def test_render_shows_all_three_subtypes(self) -> None:
+        operators = parse_showplan(_PARALLELISM_OPS_XML)
+        output = _render_to_str(operators)
+        assert "Gather Streams" in output
+        assert "Repartition Streams" in output
+        assert "Distribute Streams" in output

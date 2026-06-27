@@ -7,6 +7,14 @@ operator — Fabric's MPP equivalent of SQL Server's "Gather/Distribute/
 Repartition Streams" operators, which do NOT appear in Fabric estimated
 plans.
 
+Also covers two additional live-captured plans (sanitized, tenant identifiers
+removed):
+- ``plan508_move.sqlplan``:  simple GROUP BY exercising Compute To Control
+  Node (LogicalOp "Move") and Hash Match/Aggregate.
+- ``plan508_complex.sqlplan``:  complex query on sys catalog tables,
+  exercising Concatenation, Filter, Index Scan, Clustered Index Seek, and
+  TopN Sort — a broader operator surface than the TPC-H plans.
+
 The fixtures live under ``tests/unit/cli/fixtures/`` and are committed as
 static files.  No live Fabric API access is required for any test here.
 
@@ -41,6 +49,12 @@ _FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 _Q5_XML = (_FIXTURES_DIR / "tpch_q5_fabric.sqlplan").read_text(encoding="utf-8")
 _Q9_XML = (_FIXTURES_DIR / "tpch_q9_fabric.sqlplan").read_text(encoding="utf-8")
+_MOVE_XML = (_FIXTURES_DIR / "plan508_move.sqlplan").read_text(encoding="utf-8")
+# plan508_complex.sqlplan: complex sys-catalog query; no Parallelism
+# operators (NonParallelPlanReason is set).  SQL Server-style Parallelism
+# (Distribute/Gather/Repartition Streams) is tested via synthetic XML in
+# test_plan_parse.py::TestParallelismOperatorGracefulDegradation.
+_PARA_XML = (_FIXTURES_DIR / "plan508_complex.sqlplan").read_text(encoding="utf-8")
 
 # Operator types that must appear in a TPC-H Q5 / Q9 Fabric plan.
 # "Compute To Control Node" is Fabric's data-movement operator; the others
@@ -69,6 +83,19 @@ def _all_ops(root: PlanOperator) -> set[str]:
     for child in root.children:
         result |= _all_ops(child)
     return result
+
+
+def _all_logical_ops(root: PlanOperator) -> set[str]:
+    """Collect logical_op names from *root* and all descendants."""
+    result: set[str] = {root.logical_op}
+    for child in root.children:
+        result |= _all_logical_ops(child)
+    return result
+
+
+def _collect_cost_pcts(node: PlanOperator) -> list[float]:
+    """Recursively collect cost_pct values from *node* and all descendants."""
+    return [node.cost_pct, *[p for child in node.children for p in _collect_cost_pcts(child)]]
 
 
 def _parse(plan_xml: str) -> list[PlanOperator]:
@@ -164,12 +191,8 @@ class TestFabricFixtureParse:
     @pytest.mark.parametrize("plan_xml", _FIXTURE_CASES)
     def test_cost_pcts_sum_to_100(self, plan_xml: str) -> None:
         """Cost percentages across the full tree must sum to ≈ 100 %."""
-
-        def _collect(node: PlanOperator) -> list[float]:
-            return [node.cost_pct, *[p for child in node.children for p in _collect(child)]]
-
         for root in _parse(plan_xml):
-            total = sum(_collect(root))
+            total = sum(_collect_cost_pcts(root))
             assert total == pytest.approx(100.0, abs=1.0)
 
 
@@ -374,3 +397,306 @@ class TestFabricFixtureHtmlRenderer:
         # and the Fabric operator so a regression where the full XML is omitted is caught.
         assert "ShowPlanXML" in output
         assert "Compute To Control Node" in output
+
+
+# ---------------------------------------------------------------------------
+# plan508_move: Compute To Control Node (Move) fixture
+# ---------------------------------------------------------------------------
+
+
+class TestPlan508MoveParse:
+    """Parser tests specific to the plan508_move.sqlplan fixture.
+
+    This plan exercises ``Compute To Control Node`` with LogicalOp ``Move``
+    from a simple GROUP BY on a user table.
+    """
+
+    def test_parses_without_error(self) -> None:
+        operators = _parse(_MOVE_XML)
+        assert len(operators) >= 1
+
+    def test_contains_compute_to_control_node(self) -> None:
+        operators = _parse(_MOVE_XML)
+        found: set[str] = set()
+        for root in operators:
+            found |= _all_ops(root)
+        assert "Compute To Control Node" in found
+
+    def test_move_logical_op_present(self) -> None:
+        """LogicalOp 'Move' must appear alongside the Compute To Control Node."""
+        operators = _parse(_MOVE_XML)
+        logical_ops: set[str] = set()
+        for root in operators:
+            logical_ops |= _all_logical_ops(root)
+        assert "Move" in logical_ops
+
+    def test_root_is_not_unknown(self) -> None:
+        operators = _parse(_MOVE_XML)
+        assert operators[0].physical_op != "Unknown"
+
+    def test_estimate_rows_positive(self) -> None:
+        operators = _parse(_MOVE_XML)
+        assert operators[0].estimate_rows > 0
+
+    def test_cost_pcts_sum_to_100(self) -> None:
+        for root in _parse(_MOVE_XML):
+            total = sum(_collect_cost_pcts(root))
+            assert total == pytest.approx(100.0, abs=1.0)
+
+
+class TestPlan508MoveTreeRenderer:
+    def test_renders_without_error(self) -> None:
+        operators = _parse(_MOVE_XML)
+        output = _render_tree_str(operators)
+        assert output
+
+    def test_labels_compute_to_control_node_as_move(self) -> None:
+        operators = _parse(_MOVE_XML)
+        output = _render_tree_str(operators)
+        assert "(Move)" in output
+        assert "Compute To Control Node" in output
+
+    def test_renders_hash_match(self) -> None:
+        operators = _parse(_MOVE_XML)
+        output = _render_tree_str(operators)
+        assert "Hash Match" in output
+
+
+class TestPlan508MoveJsonRenderer:
+    def test_is_json_serialisable(self) -> None:
+        operators = _parse(_MOVE_XML)
+        for root in operators:
+            payload = json.dumps(operator_to_dict(root))
+            parsed = json.loads(payload)
+            assert "physicalOp" in parsed
+
+    def test_json_contains_compute_to_control_node(self) -> None:
+        operators = _parse(_MOVE_XML)
+        all_json = json.dumps([operator_to_dict(r) for r in operators])
+        assert "Compute To Control Node" in all_json
+
+
+class TestPlan508MoveMermaidRenderer:
+    def test_renders_without_error(self) -> None:
+        operators = _parse(_MOVE_XML)
+        output = render_plan_mermaid(operators)
+        assert output
+
+    def test_output_starts_with_flowchart(self) -> None:
+        operators = _parse(_MOVE_XML)
+        output = render_plan_mermaid(operators)
+        assert "flowchart" in output
+
+    def test_contains_compute_to_control_node(self) -> None:
+        operators = _parse(_MOVE_XML)
+        output = render_plan_mermaid(operators)
+        assert "Compute To Control Node" in output
+
+
+class TestPlan508MoveDotRenderer:
+    def test_renders_without_error(self) -> None:
+        operators = _parse(_MOVE_XML)
+        output = render_plan_dot(operators)
+        assert output
+
+    def test_output_is_valid_digraph(self) -> None:
+        operators = _parse(_MOVE_XML)
+        output = render_plan_dot(operators)
+        assert "digraph" in output
+
+    def test_contains_compute_to_control_node(self) -> None:
+        operators = _parse(_MOVE_XML)
+        output = render_plan_dot(operators)
+        assert "Compute To Control Node" in output
+
+
+class TestPlan508MoveSvgRenderer:
+    def test_dot_text_contains_compute_to_control_node(self) -> None:
+        operators = _parse(_MOVE_XML)
+        dot_text = render_plan_dot(operators)
+        assert "Compute To Control Node" in dot_text
+
+    def test_svg_renderer_returns_bytes(self) -> None:
+        operators = _parse(_MOVE_XML)
+        with (
+            patch("fabric_dw.cli._plan_svg.shutil.which", return_value="/usr/bin/dot"),
+            patch(
+                "fabric_dw.cli._plan_svg.subprocess.run",
+                return_value=_mock_dot(),
+            ),
+        ):
+            result = render_plan_svg(operators)
+        assert isinstance(result, bytes)
+
+
+class TestPlan508MoveHtmlRenderer:
+    def test_renders_without_error(self) -> None:
+        output = render_plan_html(_MOVE_XML)
+        assert output
+
+    def test_output_is_html(self) -> None:
+        output = render_plan_html(_MOVE_XML)
+        assert "<html" in output.lower()
+
+    def test_raw_xml_embedded_in_output(self) -> None:
+        output = render_plan_html(_MOVE_XML)
+        assert "ShowPlanXML" in output
+        assert "Compute To Control Node" in output
+
+
+# ---------------------------------------------------------------------------
+# plan508_complex: complex-surface fixture (Concatenation, Filter, etc.)
+# ---------------------------------------------------------------------------
+
+
+# Operator types that must appear in the plan508_complex fixture.
+# This plan queries sys catalog tables and exercises a broader set of
+# operators than the TPC-H plans, including Clustered Index Seek, Index Scan,
+# Concatenation, Filter, and TopN Sort (PhysicalOp "Sort").
+_PARA_EXPECTED_OPS: frozenset[str] = frozenset(
+    {
+        "Concatenation",
+        "Filter",
+        "Sort",
+        "Hash Match",
+        "Clustered Index Scan",
+        "Clustered Index Seek",
+        "Index Scan",
+    }
+)
+
+
+class TestPlan508ParallelismParse:
+    """Parser tests for the plan508_complex.sqlplan fixture.
+
+    This plan exercises Concatenation, Filter, Clustered Index Seek, Index
+    Scan, and TopN Sort — operators not all covered by the TPC-H fixtures.
+    """
+
+    def test_parses_without_error(self) -> None:
+        operators = _parse(_PARA_XML)
+        assert len(operators) >= 1
+
+    def test_contains_expected_operator_types(self) -> None:
+        operators = _parse(_PARA_XML)
+        found: set[str] = set()
+        for root in operators:
+            found |= _all_ops(root)
+        missing = _PARA_EXPECTED_OPS - found
+        assert not missing, f"Missing operator types: {sorted(missing)}"
+
+    def test_root_is_not_unknown(self) -> None:
+        operators = _parse(_PARA_XML)
+        assert operators[0].physical_op != "Unknown"
+
+    def test_estimate_rows_positive(self) -> None:
+        operators = _parse(_PARA_XML)
+        assert operators[0].estimate_rows > 0
+
+    def test_cost_pcts_sum_to_100(self) -> None:
+        for root in _parse(_PARA_XML):
+            total = sum(_collect_cost_pcts(root))
+            assert total == pytest.approx(100.0, abs=1.0)
+
+
+class TestPlan508ParallelismTreeRenderer:
+    def test_renders_without_error(self) -> None:
+        operators = _parse(_PARA_XML)
+        output = _render_tree_str(operators)
+        assert output
+
+    def test_renders_concatenation(self) -> None:
+        operators = _parse(_PARA_XML)
+        output = _render_tree_str(operators)
+        assert "Concatenation" in output
+
+    def test_renders_filter(self) -> None:
+        operators = _parse(_PARA_XML)
+        output = _render_tree_str(operators)
+        assert "Filter" in output
+
+    def test_renders_statement_text(self) -> None:
+        operators = _parse(_PARA_XML)
+        output = _render_tree_str(operators)
+        assert "Statement 1" in output
+
+
+class TestPlan508ParallelismJsonRenderer:
+    def test_is_json_serialisable(self) -> None:
+        operators = _parse(_PARA_XML)
+        for root in operators:
+            payload = json.dumps(operator_to_dict(root))
+            parsed = json.loads(payload)
+            assert "physicalOp" in parsed
+
+    def test_json_contains_concatenation(self) -> None:
+        operators = _parse(_PARA_XML)
+        all_json = json.dumps([operator_to_dict(r) for r in operators])
+        assert "Concatenation" in all_json
+
+
+class TestPlan508ParallelismMermaidRenderer:
+    def test_renders_without_error(self) -> None:
+        operators = _parse(_PARA_XML)
+        output = render_plan_mermaid(operators)
+        assert output
+
+    def test_output_starts_with_flowchart(self) -> None:
+        operators = _parse(_PARA_XML)
+        output = render_plan_mermaid(operators)
+        assert "flowchart" in output
+
+    def test_contains_concatenation(self) -> None:
+        operators = _parse(_PARA_XML)
+        output = render_plan_mermaid(operators)
+        assert "Concatenation" in output
+
+
+class TestPlan508ParallelismDotRenderer:
+    def test_renders_without_error(self) -> None:
+        operators = _parse(_PARA_XML)
+        output = render_plan_dot(operators)
+        assert output
+
+    def test_output_is_valid_digraph(self) -> None:
+        operators = _parse(_PARA_XML)
+        output = render_plan_dot(operators)
+        assert "digraph" in output
+
+    def test_contains_concatenation(self) -> None:
+        operators = _parse(_PARA_XML)
+        output = render_plan_dot(operators)
+        assert "Concatenation" in output
+
+
+class TestPlan508ParallelismSvgRenderer:
+    def test_dot_text_contains_filter(self) -> None:
+        operators = _parse(_PARA_XML)
+        dot_text = render_plan_dot(operators)
+        assert "Filter" in dot_text
+
+    def test_svg_renderer_returns_bytes(self) -> None:
+        operators = _parse(_PARA_XML)
+        with (
+            patch("fabric_dw.cli._plan_svg.shutil.which", return_value="/usr/bin/dot"),
+            patch(
+                "fabric_dw.cli._plan_svg.subprocess.run",
+                return_value=_mock_dot(),
+            ),
+        ):
+            result = render_plan_svg(operators)
+        assert isinstance(result, bytes)
+
+
+class TestPlan508ParallelismHtmlRenderer:
+    def test_renders_without_error(self) -> None:
+        output = render_plan_html(_PARA_XML)
+        assert output
+
+    def test_output_is_html(self) -> None:
+        output = render_plan_html(_PARA_XML)
+        assert "<html" in output.lower()
+
+    def test_raw_xml_embedded_in_output(self) -> None:
+        output = render_plan_html(_PARA_XML)
+        assert "ShowPlanXML" in output
