@@ -43,16 +43,13 @@ connections are drained on server shutdown.
 
 from __future__ import annotations
 
-import contextlib
 import logging
-import os
-import threading
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
-from fabric_dw.auth import CredentialMode, get_sql_token_struct
+from fabric_dw.auth import CredentialMode
 from fabric_dw.sql_errors import (
     _clean_driver_error_message,  # noqa: F401 (test shim: _sql_module._clean_driver_error_message)
     _is_connect_retryable,
@@ -64,24 +61,49 @@ from fabric_dw.sql_errors import (
 )
 from fabric_dw.sql_pool import (
     _CONNECT_RETRY_TIMEOUT_S,  # noqa: F401 (backwards-compat alias; read by integration smoke)
-    _FALSY_STRINGS,
+    _FALSY_STRINGS,  # noqa: F401 (backwards-compat alias)
     _MIN_SQL_RETRY_DEADLINE_S,  # noqa: F401 (test shim: _sql_module._MIN_SQL_RETRY_DEADLINE_S)
     _SQL_RETRY_DEADLINE_S_DEFAULT,  # noqa: F401 (test shim: _sql_module._SQL_RETRY_DEADLINE_S_DEFAULT)
+    POOL_MAX_IDLE,
+    # POOL_MAX_IDLE is read from sql_pool.py's globals by _pool_checkout/_pool_checkin.
+    # Tests that SET POOL_MAX_IDLE to change pool capacity MUST target
+    # fabric_dw.sql_pool.POOL_MAX_IDLE — setting fabric_dw.sql.POOL_MAX_IDLE is a
+    # silent no-op for those callers.
+    POOL_MAX_IDLE_SECS,
     SQL_COPT_SS_ACCESS_TOKEN,
     SQL_LOGIN_TIMEOUT_S,
     SQL_QUERY_TIMEOUT_S,
     _driver,  # noqa: F401 (test shim: _sql_module._driver)
-    _get_mssql,
-    _load_sql_config,
+    _get_mssql,  # noqa: F401 (test shim)
+    _is_alive,  # noqa: F401 (backwards-compat alias)
+    _load_sql_config,  # noqa: F401 (test shim)
+    _make_pool_key,  # noqa: F401 (backwards-compat alias)
     # _mssql is the import-time value (None). Patching fabric_dw.sql._mssql is a
     # silent no-op because _get_mssql() reads _mssql from sql_pool's own globals,
     # not from sql.py's namespace.  Tests MUST patch fabric_dw.sql_pool._mssql.
     _mssql,  # noqa: F401 (import-time snapshot; do NOT patch via fabric_dw.sql)
+    _pool,  # noqa: F401 (test access: from fabric_dw.sql import _pool; same object as sql_pool._pool)
+    _pool_checkin,  # noqa: F401 (backwards-compat alias)
+    _pool_checkout,  # noqa: F401 (backwards-compat alias)
+    # _pool_enabled is called by bare name via _PooledConnection.close() and
+    # open_connection — both live in sql_pool.py.  Patching fabric_dw.sql._pool_enabled
+    # is a silent no-op for those callers.  Tests that call _pool_enabled() directly
+    # via _sql_module._pool_enabled() call the function (which executes in sql_pool
+    # context) and get the correct result — the function reference is the same object.
+    _pool_enabled,  # noqa: F401 (test access via _sql_module._pool_enabled())
+    _pool_lock,  # noqa: F401 (test access: from fabric_dw.sql import _pool_lock; same object)
+    # _pool_time is called by bare name inside _pool_checkout/_pool_checkin, both in
+    # sql_pool.py.  Tests that patch _pool_time MUST target fabric_dw.sql_pool._pool_time
+    # — patching fabric_dw.sql._pool_time is a silent no-op for those callers.
+    _pool_time,  # noqa: F401 (import-time snapshot; do NOT patch via fabric_dw.sql)
+    _PooledConnection,
     _resolve_sql_retry_deadline_s,
     _resolve_sql_retry_executes,
     _sql_config_cache_clear,  # noqa: F401 (test hook: _sql_module._sql_config_cache_clear())
     _validate_sql_retry_deadline_s,  # noqa: F401 (test shim: _sql_module._validate_sql_retry_deadline_s)
     build_connection_string,
+    open_connection,
+    reset_pool,
 )
 
 # Re-export shims rationale (two groups):
@@ -96,9 +118,15 @@ from fabric_dw.sql_pool import (
 #
 # sql_pool shims: all names that were defined here but now live in sql_pool.py.
 # Importing them preserves the public surface (`from fabric_dw.sql import
-# build_connection_string`), bare-name calls inside open_connection /
-# _pool_enabled / _with_connect_retry / run_query, and test accesses such as
+# build_connection_string`), bare-name calls inside _with_connect_retry /
+# run_query / run_statements, and test accesses such as
 # `_sql_module._SQL_RETRY_DEADLINE_S_DEFAULT`.
+#
+# IMPORTANT — silent no-ops (do NOT patch via fabric_dw.sql):
+#   _mssql        — tests MUST patch fabric_dw.sql_pool._mssql
+#   _pool_time    — tests MUST patch fabric_dw.sql_pool._pool_time
+#   POOL_MAX_IDLE — tests that SET this MUST target fabric_dw.sql_pool.POOL_MAX_IDLE
+#
 # _sql_config_cache and _sql_config_lock are intentionally NOT re-exported:
 # they are mutable state owned by sql_pool; tests that must inject a cached
 # config value target fabric_dw.sql_pool._sql_config_cache directly.
@@ -306,357 +334,6 @@ def tenant_from_connection_string_host(host: object) -> str | None:
         return None
     else:
         return tenant_id
-
-
-# ---------------------------------------------------------------------------
-# Connection pool
-# ---------------------------------------------------------------------------
-
-# Pool configuration constants — override at module level before first use.
-# Pooling is controlled by _pool_enabled() which resolves: env var FABRIC_CONN_POOLING
-# (falsy: "0"/"false"/"no"/"off"; empty/whitespace → absent) > config.toml
-# [defaults].conn_pooling > built-in default on.
-POOL_MAX_IDLE: int = 4
-"""Maximum number of idle connections kept per ``(workspace_id, database, mode)`` key."""
-
-POOL_MAX_IDLE_SECS: float = 300.0
-"""Maximum age (seconds) of an idle connection before eviction on next checkout."""
-
-# Pool key type: (workspace_id, database, mode_value)
-_PoolKey = tuple[str, str, str]
-
-# Each slot stores (underlying_connection, last_used_monotonic_timestamp).
-_PoolSlot = tuple[Any, float]
-
-# The pool: key -> LIFO stack of idle slots (top = last element).
-_pool: dict[_PoolKey, list[_PoolSlot]] = {}
-_pool_lock = threading.Lock()
-
-
-def _pool_enabled() -> bool:
-    """Return True when connection pooling is active.
-
-    Resolution order (3-layer):
-    1. ``FABRIC_CONN_POOLING`` env var — read at call-time so tests can toggle
-       it without reimporting the module.  Only a non-empty, non-whitespace
-       value is honoured; an empty or whitespace-only value (e.g. a Docker
-       ``ENV FABRIC_CONN_POOLING=`` placeholder) is treated as absent and falls
-       through to the next layer.  Accepted disable values: ``"0"``,
-       ``"false"``, ``"no"``, ``"off"`` (case-insensitive).  Any other
-       non-empty string keeps pooling enabled.
-    2. ``config.toml`` ``[defaults].conn_pooling`` — consulted via the existing
-       memoised :func:`_load_sql_config` cache (never calls load_config()
-       per call).
-    3. Built-in default: ``True`` (pooling on).
-    """
-    raw_env = os.environ.get("FABRIC_CONN_POOLING")
-    if raw_env is not None:
-        stripped = raw_env.strip()
-        if stripped:
-            # Non-empty value — honour it (falsy set disables, anything else enables).
-            return stripped.lower() not in _FALSY_STRINGS
-        # Empty / whitespace-only — treat as absent; fall through to config/default.
-
-    cfg_val = _load_sql_config().defaults.conn_pooling
-    if cfg_val is not None:
-        return cfg_val
-
-    return True
-
-
-def _pool_time() -> float:
-    """Return the current monotonic clock value.
-
-    Isolated so tests can monkeypatch it to inject a deterministic clock
-    without affecting ``time.monotonic`` globally.
-    """
-    return time.monotonic()
-
-
-def _is_alive(conn: Any) -> bool:  # noqa: ANN401
-    """Return True if *conn* appears usable.
-
-    Checks the ``closed`` attribute when it is an ``int`` or ``bool`` (the
-    DB-API convention: 0 = open).  Ignores the attribute when it is not a
-    plain numeric value so that mock objects without an explicit ``closed``
-    attribute are treated as alive.
-    """
-    closed = getattr(conn, "closed", None)
-    # Only trust closed when it is a real int/bool; ignore Mock objects, etc.
-    if not isinstance(closed, (int, bool)):
-        return True
-    return not bool(closed)
-
-
-def reset_pool() -> None:
-    """Drain and physically close every pooled connection.
-
-    Call this on graceful shutdown (e.g. from the MCP server lifespan teardown,
-    a CLI ``finally`` block, or a pytest fixture teardown).  Safe to call
-    multiple times and from any thread.
-    """
-    with _pool_lock:
-        to_close: list[Any] = []
-        for slots in _pool.values():
-            while slots:
-                conn, _ts = slots.pop()
-                to_close.append(conn)
-        _pool.clear()
-    # Close outside the lock so slow I/O does not block other threads.
-    for conn in to_close:
-        with contextlib.suppress(Exception):
-            conn.close()
-
-
-def _pool_checkout(key: _PoolKey) -> Any | None:  # noqa: ANN401
-    """Pop and return a live, non-expired connection from the pool, or ``None``.
-
-    Expired or dead connections are discarded (physically closed) during the
-    search.  The pop is from the end of the list (LIFO - most recently used).
-    """
-    now = _pool_time()
-    deadline = POOL_MAX_IDLE_SECS
-    to_discard: list[Any] = []
-    result: Any = None
-
-    with _pool_lock:
-        slots = _pool.get(key)
-        if not slots:
-            return None
-        # Pop from the top (LIFO) until we find a usable slot.
-        while slots:
-            conn, last_used = slots.pop()
-            if now - last_used > deadline or not _is_alive(conn):
-                to_discard.append(conn)
-                continue
-            result = conn
-            break
-
-    # Close discarded connections outside the lock (may be slow I/O).
-    for dead in to_discard:
-        with contextlib.suppress(Exception):
-            dead.close()
-
-    return result
-
-
-def _pool_checkin(key: _PoolKey, conn: Any) -> None:  # noqa: ANN401
-    """Return *conn* to the pool if there is room, else physically close it.
-
-    Also evicts expired or dead connections from the entire slot list on
-    every checkin (D06 fix) so stale bottom-layer connections do not linger
-    indefinitely even when only the top of the LIFO stack is ever reused.
-    """
-    now = _pool_time()
-    deadline = POOL_MAX_IDLE_SECS
-    to_close: list[Any] = []
-
-    with _pool_lock:
-        slots = _pool.setdefault(key, [])
-        # Sweep the whole list for expired / dead entries before deciding
-        # whether to add the incoming connection.  Iterate in reverse to
-        # pop-in-place safely; build a new list to avoid O(n²) pops.
-        live: list[_PoolSlot] = []
-        for slot_conn, last_used in slots:
-            if now - last_used > deadline or not _is_alive(slot_conn):
-                to_close.append(slot_conn)
-            else:
-                live.append((slot_conn, last_used))
-        slots[:] = live
-
-        if len(slots) >= POOL_MAX_IDLE:
-            to_close.append(conn)
-        else:
-            slots.append((conn, now))
-
-    for dead in to_close:
-        with contextlib.suppress(Exception):
-            dead.close()
-
-
-# ---------------------------------------------------------------------------
-# Pooled connection wrapper
-# ---------------------------------------------------------------------------
-
-
-class _PooledConnection:
-    """Thin wrapper that intercepts ``.close()`` to return the connection to the pool.
-
-    When ``.close()`` is called:
-    - If ``_discard`` is ``True`` (set after a failed query), the underlying
-      connection is physically closed and NOT returned to the pool.
-    - If pooling is disabled (``_pool_enabled()`` returns ``False``), the
-      underlying connection is physically closed.
-    - Otherwise the underlying connection is returned to the pool for reuse.
-
-    All other method calls are forwarded verbatim to the underlying connection,
-    so callers need not change any code.
-    """
-
-    def __init__(self, underlying: Any, key: _PoolKey) -> None:  # noqa: ANN401
-        self._underlying = underlying
-        self._key = key
-        # Set to True after an exception during execute so that the connection
-        # is NOT returned to the pool (unknown transaction state).
-        self._discard: bool = False
-        # Guard against double-close (e.g. explicit close in retry path + outer
-        # finally).  Once True, subsequent close() calls are no-ops.
-        self._closed: bool = False
-
-    # ------------------------------------------------------------------ #
-    # Forward _Connection protocol methods to the underlying object.      #
-    # ------------------------------------------------------------------ #
-
-    def cursor(self) -> Any:  # noqa: ANN401
-        return self._underlying.cursor()
-
-    def commit(self) -> None:
-        self._underlying.commit()
-
-    def rollback(self) -> None:
-        self._underlying.rollback()
-
-    def mark_discard(self) -> None:
-        """Mark this connection for physical close instead of pool return.
-
-        Call after any error that leaves the connection in an unknown state
-        (e.g. mid-execute failure, open transaction with unknown content).
-        Once marked, ``.close()`` physically closes the underlying socket and
-        does NOT return it to the pool.
-        """
-        self._discard = True
-
-    def close(self) -> None:
-        """Return to pool or physically close, depending on state and config.
-
-        Idempotent: a second call is a no-op.  This prevents the underlying TDS
-        socket from receiving ``close()`` twice when the execute-retry path
-        calls ``conn.close()`` explicitly and the outer ``finally`` also closes.
-
-        Before returning to the pool, any open implicit transaction is rolled
-        back so the next caller starts with a clean transaction state.
-        """
-        if self._closed:
-            return
-        self._closed = True
-        if self._discard or not _pool_enabled():
-            self._underlying.close()
-        else:
-            # Roll back any open implicit transaction before pool return so
-            # the next lender starts with a clean state (D23).
-            with contextlib.suppress(Exception):
-                self._underlying.rollback()
-            _pool_checkin(self._key, self._underlying)
-
-    # Convenience accessor used by pool-specific tests.
-    @property
-    def _raw(self) -> Any:  # noqa: ANN401
-        return self._underlying
-
-
-def _make_pool_key(target: SqlTarget, mode: CredentialMode) -> _PoolKey:
-    return (target.workspace_id, target.database, mode.value)
-
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
-
-def open_connection(
-    target: SqlTarget,
-    *,
-    mode: CredentialMode = CredentialMode.DEFAULT,
-    autocommit: bool = False,
-) -> _Connection:
-    """Return a connection to the target warehouse, reusing a pooled one when available.
-
-    The returned object satisfies the :class:`_Connection` protocol.  Its
-    ``.close()`` method returns the connection to the pool (when pooling is
-    enabled and the connection is healthy) rather than physically closing the
-    socket.  Callers do **not** need to change - the ``contextlib.closing``
-    pattern works unchanged.
-
-    When pooling is disabled (``_pool_enabled()`` returns ``False``, controlled
-    via the ``FABRIC_CONN_POOLING`` env var, ``config.toml [defaults] conn_pooling``,
-    or the built-in default on) every call opens a fresh physical connection
-    and ``.close()`` physically closes it.
-
-    When ``autocommit=True``, the ODBC driver does **not** wrap each statement
-    in an explicit ``BEGIN TRANSACTION`` / ``COMMIT`` pair.  This is required
-    for DDL statements that SQL Server disallows inside a transaction (e.g.
-    ``ALTER DATABASE``).  Autocommit connections are **never** pooled — they
-    are always opened fresh and physically closed on ``.close()``.
-
-    This function is intentionally synchronous.  Callers that need to keep the
-    event loop free should wrap the entire sync block in ``asyncio.to_thread``.
-
-    Args:
-        target: The :class:`SqlTarget` identifying the warehouse.
-        mode: The credential mode for Entra authentication.
-        autocommit: When ``True``, open the connection with ODBC-level
-            autocommit enabled.  Defaults to ``False``.  Autocommit connections
-            bypass the pool entirely.
-
-    Returns:
-        A :class:`_PooledConnection` wrapping a DB-API 2.0 connection from
-        the ``mssql_python`` driver.
-    """
-    # Autocommit connections bypass the pool entirely to avoid cross-contaminating
-    # a pooled autocommit=False connection with autocommit=True semantics or vice
-    # versa.  They are always opened fresh and physically closed after use.
-    if autocommit:
-        # Acquire a token struct when running under GitHub OIDC.  This bypasses the
-        # mssql-python driver's own DefaultAzureCredential chain (which uses
-        # AzureCliCredential whose GitHub OIDC assertion expires after ~5 min) in
-        # favour of our self-refreshing credential whose _fetch_github_oidc_jwt
-        # always obtains a fresh assertion.
-        token_struct = get_sql_token_struct(mode)
-        use_token = token_struct is not None
-        cs = build_connection_string(target, mode=mode, use_access_token=use_token)
-        attrs: dict[int, bytes] | None = (
-            {SQL_COPT_SS_ACCESS_TOKEN: token_struct} if use_token else None
-        )
-        raw_conn: Any = _get_mssql().connect(
-            cs, autocommit=True, attrs_before=attrs, timeout=SQL_LOGIN_TIMEOUT_S
-        )
-        # Sets query timeout on all *future* cursors (Connection.timeout.setter stores
-        # the value; each cursor.__init__ reads it via _set_timeout()).  Safe here
-        # because every cursor in this codebase is acquired after open_connection()
-        # returns — no caller holds a cursor across connection open.
-        raw_conn.timeout = SQL_QUERY_TIMEOUT_S
-        # Wrap in _PooledConnection with a sentinel key; mark_discard() ensures
-        # .close() physically closes the connection rather than pooling it.
-        key = _make_pool_key(target, mode)
-        wrapped = _PooledConnection(raw_conn, key)
-        wrapped.mark_discard()
-        return wrapped
-
-    key = _make_pool_key(target, mode)
-
-    if _pool_enabled():
-        cached = _pool_checkout(key)
-        if cached is not None:
-            # Pool HIT — return the cached connection without acquiring a token.
-            # Checked-out connections are already authenticated; acquiring a token
-            # here would invoke credential.get_token() (holding azure-identity's
-            # token-cache lock) and then discard the result — pure waste.
-            return _PooledConnection(cached, key)
-
-    # Pool MISS (or pooling disabled) — open a new physical connection.
-    # Only now do we acquire the OIDC token struct, so the credential is never
-    # consulted on pool-hit paths.
-    token_struct = get_sql_token_struct(mode)
-    use_token = token_struct is not None
-    cs = build_connection_string(target, mode=mode, use_access_token=use_token)
-    attrs = {SQL_COPT_SS_ACCESS_TOKEN: token_struct} if use_token else None
-    raw_conn = _get_mssql().connect(cs, attrs_before=attrs, timeout=SQL_LOGIN_TIMEOUT_S)
-    # Sets query timeout on all *future* cursors (Connection.timeout.setter stores
-    # the value; each cursor.__init__ reads it via _set_timeout()).  Safe here
-    # because every cursor in this codebase is acquired after open_connection()
-    # returns — no caller holds a cursor across connection open.
-    raw_conn.timeout = SQL_QUERY_TIMEOUT_S
-    return _PooledConnection(raw_conn, key)
 
 
 # ---------------------------------------------------------------------------
