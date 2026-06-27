@@ -46,7 +46,7 @@ jobs:
 
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Verify plugin.json version matches tag (stable releases only)
         # Run only for tag/dispatch releases; skip for dev builds pushed to main.
