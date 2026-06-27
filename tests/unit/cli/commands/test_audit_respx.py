@@ -205,8 +205,13 @@ class TestAuditDisableRespx:
         assert len(captured_bodies) == 1
         body = captured_bodies[0]
         assert body.get("state") == "Disabled", f"Expected state=Disabled in body: {body}"
-        # Must NOT include retentionDays for a plain disable
-        assert "retentionDays" not in body, f"disable body must not include retentionDays: {body}"
+        # Regression guard (#780): disable must preserve retentionDays and
+        # auditActionsAndGroups in the PATCH body so the Fabric API does not silently
+        # reset them to defaults.
+        assert "retentionDays" in body, f"disable body must include retentionDays: {body}"
+        assert "auditActionsAndGroups" in body, (
+            f"disable body must include auditActionsAndGroups: {body}"
+        )
 
     def test_disable_uses_correct_http_method(self, runner: CliRunner, cache_env: Path) -> None:
         """The audit disable request must use PATCH, not POST or PUT."""
@@ -457,3 +462,147 @@ class TestAuditRemoveGroupRespx:
 
         assert result.exit_code == 0, result.output
         assert audit_patch.called
+
+    def test_remove_group_body_preserves_retention_days(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """PATCH body from remove-group must include retentionDays so it is not silently reset.
+
+        Regression guard for #780: the old code omitted retentionDays, causing the
+        Fabric API to reset it to its default value on every remove-group call.
+        """
+        _ = cache_env
+        captured_bodies: list[dict[str, object]] = []
+
+        def _capture_patch(request: httpx.Request) -> httpx.Response:
+            captured_bodies.append(json.loads(request.content))
+            return httpx.Response(204)
+
+        existing_groups: list[str] = _AUDIT_SETTINGS_ENABLED["auditActionsAndGroups"]  # type: ignore[assignment]
+        group_to_remove = existing_groups[0]
+
+        with respx.mock(assert_all_called=False) as mock_router:
+            _setup_resolver_mocks(mock_router)
+            mock_router.get(_AUDIT_URL).mock(
+                return_value=httpx.Response(200, json=_AUDIT_SETTINGS_ENABLED)
+            )
+            mock_router.patch(_AUDIT_URL).mock(side_effect=_capture_patch)
+
+            with patch(
+                "fabric_dw.cli.commands.audit.build_http_client",
+                new=_real_http_client_cm,
+            ):
+                result = runner.invoke(
+                    cli,
+                    ["-w", WS_GUID, "--json", "audit", "remove-group", WH_GUID, group_to_remove],
+                )
+
+        assert result.exit_code == 0, result.output
+        assert len(captured_bodies) == 1
+        body = captured_bodies[0]
+        assert "retentionDays" in body, (
+            f"retentionDays must be preserved in remove-group PATCH body: {body}"
+        )
+        assert body["retentionDays"] == _AUDIT_SETTINGS_ENABLED["retentionDays"], (
+            f"retentionDays must match pre-flight GET value: {body}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Regression tests — #780: partial-PATCH data-loss on add-group and disable
+# ---------------------------------------------------------------------------
+
+
+class TestAuditAddGroupRetentionPreservation:
+    """Regression tests: add-group PATCH must not silently reset retentionDays."""
+
+    def test_add_group_body_preserves_retention_days(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """PATCH body from add-group must include retentionDays so it is not silently reset.
+
+        Regression guard for #780: the old code omitted retentionDays, causing the
+        Fabric API to reset it to its default value on every add-group call.
+        """
+        _ = cache_env
+        captured_bodies: list[dict[str, object]] = []
+
+        def _capture_patch(request: httpx.Request) -> httpx.Response:
+            captured_bodies.append(json.loads(request.content))
+            return httpx.Response(204)
+
+        new_group = "FAILED_DATABASE_AUTHENTICATION_GROUP"
+
+        with respx.mock(assert_all_called=False) as mock_router:
+            _setup_resolver_mocks(mock_router)
+            mock_router.get(_AUDIT_URL).mock(
+                return_value=httpx.Response(200, json=_AUDIT_SETTINGS_ENABLED)
+            )
+            mock_router.patch(_AUDIT_URL).mock(side_effect=_capture_patch)
+
+            with patch(
+                "fabric_dw.cli.commands.audit.build_http_client",
+                new=_real_http_client_cm,
+            ):
+                result = runner.invoke(
+                    cli,
+                    ["-w", WS_GUID, "--json", "audit", "add-group", WH_GUID, new_group],
+                )
+
+        assert result.exit_code == 0, result.output
+        assert len(captured_bodies) == 1
+        body = captured_bodies[0]
+        assert "retentionDays" in body, (
+            f"retentionDays must be preserved in add-group PATCH body: {body}"
+        )
+        assert body["retentionDays"] == _AUDIT_SETTINGS_ENABLED["retentionDays"], (
+            f"retentionDays must match pre-flight GET value: {body}"
+        )
+
+
+class TestAuditDisableRetentionPreservation:
+    """Regression tests: disable PATCH must not silently reset retentionDays or groups."""
+
+    def test_disable_body_preserves_retention_and_groups(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """PATCH body from disable must include retentionDays and auditActionsAndGroups.
+
+        Regression guard for #780: the old code sent only state=Disabled, causing the
+        Fabric API to reset retentionDays and auditActionsAndGroups to defaults on disable.
+        """
+        _ = cache_env
+        captured_bodies: list[dict[str, object]] = []
+
+        def _capture_patch(request: httpx.Request) -> httpx.Response:
+            captured_bodies.append(json.loads(request.content))
+            return httpx.Response(204)
+
+        with respx.mock(assert_all_called=False) as mock_router:
+            _setup_resolver_mocks(mock_router)
+            # Single mock handles both the pre-flight GET and the re-fetch GET.
+            mock_router.get(_AUDIT_URL).mock(
+                return_value=httpx.Response(200, json=_AUDIT_SETTINGS_ENABLED)
+            )
+            mock_router.patch(_AUDIT_URL).mock(side_effect=_capture_patch)
+
+            with patch(
+                "fabric_dw.cli.commands.audit.build_http_client",
+                new=_real_http_client_cm,
+            ):
+                result = runner.invoke(
+                    cli,
+                    ["-w", WS_GUID, "--yes", "--json", "audit", "disable", WH_GUID],
+                )
+
+        assert result.exit_code == 0, result.output
+        assert len(captured_bodies) == 1
+        body = captured_bodies[0]
+        assert body.get("state") == "Disabled"
+        assert "retentionDays" in body, (
+            f"retentionDays must be preserved in disable PATCH body: {body}"
+        )
+        existing_groups: list[str] = _AUDIT_SETTINGS_ENABLED["auditActionsAndGroups"]  # type: ignore[assignment]
+        assert body.get("auditActionsAndGroups") == existing_groups, (
+            f"auditActionsAndGroups must be preserved in disable PATCH body: {body}"
+        )
