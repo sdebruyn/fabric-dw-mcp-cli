@@ -1,4 +1,4 @@
-"""Pure SHOWPLAN XML parser — zero Rich dependency, fully unit-testable.
+"""Pure SHOWPLAN XML parser, zero Rich dependency, fully unit-testable.
 
 Parses the ``ShowPlanXML`` format produced by ``SET SHOWPLAN_XML ON`` (or the
 ``sql plan`` command) into a small dataclass tree.  Uses stdlib
@@ -6,10 +6,10 @@ Parses the ``ShowPlanXML`` format produced by ``SET SHOWPLAN_XML ON`` (or the
 
 Public API
 ----------
-- :class:`PlanOperator` — one node in the operator tree.
-- :func:`parse_showplan` — top-level entry point; returns one
+- :class:`PlanOperator`: one node in the operator tree.
+- :func:`parse_showplan`: top-level entry point; returns one
   :class:`PlanOperator` per ``StmtSimple`` in the batch.
-- :func:`humanise_rows` — format a float row-count as ``1.2K`` / ``3.4M`` etc.
+- :func:`humanise_rows`: format a float row-count as ``1.2K`` / ``3.4M`` etc.
 """
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ class PlanOperator:
             node's *own* work (i.e. excluding child subtrees).  Populated
             by :func:`_assign_cost_pct` after the tree is built.
         children: Child :class:`PlanOperator` nodes.
-        stmt_text: Statement text — only set on the root node of each
+        stmt_text: Statement text, only set on the root node of each
             ``StmtSimple`` sub-plan.
     """
 
@@ -169,7 +169,7 @@ def _assign_cost_pct(node: PlanOperator, root_total_cost: float) -> None:
     floating-point precision).
 
     For leaf nodes (no children) the subtree cost is entirely the node's own.
-    Guarded against zero or missing root cost — no division by zero.
+    Guarded against zero or missing root cost (no division by zero).
     Clamped to >= 0 to absorb tiny float-noise artefacts.
 
     Args:
@@ -203,7 +203,7 @@ def _parse_rel_op(rel_op_elem: ET.Element) -> PlanOperator:
     The concrete operator child element (e.g. ``<HashMatch>``, ``<IndexScan>``)
     is the first child element of the ``<RelOp>``; child ``<RelOp>`` nodes live
     inside that concrete child.  Unknown/future operator elements are handled
-    gracefully — child ``<RelOp>`` nodes are still recursed into.
+    gracefully, and child ``<RelOp>`` nodes are still recursed into.
 
     Args:
         rel_op_elem: The ``<RelOp>`` XML element to parse.

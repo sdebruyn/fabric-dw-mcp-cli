@@ -1,4 +1,4 @@
-"""Compatibility shim — SHOWPLAN XML parser moved to ``fabric_dw.plan._parse``.
+"""Compatibility shim: SHOWPLAN XML parser moved to ``fabric_dw.plan._parse``.
 
 The canonical location of this code is :mod:`fabric_dw.plan._parse`.
 All symbols are re-exported here so existing CLI and test imports continue

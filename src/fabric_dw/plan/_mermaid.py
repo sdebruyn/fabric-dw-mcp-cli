@@ -2,12 +2,12 @@
 
 Converts a list of :class:`~fabric_dw.plan._parse.PlanOperator` trees
 (produced by :func:`~fabric_dw.plan._parse.parse_showplan`) into a
-Mermaid ``flowchart TD`` diagram.  No third-party dependencies — Mermaid
+Mermaid ``flowchart TD`` diagram.  No third-party dependencies; Mermaid
 output is plain text.
 
 Public API
 ----------
-- :func:`render_plan_mermaid` — render all statements to a Mermaid string.
+- :func:`render_plan_mermaid`: render all statements to a Mermaid string.
 
 Viewing the output
 ------------------

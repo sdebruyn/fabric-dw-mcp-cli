@@ -1,4 +1,4 @@
-"""Plan-to-dict serialiser — shared by cli and mcp.
+"""Plan-to-dict serialiser, shared by cli and mcp.
 
 Provides :func:`operator_to_dict`, which converts a
 :class:`~fabric_dw.plan._parse.PlanOperator` tree to a plain
@@ -9,7 +9,7 @@ is CLI-presentation-only and lives in ``fabric_dw.cli._plan_render``.
 
 Public API
 ----------
-- :func:`operator_to_dict` — convert a :class:`PlanOperator` tree to a dict.
+- :func:`operator_to_dict`: convert a :class:`PlanOperator` tree to a dict.
 """
 
 from __future__ import annotations

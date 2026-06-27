@@ -6,8 +6,8 @@ Converts a list of :class:`~fabric_dw.plan._parse.PlanOperator` trees
 
 Public API
 ----------
-- :func:`render_plan_tree` — build and print Rich trees for all statements.
-- :func:`operator_to_dict` — re-exported from :mod:`fabric_dw.plan._render`
+- :func:`render_plan_tree`: build and print Rich trees for all statements.
+- :func:`operator_to_dict`: re-exported from :mod:`fabric_dw.plan._render`
   for backward compatibility; new code should import from there directly.
 """
 
