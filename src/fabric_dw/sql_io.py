@@ -252,14 +252,12 @@ def write_arrow(
                 stream.write(payload)
                 stream.write("\n")
         case OutputFormat.CSV:
-            if output is None:  # guarded by ValueError above; this is an internal error
-                raise RuntimeError("output path is required for CSV format")
+            assert output is not None  # noqa: S101  # guarded by ValueError above
             buf = io.BytesIO()
             pa_csv.write_csv(table, buf)
             output.write_bytes(buf.getvalue())
         case OutputFormat.PARQUET:
-            if output is None:  # guarded by ValueError above; this is an internal error
-                raise RuntimeError("output path is required for Parquet format")
+            assert output is not None  # noqa: S101  # guarded by ValueError above
             pq.write_table(table, str(output))
         case _:  # pragma: no cover
             msg = f"Unhandled OutputFormat member {fmt!r}; update write_arrow to handle it"
