@@ -349,6 +349,7 @@ class TestWideTableVerticalFallback:
         *,
         table_title: str | None = None,
         drop_columns: tuple[str, ...] | None = None,
+        prune_null_columns: bool = False,
     ) -> str:
         sio = StringIO()
         console = Console(file=sio, width=width, highlight=False, no_color=True)
@@ -358,6 +359,7 @@ class TestWideTableVerticalFallback:
             console=console,
             table_title=table_title,
             drop_columns=drop_columns,
+            prune_null_columns=prune_null_columns,
         )
         return sio.getvalue()
 
@@ -447,11 +449,11 @@ class TestWideTableVerticalFallback:
         """All non-null field names appear in the vertical layout at width=80.
 
         With the header-based threshold, the 11 visible columns (blocking_session_id
-        is all-null and pruned) have headers averaging ~10 chars, which far exceeds
-        80 columns, triggering the vertical fallback.
+        is all-null and pruned when prune_null_columns=True) have headers averaging
+        ~10 chars, which far exceeds 80 columns, triggering the vertical fallback.
         """
-        output = self._render_at_width(_QUERIES_ROWS, width=80)
-        # blocking_session_id is all-null → pruned; check the non-null columns only
+        output = self._render_at_width(_QUERIES_ROWS, width=80, prune_null_columns=True)
+        # blocking_session_id is all-null and pruned; check the non-null columns only
         visible_cols = [c for c in _QUERIES_ROWS[0] if c != "blocking_session_id"]
         for col in visible_cols:
             assert col in output, f"Field '{col}' missing from vertical output"
@@ -651,12 +653,18 @@ class TestSparseRowRendering:
 
 
 class TestOmitAllNullColumns:
-    """_render_table omits columns that are None in every row (human table only)."""
+    """_render_table omits columns that are None in every row when prune_null_columns=True."""
 
     def _render_to_string(self, data: object, table_title: str | None = None) -> str:
         sio = StringIO()
         console = Console(file=sio, width=200, highlight=False, no_color=True)
-        render(data, json_output=False, console=console, table_title=table_title)
+        render(
+            data,
+            json_output=False,
+            console=console,
+            table_title=table_title,
+            prune_null_columns=True,
+        )
         return sio.getvalue()
 
     # ------------------------------------------------------------------
@@ -763,6 +771,58 @@ class TestOmitAllNullColumns:
         output = self._render_to_string(data)
         assert "name" in output
         assert "definition" not in output
+
+
+class TestRawSqlNullColumns:
+    """Raw sql exec results must show every column, including all-NULL ones.
+
+    The prune_null_columns flag defaults to False so that raw query output
+    (sql exec) never silently hides a column the user asked for.
+    """
+
+    def _render_to_string(self, data: object) -> str:
+        sio = StringIO()
+        console = Console(file=sio, width=200, highlight=False, no_color=True)
+        # prune_null_columns defaults to False - raw SQL callers do not set it
+        render(data, json_output=False, console=console)
+        return sio.getvalue()
+
+    def test_all_null_column_present_when_pruning_disabled(self) -> None:
+        """A column that is NULL in every row must appear when prune_null_columns=False."""
+        data = [
+            {"a": None, "b": 5},
+            {"a": None, "b": 10},
+        ]
+        output = self._render_to_string(data)
+        assert "a" in output
+        assert "b" in output
+
+    def test_all_null_column_header_shown(self) -> None:
+        """SELECT NULL AS a, 5 AS b: column header 'a' must be visible."""
+        data = [{"a": None, "b": 5}]
+        output = self._render_to_string(data)
+        assert "a" in output
+
+    def test_all_null_cell_renders_as_null(self) -> None:
+        """The all-NULL column's cell must render as NULL, not disappear."""
+        data = [{"a": None, "b": 5}]
+        output = self._render_to_string(data)
+        assert "NULL" in output
+
+    def test_single_row_all_null_result_shows_column(self) -> None:
+        """A single-row result where every column is NULL still shows the header."""
+        data = [{"x": None}]
+        output = self._render_to_string(data)
+        assert "x" in output
+
+    def test_prune_false_is_default(self) -> None:
+        """Passing prune_null_columns=False explicitly has the same effect as omitting it."""
+        data = [{"col": None}]
+        sio = StringIO()
+        console = Console(file=sio, width=200, highlight=False, no_color=True)
+        render(data, json_output=False, console=console, prune_null_columns=False)
+        output = sio.getvalue()
+        assert "col" in output
 
 
 class TestDropColumns:
@@ -1191,10 +1251,17 @@ class TestGuidColumnWidthInNarrowConsole:
         *,
         width: int = 50,
         table_title: str | None = None,
+        prune_null_columns: bool = False,
     ) -> str:
         sio = StringIO()
         console = Console(file=sio, width=width, highlight=False, no_color=True)
-        render(data, json_output=False, console=console, table_title=table_title)
+        render(
+            data,
+            json_output=False,
+            console=console,
+            table_title=table_title,
+            prune_null_columns=prune_null_columns,
+        )
         return sio.getvalue()
 
     def test_guid_survives_narrow_console(self) -> None:
@@ -1242,13 +1309,20 @@ class TestGuidColumnWidthInNarrowConsole:
         # is truncated — the point is we don't crash and the output is produced.
         assert "short-non-guid" in output
 
-    def test_all_none_guid_col_stays_normal(self) -> None:
-        """A column that is all-None is dropped entirely (existing behaviour)."""
+    def test_all_none_guid_col_dropped_when_pruning_enabled(self) -> None:
+        """An all-None column is dropped when prune_null_columns=True."""
         data: list[dict[str, object]] = [{"id": None, "displayName": "Alice"}]
-        output = self._render_narrow(data, width=50)
-        # Column "id" is all-null → dropped; "displayName" remains
+        output = self._render_narrow(data, width=50, prune_null_columns=True)
+        # Column "id" is all-null and pruned; "displayName" remains
         assert "Alice" in output
         assert "id" not in output
+
+    def test_all_none_guid_col_visible_when_pruning_disabled(self) -> None:
+        """An all-None column is kept when prune_null_columns=False (the default)."""
+        data: list[dict[str, object]] = [{"id": None, "displayName": "Alice"}]
+        output = self._render_narrow(data, width=50, prune_null_columns=False)
+        assert "Alice" in output
+        assert "id" in output
 
     def test_guid_column_with_some_nulls_survives(self) -> None:
         """A partially-null GUID column still gets full width."""
@@ -1421,13 +1495,14 @@ class TestMultiGuidColumnWidthStarvation:
     # ------------------------------------------------------------------
 
     def test_all_null_guid_column_still_pruned_in_multi_guid_table(self) -> None:
-        """An all-null GUID column is pruned even when other GUID columns are present.
+        """An all-null GUID column is pruned when prune_null_columns=True.
 
         This test exercises the primary/secondary-GUID code path: ``id`` is the
         primary GUID (non-null), ``workspaceId`` is a secondary non-null GUID, and
-        ``capacityId`` is all-null and must be dropped.  After pruning, the table
-        has two live GUID columns (primary + secondary) plus ``displayName``; the
-        fix must ensure ``displayName`` is NOT starved to zero width at 80 cols.
+        ``capacityId`` is all-null and must be dropped when pruning is enabled.
+        After pruning, the table has two live GUID columns (primary + secondary)
+        plus ``displayName``; the fix must ensure ``displayName`` is NOT starved
+        to zero width at 80 cols.
         """
         data: list[dict[str, object]] = [
             {
@@ -1445,7 +1520,7 @@ class TestMultiGuidColumnWidthStarvation:
         ]
         sio = StringIO()
         console = Console(file=sio, width=80, highlight=False, no_color=True)
-        render(data, json_output=False, console=console)
+        render(data, json_output=False, console=console, prune_null_columns=True)
         output = sio.getvalue()
         # All-null column pruned
         assert "capacityId" not in output

@@ -96,6 +96,7 @@ def render(
     console: Console | None = None,
     table_title: str | None = None,
     drop_columns: tuple[str, ...] | list[str] | None = None,
+    prune_null_columns: bool = False,
 ) -> None:
     """Print *data* to stdout using JSON or Rich formatting.
 
@@ -116,6 +117,14 @@ def render(
             workspace-id column when every row shares the same workspace).
             Ignored when *json_output=True* (machine-readable output is never
             pruned) and when *data* is not a list.
+        prune_null_columns: When *True*, columns whose value is ``None`` in
+            every row are omitted from the rendered table.  Defaults to
+            *False* so that raw query results (e.g. ``sql exec``) always show
+            every column the query returned, including all-``NULL`` ones.
+            Set to *True* for metadata renders (list commands) where optional
+            model fields that happen to be unpopulated in a given response
+            should be hidden to reduce visual clutter.
+            Ignored when *json_output=True*.
     """
     if json_output:
         click.echo(_json.dumps(data, indent=2, default=str))
@@ -124,7 +133,13 @@ def render(
     con = console if console is not None else _DEFAULT_CONSOLE
 
     if isinstance(data, list):
-        _render_table(data, console=con, title=table_title, drop_columns=drop_columns)
+        _render_table(
+            data,
+            console=con,
+            title=table_title,
+            drop_columns=drop_columns,
+            prune_null_columns=prune_null_columns,
+        )
     elif isinstance(data, dict):
         _render_panel({str(k): v for k, v in data.items()}, console=con, title=table_title)
     else:
@@ -260,6 +275,7 @@ def _render_table(
     console: Console,
     title: str | None,
     drop_columns: tuple[str, ...] | list[str] | None = None,
+    prune_null_columns: bool = False,
 ) -> None:
     """Render a list of dicts as a Rich Table (or vertical fallback).
 
@@ -271,18 +287,27 @@ def _render_table(
     normally keep the horizontal layout and the existing GUID-column width
     behaviour from PR #743.  See :func:`_table_fits` for the exact criterion.
 
-    Columns whose value is ``None`` in **every** row are omitted from the
-    output — they only clutter list views (e.g. ``definition`` for
-    ``procedures list``).  A column that is non-null in at least one row is
-    kept, and any null cells in that column still render as ``[dim]NULL[/dim]``.
+    When *prune_null_columns* is *True*, columns whose value is ``None`` in
+    every row are omitted from the output.  This is appropriate for metadata
+    list views (e.g. ``procedures list``) where optional model fields that are
+    unpopulated in a given response only add visual clutter.  A column that is
+    non-null in at least one row is always kept, and any null cells in that
+    column still render as ``[dim]NULL[/dim]``.
+
+    When *prune_null_columns* is *False* (the default), every column that
+    appears in the data is rendered, including all-``NULL`` ones.  Raw query
+    results (``sql exec``) must use this default so that the user sees every
+    column their query selected.
 
     Args:
         rows: The list of rows (dicts or scalars) to render.
         console: The Rich console to print to.
         title: Optional table title.
-        drop_columns: Optional column names to explicitly omit, in addition to
-            the automatic all-null pruning.  Used by callers to hide a column
-            that is redundant in a given context (e.g. a shared workspace id).
+        drop_columns: Optional column names to explicitly omit.  Used by callers
+            to hide a column that is redundant in a given context (e.g. a
+            shared workspace id).
+        prune_null_columns: When *True*, drop columns whose value is ``None``
+            in every row before rendering.  Defaults to *False*.
     """
     dropped: frozenset[str] = frozenset(drop_columns or ())
 
@@ -309,10 +334,15 @@ def _render_table(
         else:
             norm_rows.append(row)
 
-    # Drop columns where every dict-row's value is None (or the key is absent).
+    # Optionally drop columns where every dict-row's value is None (or absent).
     # Non-dict rows (scalars) are never counted as "having" any column value, so
     # a column is only kept if at least one dict-row provides a non-None value.
-    all_null = {col for col in columns if _column_is_all_null(col, norm_rows)}
+    # Pruning is opt-in: raw query results must show every column they returned.
+    all_null: set[str] = (
+        {col for col in columns if _column_is_all_null(col, norm_rows)}
+        if prune_null_columns
+        else set()
+    )
     visible_columns = [col for col in columns if col not in all_null and col not in dropped]
 
     # Wide-table fallback: when the estimated minimum width for all visible

@@ -97,6 +97,7 @@ async def list_cmd(
                 json_output=ctx.json_output,
                 table_title="Warehouses",
                 drop_columns=drop_columns,
+                prune_null_columns=True,
             )
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
