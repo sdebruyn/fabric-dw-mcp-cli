@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This repo is `fabric-dw-mcp-cli` — a CLI and MCP server for Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
+This repo is `fabric-dw-mcp-cli`: a CLI and MCP server for Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
 
 ## No SQL parsing
 
