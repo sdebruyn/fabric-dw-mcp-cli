@@ -789,6 +789,29 @@ async def test_roll_timestamp_aware_non_utc_new_dt_normalized_to_utc() -> None:
     assert result == datetime(2024, 3, 15, 8, 30, 45, tzinfo=UTC)
 
 
+async def test_roll_timestamp_returns_truncated_utc() -> None:
+    """roll_timestamp returns the UTC, whole-second-truncated value written to SET TIMESTAMP.
+
+    The SET TIMESTAMP literal uses the fixed suffix ".00", so any sub-second
+    component of new_dt is dropped.  The returned datetime must reflect what
+    the database actually received, not the original un-truncated input.
+    """
+    target = _make_sql_target()
+    conn = _make_mock_conn()
+    # Supply a datetime with microseconds; the SQL literal will strip them.
+    new_dt = datetime(2024, 3, 15, 8, 30, 45, 123456, tzinfo=UTC)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await snapshots.roll_timestamp(target, "MySnapshot", new_dt=new_dt)
+
+    cursor = conn.cursor.return_value
+    sql = cursor.execute.call_args_list[0][0][0]
+    assert "ALTER DATABASE [MySnapshot] SET TIMESTAMP = '2024-03-15T08:30:45.00';" in sql
+    # The returned value must match what was written: microsecond zeroed out.
+    assert result == datetime(2024, 3, 15, 8, 30, 45, tzinfo=UTC)
+    assert result.microsecond == 0
+
+
 async def test_roll_timestamp_name_injection_bracket() -> None:
     """snapshot_name containing ] should raise ValueError."""
     target = _make_sql_target()

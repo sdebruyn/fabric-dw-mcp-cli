@@ -349,9 +349,12 @@ async def roll_timestamp(
 
     Returns:
         The datetime that was actually applied to the snapshot.  When
-        *new_dt* is supplied this equals the normalised *new_dt*; when
-        *new_dt* is ``None`` (reset to ``CURRENT_TIMESTAMP``) this is the
-        server-side timestamp queried back immediately after the ALTER.
+        *new_dt* is supplied this is the UTC-normalised, whole-second-truncated
+        value that was written to the ``SET TIMESTAMP`` literal (sub-second
+        precision is dropped because the literal uses the fixed suffix
+        ``.00``); when *new_dt* is ``None`` (reset to ``CURRENT_TIMESTAMP``)
+        this is the server-side timestamp queried back immediately after the
+        ALTER.
 
     Raises:
         ValueError: If *snapshot_name* contains any forbidden character.
@@ -423,11 +426,15 @@ async def roll_timestamp(
         else:
             break  # ALTER succeeded — proceed to fetch the applied timestamp.
 
-    # When new_dt was supplied the applied timestamp equals new_dt (the ALTER
-    # SET a deterministic value).  When new_dt is None the server applied
-    # CURRENT_TIMESTAMP, which is only knowable by querying it back.
+    # When new_dt was supplied the applied timestamp is new_dt normalised to
+    # UTC and truncated to whole-second precision (the SET TIMESTAMP literal
+    # uses the fixed suffix ".00", so any sub-second component is dropped).
+    # Return exactly that value so callers see the datetime the database
+    # received, not the original un-truncated input.
+    # When new_dt is None the server applied CURRENT_TIMESTAMP, which is only
+    # knowable by querying it back.
     if new_dt_utc is not None:
-        return new_dt_utc
+        return new_dt_utc.replace(microsecond=0)
 
     def _fetch_ts() -> datetime:
         _, rows = run_query(
