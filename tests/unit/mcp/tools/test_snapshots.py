@@ -298,30 +298,6 @@ async def test_create_snapshot_value_error_becomes_tool_error(mock_ctx, ctx_patc
     assert "non-empty" in str(exc_info.value).lower()
 
 
-async def test_create_snapshot_clears_negative_cache(mock_ctx, ctx_patch) -> None:
-    """create_snapshot calls resolver.clear_negative_cache() after success."""
-    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
-
-    snap = _make_snapshot()
-    item = make_item_entry()
-    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
-    mock_ctx.resolver.item = AsyncMock(return_value=item)
-
-    with (
-        ctx_patch,
-        patch(
-            "fabric_dw.services.snapshots.create",
-            new=AsyncMock(return_value=snap),
-        ),
-    ):
-        await mcp._tool_manager.call_tool(
-            "create_snapshot",
-            {"workspace": WS_NAME, "warehouse": WH_NAME, "name": _SNAP_NAME},
-        )
-
-    mock_ctx.resolver.clear_negative_cache.assert_called_once()
-
-
 async def test_create_snapshot_workspace_guard(ctx_patch) -> None:
     """create_snapshot raises ToolError when workspace is not in the allowlist."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -430,30 +406,6 @@ async def test_rename_snapshot_value_error_becomes_tool_error(mock_ctx, ctx_patc
         )
 
     assert "non-empty" in str(exc_info.value).lower()
-
-
-async def test_rename_snapshot_clears_negative_cache(mock_ctx, ctx_patch) -> None:
-    """rename_snapshot calls resolver.clear_negative_cache() after success."""
-    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
-
-    snap = _make_snapshot(name="snap-renamed")
-    item = make_item_entry()
-    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
-    mock_ctx.resolver.item = AsyncMock(return_value=item)
-
-    with (
-        ctx_patch,
-        patch(
-            "fabric_dw.services.snapshots.rename",
-            new=AsyncMock(return_value=snap),
-        ),
-    ):
-        await mcp._tool_manager.call_tool(
-            "rename_snapshot",
-            {"workspace": WS_NAME, "snapshot": _SNAP_NAME, "new_name": "snap-renamed"},
-        )
-
-    mock_ctx.resolver.clear_negative_cache.assert_called_once()
 
 
 async def test_rename_snapshot_workspace_guard(ctx_patch) -> None:

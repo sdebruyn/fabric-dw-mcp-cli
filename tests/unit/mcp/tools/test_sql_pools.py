@@ -371,7 +371,6 @@ async def test_create_sql_pool_happy_path(mock_ctx, ctx_patch) -> None:
     assert isinstance(result, dict)
     assert result["name"] == "new-pool"
     assert result["maxResourcePercentage"] == 20
-    mock_ctx.resolver.clear_negative_cache.assert_called_once()
 
 
 async def test_create_sql_pool_with_classifier(mock_ctx, ctx_patch) -> None:

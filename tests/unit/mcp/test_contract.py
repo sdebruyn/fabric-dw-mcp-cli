@@ -76,8 +76,6 @@ def contract_ctx():
     mock_resolver = AsyncMock()
     mock_resolver.workspace_id = AsyncMock(return_value=WS_ID)
     mock_resolver.item = AsyncMock(return_value=make_item_entry())
-    mock_resolver.clear_negative_cache = MagicMock()
-
     return ServerContext(
         http=mock_http,
         cache=mock_cache,

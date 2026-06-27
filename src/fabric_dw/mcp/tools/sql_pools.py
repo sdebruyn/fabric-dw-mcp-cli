@@ -161,7 +161,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 f"pool {name!r} was not found in the API response after creation; "
                 "the pool may have been created but is not yet visible (eventual consistency)"
             )
-        ctx.resolver.clear_negative_cache()
         return created.model_dump(by_alias=True, mode="json")
 
     @mutating_tool(mcp, "update_sql_pool")

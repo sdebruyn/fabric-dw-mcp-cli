@@ -1240,8 +1240,6 @@ async def test_drop_view_allowed_with_destructive_flag() -> None:
     mock_resolver = AsyncMock()
     mock_resolver.workspace_id = AsyncMock(return_value=_WS_ID)
     mock_resolver.item = AsyncMock(return_value=entry)
-    mock_resolver.clear_negative_cache = MagicMock()
-
     ctx = ServerContext(
         http=AsyncMock(),
         cache=MagicMock(),

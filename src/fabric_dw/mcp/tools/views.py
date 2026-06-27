@@ -229,7 +229,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
-        ctx.resolver.clear_negative_cache()
         return result.model_dump(mode="json")
 
     @mutating_tool(mcp, "update_view")
@@ -262,7 +261,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
-        ctx.resolver.clear_negative_cache()
         return result.model_dump(mode="json")
 
     @mutating_tool(mcp, "drop_view", destructive=True)
@@ -287,7 +285,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             await views_svc.drop_view(target, schema, view_name, mode=ctx.auth_mode)
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
-        ctx.resolver.clear_negative_cache()
         return {"dropped": True}
 
     @mutating_tool(mcp, "rename_view")
@@ -330,5 +327,4 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
-        ctx.resolver.clear_negative_cache()
         return result.model_dump(mode="json")

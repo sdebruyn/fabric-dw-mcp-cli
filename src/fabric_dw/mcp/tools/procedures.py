@@ -121,7 +121,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
-        ctx.resolver.clear_negative_cache()
         return result.model_dump(mode="json")
 
     @mutating_tool(mcp, "update_procedure")

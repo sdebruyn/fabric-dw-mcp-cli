@@ -125,7 +125,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
-        ctx.resolver.clear_negative_cache()
         return result.model_dump(by_alias=True, mode="json")
 
     @mutating_tool(mcp, "rename_warehouse")
@@ -149,7 +148,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
-        ctx.resolver.clear_negative_cache()
         return result.model_dump(by_alias=True, mode="json")
 
     @mutating_tool(mcp, "delete_warehouse", destructive=True)

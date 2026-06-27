@@ -276,7 +276,6 @@ async def test_create_warehouse_happy_path(mock_ctx, ctx_patch) -> None:
 
     assert isinstance(result, dict)
     assert result["id"] == str(WH_ID)
-    mock_ctx.resolver.clear_negative_cache.assert_called_once()
 
 
 async def test_create_warehouse_value_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
@@ -364,7 +363,6 @@ async def test_rename_warehouse_happy_path(mock_ctx, ctx_patch) -> None:
 
     assert isinstance(result, dict)
     assert result["id"] == str(WH_ID)
-    mock_ctx.resolver.clear_negative_cache.assert_called_once()
 
 
 async def test_rename_warehouse_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
