@@ -19,7 +19,7 @@ from fabric_dw.cli._plan_mermaid import render_plan_mermaid
 from fabric_dw.cli._plan_parse import parse_showplan
 from fabric_dw.cli._plan_render import operator_to_dict, render_plan_tree
 from fabric_dw.cli._plan_svg import render_plan_svg
-from fabric_dw.cli._render import render, sanitise_json
+from fabric_dw.cli._render import render, render_result_rows, sanitise_json
 from fabric_dw.cli.commands._utils import (
     build_http_client,
     build_sql_target,
@@ -86,8 +86,12 @@ async def sql_exec_cmd(
                     json_output=True,
                 )
             elif result.rows:
-                rows_as_dicts = [dict(zip(result.columns, row, strict=True)) for row in result.rows]
-                render(rows_as_dicts, json_output=False, table_title="SQL Result")
+                render_result_rows(
+                    result.columns,
+                    result.rows,
+                    json_output=False,
+                    table_title="SQL Result",
+                )
             else:
                 click.echo(f"Query executed successfully. rowcount={result.rowcount}")
     except (ValueError, FabricError) as exc:

@@ -14,7 +14,7 @@ import click
 from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._main import _CLI_CONDITIONAL_DESTRUCTIVE_KEY
-from fabric_dw.cli._render import render
+from fabric_dw.cli._render import render, render_result_rows
 from fabric_dw.cli.commands._utils import (
     build_http_client,
     build_sql_target,
@@ -237,8 +237,9 @@ async def health_check_cmd(
             columns, rows = await _tables_svc.get_table_health_metrics(
                 target, schema, table_name, kind=entry.kind, mode=ctx.auth
             )
-            render(
-                [dict(zip(columns, row, strict=True)) for row in rows],
+            render_result_rows(
+                columns,
+                rows,
                 json_output=ctx.json_output,
                 table_title="Table Health Metrics",
             )

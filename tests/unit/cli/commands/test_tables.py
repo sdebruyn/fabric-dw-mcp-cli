@@ -3096,3 +3096,71 @@ class TestTablesHealthCheck:
         assert result.exit_code == 0, result.output
         parsed = json.loads(result.output)
         assert parsed == []
+
+
+class TestTablesHealthCheckDuplicateColumns:
+    """tables health-check — duplicate column name handling (issue #833)."""
+
+    def test_health_check_duplicate_columns_renders_both_values(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """health-check with duplicate column names must render both values.
+
+        With the old dict(zip(columns, row)) approach the second value
+        overwrites the first; the positional renderer must show both.
+        """
+        _ = cache_env
+        mock_http = AsyncMock()
+        fake_cols = ["metric", "metric"]
+        fake_rows: list[tuple[object, ...]] = [("alpha", "beta")]
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.get_table_health_metrics",
+                new=AsyncMock(return_value=(fake_cols, fake_rows)),
+            ),
+        ):
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "tables", "health-check", SE_GUID, "dbo.FactSales"]
+            )
+        assert result.exit_code == 0, result.output
+        assert "alpha" in result.output, "first value must appear in table output"
+        assert "beta" in result.output, "second value must appear in table output"
+
+    def test_health_check_duplicate_columns_json_output(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """health-check with --json and duplicate column names must exit zero."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        fake_cols = ["metric", "metric"]
+        fake_rows: list[tuple[object, ...]] = [("alpha", "beta")]
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.get_table_health_metrics",
+                new=AsyncMock(return_value=(fake_cols, fake_rows)),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", WS_GUID, "--json", "tables", "health-check", SE_GUID, "dbo.FactSales"],
+            )
+        assert result.exit_code == 0, result.output
+        parsed = json.loads(result.output)
+        assert isinstance(parsed, list)
+        assert len(parsed) == 1

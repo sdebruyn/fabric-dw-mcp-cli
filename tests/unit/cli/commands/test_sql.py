@@ -66,6 +66,10 @@ def _make_empty_sql_result() -> SqlResult:
     return SqlResult(columns=[], rows=[], rowcount=3)
 
 
+def _make_duplicate_col_result() -> SqlResult:
+    return SqlResult(columns=["val", "val"], rows=[["alpha", "beta"]], rowcount=1)
+
+
 _PLAN_XML = (
     "<ShowPlanXML xmlns='http://schemas.microsoft.com/sqlserver/2004/07/showplan'>"
     "<Batch><Statements><StmtSimple /></Statements></Batch></ShowPlanXML>"
@@ -398,6 +402,71 @@ class TestSqlExecErrors:
                 ["-w", WS_GUID, "sql", "exec", WH_GUID, "-q", "SELECT 1"],
             )
         assert result.exit_code != 0
+
+
+class TestSqlExecDuplicateColumns:
+    """sql exec — duplicate column name handling (issue #833)."""
+
+    def test_duplicate_columns_renders_both_values(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """SELECT 1 AS val, 2 AS val must render both values, not collapse them.
+
+        With the old dict(zip(columns, row)) approach, the second value
+        overwrites the first, so only one value appears.  The positional
+        renderer must show both.
+        """
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.sql_exec.execute",
+                new=AsyncMock(return_value=_make_duplicate_col_result()),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", WS_GUID, "sql", "exec", WH_GUID, "-q", "SELECT 1 AS val, 2 AS val"],
+            )
+        assert result.exit_code == 0
+        assert "alpha" in result.output, "first value must appear in table output"
+        assert "beta" in result.output, "second value must appear in table output"
+
+    def test_unique_columns_unaffected_by_positional_render(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """Unique-column results must still render correctly after the fix."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.sql_exec.execute",
+                new=AsyncMock(return_value=_make_sql_result()),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", WS_GUID, "sql", "exec", WH_GUID, "-q", "SELECT id, name FROM t"],
+            )
+        assert result.exit_code == 0
+        assert "foo" in result.output
+        assert "bar" in result.output
 
 
 class TestSqlPlan:

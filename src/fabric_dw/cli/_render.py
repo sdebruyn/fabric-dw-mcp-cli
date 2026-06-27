@@ -20,6 +20,7 @@ __all__ = [
     "render",
     "render_permissions_table",
     "render_refresh_table",
+    "render_result_rows",
     "sanitise_json",
 ]
 
@@ -489,6 +490,165 @@ def render_refresh_table(
         )
 
     con.print(table)
+
+
+def _is_guid_column_values(values: list[object]) -> bool:
+    """Return *True* when all non-``None`` entries in *values* are GUIDs.
+
+    Used by :func:`_render_positional_table` to apply the same GUID-column
+    width heuristic as :func:`_is_guid_column`, but working directly on a
+    pre-collected list of values rather than through dict row lookups.
+    """
+    found = False
+    for val in values:
+        if val is None:
+            continue
+        found = True
+        if not _GUID_RE.fullmatch(str(val)):
+            return False
+    return found
+
+
+def _render_positional_vertical(
+    rows: Sequence[Sequence[object]],
+    columns: list[str],
+    visible: list[int],
+    *,
+    console: Console,
+    title: str | None,
+) -> None:
+    """Render *rows* as a sequence of vertical key-value panels, index-based.
+
+    Extracted from :func:`_render_positional_table` so that the parent
+    function stays within the branch-count budget.  Duplicate column names
+    are preserved because cell values are looked up by position, not by key.
+    """
+    if title:
+        console.print(f"[bold]{_escape_markup(title)}[/bold]")
+    for j, row in enumerate(rows):
+        if j > 0:
+            console.rule(style="dim")
+        lines = "\n".join(
+            f"[bold]{_escape_markup(columns[i])}[/bold]: {_cell(row[i] if i < len(row) else None)}"
+            for i in visible
+        )
+        console.print(Panel(lines))
+
+
+def _render_positional_table(
+    columns: list[str],
+    rows: Sequence[Sequence[object]],
+    *,
+    console: Console,
+    title: str | None,
+) -> None:
+    """Render *columns* and *rows* as a Rich table using positional access.
+
+    Unlike :func:`_render_table`, column headers come directly from *columns*
+    and cell values are accessed by index, so duplicate column names
+    (e.g. ``SELECT 1 AS id, 2 AS id``) each keep their own header and value
+    instead of being collapsed by dict keying.
+
+    All-null columns (every row has ``None`` at that position) are omitted.
+    The wide-table vertical fallback uses the same heuristic as
+    :func:`_render_table`.
+    """
+    if not rows:
+        if title:
+            console.print(f"[bold]{_escape_markup(title)}[/bold]")
+        console.print(Table(show_header=True, header_style="bold"))
+        return
+
+    n = len(columns)
+
+    # Pre-collect values per column position for GUID detection and null pruning.
+    col_values: list[list[object]] = [
+        [row[i] if i < len(row) else None for row in rows] for i in range(n)
+    ]
+
+    # Drop positions where every row has None.
+    all_null_idx: set[int] = {
+        i for i, vals in enumerate(col_values) if all(v is None for v in vals)
+    }
+    visible: list[int] = [i for i in range(n) if i not in all_null_idx]
+
+    # Estimate horizontal fit using the same heuristic as _table_fits().
+    primary_guid_assigned = False
+    content_width = 0
+    for i in visible:
+        if _is_guid_column_values(col_values[i]):
+            # Primary GUID gets full width; additional GUIDs get a smaller floor.
+            content_width += _GUID_WIDTH if not primary_guid_assigned else _GUID_SECONDARY_WIDTH
+            primary_guid_assigned = True
+        else:
+            content_width += min(len(columns[i]), _HEADER_MAX_WIDTH)
+    border_chars = 3 * len(visible) + 1
+
+    if content_width + border_chars > console.width:
+        _render_positional_vertical(rows, columns, visible, console=console, title=title)
+        return
+
+    if title:
+        console.print(f"[bold]{_escape_markup(title)}[/bold]")
+    table = Table(show_header=True, header_style="bold")
+
+    primary_guid_assigned = False
+    for i in visible:
+        escaped_col = _escape_markup(columns[i])
+        if _is_guid_column_values(col_values[i]) and not primary_guid_assigned:
+            table.add_column(escaped_col, no_wrap=True, min_width=_GUID_WIDTH)
+            primary_guid_assigned = True
+        else:
+            table.add_column(escaped_col)
+
+    for row in rows:
+        table.add_row(*[_cell(row[i] if i < len(row) else None) for i in visible])
+
+    console.print(table)
+
+
+def render_result_rows(
+    columns: list[str],
+    rows: Sequence[Sequence[object]],
+    *,
+    json_output: bool,
+    console: Console | None = None,
+    table_title: str | None = None,
+) -> None:
+    """Render SQL result columns and rows, preserving duplicate column names.
+
+    Unlike :func:`render`, this function takes *columns* and *rows*
+    separately and renders them positionally for the Rich table path, so
+    duplicate column names (e.g. ``SELECT 1 AS id, 2 AS id``) each keep
+    their own header and value.
+
+    For JSON output the rows are zipped into per-row dicts; duplicate column
+    names follow standard dict semantics (last value wins), which matches the
+    behaviour of the previous dict-based rendering.
+
+    Args:
+        columns: Ordered list of column names as returned by the query.
+        rows: Ordered list of rows; each row is a sequence of values aligned
+            positionally with *columns*.
+        json_output: When *True*, emit indented JSON.  When *False*, render a
+            Rich table via :func:`_render_positional_table`.
+        console: Optional Rich Console instance.  Ignored when
+            *json_output=True*.
+        table_title: Optional title shown above the Rich table.  Ignored when
+            *json_output=True*.
+    """
+    if json_output:
+        click.echo(
+            _json.dumps(
+                [dict(zip(columns, row, strict=False)) for row in rows],
+                indent=2,
+                default=str,
+            )
+        )
+        return
+
+    con = console if console is not None else _DEFAULT_CONSOLE
+    _render_positional_table(columns, list(rows), console=con, title=table_title)
 
 
 def confirm(message: str, *, yes: bool) -> bool:
