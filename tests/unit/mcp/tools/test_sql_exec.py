@@ -1,15 +1,19 @@
-"""Unit tests for the MCP sql_exec tool wrappers — get_query_plan format param.
+"""Unit tests for the MCP sql_exec tool wrappers.
 
 Target: src/fabric_dw/mcp/tools/sql_exec.py
-Goal:   Cover all four format values, invalid-format error, and back-compat assertion.
+Goals:
+  - Cover all four format values, invalid-format error, and back-compat assertion
+    for get_query_plan.
+  - Verify that raw driver exceptions (non-FabricError) raised by the service are
+    converted to structured ToolError at the MCP boundary and do NOT leak the raw
+    exception message or query text (security: information-disclosure at MCP boundary).
 
 Strategy
 --------
 - All calls routed via ``mcp._tool_manager.call_tool``.
 - ``ServerContext`` injected by patching ``fabric_dw.mcp._context._SERVER_CTX``
   with the shared ``mock_ctx`` fixture.
-- ``fabric_dw.services.sql_exec.get_plan`` is mocked to return a known SHOWPLAN_XML
-  string (reused from tests/unit/cli/test_plan_parse.py fixture).
+- ``fabric_dw.services.sql_exec.get_plan`` / ``.execute`` are mocked per-test.
 """
 
 from __future__ import annotations
@@ -287,3 +291,135 @@ async def test_get_query_plan_invalid_format_raises_tool_error(mock_ctx, ctx_pat
             "get_query_plan",
             {"workspace": WS_NAME, "item": WH_NAME, "query": "SELECT 1", "format": "svg"},
         )
+
+
+# ---------------------------------------------------------------------------
+# Security: raw driver exceptions must not escape the MCP boundary
+# ---------------------------------------------------------------------------
+
+
+# A fake driver exception type that is NOT a subclass of FabricError or ValueError.
+# This simulates the bare `raise` in services/sql_exec.py execute() / get_plan()
+# for unmapped driver errors that carry no ddbc_error attribute (e.g. cursor-state
+# errors, network failures, TLS errors).
+class _FakeDriverError(Exception):
+    """Simulated raw driver exception (not FabricError, not ValueError)."""
+
+    # Intentionally contains connection detail to verify it does not leak to the MCP client.
+    _INTERNAL_DETAIL = (
+        "ODBC Driver 17: [08S01] connection reset by peer;"
+        " host=wh.fabric.microsoft.com; token=Bearer eyJ..."
+    )
+
+
+_RAW_DRIVER_EXC = _FakeDriverError(_FakeDriverError._INTERNAL_DETAIL)
+# A query string used to verify the tool does not echo query text into ToolError messages.
+_SENSITIVE_QUERY = "SELECT col FROM dbo.Payments WHERE user_id = 42"
+
+
+async def test_execute_sql_raw_driver_exc_raises_tool_error(mock_ctx, ctx_patch) -> None:
+    """A raw driver exception from execute() is converted to ToolError at the tool boundary."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.sql_exec.execute",
+            new=AsyncMock(side_effect=_RAW_DRIVER_EXC),
+        ),
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "execute_sql",
+            {"workspace": WS_NAME, "item": WH_NAME, "query": _SENSITIVE_QUERY},
+        )
+
+
+async def test_execute_sql_raw_driver_exc_does_not_leak_internal_detail(
+    mock_ctx, ctx_patch
+) -> None:
+    """ToolError message from a raw driver exception must not contain the raw exception text."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.sql_exec.execute",
+            new=AsyncMock(side_effect=_RAW_DRIVER_EXC),
+        ),
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "execute_sql",
+            {"workspace": WS_NAME, "item": WH_NAME, "query": _SENSITIVE_QUERY},
+        )
+
+    err_msg = str(exc_info.value)
+    assert _FakeDriverError._INTERNAL_DETAIL not in err_msg, (
+        "raw driver exception detail must not appear in the ToolError message"
+    )
+    assert _SENSITIVE_QUERY not in err_msg, "query text must not appear in the ToolError message"
+
+
+async def test_get_query_plan_raw_driver_exc_raises_tool_error(mock_ctx, ctx_patch) -> None:
+    """A raw driver exception from get_plan() is converted to ToolError at the tool boundary."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.sql_exec.get_plan",
+            new=AsyncMock(side_effect=_RAW_DRIVER_EXC),
+        ),
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "get_query_plan",
+            {"workspace": WS_NAME, "item": WH_NAME, "query": _SENSITIVE_QUERY},
+        )
+
+
+async def test_get_query_plan_raw_driver_exc_does_not_leak_internal_detail(
+    mock_ctx, ctx_patch
+) -> None:
+    """ToolError message from a raw driver exception must not contain the raw exception text."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.sql_exec.get_plan",
+            new=AsyncMock(side_effect=_RAW_DRIVER_EXC),
+        ),
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "get_query_plan",
+            {"workspace": WS_NAME, "item": WH_NAME, "query": _SENSITIVE_QUERY},
+        )
+
+    err_msg = str(exc_info.value)
+    assert _FakeDriverError._INTERNAL_DETAIL not in err_msg, (
+        "raw driver exception detail must not appear in the ToolError message"
+    )
+    assert _SENSITIVE_QUERY not in err_msg, "query text must not appear in the ToolError message"

@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
@@ -161,8 +162,19 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             applied_dt = await snapshots.roll_timestamp(
                 target, snapshot_name, parsed_dt, mode=ctx.auth_mode
             )
-        except FabricError as exc:
-            raise fabric_err(exc) from exc
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        except Exception as exc:
+            if isinstance(exc, ToolError):
+                raise
+            # roll_timestamp uses run_statements which documents bare re-raise for
+            # unclassified driver errors — catch here at the MCP trust boundary.
+            _log.debug(
+                "roll_snapshot_timestamp: unhandled driver exception (suppressed)", exc_info=True
+            )
+            raise ToolError(
+                "Snapshot timestamp roll failed due to a driver or network error."
+            ) from exc
         return {
             "rolled": True,
             "snapshot_name": snapshot_name,

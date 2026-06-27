@@ -1021,3 +1021,102 @@ async def test_list_long_running_queries_workspace_not_allowed(ctx_patch) -> Non
             "list_long_running_queries",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
+
+
+# ---------------------------------------------------------------------------
+# Security: raw driver exceptions must not escape the MCP boundary
+# ---------------------------------------------------------------------------
+# Tools in queries.py call SQL-based services via run_query, which documents
+# "Exception: Any other driver error is propagated unchanged" for unclassified
+# driver exceptions. The tool boundary must catch and sanitise these before
+# they reach the MCP client.
+
+
+class _FakeDriverError(Exception):
+    """Simulated raw driver exception (not FabricError, not ValueError)."""
+
+    _INTERNAL_DETAIL = "ODBC 17: TDS protocol error; host=wh.fabric.microsoft.com; state=08S01"
+
+
+_RAW_DRIVER_EXC = _FakeDriverError(_FakeDriverError._INTERNAL_DETAIL)
+
+
+async def test_list_running_queries_raw_driver_exc_raises_tool_error(mock_ctx, ctx_patch) -> None:
+    """A raw driver exception from list_running is converted to ToolError."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.queries.list_running",
+            new=AsyncMock(side_effect=_RAW_DRIVER_EXC),
+        ),
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "list_running_queries",
+            {"workspace": _WS_NAME, "item": _WH_NAME},
+        )
+
+    assert _FakeDriverError._INTERNAL_DETAIL not in str(exc_info.value), (
+        "raw driver exception detail must not appear in the ToolError message"
+    )
+
+
+async def test_list_connections_raw_driver_exc_raises_tool_error(mock_ctx, ctx_patch) -> None:
+    """A raw driver exception from list_connections is converted to ToolError."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.queries.list_connections",
+            new=AsyncMock(side_effect=_RAW_DRIVER_EXC),
+        ),
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "list_connections",
+            {"workspace": _WS_NAME, "item": _WH_NAME},
+        )
+
+    assert _FakeDriverError._INTERNAL_DETAIL not in str(exc_info.value), (
+        "raw driver exception detail must not appear in the ToolError message"
+    )
+
+
+async def test_kill_session_raw_driver_exc_raises_tool_error(mock_ctx, ctx_patch) -> None:
+    """A raw driver exception from queries.kill is converted to ToolError without leaking."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.queries.kill",
+            new=AsyncMock(side_effect=_RAW_DRIVER_EXC),
+        ),
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "kill_session",
+            {"workspace": _WS_NAME, "item": _WH_NAME, "session_id": 42},
+        )
+
+    assert _FakeDriverError._INTERNAL_DETAIL not in str(exc_info.value), (
+        "raw driver exception detail must not appear in the ToolError message"
+    )
