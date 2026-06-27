@@ -1093,3 +1093,30 @@ async def test_list_connections_raw_driver_exc_raises_tool_error(mock_ctx, ctx_p
     assert _FakeDriverError._INTERNAL_DETAIL not in str(exc_info.value), (
         "raw driver exception detail must not appear in the ToolError message"
     )
+
+
+async def test_kill_session_raw_driver_exc_raises_tool_error(mock_ctx, ctx_patch) -> None:
+    """A raw driver exception from queries.kill is converted to ToolError without leaking."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.queries.kill",
+            new=AsyncMock(side_effect=_RAW_DRIVER_EXC),
+        ),
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "kill_session",
+            {"workspace": _WS_NAME, "item": _WH_NAME, "session_id": 42},
+        )
+
+    assert _FakeDriverError._INTERNAL_DETAIL not in str(exc_info.value), (
+        "raw driver exception detail must not appear in the ToolError message"
+    )

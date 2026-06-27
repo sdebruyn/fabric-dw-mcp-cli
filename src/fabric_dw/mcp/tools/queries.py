@@ -113,6 +113,11 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             await queries.kill(target, session_id, mode=ctx.auth_mode)
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
+        except Exception as exc:
+            if isinstance(exc, ToolError):
+                raise
+            _log.debug("kill_session: unhandled driver exception (suppressed)", exc_info=True)
+            raise ToolError("Session kill failed due to a driver or network error.") from exc
         return {"killed": True, "session_id": session_id}
 
     @mcp.tool(name="list_request_history")
