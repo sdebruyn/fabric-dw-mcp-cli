@@ -183,6 +183,23 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 # secret and identity are intentionally excluded from this log call
             )
             sql_target = make_sql_target(ws_id, entry, item)
+
+            # Pre-check: COPY INTO gives a raw "Invalid object name" error when the
+            # target table is absent. Raise a friendly message instead.
+            from mcp.server.fastmcp.exceptions import (  # noqa: PLC0415
+                ToolError as _ToolError,
+            )
+
+            from fabric_dw.services.load import table_exists  # noqa: PLC0415
+
+            if not await table_exists(sql_target, schema, table_name, mode=ctx.auth_mode):
+                raise _ToolError(
+                    f"Table [{schema}].[{table_name}] does not exist; "
+                    "remote-URL load cannot infer schema. "
+                    "Create the table first with create_empty_table or create_table, "
+                    "then retry."
+                )
+
             result = await copy_into_from_url(
                 sql_target,
                 schema,
@@ -439,8 +456,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                         "to infer schema. Use the CLI "
                         "'tables load --file --create --if-exists replace' instead."
                     )
-                # "fail" or "append" on absent table: proceed; COPY INTO will raise a
-                # clear SQL error if the table truly does not exist.
+                if if_exists in ("fail", "append"):
+                    raise _ToolError(
+                        f"Table [{schema}].[{table_name}] does not exist; "
+                        "remote-URL load cannot infer schema. "
+                        "Create the table first with create_empty_table or create_table, "
+                        "then retry."
+                    )
 
             result = await copy_into_from_url(
                 sql_target,
