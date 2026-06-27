@@ -8,14 +8,14 @@ title: Install
 
 Pick your path:
 
-- **[Install the CLI](#cli)** — drive Fabric from a terminal.
-- **[Install the MCP server](#mcp)** — wire Fabric tools into an AI assistant (Claude Code, Cursor, GitHub Copilot, Continue, Codex).
-- **Both** — follow the [Prerequisites](#prerequisites) and [Authentication](#authentication) sections once, then complete each install section below.
+- **[Install the CLI](#cli)**: drive Fabric from a terminal.
+- **[Install the MCP server](#mcp)**: wire Fabric tools into an AI assistant (Claude Code, Cursor, GitHub Copilot, Continue, Codex).
+- **Both**: follow the [Prerequisites](#prerequisites) and [Authentication](#authentication) sections once, then complete each install section below.
 
 ## Prerequisites
 
 - Python 3.11 or later.
-- An Azure credential. The package picks one up automatically — see [Authentication](#authentication).
+- An Azure credential. The package picks one up automatically; see [Authentication](#authentication).
 
 ## Authentication {#authentication}
 
@@ -23,7 +23,7 @@ Both surfaces resolve a credential the same way. `fabric-dw` selects a credentia
 
 | `FABRIC_AUTH` value | What it uses |
 | --- | --- |
-| `default` (default) | [`azure-identity` `DefaultAzureCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.defaultazurecredential?WT.mc_id=MVP_310840) — tries environment variables, Workload/Managed Identity, Azure CLI, Azure Developer CLI, Azure PowerShell, and interactive browser in order |
+| `default` (default) | [`azure-identity` `DefaultAzureCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.defaultazurecredential?WT.mc_id=MVP_310840): tries environment variables, Workload/Managed Identity, Azure CLI, Azure Developer CLI, Azure PowerShell, and interactive browser in order |
 | `sp` | Service-principal (`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`) |
 | `interactive` | Browser pop-up |
 
@@ -37,6 +37,8 @@ pip install fabric-dw
 uvx fabric-dw --help
 ```
 
+[`uvx`](https://docs.astral.sh/uv/guides/tools/) fetches and runs the published package on demand without a global install. No setup is required beyond having `uv` available.
+
 ### Verify
 
 After installation, confirm the CLI is available:
@@ -48,13 +50,13 @@ fdw --help
 You should see the top-level help output listing available commands.
 
 !!! tip "Short alias"
-    `fdw` is an equivalent short alias for `fabric-dw` — both commands invoke the same entry point.
+    `fdw` is an equivalent short alias for `fabric-dw`; both commands invoke the same entry point.
 
 ## Install the MCP server {#mcp}
 
 `fabric-dw-mcp` is an [MCP](https://modelcontextprotocol.io) server that exposes Fabric Data Warehouse administration as tools your AI assistant can call. Pick your client below.
 
-### TL;DR — uvx
+### TL;DR: uvx
 
 The recommended runner is [`uvx`](https://docs.astral.sh/uv/guides/tools/), which fetches and runs the published package on demand without any global install:
 
@@ -66,7 +68,7 @@ Every client snippet below configures `uvx fabric-dw-mcp` as the entry point, so
 
 You will also need an Azure credential the server can use to call the Fabric REST and SQL APIs. Set the `FABRIC_AUTH` environment variable to select a source (see [Authentication](#authentication) above):
 
-- `FABRIC_AUTH=default` (default) — delegates to [`azure-identity` `DefaultAzureCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.defaultazurecredential?WT.mc_id=MVP_310840), which tries environment variables, Workload/Managed Identity, Azure CLI, Azure Developer CLI, Azure PowerShell, and interactive browser in order.
+- `FABRIC_AUTH=default` (default): delegates to [`azure-identity` `DefaultAzureCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.defaultazurecredential?WT.mc_id=MVP_310840), which tries environment variables, Workload/Managed Identity, Azure CLI, Azure Developer CLI, Azure PowerShell, and interactive browser in order.
 - `FABRIC_AUTH=sp` plus `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` for service-principal auth.
 - `FABRIC_AUTH=interactive` to force browser sign-in.
 
@@ -369,15 +371,15 @@ The MCP server reads the following environment variables to restrict what it may
 |---|---|---|
 | `FABRIC_MCP_READONLY` | unset | Set to `1` to restrict `execute_sql` to SELECT/WITH and block all mutating tools. |
 | `FABRIC_MCP_ALLOW_DESTRUCTIVE` | unset | Set to `1` to enable permanently-destructive tools (`delete_*`, `clear_table`, `restore_warehouse_in_place`). Disabled by default. |
-| `FABRIC_MCP_WORKSPACES` | unset | Comma-separated workspace names or GUIDs the server may touch. Highest-priority layer of the workspace allowlist knob — see below. An empty or whitespace-only value is treated as absent (falls through to the config layer). |
+| `FABRIC_MCP_WORKSPACES` | unset | Comma-separated workspace names or GUIDs the server may touch. Highest-priority layer of the workspace allowlist knob; see below. An empty or whitespace-only value is treated as absent (falls through to the config layer). |
 | `FABRIC_MCP_ALLOW_REMOTE` | unset | Set to `1` to allow the HTTP transport (`--transport http`) to bind on a non-loopback address. Always front with an authenticating reverse proxy that handles TLS. |
 
 #### Workspace allowlist
 
 `FABRIC_MCP_WORKSPACES` is the highest-priority layer of a 3-layer workspace allowlist knob. Resolution order (highest first):
 
-1. `FABRIC_MCP_WORKSPACES` env var — an empty or whitespace-only value falls through to layer 2.
-2. `[mcp] workspace_allowlist` in `config.toml`, set via `fdw config set mcp workspace-allowlist` — an empty array `[]` falls through to layer 3.
+1. `FABRIC_MCP_WORKSPACES` env var: an empty or whitespace-only value falls through to layer 2.
+2. `[mcp] workspace_allowlist` in `config.toml`, set via `fdw config set mcp workspace-allowlist`: an empty array `[]` falls through to layer 3.
 3. Built-in default: no restriction (all workspaces allowed).
 
 An empty list at any layer is **not** treated as "block everything"; it falls through to the next layer. This prevents an accidental `FABRIC_MCP_WORKSPACES=` from locking out all workspaces. See [MCP workspace allowlist](commands/config.md#mcp-workspace-allowlist) for the config knob.
@@ -390,7 +392,7 @@ The MCP server log level is resolved in priority order: `FABRIC_LOG_LEVEL` env v
 |---|---|---|
 | `FABRIC_LOG_LEVEL` | `INFO` | Log level for the MCP server (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`). Empty or unrecognised values fall through to the config/default layer with a warning. |
 
-To persist the log level across restarts without setting an env var each time, use the config knob — see [MCP server log level](commands/config.md#mcp-server-log-level).
+To persist the log level across restarts without setting an env var each time, use the config knob; see [MCP server log level](commands/config.md#mcp-server-log-level).
 
 ### HTTP transport
 
@@ -400,7 +402,7 @@ The MCP server can be started in HTTP mode for remote clients:
 fabric-dw-mcp --transport http [--host 127.0.0.1] [--port 8000]
 ```
 
-Binding to non-loopback addresses requires `FABRIC_MCP_ALLOW_REMOTE=1`. The HTTP transport has **no built-in authentication or TLS** — always front it with an authenticating reverse proxy.
+Binding to non-loopback addresses requires `FABRIC_MCP_ALLOW_REMOTE=1`. The HTTP transport has **no built-in authentication or TLS** - always front it with an authenticating reverse proxy.
 
 ### Verify the MCP server
 
@@ -410,7 +412,7 @@ After configuring your client, restart it and ask the assistant to list its avai
 
 - **Permission denied calling Fabric**: run `az account show` and confirm your account has at least Workspace Contributor on the target Fabric workspace.
 - **`uv: command not found`**: install uv from <https://docs.astral.sh/uv/>.
-- **`uvx: command not found`**: `uvx` ships with uv — install uv and it will be available.
+- **`uvx: command not found`**: `uvx` ships with uv; install uv and it will be available.
 - **Server hangs at startup**: the server is likely waiting for a credential to be resolved. Ensure your Azure credential is set up (see [Authentication](authentication.md)) before starting your assistant.
 - **Tools not visible in Copilot Chat**: ensure you are in **Agent** mode, not Ask or Edit mode.
 - **Tools not visible in Continue**: ensure you are in **Agent** mode.

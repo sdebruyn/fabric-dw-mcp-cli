@@ -8,9 +8,14 @@ title: Home
 
 # fabric-dw
 
+<p align="center">
+  <a href="https://pypi.org/project/fabric-dw/"><img src="https://img.shields.io/pypi/v/fabric-dw" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/fabric-dw/"><img src="https://img.shields.io/pypi/pyversions/fabric-dw" alt="Python versions"></a>
+</p>
+
 > Python CLI + MCP server for Microsoft Fabric Data Warehouse administration.
 
-`fabric-dw` is an open-source Python project that lets you administer Microsoft Fabric Data Warehouses and SQL Analytics Endpoints from the command line or from an AI assistant. It authenticates via the Azure credential chain — Azure CLI, Managed Identity, service principal, environment variables, and more — so it works in both local and automated environments without additional setup. See [Authentication](authentication.md) for the full chain.
+`fabric-dw` is an open-source Python project that lets you administer Microsoft Fabric Data Warehouses and SQL Analytics Endpoints from the command line or from an AI assistant. It authenticates via the Azure credential chain, Azure CLI, Managed Identity, service principal, environment variables, and more, so it works in both local and automated environments without additional setup. See [Authentication](authentication.md) for the full chain.
 
 Both the CLI and the MCP server surfaces are built from a single Python package and share the same authentication, connection, and business logic layers. This means fixes and new features land in both interfaces simultaneously, and you only need to install one package regardless of how you plan to use it.
 
