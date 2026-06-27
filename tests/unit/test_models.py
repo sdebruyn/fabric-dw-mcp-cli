@@ -697,11 +697,22 @@ class TestWarehouseFlatteningParametric:
         The Fabric REST API returns the collation under properties.collationType.
         Previously the model read properties.defaultCollation (which the API never sends),
         causing the collation to always fall back to FABRIC_DEFAULT_COLLATION.
+
+        The expected collation must differ from FABRIC_DEFAULT_COLLATION so this
+        test fails when the model fix is reverted (a None lookup of the missing key
+        coerces to the default, masking the bug if default == expected).
         """
-        payload = json.loads(WAREHOUSE_GET_PAYLOAD)
-        expected_collation = payload["properties"]["collationType"]
+        ci_collation = "Latin1_General_100_CI_AS_KS_WS_SC_UTF8"
+        assert ci_collation != FABRIC_DEFAULT_COLLATION, (
+            "test precondition: ci_collation must differ from the built-in default"
+        )
+        base = json.loads(WAREHOUSE_GET_PAYLOAD)
+        payload = {
+            **base,
+            "properties": {**base["properties"], "collationType": ci_collation},
+        }
         obj = Warehouse.from_api(payload, kind=WarehouseKind.WAREHOUSE)
-        assert obj.collation == expected_collation
+        assert obj.collation == ci_collation
 
 
 # ---------------------------------------------------------------------------
