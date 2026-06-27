@@ -221,6 +221,28 @@ class TestAuditSettings:
         with pytest.raises(ValidationError):
             obj.state = "Disabled"
 
+    def test_partial_body_omits_retention_days_defaults_to_zero(self) -> None:
+        """A GET body that omits retentionDays must deserialize without raising.
+
+        The Fabric sqlAudit endpoint may return a partial body.  Per Microsoft
+        Learn, retentionDays defaults to 0 (unlimited).  Regression guard for
+        #853: the field was previously required, causing ValidationError on
+        partial GET responses.
+        """
+        obj = AuditSettings.model_validate({"state": "Disabled"})
+        assert obj.retention_days == 0
+
+    def test_explicit_retention_days_is_honoured(self) -> None:
+        """An explicit retentionDays value in the body must not be overridden by the default."""
+        obj = AuditSettings.model_validate({"state": "Enabled", "retentionDays": 90})
+        assert obj.retention_days == 90
+
+    def test_partial_body_empty_dict_only_state(self) -> None:
+        """Partial body with only state (no retentionDays or auditActionsAndGroups) deserializes."""
+        obj = AuditSettings.model_validate({"state": "Enabled"})
+        assert obj.retention_days == 0
+        assert obj.action_groups == []
+
 
 class TestRunningQuery:
     def test_round_trip(self) -> None:

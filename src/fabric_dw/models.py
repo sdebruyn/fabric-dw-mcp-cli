@@ -278,10 +278,19 @@ class RestorePoint(_FabricBase):
 
 
 class AuditSettings(_FabricBase):
-    """Auditing configuration for a Warehouse."""
+    """Auditing configuration for a Warehouse.
+
+    The ``retentionDays`` field is optional in the Fabric sqlAudit REST API: the
+    endpoint may return a partial or empty body that omits the field entirely.
+    Per Microsoft Learn, ``retentionDays`` defaults to ``0``, which means
+    unlimited retention.  This default is mirrored here so a partial GET body
+    deserializes without raising ``ValidationError``.
+
+    Source: https://learn.microsoft.com/fabric/data-warehouse/configure-sql-audit-logs
+    """
 
     state: Literal["Enabled", "Disabled"]
-    retention_days: int = Field(alias="retentionDays")
+    retention_days: int = Field(default=0, alias="retentionDays")
     action_groups: list[str] = Field(default_factory=list, alias="auditActionsAndGroups")
 
 
