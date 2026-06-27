@@ -20,7 +20,14 @@ from fabric_dw.exceptions import (
     NotFoundError,
     PermissionDeniedError,
 )
-from fabric_dw.models import ColumnSpec, Table, WarehouseKind
+from fabric_dw.models import (
+    ClusterColumn,
+    ColumnSpec,
+    ResultSet,
+    Table,
+    TableRowCount,
+    WarehouseKind,
+)
 from fabric_dw.services import tables
 from fabric_dw.services.tables import validate_identifier
 from tests.unit.services._helpers import (
@@ -380,15 +387,27 @@ class TestListTables:
 
 
 class TestReadTable:
-    async def test_returns_columns_and_rows(self) -> None:
+    async def test_returns_result_set(self) -> None:
         target = _make_target()
         cols = ["id", "name"]
         rows: list[tuple[object, ...]] = [(1, "Alice"), (2, "Bob")]
         conn = _make_conn(rows, cols)
         with patch("fabric_dw.sql.open_connection", return_value=conn):
-            result_cols, result_rows = await tables.read_table(target, "dbo", "sales")
-        assert result_cols == cols
-        assert list(result_rows) == rows
+            result = await tables.read_table(target, "dbo", "sales")
+        assert isinstance(result, ResultSet)
+        assert result.columns == cols
+        assert list(result.rows) == rows
+
+    async def test_returns_columns_and_rows(self) -> None:
+        """Accessor attributes on ResultSet match the raw query output."""
+        target = _make_target()
+        cols = ["id", "name"]
+        rows: list[tuple[object, ...]] = [(1, "Alice"), (2, "Bob")]
+        conn = _make_conn(rows, cols)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await tables.read_table(target, "dbo", "sales")
+        assert result.columns == cols
+        assert list(result.rows) == rows
 
     async def test_sql_uses_select_top(self) -> None:
         target = _make_target()
@@ -460,19 +479,29 @@ class TestReadTable:
 
 
 class TestCountTableRows:
+    async def test_returns_table_row_count_model(self) -> None:
+        target = _make_target()
+        conn = _make_conn([(42,)], ["row_count"])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await tables.count_table_rows(target, "dbo", "sales")
+        assert isinstance(result, TableRowCount)
+        assert result.schema_name == "dbo"
+        assert result.name == "sales"
+        assert result.row_count == 42
+
     async def test_returns_row_count(self) -> None:
         target = _make_target()
         conn = _make_conn([(42,)], ["row_count"])
         with patch("fabric_dw.sql.open_connection", return_value=conn):
             result = await tables.count_table_rows(target, "dbo", "sales")
-        assert result == 42
+        assert result.row_count == 42
 
     async def test_returns_zero_for_empty_table(self) -> None:
         target = _make_target()
         conn = _make_conn([(0,)], ["row_count"])
         with patch("fabric_dw.sql.open_connection", return_value=conn):
             result = await tables.count_table_rows(target, "dbo", "sales")
-        assert result == 0
+        assert result.row_count == 0
 
     async def test_sql_uses_count_big(self) -> None:
         target = _make_target()
@@ -531,13 +560,29 @@ class TestCountTableRows:
 
 
 class TestGetClusterColumns:
-    async def test_returns_columns_ordered_by_ordinal(self) -> None:
+    async def test_returns_cluster_column_instances(self) -> None:
         target = _make_target()
         rows: list[tuple[object, ...]] = [("city", 1), ("country", 2)]
         conn = _make_conn(rows, ["column_name", "clustering_ordinal"])
         with patch("fabric_dw.sql.open_connection", return_value=conn):
             result = await tables.get_cluster_columns(target, "dbo", "sales")
-        assert result == [
+        assert len(result) == 2
+        assert isinstance(result[0], ClusterColumn)
+        assert result[0].column_name == "city"
+        assert result[0].clustering_ordinal == 1
+        assert isinstance(result[1], ClusterColumn)
+        assert result[1].column_name == "country"
+        assert result[1].clustering_ordinal == 2
+
+    async def test_returns_columns_ordered_by_ordinal(self) -> None:
+        """model_dump output matches the previous dict shape byte-for-byte."""
+        target = _make_target()
+        rows: list[tuple[object, ...]] = [("city", 1), ("country", 2)]
+        conn = _make_conn(rows, ["column_name", "clustering_ordinal"])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await tables.get_cluster_columns(target, "dbo", "sales")
+        dumped = [c.model_dump(mode="json") for c in result]
+        assert dumped == [
             {"column_name": "city", "clustering_ordinal": 1},
             {"column_name": "country", "clustering_ordinal": 2},
         ]
@@ -604,6 +649,113 @@ class TestGetClusterColumns:
             pytest.raises(PermissionDeniedError),
         ):
             await tables.get_cluster_columns(target, "dbo", "sales")
+
+
+# ===========================================================================
+# ResultSet native-type fidelity
+# ===========================================================================
+
+
+class TestResultSetNativeTypeFidelity:
+    """Verify that ResultSet stores native driver types without pydantic coercion.
+
+    The critical requirement: datetime, Decimal, and bytes values passed into
+    ResultSet must come out of .rows as the exact same Python objects (pydantic
+    must not coerce them to str or any other type).  Downstream consumers
+    (columns_rows_to_arrow, safe_rows) depend on receiving the raw driver types.
+    """
+
+    def test_datetime_preserved(self) -> None:
+        from datetime import UTC, datetime  # noqa: PLC0415
+
+        dt = datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC)
+        rs = ResultSet(columns=["ts"], rows=[(dt,)])
+        assert rs.rows[0][0] is dt
+        assert type(rs.rows[0][0]) is datetime  # type: ignore[comparison-overlap]
+
+    def test_decimal_preserved(self) -> None:
+        from decimal import Decimal  # noqa: PLC0415
+
+        dec = Decimal("3.14159")
+        rs = ResultSet(columns=["amount"], rows=[(dec,)])
+        assert rs.rows[0][0] is dec
+        assert type(rs.rows[0][0]) is Decimal  # type: ignore[comparison-overlap]
+
+    def test_bytes_preserved(self) -> None:
+        raw = b"\x00\x01\x02\xde\xad\xbe\xef"
+        rs = ResultSet(columns=["blob"], rows=[(raw,)])
+        assert rs.rows[0][0] is raw
+        assert type(rs.rows[0][0]) is bytes  # type: ignore[comparison-overlap]
+
+    def test_mixed_row_native_types_preserved(self) -> None:
+        """Round-trip a row with datetime + Decimal + bytes through ResultSet."""
+        from datetime import UTC, datetime  # noqa: PLC0415
+        from decimal import Decimal  # noqa: PLC0415
+
+        dt = datetime(2024, 1, 15, 8, 30, 0, tzinfo=UTC)
+        dec = Decimal("99.99")
+        raw = b"\xca\xfe\xba\xbe"
+        rs = ResultSet(
+            columns=["ts", "amount", "data__base64"],
+            rows=[(dt, dec, raw)],
+        )
+        row = rs.rows[0]
+        assert row[0] is dt
+        assert row[1] is dec
+        assert row[2] is raw
+
+    def test_round_trip_through_columns_rows_to_arrow(self) -> None:
+        """columns_rows_to_arrow must materialise Arrow columns with correct types."""
+        from datetime import UTC, datetime  # noqa: PLC0415
+        from decimal import Decimal  # noqa: PLC0415
+
+        import pyarrow as pa  # noqa: PLC0415
+
+        from fabric_dw.sql_io import columns_rows_to_arrow  # noqa: PLC0415
+
+        dt = datetime(2024, 6, 15, 10, 0, 0, tzinfo=UTC)
+        dec = Decimal("1.50")
+        raw = b"\xff\x00"
+        rs = ResultSet(
+            columns=["ts", "amount", "data__base64"],
+            rows=[(dt, dec, raw)],
+        )
+        arrow_table = columns_rows_to_arrow(rs.columns, rs.rows)  # type: ignore[arg-type]
+        # datetime column — Arrow must represent it as a temporal type, not string.
+        ts_col = arrow_table.column("ts")
+        assert pa.types.is_temporal(ts_col.type), f"expected temporal type, got {ts_col.type}"
+        # Decimal column — Arrow should produce a numeric type.
+        amount_col = arrow_table.column("amount")
+        assert (
+            pa.types.is_floating(amount_col.type)
+            or pa.types.is_decimal(amount_col.type)
+            or pa.types.is_large_string(amount_col.type)
+            or pa.types.is_string(amount_col.type)
+        ), f"unexpected Arrow type for Decimal: {amount_col.type}"
+        # bytes column — Arrow should produce a binary type or fall back to string.
+        blob_col = arrow_table.column("data__base64")
+        assert (
+            pa.types.is_binary(blob_col.type)
+            or pa.types.is_large_binary(blob_col.type)
+            or pa.types.is_string(blob_col.type)
+        ), f"unexpected Arrow type for bytes: {blob_col.type}"
+
+    def test_round_trip_through_safe_rows_base64(self) -> None:
+        """safe_rows must base64-encode bytes and leave datetime/Decimal as strings."""
+        import base64  # noqa: PLC0415
+        from decimal import Decimal  # noqa: PLC0415
+
+        from fabric_dw.mcp._helpers import safe_rows  # noqa: PLC0415
+
+        raw = b"\xde\xad\xbe\xef"
+        dec = Decimal("7.77")
+        rs = ResultSet(columns=["data__base64", "amount"], rows=[(raw, dec)])
+        serialised = safe_rows(rs.rows)  # type: ignore[arg-type]
+        row = serialised[0]
+        # bytes -> base64 string
+        assert row[0] == base64.b64encode(raw).decode("ascii")
+        # Decimal -> str (safe_rows delegates to json_safe which str()-ifies Decimals)
+        assert row[1] == str(dec)
 
 
 # ===========================================================================
@@ -2378,6 +2530,23 @@ class TestGetTableHealthMetrics:
         call_sql: str = cursor.execute.call_args[0][0]
         assert call_sql == "EXEC sp_get_table_health_metrics 'sales.Transactions'"
 
+    async def test_returns_result_set(self) -> None:
+        """Returns a ResultSet (generic passthrough); columns and rows are preserved."""
+        target = _make_target()
+        fake_cols = ["col_a", "col_b", "col_c"]
+        fake_rows: list[tuple[object, ...]] = [("v1", 42, True), ("v2", 0, False)]
+        conn = _make_conn(fake_rows, fake_cols)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await tables.get_table_health_metrics(
+                target,
+                "dbo",
+                "FactSales",
+                kind=WarehouseKind.SQL_ENDPOINT,
+            )
+        assert isinstance(result, ResultSet)
+        assert result.columns == fake_cols
+        assert result.rows == fake_rows
+
     async def test_returns_columns_and_rows(self) -> None:
         """Columns and rows are returned as-is (generic passthrough)."""
         target = _make_target()
@@ -2385,27 +2554,27 @@ class TestGetTableHealthMetrics:
         fake_rows: list[tuple[object, ...]] = [("v1", 42, True), ("v2", 0, False)]
         conn = _make_conn(fake_rows, fake_cols)
         with patch("fabric_dw.sql.open_connection", return_value=conn):
-            result_cols, result_rows = await tables.get_table_health_metrics(
+            result = await tables.get_table_health_metrics(
                 target,
                 "dbo",
                 "FactSales",
                 kind=WarehouseKind.SQL_ENDPOINT,
             )
-        assert result_cols == fake_cols
-        assert result_rows == fake_rows
+        assert result.columns == fake_cols
+        assert result.rows == fake_rows
 
     async def test_returns_empty_rows_when_proc_returns_nothing(self) -> None:
         """An empty result set is valid (no rows, but columns may be present)."""
         target = _make_target()
         conn = _make_conn([], [])
         with patch("fabric_dw.sql.open_connection", return_value=conn):
-            _cols, rows = await tables.get_table_health_metrics(
+            result = await tables.get_table_health_metrics(
                 target,
                 "dbo",
                 "FactSales",
                 kind=WarehouseKind.SQL_ENDPOINT,
             )
-        assert rows == []
+        assert result.rows == []
 
     async def test_warehouse_kind_raises_item_kind_error(self) -> None:
         """Passing a Warehouse kind raises ItemKindError (inverse guard)."""
@@ -2483,19 +2652,19 @@ class TestGetTableHealthMetrics:
         target = _make_target()
         conn = _make_conn(fake_driver_rows, fake_cols)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         with patch("fabric_dw.sql.open_connection", return_value=conn):
-            result_cols, result_rows = await tables.get_table_health_metrics(
+            result = await tables.get_table_health_metrics(
                 target,
                 "dbo",
                 "FactSales",
                 kind=WarehouseKind.SQL_ENDPOINT,
             )
 
-        assert result_cols == fake_cols
-        assert len(result_rows) == 2
-        for row in result_rows:
+        assert result.columns == fake_cols
+        assert len(result.rows) == 2
+        for row in result.rows:
             assert isinstance(row, tuple), f"each row must be a tuple, got {type(row)}: {row!r}"
-        assert result_rows[0] == (1, "alpha", None)
-        assert result_rows[1] == (2, "beta", 3.14)
+        assert result.rows[0] == (1, "alpha", None)
+        assert result.rows[1] == (2, "beta", 3.14)
 
 
 # ===========================================================================
@@ -2508,15 +2677,15 @@ class TestReadTableRowNormalisation:
     """Tests for :func:`tables.read_table` — ensures real tuples are returned (#718)."""
 
     async def test_returns_columns_and_rows(self) -> None:
-        """Basic smoke: columns and row values are returned correctly."""
+        """Basic smoke: columns and row values are returned correctly via ResultSet."""
         target = _make_target()
         cols = ["id", "name"]
         rows: list[tuple[object, ...]] = [(1, "Alice"), (2, "Bob")]
         conn = _make_conn(rows, cols)
         with patch("fabric_dw.sql.open_connection", return_value=conn):
-            result_cols, result_rows = await tables.read_table(target, "dbo", "my_table")
-        assert result_cols == cols
-        assert list(result_rows) == rows
+            result = await tables.read_table(target, "dbo", "my_table")
+        assert result.columns == cols
+        assert list(result.rows) == rows
 
     async def test_driver_row_objects_are_normalised_to_tuples(self) -> None:
         """Row objects (non-tuple) returned by the driver become real tuples.
@@ -2533,14 +2702,14 @@ class TestReadTableRowNormalisation:
         # run_query's central normalisation will convert them to real tuples.
         conn = _make_conn(fake_driver_rows, cols)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         with patch("fabric_dw.sql.open_connection", return_value=conn):
-            result_cols, result_rows = await tables.read_table(target, "dbo", "my_table")
+            result = await tables.read_table(target, "dbo", "my_table")
 
-        assert result_cols == cols
-        assert len(result_rows) == 2
-        for row in result_rows:
+        assert result.columns == cols
+        assert len(result.rows) == 2
+        for row in result.rows:
             assert type(row) is tuple, f"expected tuple, got {type(row)}: {row!r}"
-        assert result_rows[0] == (1, "alpha", 3.14)
-        assert result_rows[1] == (2, "beta", None)
+        assert result.rows[0] == (1, "alpha", 3.14)
+        assert result.rows[1] == (2, "beta", None)
 
     async def test_raises_not_found_when_no_columns(self) -> None:
         """Empty column metadata raises NotFoundError (mirrors read_table contract)."""

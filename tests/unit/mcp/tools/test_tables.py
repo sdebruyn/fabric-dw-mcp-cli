@@ -23,7 +23,7 @@ import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw.exceptions import ItemKindError, NotFoundError
-from fabric_dw.models import Table, WarehouseKind
+from fabric_dw.models import ClusterColumn, ResultSet, Table, TableRowCount, WarehouseKind
 from tests.unit.mcp.conftest import (
     WH_NAME,
     WS_ID,
@@ -177,7 +177,9 @@ async def test_read_table_happy_path(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch(
             "fabric_dw.services.tables.read_table",
-            new=AsyncMock(return_value=(["id", "name"], [[1, "foo"], [2, "bar"]])),
+            new=AsyncMock(
+                return_value=ResultSet(columns=["id", "name"], rows=[(1, "foo"), (2, "bar")])
+            ),
         ),
     ):
         result = await mcp._tool_manager.call_tool(
@@ -197,7 +199,7 @@ async def test_read_table_with_count(mock_ctx, ctx_patch) -> None:
     item = make_item_entry()
     mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
     mock_ctx.resolver.item = AsyncMock(return_value=item)
-    mock_read = AsyncMock(return_value=(["id"], [[42]]))
+    mock_read = AsyncMock(return_value=ResultSet(columns=["id"], rows=[(42,)]))
 
     with (
         ctx_patch,
@@ -589,7 +591,9 @@ async def test_count_table_rows_happy_path(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch(
             "fabric_dw.services.tables.count_table_rows",
-            new=AsyncMock(return_value=42),
+            new=AsyncMock(
+                return_value=TableRowCount(schema_name="dbo", name="sales", row_count=42)
+            ),
         ),
     ):
         result = await mcp._tool_manager.call_tool(
@@ -598,7 +602,8 @@ async def test_count_table_rows_happy_path(mock_ctx, ctx_patch) -> None:
         )
 
     assert isinstance(result, dict)
-    assert result["schema"] == "dbo"
+    # schema_name replaces the legacy "schema" key (deliberate behaviour change)
+    assert result["schema_name"] == "dbo"
     assert result["name"] == "sales"
     assert result["row_count"] == 42
 
@@ -666,7 +671,12 @@ async def test_get_cluster_columns_happy_path(mock_ctx, ctx_patch) -> None:
     item = make_item_entry()
     mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
     mock_ctx.resolver.item = AsyncMock(return_value=item)
-    expected = [
+    # service now returns ClusterColumn instances; tool converts to dicts via model_dump
+    service_result = [
+        ClusterColumn(column_name="city", clustering_ordinal=1),
+        ClusterColumn(column_name="country", clustering_ordinal=2),
+    ]
+    expected_dicts = [
         {"column_name": "city", "clustering_ordinal": 1},
         {"column_name": "country", "clustering_ordinal": 2},
     ]
@@ -675,7 +685,7 @@ async def test_get_cluster_columns_happy_path(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch(
             "fabric_dw.services.tables.get_cluster_columns",
-            new=AsyncMock(return_value=expected),
+            new=AsyncMock(return_value=service_result),
         ),
     ):
         result = await mcp._tool_manager.call_tool(
@@ -683,7 +693,7 @@ async def test_get_cluster_columns_happy_path(mock_ctx, ctx_patch) -> None:
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.sales"},
         )
 
-    assert result == expected
+    assert result == expected_dicts
 
 
 async def test_get_cluster_columns_empty_result(mock_ctx, ctx_patch) -> None:
@@ -889,7 +899,7 @@ async def test_get_table_health_metrics_is_not_mutating(
         ctx_patch,
         patch(
             "fabric_dw.services.tables.get_table_health_metrics",
-            new=AsyncMock(return_value=([], [])),
+            new=AsyncMock(return_value=ResultSet(columns=[], rows=[])),
         ),
     ):
         # Must NOT raise ToolError — read-only tools don't check writes_allowed.
@@ -909,7 +919,7 @@ async def test_get_table_health_metrics_happy_path(mock_ctx, ctx_patch) -> None:
 
     fake_cols = ["issue_type", "severity"]
     fake_rows: list[tuple[object, ...]] = [("small_files", "medium")]
-    mock_svc = AsyncMock(return_value=(fake_cols, fake_rows))
+    mock_svc = AsyncMock(return_value=ResultSet(columns=fake_cols, rows=fake_rows))
 
     with (
         ctx_patch,
@@ -931,7 +941,7 @@ async def test_get_table_health_metrics_forwards_qualified_name(mock_ctx, ctx_pa
 
     mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
     mock_ctx.resolver.item = AsyncMock(return_value=make_sql_endpoint_entry())
-    mock_svc = AsyncMock(return_value=([], []))
+    mock_svc = AsyncMock(return_value=ResultSet(columns=[], rows=[]))
 
     with (
         ctx_patch,

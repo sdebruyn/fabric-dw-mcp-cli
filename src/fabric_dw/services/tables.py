@@ -41,7 +41,14 @@ if TYPE_CHECKING:
 from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import FabricError, ItemKindError, NotFoundError
 from fabric_dw.identifiers import parse_qualified_name, quote_identifier, validate_identifier
-from fabric_dw.models import ColumnSpec, Table, WarehouseKind
+from fabric_dw.models import (
+    ClusterColumn,
+    ColumnSpec,
+    ResultSet,
+    Table,
+    TableRowCount,
+    WarehouseKind,
+)
 from fabric_dw.services._helpers import _assert_not_sql_endpoint, coerce_to_utc, reject_non_select
 from fabric_dw.sql import SqlTarget, run_query, run_statements
 from fabric_dw.types import arrow_type_to_tsql, validate_tsql_type
@@ -231,11 +238,14 @@ async def read_table(
     *,
     count: int = 10,
     mode: CredentialMode = CredentialMode.DEFAULT,
-) -> tuple[list[str], list[tuple[object, ...]]]:
+) -> ResultSet:
     """Return up to *count* rows from *schema*.*table_name*.
 
-    The result is a ``(columns, rows)`` pair suitable for passing to
-    :mod:`fabric_dw.sql_io` for materialisation via Arrow.
+    The result is a :class:`~fabric_dw.models.ResultSet` with native driver
+    types preserved (``datetime``, ``Decimal``, ``bytes`` are NOT coerced).
+    Pass ``result.columns`` and ``result.rows`` to
+    :func:`~fabric_dw.sql_io.columns_rows_to_arrow` or
+    :func:`~fabric_dw.mcp._helpers.safe_rows` as needed.
 
     Args:
         target: The warehouse to query.
@@ -245,8 +255,7 @@ async def read_table(
         mode: The credential mode for Entra authentication.
 
     Returns:
-        A ``(columns, rows)`` tuple where *columns* is a list of column name
-        strings and *rows* is a list of row tuples.
+        A :class:`~fabric_dw.models.ResultSet` with ``columns`` and ``rows``.
 
     Raises:
         ValueError: If *schema* or *table_name* fails identifier validation.
@@ -262,12 +271,12 @@ async def read_table(
         table_q=quote_identifier(table_name),
     )
 
-    def _run() -> tuple[list[str], list[tuple[object, ...]]]:
+    def _run() -> ResultSet:
         cols, rows = run_query(target, read_sql, mode=mode)
         if not cols:
             msg = f"Table [{schema}].[{table_name}] not found"
             raise NotFoundError(msg)
-        return cols, list(rows)
+        return ResultSet(columns=cols, rows=list(rows))
 
     return await asyncio.to_thread(_run)
 
@@ -278,7 +287,7 @@ async def count_table_rows(
     table_name: str,
     *,
     mode: CredentialMode = CredentialMode.DEFAULT,
-) -> int:
+) -> TableRowCount:
     """Return the total row count of *schema*.*table_name* via ``COUNT_BIG(*)``.
 
     Uses ``COUNT_BIG(*)`` rather than ``COUNT(*)`` to avoid integer overflow on
@@ -291,7 +300,8 @@ async def count_table_rows(
         mode: The credential mode for Entra authentication.
 
     Returns:
-        The number of rows in the table as a Python :class:`int`.
+        A :class:`~fabric_dw.models.TableRowCount` with ``schema_name``,
+        ``name``, and ``row_count`` fields.
 
     Raises:
         ValueError: If *schema* or *table_name* fails identifier validation.
@@ -306,12 +316,12 @@ async def count_table_rows(
         table_q=quote_identifier(table_name),
     )
 
-    def _run() -> int:
+    def _run() -> TableRowCount:
         _cols, rows = run_query(target, count_sql, mode=mode)
         if not rows:
             msg = f"Table [{schema}].[{table_name}] not found"
             raise NotFoundError(msg)
-        return int(rows[0][0])
+        return TableRowCount(schema_name=schema, name=table_name, row_count=int(rows[0][0]))
 
     return await asyncio.to_thread(_run)
 
@@ -323,7 +333,7 @@ async def get_cluster_columns(
     *,
     kind: WarehouseKind = WarehouseKind.WAREHOUSE,
     mode: CredentialMode = CredentialMode.DEFAULT,
-) -> list[dict[str, object]]:
+) -> list[ClusterColumn]:
     """Return the data-clustering columns of *schema*.*table_name*, ordered by ordinal.
 
     Queries ``sys.index_columns`` filtered on ``data_clustering_ordinal > 0``.
@@ -338,8 +348,8 @@ async def get_cluster_columns(
         mode: The credential mode for Entra authentication.
 
     Returns:
-        A (possibly empty) list of ``{"column_name": str, "clustering_ordinal": int}``
-        dicts ordered by ascending *clustering_ordinal*.
+        A (possibly empty) list of :class:`~fabric_dw.models.ClusterColumn`
+        instances ordered by ascending ``clustering_ordinal``.
 
     Raises:
         ItemKindError: If *kind* is :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
@@ -353,14 +363,16 @@ async def get_cluster_columns(
     validate_identifier(schema)
     validate_identifier(table_name)
 
-    def _run() -> list[dict[str, object]]:
+    def _run() -> list[ClusterColumn]:
         _cols, rows = run_query(
             target,
             _CLUSTER_COLUMNS_SQL,
             params=[schema, table_name],
             mode=mode,
         )
-        return [{"column_name": str(row[0]), "clustering_ordinal": int(row[1])} for row in rows]
+        return [
+            ClusterColumn(column_name=str(row[0]), clustering_ordinal=int(row[1])) for row in rows
+        ]
 
     return await asyncio.to_thread(_run)
 
@@ -1497,7 +1509,7 @@ async def get_table_health_metrics(
     *,
     kind: WarehouseKind = WarehouseKind.WAREHOUSE,
     mode: CredentialMode = CredentialMode.DEFAULT,
-) -> tuple[list[str], list[tuple[object, ...]]]:
+) -> ResultSet:
     """Return health metrics for *schema*.*table_name* via ``sp_get_table_health_metrics``.
 
     Executes ``EXEC sp_get_table_health_metrics 'schema.table'`` against the
@@ -1521,9 +1533,8 @@ async def get_table_health_metrics(
         mode: The credential mode for Entra authentication.
 
     Returns:
-        A ``(columns, rows)`` tuple where *columns* is a list of column name
-        strings and *rows* is a list of row tuples.  The exact columns are
-        determined by the proc and are passed through verbatim.
+        A :class:`~fabric_dw.models.ResultSet` with ``columns`` and ``rows``.
+        The exact columns are determined by the proc and are passed through verbatim.
 
     Raises:
         ItemKindError: If *kind* is not
@@ -1545,9 +1556,9 @@ async def get_table_health_metrics(
     # expects a plain 'schema.table' string literal, not an ODBC-quoted name.
     sql = _SP_TABLE_HEALTH_METRICS_SQL.format(schema=schema, table=table_name)
 
-    def _run() -> tuple[list[str], list[tuple[object, ...]]]:
+    def _run() -> ResultSet:
         cols, rows = run_query(target, sql, mode=mode)
-        return cols, list(rows)
+        return ResultSet(columns=cols, rows=list(rows))
 
     return await asyncio.to_thread(_run)
 

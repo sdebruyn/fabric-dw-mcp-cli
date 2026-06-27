@@ -895,6 +895,54 @@ class ColumnSpec(_FabricBase):
     nullable: bool = True
 
 
+class ClusterColumn(_FabricBase):
+    """A data-clustering column on a Fabric Data Warehouse table.
+
+    Returned by :func:`~fabric_dw.services.tables.get_cluster_columns`.
+    The field names mirror the ``sys.index_columns`` query output so that
+    ``model_dump(mode="json")`` produces byte-identical output to the
+    previous ``{"column_name": ..., "clustering_ordinal": ...}`` dicts.
+    """
+
+    column_name: str
+    clustering_ordinal: int
+
+
+class TableRowCount(_FabricBase):
+    """Row-count result for a single table.
+
+    Field names mirror :class:`Table` (``schema_name`` / ``name``) so the
+    model is consistent with table-listing output.
+
+    Note: the ``schema_name`` field replaces the legacy ``schema`` key that
+    the MCP ``count_table_rows`` tool previously emitted.  Callers that used
+    ``result["schema"]`` must be updated to ``result["schema_name"]``.
+    """
+
+    schema_name: str
+    name: str
+    row_count: int
+
+
+class ResultSet(_FabricBase):
+    """Raw result set from a SQL query - columns and rows with native driver types.
+
+    Unlike :class:`SqlResult` (whose ``rows`` are JSON-pre-serialised scalars),
+    the rows here carry native Python driver types such as
+    :class:`~datetime.datetime`, :class:`~decimal.Decimal`, and :class:`bytes`
+    so that downstream consumers (Arrow materialisation, ``safe_rows``
+    serialisation) receive the original values without coercion.
+
+    Attributes:
+        columns: Ordered list of column name strings.
+        rows: Each element is one row of raw driver values.  Types are stored
+            by identity - pydantic does not coerce them.
+    """
+
+    columns: list[str] = Field(default_factory=list)
+    rows: list[tuple[object, ...]] = Field(default_factory=list)
+
+
 class CopyIntoResult(_FabricBase):
     """Result of a ``COPY INTO`` load operation.
 
