@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json as _json
+import math
 import re
 from collections.abc import Sequence
 
@@ -19,7 +20,40 @@ __all__ = [
     "render",
     "render_permissions_table",
     "render_refresh_table",
+    "sanitise_json",
 ]
+
+
+# ---------------------------------------------------------------------------
+# JSON sanitisation
+# ---------------------------------------------------------------------------
+
+
+def sanitise_json(obj: object) -> object:
+    """Recursively replace non-finite floats with ``None`` for strict JSON.
+
+    ``json.dumps`` with the default ``allow_nan=True`` emits the non-standard
+    tokens ``Infinity``, ``-Infinity``, and ``NaN``, which strict JSON parsers
+    reject.  This function walks the value tree and coerces any non-finite
+    ``float`` to ``None`` (serialised as JSON ``null``) so the payload is
+    always RFC 8259 compliant before being passed to ``json.dumps``.
+
+    Handles ``dict``, ``list``, and scalar types.  All other types are returned
+    unchanged for the ``default`` fallback in ``json.dumps`` to handle.
+
+    Args:
+        obj: The value to sanitise (can be any JSON-representable Python value).
+
+    Returns:
+        A new value with non-finite floats replaced by ``None``.
+    """
+    if isinstance(obj, float):
+        return None if not math.isfinite(obj) else obj
+    if isinstance(obj, dict):
+        return {k: sanitise_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [sanitise_json(item) for item in obj]
+    return obj
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +152,7 @@ def render(
             pruned) and when *data* is not a list.
     """
     if json_output:
-        click.echo(_json.dumps(data, indent=2, default=str))
+        click.echo(_json.dumps(sanitise_json(data), indent=2, default=str, allow_nan=False))
         return
 
     con = console if console is not None else _DEFAULT_CONSOLE

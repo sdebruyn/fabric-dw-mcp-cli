@@ -19,7 +19,7 @@ from fabric_dw.cli._plan_mermaid import render_plan_mermaid
 from fabric_dw.cli._plan_parse import parse_showplan
 from fabric_dw.cli._plan_render import operator_to_dict, render_plan_tree
 from fabric_dw.cli._plan_svg import render_plan_svg
-from fabric_dw.cli._render import render
+from fabric_dw.cli._render import render, sanitise_json
 from fabric_dw.cli.commands._utils import (
     build_http_client,
     build_sql_target,
@@ -238,7 +238,7 @@ def _output_plan(
         # Global --json: parsed operator tree as JSON; -o writes to file.
         operators = parse_showplan(plan_xml)
         payload = [operator_to_dict(op) for op in operators]
-        json_text = _json.dumps(payload, indent=2)
+        json_text = _json.dumps(sanitise_json(payload), indent=2, allow_nan=False)
         _write_or_echo(json_text, output_path, "Execution plan JSON written to {path}")
     elif output_format == "mermaid":
         # --format mermaid: Mermaid flowchart diagram; -o writes to file.
