@@ -389,6 +389,90 @@ async def test_set_audit_action_groups_happy_path(mock_ctx, ctx_patch) -> None:
     mock_svc.assert_called_once()
 
 
+async def test_set_audit_action_groups_passes_ensure_enabled_false(mock_ctx, ctx_patch) -> None:
+    """set_audit_action_groups always passes ensure_enabled=False to the service.
+
+    Regression guard for #876: the tool must not silently enable auditing on a
+    Disabled warehouse, so it must call set_action_groups with ensure_enabled=False.
+    """
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    groups = ["BATCH_COMPLETED_GROUP"]
+    settings = _make_audit_settings(action_groups=groups)
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+    mock_svc = AsyncMock(return_value=settings)
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.audit.set_action_groups", new=mock_svc),
+    ):
+        await mcp._tool_manager.call_tool(
+            "set_audit_action_groups",
+            {"workspace": WS_NAME, "warehouse": WH_NAME, "action_groups": groups},
+        )
+
+    _, kwargs = mock_svc.call_args
+    assert kwargs.get("ensure_enabled") is False
+
+
+async def test_set_audit_action_groups_disabled_warehouse_state_unchanged(
+    mock_ctx, ctx_patch
+) -> None:
+    """set_audit_action_groups on a Disabled warehouse returns Disabled state.
+
+    Regression guard for #876: the tool must not silently enable auditing.
+    When the service returns Disabled state (because ensure_enabled=False preserved
+    it), the tool must return that state to the caller unchanged.
+    """
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    groups = ["BATCH_COMPLETED_GROUP"]
+    settings = _make_audit_settings(state="Disabled", action_groups=groups)
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.audit.set_action_groups", new=AsyncMock(return_value=settings)),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "set_audit_action_groups",
+            {"workspace": WS_NAME, "warehouse": WH_NAME, "action_groups": groups},
+        )
+
+    assert result["state"] == "Disabled"
+    assert groups[0] in result["auditActionsAndGroups"]
+
+
+async def test_set_audit_action_groups_enabled_warehouse_state_unchanged(
+    mock_ctx, ctx_patch
+) -> None:
+    """set_audit_action_groups on an Enabled warehouse preserves Enabled state.
+
+    Companion to the Disabled case: replacing groups on an already-Enabled warehouse
+    must keep state=Enabled in the result.
+    """
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    groups = ["BATCH_COMPLETED_GROUP"]
+    settings = _make_audit_settings(state="Enabled", action_groups=groups)
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.audit.set_action_groups", new=AsyncMock(return_value=settings)),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "set_audit_action_groups",
+            {"workspace": WS_NAME, "warehouse": WH_NAME, "action_groups": groups},
+        )
+
+    assert result["state"] == "Enabled"
+    assert groups[0] in result["auditActionsAndGroups"]
+
+
 # ---------------------------------------------------------------------------
 # set_audit_action_groups — error / guard paths
 # ---------------------------------------------------------------------------
