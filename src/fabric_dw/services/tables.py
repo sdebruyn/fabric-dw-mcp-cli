@@ -42,7 +42,7 @@ from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import FabricError, ItemKindError, NotFoundError
 from fabric_dw.identifiers import parse_qualified_name, quote_identifier, validate_identifier
 from fabric_dw.models import ColumnSpec, Table, WarehouseKind
-from fabric_dw.services._helpers import reject_non_select
+from fabric_dw.services._helpers import coerce_to_utc, reject_non_select
 from fabric_dw.sql import SqlTarget, run_query, run_statements
 from fabric_dw.types import arrow_type_to_tsql, validate_tsql_type
 
@@ -1273,15 +1273,19 @@ async def clone_table(
 
     ddl = f"CREATE TABLE {new_q} AS CLONE OF {src_q}"
     if at is not None:
+        # Normalise to UTC first so the AT literal is always in UTC regardless
+        # of whether the caller passes a naive (assumed UTC per coerce_to_utc
+        # convention) or a tz-aware non-UTC datetime.
+        at = coerce_to_utc(at)
         # Format the datetime as a millisecond-precision UTC literal.
         # The AT clause does not support bound parameters in T-SQL DDL, so we
         # embed a fixed-format literal derived from the already-validated datetime
-        # object — never an arbitrary user string.
+        # object -- never an arbitrary user string.
         #
         # Round to the nearest millisecond (half-to-even via Python round())
-        # rather than truncating, so that e.g. 123_750 µs → 124 ms instead
+        # rather than truncating, so that e.g. 123_750 us -> 124 ms instead
         # of silently shifting the point-in-time 0.75 ms earlier.
-        # round() can return 1000 for microsecond values ≥ 999_500 µs;
+        # round() can return 1000 for microsecond values >= 999_500 us;
         # use timedelta to roll the carry into the seconds field correctly.
         at_rounded = at.replace(microsecond=0) + timedelta(
             milliseconds=round(at.microsecond / 1000)

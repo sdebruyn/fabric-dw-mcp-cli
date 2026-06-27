@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import ClassVar
 from unittest.mock import MagicMock, patch
@@ -1025,6 +1025,26 @@ class TestCloneTable:
         cursor = ddl_conn.cursor.return_value
         call_sql: str = cursor.execute.call_args[0][0]
         # Naive datetime with same wall-clock value as UTC - literal must match
+        assert "AT '2024-05-20T14:00:00.000'" in call_sql
+
+    async def test_at_clause_non_utc_aware_datetime_normalised_to_utc(self) -> None:
+        """Non-UTC tz-aware at is converted to UTC before building the AT literal (#850).
+
+        A UTC+2 datetime at 16:00 must produce the UTC-equivalent 14:00 literal,
+        not the raw wall-clock value.  Without coerce_to_utc this would silently
+        embed the wrong hour.
+        """
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_TABLE_ROW_1], _LIST_COLS)
+        tz_plus2 = timezone(timedelta(hours=2))
+        # 2024-05-20 16:00:00+02:00 == 2024-05-20 14:00:00 UTC
+        non_utc_dt = datetime(2024, 5, 20, 16, 0, 0, tzinfo=tz_plus2)
+        mock_oc = patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn])
+        with mock_oc:
+            await tables.clone_table(target, "dbo.source_tbl", "dbo.sales", at=non_utc_dt)
+        cursor = ddl_conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
         assert "AT '2024-05-20T14:00:00.000'" in call_sql
 
     async def test_rejects_sql_endpoint(self) -> None:
