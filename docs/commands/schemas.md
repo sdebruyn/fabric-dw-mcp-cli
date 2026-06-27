@@ -12,8 +12,6 @@ Manage SQL schemas on Microsoft Fabric Data Warehouses and SQL Analytics Endpoin
 
     `schemas list`, `schemas create`, and `schemas delete` (CLI) and `list_schemas`, `create_schema`, and `delete_schema` (MCP) all work on both Fabric Data Warehouses and SQL Analytics Endpoints. When `schemas delete --cascade` (CLI) or `delete_schema` with `cascade=True` (MCP) is used on a SQL Analytics Endpoint, views, stored procedures, and functions in the schema are dropped, but tables are **not** dropped (because `DROP TABLE` is a Warehouse-only operation on Fabric). If the schema contains tables, the final `DROP SCHEMA` will be rejected by the engine; remove the tables manually first or omit `--cascade` and drop the schema only after it is empty.
 
----
-
 ## CLI
 
 ### schemas create
@@ -33,8 +31,6 @@ fdw [-w WORKSPACE] schemas create [OPTIONS] [WAREHOUSE] NAME
 ```shell
 fdw -w MyWorkspace schemas create SalesWH reporting
 ```
-
----
 
 ### schemas delete
 
@@ -64,8 +60,6 @@ fdw -w MyWorkspace --yes schemas delete SalesWH staging
 fdw -w MyWorkspace --yes schemas delete SalesWH staging --cascade
 ```
 
----
-
 ### schemas list
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -92,8 +86,6 @@ fdw -w MyWorkspace schemas list SalesWH
  staging  7
 ```
 
----
-
 ## MCP tools
 
 ### create_schema
@@ -109,8 +101,6 @@ Create a new SQL schema on a Fabric Data Warehouse or SQL Analytics Endpoint.
 - `name` (`str`): the schema name; must be a valid SQL identifier.
 
 **Returns:** `Schema`: the newly-created schema record with `name` and `principal_id`.
-
----
 
 ### delete_schema
 
@@ -130,8 +120,6 @@ Drop a SQL schema from a Fabric Data Warehouse or SQL Analytics Endpoint.
 - `cascade` (`bool`, default `False`): when `True`, drop all tables, views, functions, and stored procedures in the schema first.
 
 **Returns:** `{ "deleted": true }`: confirmation.
-
----
 
 ### list_schemas
 

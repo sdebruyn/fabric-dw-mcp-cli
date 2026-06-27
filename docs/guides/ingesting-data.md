@@ -8,8 +8,6 @@ This guide walks through getting file-based data - CSV, Parquet, or JSON - into 
 
 It is task-oriented. For the full option reference of each command and tool, see the per-domain pages it links to: [Tables](../commands/tables.md), [Schemas](../commands/schemas.md), [Statistics](../commands/statistics.md), [Running SQL](../commands/sql.md), and the [MCP server](../install.md#mcp).
 
----
-
 ## When to use this guide
 
 Use this guide when you have a target **Data Warehouse** and want to load file-based data into one of its tables.
@@ -18,9 +16,7 @@ Use this guide when you have a target **Data Warehouse** and want to load file-b
 
     `COPY INTO` and table DDL (create / load / clear / statistics writes) are **Data Warehouse only**. SQL Analytics Endpoints are read-only here - listing, counting, and reading tables work, but you cannot create or load into them. If your `[ITEM]` is a SQL Analytics Endpoint the engine (or this tool) will reject the write.
 
-Fabric offers several ingestion mechanisms. `COPY INTO`: what this tool uses - is Microsoft's recommended high-throughput, code-rich path for getting files into a warehouse. For scheduled low-code ingestion use **pipelines**, for code-free transforms use **dataflows**, and for in-warehouse moves use T-SQL (`INSERT … SELECT`, `SELECT INTO`, `CTAS`). See [Ingest data into a Fabric warehouse](https://learn.microsoft.com/fabric/data-warehouse/ingest-data?WT.mc_id=MVP_310840) for the full picture.
-
----
+Fabric offers several ingestion mechanisms. `COPY INTO`, what this tool uses, is Microsoft's recommended high-throughput, code-rich path for getting files into a warehouse. For scheduled low-code ingestion use **pipelines**, for code-free transforms use **dataflows**, and for in-warehouse moves use T-SQL (`INSERT … SELECT`, `SELECT INTO`, `CTAS`). See [Ingest data into a Fabric warehouse](https://learn.microsoft.com/fabric/data-warehouse/ingest-data?WT.mc_id=MVP_310840) for the full picture.
 
 ## Prerequisites
 
@@ -38,8 +34,6 @@ Fabric offers several ingestion mechanisms. `COPY INTO`: what this tool uses - i
     ```
 
     not `<command> <workspace> <item> …`. Once the [defaults](#set-your-defaults) are set, both `-w <workspace>` and the optional `[ITEM]` positional can be omitted (the examples below do).
-
----
 
 ## Decide your path
 
@@ -63,8 +57,6 @@ Two decisions shape the whole workflow:
 
     The MCP tools (`load_table_from_url`, `import_table_from_url`) are **remote-URL only**, and `create_empty_table` does not infer a schema from files. Local-file staging and file-based schema inference are **CLI-only**. From an AI assistant, either point at a remote/OneLake URL or run the local-file load from the CLI. See [Same workflow from MCP](#same-workflow-from-mcp-or-an-ai-assistant) below.
 
----
-
 ## Set your defaults
 
 Store the workspace and warehouse once so you do not repeat them on every command:
@@ -75,8 +67,6 @@ fdw config set warehouse SalesWH
 ```
 
 The rest of this guide assumes these defaults are set, so the examples omit `-w MyWorkspace` and drop the warehouse positional where it is optional. Any command still accepts an explicit `-w`/`--workspace` or a positional `[ITEM]` to override them. Commands that take a trailing required argument (such as `tables load … QUALIFIED_NAME`) keep the warehouse positional so the remaining arguments stay unambiguous. See [Configuration & defaults](../commands/config.md).
-
----
 
 ## Step 1 - (optional) create the schema
 
@@ -93,8 +83,6 @@ If your destination schema does not exist yet, create it. `dbo` always exists, s
     Call `create_schema` with `workspace`, `item`, and `name`. `list_schemas` enumerates existing schemas; `delete_schema` is destructive and gated (see [statistics & destructive gating](#destructive-operations)).
 
 See [Schemas](../commands/schemas.md) for the full reference.
-
----
 
 ## Step 2 - create the destination table
 
@@ -148,8 +136,6 @@ Skip this step if you plan to auto-create with `tables load --create` (see [Step
 !!! tip "Prefer Parquet over CSV"
 
     Parquet is columnar, compressed, and supports column/row skipping, so it is faster for repeated reads and gives exact types on ingestion (CSV requires inference). Whatever method you use, the Parquet files Fabric writes are V-Order optimized - don't disable V-Order. See the [warehouse performance guidance](https://learn.microsoft.com/fabric/data-warehouse/guidelines-warehouse-performance?WT.mc_id=MVP_310840#data-ingestion-and-preparation-into-a-warehouse).
-
----
 
 ## Step 3 - load the data
 
@@ -255,8 +241,6 @@ fdw tables load SalesWH dbo.sales --file data.parquet --create \
 
 CSV tuning (`--header / --no-header`, `--delimiter`, `--encoding`, `--field-quote`, `--row-terminator`) and error handling (`--max-errors`, `--rejected-row-location`) are documented in full on the [tables load](../commands/tables.md#tables-load) reference.
 
----
-
 ## Step 4 - verify the load
 
 `tables load` reports `rows_loaded`, `rows_rejected`, and the target.
@@ -289,8 +273,6 @@ Confirm the data landed:
 
 See [Tables](../commands/tables.md) for the full reference.
 
----
-
 ## Step 5 - refresh statistics after the load
 
 Statistics are **not** updated automatically after a load. Create or update single-column histogram statistics on the columns your queries filter and join on so the optimizer has fresh cardinality estimates.
@@ -318,8 +300,6 @@ Statistics are **not** updated automatically after a load. Create or update sing
     `create_statistics`, `update_statistics`, `list_statistics`, and `show_statistics` mirror the CLI. `delete_statistics` is destructive and gated.
 
 See [Statistics](../commands/statistics.md) for the full reference and [Update statistics after a load](https://learn.microsoft.com/fabric/data-warehouse/statistics?WT.mc_id=MVP_310840) on Microsoft Learn.
-
----
 
 ## Same workflow from MCP (or an AI assistant)
 
@@ -354,8 +334,6 @@ The same end-to-end flow is available to an AI assistant through the MCP server,
 
 Destructive `if_exists` policies (and `delete_schema` / `delete_statistics`) require the server to run with `FABRIC_MCP_ALLOW_DESTRUCTIVE=1`: see the [MCP security environment variables](../install.md#security-environment-variables).
 
----
-
 ## Best practices
 
 These recommendations come from Microsoft Learn. Where they describe pre-staging many files, note that `fabric-dw` stages one local file at a time - that parallel-file guidance applies when you pre-stage files yourself and load them with `--url`, not as a feature of this tool.
@@ -368,8 +346,6 @@ These recommendations come from Microsoft Learn. Where they describe pre-staging
 - **Prefer Parquet over CSV** for repeated reads - columnar, compressed, with column/row skipping. See [warehouse performance guidance](https://learn.microsoft.com/fabric/data-warehouse/guidelines-warehouse-performance?WT.mc_id=MVP_310840#data-ingestion-and-preparation-into-a-warehouse).
 - **Create the table before `COPY INTO`, and use `FIRSTROW=2` to skip a CSV header.** See [ingest with COPY](https://learn.microsoft.com/fabric/data-warehouse/ingest-data-copy?WT.mc_id=MVP_310840) and [ingest data into a table](https://learn.microsoft.com/fabric/data-warehouse/ingest-data-into-table?WT.mc_id=MVP_310840).
 - **Update statistics after a load**: they are not refreshed automatically. Create/update single-column histogram stats, and inspect them with `DBCC SHOW_STATISTICS` (`statistics show`). See [tables & statistics](https://learn.microsoft.com/fabric/data-warehouse/tables?WT.mc_id=MVP_310840#statistics) and [statistics](https://learn.microsoft.com/fabric/data-warehouse/statistics?WT.mc_id=MVP_310840).
-
----
 
 ## Troubleshooting
 

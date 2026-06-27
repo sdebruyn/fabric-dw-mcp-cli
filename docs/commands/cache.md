@@ -8,8 +8,6 @@ Manage the local name-to-UUID lookup cache. `fabric-dw` caches workspace and ite
 
 **Targets:** Workspace (not item-specific)
 
----
-
 ## CLI
 
 ### cache clear
@@ -33,8 +31,6 @@ fdw cache clear
 ```
 Cache cleared.
 ```
-
----
 
 ## MCP tools
 

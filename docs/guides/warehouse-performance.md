@@ -23,8 +23,6 @@ Every command appears in **both** its CLI form (`fdw …`) and its MCP tool name
 this workflow by hand or through an AI assistant. CLI subcommand names and MCP tool names mostly
 match; where they diverge (the `queries` group), both are given.
 
----
-
 ## Relationship to the `warehouse-performance` Agent Skill
 
 `fabric-dw` ships a [`warehouse-performance` Agent Skill](../skills.md#warehouse-performance)
@@ -44,8 +42,6 @@ The guide and the skill are **complementary, not duplicates**:
 
 If you have an MCP-connected assistant configured, you can let the skill drive the steps below for
 you. Either way, the underlying commands and their guarantees are identical.
-
----
 
 ## How Fabric Warehouse compute actually works
 
@@ -95,8 +91,6 @@ This keeps ingestion from starving interactive reads (and vice-versa) by default
 this baseline with **custom SQL pools**: covered in [Step 3](#step-3-tune-apply-the-right-lever).
 See [Workload management - compute pool isolation](https://learn.microsoft.com/fabric/data-warehouse/workload-management?WT.mc_id=MVP_310840#compute-pool-isolation).
 
----
-
 ## When to use this guide
 
 Reach for this playbook when you see warehouse-wide symptoms, not a single slow query:
@@ -108,8 +102,6 @@ Reach for this playbook when you see warehouse-wide symptoms, not a single slow 
 
 If instead a *specific* query regressed, start with the [`query-optimizer` skill](../skills.md#query-optimizer).
 
----
-
 ## Set your defaults
 
 Store the workspace and warehouse once so you do not repeat them on every command:
@@ -120,8 +112,6 @@ fdw config set warehouse SalesWH
 ```
 
 The rest of this guide assumes these defaults are set, so the examples omit `-w MyWorkspace` and drop the warehouse positional where it is optional. Any command still accepts an explicit `-w`/`--workspace` or a positional `[WAREHOUSE]`/`[ITEM]` to override them. Commands that take a trailing required argument (such as `queries kill … SESSION_ID` or `settings result-set-caching … on|off`) keep the warehouse positional so the remaining arguments stay unambiguous. The workspace-wide commands (`warehouses list`, `workspaces list-capacities`) take no per-warehouse target. See [Configuration & defaults](../commands/config.md).
-
----
 
 ## Step 1 - Monitor: is there a problem, and where?
 
@@ -200,8 +190,6 @@ fdw workspaces list-capacities
 
 `fabric-dw` also reads `GET /v1/capacities` internally so that an all-workspaces scan
 (`warehouses list -A`) automatically skips paused/inactive capacities.
-
----
 
 ## Step 2 - Diagnose: what is consuming compute, and why?
 
@@ -284,8 +272,6 @@ fdw statistics show SalesWH dbo.sales _stat_order_date --histogram   # warehouse
 See [Statistics in Fabric Data Warehouse](https://learn.microsoft.com/fabric/data-warehouse/statistics?WT.mc_id=MVP_310840)
 for when automatic statistics suffice and when to create/update manually, and the umbrella
 [Performance guidelines](https://learn.microsoft.com/fabric/data-warehouse/guidelines-warehouse-performance?WT.mc_id=MVP_310840).
-
----
 
 ## Step 3 - Tune: apply the right lever
 
@@ -392,8 +378,6 @@ If a single runaway session is blocking everything else, terminate it.
 fdw --yes queries kill SalesWH 42   # warehouse positional kept - SESSION_ID follows
 ```
 
----
-
 ## Step 4 - Decide whether to scale
 
 If the cost drivers are genuinely justified work - not a tuning problem - and you are still
@@ -432,8 +416,6 @@ for right-sizing and load-balancing guidance.
     work but is not itself a diagnosis tool. Enable auditing for accountability, not to find slow
     queries.
 
----
-
 ## Worked example
 
 A copy-pasteable session that walks the whole loop on a warehouse that "feels slow". Or let the
@@ -469,8 +451,6 @@ Only if throttling persists after re-measuring should you consider
 [Step 4](#step-4-decide-whether-to-scale) - reassigning the workspace to another capacity, or
 escalating a SKU resize to a capacity admin.
 
----
-
 ## Limits of this tool
 
 `fabric-dw` covers the *read* and most of the *tune* levers, but a few things are deliberately out
@@ -487,8 +467,6 @@ of scope:
   ([#596](https://github.com/sdebruyn/fabric-dw-mcp-cli/issues/596)).
 - **No cache-cooldown control** for result-set caching
   ([#595](https://github.com/sdebruyn/fabric-dw-mcp-cli/issues/595)).
-
----
 
 ## See also
 

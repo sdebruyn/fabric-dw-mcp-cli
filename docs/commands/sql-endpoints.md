@@ -8,8 +8,6 @@ Manage Microsoft Fabric SQL Analytics Endpoints.
 
 **Targets:** SQL Analytics Endpoint
 
----
-
 ## CLI
 
 ### sql-endpoints get
@@ -29,8 +27,6 @@ fdw [-w WORKSPACE] sql-endpoints get ENDPOINT
 ```shell
 fdw -w MyWorkspace sql-endpoints get MyLakehouseEP
 ```
-
----
 
 ### sql-endpoints list
 
@@ -67,8 +63,6 @@ fdw sql-endpoints list --all-workspaces
  MyLakehouseEP      f9e1...
 ```
 
----
-
 ### sql-endpoints permissions
 
 **Targets:** SQL Analytics Endpoint
@@ -101,8 +95,6 @@ fdw -w MyWorkspace --json sql-endpoints permissions MyLakehouseEP
  Alice           alice@contoso.com        User    Read, Write
  DataPipeline    00000000-0000-...        ServicePrincipal  Read
 ```
-
----
 
 ### sql-endpoints refresh
 
@@ -137,8 +129,6 @@ fdw -w MyWorkspace sql-endpoints refresh --recreate-tables MyLakehouseEP
 fdw -w MyWorkspace --json sql-endpoints refresh MyLakehouseEP
 ```
 
----
-
 ## MCP tools
 
 ### get_sql_endpoint
@@ -153,8 +143,6 @@ Return details for a single SQL analytics endpoint.
 - `endpoint` (`str`): endpoint name or GUID.
 
 **Returns:** `Warehouse`: single SQL analytics endpoint object.
-
----
 
 ### get_sql_endpoint_permissions
 
@@ -173,8 +161,6 @@ Return all principals (users, groups, service principals) with access to a SQL A
 
 **Returns:** `list[ItemAccess]`: array of access records, each with `principal` (containing `id`, `displayName`, `type`, and type-specific fields such as `userPrincipalName` or `aadAppId`) and `itemAccessDetails` (containing `type`, `permissions`, and `additionalPermissions`).
 
----
-
 ### list_sql_endpoints
 
 **Targets:** SQL Analytics Endpoint
@@ -187,8 +173,6 @@ List all SQL analytics endpoints in a workspace, or across all visible workspace
 - `all_workspaces` (`bool`, default `false`): when `true`, aggregate results across every workspace the caller can see.
 
 **Returns:** `list[Warehouse]`: array of SQL analytics endpoint objects (same fields as Warehouse, `kind` is always `SQLEndpoint`).
-
----
 
 ### refresh_sql_endpoint_metadata
 

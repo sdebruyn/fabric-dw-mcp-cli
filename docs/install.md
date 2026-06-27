@@ -419,6 +419,4 @@ After configuring your client, restart it and ask the assistant to list its avai
 
 For a more complete reference of error messages and resolutions, see the [Troubleshooting](troubleshooting.md) page.
 
----
-
 See also the [Authentication](authentication.md) page for the full credential chain and the [Troubleshooting](troubleshooting.md) page for common failure modes such as expired tokens and 403 permission errors.

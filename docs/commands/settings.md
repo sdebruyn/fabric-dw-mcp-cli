@@ -16,8 +16,6 @@ The workspace is resolved from the global `-w/--workspace` option, the `FABRIC_D
 
 **Targets:** Data Warehouse
 
----
-
 ## CLI
 
 ### settings result-set-caching
@@ -42,8 +40,6 @@ fdw -w MyWorkspace settings result-set-caching MyWarehouse off
 fdw -w MyWorkspace --json settings result-set-caching MyWarehouse on
 ```
 
----
-
 ### settings retention
 
 **Targets:** Data Warehouse
@@ -67,8 +63,6 @@ fdw -w MyWorkspace settings retention MyWarehouse --days 30
 fdw -w MyWorkspace --json settings retention MyWarehouse --days 7
 ```
 
----
-
 ### settings show
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -85,8 +79,6 @@ fdw -w <workspace> settings show [ITEM]
 fdw -w MyWorkspace settings show MyWarehouse
 fdw -w MyWorkspace --json settings show MyWarehouse
 ```
-
----
 
 ## MCP tools
 
@@ -107,8 +99,6 @@ Return the current server-side database settings for a warehouse. Reads `result_
 
 **Returns:** `WarehouseSettings`: `{ database, result_set_caching, time_travel_retention_days, time_travel_retention_cutoff_date }`.
 
----
-
 ### set_result_set_caching
 
 **Targets:** Data Warehouse
@@ -126,8 +116,6 @@ Enable or disable result-set caching on a warehouse. Executes `ALTER DATABASE CU
 | `enabled` | `bool` | `true` to enable result-set caching, `false` to disable it. |
 
 **Returns:** `WarehouseSettings`: the effective settings after the change.
-
----
 
 ### set_time_travel_retention
 

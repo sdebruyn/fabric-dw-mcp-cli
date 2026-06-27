@@ -18,26 +18,26 @@ Generates a complete dbt-fabric project scaffold using the fabric-dw MCP tools a
 
 Gather these from the user (via `$ARGUMENTS` or natural language) before starting:
 
-- **workspace** — workspace name or GUID
-- **warehouse** — Fabric Data Warehouse name or GUID
-- **project_name** — desired dbt project name (default: warehouse name, lowercased, spaces replaced with underscores)
-- **schema** — default dbt schema (default: `dbo`)
-- **authentication** — `default` (DefaultAzureCredential), `sp` (service principal), or `interactive` (default: `default`)
-- **with_sources** — whether to generate a column-rich `_sources.yml` (default: `true`, recommended)
+- **workspace**: workspace name or GUID
+- **warehouse**: Fabric Data Warehouse name or GUID
+- **project_name**: desired dbt project name (default: warehouse name, lowercased, spaces replaced with underscores)
+- **schema**: default dbt schema (default: `dbo`)
+- **authentication**: `default` (DefaultAzureCredential), `sp` (service principal), or `interactive` (default: `default`)
+- **with_sources**: whether to generate a column-rich `_sources.yml` (default: `true`, recommended)
 
 ## Workflow
 
-### Step 1 — Resolve the warehouse connection
+### Step 1 - Resolve the warehouse connection
 
 Call `get_warehouse` with the workspace and warehouse name. This returns the warehouse metadata including the connection string used in the dbt profile.
 
-### Step 2 — Confirm connectivity and list objects
+### Step 2 - Confirm connectivity and list objects
 
 Call `list_schemas` and `list_tables` to confirm that the warehouse is reachable and to identify the schemas and tables that will appear as dbt sources.
 
 Show the user a summary: number of schemas found, number of tables found.
 
-### Step 3 — Generate the dbt scaffold
+### Step 3 - Generate the dbt scaffold
 
 Call `generate_dbt_profile` with:
 
@@ -46,7 +46,7 @@ Call `generate_dbt_profile` with:
 
 When `with_sources=true`, the tool performs a bulk column fetch and emits a `models/staging/_sources.yml` that already includes each table's `columns:` block with `name` and formatted `data_type` for every column. This output is ready for dbt [contract enforcement](https://docs.getdbt.com/docs/collaborate/govern/model-contracts) and column-level documentation without any manual assembly.
 
-### Step 4 — Write files to the local filesystem
+### Step 4 - Write files to the local filesystem
 
 Write all file contents returned by `generate_dbt_profile` to the user's working directory. The expected set of files:
 
@@ -60,7 +60,7 @@ Write all file contents returned by `generate_dbt_profile` to the user's working
 
 Before writing, check whether any of these files already exist and confirm with the user before overwriting.
 
-### Step 5 — Provide next steps
+### Step 5 - Provide next steps
 
 After writing the files, give the user the following instructions:
 
@@ -77,12 +77,12 @@ dbt run
 
 Also remind the user to:
 
-1. Review `profiles.yml` and fill in any `{{ env_var(...) }}` placeholders (service-principal credentials are never written as literals — they are templated).
+1. Review `profiles.yml` and fill in any `{{ env_var(...) }}` placeholders (service-principal credentials are never written as literals; they are templated).
 2. Check that environment variables (`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`) are set before running `dbt debug` if using service-principal auth.
 
 ## Guardrails
 
 - **Service-principal auth**: when `authentication=sp`, the generated `profiles.yml` uses `{{ env_var(...) }}` placeholders for tenant ID, client ID, and client secret. Never write literal credential values. Remind the user that these must be set in environment before committing `profiles.yml` to version control.
 - **Overwrite protection**: if any target file already exists, list them and ask the user to confirm before overwriting.
-- **Fabric auth only**: dbt-fabric requires Entra (Azure AD) authentication. Warn the user if they ask about username/password auth — it is not supported by the dbt-fabric adapter.
-- **Column inspection**: `get_table_columns` and `get_view_columns` are available for ad-hoc schema inspection (e.g., if the user wants to review a specific table before deciding which columns to expose), but explicit calls to those tools are not required — column data is built into `generate_dbt_profile` with `with_sources=true`.
+- **Fabric auth only**: dbt-fabric requires Entra (Azure AD) authentication. Warn the user if they ask about username/password auth. It is not supported by the dbt-fabric adapter.
+- **Column inspection**: `get_table_columns` and `get_view_columns` are available for ad-hoc schema inspection (e.g., if the user wants to review a specific table before deciding which columns to expose), but explicit calls to those tools are not required; column data is built into `generate_dbt_profile` with `with_sources=true`.

@@ -8,8 +8,6 @@ Manage Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
----
-
 ## CLI
 
 ### warehouses create
@@ -35,8 +33,6 @@ fdw [-w WORKSPACE] warehouses create [OPTIONS] NAME
 fdw -w MyWorkspace warehouses create NewWH --description "Staging warehouse"
 ```
 
----
-
 ### warehouses delete
 
 **Targets:** Data Warehouse only
@@ -54,8 +50,6 @@ fdw [-w WORKSPACE] warehouses delete [WAREHOUSE]
 ```shell
 fdw -w MyWorkspace --yes warehouses delete OldWH
 ```
-
----
 
 ### warehouses get
 
@@ -80,8 +74,6 @@ id             7c3f...
 displayName    SalesWH
 description    Main sales warehouse
 ```
-
----
 
 ### warehouses list
 
@@ -120,8 +112,6 @@ fdw warehouses list --all-workspaces
  OtherWS        AnalyticsWH    1a2b...
 ```
 
----
-
 ### warehouses permissions
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -155,8 +145,6 @@ fdw -w MyWorkspace --json warehouses permissions SalesWH
  DataPipeline    00000000-0000-...        ServicePrincipal  Read
 ```
 
----
-
 ### warehouses rename
 
 **Targets:** Data Warehouse only
@@ -179,8 +167,6 @@ fdw [-w WORKSPACE] warehouses rename [OPTIONS] [WAREHOUSE] NEW_NAME
 fdw -w MyWorkspace warehouses rename SalesWH SalesWH_v2 --description "Renamed"
 ```
 
----
-
 ### warehouses takeover
 
 **Targets:** Data Warehouse only
@@ -199,8 +185,6 @@ fdw [-w WORKSPACE] warehouses takeover [WAREHOUSE]
 fdw -w MyWorkspace warehouses takeover SalesWH
 ```
 
----
-
 ## MCP tools
 
 ### create_warehouse
@@ -218,8 +202,6 @@ Create a new Warehouse in a workspace.
 
 **Returns:** `Warehouse`: the newly-created warehouse object.
 
----
-
 ### delete_warehouse
 
 **Targets:** Data Warehouse only
@@ -233,8 +215,6 @@ Delete a Warehouse.
 
 **Returns:** `{ "deleted": true, "warehouse_id": str }`: confirmation with the warehouse GUID.
 
----
-
 ### get_warehouse
 
 **Targets:** Data Warehouse only
@@ -247,8 +227,6 @@ Return details for a single Data Warehouse. Uses the warehouse-scoped REST path 
 - `warehouse` (`str`): warehouse name or GUID.
 
 **Returns:** `Warehouse`: single warehouse object (fields as above).
-
----
 
 ### get_warehouse_permissions
 
@@ -267,8 +245,6 @@ Return all principals (users, groups, service principals) with access to a Wareh
 
 **Returns:** `list[ItemAccess]`: array of access records, each with `principal` (containing `id`, `displayName`, `type`, and type-specific fields such as `userPrincipalName` or `aadAppId`) and `itemAccessDetails` (containing `type`, `permissions`, and `additionalPermissions`).
 
----
-
 ### list_warehouses
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -281,8 +257,6 @@ List all warehouses and SQL analytics endpoints in a workspace, or across all vi
 - `all_workspaces` (`bool`, default `false`): when `true`, aggregate results across every workspace the caller can see.
 
 **Returns:** `list[Warehouse]`: array of warehouse objects, each with `id`, `displayName`, `description`, `workspaceId`, `kind` (`Warehouse` or `SQLEndpoint`), `connectionString`, `defaultCollation`, and `createdDate`.
-
----
 
 ### rename_warehouse
 
@@ -298,8 +272,6 @@ Rename a Warehouse and optionally update its description.
 - `description` (`str | null`, optional): new description; omit to leave unchanged.
 
 **Returns:** `Warehouse`: the updated warehouse object.
-
----
 
 ### takeover_warehouse
 

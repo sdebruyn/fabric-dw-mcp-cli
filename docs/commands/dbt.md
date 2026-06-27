@@ -10,8 +10,6 @@ No dbt installation is required to run these commands - `fabric-dw` generates al
 
 **Targets:** Data Warehouse
 
----
-
 ## CLI
 
 ### dbt init
@@ -90,8 +88,6 @@ fdw -w MyWorkspace dbt init SalesWH ./sales_dbt --force
 ├── macros/
 └── analyses/
 ```
-
----
 
 ## MCP tools
 

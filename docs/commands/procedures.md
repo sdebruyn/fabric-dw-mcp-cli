@@ -8,8 +8,6 @@ Manage stored procedures on Microsoft Fabric Data Warehouses and SQL Analytics E
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
----
-
 ## CLI
 
 ### procedures create
@@ -40,8 +38,6 @@ fdw -w MyWorkspace procedures create SalesWH \
   --body "BEGIN INSERT INTO dbo.archive SELECT * FROM dbo.orders; END"
 ```
 
----
-
 ### procedures drop
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -59,8 +55,6 @@ fdw [-w WORKSPACE] procedures drop [ITEM] QUALIFIED_NAME
 ```shell
 fdw -w MyWorkspace --yes procedures drop SalesWH dbo.usp_archive_orders
 ```
-
----
 
 ### procedures get
 
@@ -81,8 +75,6 @@ fdw [-w WORKSPACE] procedures get [ITEM] QUALIFIED_NAME
 ```shell
 fdw -w MyWorkspace procedures get SalesWH dbo.usp_load_sales
 ```
-
----
 
 ### procedures list
 
@@ -112,8 +104,6 @@ fdw -w MyWorkspace procedures list SalesWH --schema dbo
  dbo          usp_load_sales  2026-01-10T08:00:00Z  2026-06-01T12:00:00Z
 ```
 
----
-
 ### procedures update
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -142,8 +132,6 @@ fdw -w MyWorkspace procedures update SalesWH dbo.usp_archive_orders \
   --from-file ./procs/usp_archive_orders_v2.sql
 ```
 
----
-
 ## MCP tools
 
 ### create_procedure
@@ -165,8 +153,6 @@ Create a new stored procedure.
 
 **Returns:** `StoredProcedure`: the newly-created procedure object.
 
----
-
 ### drop_procedure
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -180,8 +166,6 @@ Drop a stored procedure.
 - `qualified_name` (`str`): dot-separated qualified procedure name, e.g. `dbo.usp_load`.
 
 **Returns:** `{ "dropped": true }`: confirmation.
-
----
 
 ### get_procedure
 
@@ -197,8 +181,6 @@ Fetch the full definition of a single stored procedure.
 
 **Returns:** `StoredProcedure`: single procedure object with `definition` populated from `sys.sql_modules`.
 
----
-
 ### list_procedures
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -212,8 +194,6 @@ List stored procedures on a warehouse or SQL Analytics Endpoint, optionally filt
 - `schema` (`str | null`, optional): when provided, only procedures in this schema are returned.
 
 **Returns:** `list[StoredProcedure]`: array of procedure objects, each with `schema_name`, `name`, `qualified_name`, `created`, and `modified`.
-
----
 
 ### update_procedure
 

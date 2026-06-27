@@ -17,8 +17,6 @@ Microsoft's own [tutorial](https://learn.microsoft.com/fabric/data-warehouse/tut
 
     Everything below is the **human, copy-pasteable narrative** for someone driving `fabric-dw` from a terminal. If you drive an AI assistant (Claude) against the [MCP server](../install.md#mcp), the shipped [`dbt-setup` Agent Skill](../skills.md#dbt-setup) automates the same provision → scaffold → sources → verify flow through the MCP tools. The CLI commands here and the skill are two front-ends to the same logic - pick whichever fits your workflow.
 
----
-
 ## Prerequisites
 
 - A Fabric **workspace** on an active capacity (Trial, Premium, or Fabric capacity).
@@ -33,8 +31,6 @@ Microsoft's own [tutorial](https://learn.microsoft.com/fabric/data-warehouse/tut
 !!! note "Entra ID only - no SQL authentication"
 
     dbt-fabric authenticates with **Microsoft Entra ID** identities (users, service principals); SQL username/password authentication is **not supported**. See [Connect using dbt](https://learn.microsoft.com/fabric/data-warehouse/how-to-connect?WT.mc_id=MVP_310840#connect-using-dbt). `fabric-dw` uses the same Entra-based credential chain, so once you can run `fdw` you have everything dbt needs.
-
----
 
 ## Step 1 - Sign in
 
@@ -64,8 +60,6 @@ Microsoft recommends interactive (`CLI`) auth for working on a warehouse by hand
 
 See the [Authentication reference](../authentication.md) for the full credential chain and every environment variable.
 
----
-
 ## Set your defaults
 
 Once you are signed in, store the workspace so you do not repeat it on every command:
@@ -76,8 +70,6 @@ fdw config set warehouse SalesWH        # optional - once the warehouse exists (
 ```
 
 The rest of this guide assumes the workspace default is set, so the examples omit `-w "Sales Workspace"`. Any command still accepts an explicit `-w`/`--workspace NAME|GUID` to override it. The warehouse default fills optional `[ITEM]` positionals once the warehouse has been provisioned; commands here that take a required name (`warehouses create NAME`, `dbt init … FOLDER`, `sql-endpoints get ENDPOINT`) still spell out the warehouse. See [Configuration & defaults](../commands/config.md).
-
----
 
 ## Step 2 - Provision the warehouse
 
@@ -98,8 +90,6 @@ If a service principal or team needs access (for example, the identity that will
 
     The MCP tool [`create_warehouse`](../commands/warehouses.md#create_warehouse) provisions the warehouse from an AI client with the same polling behaviour.
 
----
-
 ## Step 3 - Scaffold the dbt project
 
 [`fdw dbt init`](../commands/dbt.md#dbt-init) creates the whole project directory pre-wired to the warehouse. `ITEM` (the warehouse name or GUID) is optional if you set a default warehouse; `FOLDER` is the target directory.
@@ -118,8 +108,6 @@ You do **not** hand-author `profiles.yml`. `fdw dbt init` resolves the warehouse
 - **`database`**: the warehouse display name (Fabric uses the item name as the Initial Catalog). For `SalesWH`, the database is simply `SalesWH`.
 
 The `authentication` value is mapped from your sign-in mode (`default` → `auto`, `interactive` → `CLI`, `sp` → `ServicePrincipal`). With `--auth sp`, secrets are emitted as Jinja2 `env_var()` placeholders - never literal secrets - so the file is safe to commit. The full option list (`--schema`, `--target`, `--threads`, `--profiles-dir`, `--auth`, …), the exact generated `profiles.yml`, and the auth mapping live in the [dbt command reference](../commands/dbt.md#dbt-init); the credential chain is in the [Authentication reference](../authentication.md).
-
----
 
 ## Step 4 - Provision all your dbt sources
 
@@ -187,8 +175,6 @@ from {{ source('sales', 'customer') }}
 
 Because every schema and table is already declared in `_sources.yml`, `source()` resolves immediately and `dbt run` / `dbt test` can build on top of the real warehouse objects without any manual source authoring.
 
----
-
 ## Step 5 - Verify
 
 Install the dbt dependencies in a **separate environment** (the scaffolded `requirements.txt` pins `dbt-core` and `dbt-fabric`), then verify the connection and build the sample model:
@@ -220,8 +206,6 @@ fdw tables list SalesWH
 
     The SQL group is `fdw sql exec` / `fdw sql plan`. There is no `fdw sql query` command.
 
----
-
 ## Doing it from an AI assistant
 
 If you drive an AI client over the [MCP server](../install.md#mcp), the same scaffold is available as the [`generate_dbt_profile`](../commands/dbt.md#generate_dbt_profile) tool. Unlike the CLI, it does **not** write files - the MCP server cannot touch the caller's filesystem, so it returns each file's contents as a string:
@@ -233,8 +217,6 @@ If you drive an AI client over the [MCP server](../install.md#mcp), the same sca
 - `gitignore`
 
 The AI agent writes those strings to disk itself. The shipped [`dbt-setup` Agent Skill](../skills.md#dbt-setup) orchestrates the whole flow - it resolves the warehouse with `get_warehouse`, confirms connectivity with `list_schemas` / `list_tables`, calls `generate_dbt_profile` with `with_sources=True` to provision the sources, writes the files, and tells you to run `pip install -r requirements.txt`, `dbt debug`, and `dbt run`. In short: **the guide is the CLI narrative; the skill is the assistant-driven equivalent.**
-
----
 
 ## Next steps & references
 

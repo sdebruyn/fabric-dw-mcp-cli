@@ -12,8 +12,6 @@ Manage user-defined statistics on Fabric Data Warehouses and read their details 
 
     Only **single-column, histogram-based** statistics can be created or updated (Fabric limitation). Multi-column statistics are not supported.
 
----
-
 ## CLI
 
 ### statistics create
@@ -34,8 +32,6 @@ fdw [-w WORKSPACE] statistics create [ITEM] --table schema.table --column COL --
 | `--fullscan` | Use `WITH FULLSCAN` (default). Mutually exclusive with `--sample-percent`. | on |
 | `--sample-percent N` | Sample `N`% of the table (1–100). Overrides `--fullscan`. | - |
 
----
-
 ### statistics delete
 
 **Targets:** Data Warehouse only
@@ -45,8 +41,6 @@ Drop a statistic via `DROP STATISTICS`. Prompts for confirmation unless `--yes` 
 ```
 fdw [-w WORKSPACE] statistics delete [ITEM] QUALIFIED_TABLE STAT_NAME
 ```
-
----
 
 ### statistics list
 
@@ -65,8 +59,6 @@ fdw [-w WORKSPACE] statistics list [ITEM] [OPTIONS]
 | `--user-only` | Only show user-created statistics. | off |
 | `--auto-only` | Only show auto-created statistics. | off |
 
----
-
 ### statistics show
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -83,8 +75,6 @@ fdw [-w WORKSPACE] statistics show [ITEM] QUALIFIED_TABLE STAT_NAME [OPTIONS]
 | --- | --- | --- |
 | `--histogram` | Show only the histogram steps (skip header and density vector). | off |
 
----
-
 ### statistics update
 
 **Targets:** Data Warehouse only
@@ -99,8 +89,6 @@ fdw [-w WORKSPACE] statistics update [ITEM] QUALIFIED_TABLE STAT_NAME [OPTIONS]
 | --- | --- | --- |
 | `--fullscan` | Use `WITH FULLSCAN` (default). | on |
 | `--sample-percent N` | Sample `N`% of the table (1–100). Overrides `--fullscan`. | - |
-
----
 
 ## MCP tools
 
@@ -134,8 +122,6 @@ Create a single-column statistic on a table. Only single-column statistics are s
 
 **Returns:** `Statistic`: the newly-created statistic.
 
----
-
 ### delete_statistics
 
 **Targets:** Data Warehouse only
@@ -154,8 +140,6 @@ Drop a statistic via `DROP STATISTICS`. **Destructive and irreversible.** Requir
 | `stat_name` | `str` | Name of the statistic to drop. |
 
 **Returns:** `{ "dropped": true }`: confirmation.
-
----
 
 ### list_statistics
 
@@ -178,8 +162,6 @@ List statistics on a warehouse or SQL Analytics Endpoint.
 
 **Returns:** `list[dict]`: array of `Statistic` objects.
 
----
-
 ### show_statistics
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -199,8 +181,6 @@ Show details of a statistic using `DBCC SHOW_STATISTICS`. Returns the stat heade
 | `histogram_only` | `bool` | When `true`, return only the histogram steps. |
 
 **Returns:** `StatisticDetails`: `{ stat_header, density_vector, histogram }`.
-
----
 
 ### update_statistics
 

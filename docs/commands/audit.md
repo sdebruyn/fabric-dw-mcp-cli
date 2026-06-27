@@ -8,8 +8,6 @@ Manage SQL audit settings for Microsoft Fabric Data Warehouses and SQL Analytics
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
----
-
 ## CLI
 
 ### audit add-group
@@ -30,8 +28,6 @@ fdw [-w WORKSPACE] audit add-group [WAREHOUSE] GROUP
 fdw -w MyWorkspace audit add-group SalesWH BATCH_COMPLETED_GROUP
 ```
 
----
-
 ### audit disable
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -49,8 +45,6 @@ fdw [-w WORKSPACE] audit disable [WAREHOUSE]
 ```shell
 fdw -w MyWorkspace audit disable SalesWH
 ```
-
----
 
 ### audit enable
 
@@ -81,8 +75,6 @@ fdw -w MyWorkspace audit enable --retention-days 90 SalesWH
 fdw -w MyWorkspace audit enable --unlimited SalesWH
 ```
 
----
-
 ### audit get
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -107,8 +99,6 @@ retentionDays    7
 actionGroups     BATCH_COMPLETED_GROUP
 ```
 
----
-
 ### audit remove-group
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -126,8 +116,6 @@ fdw [-w WORKSPACE] audit remove-group [WAREHOUSE] GROUP
 ```shell
 fdw -w MyWorkspace audit remove-group SalesWH BATCH_COMPLETED_GROUP
 ```
-
----
 
 ### audit set-groups
 
@@ -154,8 +142,6 @@ fdw -w MyWorkspace audit set-groups \
   SalesWH
 ```
 
----
-
 ### audit set-retention
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -178,8 +164,6 @@ fdw [-w WORKSPACE] audit set-retention --days INTEGER [WAREHOUSE]
 fdw -w MyWorkspace audit set-retention --days 90 SalesWH
 ```
 
----
-
 ## MCP tools
 
 ### add_audit_group
@@ -196,8 +180,6 @@ Add a single audit action group without overwriting the others. Idempotent - if 
 
 **Returns:** `AuditSettings`: the updated audit settings.
 
----
-
 ### disable_audit
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -210,8 +192,6 @@ Disable SQL auditing on a warehouse or SQL analytics endpoint.
 - `warehouse` (`str`): warehouse or SQL analytics endpoint name or GUID.
 
 **Returns:** `AuditSettings`: the updated audit settings.
-
----
 
 ### enable_audit
 
@@ -227,8 +207,6 @@ Enable SQL auditing on a warehouse or SQL analytics endpoint.
 
 **Returns:** `AuditSettings`: the updated audit settings.
 
----
-
 ### get_audit_settings
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -241,8 +219,6 @@ Fetch the current SQL audit settings for a warehouse or SQL analytics endpoint.
 - `warehouse` (`str`): warehouse or SQL analytics endpoint name or GUID.
 
 **Returns:** `AuditSettings`: object with `state` (`Enabled` or `Disabled`), `retentionDays`, and `auditActionsAndGroups`.
-
----
 
 ### remove_audit_group
 
@@ -258,8 +234,6 @@ Remove a single audit action group without overwriting the others. Idempotent - 
 
 **Returns:** `AuditSettings`: the updated audit settings.
 
----
-
 ### set_audit_action_groups
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -273,8 +247,6 @@ Replace the audited action groups for a warehouse or SQL analytics endpoint. Thi
 - `action_groups` (`list[str]`): list of audit action group names (e.g. `["BATCH_COMPLETED_GROUP"]`).
 
 **Returns:** `AuditSettings`: the updated audit settings.
-
----
 
 ### set_audit_retention
 

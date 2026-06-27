@@ -8,8 +8,6 @@ Manage T-SQL user-defined functions on Microsoft Fabric Data Warehouses and SQL 
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
----
-
 ## CLI
 
 ### functions create
@@ -40,8 +38,6 @@ fdw -w MyWorkspace functions create SalesWH \
   --body "(@input NVARCHAR(100)) RETURNS NVARCHAR(100) AS BEGIN RETURN LTRIM(RTRIM(@input)) END"
 ```
 
----
-
 ### functions drop
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -64,8 +60,6 @@ fdw [-w WORKSPACE] functions drop [OPTIONS] [ITEM] QUALIFIED_NAME
 fdw -w MyWorkspace --yes functions drop SalesWH dbo.fn_clean_input
 ```
 
----
-
 ### functions get
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -85,8 +79,6 @@ fdw [-w WORKSPACE] functions get [ITEM] QUALIFIED_NAME
 ```shell
 fdw -w MyWorkspace functions get SalesWH dbo.fn_clean_input
 ```
-
----
 
 ### functions list
 
@@ -117,8 +109,6 @@ fdw -w MyWorkspace functions list SalesWH --schema dbo --kind scalar
  dbo          fn_clean_input  scalar  True           2026-06-01T08:00:00Z  2026-06-10T12:00:00Z
 ```
 
----
-
 ### functions rename
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -141,8 +131,6 @@ fdw [-w WORKSPACE] functions rename [OPTIONS] [ITEM] QUALIFIED_NAME
 fdw -w MyWorkspace --yes functions rename SalesWH dbo.fn_clean_input \
   --new-name fn_sanitize_input
 ```
-
----
 
 ### functions update
 
@@ -176,8 +164,6 @@ fdw -w MyWorkspace functions update SalesWH dbo.fn_clean_input \
   --from-file ./fns/fn_clean_input_v2.sql
 ```
 
----
-
 ## MCP tools
 
 ### create_function
@@ -199,8 +185,6 @@ Create a new T-SQL user-defined function.
 
 **Returns:** `FunctionDetails`: the newly-created function object.
 
----
-
 ### drop_function
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -216,8 +200,6 @@ Drop a T-SQL user-defined function.
 
 **Returns:** `{ "dropped": true }`: confirmation.
 
----
-
 ### get_function
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -231,8 +213,6 @@ Fetch the full definition of a single T-SQL user-defined function, including its
 - `qualified_name` (`str`): dot-separated qualified function name, e.g. `dbo.fn_clean_input`.
 
 **Returns:** `FunctionDetails`: single function object with `definition` (from `sys.sql_modules`) and `parameters` (from `sys.parameters`).
-
----
 
 ### list_functions
 
@@ -249,8 +229,6 @@ List T-SQL user-defined functions on a warehouse or SQL Analytics Endpoint, opti
 
 **Returns:** `list[Function]`: array of function objects, each with `schema_name`, `name`, `qualified_name`, `kind`, `is_inlineable`, `created`, and `modified`.
 
----
-
 ### rename_function
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -265,8 +243,6 @@ Rename a T-SQL user-defined function via `sp_rename`. The new name must be a bar
 - `new_name` (`str`): new bare function name (no schema prefix), e.g. `fn_sanitize_input`.
 
 **Returns:** `FunctionDetails`: the renamed function record.
-
----
 
 ### update_function
 

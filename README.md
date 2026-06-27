@@ -19,10 +19,10 @@ Python CLI and MCP server for administering Microsoft Fabric Data Warehouses and
 
 `fabric-dw` provides two interfaces for managing Microsoft Fabric Data Warehouses and SQL Analytics Endpoints:
 
-- **CLI** — a command-line tool for common DW administration tasks.
-- **MCP server** — a [Model Context Protocol](https://modelcontextprotocol.io) server that exposes DW operations as tools for AI assistants.
+- **CLI**: a command-line tool for common DW administration tasks.
+- **MCP server**: a [Model Context Protocol](https://modelcontextprotocol.io) server that exposes DW operations as tools for AI assistants.
 
-Authentication is configured via the `FABRIC_AUTH` environment variable. The default (`FABRIC_AUTH=default`) uses [`azure-identity` `DefaultAzureCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.defaultazurecredential?WT.mc_id=MVP_310840), which walks environment variables, Workload/Managed Identity, Azure CLI, Azure Developer CLI, Azure PowerShell, and interactive browser in order — any of these will satisfy it. See the [Authentication](https://fdw.debruyn.dev/authentication/) docs for the full chain, all supported sources, and debugging tips.
+Authentication is configured via the `FABRIC_AUTH` environment variable. The default (`FABRIC_AUTH=default`) uses [`azure-identity` `DefaultAzureCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.defaultazurecredential?WT.mc_id=MVP_310840), which walks environment variables, Workload/Managed Identity, Azure CLI, Azure Developer CLI, Azure PowerShell, and interactive browser in order. Any of these will satisfy it. See the [Authentication](https://fdw.debruyn.dev/authentication/) docs for the full chain, all supported sources, and debugging tips.
 
 ## Installation
 
@@ -32,7 +32,7 @@ pip install fabric-dw
 uvx fabric-dw --help
 ```
 
-After installation, the `fdw` command is a short alias for `fabric-dw` — both invoke the same entry point.
+After installation, the `fdw` command is a short alias for `fabric-dw`; both invoke the same entry point.
 
 ## Quick Start
 
@@ -86,7 +86,7 @@ The Docker image's default `ENTRYPOINT` is the **MCP server** (`fabric-dw-mcp`).
 ```bash
 docker pull ghcr.io/sdebruyn/fabric-dw:latest
 
-# Run the MCP server (default entrypoint — connect via stdio from your MCP client):
+# Run the MCP server (default entrypoint, connect via stdio from your MCP client):
 docker run --rm -i \
   -e AZURE_CLIENT_ID=… \
   -e AZURE_TENANT_ID=… \
@@ -125,11 +125,11 @@ The MCP server can be started in HTTP mode for remote clients:
 fabric-dw-mcp --transport http [--host 127.0.0.1] [--port 8000]
 ```
 
-Binding to non-loopback addresses requires `FABRIC_MCP_ALLOW_REMOTE=1`. The HTTP transport has **no built-in authentication or TLS** — always front it with an authenticating reverse proxy.
+Binding to non-loopback addresses requires `FABRIC_MCP_ALLOW_REMOTE=1`. The HTTP transport has **no built-in authentication or TLS**. Always front it with an authenticating reverse proxy.
 
 ## Develop in a container
 
-Open the repo in [GitHub Codespaces](https://github.com/codespaces) or VS Code's Remote-Containers extension — the devcontainer pre-installs Python 3.13, uv, Azure CLI, and the GitHub CLI.
+Open the repo in [GitHub Codespaces](https://github.com/codespaces) or VS Code's Remote-Containers extension. The devcontainer pre-installs Python 3.13, uv, Azure CLI, and the GitHub CLI.
 
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/sdebruyn/fabric-dw-mcp-cli)
 
@@ -145,7 +145,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, branch flow, and how to ru
 
 ## Security
 
-Please report vulnerabilities privately — see [SECURITY.md](SECURITY.md).
+Please report vulnerabilities privately. See [SECURITY.md](SECURITY.md).
 
 ## Code of Conduct
 
@@ -153,4 +153,4 @@ This project follows the [Contributor Covenant 2.1](CODE_OF_CONDUCT.md).
 
 ## License
 
-[MIT](LICENSE) — Copyright (c) 2026 Sam Debruyn
+[MIT](LICENSE). Copyright (c) 2026 Sam Debruyn

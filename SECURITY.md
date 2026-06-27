@@ -2,7 +2,7 @@
 
 We use [GitHub Private Vulnerability Reporting](https://docs.github.com/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability?WT.mc_id=MVP_310840) for security disclosures.
 
-**To report a vulnerability**: [open a private advisory](https://github.com/sdebruyn/fabric-dw-mcp-cli/security/advisories/new). GitHub will deliver it directly and privately to the maintainers — no public issue or email needed.
+**To report a vulnerability**: [open a private advisory](https://github.com/sdebruyn/fabric-dw-mcp-cli/security/advisories/new). GitHub will deliver it directly and privately to the maintainers. No public issue or email needed.
 
 We aim to acknowledge reports within **5 business days** and to publish a fix or advisory within **90 days** of confirmation.
 
@@ -24,7 +24,7 @@ The interactive browser sign-in path (and the fallback interactive browser step 
 
 This application requests delegated (user-context) permissions for the following scope:
 
-- `https://analysis.windows.net/powerbi/api/.default` — Power BI / Fabric REST API
+- `https://analysis.windows.net/powerbi/api/.default`: Power BI / Fabric REST API
 
 > **Note**: The `SQL_SCOPE` constant (`https://database.windows.net/.default`) is defined in `auth.py` for future use when direct Fabric SQL Analytics Endpoint connections are implemented, but it is not yet requested at runtime.
 
@@ -32,7 +32,7 @@ This application requests delegated (user-context) permissions for the following
 
 Because the app is **multi-tenant and shared across all users of this tool**:
 
-1. **Upstream-app trust**: your tenant admin must consent to the app (or the user must do per-user consent if your tenant policy allows it). The audit trail in your Azure AD / Entra audit log will show the *upstream app ID* (`f666e5ee-...`), not a tenant-specific registration — this reduces per-tenant audit granularity.
+1. **Upstream-app trust**: your tenant admin must consent to the app (or the user must do per-user consent if your tenant policy allows it). The audit trail in your Azure AD / Entra audit log will show the *upstream app ID* (`f666e5ee-...`), not a tenant-specific registration. This reduces per-tenant audit granularity.
 2. **Supply-chain risk**: if the shared application is compromised, suspended, or deleted by Microsoft, all users on the default flow will be impacted without a per-tenant fallback.
 3. **No tenant-specific conditional-access policies**: because the app is not registered in your tenant, you cannot target it with tenant-specific conditional-access rules.
 

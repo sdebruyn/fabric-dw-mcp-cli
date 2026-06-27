@@ -8,8 +8,6 @@ This guide walks through building out a schema model on a Microsoft Fabric Data 
 
 The flat per-command references stay the source of truth for every flag and parameter: [Schemas](../commands/schemas.md), [Tables](../commands/tables.md), [Views](../commands/views.md), and [Statistics](../commands/statistics.md). This guide ties them together as a single narrative.
 
----
-
 ## What you'll build
 
 A small star-schema-style model in one warehouse:
@@ -27,8 +25,6 @@ You'll then maintain and iterate on the model - clone, rename, re-cluster, clear
 - **CLI** (`fdw …`) is the full surface. File-based schema inference (`--from-parquet` / `--from-csv` / `--from-json`), `tables load`, and `if-exists replace` are **CLI-only** because they need reliable local file access.
 - **MCP tools** mirror the CLI for everything that doesn't depend on server-side file access, so an AI assistant can author and inspect the same objects. Where an MCP equivalent exists it's named in each step; where it doesn't (notably `tables load`), the gap is called out.
 
----
-
 ## Prerequisites
 
 - `fabric-dw` [installed](../install.md) and [authenticated](../authentication.md) (the Azure credential chain - Azure CLI, managed identity, service principal, and more).
@@ -38,8 +34,6 @@ You'll then maintain and iterate on the model - clone, rename, re-cluster, clear
 !!! warning "Data Warehouse vs SQL Analytics Endpoint"
 
     A **SQL Analytics Endpoint** (the read query surface over a Lakehouse) cannot create, alter, or drop **tables**: that's a Warehouse-only capability. On a SQL Analytics Endpoint you can still create **views**, list/read/inspect everything, and manage schemas. The capability split is spelled out under [The SQL Analytics Endpoint read-only guard](#the-sql-analytics-endpoint-read-only-guard); each step below marks its **Targets**.
-
----
 
 ## Set your defaults
 
@@ -51,8 +45,6 @@ fdw config set warehouse SalesWH
 ```
 
 The rest of this guide assumes these defaults are set, so the examples omit `-w MyWorkspace` and drop the warehouse positional where it is optional. Any command still accepts an explicit `-w`/`--workspace` or a positional `[WAREHOUSE]`/`[ITEM]` to override them. Commands that take a trailing required argument (such as `tables clear … QUALIFIED_NAME` or `schemas create … NAME`) keep the warehouse positional so the remaining arguments stay unambiguous. See [Configuration & defaults](../commands/config.md).
-
----
 
 ## Step 1 - Create a schema
 
@@ -73,8 +65,6 @@ fdw schemas list
 !!! note "Schema names are case-sensitive"
 
     Fabric warehouses use a fixed, case-sensitive default collation (`Latin1_General_100_BIN2_UTF8`), and **schema names are case-sensitive**. `Sales` and `sales` are different schemas. See [Limitations & gotchas](#fixed-case-sensitive-collation) before you settle on a naming convention - collation can't be changed after the warehouse is created.
-
----
 
 ## Step 2 - Create tables
 
@@ -191,8 +181,6 @@ fdw --json tables count SalesWH sales.orders
 fdw tables list --schema sales
 ```
 
----
-
 ## Step 3 - Populate the tables
 
 Loading data is its own topic. The bridge from "empty table" to "populated table" is **`tables load`**, which issues `COPY INTO` from a local file or a remote URL (and can auto-create the table from the source schema with `--create`):
@@ -202,8 +190,6 @@ fdw tables load SalesWH sales.orders --file ./data/orders.parquet
 ```
 
 **Targets:** Data Warehouse only. There is **no MCP `load` tool for local files**; the MCP server exposes `load_table_from_url` / `import_table_from_url` for remote URLs only (local staging needs reliable file access). For the full loading surface - `--create`, `--if-exists`, credentials for secured external URLs, CSV options - see the [`tables load`](../commands/tables.md#tables-load) reference rather than this guide.
-
----
 
 ## Step 4 - Create views
 
@@ -251,8 +237,6 @@ fdw views update SalesWH sales.vw_orders_by_month \
 
     Views, stored procedures, and table-valued/scalar functions are the object kinds you *can* create on a SQL Analytics Endpoint. `fabric-dw` ships read-only [`procedures`](../commands/procedures.md) (`list_procedures`, `get_procedure`) and [`functions`](../commands/functions.md) (`list_functions`, `get_function`) groups for inspecting the procs and functions that sit alongside your views.
 
----
-
 ## Step 5 - Help the optimizer
 
 After you load data, give the query optimizer the statistics it needs. `fabric-dw` manages **single-column** statistics (a Fabric limitation - multi-column statistics aren't supported), and you must pass an explicit `--name` (Fabric requires an explicit statistic name - there is no auto-generated default).
@@ -295,8 +279,6 @@ fdw tables cluster-columns SalesWH sales.orders
 !!! tip "Diagnosing slow queries"
 
     The [Agent Skills](../skills.md) page documents `/query-optimizer` (clustering and missing/stale statistics for a single query) and `/warehouse-performance` (warehouse-wide statistics health). They pick up where this authoring workflow leaves off.
-
----
 
 ## Step 6 - Maintain & iterate
 
@@ -343,8 +325,6 @@ fdw --yes schemas delete SalesWH sales --cascade
 
 **MCP equivalents:** `clone_table`, `rename_table` / `rename_view`, `clear_table`, `get_table_health_metrics`, `drop_view`, `delete_table`, `delete_schema(..., cascade=True)`.
 
----
-
 ### Destructive operations and the `--yes` flag
 
 These commands prompt for confirmation before they run; pass `--yes` / `-y` to skip the prompt in scripts (at your own risk):
@@ -363,8 +343,6 @@ A SQL Analytics Endpoint can't mutate tables. The following raise an error when 
 Everything else works on both item kinds: every `list` / `read` / `columns` / `count` / `get` operation, `schemas create` / `delete`, and **all** `views` mutations (`create` / `update` / `rename` / `drop`). The one inverse is **`tables health-check`**, which is **SQL-Analytics-Endpoint-only** and rejected on a Data Warehouse.
 
 `--json` output and name-or-GUID resolution apply uniformly across every command group.
-
----
 
 ## Limitations & gotchas
 
@@ -403,8 +381,6 @@ Table and schema names **can't contain `/` or `\`, and can't end with a `.`**. S
 ### Table design
 
 For the schema model itself, follow the [dimensional-modeling](https://learn.microsoft.com/fabric/data-warehouse/dimensional-modeling-overview?WT.mc_id=MVP_310840#star-schema-design) and [table design](https://learn.microsoft.com/fabric/data-warehouse/tables?WT.mc_id=MVP_310840) guidance: fact / dimension / integration table categories, surrogate keys, types matched to semantics (`date` / `datetime2`, integer types for whole numbers, the smallest viable `decimal` precision - see [data-type optimization](https://learn.microsoft.com/fabric/data-warehouse/guidelines-warehouse-performance?WT.mc_id=MVP_310840#data-type-optimization)), and [statistics](https://learn.microsoft.com/fabric/data-warehouse/statistics?WT.mc_id=MVP_310840) refreshed after loads. The canonical DDL references are [CREATE TABLE](https://learn.microsoft.com/fabric/data-warehouse/create-table?WT.mc_id=MVP_310840) and [CREATE TABLE AS SELECT](https://learn.microsoft.com/sql/t-sql/statements/create-table-azure-sql-data-warehouse?view=fabric&WT.mc_id=MVP_310840).
-
----
 
 ## The same workflow via MCP
 

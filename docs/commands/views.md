@@ -8,8 +8,6 @@ Manage SQL views on Microsoft Fabric Data Warehouses and SQL Analytics Endpoints
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
 
----
-
 ## CLI
 
 ### views columns
@@ -39,8 +37,6 @@ fdw -w MyWorkspace views columns SalesWH dbo.vw_sales
  2        amount  DECIMAL(18,2) True      False        False
 ```
 
----
-
 ### views count
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -62,8 +58,6 @@ fdw -w MyWorkspace --json views count SalesWH dbo.vw_sales
 ```json
 {"schema": "dbo", "name": "vw_sales", "row_count": 12345}
 ```
-
----
 
 ### views create
 
@@ -93,8 +87,6 @@ fdw -w MyWorkspace views create SalesWH \
   --select "SELECT id, amount FROM dbo.sales WHERE sale_date >= '2026-01-01'"
 ```
 
----
-
 ### views drop
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -112,8 +104,6 @@ fdw [-w WORKSPACE] views drop [WAREHOUSE] QUALIFIED_NAME
 ```shell
 fdw -w MyWorkspace --yes views drop SalesWH dbo.vw_recent
 ```
-
----
 
 ### views get
 
@@ -144,8 +134,6 @@ modified       2026-06-01T12:00:00Z
 definition     SELECT id, amount FROM dbo.sales
 ```
 
----
-
 ### views list
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -174,8 +162,6 @@ fdw -w MyWorkspace views list SalesWH --schema dbo
  dbo          vw_sales     2026-01-10T08:00:00Z  2026-06-01T12:00:00Z
  dbo          vw_monthly   2026-02-01T09:00:00Z  2026-05-15T14:00:00Z
 ```
-
----
 
 ### views read
 
@@ -210,8 +196,6 @@ fdw -w MyWorkspace views read SalesWH dbo.vw_sales --count 5
 ]
 ```
 
----
-
 ### views rename
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -235,8 +219,6 @@ fdw [-w WORKSPACE] views rename [OPTIONS] [WAREHOUSE] QUALIFIED_NAME
 ```shell
 fdw -w MyWorkspace views rename SalesWH dbo.vw_recent --new-name vw_revenue
 ```
-
----
 
 ### views update
 
@@ -266,8 +248,6 @@ fdw -w MyWorkspace views update SalesWH dbo.vw_recent \
   --select "SELECT id, amount, region FROM dbo.sales WHERE sale_date >= '2026-01-01'"
 ```
 
----
-
 ## MCP tools
 
 ### count_view_rows
@@ -284,8 +264,6 @@ Return the total row count of a view via `SELECT COUNT_BIG(*)`.
 
 **Returns:** `{ "schema": str, "name": str, "row_count": int }`: the schema name, view name, and total row count.
 
----
-
 ### create_view
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -301,8 +279,6 @@ Create a new SQL view.
 
 **Returns:** `View`: the newly-created view object (fetched after DDL, includes `definition`).
 
----
-
 ### drop_view
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -317,8 +293,6 @@ Drop a SQL view.
 
 **Returns:** `{ "dropped": true }`: confirmation.
 
----
-
 ### get_view
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -332,8 +306,6 @@ Fetch the full definition of a single SQL view.
 - `qualified_name` (`str`): dot-separated schema and view name, e.g. `dbo.vw_sales`.
 
 **Returns:** `View`: single view object with `definition` populated from `sys.sql_modules`.
-
----
 
 ### get_view_columns
 
@@ -359,8 +331,6 @@ Return column metadata for a SQL view via `sys.columns`. Works on both Fabric Da
 
 Results are ordered by ordinal position. Raises a `ToolError` if the view does not exist.
 
----
-
 ### list_views
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -374,8 +344,6 @@ List SQL views on a warehouse or SQL Analytics Endpoint, optionally filtered to 
 - `schema` (`str | null`, optional): when provided, only views in this schema are returned; must be a valid SQL identifier.
 
 **Returns:** `list[View]`: array of view objects, each with `schema_name`, `name`, `qualified_name`, `created`, `modified`, and `definition` (always `null` for list results).
-
----
 
 ### read_view
 
@@ -392,8 +360,6 @@ Return up to `count` rows from a view as JSON-serialisable columns and rows.
 
 **Returns:** `{ "columns": list[str], "rows": list[list] }`: column names and row arrays.
 
----
-
 ### rename_view
 
 **Targets:** Data Warehouse · SQL Analytics Endpoint
@@ -408,8 +374,6 @@ Rename a SQL view via `sp_rename`. Works on both Data Warehouses and SQL Analyti
 - `new_name` (`str`): new bare view name (no schema prefix), e.g. `vw_revenue`.
 
 **Returns:** `View`: the updated view object (fetched after rename, includes `definition`).
-
----
 
 ### update_view
 
