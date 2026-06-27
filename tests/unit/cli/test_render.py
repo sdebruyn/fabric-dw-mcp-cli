@@ -17,6 +17,7 @@ from fabric_dw.cli._render import (
     render,
     render_permissions_table,
     render_refresh_table,
+    sanitise_json,
 )
 from fabric_dw.models import (
     ItemAccess,
@@ -1533,3 +1534,75 @@ class TestWarehousesAllShapeWidthStarvation:
         assert "displayName" in output
         assert "kind" in output
         assert "id" in output
+
+
+class TestSanitiseJson:
+    """Unit tests for the sanitise_json helper."""
+
+    def test_finite_float_unchanged(self) -> None:
+        assert sanitise_json(1.5) == 1.5
+
+    def test_positive_infinity_becomes_none(self) -> None:
+        assert sanitise_json(float("inf")) is None
+
+    def test_negative_infinity_becomes_none(self) -> None:
+        assert sanitise_json(float("-inf")) is None
+
+    def test_nan_becomes_none(self) -> None:
+        assert sanitise_json(float("nan")) is None
+
+    def test_non_float_scalars_unchanged(self) -> None:
+        assert sanitise_json(42) == 42
+        assert sanitise_json("hello") == "hello"
+        assert sanitise_json(None) is None
+        assert sanitise_json(True) is True  # noqa: FBT003
+
+    def test_dict_with_non_finite_value_coerced(self) -> None:
+        result = sanitise_json({"a": float("inf"), "b": 1.0})
+        assert result == {"a": None, "b": 1.0}
+
+    def test_list_with_non_finite_value_coerced(self) -> None:
+        result = sanitise_json([float("nan"), 2.0, float("-inf")])
+        assert result == [None, 2.0, None]
+
+    def test_nested_structure_coerced(self) -> None:
+        data = {"rows": [{"cost": float("inf"), "label": "x"}], "total": float("nan")}
+        result = sanitise_json(data)
+        assert result == {"rows": [{"cost": None, "label": "x"}], "total": None}
+
+    def test_no_copy_when_no_non_finite(self) -> None:
+        """Finite-only data roundtrips without mutation."""
+        data = {"a": 1.0, "b": [2.5, 3.0]}
+        result = sanitise_json(data)
+        assert result == data
+
+
+class TestRenderJsonNonFinite:
+    """render(data, json_output=True) must emit strict JSON even for non-finite floats."""
+
+    def test_infinity_in_dict_emits_null(self, capsys: pytest.CaptureFixture[str]) -> None:
+        render({"cost": float("inf")}, json_output=True)
+        captured = capsys.readouterr()
+        parsed = json.loads(captured.out)
+        assert parsed["cost"] is None
+
+    def test_nan_in_dict_emits_null(self, capsys: pytest.CaptureFixture[str]) -> None:
+        render({"value": float("nan")}, json_output=True)
+        captured = capsys.readouterr()
+        parsed = json.loads(captured.out)
+        assert parsed["value"] is None
+
+    def test_negative_infinity_in_list_emits_null(self, capsys: pytest.CaptureFixture[str]) -> None:
+        render([float("-inf"), 1.0], json_output=True)
+        captured = capsys.readouterr()
+        parsed = json.loads(captured.out)
+        assert parsed[0] is None
+        assert parsed[1] == 1.0
+
+    def test_output_is_strict_json_parseable(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """json.loads must succeed: no Infinity / NaN tokens in the output."""
+        render({"a": float("inf"), "b": float("nan"), "c": 2.5}, json_output=True)
+        captured = capsys.readouterr()
+        # json.loads raises if the output is not strict JSON
+        parsed = json.loads(captured.out)
+        assert parsed["c"] == 2.5

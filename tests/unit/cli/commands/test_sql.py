@@ -1221,3 +1221,90 @@ class TestSqlPlanFormatHtml:
                 ],
             )
         assert result.exit_code != 0
+
+
+# Plan XML whose EstimateRows="1e400" parses to float('inf') via float().
+_NONFINITE_PLAN_XML = (
+    f'<ShowPlanXML xmlns="{_NS}" Version="1.6" Build="16.0.0.0">'
+    f"<BatchSequence><Batch><Statements>"
+    f'<StmtSimple StatementText="SELECT 1">'
+    f"<QueryPlan>"
+    f'<RelOp NodeId="0" PhysicalOp="Table Scan" LogicalOp="Table Scan"'
+    f' EstimateRows="1e400" EstimatedTotalSubtreeCost="0.5" Parallel="0">'
+    f"<TableScan />"
+    f"</RelOp>"
+    f"</QueryPlan>"
+    f"</StmtSimple>"
+    f"</Statements></Batch></BatchSequence>"
+    f"</ShowPlanXML>"
+)
+
+
+class TestSqlJsonNonFinite:
+    """--json output must never contain non-standard Infinity / NaN tokens."""
+
+    def test_exec_json_non_finite_float_emits_null(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """sql exec --json coerces a non-finite float row value to null."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        non_finite_result = SqlResult(
+            columns=["value"],
+            rows=[[float("inf")]],
+            rowcount=1,
+        )
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.sql_exec.execute",
+                new=AsyncMock(return_value=non_finite_result),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", WS_GUID, "--json", "sql", "exec", WH_GUID, "-q", "SELECT 1e400"],
+            )
+        assert result.exit_code == 0
+        # Must be strict JSON (json.loads raises on Infinity / NaN tokens).
+        parsed = json.loads(result.output)
+        # The non-finite float must become null.
+        assert parsed["rows"][0][0] is None
+
+    def test_plan_json_non_finite_estimate_rows_emits_null(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """sql plan --json coerces a non-finite estimateRows to null."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.sql_exec.get_plan",
+                new=AsyncMock(return_value=_NONFINITE_PLAN_XML),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", WS_GUID, "--json", "sql", "plan", WH_GUID, "-q", "SELECT 1"],
+            )
+        assert result.exit_code == 0
+        # Must be strict JSON (json.loads raises on Infinity / NaN tokens).
+        parsed = json.loads(result.output)
+        assert isinstance(parsed, list)
+        # The operator with EstimateRows="1e400" must have estimateRows=null.
+        assert parsed[0]["estimateRows"] is None
