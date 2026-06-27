@@ -1,5 +1,7 @@
 """Azure credential chain with persistent token cache."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
@@ -153,7 +155,7 @@ class SyncCredentialAdapter:
     async def close(self) -> None:
         await asyncio.to_thread(self._inner.close)
 
-    async def __aenter__(self) -> "SyncCredentialAdapter":
+    async def __aenter__(self) -> SyncCredentialAdapter:
         return self
 
     async def __aexit__(
