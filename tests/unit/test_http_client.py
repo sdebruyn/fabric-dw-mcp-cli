@@ -1461,13 +1461,13 @@ def test_default_timeout_is_60_seconds() -> None:
     assert _DEFAULT_TIMEOUT == 60.0, f"Expected _DEFAULT_TIMEOUT == 60.0; got {_DEFAULT_TIMEOUT}"
 
 
-async def test_post_5xx_is_retried() -> None:
-    """POST on 5xx must still be retried (FabricServerError path in _should_retry).
+async def test_post_5xx_not_retried_method_gate() -> None:
+    """POST on 5xx must NOT be retried (method gate added in #801).
 
-    The switch from retry_if_exception_type(FabricServerError) to
-    retry_if_exception(_should_retry) keeps 5xx retry regardless of HTTP method.
-    This test guards against accidentally removing the isinstance(exc,
-    FabricServerError) branch from _should_retry.
+    5xx retries are gated on idempotent methods (GET/HEAD/OPTIONS) so that a
+    non-idempotent POST that returned a bare 500/503 is raised immediately.
+    Re-sending a POST that may have committed on the server risks creating a
+    duplicate resource or a 409 Conflict.
     """
     call_count = 0
 
@@ -1484,7 +1484,9 @@ async def test_post_5xx_is_retried() -> None:
             with pytest.raises(FabricServerError):
                 await client.request("POST", HttpBase.FABRIC, "/items", json={"x": 1})
 
-    assert call_count == 3, f"POST 5xx must be retried 3 times (tenacity budget); got {call_count}"
+    assert call_count == 1, (
+        f"POST 5xx must not be retried (non-idempotent); expected 1 call but got {call_count}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1896,3 +1898,142 @@ async def test_get_token_does_not_remap_non_auth_errors() -> None:
     async with client:
         with pytest.raises(RuntimeError, match="unexpected credential crash"):
             await client._get_token()  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# 5xx method gate: non-idempotent methods not retried on 5xx (#801)
+# ---------------------------------------------------------------------------
+
+
+async def test_post_bare_503_not_retried() -> None:
+    """A bare 503 (no envelope) on POST must NOT be retried (non-idempotent, #801).
+
+    Before the fix, FabricServerError retried regardless of HTTP method because
+    _make_should_retry had no method gate on the 5xx branch.  After the fix, 5xx
+    retries are gated on idempotent methods (GET/HEAD/OPTIONS) in the same way
+    timeouts are gated.
+
+    A POST that returns 503 without a Fabric error envelope (is_retriable defaults
+    to True) must be raised immediately with exactly one HTTP send.  Re-sending a
+    POST that already returned 503 risks creating a duplicate resource or a 409.
+    """
+    call_count = 0
+
+    def side_effect(_request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(503, json={"error": "service unavailable"})
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.post("https://api.fabric.microsoft.com/v1/items").mock(side_effect=side_effect)
+
+        client = await _get_client(rps=10)
+        async with client:
+            with pytest.raises(FabricServerError):
+                await client.request("POST", HttpBase.FABRIC, "/items", json={"x": 1})
+
+    assert call_count == 1, (
+        f"POST 503 must not be retried (non-idempotent); expected 1 call but got {call_count}"
+    )
+
+
+async def test_patch_bare_503_not_retried() -> None:
+    """A bare 503 on PATCH must NOT be retried (non-idempotent method, #801)."""
+    call_count = 0
+
+    def side_effect(_request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(503, json={"error": "service unavailable"})
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.patch("https://api.fabric.microsoft.com/v1/items/abc").mock(
+            side_effect=side_effect
+        )
+
+        client = await _get_client(rps=10)
+        async with client:
+            with pytest.raises(FabricServerError):
+                await client.request("PATCH", HttpBase.FABRIC, "/items/abc", json={"x": 1})
+
+    assert call_count == 1, (
+        f"PATCH 503 must not be retried (non-idempotent); expected 1 call but got {call_count}"
+    )
+
+
+async def test_delete_bare_503_not_retried() -> None:
+    """A bare 503 on DELETE must NOT be retried (non-idempotent method, #801)."""
+    call_count = 0
+
+    def side_effect(_request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(503, json={"error": "service unavailable"})
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.delete("https://api.fabric.microsoft.com/v1/items/abc").mock(
+            side_effect=side_effect
+        )
+
+        client = await _get_client(rps=10)
+        async with client:
+            with pytest.raises(FabricServerError):
+                await client.request("DELETE", HttpBase.FABRIC, "/items/abc")
+
+    assert call_count == 1, (
+        f"DELETE 503 must not be retried (non-idempotent); expected 1 call but got {call_count}"
+    )
+
+
+async def test_get_5xx_still_retried_after_method_gate() -> None:
+    """A 503 on GET must still be retried (idempotent method - existing behaviour, #801).
+
+    The method gate on 5xx retries must NOT block idempotent methods: GET is in
+    _IDEMPOTENT_METHODS so all three tenacity attempts must fire.
+    """
+    call_count = 0
+
+    def side_effect(_request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(503, json={"error": "service unavailable"})
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get("https://api.fabric.microsoft.com/v1/items").mock(side_effect=side_effect)
+
+        client = await _get_client(rps=10)
+        async with client:
+            with pytest.raises(FabricServerError):
+                await client.request("GET", HttpBase.FABRIC, "/items")
+
+    assert call_count == 3, (
+        f"GET 503 must be retried up to 3 times (tenacity budget); got {call_count}"
+    )
+
+
+async def test_get_5xx_envelope_not_retriable_not_retried() -> None:
+    """GET with isRetriable: false in the envelope must NOT be retried (existing fail-fast, #801).
+
+    The is_retriable flag from the Fabric error envelope is preserved after adding
+    the method gate: both conditions (is_retriable AND idempotent method) must be
+    True for a retry to occur.  An envelope with isRetriable: false on any method
+    must still fail fast.
+    """
+    call_count = 0
+
+    def side_effect(_request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(503, json={"isRetriable": False, "error": "paused capacity"})
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get("https://api.fabric.microsoft.com/v1/items").mock(side_effect=side_effect)
+
+        client = await _get_client(rps=10)
+        async with client:
+            with pytest.raises(FabricServerError):
+                await client.request("GET", HttpBase.FABRIC, "/items")
+
+    assert call_count == 1, (
+        f"GET 503 with isRetriable: false must not be retried; expected 1 call but got {call_count}"
+    )

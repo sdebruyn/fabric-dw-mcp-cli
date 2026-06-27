@@ -12,19 +12,22 @@ Provides:
 Retry arithmetic
 ~~~~~~~~~~~~~~~~
 Tenacity wraps ``_request_with_retry`` and retries on ``FabricServerError``
-(5xx) up to 3 attempts with exponential back-off.  Inside each attempt,
-``_do_request`` executes a 429-loop of up to ``max_429_retries`` iterations.
-Both mechanisms share a common wall-clock deadline (``_combined_deadline_s``
-seconds from the first attempt, default 300 s) so the combined worst-case
-latency is bounded even if the server returns large Retry-After values.
+(5xx) up to 3 attempts with exponential back-off, but ONLY for idempotent
+HTTP methods (GET, HEAD, OPTIONS).  POST, PATCH, and DELETE are not retried
+on 5xx because the server may have committed the request — re-sending risks a
+duplicate resource or a 409 Conflict.  Inside each attempt, ``_do_request``
+executes a 429-loop of up to ``max_429_retries`` iterations.  Both mechanisms
+share a common wall-clock deadline (``_combined_deadline_s`` seconds from the
+first attempt, default 300 s) so the combined worst-case latency is bounded
+even if the server returns large Retry-After values.
 
 Timeout retry safety
 ~~~~~~~~~~~~~~~~~~~~
 ``httpx.TimeoutException`` (including ``ReadTimeout``, ``ConnectTimeout``, etc.)
 is retried ONLY for idempotent HTTP methods (GET, HEAD, OPTIONS).  POST, PATCH,
-and DELETE are NOT retried on timeout because the server may have received and
-committed the request — re-sending a POST would duplicate the resource or cause
-a 409 Conflict.  LRO status polling (GET) is covered by the safe retry path.
+and DELETE are NOT retried on timeout for the same reason as 5xx: the server
+may have received and committed the request.  LRO status polling (GET) is
+covered by the safe retry path.
 
 Credential ownership
 ~~~~~~~~~~~~~~~~~~~~
@@ -202,19 +205,22 @@ def _make_should_retry(method: str) -> Callable[[BaseException], bool]:
     upper = method.upper()
 
     def _should_retry(exc: BaseException) -> bool:
-        """Retry on 5xx *or* on timeout for idempotent methods.
+        """Retry on 5xx or on timeout, but only for idempotent HTTP methods.
 
         - Retry :class:`~fabric_dw.exceptions.FabricServerError` (5xx) ONLY
-          when ``is_retriable`` is ``True`` (the default).  A Fabric error
-          envelope with ``"isRetriable": false`` (e.g. the ~22s
-          InternalServerError from a paused-capacity workspace) must NOT be
-          retried — fail fast, no 60-70s back-off waste.
+          when ``is_retriable`` is ``True`` AND the method is idempotent
+          (GET/HEAD/OPTIONS).  A Fabric error envelope with
+          ``"isRetriable": false`` (e.g. the ~22s InternalServerError from a
+          paused-capacity workspace) still fails fast regardless of method.
+          POST/PATCH/DELETE are not retried on 5xx: the server may have
+          already committed the request, so re-sending risks a duplicate
+          resource or a 409 Conflict.
         - Retry :class:`httpx.TimeoutException` ONLY for idempotent HTTP
           methods (GET, HEAD, OPTIONS).  POST/PATCH/DELETE are not retried
-          on timeout — the server may have already committed the request.
+          on timeout for the same reason.
         """
         if isinstance(exc, FabricServerError):
-            return exc.is_retriable
+            return exc.is_retriable and upper in _IDEMPOTENT_METHODS
         if isinstance(exc, httpx.TimeoutException):
             return upper in _IDEMPOTENT_METHODS
         return False
@@ -243,11 +249,14 @@ class FabricHttpClient:
     Retry arithmetic
     ~~~~~~~~~~~~~~~~
     Tenacity wraps ``_request_with_retry`` and retries on ``FabricServerError``
-    (5xx) up to 3 attempts.  Inside each tenacity attempt, ``_do_request`` runs
-    a 429-loop of up to ``max_429_retries`` iterations.  Both mechanisms share a
-    common wall-clock deadline (``combined_deadline_s`` seconds from the first
-    send, default 300 s) so the total latency is bounded even when the server
-    advertises large ``Retry-After`` values.
+    (5xx) up to 3 attempts, but ONLY for idempotent methods (GET/HEAD/OPTIONS).
+    POST, PATCH, and DELETE are not retried on 5xx: the server may have already
+    committed the request, and re-sending risks a duplicate resource or a 409.
+    Inside each tenacity attempt, ``_do_request`` runs a 429-loop of up to
+    ``max_429_retries`` iterations.  Both mechanisms share a common wall-clock
+    deadline (``combined_deadline_s`` seconds from the first send, default 300 s)
+    so the total latency is bounded even when the server advertises large
+    ``Retry-After`` values.
 
     Args:
         credential:             Azure credential used to fetch bearer tokens.
