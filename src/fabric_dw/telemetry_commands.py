@@ -166,7 +166,7 @@ DOMAIN_MAP: dict[str, str] = {
     "update_statistics": "statistics",
     "delete_statistics": "statistics",
     # SQL Pools
-    "get_sql_pools_configuration": "sql_pools",
+    "get_sql_pools_status": "sql_pools",
     "list_sql_pools": "sql_pools",
     "get_sql_pool": "sql_pools",
     "create_sql_pool": "sql_pools",

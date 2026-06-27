@@ -33,9 +33,13 @@ _log = logging.getLogger(__name__)
 def register(mcp: FastMCP) -> None:  # noqa: PLR0915
     """Register SQL Pools tools against *mcp*."""
 
-    @mcp.tool(name="get_sql_pools_configuration")
-    async def get_sql_pools_configuration(workspace: str) -> dict[str, Any]:
-        """Fetch the full SQL Pools configuration (enabled flag + pool list) for a workspace.
+    @mcp.tool(name="get_sql_pools_status")
+    async def get_sql_pools_status(workspace: str) -> dict[str, Any]:
+        """Return whether custom SQL Pools are enabled for a workspace.
+
+        Returns only the workspace-level enabled/disabled switch
+        (``customSQLPoolsEnabled``).  Use ``list_sql_pools`` to see the pool
+        list, or ``get_sql_pool`` for a single pool's details.
 
         Requires workspace admin role.  This tool targets a **beta / preview** API
         endpoint that may change before general availability.
@@ -47,11 +51,11 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             assert_workspace_allowed(
                 workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
             )
-            _log.debug("get_sql_pools_configuration ws=%s", ws_id)
+            _log.debug("get_sql_pools_status ws=%s", ws_id)
             result = await sql_pools_svc.get_configuration(ctx.http, ws_id)
         except FabricError as exc:
             raise fabric_err(exc) from exc
-        return result.model_dump(by_alias=True, mode="json")
+        return {"customSQLPoolsEnabled": result.custom_sql_pools_enabled}
 
     @mcp.tool(name="list_sql_pools")
     async def list_sql_pools(workspace: str) -> list[dict[str, Any]]:

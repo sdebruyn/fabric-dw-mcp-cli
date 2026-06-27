@@ -89,8 +89,8 @@ def _make_http_cm(http: object) -> object:
     return _cm
 
 
-class TestSqlPoolsGet:
-    def test_get_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+class TestSqlPoolsStatus:
+    def test_status_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         with (
             patch(
@@ -106,13 +106,14 @@ class TestSqlPoolsGet:
                 new=AsyncMock(return_value=_CONFIG),
             ),
         ):
-            result = runner.invoke(cli, ["-w", WS_GUID, "--json", "sql-pools", "get"])
+            result = runner.invoke(cli, ["-w", WS_GUID, "--json", "sql-pools", "status"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["customSQLPoolsEnabled"] is True
-        assert len(data["customSQLPools"]) == 1
+        # status returns only the enabled flag, not the pool list
+        assert "customSQLPools" not in data
 
-    def test_get_json_output(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_status_json_output_flag_only(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         with (
             patch(
@@ -128,13 +129,34 @@ class TestSqlPoolsGet:
                 new=AsyncMock(return_value=_CONFIG),
             ),
         ):
-            result = runner.invoke(cli, ["-w", WS_GUID, "--json", "sql-pools", "get"])
+            result = runner.invoke(cli, ["-w", WS_GUID, "--json", "sql-pools", "status"])
         assert result.exit_code == 0
         data = json.loads(result.output)
-        assert data["customSQLPoolsEnabled"] is True
-        assert len(data["customSQLPools"]) == 1
+        # Only the enabled flag is rendered; pool list must not appear.
+        assert data == {"customSQLPoolsEnabled": True}
 
-    def test_get_403_shows_permission_hint(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_status_disabled_shows_false(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql_pools.build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools.resolve_workspace_id",
+                new=AsyncMock(return_value=WS_UUID),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql_pools._svc.get_configuration",
+                new=AsyncMock(return_value=_CONFIG_DISABLED),
+            ),
+        ):
+            result = runner.invoke(cli, ["-w", WS_GUID, "--json", "sql-pools", "status"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data == {"customSQLPoolsEnabled": False}
+
+    def test_status_403_shows_permission_hint(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         with (
             patch(
@@ -150,7 +172,7 @@ class TestSqlPoolsGet:
                 new=AsyncMock(side_effect=PermissionDeniedError("403")),
             ),
         ):
-            result = runner.invoke(cli, ["-w", WS_GUID, "sql-pools", "get"])
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-pools", "status"])
         assert result.exit_code != 0
         assert "admin" in result.output.lower()
 
@@ -794,10 +816,10 @@ class TestSqlPoolsDisable:
         assert data["customSQLPoolsEnabled"] is False
 
 
-class TestSqlPoolsGetFabricError:
-    """get_cmd — FabricError branch (line 70-71)."""
+class TestSqlPoolsStatusFabricError:
+    """status_cmd — FabricError branch."""
 
-    def test_get_fabric_error_exits_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_status_fabric_error_exits_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         with (
             patch(
@@ -813,7 +835,7 @@ class TestSqlPoolsGetFabricError:
                 new=AsyncMock(side_effect=FabricError("server error")),
             ),
         ):
-            result = runner.invoke(cli, ["-w", WS_GUID, "sql-pools", "get"])
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-pools", "status"])
         assert result.exit_code != 0
         assert "server error" in result.output
 
