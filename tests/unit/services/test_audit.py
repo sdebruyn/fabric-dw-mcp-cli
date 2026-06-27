@@ -201,7 +201,7 @@ async def test_enable_negative_retention_raises_value_error() -> None:
 async def test_enable_403_raises_permission_denied() -> None:
     """enable should propagate PermissionDeniedError on 403 from PATCH.
 
-    enable now issues a pre-flight GET (which succeeds here) before the PATCH
+    enable issues a pre-flight GET (which succeeds here) before the PATCH
     that returns 403.
     """
     with respx.mock:
@@ -211,6 +211,23 @@ async def test_enable_403_raises_permission_denied() -> None:
         async with client:
             with pytest.raises(PermissionDeniedError):
                 await audit.enable(client, _WS_ID, _WH_ID)
+
+
+async def test_enable_get_403_raises_permission_denied() -> None:
+    """enable should propagate PermissionDeniedError on 403 from the pre-flight GET.
+
+    The pre-flight GET added by this fix is a new 403 surface.  This test
+    confirms the error propagates before the PATCH is ever attempted.
+    """
+    with respx.mock:
+        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(403, json={"error": "forbidden"}))
+        patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        client = await _make_client()
+        async with client:
+            with pytest.raises(PermissionDeniedError):
+                await audit.enable(client, _WS_ID, _WH_ID)
+
+    assert not patch_route.called
 
 
 # ---------------------------------------------------------------------------
@@ -847,13 +864,13 @@ async def test_enable_while_already_enabled_preserves_action_groups() -> None:
     assert result.action_groups == custom_groups
 
 
-async def test_enable_while_disabled_does_not_include_action_groups() -> None:
-    """enable on a disabled audit must not send auditActionsAndGroups in the PATCH body.
+async def test_enable_while_disabled_sends_empty_action_groups() -> None:
+    """enable on a disabled audit sends auditActionsAndGroups=[] in the PATCH body.
 
-    On a first-time enable (state == "Disabled") there are no custom groups to
-    preserve.  Omitting the field lets the Fabric API apply its own defaults.
-    Including an empty list would be equally correct, but omitting it is the
-    documented intent and keeps the PATCH body minimal.
+    The Fabric API resets any omitted field to defaults, so auditActionsAndGroups
+    is always round-tripped.  When audit is Disabled the model field defaults to
+    an empty list (default_factory=list), so the PATCH body includes [] rather
+    than omitting the field.  This is the safe no-op value for a first-time enable.
     """
     enabled_response = {
         "state": "Enabled",
@@ -874,9 +891,8 @@ async def test_enable_while_disabled_does_not_include_action_groups() -> None:
             await audit.enable(client, _WS_ID, _WH_ID)
 
     sent_body = json.loads(patch_route.calls[0].request.content)
-    # On first-time enable from Disabled, auditActionsAndGroups must be absent.
-    assert "auditActionsAndGroups" not in sent_body
-    assert sent_body == {"state": "Enabled", "retentionDays": 0}
+    # auditActionsAndGroups is always present (empty list from the Disabled pre-flight GET).
+    assert sent_body == {"state": "Enabled", "retentionDays": 0, "auditActionsAndGroups": []}
 
 
 # ---------------------------------------------------------------------------

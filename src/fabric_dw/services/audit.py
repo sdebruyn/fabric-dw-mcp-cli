@@ -164,16 +164,20 @@ async def enable(
 ) -> AuditSettings:
     """Enable SQL auditing on a Data Warehouse or SQL Analytics Endpoint.
 
-    Performs a pre-flight ``GET /settings/sqlAudit`` to read the current audit
-    state before sending the PATCH.  This is required to avoid silently wiping
-    the ``auditActionsAndGroups`` when auditing is already active:
+    Performs a pre-flight ``GET /settings/sqlAudit`` to read the current
+    ``auditActionsAndGroups`` before sending the PATCH.  The Fabric API resets
+    any field omitted from a partial PATCH to its default value, so the current
+    action-group list is always round-tripped alongside ``state`` and
+    ``retentionDays``.  On a first-time enable the
+    :attr:`~fabric_dw.models.AuditSettings.action_groups` model field
+    defaults to an empty list (``default_factory=list``), which is the
+    safe no-op value.
 
-    - **First-time enable** (current ``state == "Disabled"``): the PATCH sends
-      only ``{state, retentionDays}``; there are no custom groups to preserve
-      and the API applies its own defaults.
-    - **Re-enable** (current ``state == "Enabled"``): the PATCH also includes
-      the current ``auditActionsAndGroups`` so the Fabric API does not reset
-      them to defaults on the partial update.
+    Note:
+        This function performs a read-modify-write (GET then PATCH) without
+        optimistic concurrency control.  The Fabric REST API does not expose
+        ETags or ``If-Match`` on the ``/settings/sqlAudit`` endpoint.  Under
+        concurrent modification the last writer wins silently.
 
     Args:
         http: Authenticated Fabric HTTP client.
@@ -191,6 +195,8 @@ async def enable(
     Raises:
         ValueError: If *retention_days* is negative.
         PermissionDeniedError: If the caller lacks the required permission (HTTP 403).
+        NotFoundError: If the item does not exist (HTTP 404) — raised by the
+            pre-flight GET or the final re-fetch.
     """
     if retention_days < 0:
         msg = f"retention_days must be >= 0; got {retention_days}"
@@ -198,19 +204,22 @@ async def enable(
 
     path = _audit_path(workspace_id, item_id, kind)
 
-    # Fetch current settings to detect whether auditing is already active.
-    # When re-enabling an already-enabled audit (e.g. to bump retention), the
-    # Fabric API resets auditActionsAndGroups to defaults if the field is
-    # omitted from the PATCH body.  Round-tripping the current groups prevents
-    # that silent data-loss.  On a first-time enable (state == "Disabled") there
-    # are no custom groups to preserve, so the field is intentionally omitted
-    # and the API applies its own defaults.
+    # Fetch current settings to round-trip the existing action groups into
+    # the PATCH body.  Omitting auditActionsAndGroups causes the Fabric API
+    # to silently reset it to defaults.  current.action_groups is always a
+    # valid list (default_factory=list), so this is safe even when audit was
+    # previously Disabled and no custom groups have been configured.
     current = await get_settings(http, workspace_id, item_id, kind)
-    patch_body: dict[str, object] = {"state": "Enabled", "retentionDays": retention_days}
-    if current.state == "Enabled":
-        patch_body["auditActionsAndGroups"] = current.action_groups
-
-    await http.request("PATCH", HttpBase.FABRIC, path, json=patch_body)
+    await http.request(
+        "PATCH",
+        HttpBase.FABRIC,
+        path,
+        json={
+            "state": "Enabled",
+            "retentionDays": retention_days,
+            "auditActionsAndGroups": current.action_groups,
+        },
+    )
     # PATCH returns empty/partial body on this endpoint; re-fetch required.
     return await get_settings(http, workspace_id, item_id, kind)
 
@@ -251,12 +260,20 @@ async def set_retention(
     *,
     days: int,
 ) -> AuditSettings:
-    """Update the audit log retention period without changing the audit state.
+    """Update the audit log retention period for an already-enabled audit.
 
-    Performs a pre-flight GET to verify that auditing is currently enabled.
-    Setting retention while audit is disabled is not meaningful — the Fabric
-    service accepts the PATCH silently but the setting has no effect.  Raising
-    ``ValueError`` eagerly gives callers a clear signal to enable auditing first.
+    Performs a pre-flight GET (via :func:`_require_enabled`) to verify that
+    auditing is currently enabled.  Setting retention while audit is disabled
+    is not meaningful — the Fabric service accepts the PATCH silently but the
+    setting has no effect.  Raising ``ValueError`` eagerly gives callers a
+    clear signal to enable auditing first.
+
+    The PATCH body re-asserts ``state=Enabled`` and the current
+    ``auditActionsAndGroups`` alongside ``retentionDays``.  Omitting either
+    field from a partial PATCH causes the Fabric API to silently reset it to
+    its default value, which would wipe custom action groups.  Since
+    ``_require_enabled`` guarantees the current state is already ``"Enabled"``,
+    re-asserting it does not change the effective audit state.
 
     The Fabric REST API does not document an upper bound for ``retentionDays``.
     Only the lower bound (>= 1) is enforced here; the API will reject any value
