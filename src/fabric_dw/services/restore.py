@@ -10,7 +10,7 @@ import http as _http
 from uuid import UUID
 
 from fabric_dw.http_client import FabricHttpClient, HttpBase
-from fabric_dw.models import CreationModeType, RestorePoint
+from fabric_dw.models import RestorePoint
 from fabric_dw.services._helpers import compact
 from fabric_dw.services._lro import resolve_lro_item_id
 
@@ -143,23 +143,27 @@ async def create_point(
     if resource_id_str:
         return await get_point(http, workspace_id, warehouse_id, resource_id_str)
 
-    # Path C — last resort: list all restore points and return the newest
-    # UserDefined one.  Creation is serialised (the API enforces a single
-    # in-flight create), so the highest numeric ID (timestamp-based integer)
-    # among UserDefined points is the one just created.
+    # Path C -- last resort: list all restore points and return the newest one.
+    # Creation is serialised (the API enforces a single in-flight create), so
+    # the highest numeric ID (timestamp-based integer) among all points is the
+    # one just created.
+    # NOTE: Do NOT filter by creation_mode here.  Under eventual consistency a
+    # freshly created point can appear with creation_mode = NULL before the
+    # backend populates the field.  Filtering to UserDefined would exclude it
+    # and raise a spurious RuntimeError even though the create succeeded.
+    # A genuinely absent point is detected below by the empty-list check.
     # NOTE: IDs are decimal digit strings (epoch-millisecond timestamps).
     # Comparing numerically (int(p.id)) avoids the lexicographic ordering bug
     # that would arise when IDs have different string lengths.
     points = await list_points(http, workspace_id, warehouse_id)
-    user_points = [p for p in points if p.creation_mode == CreationModeType.USER_DEFINED]
-    if user_points:
+    if points:
         # Non-digit IDs are treated as 0; if all points have non-digit IDs the
         # selection is arbitrary (but the API guarantees epoch-ms decimal strings).
-        return max(user_points, key=lambda p: int(p.id) if p.id.isdigit() else 0)
+        return max(points, key=lambda p: int(p.id) if p.id.isdigit() else 0)
 
     msg = (
         "Restore point create succeeded but the created point could not be located: "
-        f"no UserDefined restore points found after LRO completed. "
+        f"no restore points found after LRO completed. "
         f"LRO result: {operation_result}"
     )
     raise RuntimeError(msg)

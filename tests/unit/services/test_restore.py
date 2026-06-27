@@ -356,6 +356,92 @@ async def test_create_point_lro_202_last_resort_list() -> None:
     assert isinstance(result, RestorePoint)
 
 
+@respx.mock
+async def test_create_point_path_c_null_creation_mode_located() -> None:
+    """Path C must locate the new point even when creation_mode is NULL.
+
+    Under eventual consistency the Fabric API can return a freshly created
+    restore point with creationMode absent/null before the field is populated.
+    The fallback must match by timestamp-based ID, not by creation_mode.
+    """
+    # The newly created point appears with creation_mode = NULL.
+    null_mode_payload: dict[str, Any] = {
+        "id": _RP_ID,
+        "displayName": "My new point",
+        "creationDetails": {"eventDateTime": "2024-10-18T22:17:09Z"},
+        # creationMode intentionally absent (maps to None on the model)
+    }
+    respx.post(_RP_LIST_URL).mock(
+        return_value=httpx.Response(202, headers={"Location": _LRO_LOCATION})
+    )
+    respx.get(url__regex=rf"{_RP_LIST_URL}(\?.*)?$").mock(
+        return_value=httpx.Response(200, json={"value": [null_mode_payload]})
+    )
+
+    async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
+        with patch.object(http, "poll_operation", new_callable=AsyncMock) as mock_poll:
+            mock_poll.return_value = LRO_SUCCEEDED  # no id in status body
+
+            with patch.object(http, "get_operation_result", new_callable=AsyncMock) as mock_result:
+                mock_result.return_value = {}  # no id in /result endpoint
+                result = await restore.create_point(http, _WS_ID, _WH_ID)
+
+    assert isinstance(result, RestorePoint)
+    assert result.id == _RP_ID
+    assert result.creation_mode is None
+
+
+@respx.mock
+async def test_create_point_path_c_creation_mode_set_located() -> None:
+    """Path C must locate the new point when creation_mode is fully populated.
+
+    Ensures the fix does not regress the normal case where creation_mode is
+    present and set to UserDefined.
+    """
+    respx.post(_RP_LIST_URL).mock(
+        return_value=httpx.Response(202, headers={"Location": _LRO_LOCATION})
+    )
+    respx.get(url__regex=rf"{_RP_LIST_URL}(\?.*)?$").mock(
+        return_value=httpx.Response(200, json={"value": [RP_PAYLOAD]})
+    )
+
+    async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
+        with patch.object(http, "poll_operation", new_callable=AsyncMock) as mock_poll:
+            mock_poll.return_value = LRO_SUCCEEDED
+
+            with patch.object(http, "get_operation_result", new_callable=AsyncMock) as mock_result:
+                mock_result.return_value = {}
+                result = await restore.create_point(http, _WS_ID, _WH_ID)
+
+    assert isinstance(result, RestorePoint)
+    assert result.id == _RP_ID
+    assert result.creation_mode == CreationModeType.USER_DEFINED
+
+
+@respx.mock
+async def test_create_point_path_c_absent_raises() -> None:
+    """Path C must raise RuntimeError when the list is genuinely empty.
+
+    If the create LRO succeeded but no restore points appear in the list at
+    all, the function has no candidate to return and must raise.
+    """
+    respx.post(_RP_LIST_URL).mock(
+        return_value=httpx.Response(202, headers={"Location": _LRO_LOCATION})
+    )
+    respx.get(url__regex=rf"{_RP_LIST_URL}(\?.*)?$").mock(
+        return_value=httpx.Response(200, json={"value": []})
+    )
+
+    async with FabricHttpClient(credential=_make_credential(), rps=100) as http:
+        with patch.object(http, "poll_operation", new_callable=AsyncMock) as mock_poll:
+            mock_poll.return_value = LRO_SUCCEEDED
+
+            with patch.object(http, "get_operation_result", new_callable=AsyncMock) as mock_result:
+                mock_result.return_value = {}
+                with pytest.raises(RuntimeError, match="could not be located"):
+                    await restore.create_point(http, _WS_ID, _WH_ID)
+
+
 # ---------------------------------------------------------------------------
 # update_point
 # ---------------------------------------------------------------------------
