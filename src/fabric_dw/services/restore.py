@@ -143,23 +143,29 @@ async def create_point(
     if resource_id_str:
         return await get_point(http, workspace_id, warehouse_id, resource_id_str)
 
-    # Path C — last resort: list all restore points and return the newest
-    # UserDefined one.  Creation is serialised (the API enforces a single
-    # in-flight create), so the highest numeric ID (timestamp-based integer)
-    # among UserDefined points is the one just created.
+    # Path C -- last resort: list all restore points and locate the one just
+    # created.  Filter to points that are NOT confirmed system-created: Fabric
+    # generates SystemCreated checkpoints asynchronously and independently of
+    # user-initiated creates, so a system checkpoint can race in with a higher
+    # epoch-millisecond ID than the user's new point.
+    # NOTE: Use != SYSTEM_CREATED rather than == USER_DEFINED.  Under eventual
+    # consistency a freshly created point can appear with creation_mode = NULL
+    # before the backend populates the field; that null-mode point is still a
+    # user point and must not be excluded.  Only points the API has explicitly
+    # confirmed as SystemCreated are excluded.
     # NOTE: IDs are decimal digit strings (epoch-millisecond timestamps).
     # Comparing numerically (int(p.id)) avoids the lexicographic ordering bug
     # that would arise when IDs have different string lengths.
     points = await list_points(http, workspace_id, warehouse_id)
-    user_points = [p for p in points if p.creation_mode == CreationModeType.USER_DEFINED]
-    if user_points:
+    non_system = [p for p in points if p.creation_mode != CreationModeType.SYSTEM_CREATED]
+    if non_system:
         # Non-digit IDs are treated as 0; if all points have non-digit IDs the
         # selection is arbitrary (but the API guarantees epoch-ms decimal strings).
-        return max(user_points, key=lambda p: int(p.id) if p.id.isdigit() else 0)
+        return max(non_system, key=lambda p: int(p.id) if p.id.isdigit() else 0)
 
     msg = (
         "Restore point create succeeded but the created point could not be located: "
-        f"no UserDefined restore points found after LRO completed. "
+        f"no non-system restore points found after LRO completed. "
         f"LRO result: {operation_result}"
     )
     raise RuntimeError(msg)

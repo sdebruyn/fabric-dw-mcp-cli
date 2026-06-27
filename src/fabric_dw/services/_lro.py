@@ -7,8 +7,10 @@ different places depending on the API version and response shape:
   or ``itemId`` directly.
 - **Path B** — the LRO status body has no ID; the ``GET /operations/{id}/result``
   sub-endpoint returns the created item (under the key ``"id"``).
-- **Path C** — last resort: list all items of the relevant type and return the one
-  that matches a supplied predicate (typically the newest user-defined item).
+- **Path C** — last resort: list all items of the relevant type and return the
+  newest non-system-created item by timestamp-based ID (confirmed
+  SYSTEM_CREATED items are excluded; null-mode items are accepted because a
+  freshly created user item can appear with creationMode not yet populated).
 
 Use :func:`resolve_lro_item_id` to encode this three-path fallback **once** with
 named constants for retry behaviour.
