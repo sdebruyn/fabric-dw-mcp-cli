@@ -133,7 +133,12 @@ async def test_get_settings_403_raises_permission_denied() -> None:
 
 
 async def test_enable_patches_with_enabled_state_and_retention() -> None:
-    """enable should PATCH with state=Enabled and retentionDays, then GET and return fresh state."""
+    """enable (re-enable) should PATCH with state, retentionDays, and auditActionsAndGroups.
+
+    When auditing is already enabled, enable() preserves the current action groups
+    by including auditActionsAndGroups in the PATCH body.  Two GETs are issued:
+    one pre-flight (to read current state/groups) and one re-fetch after PATCH.
+    """
     get_response = AUDIT_SETTINGS_PAYLOAD.copy()
     get_response["retentionDays"] = 7
 
@@ -146,7 +151,14 @@ async def test_enable_patches_with_enabled_state_and_retention() -> None:
 
     assert patch_route.called
     sent_body = json.loads(patch_route.calls[0].request.content)
-    assert sent_body == {"state": "Enabled", "retentionDays": 7}
+    assert sent_body == {
+        "state": "Enabled",
+        "retentionDays": 7,
+        "auditActionsAndGroups": [
+            "BATCH_COMPLETED_GROUP",
+            "SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP",
+        ],
+    }
 
     assert get_route.called
     assert isinstance(result, AuditSettings)
@@ -155,7 +167,11 @@ async def test_enable_patches_with_enabled_state_and_retention() -> None:
 
 
 async def test_enable_default_retention_is_zero() -> None:
-    """enable with default retention_days=0 (unlimited) should send retentionDays=0."""
+    """enable with default retention_days=0 (unlimited) should send retentionDays=0.
+
+    When auditing is already enabled (AUDIT_SETTINGS_PAYLOAD), the PATCH body
+    also includes auditActionsAndGroups to preserve the current groups.
+    """
     with respx.mock:
         patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
         respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=AUDIT_SETTINGS_PAYLOAD))
@@ -164,7 +180,14 @@ async def test_enable_default_retention_is_zero() -> None:
             await audit.enable(client, _WS_ID, _WH_ID)
 
     sent_body = json.loads(patch_route.calls[0].request.content)
-    assert sent_body == {"state": "Enabled", "retentionDays": 0}
+    assert sent_body == {
+        "state": "Enabled",
+        "retentionDays": 0,
+        "auditActionsAndGroups": [
+            "BATCH_COMPLETED_GROUP",
+            "SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP",
+        ],
+    }
 
 
 async def test_enable_negative_retention_raises_value_error() -> None:
@@ -176,13 +199,35 @@ async def test_enable_negative_retention_raises_value_error() -> None:
 
 
 async def test_enable_403_raises_permission_denied() -> None:
-    """enable should propagate PermissionDeniedError on 403 from PATCH."""
+    """enable should propagate PermissionDeniedError on 403 from PATCH.
+
+    enable issues a pre-flight GET (which succeeds here) before the PATCH
+    that returns 403.
+    """
     with respx.mock:
+        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=AUDIT_SETTINGS_PAYLOAD))
         respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(403, json={"error": "forbidden"}))
         client = await _make_client()
         async with client:
             with pytest.raises(PermissionDeniedError):
                 await audit.enable(client, _WS_ID, _WH_ID)
+
+
+async def test_enable_get_403_raises_permission_denied() -> None:
+    """enable should propagate PermissionDeniedError on 403 from the pre-flight GET.
+
+    The pre-flight GET added by this fix is a new 403 surface.  This test
+    confirms the error propagates before the PATCH is ever attempted.
+    """
+    with respx.mock:
+        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(403, json={"error": "forbidden"}))
+        patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        client = await _make_client()
+        async with client:
+            with pytest.raises(PermissionDeniedError):
+                await audit.enable(client, _WS_ID, _WH_ID)
+
+    assert not patch_route.called
 
 
 # ---------------------------------------------------------------------------
@@ -659,11 +704,14 @@ async def test_remove_action_group_returns_authoritative_state_no_reget() -> Non
 # ---------------------------------------------------------------------------
 
 
-async def test_set_retention_patches_with_retention_days_only() -> None:
-    """set_retention should PATCH with only retentionDays (no state), then GET and return fresh.
+async def test_set_retention_preserves_action_groups_and_state() -> None:
+    """set_retention PATCH must include auditActionsAndGroups and state alongside retentionDays.
 
-    set_retention performs a pre-flight GET to verify audit is enabled, then
-    sends a PATCH with only ``retentionDays``, then GETs fresh state.
+    Regression guard: the Fabric API silently resets auditActionsAndGroups to
+    defaults when the field is omitted from a partial PATCH.  set_retention must
+    round-trip the current groups (sourced from the _require_enabled pre-flight GET)
+    to prevent data-loss.  Two GETs are issued: one pre-flight (via _require_enabled)
+    and one re-fetch after the PATCH.
     """
     enabled = AUDIT_SETTINGS_PAYLOAD.copy()
     updated = AUDIT_SETTINGS_PAYLOAD.copy()
@@ -683,8 +731,15 @@ async def test_set_retention_patches_with_retention_days_only() -> None:
 
     assert patch_route.called
     sent_body = json.loads(patch_route.calls[0].request.content)
-    assert sent_body == {"retentionDays": 90}
-    assert "state" not in sent_body
+    # Primary assertion: PATCH body must include all three fields so no data is lost.
+    assert sent_body == {
+        "state": "Enabled",
+        "retentionDays": 90,
+        "auditActionsAndGroups": [
+            "BATCH_COMPLETED_GROUP",
+            "SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP",
+        ],
+    }
 
     assert get_route.call_count == 2
     assert isinstance(result, AuditSettings)
@@ -765,6 +820,82 @@ async def test_set_retention_403_raises_permission_denied() -> None:
 
 
 # ---------------------------------------------------------------------------
+# enable — re-enable and first-time enable (group preservation / no-clobber)
+# ---------------------------------------------------------------------------
+
+
+async def test_enable_while_already_enabled_preserves_action_groups() -> None:
+    """enable called while auditing is already enabled must not clobber action groups.
+
+    Regression guard: calling enable() to bump retention on an already-enabled
+    audit must not wipe the existing auditActionsAndGroups.  The pre-flight GET
+    sees state=Enabled, so the PATCH body includes the current groups.
+    """
+    custom_groups = ["BATCH_COMPLETED_GROUP", "SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP"]
+    current_payload = {
+        "state": "Enabled",
+        "retentionDays": 30,
+        "auditActionsAndGroups": custom_groups,
+    }
+    updated_payload = {
+        "state": "Enabled",
+        "retentionDays": 90,
+        "auditActionsAndGroups": custom_groups,
+    }
+
+    with respx.mock:
+        patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        respx.get(_AUDIT_URL).mock(
+            side_effect=[
+                httpx.Response(200, json=current_payload),  # pre-flight GET
+                httpx.Response(200, json=updated_payload),  # re-fetch after PATCH
+            ]
+        )
+        client = await _make_client()
+        async with client:
+            result = await audit.enable(client, _WS_ID, _WH_ID, retention_days=90)
+
+    assert patch_route.called
+    sent_body = json.loads(patch_route.calls[0].request.content)
+    # Primary assertion: groups must be round-tripped so they are not lost.
+    assert sent_body["auditActionsAndGroups"] == custom_groups
+    assert sent_body["state"] == "Enabled"
+    assert sent_body["retentionDays"] == 90
+    assert result.action_groups == custom_groups
+
+
+async def test_enable_while_disabled_sends_empty_action_groups() -> None:
+    """enable on a disabled audit sends auditActionsAndGroups=[] in the PATCH body.
+
+    The Fabric API resets any omitted field to defaults, so auditActionsAndGroups
+    is always round-tripped.  When audit is Disabled the model field defaults to
+    an empty list (default_factory=list), so the PATCH body includes [] rather
+    than omitting the field.  This is the safe no-op value for a first-time enable.
+    """
+    enabled_response = {
+        "state": "Enabled",
+        "retentionDays": 0,
+        "auditActionsAndGroups": [],
+    }
+
+    with respx.mock:
+        patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        respx.get(_AUDIT_URL).mock(
+            side_effect=[
+                httpx.Response(200, json=AUDIT_SETTINGS_DISABLED_PAYLOAD),  # pre-flight GET
+                httpx.Response(200, json=enabled_response),  # re-fetch after PATCH
+            ]
+        )
+        client = await _make_client()
+        async with client:
+            await audit.enable(client, _WS_ID, _WH_ID)
+
+    sent_body = json.loads(patch_route.calls[0].request.content)
+    # auditActionsAndGroups is always present (empty list from the Disabled pre-flight GET).
+    assert sent_body == {"state": "Enabled", "retentionDays": 0, "auditActionsAndGroups": []}
+
+
+# ---------------------------------------------------------------------------
 # SQL Analytics Endpoint — kind-aware routing
 # Verifies the 'sqlEndpoints' collection segment is used (not 'warehouses').
 # See: _EP_AUDIT_URL / _EP_AUDIT_PATH constants above.
@@ -790,7 +921,12 @@ async def test_endpoint_get_settings_uses_sql_endpoints_collection() -> None:
 
 
 async def test_endpoint_enable_uses_sql_endpoints_collection() -> None:
-    """enable with SQL_ENDPOINT kind must PATCH /sqlEndpoints/{id}/settings/sqlAudit."""
+    """enable with SQL_ENDPOINT kind must PATCH /sqlEndpoints/{id}/settings/sqlAudit.
+
+    Two GETs are issued (pre-flight + re-fetch); the same mock handles both.
+    The PATCH body includes auditActionsAndGroups because the pre-flight GET
+    returns state=Enabled (AUDIT_SETTINGS_PAYLOAD).
+    """
     with respx.mock:
         patch_route = respx.patch(_EP_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
         get_route = respx.get(_EP_AUDIT_URL).mock(
@@ -805,7 +941,14 @@ async def test_endpoint_enable_uses_sql_endpoints_collection() -> None:
     assert patch_route.called
     assert get_route.called
     sent_body = json.loads(patch_route.calls[0].request.content)
-    assert sent_body == {"state": "Enabled", "retentionDays": 7}
+    assert sent_body == {
+        "state": "Enabled",
+        "retentionDays": 7,
+        "auditActionsAndGroups": [
+            "BATCH_COMPLETED_GROUP",
+            "SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP",
+        ],
+    }
     assert isinstance(result, AuditSettings)
 
 
@@ -828,7 +971,10 @@ async def test_endpoint_disable_uses_sql_endpoints_collection() -> None:
 
 
 async def test_endpoint_set_retention_uses_sql_endpoints_collection() -> None:
-    """set_retention with SQL_ENDPOINT kind must PATCH /sqlEndpoints/{id}/settings/sqlAudit."""
+    """set_retention with SQL_ENDPOINT kind must PATCH /sqlEndpoints/{id}/settings/sqlAudit.
+
+    Also verifies that the PATCH body preserves auditActionsAndGroups and state.
+    """
     enabled = AUDIT_SETTINGS_PAYLOAD.copy()
     updated = AUDIT_SETTINGS_PAYLOAD.copy()
     updated["retentionDays"] = 14
@@ -849,7 +995,14 @@ async def test_endpoint_set_retention_uses_sql_endpoints_collection() -> None:
 
     assert patch_route.called
     sent_body = json.loads(patch_route.calls[0].request.content)
-    assert sent_body == {"retentionDays": 14}
+    assert sent_body == {
+        "state": "Enabled",
+        "retentionDays": 14,
+        "auditActionsAndGroups": [
+            "BATCH_COMPLETED_GROUP",
+            "SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP",
+        ],
+    }
     assert result.retention_days == 14
 
 

@@ -274,8 +274,16 @@ class TestAuditSetRetentionRespx:
         assert len(captured_bodies) == 1
         body = captured_bodies[0]
         assert body.get("retentionDays") == 90, f"Expected retentionDays=90 in PATCH body: {body}"
-        # set-retention must NOT send state (does not change enabled/disabled)
-        assert "state" not in body, f"set-retention must not change state: {body}"
+        # set-retention re-asserts state=Enabled and round-trips auditActionsAndGroups so the
+        # Fabric API does not silently reset either field on a partial PATCH (fix for #765).
+        assert body.get("state") == "Enabled", f"Expected state=Enabled in PATCH body: {body}"
+        assert "auditActionsAndGroups" in body, (
+            f"Expected auditActionsAndGroups in PATCH body to preserve groups: {body}"
+        )
+        existing_groups: list[str] = _AUDIT_SETTINGS_ENABLED["auditActionsAndGroups"]  # type: ignore[assignment]
+        assert body["auditActionsAndGroups"] == existing_groups, (
+            f"auditActionsAndGroups must match pre-flight GET groups: {body}"
+        )
 
     def test_set_retention_correct_url(self, runner: CliRunner, cache_env: Path) -> None:
         """The PATCH must target the exact audit settings URL."""
