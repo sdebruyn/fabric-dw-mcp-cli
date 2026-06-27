@@ -1428,7 +1428,8 @@ def run_query(  # noqa: PLR0913, PLR0915
         """
         cur = c.cursor()
         _debug = _log.isEnabledFor(logging.DEBUG)
-        _log_sql_execute(statement, param_count=len(params) if params else 0)
+        if _debug:
+            _log_sql_execute(statement, param_count=len(params) if params else 0)
         _t0 = time.monotonic() if _debug else 0.0
         if params:
             cur.execute(statement, params)

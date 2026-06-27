@@ -53,7 +53,7 @@ Once registered, set `FABRIC_INTERACTIVE_CLIENT_ID` to your app's client ID. The
 
 ## Logging and secrets
 
-The `-v`/`--verbose` flag enables DEBUG-level output. DEBUG logs may contain SQL statements, URLs, and HTTP request bodies verbatim, including any credentials you embed in your SQL or URLs - for example SAS tokens in `COPY INTO` source URLs, `SECRET = '...'` values, or connection-string keys.
+The `-v`/`--verbose` flag enables DEBUG-level output. DEBUG logs may contain SQL statements and URLs verbatim, including any credentials you embed in your SQL or URLs - for example SAS tokens in `COPY INTO` source URLs, `SECRET = '...'` values, or connection-string keys.
 
 **Do not share `-v` output.** Treat it as sensitive on the same level as the credentials it may contain.
 

@@ -707,7 +707,7 @@ class _LazyGroup(_InstrumentedGroup):
     default=False,
     help=(
         "Enable debug logging. "
-        "DEBUG output may contain SQL, URLs, and request bodies verbatim, "
+        "DEBUG output may contain SQL and URLs verbatim, "
         "including any embedded credentials (SAS tokens, COPY INTO secrets, "
         "connection strings). Treat -v output as sensitive and do not share it."
     ),

@@ -3582,7 +3582,9 @@ class TestSqlDebugLogging:
 
         # The SQL is logged verbatim - the raw secret must be present in the log record.
         sql_attrs = [
-            str(getattr(r, "sql", "")) for r in caplog.records if r.name == "fabric_dw.sql"
+            str(getattr(r, "sql", ""))
+            for r in caplog.records
+            if r.name == "fabric_dw.sql" and r.levelno == 10  # logging.DEBUG
         ]
         combined = " ".join(sql_attrs)
         assert "TOPSECRETTOKEN" in combined, (

@@ -1,0 +1,11 @@
+# CodeQL configuration for fabric-dw-mcp-cli.
+#
+# py/clear-text-logging-sensitive-data is suppressed repo-wide because the
+# only raw-SQL DEBUG log (_log_sql_execute in sql.py) is intentional: redact_sql
+# was removed by design (pattern-matching redaction gives false confidence).
+# DEBUG logs are documented as sensitive and operators are warned not to share
+# -v output.  The Fabric bearer token is still redacted by redact_auth_header.
+# See SECURITY.md "Logging and secrets" and GitHub issue #796.
+query-filters:
+  - exclude:
+      id: py/clear-text-logging-sensitive-data

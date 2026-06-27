@@ -1366,7 +1366,11 @@ async def test_execute_sql_logged_verbatim(caplog: pytest.LogCaptureFixture) -> 
     with _patch_connect(conn), caplog.at_level(logging.DEBUG, logger="fabric_dw.sql"):
         await sql_exec.execute(target, copy_sql)
 
-    sql_attrs = [str(getattr(r, "sql", "")) for r in caplog.records if r.name == "fabric_dw.sql"]
+    sql_attrs = [
+        str(getattr(r, "sql", ""))
+        for r in caplog.records
+        if r.name == "fabric_dw.sql" and r.levelno == logging.DEBUG
+    ]
     combined = " ".join(sql_attrs)
     assert "TOPSECRETTOKEN" in combined, "SQL must be logged verbatim at DEBUG"
 
@@ -1446,6 +1450,10 @@ async def test_get_plan_sql_logged_verbatim(caplog: pytest.LogCaptureFixture) ->
     ):
         await sql_exec.get_plan(target, copy_sql)
 
-    sql_attrs = [str(getattr(r, "sql", "")) for r in caplog.records if r.name == "fabric_dw.sql"]
+    sql_attrs = [
+        str(getattr(r, "sql", ""))
+        for r in caplog.records
+        if r.name == "fabric_dw.sql" and r.levelno == logging.DEBUG
+    ]
     combined = " ".join(sql_attrs)
     assert "TOPSECRETTOKEN" in combined, "SQL must be logged verbatim at DEBUG"
