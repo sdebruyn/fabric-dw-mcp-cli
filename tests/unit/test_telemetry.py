@@ -1186,42 +1186,80 @@ def test_flush_telemetry_is_noop_when_sdk_not_initialised(
 
 
 # ---------------------------------------------------------------------------
-# B3: exit_status mapping from Click exit code
+# B3: exit_status mapping -- via the real _on_close closure
 # ---------------------------------------------------------------------------
 
 
-def test_exit_status_mapping_zero_is_ok() -> None:
-    """Exit code 0 must map to exit_status='ok'."""
-    # Replicate the mapping logic from _on_close
-    exit_code = 0
-    exit_status = "ok" if (exit_code is None or exit_code == 0) else "user_error"
-    assert exit_status == "ok"
+def _invoke_cli_capture_exit_status(
+    args: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> str | None:
+    """Invoke the CLI and return the exit_status that _on_close passes to record_app_exited.
 
-
-def test_exit_status_mapping_none_is_ok() -> None:
-    """Exit code None must map to exit_status='ok'."""
-    exit_code = None
-    exit_status = "ok" if (exit_code is None or exit_code == 0) else "user_error"
-    assert exit_status == "ok"
-
-
-def test_exit_status_mapping_nonzero_is_user_error() -> None:
-    """Non-zero exit code must map to exit_status='user_error'."""
-    for code in (1, 2, 127):
-        exit_status = "ok" if (code is None or code == 0) else "user_error"
-        assert exit_status == "user_error", f"Expected 'user_error' for exit code {code}"
-
-
-def test_on_close_exit_status_mapping_covered_by_logic_tests() -> None:
-    """Placeholder confirming B3 exit_status mapping is covered by logic tests above.
-
-    The exit_status mapping in _on_close uses sys.exc_info() at teardown time.
-    The canonical mapping is tested by test_exit_status_mapping_* above; this
-    test is kept as a docstring anchor so the B3 coverage rationale is clear.
+    Patches record_app_exited and shutdown_telemetry in the fabric_dw.cli._main
+    namespace so the real _on_close closure runs while avoiding SDK side effects.
+    Returns None if record_app_exited was never called (i.e. _on_close did not run).
     """
-    # B3 mapping: 0 / None → "ok", non-zero → "user_error", Abort → "user_error".
-    # See test_exit_status_mapping_zero_is_ok, test_exit_status_mapping_nonzero_is_user_error.
-    assert True
+    from unittest.mock import MagicMock, patch  # noqa: PLC0415
+
+    from click.testing import CliRunner  # noqa: PLC0415
+
+    from fabric_dw.cli._main import cli  # noqa: PLC0415
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setenv("FABRIC_DW_TELEMETRY_OPT_OUT", "1")
+
+    mock_record = MagicMock()
+    runner = CliRunner()
+    with (
+        patch("fabric_dw.cli._main.record_app_exited", mock_record),
+        patch("fabric_dw.cli._main.shutdown_telemetry"),
+        patch("fabric_dw.cli._main.record_app_started"),
+    ):
+        runner.invoke(cli, args, catch_exceptions=True)
+    if not mock_record.called:
+        return None
+    return mock_record.call_args.kwargs["exit_status"]  # type: ignore[no-any-return]
+
+
+def test_on_close_no_exception_maps_to_ok(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """_on_close records exit_status='ok' when the command exits without raising.
+
+    CliRunner uses standalone_mode=False internally, so a clean run exits the
+    root context with (None, None, None): _on_close sees exc_type=None -> 'ok'.
+    """
+    status = _invoke_cli_capture_exit_status(["--yes", "cache", "clear"], monkeypatch, tmp_path)
+    assert status == "ok"
+
+
+def test_on_close_system_exit_zero_maps_to_ok(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """_on_close records exit_status='ok' when SystemExit(0) is active at teardown.
+
+    A subgroup --help flag calls ctx.exit(0) which raises SystemExit(0) inside
+    the root context; _on_close sees exc_type=SystemExit with code=0 -> 'ok'.
+    """
+    status = _invoke_cli_capture_exit_status(["cache", "--help"], monkeypatch, tmp_path)
+    assert status == "ok"
+
+
+def test_on_close_usage_error_maps_to_user_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """_on_close records exit_status='user_error' when a UsageError is active at teardown.
+
+    An unknown subcommand raises UsageError; _on_close inspects sys.exc_info()
+    before Click's handler converts it to SystemExit(2), and maps it to 'user_error'.
+    """
+    status = _invoke_cli_capture_exit_status(
+        ["cache", "no-such-subcommand"], monkeypatch, tmp_path
+    )
+    assert status == "user_error"
 
 
 # ---------------------------------------------------------------------------
