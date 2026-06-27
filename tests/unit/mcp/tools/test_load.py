@@ -187,14 +187,14 @@ async def test_import_table_from_url_fail_when_table_exists(
 
 
 # ---------------------------------------------------------------------------
-# import_table_from_url — happy path (append, table not exists)
+# import_table_from_url — absent table raises friendly error for fail/append
 # ---------------------------------------------------------------------------
 
 
-async def test_import_table_from_url_append_table_not_exists_happy_path(
+async def test_import_table_from_url_append_absent_table_raises(
     mock_ctx, ctx_patch, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """import_table_from_url with if_exists=append + no existing table succeeds."""
+    """import_table_from_url with if_exists=append raises ToolError when table does not exist."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     monkeypatch.delenv("FABRIC_MCP_READONLY", raising=False)
@@ -207,6 +207,75 @@ async def test_import_table_from_url_append_table_not_exists_happy_path(
         patch(
             "fabric_dw.services.load.table_exists",
             new=AsyncMock(return_value=False),
+        ),
+        pytest.raises(ToolError, match="does not exist"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "import_table_from_url",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "qualified_name": "dbo.sales",
+                "url": "https://onelake.dfs.fabric.microsoft.com/ws/lh/Files/f.parquet",
+                "file_type": "PARQUET",
+                "if_exists": "append",
+            },
+        )
+
+
+async def test_import_table_from_url_fail_absent_table_raises(
+    mock_ctx, ctx_patch, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """import_table_from_url with if_exists=fail raises ToolError when table does not exist."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    monkeypatch.delenv("FABRIC_MCP_READONLY", raising=False)
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.load.table_exists",
+            new=AsyncMock(return_value=False),
+        ),
+        pytest.raises(ToolError, match="does not exist"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "import_table_from_url",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "qualified_name": "dbo.sales",
+                "url": "https://example.com/f.parquet",
+                "file_type": "PARQUET",
+                "if_exists": "fail",
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
+# import_table_from_url — happy path (append, table exists)
+# ---------------------------------------------------------------------------
+
+
+async def test_import_table_from_url_append_table_exists_happy_path(
+    mock_ctx, ctx_patch, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """import_table_from_url with if_exists=append + existing table loads successfully."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    monkeypatch.delenv("FABRIC_MCP_READONLY", raising=False)
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.load.table_exists",
+            new=AsyncMock(return_value=True),
         ),
         patch(
             "fabric_dw.mcp.tools.load.copy_into_from_url",
@@ -375,3 +444,120 @@ async def test_import_table_from_url_replace_absent_table_raises(
                 "if_exists": "replace",
             },
         )
+
+
+# ---------------------------------------------------------------------------
+# load_table_from_url — SQL endpoint rejection fires before table-existence check
+# ---------------------------------------------------------------------------
+
+
+async def test_load_table_from_url_rejects_sql_endpoint(
+    mock_ctx, ctx_patch, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """load_table_from_url raises ToolError for SQL Analytics Endpoint items.
+
+    The endpoint guard must fire before the table-existence check so that
+    'SQL endpoint + absent table' yields the endpoint error, not 'table not found'.
+    """
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    monkeypatch.delenv("FABRIC_MCP_READONLY", raising=False)
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_sql_endpoint_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.load.table_exists",
+            new=AsyncMock(return_value=False),
+        ),
+        pytest.raises(ToolError, match="read-only"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "load_table_from_url",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "qualified_name": "dbo.sales",
+                "url": "https://example.com/f.parquet",
+                "file_type": "PARQUET",
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
+# load_table_from_url — absent table raises friendly error
+# ---------------------------------------------------------------------------
+
+
+async def test_load_table_from_url_absent_table_raises(
+    mock_ctx, ctx_patch, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """load_table_from_url raises ToolError when the target table does not exist."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    monkeypatch.delenv("FABRIC_MCP_READONLY", raising=False)
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.load.table_exists",
+            new=AsyncMock(return_value=False),
+        ),
+        pytest.raises(ToolError, match="does not exist"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "load_table_from_url",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "qualified_name": "dbo.sales",
+                "url": "https://onelake.dfs.fabric.microsoft.com/ws/lh/Files/f.parquet",
+                "file_type": "PARQUET",
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
+# load_table_from_url — happy path (table exists)
+# ---------------------------------------------------------------------------
+
+
+async def test_load_table_from_url_table_exists_happy_path(
+    mock_ctx, ctx_patch, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """load_table_from_url loads rows when the target table already exists."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    monkeypatch.delenv("FABRIC_MCP_READONLY", raising=False)
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.load.table_exists",
+            new=AsyncMock(return_value=True),
+        ),
+        patch(
+            "fabric_dw.mcp.tools.load.copy_into_from_url",
+            new=AsyncMock(return_value=_make_result()),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "load_table_from_url",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "qualified_name": "dbo.sales",
+                "url": "https://onelake.dfs.fabric.microsoft.com/ws/lh/Files/f.parquet",
+                "file_type": "PARQUET",
+            },
+        )
+
+    assert result["rows_loaded"] == 3
+    assert result["target"] == "dbo.sales"

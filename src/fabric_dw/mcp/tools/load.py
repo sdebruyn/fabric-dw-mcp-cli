@@ -29,6 +29,16 @@ __all__ = ["register"]
 _log = logging.getLogger(__name__)
 
 
+def _absent_table_msg(schema: str, table: str) -> str:
+    """Return a friendly error message for a missing target table on remote-URL load."""
+    return (
+        f"Table [{schema}].[{table}] does not exist; "
+        "remote-URL load cannot infer schema. "
+        "Create the table first with create_empty_table or create_table, "
+        "then retry."
+    )
+
+
 def register(mcp: FastMCP) -> None:  # noqa: PLR0915
     """Register table-load tools against *mcp*."""
 
@@ -143,14 +153,14 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             max_errors: Maximum errors before aborting.
             rejected_row_location: URL for rejected-row output.
         """
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
         schema, table_name = parse_qualified_name(qualified_name, kind="table")
         ctx = get_context()
         assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
 
         # Validate file_type
         if file_type not in ("CSV", "PARQUET"):
-            from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
-
             raise ToolError(f"Unsupported file_type {file_type!r}; must be CSV or PARQUET")
 
         # Build CSV options.
@@ -183,6 +193,21 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 # secret and identity are intentionally excluded from this log call
             )
             sql_target = make_sql_target(ws_id, entry, item)
+
+            from fabric_dw.exceptions import ItemKindError  # noqa: PLC0415
+            from fabric_dw.models import WarehouseKind  # noqa: PLC0415
+            from fabric_dw.services.load import table_exists  # noqa: PLC0415
+
+            # SQL Endpoint: COPY INTO is Warehouse-only (check before table_exists so the
+            # endpoint guard fires with the right message even when the table is absent).
+            if entry.kind == WarehouseKind.SQL_ENDPOINT:
+                raise ItemKindError("SQL Endpoints are read-only; COPY INTO not supported")
+
+            # Pre-check: COPY INTO gives a raw "Invalid object name" error when the
+            # target table is absent. Raise a friendly message instead.
+            if not await table_exists(sql_target, schema, table_name, mode=ctx.auth_mode):
+                raise ToolError(_absent_table_msg(schema, table_name))
+
             result = await copy_into_from_url(
                 sql_target,
                 schema,
@@ -221,9 +246,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             IfExistsPolicy,
             Field(
                 description=(
-                    "What to do when the target table already exists. "
-                    "'fail': error (default). "
-                    "'append': load into existing table. "
+                    "What to do when the target table exists or is absent. "
+                    "'fail': error if the table already exists, or if it does not exist (default). "
+                    "'append': load into the existing table; error if the table is absent. "
                     "'truncate': TRUNCATE then load (destructive). "
                     "'replace': DROP + recreate from inferred schema, then load (destructive)."
                 ),
@@ -300,8 +325,11 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
 
         ``if_exists`` controls behaviour when the table already exists:
 
-        - ``"fail"`` (default): raise an error if the table already exists.
+        - ``"fail"`` (default): raise an error if the table already exists, or if it
+          does not exist (the table must be created first with create_empty_table or
+          create_table).
         - ``"append"``: load rows into the existing table without modification.
+          Raises an error if the table does not exist.
         - ``"truncate"``: TRUNCATE the existing table first, then load.
           Requires ``FABRIC_MCP_ALLOW_DESTRUCTIVE=1``.  Raises an error if the
           table does **not** exist.
@@ -424,23 +452,24 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                         "'tables load --file --create --if-exists replace'."
                     )
                 # "append": do nothing — COPY INTO will add rows to the existing table.
+            # Table does not exist.
+            elif if_exists == "truncate":
+                raise _ToolError(
+                    f"Table [{schema}].[{table_name}] does not exist; "
+                    "nothing to truncate. Create the table first or use "
+                    "if_exists='fail' / 'append'."
+                )
+            elif if_exists == "replace":
+                raise _ToolError(
+                    f"Table [{schema}].[{table_name}] does not exist; "
+                    "if_exists='replace' for remote URLs requires downloading the file "
+                    "to infer schema. Use the CLI "
+                    "'tables load --file --create --if-exists replace' instead."
+                )
             else:
-                # Table does not exist.
-                if if_exists == "truncate":
-                    raise _ToolError(
-                        f"Table [{schema}].[{table_name}] does not exist; "
-                        "nothing to truncate. Create the table first or use "
-                        "if_exists='fail' / 'append'."
-                    )
-                if if_exists == "replace":
-                    raise _ToolError(
-                        f"Table [{schema}].[{table_name}] does not exist; "
-                        "if_exists='replace' for remote URLs requires downloading the file "
-                        "to infer schema. Use the CLI "
-                        "'tables load --file --create --if-exists replace' instead."
-                    )
-                # "fail" or "append" on absent table: proceed; COPY INTO will raise a
-                # clear SQL error if the table truly does not exist.
+                # "fail", "append", or any future policy: table must exist first because
+                # remote-URL load cannot infer schema to auto-create it.
+                raise _ToolError(_absent_table_msg(schema, table_name))
 
             result = await copy_into_from_url(
                 sql_target,
