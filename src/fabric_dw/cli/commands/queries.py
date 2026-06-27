@@ -46,6 +46,7 @@ async def running_cmd(ctx: CliContext, item: str | None) -> None:
                 [q.model_dump(by_alias=True, mode="json") for q in items],
                 json_output=ctx.json_output,
                 table_title="Running Queries",
+                prune_null_columns=True,
             )
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -67,6 +68,7 @@ async def connections_cmd(ctx: CliContext, item: str | None) -> None:
                 [c.model_dump(by_alias=True, mode="json") for c in items],
                 json_output=ctx.json_output,
                 table_title="SQL Connections",
+                prune_null_columns=True,
             )
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -135,6 +137,7 @@ async def history_cmd(
                 [q.model_dump(by_alias=True, mode="json") for q in items],
                 json_output=ctx.json_output,
                 table_title="Request History",
+                prune_null_columns=True,
             )
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -176,6 +179,7 @@ async def sessions_cmd(
                 [q.model_dump(by_alias=True, mode="json") for q in items],
                 json_output=ctx.json_output,
                 table_title="Session History",
+                prune_null_columns=True,
             )
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -217,6 +221,7 @@ async def frequent_cmd(
                 [q.model_dump(by_alias=True, mode="json") for q in items],
                 json_output=ctx.json_output,
                 table_title="Frequently Run Queries",
+                prune_null_columns=True,
             )
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -258,6 +263,7 @@ async def long_running_cmd(
                 [q.model_dump(by_alias=True, mode="json") for q in items],
                 json_output=ctx.json_output,
                 table_title="Long Running Queries",
+                prune_null_columns=True,
             )
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc

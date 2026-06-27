@@ -68,6 +68,7 @@ async def list_cmd(
                 [f.model_dump(by_alias=True, mode="json") for f in items],
                 json_output=ctx.json_output,
                 table_title="Functions",
+                prune_null_columns=True,
             )
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc

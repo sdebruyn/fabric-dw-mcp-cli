@@ -42,6 +42,7 @@ async def list_cmd(ctx: CliContext, item: str | None, schema: str | None) -> Non
                 [p.model_dump(by_alias=True, mode="json") for p in items],
                 json_output=ctx.json_output,
                 table_title="Stored Procedures",
+                prune_null_columns=True,
             )
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc

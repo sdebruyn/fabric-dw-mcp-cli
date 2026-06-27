@@ -132,6 +132,7 @@ async def list_cmd(ctx: CliContext, all_workspaces: bool) -> None:
                 rows,
                 json_output=ctx.json_output,
                 table_title="SQL Analytics Endpoints",
+                prune_null_columns=True,
             )
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc

@@ -46,6 +46,7 @@ async def list_cmd(ctx: CliContext, item: str | None, schema: str | None) -> Non
                 [v.model_dump(by_alias=True, mode="json") for v in items],
                 json_output=ctx.json_output,
                 table_title="Views",
+                prune_null_columns=True,
             )
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -122,6 +123,7 @@ async def columns_cmd(
                 cols,
                 json_output=ctx.json_output,
                 table_title="Columns",
+                prune_null_columns=True,
             )
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc

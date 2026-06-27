@@ -156,7 +156,7 @@ async def list_cmd(ctx: CliContext) -> None:
             _print_default_workload_note()
         return
 
-    render(pools, json_output=ctx.json_output)
+    render(pools, json_output=ctx.json_output, prune_null_columns=True)
 
 
 # ---------------------------------------------------------------------------
@@ -461,6 +461,7 @@ async def insights_cmd(
                 [q.model_dump(by_alias=True, mode="json") for q in items],
                 json_output=ctx.json_output,
                 table_title="SQL Pool Insights",
+                prune_null_columns=True,
             )
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc

@@ -37,6 +37,7 @@ async def list_capacities_cmd(ctx: CliContext) -> None:
                 [c.model_dump(by_alias=True, mode="json") for c in items],
                 json_output=ctx.json_output,
                 table_title="Capacities",
+                prune_null_columns=True,
             )
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -54,6 +55,7 @@ async def list_cmd(ctx: CliContext) -> None:
                 [w.model_dump(by_alias=True, mode="json") for w in items],
                 json_output=ctx.json_output,
                 table_title="Workspaces",
+                prune_null_columns=True,
             )
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc

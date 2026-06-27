@@ -66,6 +66,7 @@ async def list_cmd(ctx: CliContext, item: str | None, schema: str | None) -> Non
                 [t.model_dump(by_alias=True, mode="json") for t in items],
                 json_output=ctx.json_output,
                 table_title="Tables",
+                prune_null_columns=True,
             )
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -176,6 +177,7 @@ async def columns_cmd(
                 cols,
                 json_output=ctx.json_output,
                 table_title="Columns",
+                prune_null_columns=True,
             )
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -241,6 +243,7 @@ async def health_check_cmd(
                 [dict(zip(columns, row, strict=True)) for row in rows],
                 json_output=ctx.json_output,
                 table_title="Table Health Metrics",
+                prune_null_columns=True,
             )
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -672,6 +675,7 @@ async def cluster_columns_cmd(
                 rows,
                 json_output=ctx.json_output,
                 table_title="Cluster Columns",
+                prune_null_columns=True,
             )
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
