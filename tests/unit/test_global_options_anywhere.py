@@ -14,6 +14,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -379,18 +380,25 @@ class TestWorkspaceFlag:
         assert captured["workspace"] == "myws"
 
     def test_workspace_both_positions(self, runner: CliRunner) -> None:
-        """-w before AND after the subcommand does not cause a parse error."""
+        """-w before AND after the subcommand: trailing value wins."""
+        captured: dict[str, str | None] = {}
+
+        def _capture_resolve_workspace(ctx: CliContext) -> str:
+            captured["workspace"] = ctx.workspace
+            return "fake-ws-name"
+
         with patch(
             "fabric_dw.cli.commands.warehouses.resolve_workspace",
-            return_value="fake-ws-name",
+            side_effect=_capture_resolve_workspace,
         ):
             result = runner.invoke(
                 cli,
                 ["-w", "first", "warehouses", "list", "-w", "second"],
                 catch_exceptions=False,
             )
-        # Trailing value wins over the root-level value (last-writer semantics).
         assert result.exit_code == 0, result.output
+        # The trailing -w value overwrites the root-level one in ctx.obj.
+        assert captured["workspace"] == "second"
 
 
 # ---------------------------------------------------------------------------
@@ -427,7 +435,7 @@ class TestAuthFlag:
         ctx_holder: list[CliContext] = []
 
         @contextlib.asynccontextmanager
-        async def _fake_build_http_client(ctx: CliContext) -> object:  # type: ignore[misc]
+        async def _fake_build_http_client(ctx: CliContext) -> AsyncGenerator[AsyncMock, None]:
             ctx_holder.append(ctx)
             yield AsyncMock()
 
@@ -468,17 +476,6 @@ class TestRetryOptionsFlag:
         ):
             yield
 
-    @staticmethod
-    def _make_capturing_http(ctx_holder: list[CliContext]) -> object:
-        """Return an async-context-manager factory that records the CliContext."""
-
-        @contextlib.asynccontextmanager
-        async def _fake(ctx: CliContext) -> object:  # type: ignore[misc]
-            ctx_holder.append(ctx)
-            yield AsyncMock()
-
-        return _fake
-
     def test_max_429_retries_before_subcommand(self, runner: CliRunner) -> None:
         """--max-429-retries BEFORE the subcommand sets the retry count (regression)."""
         result = runner.invoke(
@@ -489,9 +486,15 @@ class TestRetryOptionsFlag:
     def test_max_429_retries_after_leaf(self, runner: CliRunner) -> None:
         """--max-429-retries AFTER the leaf command sets ctx.obj.max_429_retries."""
         ctx_holder: list[CliContext] = []
+
+        @contextlib.asynccontextmanager
+        async def _fake_http(ctx: CliContext) -> AsyncGenerator[AsyncMock, None]:
+            ctx_holder.append(ctx)
+            yield AsyncMock()
+
         with patch(
             "fabric_dw.cli.commands.workspaces.build_http_client",
-            side_effect=self._make_capturing_http(ctx_holder),
+            side_effect=_fake_http,
         ):
             result = runner.invoke(
                 cli, ["workspaces", "list", "--max-429-retries", "7"], catch_exceptions=False
@@ -510,9 +513,15 @@ class TestRetryOptionsFlag:
     def test_retry_deadline_after_leaf(self, runner: CliRunner) -> None:
         """--retry-deadline AFTER the leaf command sets ctx.obj.retry_deadline_s."""
         ctx_holder: list[CliContext] = []
+
+        @contextlib.asynccontextmanager
+        async def _fake_http(ctx: CliContext) -> AsyncGenerator[AsyncMock, None]:
+            ctx_holder.append(ctx)
+            yield AsyncMock()
+
         with patch(
             "fabric_dw.cli.commands.workspaces.build_http_client",
-            side_effect=self._make_capturing_http(ctx_holder),
+            side_effect=_fake_http,
         ):
             result = runner.invoke(
                 cli, ["workspaces", "list", "--retry-deadline", "120"], catch_exceptions=False
