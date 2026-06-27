@@ -65,7 +65,7 @@ fdw -w MyWorkspace --json settings retention MyWarehouse --days 7
 
 ### settings show
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Display all server-side database settings for an item in a single table.
 
@@ -84,7 +84,7 @@ fdw -w MyWorkspace --json settings show MyWarehouse
 
 ### get_warehouse_settings
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 **Guards:** `assert_workspace_allowed`
 

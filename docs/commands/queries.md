@@ -6,13 +6,13 @@ title: Queries
 
 Inspect and manage running queries on Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 ## CLI
 
 ### queries connections
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 List all active SQL connections on a warehouse or SQL Analytics Endpoint. This queries `sys.dm_exec_connections` and shows lower-level connection info (including idle connections) that is not visible in `queries running`.
 
@@ -37,7 +37,7 @@ fdw -w MyWorkspace queries connections SalesWH
 
 ### queries frequent
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 List frequently-run queries from `queryinsights.frequently_run_queries`.
 
@@ -65,7 +65,7 @@ fdw -w MyWorkspace queries frequent SalesWH --ago 1h
 
 ### queries history
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 List completed SQL requests from `queryinsights.exec_requests_history`. Supports optional time-range filtering with `--since` and `--until` (ISO-8601 strings). The `--limit` option caps the number of rows returned (default: 100, max: 10 000).
 
@@ -93,7 +93,7 @@ fdw -w MyWorkspace queries history SalesWH --ago 1h
 
 ### queries kill
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Kill a specific session on a warehouse or SQL Analytics Endpoint. You will be asked to confirm unless `--yes` is passed.
 
@@ -111,7 +111,7 @@ fdw -w MyWorkspace --yes queries kill SalesWH 42
 
 ### queries long-running
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 List long-running queries from `queryinsights.long_running_queries`.
 
@@ -139,7 +139,7 @@ fdw -w MyWorkspace queries long-running SalesWH --ago 2d
 
 ### queries running
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 List all currently running queries on a warehouse or SQL Analytics Endpoint.
 
@@ -163,7 +163,7 @@ fdw -w MyWorkspace queries running SalesWH
 
 ### queries sessions
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 List completed sessions from `queryinsights.exec_sessions_history`.
 
@@ -195,7 +195,7 @@ The following four tools query the `queryinsights` schema DMVs via TDS. They sha
 
 ### kill_session
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Terminate a session on a warehouse.
 
@@ -209,7 +209,7 @@ Terminate a session on a warehouse.
 
 ### list_connections
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Return all active SQL connections on a warehouse or SQL Analytics Endpoint. Queries `sys.dm_exec_connections`, which includes idle connections not visible via `list_running_queries`.
 
@@ -222,7 +222,7 @@ Return all active SQL connections on a warehouse or SQL Analytics Endpoint. Quer
 
 ### list_frequent_queries
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Return frequently-run queries from `queryinsights.frequently_run_queries`.
 
@@ -238,7 +238,7 @@ Return frequently-run queries from `queryinsights.frequently_run_queries`.
 
 ### list_long_running_queries
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Return long-running queries from `queryinsights.long_running_queries`.
 
@@ -254,7 +254,7 @@ Return long-running queries from `queryinsights.long_running_queries`.
 
 ### list_request_history
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Return completed SQL requests from `queryinsights.exec_requests_history`.
 
@@ -270,7 +270,7 @@ Return completed SQL requests from `queryinsights.exec_requests_history`.
 
 ### list_running_queries
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Return all currently-executing queries on a warehouse.
 
@@ -283,7 +283,7 @@ Return all currently-executing queries on a warehouse.
 
 ### list_session_history
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Return completed sessions from `queryinsights.exec_sessions_history`.
 

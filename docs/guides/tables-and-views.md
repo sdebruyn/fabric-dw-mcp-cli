@@ -50,7 +50,7 @@ The rest of this guide assumes these defaults are set, so the examples omit `-w 
 
 Schemas are the namespace for your tables and views. `dbo` always exists; create custom schemas to group related objects.
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 ```shell
 # Create the schema (warehouse positional kept - schema NAME follows)
@@ -70,7 +70,7 @@ fdw schemas list
 
 `tables create` is a single command with mutually-exclusive source modes (validated client-side before any DDL runs). All of them are **Data Warehouse only**: tables can't be created on a SQL Analytics Endpoint.
 
-**Targets:** Data Warehouse only · **MCP:** `create_table` (CTAS), `create_empty_table` (explicit columns)
+**Targets:** Data Warehouse only / **MCP:** `create_table` (CTAS), `create_empty_table` (explicit columns)
 
 ### Empty table from explicit columns
 
@@ -168,7 +168,7 @@ fdw tables create \
 
 ### Inspect what you built
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint · **MCP:** `get_table_columns`, `count_table_rows`, `list_tables`
+**Targets:** Data Warehouse / SQL Analytics Endpoint / **MCP:** `get_table_columns`, `count_table_rows`, `list_tables`
 
 ```shell
 # Column metadata (name, type, nullability, ordinal, collation, identity/computed)
@@ -195,7 +195,7 @@ fdw tables load SalesWH sales.orders --file ./data/orders.parquet
 
 Views give consumers a stable, named query. Unlike tables, **views are creatable on both a Data Warehouse and a SQL Analytics Endpoint**: there's no Warehouse-only guard.
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint · **MCP:** `create_view`, `update_view`, `get_view`, `get_view_columns`, `rename_view`, `list_views`
+**Targets:** Data Warehouse / SQL Analytics Endpoint / **MCP:** `create_view`, `update_view`, `get_view`, `get_view_columns`, `rename_view`, `list_views`
 
 ### Create from a versioned `.sql` file
 
@@ -241,7 +241,7 @@ fdw views update SalesWH sales.vw_orders_by_month \
 
 After you load data, give the query optimizer the statistics it needs. `fabric-dw` manages **single-column** statistics (a Fabric limitation - multi-column statistics aren't supported), and you must pass an explicit `--name` (Fabric requires an explicit statistic name - there is no auto-generated default).
 
-**Targets:** Data Warehouse only (create/update/delete) · Data Warehouse · SQL Analytics Endpoint (list/show) · **MCP:** `create_statistics`, `update_statistics`, `list_statistics`, `show_statistics`
+**Targets:** Data Warehouse only (create/update/delete) / Data Warehouse / SQL Analytics Endpoint (list/show) / **MCP:** `create_statistics`, `update_statistics`, `list_statistics`, `show_statistics`
 
 ```shell
 # Create a single-column statistic
@@ -274,7 +274,7 @@ fdw --yes tables cluster-by SalesWH sales.orders
 fdw tables cluster-columns SalesWH sales.orders
 ```
 
-**Targets:** Data Warehouse only · **MCP:** `set_cluster_columns` (destructive - copies the full table), `get_cluster_columns`.
+**Targets:** Data Warehouse only / **MCP:** `set_cluster_columns` (destructive - copies the full table), `get_cluster_columns`.
 
 !!! tip "Diagnosing slow queries"
 

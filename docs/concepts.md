@@ -15,7 +15,7 @@ Fabric has two SQL-surface item kinds:
 
 Each command below is labelled with one of:
 
-- **`Targets: Data Warehouse · SQL Analytics Endpoint`**: the command works on both item kinds.
+- **`Targets: Data Warehouse / SQL Analytics Endpoint`**: the command works on both item kinds.
 - **`Targets: Data Warehouse only`**: the command is blocked on SQL Analytics Endpoints (either by an explicit client-side guard in the source code, because it requires write/DDL capability that endpoints do not have, or because it calls warehouse-scoped REST API paths that are not available for SQL Analytics Endpoints).
 - **`Targets: SQL Analytics Endpoint`**: the command operates on SQL Analytics Endpoints specifically (not on Data Warehouses).
 - **`Targets: Workspace (not item-specific)`**: the command operates at the workspace level and does not target a specific DW or SQL Analytics Endpoint item.

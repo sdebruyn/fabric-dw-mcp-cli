@@ -6,13 +6,13 @@ title: Functions
 
 Manage T-SQL user-defined functions on Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 ## CLI
 
 ### functions create
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Create a new T-SQL user-defined function.
 
@@ -40,7 +40,7 @@ fdw -w MyWorkspace functions create SalesWH \
 
 ### functions drop
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Drop a T-SQL user-defined function. You will be asked to confirm unless `--yes` is passed.
 
@@ -62,7 +62,7 @@ fdw -w MyWorkspace --yes functions drop SalesWH dbo.fn_clean_input
 
 ### functions get
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Get the full definition of a single T-SQL user-defined function, including its parameter list.
 
@@ -82,7 +82,7 @@ fdw -w MyWorkspace functions get SalesWH dbo.fn_clean_input
 
 ### functions list
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 List T-SQL user-defined functions on a warehouse or SQL Analytics Endpoint. Pass `--schema` to filter by schema, or `--kind` to filter by function kind.
 
@@ -111,7 +111,7 @@ fdw -w MyWorkspace functions list SalesWH --schema dbo --kind scalar
 
 ### functions rename
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Rename a T-SQL user-defined function via `EXEC sp_rename`. The new name must be a bare (unqualified) identifier - `sp_rename` cannot move a function to a different schema. You will be asked to confirm unless `--yes` is passed.
 
@@ -134,7 +134,7 @@ fdw -w MyWorkspace --yes functions rename SalesWH dbo.fn_clean_input \
 
 ### functions update
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Redefine an existing T-SQL user-defined function via `CREATE OR ALTER FUNCTION`.
 
@@ -168,7 +168,7 @@ fdw -w MyWorkspace functions update SalesWH dbo.fn_clean_input \
 
 ### create_function
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Create a new T-SQL user-defined function.
 
@@ -187,7 +187,7 @@ Create a new T-SQL user-defined function.
 
 ### drop_function
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Drop a T-SQL user-defined function.
 
@@ -202,7 +202,7 @@ Drop a T-SQL user-defined function.
 
 ### get_function
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Fetch the full definition of a single T-SQL user-defined function, including its parameter list.
 
@@ -216,7 +216,7 @@ Fetch the full definition of a single T-SQL user-defined function, including its
 
 ### list_functions
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 List T-SQL user-defined functions on a warehouse or SQL Analytics Endpoint, optionally filtered by schema or kind.
 
@@ -231,7 +231,7 @@ List T-SQL user-defined functions on a warehouse or SQL Analytics Endpoint, opti
 
 ### rename_function
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Rename a T-SQL user-defined function via `sp_rename`. The new name must be a bare (unqualified) identifier - `sp_rename` cannot move a function across schemas.
 
@@ -246,7 +246,7 @@ Rename a T-SQL user-defined function via `sp_rename`. The new name must be a bar
 
 ### update_function
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Redefine a T-SQL user-defined function via `CREATE OR ALTER FUNCTION`.
 

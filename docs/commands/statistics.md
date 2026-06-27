@@ -6,7 +6,7 @@ title: Statistics
 
 Manage user-defined statistics on Fabric Data Warehouses and read their details on SQL Analytics Endpoints.
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 !!! note
 
@@ -44,7 +44,7 @@ fdw [-w WORKSPACE] statistics delete [ITEM] QUALIFIED_TABLE STAT_NAME
 
 ### statistics list
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 List statistics on an item.
 
@@ -61,7 +61,7 @@ fdw [-w WORKSPACE] statistics list [ITEM] [OPTIONS]
 
 ### statistics show
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Show details of a named statistic using `DBCC SHOW_STATISTICS`. Returns the stat header, density vector, and histogram steps.
 
@@ -143,7 +143,7 @@ Drop a statistic via `DROP STATISTICS`. **Destructive and irreversible.** Requir
 
 ### list_statistics
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 **Guards:** `assert_workspace_allowed`
 
@@ -164,7 +164,7 @@ List statistics on a warehouse or SQL Analytics Endpoint.
 
 ### show_statistics
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 **Guards:** `assert_workspace_allowed`
 

@@ -6,7 +6,7 @@ title: Tables
 
 Manage SQL tables on Microsoft Fabric Data Warehouses and SQL Analytics Endpoints. Commands and tools cover listing, counting, reading, creating (including CTAS, empty DDL from schema inference, and zero-copy clone), deleting, clearing, renaming, and loading data via `COPY INTO` from local files or remote URLs.
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 ## CLI
 
@@ -30,7 +30,7 @@ fdw -w MyWorkspace --yes tables clear SalesWH dbo.staging_load
 
 ### tables columns
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 List the columns of a table, including name, formatted data type, nullability, ordinal position, collation, identity, and computed flags.
 
@@ -170,7 +170,7 @@ fdw -w MyWorkspace tables clone SalesWH \
 
 ### tables count
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Return the total row count of a table using `SELECT COUNT_BIG(*)`.
 
@@ -343,7 +343,7 @@ fdw -w MyWorkspace --json tables health-check MySqlEndpoint dbo.FactSales
 
 ### tables list
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 List all tables on a warehouse or SQL Analytics Endpoint. Pass `--schema` to filter to a single schema.
 
@@ -479,7 +479,7 @@ fdw -w MyWorkspace tables load SalesWH dbo.events \
 
 ### tables read
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Read up to `--count` rows from a table and emit them as JSON (default), CSV, or Parquet.
 
@@ -570,7 +570,7 @@ Create a zero-copy clone of a table using `CREATE TABLE … AS CLONE OF …`. On
 
 ### get_table_columns
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Return column metadata for a SQL table via `sys.columns`. Works on both Fabric Data Warehouses and SQL Analytics Endpoints.
 
@@ -594,7 +594,7 @@ Results are ordered by ordinal position. Raises a `ToolError` if the table does 
 
 ### count_table_rows
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Return the total row count of a table via `SELECT COUNT_BIG(*)`.
 
@@ -760,7 +760,7 @@ Load data from a remote URL into an existing Data Warehouse table with control o
 
 ### list_tables
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 List SQL tables on a warehouse or SQL Analytics Endpoint.
 
@@ -812,7 +812,7 @@ Load data into a Data Warehouse table via `COPY INTO` from a remote URL. For One
 
 ### read_table
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Return up to `count` rows from a table as JSON-serialisable columns and rows.
 

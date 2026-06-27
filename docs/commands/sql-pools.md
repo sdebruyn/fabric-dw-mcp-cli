@@ -122,7 +122,7 @@ fdw -w MyWorkspace sql-pools get
 
 ### sql-pools insights
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 List SQL pool insight events from `queryinsights.sql_pool_insights`. Supports optional time-range filtering with `--since` and `--until` (ISO-8601 strings). The `--limit` option caps the number of rows returned (default: 100, max: 10 000).
 
@@ -325,7 +325,7 @@ Fetch the full SQL Pools configuration (enabled flag + pool list) for a workspac
 
 ### list_sql_pool_insights
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Return SQL pool insight events from `queryinsights.sql_pool_insights`.
 

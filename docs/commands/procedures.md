@@ -6,13 +6,13 @@ title: Stored procedures
 
 Manage stored procedures on Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 ## CLI
 
 ### procedures create
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Create a new stored procedure.
 
@@ -40,7 +40,7 @@ fdw -w MyWorkspace procedures create SalesWH \
 
 ### procedures drop
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Drop a stored procedure. You will be asked to confirm unless `--yes` is passed.
 
@@ -58,7 +58,7 @@ fdw -w MyWorkspace --yes procedures drop SalesWH dbo.usp_archive_orders
 
 ### procedures get
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Get the full definition of a single stored procedure.
 
@@ -78,7 +78,7 @@ fdw -w MyWorkspace procedures get SalesWH dbo.usp_load_sales
 
 ### procedures list
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 List stored procedures on a warehouse or SQL Analytics Endpoint. Pass `--schema` to filter to a single schema.
 
@@ -106,7 +106,7 @@ fdw -w MyWorkspace procedures list SalesWH --schema dbo
 
 ### procedures update
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Redefine an existing stored procedure via `CREATE OR ALTER PROCEDURE`.
 
@@ -136,7 +136,7 @@ fdw -w MyWorkspace procedures update SalesWH dbo.usp_archive_orders \
 
 ### create_procedure
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Create a new stored procedure.
 
@@ -155,7 +155,7 @@ Create a new stored procedure.
 
 ### drop_procedure
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Drop a stored procedure.
 
@@ -169,7 +169,7 @@ Drop a stored procedure.
 
 ### get_procedure
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Fetch the full definition of a single stored procedure.
 
@@ -183,7 +183,7 @@ Fetch the full definition of a single stored procedure.
 
 ### list_procedures
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 List stored procedures on a warehouse or SQL Analytics Endpoint, optionally filtered to a single schema.
 
@@ -197,7 +197,7 @@ List stored procedures on a warehouse or SQL Analytics Endpoint, optionally filt
 
 ### update_procedure
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Redefine a stored procedure via `CREATE OR ALTER PROCEDURE`.
 

@@ -6,7 +6,7 @@ title: Warehouses
 
 Manage Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 ## CLI
 
@@ -77,7 +77,7 @@ description    Main sales warehouse
 
 ### warehouses list
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 List all Data Warehouses and SQL Analytics Endpoints in a workspace. Pass `-A` / `--all-workspaces` to aggregate across every visible workspace. `-w` / `--workspace` and `--all-workspaces` are mutually exclusive.
 
@@ -114,7 +114,7 @@ fdw warehouses list --all-workspaces
 
 ### warehouses permissions
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 List all principals (users, groups, service principals) with access to a warehouse, including their effective permissions. Requires **Fabric Administrator** role.
 
@@ -230,7 +230,7 @@ Return details for a single Data Warehouse. Uses the warehouse-scoped REST path 
 
 ### get_warehouse_permissions
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Return all principals (users, groups, service principals) with access to a Warehouse, including their effective permissions.
 
@@ -247,7 +247,7 @@ Return all principals (users, groups, service principals) with access to a Wareh
 
 ### list_warehouses
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 List all warehouses and SQL analytics endpoints in a workspace, or across all visible workspaces.
 

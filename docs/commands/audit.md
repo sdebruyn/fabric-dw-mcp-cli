@@ -6,13 +6,13 @@ title: Audit
 
 Manage SQL audit settings for Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 ## CLI
 
 ### audit add-group
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Add a single audit action group without overwriting the others. Idempotent - if the group is already present the command succeeds without modifying the configuration. Auditing must already be enabled.
 
@@ -30,7 +30,7 @@ fdw -w MyWorkspace audit add-group SalesWH BATCH_COMPLETED_GROUP
 
 ### audit disable
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Disable SQL auditing on a warehouse or SQL Analytics Endpoint.
 
@@ -48,7 +48,7 @@ fdw -w MyWorkspace audit disable SalesWH
 
 ### audit enable
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Enable SQL auditing on a warehouse or SQL Analytics Endpoint.
 
@@ -77,7 +77,7 @@ fdw -w MyWorkspace audit enable --unlimited SalesWH
 
 ### audit get
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Get the current audit settings for a warehouse or SQL Analytics Endpoint.
 
@@ -101,7 +101,7 @@ actionGroups     BATCH_COMPLETED_GROUP
 
 ### audit remove-group
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Remove a single audit action group without overwriting the others. Idempotent - if the group is not present the command succeeds without modifying the configuration. Auditing must already be enabled.
 
@@ -119,7 +119,7 @@ fdw -w MyWorkspace audit remove-group SalesWH BATCH_COMPLETED_GROUP
 
 ### audit set-groups
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Set the audit action groups for a warehouse or SQL Analytics Endpoint. Pass `--group` / `-g` once per action group. This replaces the existing list of groups.
 
@@ -144,7 +144,7 @@ fdw -w MyWorkspace audit set-groups \
 
 ### audit set-retention
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Update the audit log retention period without changing the audit enabled/disabled state. Audit must already be enabled; if it is disabled, run `audit enable` first.
 
@@ -168,7 +168,7 @@ fdw -w MyWorkspace audit set-retention --days 90 SalesWH
 
 ### add_audit_group
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Add a single audit action group without overwriting the others. Idempotent - if the group is already present the current settings are returned unchanged. Auditing must already be enabled.
 
@@ -182,7 +182,7 @@ Add a single audit action group without overwriting the others. Idempotent - if 
 
 ### disable_audit
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Disable SQL auditing on a warehouse or SQL analytics endpoint.
 
@@ -195,7 +195,7 @@ Disable SQL auditing on a warehouse or SQL analytics endpoint.
 
 ### enable_audit
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Enable SQL auditing on a warehouse or SQL analytics endpoint.
 
@@ -209,7 +209,7 @@ Enable SQL auditing on a warehouse or SQL analytics endpoint.
 
 ### get_audit_settings
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Fetch the current SQL audit settings for a warehouse or SQL analytics endpoint.
 
@@ -222,7 +222,7 @@ Fetch the current SQL audit settings for a warehouse or SQL analytics endpoint.
 
 ### remove_audit_group
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Remove a single audit action group without overwriting the others. Idempotent - if the group is not present the current settings are returned unchanged. Auditing must already be enabled.
 
@@ -236,7 +236,7 @@ Remove a single audit action group without overwriting the others. Idempotent - 
 
 ### set_audit_action_groups
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Replace the audited action groups for a warehouse or SQL analytics endpoint. This overwrites the existing list of groups.
 
@@ -250,7 +250,7 @@ Replace the audited action groups for a warehouse or SQL analytics endpoint. Thi
 
 ### set_audit_retention
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Update the audit log retention period without changing the audit enabled/disabled state. Audit must already be enabled; if it is disabled, enable it first with `enable_audit`.
 

@@ -6,7 +6,7 @@ title: Running SQL
 
 SQL execution and query-plan capture against a Fabric Data Warehouse or SQL Analytics Endpoint.
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 ## CLI
 
@@ -197,7 +197,7 @@ Each operator appears as a node labelled with its physical op name (and logical 
 
 ### execute_sql
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Execute an arbitrary SQL statement or batch against a warehouse or SQL Analytics Endpoint.
 
@@ -219,7 +219,7 @@ Multi-statement batches are supported; only the **last** result set is returned.
 
 ### get_query_plan
 
-**Targets:** Data Warehouse · SQL Analytics Endpoint
+**Targets:** Data Warehouse / SQL Analytics Endpoint
 
 Capture the **estimated** SHOWPLAN_XML execution plan for a SQL query without executing it.
 
