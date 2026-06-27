@@ -180,7 +180,7 @@ def _reset_telemetry_module_globals(
     # original module object (the same one that file-level imports in other test
     # modules have bound to).
     if _orig_telemetry_module is None:
-        _orig_telemetry_module = sys.modules.get("fabric_dw.telemetry")  # type: ignore[assignment]
+        _orig_telemetry_module = sys.modules.get("fabric_dw.telemetry")
 
     is_self_managed = (
         request.path is not None and request.path.name in _TELEMETRY_SELF_MANAGED_MODULES

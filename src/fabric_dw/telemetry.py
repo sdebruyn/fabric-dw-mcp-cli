@@ -172,6 +172,14 @@ def _config_dir() -> Path:
     return base / "fabric-dw"
 
 
+# ---------------------------------------------------------------------------
+# Config-disabled cache (#844)
+# ---------------------------------------------------------------------------
+
+# Computed once per process; None means not yet read from disk.
+_config_disabled_cache: bool | None = None
+
+
 def _is_disabled_by_config() -> bool:
     """Return True when the config file contains a truthy ``[telemetry] disabled``.
 
@@ -290,13 +298,6 @@ _install_id_cache: str | None = None
 
 # Computed once per process; None means not yet detected.
 _install_method_cache: str | None = None
-
-# ---------------------------------------------------------------------------
-# Config-disabled cache (#844)
-# ---------------------------------------------------------------------------
-
-# Computed once per process; None means not yet read from disk.
-_config_disabled_cache: bool | None = None
 
 # ---------------------------------------------------------------------------
 # Tenant-ID persistence (#652)

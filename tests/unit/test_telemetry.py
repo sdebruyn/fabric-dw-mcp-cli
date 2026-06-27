@@ -1417,7 +1417,14 @@ def test_install_method_cached_across_envelope_calls(
     fake_dist = MagicMock()
     fake_dist.read_text.return_value = None  # no direct_url.json present
 
-    with patch.object(_meta, "distribution", return_value=fake_dist) as mock_dist:
+    # Patch sys.executable to a neutral path so the pipx detection branch
+    # ("pipx" in sys.executable) cannot short-circuit before reaching the
+    # importlib.metadata branch — otherwise the test fails on a pipx-installed
+    # interpreter where sys.executable contains "pipx".
+    with (
+        patch.object(mod.sys, "executable", "/usr/bin/python3"),
+        patch.object(_meta, "distribution", return_value=fake_dist) as mock_dist,
+    ):
         for _ in range(3):
             mod._build_envelope()  # type: ignore[attr-defined]
 
@@ -1449,10 +1456,15 @@ def test_config_disabled_cached_across_telemetry_enabled_calls(
     original_read_text = Path.read_text
 
     def counting_read_text(
-        self: Path, encoding: str | None = None, errors: str | None = None
+        self: Path,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
     ) -> str:
         if self.name == "config.toml":
             read_calls.append(1)
+        if sys.version_info >= (3, 13):
+            return original_read_text(self, encoding=encoding, errors=errors, newline=newline)
         return original_read_text(self, encoding=encoding, errors=errors)
 
     with patch.object(Path, "read_text", counting_read_text):
@@ -1489,12 +1501,19 @@ def test_config_disabled_transient_error_not_cached(
     original_read_text = Path.read_text
     call_count = 0
 
-    def flaky_read_text(self: Path, encoding: str | None = None, errors: str | None = None) -> str:
+    def flaky_read_text(
+        self: Path,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ) -> str:
         nonlocal call_count
         if self.name == "config.toml":
             call_count += 1
             if call_count == 1:
                 raise OSError("simulated transient read failure")
+        if sys.version_info >= (3, 13):
+            return original_read_text(self, encoding=encoding, errors=errors, newline=newline)
         return original_read_text(self, encoding=encoding, errors=errors)
 
     with patch.object(Path, "read_text", flaky_read_text):
