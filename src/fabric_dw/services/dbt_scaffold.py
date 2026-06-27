@@ -229,8 +229,22 @@ def render_profiles_yml(cfg: DbtScaffoldConfig) -> str:
     return yaml.safe_dump(doc, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
 
+def _escape_jinja_str(value: str) -> str:
+    """Escape *value* for embedding inside a single-quoted Jinja string literal.
+
+    Replaces backslashes and single quotes so that the value cannot break out
+    of the surrounding ``'...'`` Jinja string.
+    """
+    return value.replace("\\", "\\\\").replace("'", "\\'")
+
+
 def render_dbt_project_yml(cfg: DbtScaffoldConfig) -> str:
     """Render the ``dbt_project.yml`` content for the given config.
+
+    Uses :func:`yaml.safe_dump` to serialise the document so that any
+    special characters in ``project_name`` or ``profile_name`` (colons,
+    hashes, newlines, etc.) are automatically quoted and cannot inject
+    top-level YAML keys.
 
     Args:
         cfg: The scaffold configuration.
@@ -238,23 +252,24 @@ def render_dbt_project_yml(cfg: DbtScaffoldConfig) -> str:
     Returns:
         The ``dbt_project.yml`` content as a YAML string.
     """
-    return (
-        f"name: {cfg.project_name}\n"
-        "version: '1.0.0'\n"
-        "config-version: 2\n"
-        f"profile: {cfg.profile_name}\n"
-        "\n"
-        "model-paths: ['models']\n"
-        "analysis-paths: ['analyses']\n"
-        "test-paths: ['tests']\n"
-        "seed-paths: ['seeds']\n"
-        "macro-paths: ['macros']\n"
-        "snapshot-paths: ['snapshots']\n"
-        "\n"
-        "models:\n"
-        f"  {cfg.project_name}:\n"
-        "    +materialized: table\n"
-    )
+    doc: dict[str, object] = {
+        "name": cfg.project_name,
+        "version": "1.0.0",
+        "config-version": 2,
+        "profile": cfg.profile_name,
+        "model-paths": ["models"],
+        "analysis-paths": ["analyses"],
+        "test-paths": ["tests"],
+        "seed-paths": ["seeds"],
+        "macro-paths": ["macros"],
+        "snapshot-paths": ["snapshots"],
+        "models": {
+            cfg.project_name: {
+                "+materialized": "table",
+            }
+        },
+    }
+    return yaml.safe_dump(doc, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
 
 def render_sources_yml(
@@ -284,7 +299,9 @@ def render_sources_yml(
                 {
                     "name": "placeholder",
                     "description": "Replace with your source definitions.",
-                    "database": "{{ env_var('DBT_DATABASE', '" + cfg.database + "') }}",
+                    "database": (
+                        "{{ env_var('DBT_DATABASE', '" + _escape_jinja_str(cfg.database) + "') }}"
+                    ),
                     "schema": "dbo",
                     "tables": [],
                 }
