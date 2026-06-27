@@ -203,6 +203,32 @@ def _cell(value: object) -> str:
     return _escape_markup(str(value))
 
 
+def _format_nested(value: object, *, _depth: int = 0) -> str:
+    """Recursively format a value for panel display.
+
+    Scalars are rendered via ``_cell()``.  Dicts and lists are expanded into
+    indented multi-line blocks so nested structures appear readable rather than
+    as Python ``repr`` strings (e.g. ``{'workspace': None, ...}``).
+
+    Empty dict renders as ``{}``.  Empty list renders as ``[]``.
+    """
+    indent = "  " * (_depth + 1)
+    if isinstance(value, dict):
+        if not value:
+            return "{}"
+        parts = [
+            f"{indent}[bold]{_escape_markup(str(k))}[/bold]: {_format_nested(v, _depth=_depth + 1)}"
+            for k, v in value.items()
+        ]
+        return "\n" + "\n".join(parts)
+    if isinstance(value, list):
+        if not value:
+            return "[]"
+        parts = [f"{indent}{_format_nested(item, _depth=_depth + 1)}" for item in value]
+        return "\n" + "\n".join(parts)
+    return _cell(value)
+
+
 def _column_is_all_null(col: str, norm_rows: list[dict[str, object] | object]) -> bool:
     """Return *True* when every dict-row in *norm_rows* has a ``None`` value for *col*.
 
@@ -430,8 +456,16 @@ def _render_vertical(
 
 
 def _render_panel(data: dict[str, object], *, console: Console, title: str | None) -> None:
-    """Render a single dict as a Rich Panel with key: value lines."""
-    lines = "\n".join(f"[bold]{_escape_markup(k)}[/bold]: {_cell(v)}" for k, v in data.items())
+    """Render a single dict as a Rich Panel with key: value lines.
+
+    Nested dict and list values are expanded recursively via
+    :func:`_format_nested` so they appear as readable indented blocks rather
+    than raw Python repr strings.  Scalar values are rendered via
+    :func:`_cell` as before.
+    """
+    lines = "\n".join(
+        f"[bold]{_escape_markup(k)}[/bold]: {_format_nested(v)}" for k, v in data.items()
+    )
     panel = Panel(lines, title=title)
     console.print(panel)
 
