@@ -50,3 +50,11 @@ The app must be configured as a public client (mobile & desktop) with the follow
 - **Azure SQL Database** → `user_impersonation`
 
 Once registered, set `FABRIC_INTERACTIVE_CLIENT_ID` to your app's client ID. The tool will use it for both the `interactive` and `default` credential modes instead of the shared application.
+
+## Logging and secrets
+
+The `-v`/`--verbose` flag enables DEBUG-level output. DEBUG logs may contain SQL statements, URLs, and HTTP request bodies verbatim, including any credentials you embed in your SQL or URLs - for example SAS tokens in `COPY INTO` source URLs, `SECRET = '...'` values, or connection-string keys.
+
+**Do not share `-v` output.** Treat it as sensitive on the same level as the credentials it may contain.
+
+The Fabric bearer token used for HTTP API calls IS still redacted in all log output (shown as `Bearer ***`). Only SQL-level and URL-level secrets - which are your own data passed through the tool - are logged verbatim at DEBUG level.

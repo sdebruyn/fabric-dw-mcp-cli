@@ -705,7 +705,12 @@ class _LazyGroup(_InstrumentedGroup):
     "verbose",
     is_flag=True,
     default=False,
-    help="Enable debug logging.",
+    help=(
+        "Enable debug logging. "
+        "DEBUG output may contain SQL, URLs, and request bodies verbatim, "
+        "including any embedded credentials (SAS tokens, COPY INTO secrets, "
+        "connection strings). Treat -v output as sensitive and do not share it."
+    ),
 )
 @click.option(
     "--max-429-retries",

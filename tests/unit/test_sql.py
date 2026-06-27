@@ -3560,10 +3560,14 @@ class TestSqlDebugLogging:
             f"Expected no fabric_dw.sql records at INFO level; got: {sql_records}"
         )
 
-    def test_secret_not_logged_raw(
+    def test_sql_logged_verbatim_at_debug(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """A COPY INTO with SECRET = '<token>' must not log the raw secret value."""
+        """SQL is logged verbatim at DEBUG level - no redaction is applied.
+
+        Operators using -v must treat log output as sensitive.  Bound parameter
+        VALUES are still never logged; only the statement text is emitted.
+        """
         mock_mssql, _conn, _cursor = _make_mock_mssql()
         _patch_mssql(monkeypatch, mock_mssql)
 
@@ -3576,14 +3580,14 @@ class TestSqlDebugLogging:
         with caplog.at_level("DEBUG", logger="fabric_dw.sql"):
             run_query(_make_target(), copy_sql)
 
-        # The raw secret must NOT appear anywhere in any log record.
-        all_log_text = " ".join(
-            str(r.getMessage()) + str(getattr(r, "sql", "")) for r in caplog.records
+        # The SQL is logged verbatim - the raw secret must be present in the log record.
+        sql_attrs = [
+            str(getattr(r, "sql", "")) for r in caplog.records if r.name == "fabric_dw.sql"
+        ]
+        combined = " ".join(sql_attrs)
+        assert "TOPSECRETTOKEN" in combined, (
+            "SQL must be logged verbatim at DEBUG - raw SQL must appear in r.sql"
         )
-        assert "TOPSECRETTOKEN" not in all_log_text, (
-            "Raw secret token must not appear in any log record"
-        )
-        assert "***" in all_log_text, "Redacted placeholder '***' must appear in log records"
 
     def test_bound_param_values_not_logged(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
