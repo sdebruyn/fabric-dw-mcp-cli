@@ -119,6 +119,9 @@ packages = ["src/fabric_dw"]
 [tool.ruff]
 target-version = "py311"
 line-length = 100
+# Exclude the vcs-generated version file; it is gitignored and its __all__
+# ordering is controlled by the build backend, not by us.
+exclude = ["src/fabric_dw/_version.py"]
 
 [tool.ruff.lint]
 select = [

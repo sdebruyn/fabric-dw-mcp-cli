@@ -50,7 +50,11 @@ _FIXTURES_DIR = Path(__file__).parent / "fixtures"
 _Q5_XML = (_FIXTURES_DIR / "tpch_q5_fabric.sqlplan").read_text(encoding="utf-8")
 _Q9_XML = (_FIXTURES_DIR / "tpch_q9_fabric.sqlplan").read_text(encoding="utf-8")
 _MOVE_XML = (_FIXTURES_DIR / "plan508_move.sqlplan").read_text(encoding="utf-8")
-_PARA_XML = (_FIXTURES_DIR / "plan508_parallelism.sqlplan").read_text(encoding="utf-8")
+# plan508_complex.sqlplan: complex sys-catalog query; no Parallelism
+# operators (NonParallelPlanReason is set).  SQL Server-style Parallelism
+# (Distribute/Gather/Repartition Streams) is tested via synthetic XML in
+# test_plan_parse.py::TestParallelismOperatorGracefulDegradation.
+_PARA_XML = (_FIXTURES_DIR / "plan508_complex.sqlplan").read_text(encoding="utf-8")
 
 # Operator types that must appear in a TPC-H Q5 / Q9 Fabric plan.
 # "Compute To Control Node" is Fabric's data-movement operator; the others
@@ -81,6 +85,19 @@ def _all_ops(root: PlanOperator) -> set[str]:
     return result
 
 
+def _all_logical_ops(root: PlanOperator) -> set[str]:
+    """Collect logical_op names from *root* and all descendants."""
+    result: set[str] = {root.logical_op}
+    for child in root.children:
+        result |= _all_logical_ops(child)
+    return result
+
+
+def _collect_cost_pcts(node: PlanOperator) -> list[float]:
+    """Recursively collect cost_pct values from *node* and all descendants."""
+    return [node.cost_pct, *[p for child in node.children for p in _collect_cost_pcts(child)]]
+
+
 def _parse(plan_xml: str) -> list[PlanOperator]:
     return parse_showplan(plan_xml)
 
@@ -106,21 +123,6 @@ def _mock_dot(stdout: bytes = _FAKE_SVG) -> MagicMock:
 _FIXTURE_CASES = [
     pytest.param(_Q5_XML, id="tpch_q5"),
     pytest.param(_Q9_XML, id="tpch_q9"),
-]
-
-# All four fixtures: used for renderer smoke tests that only require
-# "renders without error" and do not assert specific operator names.
-_ALL_FIXTURE_CASES = [
-    pytest.param(_Q5_XML, id="tpch_q5"),
-    pytest.param(_Q9_XML, id="tpch_q9"),
-    pytest.param(_MOVE_XML, id="plan508_move"),
-    pytest.param(_PARA_XML, id="plan508_parallelism"),
-]
-
-# plan508 cases grouped for move / parallelism-surface tests.
-_PLAN508_CASES = [
-    pytest.param(_MOVE_XML, id="plan508_move"),
-    pytest.param(_PARA_XML, id="plan508_parallelism"),
 ]
 
 
@@ -189,12 +191,8 @@ class TestFabricFixtureParse:
     @pytest.mark.parametrize("plan_xml", _FIXTURE_CASES)
     def test_cost_pcts_sum_to_100(self, plan_xml: str) -> None:
         """Cost percentages across the full tree must sum to ≈ 100 %."""
-
-        def _collect(node: PlanOperator) -> list[float]:
-            return [node.cost_pct, *[p for child in node.children for p in _collect(child)]]
-
         for root in _parse(plan_xml):
-            total = sum(_collect(root))
+            total = sum(_collect_cost_pcts(root))
             assert total == pytest.approx(100.0, abs=1.0)
 
 
@@ -426,13 +424,6 @@ class TestPlan508MoveParse:
 
     def test_move_logical_op_present(self) -> None:
         """LogicalOp 'Move' must appear alongside the Compute To Control Node."""
-
-        def _all_logical_ops(root: PlanOperator) -> set[str]:
-            result: set[str] = {root.logical_op}
-            for child in root.children:
-                result |= _all_logical_ops(child)
-            return result
-
         operators = _parse(_MOVE_XML)
         logical_ops: set[str] = set()
         for root in operators:
@@ -448,11 +439,8 @@ class TestPlan508MoveParse:
         assert operators[0].estimate_rows > 0
 
     def test_cost_pcts_sum_to_100(self) -> None:
-        def _collect(node: PlanOperator) -> list[float]:
-            return [node.cost_pct, *[p for child in node.children for p in _collect(child)]]
-
         for root in _parse(_MOVE_XML):
-            total = sum(_collect(root))
+            total = sum(_collect_cost_pcts(root))
             assert total == pytest.approx(100.0, abs=1.0)
 
 
@@ -561,9 +549,10 @@ class TestPlan508MoveHtmlRenderer:
 # ---------------------------------------------------------------------------
 
 
-# Operator types that must appear in the plan508_parallelism fixture.
+# Operator types that must appear in the plan508_complex fixture.
 # This plan queries sys catalog tables and exercises a broader set of
-# operators than the TPC-H plans.
+# operators than the TPC-H plans, including Clustered Index Seek, Index Scan,
+# Concatenation, Filter, and TopN Sort (PhysicalOp "Sort").
 _PARA_EXPECTED_OPS: frozenset[str] = frozenset(
     {
         "Concatenation",
@@ -571,6 +560,8 @@ _PARA_EXPECTED_OPS: frozenset[str] = frozenset(
         "Sort",
         "Hash Match",
         "Clustered Index Scan",
+        "Clustered Index Seek",
+        "Index Scan",
     }
 )
 
@@ -594,20 +585,6 @@ class TestPlan508ParallelismParse:
         missing = _PARA_EXPECTED_OPS - found
         assert not missing, f"Missing operator types: {sorted(missing)}"
 
-    def test_contains_concatenation(self) -> None:
-        operators = _parse(_PARA_XML)
-        found: set[str] = set()
-        for root in operators:
-            found |= _all_ops(root)
-        assert "Concatenation" in found
-
-    def test_contains_filter(self) -> None:
-        operators = _parse(_PARA_XML)
-        found: set[str] = set()
-        for root in operators:
-            found |= _all_ops(root)
-        assert "Filter" in found
-
     def test_root_is_not_unknown(self) -> None:
         operators = _parse(_PARA_XML)
         assert operators[0].physical_op != "Unknown"
@@ -617,11 +594,8 @@ class TestPlan508ParallelismParse:
         assert operators[0].estimate_rows > 0
 
     def test_cost_pcts_sum_to_100(self) -> None:
-        def _collect(node: PlanOperator) -> list[float]:
-            return [node.cost_pct, *[p for child in node.children for p in _collect(child)]]
-
         for root in _parse(_PARA_XML):
-            total = sum(_collect(root))
+            total = sum(_collect_cost_pcts(root))
             assert total == pytest.approx(100.0, abs=1.0)
 
 
