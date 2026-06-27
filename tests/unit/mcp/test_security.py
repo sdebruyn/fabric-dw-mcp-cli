@@ -186,17 +186,35 @@ class TestAssertReadonlySql:
         with pytest.raises(ToolError):
             self._call("SELECT 1 */ DROP TABLE t")
 
-    def test_accepts_string_literal_with_semicolon(self) -> None:
-        """LOW: WHERE name = 'a;b' must NOT be rejected as multi-statement."""
-        self._call("SELECT id FROM t WHERE name = 'a;b'")
+    def test_rejects_semicolon_inside_string_literal_pre_fix(self) -> None:
+        """FLIPPED: WHERE name = 'a;b' is now REJECTED (fail-closed raw-scan policy).
+
+        Previously this was allowed because the string-literal masking hid the
+        semicolon.  After the fix, the raw text is scanned and the semicolon
+        trips the multi-statement guard.  Unset FABRIC_MCP_READONLY for such
+        queries.
+        """
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError, match="multi-statement"):
+            self._call("SELECT id FROM t WHERE name = 'a;b'")
 
     def test_accepts_string_literal_with_escaped_quote(self) -> None:
-        """String literal with escaped single-quote must be accepted."""
+        """String literal with escaped single-quote and no forbidden keyword is accepted."""
         self._call("SELECT 'it''s' FROM t")
 
-    def test_accepts_bracketed_keyword_identifier(self) -> None:
-        """SELECT [delete] FROM t must be accepted (bracketed identifier, not keyword)."""
-        self._call("SELECT [delete] FROM t")
+    def test_rejects_bracketed_keyword_identifier(self) -> None:
+        """FLIPPED: SELECT [delete] FROM t is now REJECTED (fail-closed raw-scan policy).
+
+        Previously this was allowed because the bracket-identifier masking
+        replaced [delete] with [x] before the token scan.  After the fix, the
+        raw text is scanned and the token 'delete' is found inside the brackets.
+        Unset FABRIC_MCP_READONLY for such queries.
+        """
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError):
+            self._call("SELECT [delete] FROM t")
 
     def test_accepts_with_cte_then_select(self) -> None:
         """WITH cte AS (SELECT 1) SELECT * FROM cte; is a valid read-only statement."""
@@ -286,6 +304,140 @@ class TestAssertReadonlySql:
 
         with pytest.raises(ToolError, match=r"multi-statement|non-SELECT"):
             self._call("SET NOCOUNT ON;\nSELECT 1")
+
+    # ------------------------------------------------------------------
+    # Fail-closed behavior: previously ALLOWED, now REJECTED
+    # ------------------------------------------------------------------
+
+    def test_rejects_forbidden_keyword_in_string_literal(self) -> None:
+        """SECURITY: a forbidden keyword inside a string literal must be rejected.
+
+        The raw-scan policy fails closed: read-only mode rejects queries that
+        embed a write keyword in a string literal.  Unset FABRIC_MCP_READONLY
+        to run such queries.
+        """
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError):
+            self._call("SELECT * FROM cdc WHERE op='DELETE'")
+
+    def test_rejects_forbidden_keyword_as_bracket_identifier(self) -> None:
+        """SECURITY: a forbidden keyword used as a bracket-quoted identifier is rejected.
+
+        Raw-scan policy: the token scanner sees 'delete' from [delete] and blocks it.
+        """
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError):
+            self._call("SELECT [delete] FROM t")
+
+    def test_rejects_forbidden_keyword_as_dquote_identifier(self) -> None:
+        """SECURITY: a forbidden keyword used as a double-quoted identifier is rejected."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError):
+            self._call('SELECT "drop" FROM t')
+
+    def test_rejects_semicolon_inside_string_literal(self) -> None:
+        """SECURITY: a semicolon inside a string literal now trips the multi-statement guard.
+
+        Raw-scan policy: ';' in any context (including string literals) is rejected.
+        """
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError, match="multi-statement"):
+            self._call("SELECT id FROM t WHERE name = 'a;b'")
+
+    # ------------------------------------------------------------------
+    # Bracket/double-quote identifier bypass regression tests (#788)
+    # ------------------------------------------------------------------
+
+    def test_rejects_bracket_quote_trick_delete(self) -> None:
+        """CRITICAL #788: bracket-identifier with embedded quote hides DELETE."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError):
+            self._call("SELECT [a'];DELETE FROM t WHERE c='x'")
+
+    def test_rejects_bracket_quote_trick_drop(self) -> None:
+        """CRITICAL #788: bracket-identifier with embedded quote hides DROP."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError):
+            self._call("SELECT [a'];DROP TABLE t WHERE c='x'")
+
+    def test_rejects_bracket_quote_trick_update(self) -> None:
+        """CRITICAL #788: bracket-identifier with embedded quote hides UPDATE."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError):
+            self._call("SELECT [a'];UPDATE t SET x=1 WHERE c='x'")
+
+    def test_rejects_bracket_quote_trick_insert(self) -> None:
+        """CRITICAL #788: bracket-identifier with embedded quote hides INSERT."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError):
+            self._call("SELECT [a'];INSERT INTO t VALUES (1) WHERE c='x'")
+
+    def test_rejects_bracket_quote_trick_merge(self) -> None:
+        """CRITICAL #788: bracket-identifier with embedded quote hides MERGE."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError):
+            self._call("SELECT [a'];MERGE t USING s ON 1=0 WHERE c='x'")
+
+    def test_rejects_bracket_quote_trick_truncate(self) -> None:
+        """CRITICAL #788: bracket-identifier with embedded quote hides TRUNCATE."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError):
+            self._call("SELECT [a'];TRUNCATE TABLE t WHERE c='x'")
+
+    def test_rejects_bracket_quote_trick_exec(self) -> None:
+        """CRITICAL #788: bracket-identifier with embedded quote hides EXEC."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError):
+            self._call("SELECT [a'];EXEC sp_who WHERE c='x'")
+
+    def test_rejects_dquote_identifier_bypass(self) -> None:
+        """CRITICAL #788: double-quote identifier bypass hides DELETE."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError):
+            self._call("SELECT \"a'\";DELETE FROM t WHERE c='x'")
+
+    def test_rejects_string_literal_hides_keyword(self) -> None:
+        """CRITICAL #788: string literal that previously hid a forbidden keyword."""
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+        with pytest.raises(ToolError):
+            self._call("SELECT * FROM t WHERE x='DROP TABLE t--'")
+
+    # ------------------------------------------------------------------
+    # Legitimate plain reads that must still PASS after fix
+    # ------------------------------------------------------------------
+
+    def test_accepts_plain_select_after_fix(self) -> None:
+        """Regression: basic SELECT must still be allowed."""
+        self._call("SELECT * FROM t")
+
+    def test_accepts_select_1_after_fix(self) -> None:
+        """Regression: bare SELECT 1 must still be allowed."""
+        self._call("select 1")
+
+    def test_accepts_with_cte_then_select_after_fix(self) -> None:
+        """Regression: CTE followed by SELECT must still be allowed."""
+        self._call("WITH cte AS (SELECT 1) SELECT * FROM cte")
+
+    def test_accepts_multiline_select_after_fix(self) -> None:
+        """Regression: multi-line SELECT must still be allowed."""
+        self._call("SELECT\n    id,\n    name\nFROM dbo.users\nWHERE active = 1")
+
+    def test_accepts_select_with_block_and_line_comments_after_fix(self) -> None:
+        """Regression: SELECT with both a block comment and a line comment must be allowed."""
+        self._call("/* admin */ SELECT id FROM t -- end")
 
 
 # ---------------------------------------------------------------------------
