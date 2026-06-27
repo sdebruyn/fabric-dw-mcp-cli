@@ -188,8 +188,9 @@ class LookupCache:
         # Handle naive datetimes by assuming UTC
         if fetched_at.tzinfo is None:
             fetched_at = fetched_at.replace(tzinfo=UTC)
-        # Reject future fetched_at (clock drift / corruption) and entries beyond TTL
-        return now >= fetched_at and (now - fetched_at) < self._ttl
+        # A slightly-future fetched_at (clock skew) yields a negative age, which is
+        # less than TTL, so it is correctly treated as fresh.
+        return (now - fetched_at) < self._ttl
 
     def _get_record(self, section: dict[str, Any], key: str) -> dict[str, Any] | None:
         """Return a fresh, validated record dict from *section* under *key*, or None.

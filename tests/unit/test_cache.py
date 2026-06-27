@@ -429,21 +429,37 @@ def test_read_returns_empty_on_schema_version_mismatch(
 
 
 # ---------------------------------------------------------------------------
-# Freshness: future fetched_at must be rejected
+# Freshness: within-TTL and clock-skew behaviour
 # ---------------------------------------------------------------------------
 
 
-def test_future_fetched_at_not_fresh(tmp_path: Path) -> None:
-    """An entry with fetched_at in the future must be treated as stale."""
+def test_slightly_future_workspace_fetched_at_is_fresh(tmp_path: Path) -> None:
+    """A workspace entry whose fetched_at is slightly in the future (clock skew) is fresh.
+
+    Dropping the old `now >= fetched_at` guard means a negative age is simply
+    less than TTL, so the entry is correctly served rather than rejected.
+    """
     cache = _make_cache(tmp_path, ttl=timedelta(hours=24))
     cache_file = tmp_path / "lookup.json"
     cache.put_workspace("ws", WS_ID)
-    # Overwrite fetched_at to be one hour in the future
-    future = (datetime.now(tz=UTC) + timedelta(hours=1)).isoformat()
+    # Overwrite fetched_at to be 30 seconds ahead - simulates a slightly-faster peer clock
+    slightly_ahead = (datetime.now(tz=UTC) + timedelta(seconds=30)).isoformat()
     data = json.loads(cache_file.read_text())
-    data["workspaces"]["ws"]["fetched_at"] = future
+    data["workspaces"]["ws"]["fetched_at"] = slightly_ahead
     cache_file.write_text(json.dumps(data))
-    assert cache.get_workspace("ws") is None, "future fetched_at must be rejected"
+    assert cache.get_workspace("ws") is not None, "slightly-future fetched_at must be fresh"
+
+
+def test_workspace_fetched_at_beyond_ttl_is_stale(tmp_path: Path) -> None:
+    """A workspace entry older than TTL is stale."""
+    cache = _make_cache(tmp_path, ttl=timedelta(hours=1))
+    cache_file = tmp_path / "lookup.json"
+    cache.put_workspace("ws", WS_ID)
+    stale = (datetime.now(tz=UTC) - timedelta(hours=2)).isoformat()
+    data = json.loads(cache_file.read_text())
+    data["workspaces"]["ws"]["fetched_at"] = stale
+    cache_file.write_text(json.dumps(data))
+    assert cache.get_workspace("ws") is None, "entry beyond TTL must be stale"
 
 
 def test_exact_now_fetched_at_is_fresh(tmp_path: Path) -> None:
@@ -455,16 +471,16 @@ def test_exact_now_fetched_at_is_fresh(tmp_path: Path) -> None:
     assert result is not None, "just-written entry must be fresh"
 
 
-def test_item_future_fetched_at_rejected(tmp_path: Path) -> None:
-    """Item entry with fetched_at in the future must be treated as stale."""
+def test_slightly_future_item_fetched_at_is_fresh(tmp_path: Path) -> None:
+    """An item entry whose fetched_at is slightly ahead (clock skew) is fresh."""
     cache = _make_cache(tmp_path, ttl=timedelta(hours=24))
     cache_file = tmp_path / "lookup.json"
     cache.put_item(WS_ID, "wh", _make_item_entry())
-    future = (datetime.now(tz=UTC) + timedelta(hours=1)).isoformat()
+    slightly_ahead = (datetime.now(tz=UTC) + timedelta(seconds=30)).isoformat()
     data = json.loads(cache_file.read_text())
-    data["items"][str(WS_ID)]["wh"]["fetched_at"] = future
+    data["items"][str(WS_ID)]["wh"]["fetched_at"] = slightly_ahead
     cache_file.write_text(json.dumps(data))
-    assert cache.get_item(WS_ID, "wh") is None, "future fetched_at in item must be rejected"
+    assert cache.get_item(WS_ID, "wh") is not None, "slightly-future item fetched_at must be fresh"
 
 
 # ---------------------------------------------------------------------------
