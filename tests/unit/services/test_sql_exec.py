@@ -702,16 +702,9 @@ class TestExecuteLoginRetry:
         monkeypatch.setattr(_sql_module, "time", _make_fake_time())
 
     @staticmethod
-    def _make_auth_exc() -> Exception:
-        """Return a simulated 18456 driver exception."""
-
-        class _AuthDriverError(Exception):
-            ddbc_error: str = "[SQL Server]Login failed. Error: 18456"
-
-            def __str__(self) -> str:
-                return "Could not login because the authentication failed."
-
-        return _AuthDriverError()
+    def _make_auth_exc() -> AuthError:
+        """Return a simulated authentication failure (what the connect path surfaces)."""
+        return AuthError("Could not login because the authentication failed.")
 
     @staticmethod
     def _make_good_conn() -> MagicMock:
@@ -781,7 +774,7 @@ class TestExecuteLoginRetry:
         mock_mssql.connect.side_effect = auth_exc
         monkeypatch.setattr(_sql_module, "_mssql", mock_mssql)
 
-        with pytest.raises(Exception, match="authentication failed"):
+        with pytest.raises(AuthError, match="authentication failed"):
             await sql_exec.execute(_REAL_TARGET, "SELECT 1")
 
         # Deadline fires after the first attempt — only 1 connect call.
