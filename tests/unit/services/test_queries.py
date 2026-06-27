@@ -247,16 +247,23 @@ async def test_kill_uses_autocommit_mode() -> None:
 
 
 async def test_kill_does_not_commit_manually_in_autocommit_mode() -> None:
-    """With autocommit, the driver handles commit; run_query must not call conn.commit()."""
+    """With autocommit, the driver handles commit; run_query must not call conn.commit().
+
+    Also asserts that open_connection was opened with autocommit=True, which is
+    the actual guard: without it, this test would pass even if autocommit=True
+    were accidentally dropped (because commit defaults to False in run_query).
+    """
     target = _make_target()
     conn = MagicMock()
     cursor = MagicMock()
     conn.cursor.return_value = cursor
 
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
+    with patch("fabric_dw.sql.open_connection", return_value=conn) as mock_open:
         await queries.kill(target, 42)
 
     conn.commit.assert_not_called()
+    mock_open.assert_called_once()
+    assert mock_open.call_args.kwargs.get("autocommit") is True
 
 
 async def test_kill_closes_connection_after_success() -> None:
