@@ -224,7 +224,13 @@ def _format_nested(value: object, *, _depth: int = 0) -> str:
     if isinstance(value, list):
         if not value:
             return "[]"
-        parts = [f"{indent}{_format_nested(item, _depth=_depth + 1)}" for item in value]
+        parts = []
+        for item in value:
+            child = _format_nested(item, _depth=_depth + 1)
+            # When item is itself a dict/list, child starts with "\n"; strip
+            # it so the indent is applied to the first content line rather
+            # than producing a blank line of trailing spaces before the content.
+            parts.append(f"{indent}{child.lstrip(chr(10))}")
         return "\n" + "\n".join(parts)
     return _cell(value)
 
