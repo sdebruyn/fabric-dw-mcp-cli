@@ -439,9 +439,10 @@ async def roll_timestamp(
         if rows:
             raw = rows[0][0]
             if isinstance(raw, datetime):
-                return raw
-            # Some driver versions return a string — parse it.
-            return datetime.fromisoformat(str(raw))
+                # Driver may return a naive datetime; coerce to UTC.
+                return coerce_to_utc(raw)
+            # Some driver versions return a string — parse it, then coerce.
+            return coerce_to_utc(datetime.fromisoformat(str(raw)))
         return datetime.now(tz=UTC)
 
     return await asyncio.to_thread(_fetch_ts)

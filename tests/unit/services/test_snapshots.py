@@ -353,7 +353,11 @@ async def test_create_naive_snapshot_dt_treated_as_utc() -> None:
 
 @respx.mock
 async def test_create_aware_non_utc_snapshot_dt_normalized_to_utc() -> None:
-    """create normalizes a tz-aware non-UTC snapshot_dt to UTC before emitting."""
+    """create normalizes a tz-aware non-UTC snapshot_dt to UTC before emitting.
+
+    This exercises the pre-existing aware-datetime conversion path (present before #774).
+    The naive-datetime test immediately above is the actual #774 regression guard.
+    """
     from datetime import timedelta, timezone  # noqa: PLC0415
 
     plus2 = timezone(timedelta(hours=2))
@@ -763,7 +767,11 @@ async def test_roll_timestamp_naive_new_dt_treated_as_utc() -> None:
 
 
 async def test_roll_timestamp_aware_non_utc_new_dt_normalized_to_utc() -> None:
-    """roll_timestamp normalizes a tz-aware non-UTC new_dt to UTC."""
+    """roll_timestamp normalizes a tz-aware non-UTC new_dt to UTC.
+
+    This exercises the pre-existing aware-datetime conversion path (present before #774).
+    The naive-datetime test immediately above is the actual #774 regression guard.
+    """
     from datetime import timedelta, timezone  # noqa: PLC0415
 
     target = _make_sql_target()
