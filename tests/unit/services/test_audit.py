@@ -1341,3 +1341,76 @@ async def test_disable_preserves_retention_and_groups_in_patch_body() -> None:
     assert sent_body.get("auditActionsAndGroups") == existing["auditActionsAndGroups"], (
         f"auditActionsAndGroups must be preserved on disable, got: {sent_body}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Regression tests — #853: partial GET body (missing retentionDays) crashes
+# get_settings and disable via ValidationError
+# ---------------------------------------------------------------------------
+
+
+async def test_get_settings_partial_body_no_retention_days_defaults_to_zero() -> None:
+    """get_settings must not raise when the API returns a body without retentionDays.
+
+    The Fabric sqlAudit endpoint may return a partial body that omits
+    retentionDays entirely.  Per Microsoft Learn, the field defaults to 0
+    (unlimited retention).  Before #853, AuditSettings.retention_days was a
+    required field, so a partial response caused ValidationError and crashed
+    get_settings.
+    """
+    partial_payload = {"state": "Disabled"}  # retentionDays absent
+
+    with respx.mock:
+        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=partial_payload))
+        client = await _make_client()
+        async with client:
+            result = await audit.get_settings(client, _WS_ID, _WH_ID)
+
+    assert isinstance(result, AuditSettings)
+    assert result.retention_days == 0
+
+
+async def test_get_settings_full_body_explicit_retention_days_is_honoured() -> None:
+    """get_settings must honour an explicit retentionDays value in the response body."""
+    payload = {"state": "Enabled", "retentionDays": 45, "auditActionsAndGroups": []}
+
+    with respx.mock:
+        respx.get(_AUDIT_URL).mock(return_value=httpx.Response(200, json=payload))
+        client = await _make_client()
+        async with client:
+            result = await audit.get_settings(client, _WS_ID, _WH_ID)
+
+    assert result.retention_days == 45
+
+
+async def test_disable_partial_get_body_does_not_crash() -> None:
+    """disable must not crash when the pre-flight GET returns a body without retentionDays.
+
+    Regression guard for #853: before the fix, AuditSettings.retention_days was
+    required, so the partial GET body caused a ValidationError inside get_settings,
+    which is called by disable as its pre-flight read.  The fix makes retention_days
+    optional with default 0 (unlimited), matching the documented API default.
+
+    The PATCH body must forward retentionDays=0 (the resolved default) so the
+    Fabric API does not receive an ambiguous partial body from our side either.
+    """
+    partial_pre_flight = {"state": "Enabled"}  # retentionDays absent
+    post_patch = {"state": "Disabled", "retentionDays": 0, "auditActionsAndGroups": []}
+
+    with respx.mock:
+        patch_route = respx.patch(_AUDIT_URL).mock(return_value=httpx.Response(200, json={}))
+        respx.get(_AUDIT_URL).mock(
+            side_effect=[
+                httpx.Response(200, json=partial_pre_flight),  # pre-flight GET
+                httpx.Response(200, json=post_patch),  # re-fetch after PATCH
+            ]
+        )
+        client = await _make_client()
+        async with client:
+            result = await audit.disable(client, _WS_ID, _WH_ID)
+
+    assert patch_route.called
+    sent_body = json.loads(patch_route.calls[0].request.content)
+    # retentionDays must be 0 (the default resolved from the partial GET body).
+    assert sent_body.get("retentionDays") == 0
+    assert result.state == "Disabled"
