@@ -447,6 +447,45 @@ async def test_import_table_from_url_replace_absent_table_raises(
 
 
 # ---------------------------------------------------------------------------
+# load_table_from_url — SQL endpoint rejection fires before table-existence check
+# ---------------------------------------------------------------------------
+
+
+async def test_load_table_from_url_rejects_sql_endpoint(
+    mock_ctx, ctx_patch, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """load_table_from_url raises ToolError for SQL Analytics Endpoint items.
+
+    The endpoint guard must fire before the table-existence check so that
+    'SQL endpoint + absent table' yields the endpoint error, not 'table not found'.
+    """
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    monkeypatch.delenv("FABRIC_MCP_READONLY", raising=False)
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_sql_endpoint_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.load.table_exists",
+            new=AsyncMock(return_value=False),
+        ),
+        pytest.raises(ToolError, match="read-only"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "load_table_from_url",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "qualified_name": "dbo.sales",
+                "url": "https://example.com/f.parquet",
+                "file_type": "PARQUET",
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
 # load_table_from_url — absent table raises friendly error
 # ---------------------------------------------------------------------------
 
