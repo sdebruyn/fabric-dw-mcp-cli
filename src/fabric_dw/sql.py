@@ -73,7 +73,10 @@ from fabric_dw.sql_pool import (
     _driver,  # noqa: F401 (test shim: _sql_module._driver)
     _get_mssql,
     _load_sql_config,
-    _mssql,  # noqa: F401 (test seam: tests retarget to fabric_dw.sql_pool._mssql)
+    # _mssql is the import-time value (None). Patching fabric_dw.sql._mssql is a
+    # silent no-op because _get_mssql() reads _mssql from sql_pool's own globals,
+    # not from sql.py's namespace.  Tests MUST patch fabric_dw.sql_pool._mssql.
+    _mssql,  # noqa: F401 (import-time snapshot; do NOT patch via fabric_dw.sql)
     _resolve_sql_retry_deadline_s,
     _resolve_sql_retry_executes,
     _sql_config_cache_clear,  # noqa: F401 (test hook: _sql_module._sql_config_cache_clear())
