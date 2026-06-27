@@ -88,22 +88,22 @@ def sql_pools_group() -> None:
 
 
 # ---------------------------------------------------------------------------
-# get
+# status
 # ---------------------------------------------------------------------------
 
 
-@sql_pools_group.command("get")
+@sql_pools_group.command("status")
 @click.pass_obj
 @coro
-async def get_cmd(ctx: CliContext) -> None:
-    """Fetch the SQL Pools configuration for the workspace."""
+async def status_cmd(ctx: CliContext) -> None:
+    """Show whether custom SQL Pools are enabled for the workspace."""
     ws = resolve_workspace(ctx)
     try:
         async with build_http_client(ctx) as http:
             ws_id = await resolve_workspace_id(http, ws)
             config = await _svc.get_configuration(http, ws_id)
             render(
-                config.model_dump(by_alias=True, mode="json"),
+                {"customSQLPoolsEnabled": config.custom_sql_pools_enabled},
                 json_output=ctx.json_output,
             )
     except PermissionDeniedError as exc:

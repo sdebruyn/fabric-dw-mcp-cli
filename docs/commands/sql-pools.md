@@ -102,22 +102,22 @@ fdw [-w WORKSPACE] sql-pools enable
 fdw -w MyWorkspace sql-pools enable
 ```
 
-### sql-pools get
+### sql-pools status
 
 **Targets:** Workspace (not item-specific)
 
-Fetch the full SQL Pools configuration (enabled flag + pool list) for a workspace.
+Show whether custom SQL Pools are enabled for the workspace (`customSQLPoolsEnabled: True/False`). Use `sql-pools list` to see the pool list, or `sql-pools show --name` for a single pool's details.
 
 **Synopsis**
 
 ```
-fdw [-w WORKSPACE] sql-pools get
+fdw [-w WORKSPACE] sql-pools status
 ```
 
 **Example**
 
 ```shell
-fdw -w MyWorkspace sql-pools get
+fdw -w MyWorkspace sql-pools status
 ```
 
 ### sql-pools insights
@@ -311,17 +311,17 @@ Return details for a single SQL pool by name.
 
 **Returns:** `SqlPool`: single pool object (fields as above).
 
-### get_sql_pools_configuration
+### get_sql_pools_status
 
 **Targets:** Workspace (not item-specific)
 
-Fetch the full SQL Pools configuration (enabled flag + pool list) for a workspace.
+Return whether custom SQL Pools are enabled for a workspace. Returns only the workspace-level enabled/disabled switch. Use `list_sql_pools` to see the pool list, or `get_sql_pool` for a single pool's details.
 
 **Parameters:**
 
 - `workspace` (`str`): workspace name or GUID.
 
-**Returns:** `SqlPoolsConfiguration`: object with `customSQLPoolsEnabled` (bool) and `customSQLPools` (list of pool objects, each with `name`, `maxResourcePercentage`, `isDefault`, `optimizeForReads`, and optional `classifier`).
+**Returns:** `dict` with a single key `customSQLPoolsEnabled` (`bool`).
 
 ### list_sql_pool_insights
 

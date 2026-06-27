@@ -2,16 +2,16 @@
 
 Coverage targets
 ----------------
-- get_sql_pools_configuration  (lines 34-49)
-- list_sql_pools               (lines 51-66)
-- get_sql_pool                 (lines 68-90)
-- create_sql_pool              (lines 92-155)
-- update_sql_pool              (lines 157-207)
-- delete_sql_pool              (lines 209-232)
-- enable_sql_pools             (lines 234-250)
-- disable_sql_pools            (lines 252-270)
-- _parse_dt helper             (lines 272-279)
-- list_sql_pool_insights       (lines 281-312)
+- get_sql_pools_status         (lines 34-54)
+- list_sql_pools               (lines 56-71)
+- get_sql_pool                 (lines 73-95)
+- create_sql_pool              (lines 97-160)
+- update_sql_pool              (lines 162-212)
+- delete_sql_pool              (lines 214-237)
+- enable_sql_pools             (lines 239-255)
+- disable_sql_pools            (lines 257-275)
+- _parse_dt helper             (lines 277-284)
+- list_sql_pool_insights       (lines 286-317)
 
 Each tool is covered for:
   1. Happy path (service returns expected data -> correct dict/list shape)
@@ -93,12 +93,12 @@ def _make_pool_insight() -> SqlPoolInsight:
 
 
 # ---------------------------------------------------------------------------
-# get_sql_pools_configuration
+# get_sql_pools_status
 # ---------------------------------------------------------------------------
 
 
-async def test_get_sql_pools_configuration_happy_path(mock_ctx, ctx_patch) -> None:
-    """get_sql_pools_configuration returns serialised config dict."""
+async def test_get_sql_pools_status_happy_path(mock_ctx, ctx_patch) -> None:
+    """get_sql_pools_status returns only the enabled flag, not the pool list."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     config = _make_config()
@@ -112,17 +112,37 @@ async def test_get_sql_pools_configuration_happy_path(mock_ctx, ctx_patch) -> No
         ),
     ):
         result = await mcp._tool_manager.call_tool(
-            "get_sql_pools_configuration",
+            "get_sql_pools_status",
             {"workspace": _WS_NAME},
         )
 
-    assert isinstance(result, dict)
-    assert result["customSQLPoolsEnabled"] is True
-    assert len(result["customSQLPools"]) == 1
+    assert result == {"customSQLPoolsEnabled": True}
 
 
-async def test_get_sql_pools_configuration_resolver_fabric_error(mock_ctx, ctx_patch) -> None:
-    """get_sql_pools_configuration wraps FabricError from resolver as ToolError."""
+async def test_get_sql_pools_status_disabled(mock_ctx, ctx_patch) -> None:
+    """get_sql_pools_status returns False when custom pools are disabled."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    config = _make_config(enabled=False)
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.sql_pools.get_configuration",
+            new=AsyncMock(return_value=config),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "get_sql_pools_status",
+            {"workspace": _WS_NAME},
+        )
+
+    assert result == {"customSQLPoolsEnabled": False}
+
+
+async def test_get_sql_pools_status_resolver_fabric_error(mock_ctx, ctx_patch) -> None:
+    """get_sql_pools_status wraps FabricError from resolver as ToolError."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -134,13 +154,13 @@ async def test_get_sql_pools_configuration_resolver_fabric_error(mock_ctx, ctx_p
         pytest.raises(ToolError),
     ):
         await mcp._tool_manager.call_tool(
-            "get_sql_pools_configuration",
+            "get_sql_pools_status",
             {"workspace": _WS_NAME},
         )
 
 
-async def test_get_sql_pools_configuration_workspace_not_allowed(ctx_patch) -> None:
-    """get_sql_pools_configuration raises ToolError when workspace not in allowlist."""
+async def test_get_sql_pools_status_workspace_not_allowed(ctx_patch) -> None:
+    """get_sql_pools_status raises ToolError when workspace not in allowlist."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -151,15 +171,15 @@ async def test_get_sql_pools_configuration_workspace_not_allowed(ctx_patch) -> N
         pytest.raises(ToolError) as exc_info,
     ):
         await mcp._tool_manager.call_tool(
-            "get_sql_pools_configuration",
+            "get_sql_pools_status",
             {"workspace": _WS_NAME},
         )
 
     assert "allowlist" in str(exc_info.value).lower()
 
 
-async def test_get_sql_pools_configuration_service_fabric_error(mock_ctx, ctx_patch) -> None:
-    """get_sql_pools_configuration surfaces FabricError from service as ToolError."""
+async def test_get_sql_pools_status_service_fabric_error(mock_ctx, ctx_patch) -> None:
+    """get_sql_pools_status surfaces FabricError from service as ToolError."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -175,7 +195,7 @@ async def test_get_sql_pools_configuration_service_fabric_error(mock_ctx, ctx_pa
         pytest.raises(ToolError),
     ):
         await mcp._tool_manager.call_tool(
-            "get_sql_pools_configuration",
+            "get_sql_pools_status",
             {"workspace": _WS_NAME},
         )
 

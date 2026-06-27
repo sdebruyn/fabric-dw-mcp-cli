@@ -338,7 +338,7 @@ workspace-scoped and require the **workspace admin** role.
 
 | Action | CLI | MCP tool | Notes |
 | --- | --- | --- | --- |
-| Read full configuration | [`fdw sql-pools get`](../commands/sql-pools.md#sql-pools-get) | `get_sql_pools_configuration` | read |
+| Check enabled/disabled status | [`fdw sql-pools status`](../commands/sql-pools.md#sql-pools-status) | `get_sql_pools_status` | read |
 | List pools | [`fdw sql-pools list`](../commands/sql-pools.md#sql-pools-list) | `list_sql_pools` | read |
 | Show one pool | [`fdw sql-pools show --name`](../commands/sql-pools.md#sql-pools-show) | `get_sql_pool` | read |
 | Create a pool | [`fdw sql-pools create`](../commands/sql-pools.md#sql-pools-create) | `create_sql_pool` | write |
