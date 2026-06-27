@@ -175,6 +175,13 @@ def _reset_telemetry_module_globals(
         # file is isolated per-test via XDG_CONFIG_HOME / tmp_path.
         # KeyError here means _UNSET was renamed in telemetry.py — update both files.
         ns["_tenant_id_cache"] = ns["_UNSET"]
+        # Reset the SDK-init globals so each test starts with an uninitialised
+        # tracer/logger.  Without teardown a test that calls _get_tracer() leaves
+        # _sdk_initialised=True and a live logger object, causing subsequent tests
+        # that expect a clean SDK state to skip the init path entirely.
+        ns["_sdk_initialised"] = False
+        ns["_tracer"] = None
+        ns["_otel_logger"] = None
 
     _reset()
     yield
