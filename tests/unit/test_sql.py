@@ -841,7 +841,9 @@ class TestConnectionPool:
         def _fake_time() -> float:
             return next(fake_times)
 
-        monkeypatch.setattr(sql_mod, "_pool_time", _fake_time)
+        # _pool_time is called by bare name inside _pool_checkout/_pool_checkin,
+        # both of which live in sql_pool.py.  Must patch sql_pool's own binding.
+        monkeypatch.setattr(_sql_pool_module, "_pool_time", _fake_time)
 
         # Put the first conn into the pool (checkin stores t=0.0).
         conn1 = open_connection(_make_target())
@@ -941,10 +943,10 @@ class TestConnectionPool:
 
     def test_max_idle_cap_per_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Pool never grows beyond POOL_MAX_IDLE per key; excess are physically closed."""
-        import fabric_dw.sql as sql_mod  # noqa: PLC0415
-
-        original_max = sql_mod.POOL_MAX_IDLE
-        sql_mod.POOL_MAX_IDLE = 2
+        # POOL_MAX_IDLE is read from sql_pool.py's globals by _pool_checkin.
+        # Must target sql_pool's own binding, not the re-export shim in sql.py.
+        original_max = _sql_pool_module.POOL_MAX_IDLE
+        _sql_pool_module.POOL_MAX_IDLE = 2
         try:
             mock_mssql, _, _ = _make_mock_mssql()
             conns = [MagicMock() for _ in range(4)]
@@ -967,7 +969,7 @@ class TestConnectionPool:
             closed_count = sum(1 for c in conns if c.close.called)
             assert closed_count == 2
         finally:
-            sql_mod.POOL_MAX_IDLE = original_max
+            _sql_pool_module.POOL_MAX_IDLE = original_max
 
     def test_run_statements_checks_out_once_checks_in_once(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1651,8 +1653,9 @@ class TestOpenConnectionOidcTokenInjection:
     """Tests for OIDC token injection in open_connection.
 
     The mssql_python driver is never imported: _mssql is monkeypatched with a
-    MagicMock.  get_sql_token_struct is patched at the fabric_dw.sql module level
-    so that the mock controls the OIDC environment independently of env-vars.
+    MagicMock.  get_sql_token_struct is patched at the fabric_dw.sql_pool module
+    level (where open_connection lives) so that the mock controls the OIDC
+    environment independently of env-vars.
     """
 
     def test_non_oidc_connect_called_without_attrs_before(
@@ -1663,7 +1666,7 @@ class TestOpenConnectionOidcTokenInjection:
         mock_mssql, _, _ = _make_mock_mssql()
         _patch_mssql(monkeypatch, mock_mssql)
         # Simulate non-OIDC: get_sql_token_struct returns None.
-        monkeypatch.setattr(_sql_module, "get_sql_token_struct", lambda *_a, **_kw: None)
+        monkeypatch.setattr(_sql_pool_module, "get_sql_token_struct", lambda *_a, **_kw: None)
 
         from fabric_dw.sql import open_connection  # noqa: PLC0415
 
@@ -1691,7 +1694,9 @@ class TestOpenConnectionOidcTokenInjection:
         token_bytes = known_token.encode("UTF-16-LE")
         fake_struct = struct.pack(f"<I{len(token_bytes)}s", len(token_bytes), token_bytes)
 
-        monkeypatch.setattr(_sql_module, "get_sql_token_struct", lambda *_a, **_kw: fake_struct)
+        monkeypatch.setattr(
+            _sql_pool_module, "get_sql_token_struct", lambda *_a, **_kw: fake_struct
+        )
 
         from fabric_dw.sql import SQL_COPT_SS_ACCESS_TOKEN, open_connection  # noqa: PLC0415
 
@@ -1714,7 +1719,9 @@ class TestOpenConnectionOidcTokenInjection:
 
         token_bytes = b"fake"
         fake_struct = struct.pack(f"<I{len(token_bytes)}s", len(token_bytes), token_bytes)
-        monkeypatch.setattr(_sql_module, "get_sql_token_struct", lambda *_a, **_kw: fake_struct)
+        monkeypatch.setattr(
+            _sql_pool_module, "get_sql_token_struct", lambda *_a, **_kw: fake_struct
+        )
 
         from fabric_dw.sql import open_connection  # noqa: PLC0415
 
@@ -1734,7 +1741,9 @@ class TestOpenConnectionOidcTokenInjection:
 
         token_bytes = b"tok"
         fake_struct = struct.pack(f"<I{len(token_bytes)}s", len(token_bytes), token_bytes)
-        monkeypatch.setattr(_sql_module, "get_sql_token_struct", lambda *_a, **_kw: fake_struct)
+        monkeypatch.setattr(
+            _sql_pool_module, "get_sql_token_struct", lambda *_a, **_kw: fake_struct
+        )
 
         from fabric_dw.sql import SQL_COPT_SS_ACCESS_TOKEN, open_connection  # noqa: PLC0415
 
@@ -1779,7 +1788,7 @@ class TestOpenConnectionOidcTokenInjection:
             token_call_count += 1
             return fake_struct
 
-        monkeypatch.setattr(_sql_module, "get_sql_token_struct", _counting_token_stub)
+        monkeypatch.setattr(_sql_pool_module, "get_sql_token_struct", _counting_token_stub)
 
         from fabric_dw.sql import open_connection  # noqa: PLC0415
 
@@ -1939,7 +1948,9 @@ class TestPoolCheckinEvictsStale:
         #   checkin conn_b (now):    t=idle_limit+5.0
         #     -> age of conn_a = idle_limit+5.0 > idle_limit => evict
         fake_times = iter([1.0, 2.0, 0.0, idle_limit + 5.0])
-        monkeypatch.setattr(sql_mod, "_pool_time", lambda: next(fake_times))
+        # _pool_time is called by bare name inside _pool_checkin, which lives in
+        # sql_pool.py.  Must patch sql_pool's own binding, not the shim in sql.py.
+        monkeypatch.setattr(_sql_pool_module, "_pool_time", lambda: next(fake_times))
 
         target = _make_target()
         wrap_a = open_connection(target)
@@ -2229,7 +2240,7 @@ class TestOpenConnectionTimeoutAPI:
         mock_mssql, _, _ = _make_mock_mssql()
         _patch_mssql(monkeypatch, mock_mssql)
         # No OIDC token — straightforward path.
-        monkeypatch.setattr(_sql_module, "get_sql_token_struct", lambda *_a, **_kw: None)
+        monkeypatch.setattr(_sql_pool_module, "get_sql_token_struct", lambda *_a, **_kw: None)
 
         from fabric_dw.sql import open_connection  # noqa: PLC0415
 
@@ -2246,7 +2257,7 @@ class TestOpenConnectionTimeoutAPI:
 
         mock_mssql, mock_conn, _ = _make_mock_mssql()
         _patch_mssql(monkeypatch, mock_mssql)
-        monkeypatch.setattr(_sql_module, "get_sql_token_struct", lambda *_a, **_kw: None)
+        monkeypatch.setattr(_sql_pool_module, "get_sql_token_struct", lambda *_a, **_kw: None)
 
         from fabric_dw.sql import open_connection  # noqa: PLC0415
 
