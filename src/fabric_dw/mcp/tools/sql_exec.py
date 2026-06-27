@@ -10,9 +10,9 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from pydantic import Field
 
-from fabric_dw.cli._plan_mermaid import render_plan_mermaid
-from fabric_dw.cli._plan_parse import parse_showplan
-from fabric_dw.cli._plan_render import operator_to_dict
+from fabric_dw.plan._mermaid import render_plan_mermaid
+from fabric_dw.plan._parse import parse_showplan
+from fabric_dw.plan._render import operator_to_dict
 from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
 from fabric_dw.mcp._guards import assert_readonly_sql, assert_workspace_allowed, env_flag

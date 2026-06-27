@@ -21,7 +21,7 @@ import subprocess
 import click
 
 from fabric_dw.cli._plan_dot import render_plan_dot
-from fabric_dw.cli._plan_parse import PlanOperator
+from fabric_dw.plan._parse import PlanOperator
 
 __all__ = ["render_plan_svg"]
 
