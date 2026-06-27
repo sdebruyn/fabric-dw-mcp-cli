@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import fabric_dw.sql as _sql_module
+import fabric_dw.sql_pool as _sql_pool_module
 from fabric_dw.auth import CredentialMode
 from fabric_dw.config import Defaults, UserConfig
 from fabric_dw.exceptions import AuthError, FabricServerError, NotFoundError, PermissionDeniedError
@@ -57,8 +58,14 @@ def _make_mock_mssql() -> tuple[MagicMock, MagicMock, MagicMock]:
 
 
 def _patch_mssql(monkeypatch: pytest.MonkeyPatch, mock_mssql: MagicMock) -> None:
-    """Replace the _mssql attribute on sql module with the mock."""
-    monkeypatch.setattr(_sql_module, "_mssql", mock_mssql)
+    """Replace the _mssql attribute on sql_pool module with the mock.
+
+    _mssql is now defined in fabric_dw.sql_pool; _get_mssql() reads it from
+    sql_pool's globals.  Patching sql.py's re-export binding would be a no-op
+    because _get_mssql checks the sql_pool-module-level name, not the sql.py
+    binding.
+    """
+    monkeypatch.setattr(_sql_pool_module, "_mssql", mock_mssql)
 
 
 # ---------------------------------------------------------------------------
@@ -2653,7 +2660,7 @@ class TestFetchBeforeCommitOrdering:
         fake_conn = _CommitInvalidatingConnection(description, rows)
         mock_mssql = MagicMock()
         mock_mssql.connect.return_value = fake_conn
-        monkeypatch.setattr(_sql_module, "_mssql", mock_mssql)
+        monkeypatch.setattr(_sql_pool_module, "_mssql", mock_mssql)
         return fake_conn
 
     def test_fetch_all_commit_true_returns_rows(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2779,7 +2786,7 @@ class TestFetchRowcountMode:
         fake_conn = _RowcountConnection(rowcount)
         mock_mssql = MagicMock()
         mock_mssql.connect.return_value = fake_conn
-        monkeypatch.setattr(_sql_module, "_mssql", mock_mssql)
+        monkeypatch.setattr(_sql_pool_module, "_mssql", mock_mssql)
         return fake_conn
 
     def test_rowcount_returns_count_tuple(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2890,7 +2897,7 @@ class TestFetchAllDescriptionNoneGuard:
         fake_conn = _NoResultSetConnection()
         mock_mssql = MagicMock()
         mock_mssql.connect.return_value = fake_conn
-        monkeypatch.setattr(_sql_module, "_mssql", mock_mssql)
+        monkeypatch.setattr(_sql_pool_module, "_mssql", mock_mssql)
         return fake_conn
 
     def test_fetch_all_description_none_returns_empty(
@@ -2953,7 +2960,7 @@ class TestSqlRetryConfig:
     def test_deadline_config_wins_over_default(self) -> None:
         """Config sql_retry_deadline_s beats the built-in 120 default."""
         cfg = UserConfig(defaults=Defaults(sql_retry_deadline_s=250))
-        _sql_module._sql_config_cache = cfg
+        _sql_pool_module._sql_config_cache = cfg
         assert _sql_module._resolve_sql_retry_deadline_s() == 250
 
     def test_deadline_falls_back_to_default(self) -> None:
@@ -2984,19 +2991,19 @@ class TestSqlRetryConfig:
         """Invalid env var falls through to config value."""
         monkeypatch.setenv("FABRIC_SQL_RETRY_TIMEOUT_S", "bad")
         cfg = UserConfig(defaults=Defaults(sql_retry_deadline_s=88))
-        _sql_module._sql_config_cache = cfg
+        _sql_pool_module._sql_config_cache = cfg
         assert _sql_module._resolve_sql_retry_deadline_s() == 88
 
     def test_deadline_config_zero_floored_to_default(self) -> None:
         """A config.toml sql_retry_deadline_s of 0 is rejected and falls through to default."""
         cfg = UserConfig(defaults=Defaults(sql_retry_deadline_s=0))
-        _sql_module._sql_config_cache = cfg
+        _sql_pool_module._sql_config_cache = cfg
         assert _sql_module._resolve_sql_retry_deadline_s() == 120
 
     def test_deadline_config_below_min_floored_to_default(self) -> None:
         """A config.toml sql_retry_deadline_s below the minimum is rejected and falls through."""
         cfg = UserConfig(defaults=Defaults(sql_retry_deadline_s=-5))
-        _sql_module._sql_config_cache = cfg
+        _sql_pool_module._sql_config_cache = cfg
         # -5 < _MIN_SQL_RETRY_DEADLINE_S, so the built-in default is used
         assert _sql_module._resolve_sql_retry_deadline_s() == 120
 
@@ -3004,7 +3011,7 @@ class TestSqlRetryConfig:
         """A config.toml sql_retry_deadline_s at or above the minimum is returned as-is."""
         min_val = _sql_module._MIN_SQL_RETRY_DEADLINE_S
         cfg = UserConfig(defaults=Defaults(sql_retry_deadline_s=min_val))
-        _sql_module._sql_config_cache = cfg
+        _sql_pool_module._sql_config_cache = cfg
         assert _sql_module._resolve_sql_retry_deadline_s() == min_val
 
     def test_executes_env_wins_over_config_and_default(
@@ -3018,13 +3025,13 @@ class TestSqlRetryConfig:
         """FABRIC_SQL_RETRY_EXECUTES=false → False."""
         monkeypatch.setenv("FABRIC_SQL_RETRY_EXECUTES", "false")
         cfg = UserConfig(defaults=Defaults(sql_retry_executes=True))
-        _sql_module._sql_config_cache = cfg
+        _sql_pool_module._sql_config_cache = cfg
         assert _sql_module._resolve_sql_retry_executes() is False
 
     def test_executes_config_wins_over_default(self) -> None:
         """Config sql_retry_executes=True beats the built-in False default."""
         cfg = UserConfig(defaults=Defaults(sql_retry_executes=True))
-        _sql_module._sql_config_cache = cfg
+        _sql_pool_module._sql_config_cache = cfg
         assert _sql_module._resolve_sql_retry_executes() is True
 
     def test_executes_falls_back_to_false(self) -> None:
@@ -3130,14 +3137,14 @@ class TestPoolEnabledConfig:
         """FABRIC_CONN_POOLING=0 disables pooling even when config says True."""
         monkeypatch.setenv("FABRIC_CONN_POOLING", "0")
         cfg = UserConfig(defaults=Defaults(conn_pooling=True))
-        _sql_module._sql_config_cache = cfg
+        _sql_pool_module._sql_config_cache = cfg
         assert _sql_module._pool_enabled() is False
 
     def test_env_one_enables_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """FABRIC_CONN_POOLING=1 enables pooling even when config says False."""
         monkeypatch.setenv("FABRIC_CONN_POOLING", "1")
         cfg = UserConfig(defaults=Defaults(conn_pooling=False))
-        _sql_module._sql_config_cache = cfg
+        _sql_pool_module._sql_config_cache = cfg
         assert _sql_module._pool_enabled() is True
 
     def test_env_false_string_disables_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3187,14 +3194,14 @@ class TestPoolEnabledConfig:
         """Config conn_pooling=False disables pooling when env var is absent."""
         monkeypatch.delenv("FABRIC_CONN_POOLING", raising=False)
         cfg = UserConfig(defaults=Defaults(conn_pooling=False))
-        _sql_module._sql_config_cache = cfg
+        _sql_pool_module._sql_config_cache = cfg
         assert _sql_module._pool_enabled() is False
 
     def test_config_true_enables_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Config conn_pooling=True enables pooling when env var is absent."""
         monkeypatch.delenv("FABRIC_CONN_POOLING", raising=False)
         cfg = UserConfig(defaults=Defaults(conn_pooling=True))
-        _sql_module._sql_config_cache = cfg
+        _sql_pool_module._sql_config_cache = cfg
         assert _sql_module._pool_enabled() is True
 
     def test_falls_back_to_true_when_no_env_no_config(
@@ -3209,14 +3216,14 @@ class TestPoolEnabledConfig:
         """Config conn_pooling=None (unset) falls through to the built-in True default."""
         monkeypatch.delenv("FABRIC_CONN_POOLING", raising=False)
         cfg = UserConfig(defaults=Defaults(conn_pooling=None))
-        _sql_module._sql_config_cache = cfg
+        _sql_pool_module._sql_config_cache = cfg
         assert _sql_module._pool_enabled() is True
 
     def test_env_wins_over_config_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """FABRIC_CONN_POOLING=1 wins over config conn_pooling=False."""
         monkeypatch.setenv("FABRIC_CONN_POOLING", "1")
         cfg = UserConfig(defaults=Defaults(conn_pooling=False))
-        _sql_module._sql_config_cache = cfg
+        _sql_pool_module._sql_config_cache = cfg
         assert _sql_module._pool_enabled() is True
 
 

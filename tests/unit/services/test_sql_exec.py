@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import fabric_dw.sql as _sql_module
+import fabric_dw.sql_pool as _sql_pool_module
 from fabric_dw.exceptions import AuthError, FabricServerError, PermissionDeniedError
 from fabric_dw.models import SqlResult
 from fabric_dw.services import sql_exec
@@ -737,7 +738,7 @@ class TestExecuteLoginRetry:
 
         mock_mssql = MagicMock()
         mock_mssql.connect.side_effect = [auth_exc, auth_exc, good_conn]
-        monkeypatch.setattr(_sql_module, "_mssql", mock_mssql)
+        monkeypatch.setattr(_sql_pool_module, "_mssql", mock_mssql)
 
         result = await sql_exec.execute(_REAL_TARGET, "SELECT 1 AS n")
 
@@ -772,7 +773,7 @@ class TestExecuteLoginRetry:
 
         mock_mssql = MagicMock()
         mock_mssql.connect.side_effect = auth_exc
-        monkeypatch.setattr(_sql_module, "_mssql", mock_mssql)
+        monkeypatch.setattr(_sql_pool_module, "_mssql", mock_mssql)
 
         with pytest.raises(AuthError, match="authentication failed"):
             await sql_exec.execute(_REAL_TARGET, "SELECT 1")
@@ -795,7 +796,7 @@ class TestExecuteLoginRetry:
 
         mock_mssql = MagicMock()
         mock_mssql.connect.side_effect = non_retryable
-        monkeypatch.setattr(_sql_module, "_mssql", mock_mssql)
+        monkeypatch.setattr(_sql_pool_module, "_mssql", mock_mssql)
 
         with pytest.raises(Exception, match="unexpected driver"):
             await sql_exec.execute(_REAL_TARGET, "SELECT 1")
@@ -817,7 +818,7 @@ class TestExecuteLoginRetry:
 
         mock_mssql = MagicMock()
         mock_mssql.connect.return_value = good_conn
-        monkeypatch.setattr(_sql_module, "_mssql", mock_mssql)
+        monkeypatch.setattr(_sql_pool_module, "_mssql", mock_mssql)
 
         await sql_exec.execute(_REAL_TARGET, "SELECT 1 AS n")
 
