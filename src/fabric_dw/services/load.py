@@ -119,19 +119,6 @@ _DFS_CREATE_RETRYABLE_STATUSES: frozenset[int] = frozenset({400, 408, 429, 500, 
 # SQL Endpoint rejection message.
 _SQL_ENDPOINT_READONLY_MSG = "SQL Endpoints are read-only; COPY INTO not supported"
 
-# ---------------------------------------------------------------------------
-# SSRF-prevention: blocked URL patterns for --url / rejected_row_location
-# ---------------------------------------------------------------------------
-
-#: Prefixes that are blocked to prevent SSRF to instance metadata / link-local endpoints.
-_BLOCKED_URL_PREFIXES: tuple[str, ...] = (
-    "http://169.254.",  # IMDS / link-local
-    "http://fd00:",  # IPv6 link-local (rare but possible)
-)
-
-#: Regex to detect link-local / IMDS hosts (IPv4 169.254.x.x and hostnames resolving to them).
-_METADATA_HOST_RE = re.compile(r"^(?:169\.254\.\d+\.\d+|metadata\.azure\.internal)$", re.IGNORECASE)
-
 #: Staging lakehouse name: same alphabet as SQL identifier but allow hyphens.
 _STAGING_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_\-]{0,127}$")
 
@@ -176,33 +163,6 @@ class CopyIntoCsvOptions:
 def _assert_not_sql_endpoint(kind: WarehouseKind) -> None:
     if kind == WarehouseKind.SQL_ENDPOINT:
         raise ItemKindError(_SQL_ENDPOINT_READONLY_MSG)
-
-
-def _validate_https_url(url: str, param_name: str = "url") -> None:
-    """Reject non-HTTPS URLs and known SSRF-prone endpoints.
-
-    Args:
-        url: The URL to validate.
-        param_name: The parameter name for use in error messages.
-
-    Raises:
-        ValueError: If the URL scheme is not ``https`` or the host is a
-            link-local / IMDS address that could enable SSRF.
-    """
-    parsed = urllib.parse.urlparse(url)
-    if parsed.scheme.lower() != "https":
-        msg = (
-            f"Invalid {param_name} scheme {parsed.scheme!r}: only HTTPS URLs are accepted. "
-            "Use https:// for all source and rejected-row URLs."
-        )
-        raise ValueError(msg)
-    host = parsed.hostname or ""
-    if _METADATA_HOST_RE.match(host):
-        msg = (
-            f"Invalid {param_name} host {host!r}: link-local and instance-metadata "
-            "endpoints are not permitted."
-        )
-        raise ValueError(msg)
 
 
 def _validate_staging_name(name: str) -> str:
@@ -747,9 +707,6 @@ async def copy_into_from_url(
     _assert_not_sql_endpoint(kind)
     validate_identifier(schema)
     validate_identifier(table)
-    _validate_https_url(url, "url")
-    if rejected_row_location is not None:
-        _validate_https_url(rejected_row_location, "rejected_row_location")
 
     # MAXERRORS is only valid for CSV; Fabric rejects it for PARQUET with
     # "Option 'MAXERRORS' is not supported for specified format 'PARQUET'".
@@ -848,7 +805,7 @@ async def copy_into_from_url(
 # ---------------------------------------------------------------------------
 
 
-async def load_local_file(  # noqa: PLR0912, PLR0915
+async def load_local_file(  # noqa: PLR0915
     http: FabricHttpClient,
     credential: AsyncTokenCredential,
     workspace_id: uuid.UUID,
@@ -913,10 +870,6 @@ async def load_local_file(  # noqa: PLR0912, PLR0915
     # A3: validate staging_lakehouse_name if explicitly provided.
     if staging_lakehouse_name is not None:
         _validate_staging_name(staging_lakehouse_name)
-
-    # A5: validate rejected_row_location URL scheme (no SSRF via rejected-row output).
-    if rejected_row_location is not None:
-        _validate_https_url(rejected_row_location, "rejected_row_location")
 
     if not local_path.exists():
         msg = f"Local file not found: {local_path}"

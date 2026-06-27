@@ -25,7 +25,6 @@ from fabric_dw.services.load import (
     _log_dfs_error,
     _safe_dest_filename,
     _sq,
-    _validate_https_url,
     _validate_staging_name,
     copy_into_from_url,
     infer_file_format,
@@ -1168,77 +1167,6 @@ class TestStagingNameValidation:
 
 
 # ---------------------------------------------------------------------------
-# A5: URL scheme validation (SSRF prevention)
-# ---------------------------------------------------------------------------
-
-
-class TestUrlSchemeValidation:
-    def test_https_url_accepted(self) -> None:
-        _validate_https_url("https://sa.blob.core.windows.net/c/f.parquet", "url")  # no error
-
-    def test_http_url_rejected(self) -> None:
-        with pytest.raises(ValueError, match="only HTTPS"):
-            _validate_https_url("http://sa.blob.core.windows.net/c/f.parquet", "url")
-
-    def test_imds_link_local_rejected(self) -> None:
-        with pytest.raises(ValueError, match="link-local"):
-            _validate_https_url("https://169.254.169.254/metadata/instance", "url")
-
-    def test_metadata_azure_host_rejected(self) -> None:
-        with pytest.raises(ValueError, match="link-local"):
-            _validate_https_url("https://metadata.azure.internal/", "url")
-
-    def test_ftp_scheme_rejected(self) -> None:
-        with pytest.raises(ValueError, match="only HTTPS"):
-            _validate_https_url("ftp://example.com/file.parquet", "url")
-
-    async def test_http_url_rejected_in_copy_into_from_url(self) -> None:
-        """A5: copy_into_from_url must reject non-HTTPS source URLs."""
-        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
-
-        target = SqlTarget(
-            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
-        )
-        with pytest.raises(ValueError, match="only HTTPS"):
-            await copy_into_from_url(
-                target,
-                "dbo",
-                "t",
-                "http://sa.blob.core.windows.net/c/f.parquet",
-                file_type="PARQUET",
-            )
-
-    async def test_http_rejected_row_location_rejected_in_load_local_file(
-        self, tmp_path: Path
-    ) -> None:
-        """A5: load_local_file must reject non-HTTPS rejected_row_location."""
-        csv_file = tmp_path / "data.csv"
-        csv_file.write_text("id\n1\n", encoding="utf-8")
-
-        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
-
-        target = SqlTarget(
-            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
-        )
-        ws_id = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
-        mock_http = AsyncMock()
-        mock_credential = AsyncMock()
-
-        with pytest.raises(ValueError, match="only HTTPS"):
-            await load_local_file(
-                mock_http,
-                mock_credential,
-                ws_id,
-                target,
-                "dbo",
-                "t",
-                csv_file,
-                file_format="csv",
-                rejected_row_location="http://example.com/rejected/",
-            )
-
-
-# ---------------------------------------------------------------------------
 # OneLake DFS upload: create → append → flush sequence
 # ---------------------------------------------------------------------------
 
@@ -2332,33 +2260,11 @@ class TestDeleteLakehouse:
 
 
 # ---------------------------------------------------------------------------
-# copy_into_from_url — rejected_row_location HTTPS validation
+# copy_into_from_url — error propagation
 # ---------------------------------------------------------------------------
 
 
 class TestCopyIntoFromUrlRejectedRowValidation:
-    async def test_http_rejected_row_location_raises(self) -> None:
-        """rejected_row_location with http:// must raise ValueError before executing SQL."""
-        from fabric_dw.sql import SqlTarget  # noqa: PLC0415
-
-        target = SqlTarget(
-            workspace_id="ws-id", database="db", connection_string="server=x;database=y"
-        )
-        with (
-            patch("fabric_dw.services.load.run_query") as mock_rq,
-            pytest.raises(ValueError, match="only HTTPS"),
-        ):
-            await copy_into_from_url(
-                target,
-                "dbo",
-                "t",
-                "https://example.com/f.parquet",
-                file_type="PARQUET",
-                rejected_row_location="http://example.com/rejected/",
-            )
-        # Validation fires before SQL execution — run_query must not be called.
-        mock_rq.assert_not_called()
-
     async def test_fabric_error_reraised_as_is(self) -> None:
         """Non-FabricServerError FabricError from run_query must be re-raised as-is."""
         from fabric_dw.sql import SqlTarget  # noqa: PLC0415
