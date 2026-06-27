@@ -328,12 +328,12 @@ def _is_connect_retryable(exc: BaseException) -> bool:
     if is_transient_connection_error(exc):
         return True
     # Also retry auth-failed errors on the connect/login path.
-    # Use the same constants as map_driver_error() for consistency.
+    # Strategy 1: native error number (same approach as map_driver_error).
     ddbc_error = getattr(exc, "ddbc_error", None)
     if ddbc_error:
         for match in _NATIVE_ERROR_RE.finditer(str(ddbc_error)):
             raw_num = match.group(1) or match.group(2)
             if raw_num and int(raw_num) in _AUTH_FAILED_ERROR_NUMBERS:
                 return True
-    msg = str(exc).lower()
-    return any(fragment in msg for fragment in _AUTH_FAILED_FRAGMENTS)
+    # Strategy 2: message-fragment fallback via the public helper.
+    return is_auth_failed_message(str(exc))

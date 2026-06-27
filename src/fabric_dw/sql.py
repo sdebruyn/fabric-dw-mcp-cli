@@ -57,18 +57,19 @@ from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
 from fabric_dw.auth import CredentialMode, get_sql_token_struct
-from fabric_dw.sql_errors import (  # noqa: F401 (re-export shims — names bound here so existing
-    _AUTH_FAILED_ERROR_NUMBERS,  # `from fabric_dw.sql import …` and
-    _AUTH_FAILED_FRAGMENTS,  # `patch("fabric_dw.sql.<name>")` callsites keep working)
-    _DRIVER_NOISE_RE,
-    _NATIVE_ERROR_RE,
-    _NOT_FOUND_ERROR_NUMBERS,
-    _NOT_FOUND_FRAGMENTS,
-    _PERMISSION_DENIED_ERROR_NUMBERS,
-    _PERMISSION_DENIED_FRAGMENTS,
-    _SNAPSHOT_NOT_READY_FRAGMENTS,
-    _TRANSIENT_FRAGMENTS,
-    _clean_driver_error_message,
+
+# Re-export shims: bind function names in this module's namespace so that
+# `from fabric_dw.sql import map_driver_error` (and the other helpers listed in
+# __all__) keeps working, so that `patch("fabric_dw.sql.<function>")` patches
+# the binding used by the runner functions below, and so that test code that
+# references private helpers via `_sql_module._<name>` can still find them.
+# Note: the private error-classification CONSTANTS are intentionally not
+# re-exported here.  They have no external callers, are not referenced by bare
+# name anywhere in this module, and patching them via fabric_dw.sql.* would be
+# a silent no-op regardless - the functions in sql_errors.py read their own
+# module globals, not any binding in sql.py.
+from fabric_dw.sql_errors import (
+    _clean_driver_error_message,  # noqa: F401 (test shim: accessed as _sql_module._clean_driver_error_message)
     _is_connect_retryable,
     _wrap_unmapped_driver_error,
     is_auth_failed_message,
