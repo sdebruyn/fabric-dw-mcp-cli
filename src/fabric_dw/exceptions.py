@@ -117,6 +117,15 @@ class FabricServerError(FabricError):
         self.is_retriable = is_retriable
 
 
+class CapacityInactiveError(FabricError):
+    """Raised when the Fabric capacity backing the workspace is paused or inactive.
+
+    The driver raises a ``ProgrammingError`` at connect time with a message
+    about the capacity not being active.  This class surfaces it as a clean,
+    actionable error instead of a raw driver traceback.
+    """
+
+
 class BadRequestError(FabricError):
     """Raised on HTTP 400 - the request body or parameters were invalid.
 

@@ -12,7 +12,14 @@ import fabric_dw.sql as _sql_module
 import fabric_dw.sql_pool as _sql_pool_module
 from fabric_dw.auth import CredentialMode
 from fabric_dw.config import Defaults, UserConfig
-from fabric_dw.exceptions import AuthError, FabricServerError, NotFoundError, PermissionDeniedError
+from fabric_dw.exceptions import (
+    AuthError,
+    CapacityInactiveError,
+    FabricError,
+    FabricServerError,
+    NotFoundError,
+    PermissionDeniedError,
+)
 from fabric_dw.sql import (
     SqlTarget,
     build_connection_string,
@@ -295,6 +302,88 @@ class TestOpenConnection:
         open_connection(_make_target())
         assert len(thread_ids) == 1
         assert thread_ids[0] == threading.get_ident()
+
+    def test_connect_raises_capacity_inactive_error_when_capacity_is_paused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Case A: connect() raises a paused-capacity driver error.
+
+        open_connection must re-raise as CapacityInactiveError (not the raw
+        driver exception type) with a message that mentions the capacity is
+        paused and includes the resume link.
+        """
+        mock_mssql, _, _ = _make_mock_mssql()
+        # Simulate the real driver message for an inactive Fabric capacity.
+        driver_msg = (
+            "Driver Error: Syntax error or access violation; "
+            "DDBC Error: [Microsoft][SQL Server]Unable to complete the action because "
+            "this Fabric capacity is currently not active. Contact the capacity "
+            "administrator for help. "
+            "(https://learn.microsoft.com/fabric/data-warehouse/pause-resume)"
+        )
+        mock_mssql.connect.side_effect = Exception(driver_msg)
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        from fabric_dw.sql import open_connection  # noqa: PLC0415
+
+        with pytest.raises(CapacityInactiveError) as exc_info:
+            open_connection(_make_target())
+
+        err_msg = str(exc_info.value)
+        assert "paused" in err_msg.lower() or "inactive" in err_msg.lower()
+        assert "https://learn.microsoft.com/fabric/data-warehouse/pause-resume" in err_msg
+        # Must not leak the raw driver exception type.
+        assert not isinstance(exc_info.value, Exception.__class__) or isinstance(
+            exc_info.value, FabricError
+        )
+
+    def test_connect_raises_fabric_error_for_generic_connection_failure(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Case B: connect() raises a generic connection error.
+
+        open_connection must wrap it into a FabricError that preserves the
+        driver message.  The raw driver exception type must not leak to the caller.
+        """
+        mock_mssql, _, _ = _make_mock_mssql()
+        original_msg = "TCP Provider: Error code 0x274C"
+        mock_mssql.connect.side_effect = Exception(original_msg)
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        from fabric_dw.sql import open_connection  # noqa: PLC0415
+
+        with pytest.raises(FabricError) as exc_info:
+            open_connection(_make_target())
+
+        # Must not be the raw Exception type - must be wrapped in FabricError.
+        assert isinstance(exc_info.value, FabricError)
+        # Must NOT be a CapacityInactiveError (wrong message).
+        assert not isinstance(exc_info.value, CapacityInactiveError)
+        # The original driver message must be preserved.
+        assert original_msg in str(exc_info.value)
+
+    def test_connect_capacity_inactive_error_is_not_raw_driver_type(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CapacityInactiveError must not be the raw driver exception class."""
+        mock_mssql, _, _ = _make_mock_mssql()
+
+        class _FakeDriverError(Exception):
+            """Fake driver exception (stands in for mssql_python.ProgrammingError)."""
+
+        mock_mssql.connect.side_effect = _FakeDriverError("capacity is currently not active")
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        from fabric_dw.sql import open_connection  # noqa: PLC0415
+
+        with pytest.raises(CapacityInactiveError) as exc_info:
+            open_connection(_make_target())
+
+        # The raised error is a FabricError subclass, not the driver error.
+        assert isinstance(exc_info.value, FabricError)
+        assert not isinstance(exc_info.value, _FakeDriverError)
+        # The original driver error is chained as the cause.
+        assert isinstance(exc_info.value.__cause__, _FakeDriverError)
 
 
 # ---------------------------------------------------------------------------
