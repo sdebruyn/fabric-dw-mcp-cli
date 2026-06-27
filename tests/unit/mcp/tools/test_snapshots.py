@@ -666,6 +666,82 @@ async def test_roll_snapshot_timestamp_fabric_error_becomes_tool_error(mock_ctx,
         )
 
 
+async def test_roll_snapshot_timestamp_naive_input_normalised_to_utc(mock_ctx, ctx_patch) -> None:
+    """roll_snapshot_timestamp normalises a naive datetime string to UTC before the service.
+
+    A naive ISO-8601 input (no timezone offset) must be treated as UTC at the
+    MCP boundary so the service receives a UTC-aware datetime, matching the
+    behaviour of clone_table.
+    """
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+    _applied = datetime(2024, 5, 20, 14, 0, 0, tzinfo=UTC)
+    mock_roll = AsyncMock(return_value=_applied)
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.snapshots.roll_timestamp", new=mock_roll),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "roll_snapshot_timestamp",
+            {
+                "workspace": WS_NAME,
+                "warehouse": WH_NAME,
+                "snapshot_name": _SNAP_NAME,
+                "new_dt": "2024-05-20T14:00:00",  # naive, no offset
+            },
+        )
+
+    mock_roll.assert_called_once()
+    _args, _kwargs = mock_roll.call_args
+    passed_dt: datetime = _args[2]
+    # The service must receive a UTC-aware datetime, not a naive one.
+    assert passed_dt.tzinfo is not None
+    assert passed_dt == datetime(2024, 5, 20, 14, 0, 0, tzinfo=UTC)
+    assert result["applied_dt"] == _applied.isoformat()
+
+
+async def test_roll_snapshot_timestamp_non_utc_aware_input_converted_to_utc(
+    mock_ctx, ctx_patch
+) -> None:
+    """roll_snapshot_timestamp converts an offset-aware non-UTC datetime to UTC.
+
+    An ISO-8601 string with a non-UTC offset (e.g. +02:00) must be converted
+    to the equivalent UTC datetime before the service is called.
+    """
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+    # 16:00+02:00 equals 14:00 UTC
+    _applied = datetime(2024, 5, 20, 14, 0, 0, tzinfo=UTC)
+    mock_roll = AsyncMock(return_value=_applied)
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.snapshots.roll_timestamp", new=mock_roll),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "roll_snapshot_timestamp",
+            {
+                "workspace": WS_NAME,
+                "warehouse": WH_NAME,
+                "snapshot_name": _SNAP_NAME,
+                "new_dt": "2024-05-20T16:00:00+02:00",
+            },
+        )
+
+    mock_roll.assert_called_once()
+    _args, _kwargs = mock_roll.call_args
+    passed_dt: datetime = _args[2]
+    assert passed_dt == datetime(2024, 5, 20, 14, 0, 0, tzinfo=UTC)
+    assert result["applied_dt"] == _applied.isoformat()
+
+
 async def test_roll_snapshot_timestamp_workspace_guard(ctx_patch) -> None:
     """roll_snapshot_timestamp raises ToolError when workspace is not in the allowlist."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
