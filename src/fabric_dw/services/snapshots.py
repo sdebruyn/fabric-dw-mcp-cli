@@ -12,7 +12,7 @@ from fabric_dw.cache import ItemEntry, LookupCache
 from fabric_dw.exceptions import FabricError
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import WarehouseKind, WarehouseSnapshot, WarehouseSnapshotApiPayload, as_props
-from fabric_dw.services._helpers import compact
+from fabric_dw.services._helpers import coerce_to_utc, compact
 from fabric_dw.services._lro import LRO_DETAIL_WAIT_S, LRO_MAX_DETAIL_RETRIES, resolve_lro_item_id
 from fabric_dw.sql import SqlTarget, is_snapshot_not_ready_error, run_query, run_statements
 
@@ -121,7 +121,8 @@ async def create(
         name: Display name for the new snapshot (non-empty trimmed string).
         description: Optional description for the snapshot.
         snapshot_dt: Optional point-in-time datetime for the snapshot. If
-            ``None``, the service captures the current state.
+            ``None``, the service captures the current state. Naive datetimes
+            (no tzinfo) are treated as UTC.
 
     Returns:
         The newly-created :class:`~fabric_dw.models.WarehouseSnapshot`.
@@ -137,11 +138,8 @@ async def create(
         "parentWarehouseId": str(parent_warehouse_id),
     }
     if snapshot_dt is not None:
-        # Always emit UTC; convert aware datetimes, reject naive ones.
-        if snapshot_dt.tzinfo is None or snapshot_dt.tzinfo.utcoffset(snapshot_dt) is None:
-            msg = "snapshot_dt must be a timezone-aware datetime"
-            raise ValueError(msg)
-        snapshot_dt_utc = snapshot_dt.astimezone(UTC)
+        # Always emit UTC; naive datetimes are treated as UTC.
+        snapshot_dt_utc = coerce_to_utc(snapshot_dt)
         creation_payload["snapshotDateTime"] = snapshot_dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     body: dict[str, object] = {
@@ -343,9 +341,10 @@ async def roll_timestamp(
             warehouse (the snapshot lives in the same SQL endpoint).
         snapshot_name: The name of the snapshot database. Must not contain
             ``]``, ``;``, ``\\``, ``'``, ``"``, ``--``, or newlines.
-        new_dt: If supplied, the snapshot is rolled to this UTC datetime,
-            formatted as ``YYYY-MM-DDTHH:MM:SS.SS``. If ``None``, the
-            snapshot rolls forward to ``CURRENT_TIMESTAMP``.
+        new_dt: If supplied, the snapshot is rolled to this datetime,
+            formatted as ``YYYY-MM-DDTHH:MM:SS.SS`` (UTC). If ``None``, the
+            snapshot rolls forward to ``CURRENT_TIMESTAMP``. Naive datetimes
+            (no tzinfo) are treated as UTC.
         mode: The credential mode for Entra authentication.
 
     Returns:
@@ -360,14 +359,12 @@ async def roll_timestamp(
     """
     _validate_snapshot_name(snapshot_name, param="snapshot_name")
 
+    new_dt_utc: datetime | None = None
     if new_dt is None:
         alter_sql = f"ALTER DATABASE [{snapshot_name}] SET TIMESTAMP = CURRENT_TIMESTAMP;"
     else:
-        # Enforce UTC-aware datetimes; reject naive datetimes to avoid silent tz errors.
-        if new_dt.tzinfo is None or new_dt.tzinfo.utcoffset(new_dt) is None:
-            msg = "new_dt must be a timezone-aware datetime (e.g. datetime(..., tzinfo=UTC))"
-            raise ValueError(msg)
-        new_dt_utc = new_dt.astimezone(UTC)
+        # Naive datetimes are treated as UTC.
+        new_dt_utc = coerce_to_utc(new_dt)
         formatted = new_dt_utc.strftime("%Y-%m-%dT%H:%M:%S.00")
         alter_sql = f"ALTER DATABASE [{snapshot_name}] SET TIMESTAMP = '{formatted}';"
 
@@ -429,8 +426,8 @@ async def roll_timestamp(
     # When new_dt was supplied the applied timestamp equals new_dt (the ALTER
     # SET a deterministic value).  When new_dt is None the server applied
     # CURRENT_TIMESTAMP, which is only knowable by querying it back.
-    if new_dt is not None:
-        return new_dt
+    if new_dt_utc is not None:
+        return new_dt_utc
 
     def _fetch_ts() -> datetime:
         _, rows = run_query(

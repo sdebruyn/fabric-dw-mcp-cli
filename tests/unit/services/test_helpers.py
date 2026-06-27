@@ -2,9 +2,54 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta, timezone
+
 import pytest
 
-from fabric_dw.services._helpers import compact, normalize_object_definition, reject_non_select
+from fabric_dw.services._helpers import (
+    coerce_to_utc,
+    compact,
+    normalize_object_definition,
+    reject_non_select,
+)
+
+# ---------------------------------------------------------------------------
+# coerce_to_utc
+# ---------------------------------------------------------------------------
+
+
+def test_coerce_to_utc_naive_becomes_utc() -> None:
+    """coerce_to_utc treats a naive datetime as UTC."""
+    naive = datetime(2026, 3, 1, 12, 0, 0)  # noqa: DTZ001
+    result = coerce_to_utc(naive)
+    assert result.tzinfo is UTC
+    assert result == datetime(2026, 3, 1, 12, 0, 0, tzinfo=UTC)
+
+
+def test_coerce_to_utc_utc_aware_is_unchanged() -> None:
+    """coerce_to_utc returns a UTC-aware datetime unchanged."""
+    utc_dt = datetime(2026, 3, 1, 12, 0, 0, tzinfo=UTC)
+    result = coerce_to_utc(utc_dt)
+    assert result == utc_dt
+    assert result.tzinfo is UTC
+
+
+def test_coerce_to_utc_non_utc_aware_is_converted() -> None:
+    """coerce_to_utc converts a non-UTC tz-aware datetime to UTC."""
+    plus2 = timezone(timedelta(hours=2))
+    aware = datetime(2026, 3, 1, 14, 0, 0, tzinfo=plus2)  # 14:00+02:00 = 12:00 UTC
+    result = coerce_to_utc(aware)
+    assert result.tzinfo is UTC
+    assert result == datetime(2026, 3, 1, 12, 0, 0, tzinfo=UTC)
+
+
+def test_coerce_to_utc_preserves_sub_second_precision() -> None:
+    """coerce_to_utc preserves microseconds when coercing a naive datetime."""
+    naive = datetime(2026, 3, 1, 12, 0, 0, 123456)  # noqa: DTZ001
+    result = coerce_to_utc(naive)
+    assert result.microsecond == 123456
+    assert result.tzinfo is UTC
+
 
 # ---------------------------------------------------------------------------
 # compact

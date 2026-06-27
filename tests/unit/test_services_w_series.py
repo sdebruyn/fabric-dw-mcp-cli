@@ -14,7 +14,7 @@ from __future__ import annotations
 import base64
 from datetime import UTC, date, datetime, time, timedelta, timezone
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
@@ -22,6 +22,7 @@ import pytest
 from fabric_dw.exceptions import ItemKindError
 from fabric_dw.models import CreationModeType, RestorePoint, WarehouseKind
 from fabric_dw.services import snapshots as _snapshots_mod
+from fabric_dw.services._helpers import coerce_to_utc
 from fabric_dw.services.ownership import takeover
 from fabric_dw.services.snapshots import create as _snap_create
 from fabric_dw.services.snapshots import rename as _snap_rename
@@ -105,28 +106,34 @@ class TestSerializeValue:
 
 
 def _tz_format(new_dt: datetime) -> str:
-    """Mirror the tz-conversion logic in roll_timestamp for isolated testing."""
-    if new_dt.tzinfo is None or new_dt.tzinfo.utcoffset(new_dt) is None:
-        msg = "new_dt must be a timezone-aware datetime"
-        raise ValueError(msg)
-    new_dt_utc = new_dt.astimezone(UTC)
+    """Mirror the tz-conversion logic in roll_timestamp for isolated testing.
+
+    Naive datetimes are treated as UTC (fix #774).
+    """
+    new_dt_utc = coerce_to_utc(new_dt)
     return new_dt_utc.strftime("%Y-%m-%dT%H:%M:%S.00")
 
 
 class TestRollTimestampTimezone:
-    """roll_timestamp must enforce tz-aware datetimes and format in UTC."""
+    """roll_timestamp treats naive datetimes as UTC and formats in UTC (fix #774)."""
 
     @pytest.mark.asyncio
-    async def test_naive_dt_raises_via_service(self) -> None:
-        """A naive datetime must raise ValueError via roll_timestamp before any DB call."""
+    async def test_naive_dt_accepted_via_service(self) -> None:
+        """A naive datetime is accepted by roll_timestamp and treated as UTC (fix #774)."""
         naive_dt = datetime(2024, 6, 1, 12, 0, 0)  # noqa: DTZ001
-        with pytest.raises(ValueError, match="timezone-aware"):
-            await _snapshots_mod.roll_timestamp(MagicMock(), "snap1", naive_dt)
+        conn = MagicMock()
+        cursor = MagicMock()
+        conn.cursor.return_value = cursor
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await _snapshots_mod.roll_timestamp(MagicMock(), "snap1", naive_dt)
+        # Naive datetime treated as UTC - returned as UTC-aware
+        assert result == naive_dt.replace(tzinfo=UTC)
 
-    def test_naive_raises_from_format_helper(self) -> None:
+    def test_naive_formats_as_utc_from_helper(self) -> None:
+        """Naive datetime passed to format helper is treated as UTC (fix #774)."""
         naive = datetime(2024, 1, 1, 0, 0, 0)  # noqa: DTZ001
-        with pytest.raises(ValueError, match="timezone-aware"):
-            _tz_format(naive)
+        result = _tz_format(naive)
+        assert result == "2024-01-01T00:00:00.00"
 
     def test_utc_aware_formats_correctly(self) -> None:
         dt = datetime(2024, 6, 1, 12, 30, 45, tzinfo=UTC)
@@ -286,12 +293,16 @@ class TestSnapshotsCreateLocationGuard:
             )
 
     @pytest.mark.asyncio
-    async def test_naive_snapshot_dt_raises(self) -> None:
-        """A naive snapshot_dt must raise ValueError before any HTTP call (W01)."""
-        http = MagicMock()
-        http.request = AsyncMock()
+    async def test_naive_snapshot_dt_treated_as_utc(self) -> None:
+        """A naive snapshot_dt is accepted and treated as UTC - no longer raises (fix #774)."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 202
+        mock_resp.headers = {}
 
-        with pytest.raises(ValueError, match="timezone-aware"):
+        http = MagicMock()
+        http.request = AsyncMock(return_value=mock_resp)
+
+        with pytest.raises(ValueError, match="Location header is missing"):
             await _snap_create(
                 http,
                 UUID("aaaaaaaa-0000-0000-0000-000000000000"),
@@ -300,7 +311,12 @@ class TestSnapshotsCreateLocationGuard:
                 snapshot_dt=datetime(2024, 1, 1, 12, 0, 0),  # naive  # noqa: DTZ001
             )
 
-        http.request.assert_not_called()
+        # HTTP request must have been made (naive dt is no longer rejected)
+        http.request.assert_called_once()
+        body = http.request.call_args.kwargs.get("json", {})
+        # Naive 2024-01-01T12:00:00 treated as UTC - emitted with Z suffix
+        snap_dt = body.get("creationPayload", {}).get("snapshotDateTime", "")
+        assert snap_dt == "2024-01-01T12:00:00Z"
 
     @pytest.mark.asyncio
     async def test_aware_snapshot_dt_converted_to_utc(self) -> None:

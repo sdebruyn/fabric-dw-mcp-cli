@@ -62,6 +62,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             name: Display name for the new snapshot.
             description: Optional description.
             snapshot_dt: Optional ISO-8601 datetime string for the snapshot point-in-time.
+                Naive datetimes (no timezone offset) are interpreted as UTC.
         """
         ctx = get_context()
         assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
@@ -143,6 +144,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             warehouse: Parent warehouse name or GUID (used for the SQL connection).
             snapshot_name: The snapshot database name to roll.
             new_dt: Optional ISO-8601 datetime string; defaults to CURRENT_TIMESTAMP.
+                Naive datetimes (no timezone offset) are interpreted as UTC.
         """
         ctx = get_context()
         assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
