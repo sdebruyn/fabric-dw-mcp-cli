@@ -103,7 +103,7 @@ async def test_list_request_history_null_row_count_batch() -> None:
     return all rows without raising ValidationError."""
     # Build a second row identical to _REQ_HIST_ROW but with row_count=None.
     # The column list keeps the same order; row_count is at index 9.
-    null_row_count_row = _REQ_HIST_ROW[:9] + (None,) + _REQ_HIST_ROW[10:]
+    null_row_count_row = (*_REQ_HIST_ROW[:9], None, *_REQ_HIST_ROW[10:])
     target = _make_target()
     conn = _make_conn([_REQ_HIST_ROW, null_row_count_row], _REQ_HIST_COLS)
     with patch("fabric_dw.sql.open_connection", return_value=conn):
