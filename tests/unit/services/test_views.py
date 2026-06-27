@@ -636,6 +636,31 @@ class TestCreateView:
         with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
             await views.create_view(target, "dbo", "vw_sales", "INSERT INTO foo SELECT 1")
 
+    async def test_rejects_multi_statement_body_in_create_view(self) -> None:
+        """CRITICAL #790: semicolon-rider injection via create_view body."""
+        target = _make_target()
+        with pytest.raises(ValueError, match="multi-statement"):
+            await views.create_view(
+                target, "dbo", "vw_sales", "SELECT 1 AS x; DROP TABLE dbo.orders"
+            )
+
+    async def test_rejects_bracket_quote_trick_in_create_view(self) -> None:
+        """CRITICAL #790: bracket-identifier quote trick hides DROP in create_view body.
+
+        The raw ';' after [a' trips the multi-statement guard before any token scan.
+        """
+        target = _make_target()
+        with pytest.raises(ValueError, match="multi-statement"):
+            await views.create_view(
+                target, "dbo", "vw_sales", "SELECT [a'];DROP TABLE dbo.orders WHERE c='x'"
+            )
+
+    async def test_rejects_forbidden_keyword_in_create_view_body(self) -> None:
+        """CRITICAL #790: string literal containing a forbidden keyword is rejected."""
+        target = _make_target()
+        with pytest.raises(ValueError, match="DELETE"):
+            await views.create_view(target, "dbo", "vw_cdc", "SELECT * FROM cdc WHERE op='DELETE'")
+
     async def test_accepts_cte_body_v23(self) -> None:
         """V23: create_view must accept a CTE (WITH … SELECT) body."""
         target = _make_target()
@@ -762,6 +787,35 @@ class TestUpdateView:
                 "WITH cte AS (SELECT id FROM dbo.src) SELECT * FROM cte",
             )
         assert isinstance(result, View)
+
+    # -----------------------------------------------------------------------
+    # Bypass regression tests (#790) - multi-statement and forbidden-keyword
+    # -----------------------------------------------------------------------
+
+    async def test_rejects_multi_statement_body_in_update_view(self) -> None:
+        """CRITICAL #790: semicolon-rider injection via update_view body."""
+        target = _make_target()
+        with pytest.raises(ValueError, match="multi-statement"):
+            await views.update_view(
+                target, "dbo", "vw_sales", "SELECT 1 AS x; DROP TABLE dbo.orders"
+            )
+
+    async def test_rejects_bracket_quote_trick_in_update_view(self) -> None:
+        """CRITICAL #790: bracket-identifier quote trick hides DROP in update_view body.
+
+        The raw ';' after [a' trips the multi-statement guard before any token scan.
+        """
+        target = _make_target()
+        with pytest.raises(ValueError, match="multi-statement"):
+            await views.update_view(
+                target, "dbo", "vw_sales", "SELECT [a'];DROP TABLE dbo.orders WHERE c='x'"
+            )
+
+    async def test_rejects_forbidden_keyword_in_update_view_body(self) -> None:
+        """CRITICAL #790: string literal containing a forbidden keyword is rejected."""
+        target = _make_target()
+        with pytest.raises(ValueError, match="DELETE"):
+            await views.update_view(target, "dbo", "vw_cdc", "SELECT * FROM cdc WHERE op='DELETE'")
 
     async def test_invalid_column_raises_fabric_server_error(self) -> None:
         """#747: a driver SQL error (invalid column) must raise FabricServerError, not traceback.

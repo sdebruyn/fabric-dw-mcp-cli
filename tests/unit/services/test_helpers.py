@@ -117,10 +117,16 @@ def test_reject_non_select_case_insensitive() -> None:
     reject_non_select("with cte as (select 1) select * from cte")
 
 
-def test_reject_non_select_leading_comment_then_select_passes() -> None:
-    """Block and line comments before SELECT are allowed."""
-    reject_non_select("/* comment */ SELECT 1")
-    reject_non_select("-- line comment\nSELECT 1")
+def test_reject_non_select_leading_comment_then_select_rejected() -> None:
+    """FLIPPED: leading comments before SELECT are now REJECTED (fail-closed raw scan).
+
+    The first raw word token comes from inside the comment ('comment', 'line'),
+    not from SELECT or WITH.  Reformulate the body to omit the leading comment.
+    """
+    with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
+        reject_non_select("/* comment */ SELECT 1")
+    with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
+        reject_non_select("-- line comment\nSELECT 1")
 
 
 def test_reject_non_select_insert_raises() -> None:

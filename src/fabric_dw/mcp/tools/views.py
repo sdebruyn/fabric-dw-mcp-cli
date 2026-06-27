@@ -208,11 +208,20 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         CAUTION: ``select_body`` is executed verbatim as DDL. Ensure the body
         matches the user's intent before calling this tool.
 
+        ``select_body`` must be a single read-only SELECT or WITH (CTE)
+        statement.  The guard is always on and fail-closed: a write keyword
+        (DELETE, DROP, INSERT, etc.) or a semicolon anywhere in the body is
+        rejected, even inside a string literal or quoted identifier.  If a
+        legitimate view body contains a write keyword (e.g. a column alias
+        'DELETE'), rewrite the expression to avoid the keyword.
+
         Args:
             workspace: Workspace name or GUID.
             item: Warehouse or SQL endpoint name or GUID.
             qualified_name: Dot-separated qualified view name, e.g. ``dbo.vw_sales``.
-            select_body: The SELECT statement that forms the view body.
+            select_body: Single read-only SELECT or WITH (CTE) statement for the
+                view body.  Write keywords and semicolons are rejected
+                fail-closed, even inside string literals or quoted identifiers.
         """
         schema, view_name = parse_qualified_name(qualified_name, kind="view")
         ctx = get_context()
@@ -240,11 +249,20 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         CAUTION: ``select_body`` is executed verbatim as DDL. Ensure the body
         matches the user's intent before calling this tool.
 
+        ``select_body`` must be a single read-only SELECT or WITH (CTE)
+        statement.  The guard is always on and fail-closed: a write keyword
+        (DELETE, DROP, INSERT, etc.) or a semicolon anywhere in the body is
+        rejected, even inside a string literal or quoted identifier.  If a
+        legitimate view body contains a write keyword (e.g. a column alias
+        'DELETE'), rewrite the expression to avoid the keyword.
+
         Args:
             workspace: Workspace name or GUID.
             item: Warehouse or SQL endpoint name or GUID.
             qualified_name: Dot-separated qualified view name, e.g. ``dbo.vw_sales``.
-            select_body: The new SELECT statement.
+            select_body: Single read-only SELECT or WITH (CTE) statement for the
+                new view body.  Write keywords and semicolons are rejected
+                fail-closed, even inside string literals or quoted identifiers.
         """
         schema, view_name = parse_qualified_name(qualified_name, kind="view")
         ctx = get_context()

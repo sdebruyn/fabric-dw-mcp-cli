@@ -254,7 +254,16 @@ async def health_check_cmd(
 @click.argument("item", required=False, default=None)
 @click.option("--name", "qualified_name", required=True, help="Qualified name: schema.table.")
 # CTAS path
-@click.option("--select", "select_body", default=None, help="Inline SELECT statement for CTAS.")
+@click.option(
+    "--select",
+    "select_body",
+    default=None,
+    help=(
+        "Inline SELECT or WITH (CTE) statement for CTAS.  Must be a single"
+        " read-only statement; write keywords and semicolons are rejected"
+        " fail-closed, even inside string literals or quoted identifiers."
+    ),
+)
 @click.option("--from-file", default=None, help="Path to a .sql file containing the SELECT body.")
 # Empty-table DDL path — sources (mutually exclusive with each other and with CTAS)
 @click.option(
