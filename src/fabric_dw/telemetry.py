@@ -189,11 +189,19 @@ def _is_disabled_by_config() -> bool:
     :func:`~fabric_dw.config.load_config` path (used for all other config
     reads) keeps its lenient swallow-and-warn semantics; the opt-out
     decision is the sole caller that needs fail-closed behaviour.
+
+    The result is cached after the first read; config.toml does not change
+    within a process run so a one-time read is correct (#844).
     """
+    global _config_disabled_cache  # noqa: PLW0603
+    if _config_disabled_cache is not None:
+        return _config_disabled_cache
+
     import tomllib as _tomllib  # noqa: PLC0415
 
     config_file = _config_dir() / "config.toml"
     if not config_file.exists():
+        _config_disabled_cache = False
         return False
 
     # File exists — read it.  Fail CLOSED on any read/parse error so that
@@ -203,6 +211,7 @@ def _is_disabled_by_config() -> bool:
         data = _tomllib.loads(raw)
         telemetry_section = data.get("telemetry", {})
         if not isinstance(telemetry_section, dict):
+            _config_disabled_cache = False
             return False
         raw_disabled = telemetry_section.get("disabled")
         # Accept bool, int, and string — mirrors _parse_telemetry_section in
@@ -219,8 +228,10 @@ def _is_disabled_by_config() -> bool:
     except Exception:
         # Any read or parse failure when the file EXISTS is treated as
         # opt-out (fail-closed) to honour the user's declared intent.
+        _config_disabled_cache = True
         return True
     else:
+        _config_disabled_cache = disabled
         return disabled
 
 
@@ -259,6 +270,20 @@ def telemetry_enabled() -> bool:
 
 _INSTALL_ID_FILE = "install_id"
 _install_id_cache: str | None = None
+
+# ---------------------------------------------------------------------------
+# Install-method cache (#844)
+# ---------------------------------------------------------------------------
+
+# Computed once per process; None means not yet detected.
+_install_method_cache: str | None = None
+
+# ---------------------------------------------------------------------------
+# Config-disabled cache (#844)
+# ---------------------------------------------------------------------------
+
+# Computed once per process; None means not yet read from disk.
+_config_disabled_cache: bool | None = None
 
 # ---------------------------------------------------------------------------
 # Tenant-ID persistence (#652)
@@ -355,33 +380,35 @@ def _detect_install_method() -> str:
 
     Note: a plain ``.venv`` in ``sys.executable`` is NOT used to infer ``"uv"``
     because pip can also install into a ``.venv``; that would be a false positive.
+
+    The result is cached after the first detection; install method does not
+    change within a process run so a one-time detection is correct (#844).
     """
+    global _install_method_cache  # noqa: PLW0603
+    if _install_method_cache is not None:
+        return _install_method_cache
+
     # uv explicitly sets UV or UV_VIRTUAL_ENV in the runner environment.
     if os.environ.get("UV") or os.environ.get("UV_VIRTUAL_ENV"):
-        return "uv"
-
+        result = "uv"
     # pipx: either the dedicated env var or the executable lives inside a pipx dir.
-    if os.environ.get("PIPX_HOME"):
-        return "pipx"
-    executable = sys.executable or ""
-    if "pipx" in executable:
-        return "pipx"
+    elif os.environ.get("PIPX_HOME") or "pipx" in (sys.executable or ""):
+        result = "pipx"
+    else:
+        # Source / editable checkout: importlib.metadata won't find the package
+        # (no dist-info installed), or it will resolve with a direct_url that has
+        # "editable": true.  Default to "source" when the metadata check fails.
+        result = "source"
+        with contextlib.suppress(Exception):
+            import importlib.metadata  # noqa: PLC0415
 
-    # Source / editable checkout: importlib.metadata won't find the package
-    # (no dist-info installed), or it will resolve with a direct_url that has
-    # "editable": true.
-    with contextlib.suppress(Exception):
-        import importlib.metadata  # noqa: PLC0415
+            dist = importlib.metadata.distribution("fabric-dw")
+            # Check for an editable install via direct_url.json
+            direct_url = dist.read_text("direct_url.json")
+            result = "source" if (direct_url and '"editable": true' in direct_url) else "pip"
 
-        dist = importlib.metadata.distribution("fabric-dw")
-        # Check for an editable install via direct_url.json
-        direct_url = dist.read_text("direct_url.json")
-        if direct_url and '"editable": true' in direct_url:
-            return "source"
-        return "pip"
-
-    # importlib.metadata raised PackageNotFoundError → running from source tree.
-    return "source"
+    _install_method_cache = result
+    return result
 
 
 def _detect_auth_mode() -> str:

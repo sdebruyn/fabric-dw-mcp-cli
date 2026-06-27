@@ -32,9 +32,19 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Generator
+from types import ModuleType
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+# Capture the telemetry module at session start, before any _reload_telemetry()
+# calls can replace it in sys.modules.  Tests that import telemetry symbols at
+# file-load time (e.g. ``from fabric_dw.telemetry import telemetry_enabled`` in
+# test_config.py) hold a reference to *this* module object even after sys.modules
+# is replaced, so the per-test reset must also clear caches on this original object.
+# Import is deferred to avoid loading fabric_dw.telemetry before the test
+# collection phase — the reference is populated on first fixture call below.
+_orig_telemetry_module: ModuleType | None = None
 
 # All environment variables that can alter the MCP security/filter behaviour.
 _FABRIC_MCP_VARS = (
@@ -132,56 +142,84 @@ def _mock_configure_azure_monitor(
 def _reset_telemetry_module_globals(
     request: pytest.FixtureRequest,
 ) -> Generator[None, None, None]:
-    """Reset telemetry module globals before and after each self-managed test.
+    """Reset telemetry module globals before and after each test.
 
-    Applied only to ``test_telemetry.py`` and ``test_telemetry_commands.py``.
-    Without this fixture, a test that calls ``set_tenant_id("runtime-tenant-xyz")``
-    leaves ``_tenant_id_override`` set in the live module for subsequent tests in the
-    same process.  If those tests then trigger ``emit_event`` with a real SDK
-    initialisation, the dummy tenant bleeds into the exported envelope — which was
-    confirmed to reach the production App Insights resource.
+    Two tiers of reset are applied:
 
-    This fixture resets both:
-    - ``_tenant_id_override`` → ``None``
-    - ``_tenant_id_cache`` → the ``_UNSET`` sentinel (forces re-read from disk,
-      which is isolated by ``XDG_CONFIG_HOME``/``tmp_path`` in individual tests)
+    1. **All tests** — the per-process caches added in #844 (``_install_method_cache``
+       and ``_config_disabled_cache``) are always reset.  Any test that calls
+       ``telemetry_enabled()`` on the shared module instance can set these caches;
+       without a universal teardown they bleed into subsequent tests regardless of
+       which module file those tests live in.
 
-    Both resets are applied *before* and *after* each test (yield fixture), so state
+    2. **Self-managed telemetry modules only** (``test_telemetry.py``,
+       ``test_telemetry_commands.py``, ``test_app_exited_emission.py``) — the
+       heavier globals are also reset:
+
+       - ``_tenant_id_override`` → ``None``
+         (prevents ``set_tenant_id("runtime-tenant-xyz")`` from bleeding into
+         the next test's ``emit_event`` envelope and reaching production App Insights)
+       - ``_tenant_id_cache`` → ``_UNSET`` sentinel
+         (forces re-read from disk; the on-disk file is isolated per-test via
+         ``XDG_CONFIG_HOME``/``tmp_path``)
+       - ``_sdk_initialised``, ``_tracer``, ``_otel_logger`` → initial values
+         (prevents a test that calls ``_get_tracer()`` from leaving a live logger
+         object that causes subsequent tests to skip the SDK init path entirely)
+
+    All resets are applied *before* and *after* each test (yield fixture) so state
     never leaks from a previous test even if it raised.
 
-    Tests that manipulate these globals directly via ``mod._tenant_id_override = ...``
-    on a reloaded module are unaffected because ``_reload_telemetry()`` produces a
-    fresh module object with its own namespace.  This fixture guards the *shared*
-    module instance that lives in ``sys.modules["fabric_dw.telemetry"]``.
+    Tests that manipulate these globals via ``mod._foo = ...`` on a reloaded module
+    are unaffected because ``_reload_telemetry()`` produces a fresh module object
+    with its own namespace.  This fixture guards the *shared* module instance that
+    lives in ``sys.modules["fabric_dw.telemetry"]``.
     """
-    if request.path is None or request.path.name not in _TELEMETRY_SELF_MANAGED_MODULES:
-        yield
-        return
+    global _orig_telemetry_module  # noqa: PLW0603
+    # Capture the module reference on the very first fixture invocation.  At this
+    # point no _reload_telemetry() call has happened, so sys.modules holds the
+    # original module object (the same one that file-level imports in other test
+    # modules have bound to).
+    if _orig_telemetry_module is None:
+        _orig_telemetry_module = sys.modules.get("fabric_dw.telemetry")  # type: ignore[assignment]
+
+    is_self_managed = (
+        request.path is not None and request.path.name in _TELEMETRY_SELF_MANAGED_MODULES
+    )
 
     def _reset() -> None:
-        mod = sys.modules.get("fabric_dw.telemetry")
-        if mod is None:
-            return
-        # Mutate the module namespace dict directly to avoid both B010 (setattr
-        # with a constant name) and unresolved-attribute errors from ty on the
-        # opaque ModuleType.  vars() returns the live __dict__ so changes are
-        # immediately visible via the module object.
-        ns = vars(mod)
-        # Reset the runtime tenant override so a previous test's set_tenant_id()
-        # call cannot bleed into the next test's emit_event envelope.
-        ns["_tenant_id_override"] = None
-        # Reset the in-memory tenant cache to the _UNSET sentinel so that
-        # _get_cached_tenant_id() re-reads from disk on next access.  The on-disk
-        # file is isolated per-test via XDG_CONFIG_HOME / tmp_path.
-        # KeyError here means _UNSET was renamed in telemetry.py — update both files.
-        ns["_tenant_id_cache"] = ns["_UNSET"]
-        # Reset the SDK-init globals so each test starts with an uninitialised
-        # tracer/logger.  Without teardown a test that calls _get_tracer() leaves
-        # _sdk_initialised=True and a live logger object, causing subsequent tests
-        # that expect a clean SDK state to skip the init path entirely.
-        ns["_sdk_initialised"] = False
-        ns["_tracer"] = None
-        ns["_otel_logger"] = None
+        # Collect all distinct module objects that need their caches cleared.
+        # sys.modules may point to a reloaded module after _reload_telemetry();
+        # _orig_telemetry_module is the original object that file-level imports
+        # (e.g. test_config.py) continue to reference even after reloading.
+        seen: set[int] = set()
+        mods_to_clean: list[ModuleType] = []
+        for candidate in (sys.modules.get("fabric_dw.telemetry"), _orig_telemetry_module):
+            if candidate is not None and id(candidate) not in seen:
+                seen.add(id(candidate))
+                mods_to_clean.append(candidate)
+
+        for mod in mods_to_clean:
+            # Mutate the module namespace dict directly to avoid both B010 (setattr
+            # with a constant name) and unresolved-attribute errors from ty on the
+            # opaque ModuleType.  vars() returns the live __dict__ so changes are
+            # immediately visible via the module object.
+            ns = vars(mod)
+            # Per-process caches (#844): reset for every test because any test that
+            # calls telemetry_enabled() or _detect_install_method() on the live
+            # module — even via an import-time reference — can populate these.
+            # KeyError here means the variable was renamed in telemetry.py — update both files.
+            ns["_install_method_cache"] = None
+            ns["_config_disabled_cache"] = None
+            if not is_self_managed:
+                continue
+            # Heavier globals: only needed for tests that exercise the telemetry
+            # enabled-path directly (self-managed modules).
+            ns["_tenant_id_override"] = None
+            # KeyError here means _UNSET was renamed in telemetry.py — update both files.
+            ns["_tenant_id_cache"] = ns["_UNSET"]
+            ns["_sdk_initialised"] = False
+            ns["_tracer"] = None
+            ns["_otel_logger"] = None
 
     _reset()
     yield
