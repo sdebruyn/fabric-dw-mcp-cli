@@ -452,8 +452,11 @@ async def create_table(
         schema: The schema name.  Must pass :func:`validate_identifier`.
         table_name: The table name.  Must pass :func:`validate_identifier`.
         select_body: The SELECT statement (or CTE) used as the CTAS source.
-            The first non-comment keyword **must** be ``SELECT`` or ``WITH``
-            (for CTE-based queries); anything else raises :class:`ValueError`.
+            Must be a single read-only ``SELECT`` or ``WITH`` statement.  The
+            guard is always on and fail-closed: a write keyword (e.g.
+            ``DELETE``, ``DROP``) or a ``;`` anywhere in the body raises
+            :class:`ValueError`, even inside a string literal or quoted
+            identifier.
         cluster_by: Optional list of column names for the ``CLUSTER BY`` clause
             (up to 4).  For CTAS, columns come from the SELECT so existence is
             not checked — only identifier validation is applied.
@@ -468,9 +471,10 @@ async def create_table(
     Raises:
         ItemKindError: If *kind* is :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
         ValueError: If *schema* or *table_name* fails identifier validation, if
-            *select_body* does not start with SELECT or WITH (CTE), if more
-            than 4 *cluster_by* columns are supplied, or if any *cluster_by*
-            name fails identifier validation.
+            *select_body* is not a single read-only SELECT or WITH statement
+            (write keyword or statement separator detected), if more than 4
+            *cluster_by* columns are supplied, or if any *cluster_by* name
+            fails identifier validation.
         PermissionDeniedError: If the driver reports a CREATE TABLE permission error.
     """
     _assert_not_sql_endpoint(kind)

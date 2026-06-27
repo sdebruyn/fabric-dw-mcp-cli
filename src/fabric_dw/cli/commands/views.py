@@ -182,7 +182,16 @@ async def get_cmd(
 @views_group.command("create")
 @click.argument("item", required=False, default=None)
 @click.option("--name", "qualified_name", required=True, help="Qualified name: schema.view.")
-@click.option("--select", "select_body", default=None, help="Inline SELECT statement.")
+@click.option(
+    "--select",
+    "select_body",
+    default=None,
+    help=(
+        "Inline SELECT or WITH (CTE) statement for the view body.  Must be a"
+        " single read-only statement; write keywords and semicolons are rejected"
+        " fail-closed, even inside string literals or quoted identifiers."
+    ),
+)
 @click.option("--from-file", default=None, help="Path to a .sql file containing the SELECT body.")
 @click.pass_obj
 @coro
@@ -210,7 +219,16 @@ async def create_cmd(
 @views_group.command("update")
 @click.argument("item", required=False, default=None)
 @click.argument("qualified_name")
-@click.option("--select", "select_body", default=None, help="Inline SELECT statement.")
+@click.option(
+    "--select",
+    "select_body",
+    default=None,
+    help=(
+        "Inline SELECT or WITH (CTE) statement for the new view body.  Must be a"
+        " single read-only statement; write keywords and semicolons are rejected"
+        " fail-closed, even inside string literals or quoted identifiers."
+    ),
+)
 @click.option("--from-file", default=None, help="Path to a .sql file containing the SELECT body.")
 @click.pass_obj
 @coro

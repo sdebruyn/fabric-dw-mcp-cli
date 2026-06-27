@@ -309,8 +309,11 @@ async def create_view(
         schema: The schema name.  Must pass :func:`validate_identifier`.
         view_name: The view name.  Must pass :func:`validate_identifier`.
         select_body: The SELECT statement (or CTE) used as the view body.
-            The first non-comment keyword **must** be ``SELECT`` or ``WITH``
-            (for CTE-based queries); anything else raises :class:`ValueError`.
+            Must be a single read-only ``SELECT`` or ``WITH`` statement.  The
+            guard is always on and fail-closed: a write keyword (e.g.
+            ``DELETE``, ``DROP``) or a ``;`` anywhere in the body raises
+            :class:`ValueError`, even inside a string literal or quoted
+            identifier.
         mode: The credential mode for Entra authentication.
 
     Returns:
@@ -318,7 +321,8 @@ async def create_view(
 
     Raises:
         ValueError: If *schema* or *view_name* fails identifier validation, or
-            if *select_body* does not start with SELECT or WITH (CTE).
+            if *select_body* is not a single read-only SELECT or WITH statement
+            (write keyword or statement separator detected).
         PermissionDeniedError: If the driver reports a CREATE VIEW permission error.
     """
     validate_identifier(schema)
@@ -349,8 +353,11 @@ async def update_view(
         schema: The schema name.  Must pass :func:`validate_identifier`.
         view_name: The view name.  Must pass :func:`validate_identifier`.
         select_body: The SELECT statement (or CTE) used as the view body.
-            The first non-comment keyword **must** be ``SELECT`` or ``WITH``
-            (for CTE-based queries); anything else raises :class:`ValueError`.
+            Must be a single read-only ``SELECT`` or ``WITH`` statement.  The
+            guard is always on and fail-closed: a write keyword (e.g.
+            ``DELETE``, ``DROP``) or a ``;`` anywhere in the body raises
+            :class:`ValueError`, even inside a string literal or quoted
+            identifier.
         mode: The credential mode for Entra authentication.
 
     Returns:
@@ -358,7 +365,8 @@ async def update_view(
 
     Raises:
         ValueError: If *schema* or *view_name* fails identifier validation, or
-            if *select_body* does not start with SELECT or WITH (CTE).
+            if *select_body* is not a single read-only SELECT or WITH statement
+            (write keyword or statement separator detected).
         PermissionDeniedError: If the driver reports an ALTER VIEW permission error.
     """
     validate_identifier(schema)

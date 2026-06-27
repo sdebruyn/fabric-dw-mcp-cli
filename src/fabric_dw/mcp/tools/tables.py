@@ -248,7 +248,13 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
 
         CAUTION: ``select_body`` is executed verbatim as DDL on the warehouse.
         Ensure the body matches the user's intent before calling this tool.
-        The first non-comment keyword of ``select_body`` must be SELECT.
+
+        ``select_body`` must be a single read-only SELECT or WITH (CTE)
+        statement.  The guard is always on and fail-closed: a write keyword
+        (DELETE, DROP, INSERT, etc.) or a semicolon anywhere in the body is
+        rejected, even inside a string literal or quoted identifier.  If a
+        legitimate query body contains a write keyword (e.g. a column alias
+        'DELETE'), rewrite the expression to avoid the keyword.
 
         When ``cluster_by`` is supplied, the DDL becomes
         ``CREATE TABLE … WITH (CLUSTER BY ([c1], [c2])) AS SELECT …``.
@@ -259,7 +265,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             workspace: Workspace name or GUID.
             item: Warehouse name or GUID.  SQL Analytics Endpoints are rejected.
             qualified_name: Dot-separated qualified table name, e.g. ``dbo.sales``.
-            select_body: The SELECT statement that becomes the CTAS source.
+            select_body: Single read-only SELECT or WITH (CTE) statement for the
+                CTAS source.  Write keywords and semicolons are rejected
+                fail-closed, even inside string literals or quoted identifiers.
             cluster_by: Optional list of column names for the ``CLUSTER BY`` clause
                 (up to 4).
         """
