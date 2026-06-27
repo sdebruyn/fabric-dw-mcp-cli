@@ -29,13 +29,16 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
 
     @mcp.tool(name="list_warehouses")
     async def list_warehouses(
-        workspace: str,
+        workspace: str | None = None,
         all_workspaces: bool = False,  # noqa: FBT001, FBT002
     ) -> list[dict[str, Any]]:
         """List all warehouses and SQL analytics endpoints in a workspace.
 
-        When *all_workspaces* is ``True``, ignore *workspace* and aggregate results
-        across every workspace the caller can see.
+        Args:
+            workspace: Workspace name or GUID.  Optional when *all_workspaces*
+                is ``True``; required otherwise.
+            all_workspaces: When ``True``, ignore *workspace* and aggregate
+                results across every workspace the caller can see.
         """
         ctx = get_context()
         if all_workspaces and workspace_allowlist_active(ctx.workspace_allowlist):
@@ -45,15 +48,20 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 "specify an individual workspace instead"
             )
         if not all_workspaces:
+            if not workspace or not workspace.strip():
+                raise ToolError("workspace is required unless all_workspaces=True")
             assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
             if all_workspaces:
                 _log.debug("list_warehouses all_workspaces=True")
                 result = await warehouses.list_all_workspaces(ctx.http)
             else:
+                assert workspace is not None  # noqa: S101 — guard above raised ToolError otherwise
                 ws_id = await ctx.resolver.workspace_id(workspace)
                 assert_workspace_allowed(
-                    workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+                    workspace,
+                    str(ws_id),
+                    config_allowlist=ctx.workspace_allowlist,
                 )
                 _log.debug("list_warehouses ws=%s", ws_id)
                 result = await warehouses.list_warehouses(ctx.http, ws_id)

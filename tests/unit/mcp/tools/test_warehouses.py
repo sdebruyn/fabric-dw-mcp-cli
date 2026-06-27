@@ -82,7 +82,7 @@ async def test_list_warehouses_all_workspaces_with_allowlist_raises(ctx_patch) -
     ):
         await mcp._tool_manager.call_tool(
             "list_warehouses",
-            {"workspace": "", "all_workspaces": True},
+            {"all_workspaces": True},
         )
 
     assert "FABRIC_MCP_WORKSPACES" in str(exc_info.value)
@@ -108,6 +108,73 @@ async def test_list_warehouses_fabric_error_becomes_tool_error(mock_ctx, ctx_pat
         )
 
     assert "NotFoundError" in str(exc_info.value) or "not found" in str(exc_info.value).lower()
+
+
+async def test_list_warehouses_all_workspaces_true_no_workspace_succeeds(
+    ctx_patch,
+) -> None:
+    """all_workspaces=True with no workspace arg must aggregate without error."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    wh = _make_warehouse()
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.warehouses.list_all_workspaces",
+            new=AsyncMock(return_value=[wh]),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "list_warehouses",
+            {"all_workspaces": True},
+        )
+
+    assert isinstance(result, list)
+    assert result[0]["id"] == str(WH_ID)
+
+
+async def test_list_warehouses_no_workspace_no_all_workspaces_raises_clear_error(
+    ctx_patch,
+) -> None:
+    """No workspace and all_workspaces=False must raise a clear ToolError."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with (
+        ctx_patch,
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "list_warehouses",
+            {},
+        )
+
+    assert "workspace is required" in str(exc_info.value).lower()
+    assert "all_workspaces" in str(exc_info.value).lower()
+
+
+async def test_list_warehouses_workspace_provided_all_workspaces_false_succeeds(
+    mock_ctx, ctx_patch
+) -> None:
+    """Existing behaviour: list_warehouses with workspace and all_workspaces=False works."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    wh = _make_warehouse()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.warehouses.list_warehouses",
+            new=AsyncMock(return_value=[wh]),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "list_warehouses",
+            {"workspace": WS_NAME},
+        )
+
+    assert isinstance(result, list)
+    assert result[0]["id"] == str(WH_ID)
 
 
 # ---------------------------------------------------------------------------
