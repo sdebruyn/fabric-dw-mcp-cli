@@ -18,6 +18,8 @@ Python CLI and MCP server for administering Microsoft Fabric Data Warehouses and
 
 **Full documentation: [fdw.debruyn.dev](https://fdw.debruyn.dev)**
 
+📣 **Just announced!** Read the story behind `fabric-dw` in the [announcement blog post](https://debruyn.dev/2026/introducing-the-fabric-data-warehouse-cli-and-mcp-server/).
+
 ## Description
 
 `fabric-dw` provides two interfaces for managing Microsoft Fabric Data Warehouses and SQL Analytics Endpoints:
