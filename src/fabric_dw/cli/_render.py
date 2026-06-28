@@ -13,7 +13,7 @@ from rich.markup import escape as _escape_markup
 from rich.panel import Panel
 from rich.table import Table
 
-from fabric_dw.models import ItemAccess, TableSyncStatus
+from fabric_dw.models import ItemAccess, StatisticDetails, StatisticHistogramStep, TableSyncStatus
 
 __all__ = [
     "confirm",
@@ -21,6 +21,7 @@ __all__ = [
     "render_permissions_table",
     "render_refresh_table",
     "render_result_rows",
+    "render_statistic_details",
     "sanitise_json",
 ]
 
@@ -737,6 +738,186 @@ def render_result_rows(
         title=table_title,
         prune_null_columns=prune_null_columns,
     )
+
+
+# ---------------------------------------------------------------------------
+# Histogram bar rendering
+# ---------------------------------------------------------------------------
+
+#: Unicode block characters for sub-character bar precision.
+#: Index 0 is a plain space (never accessed via ``_BLOCKS[0]``; the caller
+#: uses ``""`` for an empty partial), 1-7 are 1/8-through-7/8 blocks,
+#: and 8 is the full block (also used directly as ``"█"`` in ``_make_bar``).
+_BLOCKS = " ▏▎▍▌▋▊▉█"
+
+#: Maximum character width for the RANGE_HI_KEY column.
+_KEY_MAX_WIDTH = 16
+
+#: Column headers for the five histogram data columns.
+_HISTOGRAM_DATA_HEADERS = (
+    "RANGE_HI_KEY",
+    "RANGE_ROWS",
+    "EQ_ROWS",
+    "DISTINCT_RANGE_ROWS",
+    "AVG_RANGE_ROWS",
+)
+
+#: Header text for the EQ_ROWS bar column.
+_EQ_BAR_HEADER = "EQ bar"
+
+#: Header text for the RANGE_ROWS bar column.
+_RANGE_BAR_HEADER = "Range bar"
+
+
+def _make_bar(value: float | None, max_value: float, max_cells: int) -> str:
+    """Return a Unicode block-character bar string.
+
+    Returns ``""`` (no bar) when any of these conditions holds:
+
+    * ``value`` is ``None``, negative, zero, or non-finite.
+    * ``max_value`` is ``<= 0`` or non-finite.
+    * ``max_cells`` is ``<= 0``.
+
+    Args:
+        value: The numeric value to represent.
+        max_value: The scale ceiling (must be positive and finite).
+        max_cells: Maximum character cells available for the bar.
+
+    Returns:
+        A string built from ``█`` and partial-block characters (``▏▎▍▌▋▊▉``),
+        or ``""`` for an empty/invalid bar.
+    """
+    if value is None or max_cells <= 0:
+        return ""
+    if not math.isfinite(value) or not math.isfinite(max_value) or max_value <= 0:
+        return ""
+    clamped = max(0.0, value)
+    if clamped == 0.0:
+        return ""
+    total_eighths = round((clamped / max_value) * max_cells * 8)
+    total_eighths = max(0, min(total_eighths, max_cells * 8))
+    if total_eighths == 0:
+        return ""
+    full = total_eighths // 8
+    partial = total_eighths % 8
+    return "█" * full + (_BLOCKS[partial] if partial else "")
+
+
+def _render_histogram_table(
+    steps: list[StatisticHistogramStep],
+    *,
+    console: Console,
+) -> None:
+    """Render histogram steps as a Rich table with optional bar columns.
+
+    Bars for EQ_ROWS and RANGE_ROWS are scaled independently to each
+    column's own maximum across all steps.  On narrow terminals (when the
+    bar budget yields zero cells) the bar columns are omitted but the five
+    data columns always render.  Unlike the generic wide-table fallback the
+    histogram is never transposed to a vertical layout — per-step comparison
+    requires a horizontal view, so bar columns are simply dropped instead.
+
+    Args:
+        steps: Histogram steps from :class:`~fabric_dw.models.StatisticDetails`.
+        console: The Rich console to print to.
+    """
+    # Per-column maxima — None and non-finite treated as 0.
+    eq_max = 0.0
+    range_max = 0.0
+    for step in steps:
+        if step.eq_rows is not None and math.isfinite(step.eq_rows):
+            eq_max = max(eq_max, step.eq_rows)
+        if step.range_rows is not None and math.isfinite(step.range_rows):
+            range_max = max(range_max, step.range_rows)
+
+    # Budget: characters available for bar content, shared equally between
+    # the two bar columns.  The formula subtracts:
+    #   - the minimum content widths of the 5 data column headers,
+    #   - the header widths of the 2 bar columns,
+    #   - the Rich border overhead for 7 columns (3 * 7 + 1).
+    data_min = sum(min(len(h), _KEY_MAX_WIDTH) for h in _HISTOGRAM_DATA_HEADERS)
+    bar_headers_min = len(_EQ_BAR_HEADER) + len(_RANGE_BAR_HEADER)
+    budget = console.width - data_min - bar_headers_min - (3 * 7 + 1)
+    bar_max_cells = max(0, min(20, budget // 2))
+    show_bars = bar_max_cells > 0
+
+    table = Table(show_header=True, header_style="bold", title="Histogram")
+    table.add_column("RANGE_HI_KEY", max_width=_KEY_MAX_WIDTH)
+    table.add_column("RANGE_ROWS", justify="right")
+    table.add_column("EQ_ROWS", justify="right")
+    table.add_column("DISTINCT_RANGE_ROWS", justify="right")
+    table.add_column("AVG_RANGE_ROWS", justify="right")
+    if show_bars:
+        table.add_column(_EQ_BAR_HEADER)
+        table.add_column(_RANGE_BAR_HEADER)
+
+    for step in steps:
+        key_cell = (
+            _escape_markup(step.range_hi_key)
+            if step.range_hi_key is not None
+            else "[dim]NULL[/dim]"
+        )
+        row: list[str] = [
+            key_cell,
+            _cell(step.range_rows),
+            _cell(step.eq_rows),
+            _cell(step.distinct_range_rows),
+            _cell(step.avg_range_rows),
+        ]
+        if show_bars:
+            eq_bar = _make_bar(step.eq_rows, eq_max, bar_max_cells)
+            range_bar = _make_bar(step.range_rows, range_max, bar_max_cells)
+            row.append(f"[cyan]{eq_bar}[/cyan]" if eq_bar else "")
+            row.append(f"[green]{range_bar}[/green]" if range_bar else "")
+        table.add_row(*row)
+
+    console.print(table)
+
+
+def render_statistic_details(
+    details: StatisticDetails,
+    *,
+    json_output: bool,
+    console: Console | None = None,
+) -> None:
+    """Render a :class:`~fabric_dw.models.StatisticDetails` result.
+
+    In JSON mode the output is byte-for-byte identical to calling
+    ``render(details.model_dump(by_alias=True, mode="json"), json_output=True)``.
+    In terminal mode the stat header (when present) is rendered as a panel,
+    the density vector (when non-empty) as a table, and the histogram always
+    as a Rich table with optional block-character bar columns.
+
+    Args:
+        details: The statistic details to render.
+        json_output: When ``True`` emit indented JSON; when ``False`` use
+            Rich for human-friendly output.
+        console: Optional Rich Console instance.  Ignored when
+            ``json_output=True``.
+    """
+    if json_output:
+        render(details.model_dump(by_alias=True, mode="json"), json_output=True)
+        return
+
+    con = console if console is not None else _DEFAULT_CONSOLE
+
+    if details.stat_header is not None:
+        _render_panel(
+            details.stat_header.model_dump(by_alias=True, mode="json"),
+            console=con,
+            title="Stat Header",
+        )
+
+    if details.density_vector:
+        _render_table(
+            [row.model_dump(by_alias=True, mode="json") for row in details.density_vector],
+            console=con,
+            title="Density Vector",
+            drop_columns=None,
+            prune_null_columns=False,
+        )
+
+    _render_histogram_table(details.histogram, console=con)
 
 
 def confirm(message: str, *, yes: bool) -> bool:
