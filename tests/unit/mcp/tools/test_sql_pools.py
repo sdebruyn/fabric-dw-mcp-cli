@@ -235,6 +235,8 @@ async def test_get_sql_pools_status_broken_pool_schema_does_not_crash(mock_ctx, 
         )
 
     assert result == {"customSQLPoolsEnabled": True}
+    # Confirm the HTTP layer was actually invoked -- not just a mock shortcut.
+    mock_ctx.http.request.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

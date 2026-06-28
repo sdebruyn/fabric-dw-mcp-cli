@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from fabric_dw.exceptions import (
     AlreadyExistsError,
     BadRequestError,
+    FabricError,
     NotFoundError,
     PermissionDeniedError,
 )
@@ -174,13 +175,64 @@ async def test_get_status_ignores_broken_nested_pool_fields_when_disabled() -> N
 
 async def test_get_status_raises_fabric_error_when_flag_key_missing() -> None:
     """get_status raises FabricError when customSQLPoolsEnabled is absent."""
-    from fabric_dw.exceptions import FabricError  # noqa: PLC0415
-
     with respx.mock:
         respx.get(_CONFIG_URL).mock(return_value=httpx.Response(200, json={"customSQLPools": []}))
         client = await _make_client()
         async with client:
             with pytest.raises(FabricError, match="customSQLPoolsEnabled"):
+                await sql_pools.get_status(client, _WS_ID)
+
+
+async def test_get_status_raises_fabric_error_when_flag_is_null() -> None:
+    """get_status raises FabricError when customSQLPoolsEnabled is JSON null.
+
+    A null value must NOT silently coerce to False via bool(None); that would
+    misreport the actual state.  Pydantic rejects null on the bool field, so
+    get_status() must be equally strict.
+    """
+    with respx.mock:
+        # json= serialises None as JSON null.
+        respx.get(_CONFIG_URL).mock(
+            return_value=httpx.Response(
+                200, json={"customSQLPoolsEnabled": None, "customSQLPools": []}
+            )
+        )
+        client = await _make_client()
+        async with client:
+            with pytest.raises(FabricError, match="customSQLPoolsEnabled"):
+                await sql_pools.get_status(client, _WS_ID)
+
+
+async def test_get_status_raises_fabric_error_when_flag_is_string() -> None:
+    """get_status raises FabricError when customSQLPoolsEnabled is a string.
+
+    bool("false") is True, so naive coercion would silently misreport.
+    """
+    with respx.mock:
+        respx.get(_CONFIG_URL).mock(
+            return_value=httpx.Response(
+                200, json={"customSQLPoolsEnabled": "false", "customSQLPools": []}
+            )
+        )
+        client = await _make_client()
+        async with client:
+            with pytest.raises(FabricError, match="customSQLPoolsEnabled"):
+                await sql_pools.get_status(client, _WS_ID)
+
+
+async def test_get_status_raises_fabric_error_when_body_is_not_json() -> None:
+    """get_status raises FabricError instead of a raw JSONDecodeError.
+
+    A non-JSON response body (e.g. an HTML gateway error page) must not
+    produce a raw traceback at the CLI or MCP boundary.
+    """
+    with respx.mock:
+        respx.get(_CONFIG_URL).mock(
+            return_value=httpx.Response(200, content=b"<html>Bad Gateway</html>")
+        )
+        client = await _make_client()
+        async with client:
+            with pytest.raises(FabricError):
                 await sql_pools.get_status(client, _WS_ID)
 
 

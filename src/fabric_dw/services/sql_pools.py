@@ -45,6 +45,11 @@ __all__ = [
 # Wrapped in MappingProxyType to prevent accidental mutation by callers.
 _BETA_PARAMS: Mapping[str, str] = types.MappingProxyType({"beta": "True"})
 
+# The JSON key for the workspace-level enabled flag.  Must match the field alias
+# on SqlPoolsConfiguration.custom_sql_pools_enabled (Field(alias=...)) so that
+# get_status() and get_configuration() both refer to the same key.
+_STATUS_KEY = "customSQLPoolsEnabled"
+
 
 def _config_path(workspace_id: UUID) -> str:
     return f"/workspaces/{workspace_id}/warehouses/sqlPoolsConfiguration"
@@ -83,6 +88,12 @@ async def get_status(
     a pool field (renamed or added required attribute) therefore cannot crash
     a simple enabled/disabled status check.  See issue #905.
 
+    The flag read is intentionally strict: only a genuine JSON boolean is
+    accepted.  A missing key, a null value, or a non-boolean type (string,
+    integer) raises :class:`~fabric_dw.exceptions.FabricError` rather than
+    silently misreporting the state.  A non-JSON or empty response body is
+    treated the same way so that no raw exception ever escapes this function.
+
     Args:
         http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
         workspace_id: The Fabric workspace UUID.
@@ -91,8 +102,9 @@ async def get_status(
         ``True`` if custom SQL pools are enabled, ``False`` otherwise.
 
     Raises:
-        FabricError: If the top-level ``customSQLPoolsEnabled`` key is absent
-            from the response (unexpected API response shape).
+        FabricError: If the response cannot be parsed as JSON, the
+            ``customSQLPoolsEnabled`` key is absent, the value is null, or the
+            value is not a real JSON boolean.
         PermissionDeniedError: If the caller does not have the workspace admin role
             (HTTP 403).
     """
@@ -102,15 +114,31 @@ async def get_status(
         _config_path(workspace_id),
         params=_BETA_PARAMS,
     )
-    data = resp.json()
     try:
-        return bool(data["customSQLPoolsEnabled"])
-    except (KeyError, TypeError) as exc:
+        data = resp.json()
+        value = data[_STATUS_KEY]
+    except (ValueError, KeyError, TypeError) as exc:
+        # ValueError covers JSONDecodeError (non-JSON or empty body).
+        # KeyError covers a missing top-level key.
+        # TypeError covers resp.json() returning a non-dict (e.g. a JSON array).
         msg = (
-            "Unexpected API response: 'customSQLPoolsEnabled' key is missing. "
-            "The Fabric SQL Pools beta API may have changed."
+            f"Unexpected API response: '{_STATUS_KEY}' key is missing or the response "
+            "body is not valid JSON.  The Fabric SQL Pools beta API may have changed."
         )
         raise FabricError(msg) from exc
+
+    if not isinstance(value, bool):
+        # A null, string, or numeric value would silently misreport the state
+        # via bool() coercion (null->False, "false"->True).  Reject these
+        # explicitly so schema drift produces a clear error rather than a
+        # wrong answer.
+        msg = (
+            f"Unexpected API response: '{_STATUS_KEY}' is {value!r} "
+            f"(expected a JSON boolean).  The Fabric SQL Pools beta API may have changed."
+        )
+        raise FabricError(msg)
+
+    return value
 
 
 async def get_configuration(
