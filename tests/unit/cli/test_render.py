@@ -1867,7 +1867,7 @@ class TestMakeBar:
 
     def test_small_value_rounds_to_one_eighth(self) -> None:
         # Very small non-zero value should either return "" (rounds to 0)
-        # or a partial block — crucially, never crash.
+        # or a partial block; crucially, never crash.
         bar = _make_bar(0.001, 1000.0, 10)
         # Rounds to 0 eighths → empty bar
         assert bar == ""
@@ -1992,14 +1992,38 @@ class TestRenderStatisticDetails:
         assert "EQ_ROWS" in output
 
     # ------------------------------------------------------------------
+    # Bar visibility threshold: pins the exact width where bars appear
+    # ------------------------------------------------------------------
+
+    def test_bar_columns_absent_at_width_100(self) -> None:
+        """At width 100 the budget is < 2 so bar columns must not appear."""
+        sio = StringIO()
+        con = Console(file=sio, width=100, highlight=False, no_color=True)
+        render_statistic_details(_make_details(), json_output=False, console=con)
+        output = sio.getvalue()
+        assert "EQ bar" not in output
+        assert "Range bar" not in output
+
+    def test_bar_columns_present_at_width_101(self) -> None:
+        """At width 101 the budget reaches 2, giving 1 bar cell each side."""
+        sio = StringIO()
+        con = Console(file=sio, width=101, highlight=False, no_color=True)
+        render_statistic_details(_make_details(), json_output=False, console=con)
+        output = sio.getvalue()
+        assert "EQ bar" in output
+        assert "Range bar" in output
+
+    # ------------------------------------------------------------------
     # All-zero and all-None columns: no block chars
     # ------------------------------------------------------------------
 
     def test_all_zero_eq_rows_no_block_char_in_eq_column(self) -> None:
+        # Both eq_rows and range_rows are zero so no bar chars appear anywhere.
+        # This directly asserts that an all-zero column never produces a block char.
         steps = [
             StatisticHistogramStep(
                 range_hi_key="100",
-                range_rows=50.0,
+                range_rows=0.0,
                 eq_rows=0.0,
                 distinct_range_rows=None,
                 avg_range_rows=None,
@@ -2008,9 +2032,8 @@ class TestRenderStatisticDetails:
         con, sio = _make_wide_console()
         render_statistic_details(_make_details(steps=steps), json_output=False, console=con)
         output = sio.getvalue()
-        # Range bar should have a block char; EQ bar should be empty (no blocks)
-        # We can't easily assert per-column, but we CAN assert no crash
         assert "RANGE_HI_KEY" in output
+        assert "█" not in output
 
     def test_all_none_eq_rows_no_crash(self) -> None:
         steps = [
@@ -2035,7 +2058,8 @@ class TestRenderStatisticDetails:
         con, sio = _make_wide_console()
         render_statistic_details(_make_details(steps=[]), json_output=False, console=con)
         output = sio.getvalue()
-        assert output is not None
+        # No crash; a short "no steps" notice is printed instead of an empty table.
+        assert "no steps" in output
 
     # ------------------------------------------------------------------
     # stat_header and density_vector
@@ -2084,6 +2108,23 @@ class TestRenderStatisticDetails:
         render_statistic_details(_make_details(steps=steps), json_output=False, console=con)
         output = sio.getvalue()
         assert "NULL" in output
+
+    def test_range_hi_key_markup_brackets_rendered_verbatim(self) -> None:
+        """Rich markup in range_hi_key must be escaped, not interpreted."""
+        steps = [
+            StatisticHistogramStep(
+                range_hi_key="[red]x[/red]",
+                range_rows=10.0,
+                eq_rows=5.0,
+                distinct_range_rows=2.0,
+                avg_range_rows=5.0,
+            ),
+        ]
+        con, sio = _make_wide_console()
+        render_statistic_details(_make_details(steps=steps), json_output=False, console=con)
+        output = sio.getvalue()
+        # The brackets must appear as literal characters, not trigger a red colour span.
+        assert "[red]x[/red]" in output
 
     # ------------------------------------------------------------------
     # histogram-only (--histogram flag): no header or density sections

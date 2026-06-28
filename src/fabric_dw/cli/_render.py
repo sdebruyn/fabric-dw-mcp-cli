@@ -814,14 +814,18 @@ def _render_histogram_table(
     column's own maximum across all steps.  On narrow terminals (when the
     bar budget yields zero cells) the bar columns are omitted but the five
     data columns always render.  Unlike the generic wide-table fallback the
-    histogram is never transposed to a vertical layout — per-step comparison
+    histogram is never transposed to a vertical layout; per-step comparison
     requires a horizontal view, so bar columns are simply dropped instead.
 
     Args:
         steps: Histogram steps from :class:`~fabric_dw.models.StatisticDetails`.
         console: The Rich console to print to.
     """
-    # Per-column maxima — None and non-finite treated as 0.
+    if not steps:
+        console.print("[bold]Histogram[/bold]: [dim]no steps[/dim]")
+        return
+
+    # Per-column maxima; None and non-finite treated as 0.
     eq_max = 0.0
     range_max = 0.0
     for step in steps:
@@ -835,7 +839,11 @@ def _render_histogram_table(
     #   - the minimum content widths of the 5 data column headers,
     #   - the header widths of the 2 bar columns,
     #   - the Rich border overhead for 7 columns (3 * 7 + 1).
-    data_min = sum(min(len(h), _KEY_MAX_WIDTH) for h in _HISTOGRAM_DATA_HEADERS)
+    # Only RANGE_HI_KEY has max_width=_KEY_MAX_WIDTH on its column definition;
+    # the remaining four columns grow to their full header-text width.
+    data_min = min(len(_HISTOGRAM_DATA_HEADERS[0]), _KEY_MAX_WIDTH) + sum(
+        len(h) for h in _HISTOGRAM_DATA_HEADERS[1:]
+    )
     bar_headers_min = len(_EQ_BAR_HEADER) + len(_RANGE_BAR_HEADER)
     budget = console.width - data_min - bar_headers_min - (3 * 7 + 1)
     bar_max_cells = max(0, min(20, budget // 2))
