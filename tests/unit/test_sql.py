@@ -332,10 +332,8 @@ class TestOpenConnection:
         err_msg = str(exc_info.value)
         assert "paused" in err_msg.lower() or "inactive" in err_msg.lower()
         assert "https://learn.microsoft.com/fabric/data-warehouse/pause-resume" in err_msg
-        # Must not leak the raw driver exception type.
-        assert not isinstance(exc_info.value, Exception.__class__) or isinstance(
-            exc_info.value, FabricError
-        )
+        # Must be a FabricError subclass, not the raw driver exception type.
+        assert isinstance(exc_info.value, FabricError)
 
     def test_connect_raises_fabric_error_for_generic_connection_failure(
         self, monkeypatch: pytest.MonkeyPatch
@@ -346,7 +344,9 @@ class TestOpenConnection:
         driver message.  The raw driver exception type must not leak to the caller.
         """
         mock_mssql, _, _ = _make_mock_mssql()
-        original_msg = "TCP Provider: Error code 0x274C"
+        # Use a message that is not a transient fragment and not auth-related,
+        # so _is_connect_retryable returns False and the error is wrapped.
+        original_msg = "Driver Error: SSL handshake failed, certificate invalid"
         mock_mssql.connect.side_effect = Exception(original_msg)
         _patch_mssql(monkeypatch, mock_mssql)
 
@@ -384,6 +384,80 @@ class TestOpenConnection:
         assert not isinstance(exc_info.value, _FakeDriverError)
         # The original driver error is chained as the cause.
         assert isinstance(exc_info.value.__cause__, _FakeDriverError)
+
+    def test_connect_autocommit_path_also_translates_capacity_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The autocommit=True connect path also translates capacity errors.
+
+        Exercises the try/except around the autocommit connect call in
+        open_connection, which is a separate code path from the pooled connect.
+        """
+        mock_mssql, _, _ = _make_mock_mssql()
+        mock_mssql.connect.side_effect = Exception("this Fabric capacity is currently not active")
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        from fabric_dw.sql import open_connection  # noqa: PLC0415
+
+        with pytest.raises(CapacityInactiveError) as exc_info:
+            open_connection(_make_target(), autocommit=True)
+
+        err_msg = str(exc_info.value)
+        assert "https://learn.microsoft.com/fabric/data-warehouse/pause-resume" in err_msg
+        assert isinstance(exc_info.value, FabricError)
+
+    def test_connect_retryable_driver_error_propagates_with_ddbc_error_intact(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Retryable driver errors are re-raised unchanged so ddbc_error is preserved.
+
+        Regression guard for the warehouse warm-up case: a driver exception
+        carrying ddbc_error with native error 18456 and "database was not found"
+        is retryable via Strategy 1 (native-error matching in _is_connect_retryable)
+        only when the original exception propagates intact.  Wrapping it in
+        FabricError strips ddbc_error and breaks the retry window.
+
+        This test verifies that open_connection re-raises such exceptions bare,
+        and that _is_connect_retryable still classifies them as retryable.
+        """
+        from fabric_dw.sql import open_connection  # noqa: PLC0415
+        from fabric_dw.sql_errors import _is_connect_retryable  # noqa: PLC0415
+
+        mock_mssql, _, _ = _make_mock_mssql()
+
+        # Simulate the driver exception for a warming-up warehouse: native error
+        # 18456 surfaced via the ddbc_error attribute.  The message fragment alone
+        # ("database was not found") does NOT match is_auth_failed_message, so
+        # Strategy 2 would miss it -- only Strategy 1 (ddbc_error) catches it.
+        class _WarmUpDriverError(Exception):
+            ddbc_error = "Error: 18456 Login failed. Database was not found."
+
+        warm_up_exc = _WarmUpDriverError(
+            "Login failed for user '<token-identified principal>'. Reason: Database was not found."
+        )
+        mock_mssql.connect.side_effect = warm_up_exc
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        # open_connection must re-raise the original exception unchanged.
+        with pytest.raises(_WarmUpDriverError) as exc_info:
+            open_connection(_make_target())
+
+        # The exception must still carry ddbc_error so the retry loop can see it.
+        assert hasattr(exc_info.value, "ddbc_error")
+        assert _is_connect_retryable(exc_info.value), (
+            "warm-up exception must still be classified retryable after open_connection"
+        )
+
+    def test_connect_capacity_inactive_error_is_not_retryable(self) -> None:
+        """CapacityInactiveError must not be classified as retryable.
+
+        A paused capacity is a permanent condition until resumed by an admin.
+        Retrying for ~120 s would only delay the error without benefit.
+        """
+        from fabric_dw.sql_errors import _is_connect_retryable  # noqa: PLC0415
+
+        err = CapacityInactiveError("The Fabric capacity for this workspace is paused or inactive.")
+        assert not _is_connect_retryable(err)
 
 
 # ---------------------------------------------------------------------------

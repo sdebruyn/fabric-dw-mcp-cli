@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any, Never
 from fabric_dw.auth import CredentialMode, get_sql_token_struct
 from fabric_dw.config import UserConfig as _UserConfig
 from fabric_dw.exceptions import CapacityInactiveError, FabricCliError, FabricError
+from fabric_dw.sql_errors import _is_connect_retryable
 
 if TYPE_CHECKING:
     from fabric_dw.sql import SqlTarget
@@ -593,27 +594,47 @@ def _translate_connect_error(exc: Exception) -> Never:
     Called exclusively from the ``_get_mssql().connect(...)`` catch block in
     ``open_connection``.  Always raises -- never returns normally.
 
-    If *exc* is already a :class:`~fabric_dw.exceptions.FabricCliError` it is
-    re-raised unchanged.  This avoids double-wrapping when a test injects a
-    pre-typed exception (e.g. :class:`~fabric_dw.exceptions.AuthError`) as the
-    connect side-effect, and ensures that any future typed error raised inside
-    the pre-connect preparation steps propagates with its original type.
+    Evaluation order is significant:
+
+    1. Pre-typed :class:`~fabric_dw.exceptions.FabricCliError` -- re-raised bare
+       so no extra frame is added and the original type is preserved.  Covers test
+       mocks that inject a typed exception (e.g. ``AuthError``) as the connect
+       side-effect.
+    2. Capacity-inactive fragment -- translated to
+       :class:`~fabric_dw.exceptions.CapacityInactiveError` immediately (never
+       retried).
+    3. Retryable driver exceptions -- re-raised bare so the ``_is_connect_retryable``
+       check inside :func:`~fabric_dw.sql._with_connect_retry` still sees the
+       original exception with its ``ddbc_error`` attribute intact (needed for
+       Strategy 1 native-error matching, e.g. 18456 + "database was not found"
+       during warehouse warm-up).
+    4. Everything else -- wrapped in a generic
+       :class:`~fabric_dw.exceptions.FabricError` that preserves the driver message.
 
     Raises:
-        FabricCliError: Re-raised unchanged if *exc* is already a
+        FabricCliError: Re-raised bare if *exc* is already a
             :class:`~fabric_dw.exceptions.FabricCliError`.
         CapacityInactiveError: When the message indicates the Fabric capacity
             is paused or inactive.
-        FabricError: For all other driver-level connection failures, preserving
-            the original driver message.
+        Exception: Re-raised bare if :func:`~fabric_dw.sql_errors._is_connect_retryable`
+            returns ``True`` (so the retry loop retains ``ddbc_error``).
+        FabricError: For all other non-retryable driver connect failures,
+            preserving the original driver message.
     """
+    # Step 1: pass pre-typed errors through unchanged.
     if isinstance(exc, FabricCliError):
-        raise exc
+        raise  # noqa: PLE0704 -- always called from an except block; bare raise is valid
+    # Step 2: paused-capacity -- surface immediately (must precede retryable check
+    # so the error is never silently retried for ~120 s).
     msg = str(exc).lower()
     if _CAPACITY_INACTIVE_FRAGMENT in msg:
         err: FabricError = CapacityInactiveError(_CAPACITY_INACTIVE_MSG)
         err.__cause__ = exc
         raise err
+    # Step 3: retryable driver errors -- re-raise bare to preserve ddbc_error.
+    if _is_connect_retryable(exc):
+        raise  # noqa: PLE0704 -- preserves ddbc_error attribute for Strategy 1 retry
+    # Step 4: non-retryable driver failures -- wrap cleanly.
     wrapped = FabricError(f"SQL connection failed: {exc}")
     wrapped.__cause__ = exc
     raise wrapped
