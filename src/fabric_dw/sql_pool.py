@@ -31,10 +31,12 @@ import re
 import threading
 import time
 import types
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Never
 
 from fabric_dw.auth import CredentialMode, get_sql_token_struct
 from fabric_dw.config import UserConfig as _UserConfig
+from fabric_dw.exceptions import CapacityInactiveError, FabricCliError, FabricError
+from fabric_dw.sql_errors import _is_connect_retryable
 
 if TYPE_CHECKING:
     from fabric_dw.sql import SqlTarget
@@ -571,6 +573,74 @@ def _make_pool_key(target: SqlTarget, mode: CredentialMode) -> _PoolKey:
 
 
 # ---------------------------------------------------------------------------
+# Connection-error translation
+# ---------------------------------------------------------------------------
+
+# Case-insensitive substring that identifies a paused/inactive Fabric capacity
+# in the driver message returned at connect time.
+_CAPACITY_INACTIVE_FRAGMENT: str = "capacity is currently not active"
+
+# Actionable message surfaced to the caller when the capacity is paused.
+_CAPACITY_INACTIVE_MSG: str = (
+    "The Fabric capacity for this workspace is paused or inactive. "
+    "Resume it before running SQL, see "
+    "https://learn.microsoft.com/fabric/data-warehouse/pause-resume"
+)
+
+
+def _translate_connect_error(exc: Exception) -> Never:
+    """Translate a driver-level connect failure into a clean FabricError.
+
+    Called exclusively from the ``_get_mssql().connect(...)`` catch block in
+    ``open_connection``.  Always raises -- never returns normally.
+
+    Evaluation order is significant:
+
+    1. Pre-typed :class:`~fabric_dw.exceptions.FabricCliError` -- re-raised bare
+       so no extra frame is added and the original type is preserved.  Covers test
+       mocks that inject a typed exception (e.g. ``AuthError``) as the connect
+       side-effect.
+    2. Capacity-inactive fragment -- translated to
+       :class:`~fabric_dw.exceptions.CapacityInactiveError` immediately (never
+       retried).
+    3. Retryable driver exceptions -- re-raised bare so the ``_is_connect_retryable``
+       check inside :func:`~fabric_dw.sql._with_connect_retry` still sees the
+       original exception with its ``ddbc_error`` attribute intact (needed for
+       Strategy 1 native-error matching, e.g. 18456 + "database was not found"
+       during warehouse warm-up).
+    4. Everything else -- wrapped in a generic
+       :class:`~fabric_dw.exceptions.FabricError` that preserves the driver message.
+
+    Raises:
+        FabricCliError: Re-raised bare if *exc* is already a
+            :class:`~fabric_dw.exceptions.FabricCliError`.
+        CapacityInactiveError: When the message indicates the Fabric capacity
+            is paused or inactive.
+        Exception: Re-raised bare if :func:`~fabric_dw.sql_errors._is_connect_retryable`
+            returns ``True`` (so the retry loop retains ``ddbc_error``).
+        FabricError: For all other non-retryable driver connect failures,
+            preserving the original driver message.
+    """
+    # Step 1: pass pre-typed errors through unchanged.
+    if isinstance(exc, FabricCliError):
+        raise  # noqa: PLE0704 -- always called from an except block; bare raise is valid
+    # Step 2: paused-capacity -- surface immediately (must precede retryable check
+    # so the error is never silently retried for ~120 s).
+    msg = str(exc).lower()
+    if _CAPACITY_INACTIVE_FRAGMENT in msg:
+        err: FabricError = CapacityInactiveError(_CAPACITY_INACTIVE_MSG)
+        err.__cause__ = exc
+        raise err
+    # Step 3: retryable driver errors -- re-raise bare to preserve ddbc_error.
+    if _is_connect_retryable(exc):
+        raise  # noqa: PLE0704 -- preserves ddbc_error attribute for Strategy 1 retry
+    # Step 4: non-retryable driver failures -- wrap cleanly.
+    wrapped = FabricError(f"SQL connection failed: {exc}")
+    wrapped.__cause__ = exc
+    raise wrapped
+
+
+# ---------------------------------------------------------------------------
 # open_connection
 # ---------------------------------------------------------------------------
 
@@ -629,9 +699,12 @@ def open_connection(
         attrs: dict[int, bytes] | None = (
             {SQL_COPT_SS_ACCESS_TOKEN: token_struct} if use_token else None
         )
-        raw_conn: Any = _get_mssql().connect(
-            cs, autocommit=True, attrs_before=attrs, timeout=SQL_LOGIN_TIMEOUT_S
-        )
+        try:
+            raw_conn: Any = _get_mssql().connect(
+                cs, autocommit=True, attrs_before=attrs, timeout=SQL_LOGIN_TIMEOUT_S
+            )
+        except Exception as _exc:  # translate driver connect failures only
+            _translate_connect_error(_exc)
         # Sets query timeout on all *future* cursors (Connection.timeout.setter stores
         # the value; each cursor.__init__ reads it via _set_timeout()).  Safe here
         # because every cursor in this codebase is acquired after open_connection()
@@ -662,7 +735,10 @@ def open_connection(
     use_token = token_struct is not None
     cs = build_connection_string(target, mode=mode, use_access_token=use_token)
     attrs = {SQL_COPT_SS_ACCESS_TOKEN: token_struct} if use_token else None
-    raw_conn = _get_mssql().connect(cs, attrs_before=attrs, timeout=SQL_LOGIN_TIMEOUT_S)
+    try:
+        raw_conn = _get_mssql().connect(cs, attrs_before=attrs, timeout=SQL_LOGIN_TIMEOUT_S)
+    except Exception as _exc:  # translate driver connect failures only
+        _translate_connect_error(_exc)
     # Sets query timeout on all *future* cursors (Connection.timeout.setter stores
     # the value; each cursor.__init__ reads it via _set_timeout()).  Safe here
     # because every cursor in this codebase is acquired after open_connection()
