@@ -64,10 +64,11 @@ release VERSION:
     echo "  2. Open a release-prep PR and merge it to main."
     echo "  3. After merge: just tag {{ VERSION }}"
 
-# Assert plugin.json version (from the committed tree) matches VERSION, then create and push an
-# annotated git tag.  Refuses to tag on a dirty working tree, a non-main branch, or when the
-# branch is behind origin/main.
-# Run after the release-prep PR (from 'just release VERSION') has been merged to main.
+# Create and push an annotated git tag for VERSION.
+# Refuses to tag on a dirty working tree, a non-main branch, or when the branch is behind
+# origin/main.  plugin.json does NOT need to be pre-bumped: the Publish CI workflow
+# auto-bumps it on main after the tag fires (see sync-plugin-manifest job in publish.yml).
+# 'just release VERSION' remains available if you want to pre-bump locally.
 tag VERSION:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -101,12 +102,10 @@ tag VERSION:
         echo "error: local main is not up to date with origin/main — run 'git pull' first" >&2
         exit 1
     fi
-    # Read version from the committed tree, not the working tree.
+    # Informational: log current plugin.json version (mismatch is not an error).
     plugin_version=$(git show HEAD:.claude-plugin/plugin.json | python3 -c "import json,sys; print(json.load(sys.stdin)['version'])")
     if [ "$plugin_version" != "{{ VERSION }}" ]; then
-        echo "error: plugin.json version in HEAD ('$plugin_version') does not match '{{ VERSION }}'" >&2
-        echo "       Run 'just release {{ VERSION }}', open a PR, merge it, then retry 'just tag {{ VERSION }}'." >&2
-        exit 1
+        echo "Note: plugin.json is at '$plugin_version'; CI will auto-bump it to '{{ VERSION }}' after the tag fires."
     fi
     git tag -a "v{{ VERSION }}" -m "Release v{{ VERSION }}"
     git push origin "v{{ VERSION }}"

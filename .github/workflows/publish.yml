@@ -48,10 +48,11 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Verify plugin.json version matches tag (stable releases only)
+      - name: Log plugin.json version (informational)
         # Run only for tag/dispatch releases; skip for dev builds pushed to main.
-        # Prerelease tags (aN/bN/rcN/.devN) are exempt — plugin.json tracks stable only.
-        # Fails fast before uv build if the version bump was not merged before tagging.
+        # Prerelease tags (aN/bN/rcN/.devN) are exempt - plugin.json tracks stable only.
+        # The sync-plugin-manifest job (below) auto-bumps plugin.json on main after publish;
+        # a mismatch here is expected when the maintainer tags without a prior release-prep PR.
         # The context value is passed via env: to avoid ${{ }} script-injection into the run body.
         if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
         env:
@@ -61,16 +62,16 @@ jobs:
           version="${EFFECTIVE_TAG#v}"
           # Skip prerelease tags (aN/bN/rcN suffixes or .dev in the version string).
           if echo "$version" | grep -qE '(a|b|rc)[0-9]*$|\.dev'; then
-            echo "Prerelease tag '$version' detected — plugin.json tracks stable only; skipping version check."
+            echo "Prerelease tag '$version' detected - plugin.json tracks stable only; skipping."
             exit 0
           fi
-          # Stable tag: read plugin.json version and compare.
+          # Stable tag: log plugin.json version for reference (mismatch is not an error here).
           plugin_version=$(python3 -c "import json; print(json.load(open('.claude-plugin/plugin.json'))['version'])")
           if [ "$plugin_version" != "$version" ]; then
-            echo "::error::plugin.json version ('$plugin_version') does not match tag '$version'. Run 'just release $version', open a release-prep PR, merge it, then retag."
-            exit 1
+            echo "plugin.json is at '$plugin_version'; tag is '$version'. The sync-plugin-manifest job will bump it."
+          else
+            echo "plugin.json version '$plugin_version' already matches tag '$version'."
           fi
-          echo "plugin.json version '$plugin_version' matches tag '$version' — OK."
 
       - run: uv sync --frozen --no-dev
 
@@ -153,3 +154,72 @@ jobs:
           name: ${{ inputs.tag || github.ref_name }}
           tag_name: ${{ inputs.tag || github.ref_name }}
           prerelease: ${{ steps.prerelease.outputs.is_prerelease }}
+
+  sync-plugin-manifest:
+    name: Sync plugin.json to main
+    runs-on: ubuntu-latest
+    needs: publish
+    # Run only for tag/dispatch triggers (never for branch pushes or PRs).
+    # Stable-vs-prerelease gating is handled inside the run body using the same
+    # regex the repo already uses elsewhere. This job NEVER runs on plain pushes
+    # to main - it only fires after a v* tag push or manual workflow_dispatch.
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+    steps:
+      # Check out main (not the tag) so we can commit and push to the default branch.
+      # persist-credentials is true by default, so GITHUB_TOKEN can push.
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Bump plugin.json version on main
+        # NOTE: commits pushed with the default GITHUB_TOKEN do not trigger new workflow
+        # runs (GitHub loop-prevention). The [skip ci] trailer is belt-and-suspenders only.
+        #
+        # REQUIRED ONE-TIME REPO SETTING: github-actions[bot] must be added to the
+        # "Allow specified actors to bypass required pull requests" list under
+        # Settings > Branches > main branch protection rules. Without this, the push
+        # below will be rejected. Required status checks must also not block the bot's
+        # direct push.
+        env:
+          EFFECTIVE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          version="${EFFECTIVE_TAG#v}"
+          # Skip prerelease tags (aN/bN/rcN suffixes or .dev in the version string).
+          if echo "$version" | grep -qE '(a|b|rc)[0-9]*$|\.dev'; then
+            echo "Prerelease tag '$version' - plugin.json tracks stable only; skipping bump."
+            exit 0
+          fi
+          plugin_json=".claude-plugin/plugin.json"
+          # Set the version in plugin.json, preserving key order, indentation, and
+          # trailing newline byte-for-byte (same sed approach as the 'just release' recipe).
+          sed -i 's/"version": "[^"]*"/"version": "'"$version"'"/' "$plugin_json"
+          # No-op guard: if the file is already at this version, skip the commit.
+          if git diff --quiet "$plugin_json"; then
+            echo "plugin.json already at '$version' - nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$plugin_json"
+          git commit -m "chore: bump plugin.json to $version [skip ci]"
+          # Push with bounded retry to handle non-fast-forward races
+          # (main may have advanced after the tag was cut).
+          max_attempts=3
+          attempt=1
+          while [ "$attempt" -le "$max_attempts" ]; do
+            if git push origin main; then
+              echo "Pushed plugin.json bump for $version to main."
+              break
+            fi
+            if [ "$attempt" -eq "$max_attempts" ]; then
+              echo "::error::Failed to push to main after $max_attempts attempts." >&2
+              exit 1
+            fi
+            echo "Push attempt $attempt failed (non-fast-forward?), fetching and rebasing..."
+            git fetch origin main
+            git rebase origin/main
+            attempt=$((attempt + 1))
+          done
