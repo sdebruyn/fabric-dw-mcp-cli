@@ -14,16 +14,22 @@ from fabric_dw.cli._render import (
     _cell,
     _format_nested,
     _is_guid_column,
+    _make_bar,
     confirm,
     render,
     render_permissions_table,
     render_refresh_table,
+    render_statistic_details,
     sanitise_json,
 )
 from fabric_dw.models import (
     ItemAccess,
     ItemAccessDetail,
     ItemAccessPrincipal,
+    StatisticDensityRow,
+    StatisticDetails,
+    StatisticHeaderRow,
+    StatisticHistogramStep,
     TableSyncError,
     TableSyncStatus,
 )
@@ -1796,3 +1802,380 @@ class TestNestedPanelRendering:
         # No line should be non-empty but consist only of whitespace
         blank_indent_lines = [line for line in lines if line and not line.strip()]
         assert blank_indent_lines == [], f"Blank indent lines found: {blank_indent_lines!r}"
+
+
+# ===========================================================================
+# _make_bar unit tests
+# ===========================================================================
+
+
+class TestMakeBar:
+    """Unit tests for the _make_bar helper."""
+
+    def test_none_value_returns_empty(self) -> None:
+        assert _make_bar(None, 100.0, 10) == ""
+
+    def test_zero_value_returns_empty(self) -> None:
+        assert _make_bar(0.0, 100.0, 10) == ""
+
+    def test_negative_value_returns_empty(self) -> None:
+        assert _make_bar(-5.0, 100.0, 10) == ""
+
+    def test_zero_max_value_returns_empty(self) -> None:
+        assert _make_bar(50.0, 0.0, 10) == ""
+
+    def test_negative_max_value_returns_empty(self) -> None:
+        assert _make_bar(50.0, -10.0, 10) == ""
+
+    def test_zero_max_cells_returns_empty(self) -> None:
+        assert _make_bar(50.0, 100.0, 0) == ""
+
+    def test_negative_max_cells_returns_empty(self) -> None:
+        assert _make_bar(50.0, 100.0, -1) == ""
+
+    def test_nan_value_returns_empty(self) -> None:
+
+        assert _make_bar(float("nan"), 100.0, 10) == ""
+
+    def test_inf_value_returns_empty(self) -> None:
+        assert _make_bar(float("inf"), 100.0, 10) == ""
+
+    def test_nan_max_value_returns_empty(self) -> None:
+
+        assert _make_bar(50.0, float("nan"), 10) == ""
+
+    def test_inf_max_value_returns_empty(self) -> None:
+        assert _make_bar(50.0, float("inf"), 10) == ""
+
+    def test_full_value_fills_all_cells(self) -> None:
+        bar = _make_bar(100.0, 100.0, 10)
+        assert bar == "█" * 10
+
+    def test_half_value_fills_half_cells(self) -> None:
+        bar = _make_bar(50.0, 100.0, 10)
+        assert bar == "█" * 5
+
+    def test_one_eighth_produces_partial_block(self) -> None:
+        # 1/8 of 1 cell = 1/8 block character ▏
+        bar = _make_bar(1.0, 8.0, 1)
+        assert bar == "▏"
+
+    def test_bar_length_never_exceeds_max_cells(self) -> None:
+        # value > max_value is clamped to max_cells full blocks
+        bar = _make_bar(200.0, 100.0, 5)
+        assert len(bar) <= 5
+
+    def test_small_value_rounds_to_one_eighth(self) -> None:
+        # Very small non-zero value should either return "" (rounds to 0)
+        # or a partial block; crucially, never crash.
+        bar = _make_bar(0.001, 1000.0, 10)
+        # Rounds to 0 eighths → empty bar
+        assert bar == ""
+
+    def test_bar_contains_only_block_chars(self) -> None:
+        bar = _make_bar(75.0, 100.0, 8)
+        block_chars = set("█▏▎▍▌▋▊▉")
+        assert all(c in block_chars for c in bar)
+
+
+# ===========================================================================
+# render_statistic_details integration tests
+# ===========================================================================
+
+
+def _make_wide_console() -> tuple[Console, StringIO]:
+    """Return a (Console, StringIO) pair at width=160 (bars always visible)."""
+    sio = StringIO()
+    con = Console(file=sio, width=160, highlight=False, no_color=True)
+    return con, sio
+
+
+def _make_narrow_console() -> tuple[Console, StringIO]:
+    """Return a (Console, StringIO) pair at width=70 (bars always omitted)."""
+    sio = StringIO()
+    con = Console(file=sio, width=70, highlight=False, no_color=True)
+    return con, sio
+
+
+def _make_details(
+    *,
+    steps: list[StatisticHistogramStep] | None = None,
+    with_header: bool = False,
+    with_density: bool = False,
+) -> StatisticDetails:
+    """Build a minimal StatisticDetails for testing."""
+    if steps is None:
+        steps = [
+            StatisticHistogramStep(
+                range_hi_key="100",
+                range_rows=50.0,
+                eq_rows=10.0,
+                distinct_range_rows=5.0,
+                avg_range_rows=10.0,
+            ),
+            StatisticHistogramStep(
+                range_hi_key="200",
+                range_rows=100.0,
+                eq_rows=20.0,
+                distinct_range_rows=10.0,
+                avg_range_rows=10.0,
+            ),
+        ]
+    header = (
+        StatisticHeaderRow(
+            name="stat_sales_id",
+            updated=None,
+            rows=1000,
+            rows_sampled=1000,
+            steps=2,
+            density=0.001,
+            average_key_length=4.0,
+            string_index="NO",
+            filter_expression=None,
+            unfiltered_rows=None,
+        )
+        if with_header
+        else None
+    )
+    density = (
+        [StatisticDensityRow(all_density=0.001, average_length=4.0, columns="id")]
+        if with_density
+        else []
+    )
+    return StatisticDetails(stat_header=header, density_vector=density, histogram=steps)
+
+
+class TestRenderStatisticDetails:
+    """Integration tests for render_statistic_details."""
+
+    # ------------------------------------------------------------------
+    # Wide terminal: bar columns present
+    # ------------------------------------------------------------------
+
+    def test_wide_terminal_shows_histogram_column_headers(self) -> None:
+        con, sio = _make_wide_console()
+        render_statistic_details(_make_details(), json_output=False, console=con)
+        output = sio.getvalue()
+        assert "RANGE_HI_KEY" in output
+        assert "EQ_ROWS" in output
+        assert "RANGE_ROWS" in output
+
+    def test_wide_terminal_shows_bar_columns(self) -> None:
+        con, sio = _make_wide_console()
+        render_statistic_details(_make_details(), json_output=False, console=con)
+        output = sio.getvalue()
+        assert "EQ bar" in output
+        assert "Range bar" in output
+
+    def test_wide_terminal_bars_contain_block_char(self) -> None:
+        con, sio = _make_wide_console()
+        render_statistic_details(_make_details(), json_output=False, console=con)
+        output = sio.getvalue()
+        assert "█" in output
+
+    # ------------------------------------------------------------------
+    # Narrow terminal: bar columns omitted, data still rendered
+    # ------------------------------------------------------------------
+
+    def test_narrow_terminal_no_bar_columns(self) -> None:
+        con, sio = _make_narrow_console()
+        render_statistic_details(_make_details(), json_output=False, console=con)
+        output = sio.getvalue()
+        assert "EQ bar" not in output
+        assert "Range bar" not in output
+
+    def test_narrow_terminal_data_columns_still_present(self) -> None:
+        con, sio = _make_narrow_console()
+        render_statistic_details(_make_details(), json_output=False, console=con)
+        output = sio.getvalue()
+        assert "RANGE_HI_KEY" in output
+        assert "EQ_ROWS" in output
+
+    # ------------------------------------------------------------------
+    # Bar visibility threshold: pins the exact width where bars appear
+    # ------------------------------------------------------------------
+
+    def test_bar_columns_absent_at_width_100(self) -> None:
+        """At width 100 the budget is < 2 so bar columns must not appear."""
+        sio = StringIO()
+        con = Console(file=sio, width=100, highlight=False, no_color=True)
+        render_statistic_details(_make_details(), json_output=False, console=con)
+        output = sio.getvalue()
+        assert "EQ bar" not in output
+        assert "Range bar" not in output
+
+    def test_bar_columns_present_at_width_101(self) -> None:
+        """At width 101 the budget reaches 2, giving 1 bar cell each side."""
+        sio = StringIO()
+        con = Console(file=sio, width=101, highlight=False, no_color=True)
+        render_statistic_details(_make_details(), json_output=False, console=con)
+        output = sio.getvalue()
+        assert "EQ bar" in output
+        assert "Range bar" in output
+
+    # ------------------------------------------------------------------
+    # All-zero and all-None columns: no block chars
+    # ------------------------------------------------------------------
+
+    def test_all_zero_eq_rows_no_block_char_in_eq_column(self) -> None:
+        # Both eq_rows and range_rows are zero so no bar chars appear anywhere.
+        # This directly asserts that an all-zero column never produces a block char.
+        steps = [
+            StatisticHistogramStep(
+                range_hi_key="100",
+                range_rows=0.0,
+                eq_rows=0.0,
+                distinct_range_rows=None,
+                avg_range_rows=None,
+            ),
+        ]
+        con, sio = _make_wide_console()
+        render_statistic_details(_make_details(steps=steps), json_output=False, console=con)
+        output = sio.getvalue()
+        assert "RANGE_HI_KEY" in output
+        assert "█" not in output
+
+    def test_all_none_eq_rows_no_crash(self) -> None:
+        steps = [
+            StatisticHistogramStep(
+                range_hi_key="100",
+                range_rows=None,
+                eq_rows=None,
+                distinct_range_rows=None,
+                avg_range_rows=None,
+            ),
+        ]
+        con, sio = _make_wide_console()
+        render_statistic_details(_make_details(steps=steps), json_output=False, console=con)
+        output = sio.getvalue()
+        assert "RANGE_HI_KEY" in output
+
+    # ------------------------------------------------------------------
+    # Empty histogram
+    # ------------------------------------------------------------------
+
+    def test_empty_histogram_renders_without_error(self) -> None:
+        con, sio = _make_wide_console()
+        render_statistic_details(_make_details(steps=[]), json_output=False, console=con)
+        output = sio.getvalue()
+        # No crash; a short "no steps" notice is printed instead of an empty table.
+        assert "no steps" in output
+
+    # ------------------------------------------------------------------
+    # stat_header and density_vector
+    # ------------------------------------------------------------------
+
+    def test_stat_header_panel_shown_when_present(self) -> None:
+        con, sio = _make_wide_console()
+        render_statistic_details(_make_details(with_header=True), json_output=False, console=con)
+        output = sio.getvalue()
+        assert "Stat Header" in output
+        assert "stat_sales_id" in output
+
+    def test_stat_header_absent_when_none(self) -> None:
+        con, sio = _make_wide_console()
+        render_statistic_details(_make_details(with_header=False), json_output=False, console=con)
+        output = sio.getvalue()
+        assert "Stat Header" not in output
+
+    def test_density_vector_shown_when_non_empty(self) -> None:
+        con, sio = _make_wide_console()
+        render_statistic_details(_make_details(with_density=True), json_output=False, console=con)
+        output = sio.getvalue()
+        assert "Density Vector" in output
+
+    def test_density_vector_absent_when_empty(self) -> None:
+        con, sio = _make_wide_console()
+        render_statistic_details(_make_details(with_density=False), json_output=False, console=con)
+        output = sio.getvalue()
+        assert "Density Vector" not in output
+
+    # ------------------------------------------------------------------
+    # None range_hi_key renders as NULL
+    # ------------------------------------------------------------------
+
+    def test_none_range_hi_key_renders_null(self) -> None:
+        steps = [
+            StatisticHistogramStep(
+                range_hi_key=None,
+                range_rows=10.0,
+                eq_rows=5.0,
+                distinct_range_rows=2.0,
+                avg_range_rows=5.0,
+            ),
+        ]
+        con, sio = _make_wide_console()
+        render_statistic_details(_make_details(steps=steps), json_output=False, console=con)
+        output = sio.getvalue()
+        assert "NULL" in output
+
+    def test_range_hi_key_markup_brackets_rendered_verbatim(self) -> None:
+        """Rich markup in range_hi_key must be escaped, not interpreted."""
+        steps = [
+            StatisticHistogramStep(
+                range_hi_key="[red]x[/red]",
+                range_rows=10.0,
+                eq_rows=5.0,
+                distinct_range_rows=2.0,
+                avg_range_rows=5.0,
+            ),
+        ]
+        con, sio = _make_wide_console()
+        render_statistic_details(_make_details(steps=steps), json_output=False, console=con)
+        output = sio.getvalue()
+        # The brackets must appear as literal characters, not trigger a red colour span.
+        assert "[red]x[/red]" in output
+
+    # ------------------------------------------------------------------
+    # histogram-only (--histogram flag): no header or density sections
+    # ------------------------------------------------------------------
+
+    def test_histogram_only_no_header_no_density(self) -> None:
+        """When stat_header is None and density_vector is empty, only histogram renders."""
+        details = StatisticDetails(
+            stat_header=None,
+            density_vector=[],
+            histogram=[
+                StatisticHistogramStep(
+                    range_hi_key="50",
+                    range_rows=25.0,
+                    eq_rows=5.0,
+                    distinct_range_rows=3.0,
+                    avg_range_rows=8.0,
+                ),
+            ],
+        )
+        con, sio = _make_wide_console()
+        render_statistic_details(details, json_output=False, console=con)
+        output = sio.getvalue()
+        assert "Stat Header" not in output
+        assert "Density Vector" not in output
+        assert "RANGE_HI_KEY" in output
+
+    # ------------------------------------------------------------------
+    # JSON regression: byte-for-byte identical to raw render() call
+    # ------------------------------------------------------------------
+
+    def test_json_output_identical_to_raw_render(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """JSON branch must produce output character-for-character identical to
+        render(details.model_dump(by_alias=True, mode=\"json\"), json_output=True)."""
+        details = _make_details(with_header=True, with_density=True)
+        dumped = details.model_dump(by_alias=True, mode="json")
+
+        # Capture render_statistic_details output
+        render_statistic_details(details, json_output=True)
+        captured_new = capsys.readouterr().out
+
+        # Capture raw render() output with identical serialization
+        render(dumped, json_output=True)
+        captured_old = capsys.readouterr().out
+
+        assert captured_new == captured_old
+
+    def test_json_output_is_valid_json(self, capsys: pytest.CaptureFixture[str]) -> None:
+        details = _make_details(with_header=True, with_density=True)
+        render_statistic_details(details, json_output=True)
+        captured = capsys.readouterr()
+        parsed = json.loads(captured.out)
+        assert "histogram" in parsed
+        assert isinstance(parsed["histogram"], list)

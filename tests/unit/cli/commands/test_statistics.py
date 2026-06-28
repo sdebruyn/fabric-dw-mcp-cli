@@ -15,7 +15,7 @@ from click.testing import CliRunner
 from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._main import cli
 from fabric_dw.exceptions import ItemKindError, NotFoundError
-from fabric_dw.models import Statistic, StatisticDetails, WarehouseKind
+from fabric_dw.models import Statistic, StatisticDetails, StatisticHistogramStep, WarehouseKind
 from fabric_dw.sql import SqlTarget
 
 WS_GUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
@@ -85,7 +85,22 @@ def _make_statistic_details() -> StatisticDetails:
     return StatisticDetails(
         stat_header=None,
         density_vector=[],
-        histogram=[],
+        histogram=[
+            StatisticHistogramStep(
+                range_hi_key="100",
+                range_rows=50.0,
+                eq_rows=10.0,
+                distinct_range_rows=5.0,
+                avg_range_rows=10.0,
+            ),
+            StatisticHistogramStep(
+                range_hi_key="200",
+                range_rows=100.0,
+                eq_rows=20.0,
+                distinct_range_rows=10.0,
+                avg_range_rows=10.0,
+            ),
+        ],
     )
 
 
@@ -259,6 +274,104 @@ class TestStatisticsShow:
             ["-w", WS_GUID, "statistics", "show", WH_GUID, "nodot", "stat"],
         )
         assert result.exit_code != 0
+
+    def test_show_json_output_is_valid_json(self, runner: CliRunner) -> None:
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.statistics.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.statistics.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.statistics.show_statistics",
+                new=AsyncMock(return_value=_make_statistic_details()),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "--json",
+                    "-w",
+                    WS_GUID,
+                    "statistics",
+                    "show",
+                    WH_GUID,
+                    "dbo.sales",
+                    "stat_sales_id",
+                ],
+            )
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert "histogram" in parsed
+        assert isinstance(parsed["histogram"], list)
+        assert len(parsed["histogram"]) == 2
+
+    def test_show_json_structure_unchanged(self, runner: CliRunner) -> None:
+        """JSON output from show must be byte-identical to model_dump serialization."""
+        mock_http = AsyncMock()
+        details = _make_statistic_details()
+        expected = json.loads(
+            json.dumps(details.model_dump(by_alias=True, mode="json"), indent=2, default=str)
+        )
+        with (
+            patch(
+                "fabric_dw.cli.commands.statistics.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.statistics.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.statistics.show_statistics",
+                new=AsyncMock(return_value=details),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "--json",
+                    "-w",
+                    WS_GUID,
+                    "statistics",
+                    "show",
+                    WH_GUID,
+                    "dbo.sales",
+                    "stat_sales_id",
+                ],
+            )
+        assert result.exit_code == 0
+        actual = json.loads(result.output)
+        assert actual == expected
+
+    def test_show_non_json_contains_histogram_headers(self, runner: CliRunner) -> None:
+        """Non-JSON output must include histogram column headers."""
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.statistics.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.statistics.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.statistics.show_statistics",
+                new=AsyncMock(return_value=_make_statistic_details()),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", WS_GUID, "statistics", "show", WH_GUID, "dbo.sales", "stat_sales_id"],
+            )
+        assert result.exit_code == 0
+        assert "RANGE_HI_KEY" in result.output
+        assert "EQ_ROWS" in result.output
 
 
 # ===========================================================================

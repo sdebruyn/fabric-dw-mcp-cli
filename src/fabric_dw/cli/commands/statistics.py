@@ -5,7 +5,7 @@ from __future__ import annotations
 import click
 
 from fabric_dw.cli._context import CliContext
-from fabric_dw.cli._render import render
+from fabric_dw.cli._render import render, render_statistic_details
 from fabric_dw.cli.commands._utils import (
     build_http_client,
     build_sql_target,
@@ -117,7 +117,7 @@ async def show_cmd(
                 histogram_only=histogram_only,
                 mode=ctx.auth,
             )
-            render(details.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
+            render_statistic_details(details, json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
