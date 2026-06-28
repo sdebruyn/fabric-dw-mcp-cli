@@ -102,8 +102,8 @@ class TestSqlPoolsStatus:
                 new=AsyncMock(return_value=WS_UUID),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_pools._svc.get_configuration",
-                new=AsyncMock(return_value=_CONFIG),
+                "fabric_dw.cli.commands.sql_pools._svc.get_status",
+                new=AsyncMock(return_value=True),
             ),
         ):
             result = runner.invoke(cli, ["-w", WS_GUID, "--json", "sql-pools", "status"])
@@ -124,8 +124,8 @@ class TestSqlPoolsStatus:
                 new=AsyncMock(return_value=WS_UUID),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_pools._svc.get_configuration",
-                new=AsyncMock(return_value=_CONFIG_DISABLED),
+                "fabric_dw.cli.commands.sql_pools._svc.get_status",
+                new=AsyncMock(return_value=False),
             ),
         ):
             result = runner.invoke(cli, ["-w", WS_GUID, "--json", "sql-pools", "status"])
@@ -145,7 +145,7 @@ class TestSqlPoolsStatus:
                 new=AsyncMock(return_value=WS_UUID),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_pools._svc.get_configuration",
+                "fabric_dw.cli.commands.sql_pools._svc.get_status",
                 new=AsyncMock(side_effect=PermissionDeniedError("403")),
             ),
         ):
@@ -808,7 +808,7 @@ class TestSqlPoolsStatusFabricError:
                 new=AsyncMock(return_value=WS_UUID),
             ),
             patch(
-                "fabric_dw.cli.commands.sql_pools._svc.get_configuration",
+                "fabric_dw.cli.commands.sql_pools._svc.get_status",
                 new=AsyncMock(side_effect=FabricError("server error")),
             ),
         ):

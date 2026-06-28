@@ -101,14 +101,13 @@ async def test_get_sql_pools_status_happy_path(mock_ctx, ctx_patch) -> None:
     """get_sql_pools_status returns only the enabled flag, not the pool list."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
-    config = _make_config()
     mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
 
     with (
         ctx_patch,
         patch(
-            "fabric_dw.services.sql_pools.get_configuration",
-            new=AsyncMock(return_value=config),
+            "fabric_dw.services.sql_pools.get_status",
+            new=AsyncMock(return_value=True),
         ),
     ):
         result = await mcp._tool_manager.call_tool(
@@ -123,14 +122,13 @@ async def test_get_sql_pools_status_disabled(mock_ctx, ctx_patch) -> None:
     """get_sql_pools_status returns False when custom pools are disabled."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
-    config = _make_config(enabled=False)
     mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
 
     with (
         ctx_patch,
         patch(
-            "fabric_dw.services.sql_pools.get_configuration",
-            new=AsyncMock(return_value=config),
+            "fabric_dw.services.sql_pools.get_status",
+            new=AsyncMock(return_value=False),
         ),
     ):
         result = await mcp._tool_manager.call_tool(
@@ -189,7 +187,7 @@ async def test_get_sql_pools_status_service_fabric_error(mock_ctx, ctx_patch) ->
     with (
         ctx_patch,
         patch(
-            "fabric_dw.services.sql_pools.get_configuration",
+            "fabric_dw.services.sql_pools.get_status",
             new=AsyncMock(side_effect=FabricError("api error")),
         ),
         pytest.raises(ToolError),
@@ -198,6 +196,47 @@ async def test_get_sql_pools_status_service_fabric_error(mock_ctx, ctx_patch) ->
             "get_sql_pools_status",
             {"workspace": _WS_NAME},
         )
+
+
+async def test_get_sql_pools_status_broken_pool_schema_does_not_crash(mock_ctx, ctx_patch) -> None:
+    """get_sql_pools_status still returns the flag when nested pool fields are missing.
+
+    This verifies the integration between get_status() and the MCP tool: even
+    if the beta API returns a pool list with missing required fields (which would
+    fail SqlPoolsConfiguration.model_validate), the status call must succeed.
+    get_status() reads only the top-level key, so get_sql_pools_status must not
+    raise ToolError in this scenario.  See issue #905.
+
+    The mock_ctx HTTP client is configured to return the broken payload directly,
+    bypassing the real network layer (respx cannot intercept mock objects).
+    """
+    from unittest.mock import MagicMock  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    broken_payload = {
+        "customSQLPoolsEnabled": True,
+        "customSQLPools": [
+            # 'name' and 'maxResourcePercentage' are intentionally absent.
+            {"isDefault": True, "optimizeForReads": False}
+        ],
+    }
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+
+    # Configure the mock HTTP client to return the broken payload.
+    mock_response = MagicMock()
+    mock_response.json.return_value = broken_payload
+    mock_ctx.http.request = AsyncMock(return_value=mock_response)
+
+    with ctx_patch:
+        result = await mcp._tool_manager.call_tool(
+            "get_sql_pools_status",
+            {"workspace": _WS_NAME},
+        )
+
+    assert result == {"customSQLPoolsEnabled": True}
+    # Confirm the HTTP layer was actually invoked -- not just a mock shortcut.
+    mock_ctx.http.request.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
