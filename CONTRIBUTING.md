@@ -127,15 +127,21 @@ The plugin version (`plugin.json`) is auto-bumped from stable git tags by the Pu
 
 1. **Tag**: run `just tag X.Y.Z` (e.g. `just tag 2026.7.0`) **from a clean, up-to-date local `main`**. The version must follow `YYYY.M.N` (year `20xx`, month `1–12` with no leading zero, patch `0` or a positive integer without a leading zero, no prerelease suffix).
 2. **Publish**: the `Publish` CI workflow fires on the tag push, ships the package to PyPI, and creates a GitHub Release.
-3. **Auto-bump**: the `sync-plugin-manifest` job (in the same workflow) then checks out `main`, updates `.claude-plugin/plugin.json` to match the tag, and commits directly to `main` as `github-actions[bot]`. No manual PR needed.
+3. **Auto-bump**: the `sync-plugin-manifest` job (in the same workflow) checks out the default branch, updates `.claude-plugin/plugin.json` to match the tag, and commits directly using a PAT. No manual PR needed.
 
 ### Optional: pre-bump via release-prep PR
 
 If you prefer to commit the `plugin.json` bump before tagging (e.g. for review purposes), `just release X.Y.Z` is still available. It writes the version into `plugin.json` so you can open a release-prep PR. After the PR is merged, `just tag X.Y.Z` proceeds as normal. The CI `sync-plugin-manifest` job will detect that `plugin.json` is already correct and skip the auto-commit.
 
-### Required one-time repo setting
+### Required one-time repo setup
 
-The `sync-plugin-manifest` job pushes directly to `main` as `github-actions[bot]`. For this to succeed, a repository administrator must add **github-actions[bot]** to the "Allow specified actors to bypass required pull requests" list under **Settings > Branches > main** branch protection rules. Required status checks must also not block the bot's direct push. Without this setting, the auto-commit step will fail with a permission error and `plugin.json` will remain at its previous value on `main` until manually updated.
+The `sync-plugin-manifest` job pushes a commit directly to the default branch. It uses a fine-grained PAT (stored as a repo secret) to bypass branch protection:
+
+1. **Create the PAT**: an admin account must create a fine-grained Personal Access Token scoped to this repository with **Contents: Read and Write** permission. This allows the push to bypass branch protection rules (because `enforce_admins` is not set on this repo's main branch).
+2. **Store it as a secret**: add the PAT as a repository secret named **`RELEASE_BUMP_TOKEN`** under **Settings > Secrets and variables > Actions**.
+3. **Protect tags** (strongly recommended): because a `v*` tag push now causes an automated commit straight to the default branch via a PAT, it is important that only authorised maintainers can create `v*` tags. Add a tag protection rule under **Settings > Tags** matching the pattern `v*` so that only repository admins or designated roles can push release tags.
+
+Without `RELEASE_BUMP_TOKEN`, the auto-commit step will fail and `plugin.json` will remain at its previous value on the default branch (the PyPI publish and GitHub Release are unaffected).
 
 ### Prerelease builds
 
