@@ -2,7 +2,8 @@
 
 Fixture note: uses ``read_target`` from conftest for the read leg
 (``get_settings`` is dual-target) and ``shared_warehouse`` for the DWH-only
-write leg (``set_result_set_caching`` / ``set_time_travel_retention``).
+write leg (``set_result_set_caching`` / ``set_time_travel_retention`` /
+``set_data_lake_log_publishing``).
 
 The ``read_target`` fixture is parametrized over two targets:
   - ``[warehouse]``     — Data Warehouse (always runs)
@@ -21,7 +22,7 @@ from fabric_dw.models import WarehouseSettings
 from fabric_dw.services import settings
 from fabric_dw.sql import SqlTarget
 
-from .conftest import SharedWarehouseTarget
+from .conftest import SharedSqlEndpointTarget, SharedWarehouseTarget
 
 pytestmark = pytest.mark.integration
 
@@ -52,6 +53,25 @@ async def test_get_settings_returns_warehouse_settings(
     if result.time_travel_retention_days is not None:
         assert isinstance(result.time_travel_retention_days, int)
         assert result.time_travel_retention_days >= 0
+    # data_lake_log_publishing is always a bool; NULL from the driver (SQL
+    # Analytics Endpoints) is mapped to False by _row_to_settings.
+    assert isinstance(result.data_lake_log_publishing, bool)
+
+
+@pytest.mark.sql_endpoint
+async def test_get_settings_sql_endpoint_dllp_is_false(
+    shared_sql_endpoint: SharedSqlEndpointTarget,
+) -> None:
+    """get_settings on a SQL Analytics Endpoint must return data_lake_log_publishing=False.
+
+    SQL Analytics Endpoints return NULL for ``data_lake_log_publishing_desc``
+    in ``sys.databases`` (warehouse-only column).  _row_to_settings maps NULL
+    to False; this test verifies that mapping holds end-to-end with a live
+    endpoint connection.
+    """
+    result = await settings.get_settings(shared_sql_endpoint.sql_target)
+    assert isinstance(result, WarehouseSettings)
+    assert result.data_lake_log_publishing is False
 
 
 # ---------------------------------------------------------------------------

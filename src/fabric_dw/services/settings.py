@@ -94,6 +94,12 @@ SELECT
 FROM sys.databases
 WHERE database_id = DB_ID();
 """
+# Dual-target note: sys.databases is readable on both Data Warehouses and SQL
+# Analytics Endpoints.  Warehouse-specific columns (time_travel_* and
+# data_lake_log_publishing_desc) are present in the view on both target types
+# but return NULL on SQL Analytics Endpoints — the same precedent as the existing
+# time_travel_retention_period_days column.  _row_to_settings handles NULL values
+# gracefully: time_travel_retention_days -> None, data_lake_log_publishing -> False.
 
 # ON/OFF are SQL keywords — embedded as a literal derived from a Python bool,
 # never from arbitrary user input.
@@ -128,8 +134,10 @@ def _row_to_settings(cols: list[str], row: tuple[object, ...]) -> WarehouseSetti
     else:
         cutoff = None
     # data_lake_log_publishing_desc may be NULL on SQL Analytics Endpoints; default to False.
+    # isinstance guard keeps the type narrowed to str before calling .upper(), so
+    # None (NULL) and any unexpected non-string value both map safely to False.
     raw_dllp = data.get("data_lake_log_publishing_desc")
-    data_lake_log_publishing = str(raw_dllp).upper() == "AUTO" if raw_dllp is not None else False
+    data_lake_log_publishing = isinstance(raw_dllp, str) and raw_dllp.upper() == "AUTO"
     return WarehouseSettings(
         database=str(data["name"]),
         result_set_caching=bool(data["is_result_set_caching_on"]),

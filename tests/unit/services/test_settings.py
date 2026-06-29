@@ -321,6 +321,73 @@ class TestSetDataLakeLogPublishing:
         assert "=" in settings._SET_DLLP_SQL_PAUSED
         assert "AUTO" not in settings._SET_DLLP_SQL_PAUSED
 
+    async def test_enable_dispatches_auto_ddl(self) -> None:
+        """enabled=True must dispatch the = AUTO statement (not = PAUSED).
+
+        Captures the SQL actually passed to run_query so that a ternary swap
+        (AUTO/PAUSED swapped) would fail this test even if the constants
+        themselves look correct.
+        """
+        from unittest.mock import AsyncMock  # noqa: PLC0415
+
+        target = _make_target()
+        executed_sqls: list[str] = []
+
+        def _capture_ddl(_t: object, sql: str, **_kw: object) -> None:
+            executed_sqls.append(sql)
+
+        mock_result = WarehouseSettings(
+            database="SalesWarehouse",
+            result_set_caching=True,
+            time_travel_retention_days=7,
+            time_travel_retention_cutoff_date=None,
+            data_lake_log_publishing=True,
+        )
+        with (
+            patch("fabric_dw.services.settings.run_query", side_effect=_capture_ddl),
+            patch(
+                "fabric_dw.services.settings.get_settings",
+                new=AsyncMock(return_value=mock_result),
+            ),
+        ):
+            await settings.set_data_lake_log_publishing(target, enabled=True)
+
+        assert len(executed_sqls) == 1
+        assert executed_sqls[0] == settings._SET_DLLP_SQL_AUTO
+
+    async def test_disable_dispatches_paused_ddl(self) -> None:
+        """enabled=False must dispatch the = PAUSED statement (not = AUTO).
+
+        Captures the SQL actually passed to run_query so that a ternary swap
+        would fail this test even if the constants themselves look correct.
+        """
+        from unittest.mock import AsyncMock  # noqa: PLC0415
+
+        target = _make_target()
+        executed_sqls: list[str] = []
+
+        def _capture_ddl(_t: object, sql: str, **_kw: object) -> None:
+            executed_sqls.append(sql)
+
+        mock_result = WarehouseSettings(
+            database="SalesWarehouse",
+            result_set_caching=True,
+            time_travel_retention_days=7,
+            time_travel_retention_cutoff_date=None,
+            data_lake_log_publishing=False,
+        )
+        with (
+            patch("fabric_dw.services.settings.run_query", side_effect=_capture_ddl),
+            patch(
+                "fabric_dw.services.settings.get_settings",
+                new=AsyncMock(return_value=mock_result),
+            ),
+        ):
+            await settings.set_data_lake_log_publishing(target, enabled=False)
+
+        assert len(executed_sqls) == 1
+        assert executed_sqls[0] == settings._SET_DLLP_SQL_PAUSED
+
     async def test_enable_returns_settings(self) -> None:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()

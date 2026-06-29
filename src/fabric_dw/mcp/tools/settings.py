@@ -37,8 +37,9 @@ def register(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Return the current server-side database settings for a warehouse.
 
-        Reads ``result_set_caching``, ``time_travel_retention_days``, and
-        ``time_travel_retention_cutoff_date`` from ``sys.databases``.
+        Reads ``result_set_caching``, ``time_travel_retention_days``,
+        ``time_travel_retention_cutoff_date``, and ``data_lake_log_publishing``
+        from ``sys.databases``.
 
         Both Data Warehouses and SQL Analytics Endpoints are supported.
 
