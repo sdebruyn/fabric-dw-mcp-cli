@@ -152,3 +152,47 @@ def register(mcp: FastMCP) -> None:
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
         return result.model_dump(mode="json")
+
+    @mutating_tool(mcp, "set_data_lake_log_publishing")
+    async def set_data_lake_log_publishing(
+        workspace: str,
+        item: str,
+        enabled: bool,  # noqa: FBT001
+    ) -> dict[str, Any]:
+        """Enable or disable Delta Lake log publishing on a warehouse.
+
+        Executes ``ALTER DATABASE CURRENT SET DATA_LAKE_LOG_PUBLISHING = { AUTO | PAUSED }``
+        and returns the effective settings read back after the change.
+
+        Only supported on Fabric Data Warehouses (not SQL Analytics Endpoints).
+        SQL Analytics Endpoints are rejected with a ``ToolError``.
+
+        Args:
+            workspace: Workspace name or GUID.
+            item: Warehouse name or GUID.  SQL Analytics Endpoints are rejected.
+            enabled: ``True`` to enable Delta Lake log publishing (``= AUTO``),
+                ``False`` to disable it (``= PAUSED``).
+        """
+        ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
+        try:
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
+            _log.debug(
+                "set_data_lake_log_publishing ws=%s item=%s enabled=%s",
+                ws_id,
+                entry.id,
+                enabled,
+            )
+            target = make_sql_target(ws_id, entry, item)
+            result = await settings_svc.set_data_lake_log_publishing(
+                target,
+                enabled=enabled,
+                kind=entry.kind,
+                mode=ctx.auth_mode,
+            )
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        return result.model_dump(mode="json")

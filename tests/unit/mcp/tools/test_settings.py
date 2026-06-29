@@ -25,12 +25,14 @@ def _make_settings(
     *,
     result_set_caching: bool = True,
     time_travel_retention_days: int | None = 7,
+    data_lake_log_publishing: bool = True,
 ) -> WarehouseSettings:
     return WarehouseSettings(
         database="my-warehouse",
         result_set_caching=result_set_caching,
         time_travel_retention_days=time_travel_retention_days,
         time_travel_retention_cutoff_date=_NOW,
+        data_lake_log_publishing=data_lake_log_publishing,
     )
 
 
@@ -361,13 +363,14 @@ async def test_set_time_travel_retention_workspace_allowlist_blocks(ctx_patch) -
 
 
 def test_settings_tools_are_registered() -> None:
-    """All three settings tools are registered in the MCP server."""
+    """All settings tools are registered in the MCP server."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     tool_names = {t.name for t in mcp._tool_manager.list_tools()}
     assert "get_warehouse_settings" in tool_names
     assert "set_result_set_caching" in tool_names
     assert "set_time_travel_retention" in tool_names
+    assert "set_data_lake_log_publishing" in tool_names
 
 
 # ---------------------------------------------------------------------------
@@ -469,4 +472,129 @@ async def test_set_time_travel_retention_rejects_sql_endpoint_via_real_guard(
         await mcp._tool_manager.call_tool(
             "set_time_travel_retention",
             {"workspace": WS_NAME, "item": "MySqlEndpoint", "days": 14},
+        )
+
+
+# ---------------------------------------------------------------------------
+# set_data_lake_log_publishing — happy path + guards
+# ---------------------------------------------------------------------------
+
+
+async def test_set_data_lake_log_publishing_enable(mock_ctx, ctx_patch) -> None:
+    """set_data_lake_log_publishing calls service with enabled=True and returns settings."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    settings = _make_settings(data_lake_log_publishing=True)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+    mock_set = AsyncMock(return_value=settings)
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.settings.set_data_lake_log_publishing", new=mock_set),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "set_data_lake_log_publishing",
+            {"workspace": WS_NAME, "item": WH_NAME, "enabled": True},
+        )
+
+    assert isinstance(result, dict)
+    assert result["data_lake_log_publishing"] is True
+    _, kwargs = mock_set.call_args
+    assert kwargs.get("enabled") is True
+    assert kwargs.get("mode") is mock_ctx.auth_mode
+
+
+async def test_set_data_lake_log_publishing_disable(mock_ctx, ctx_patch) -> None:
+    """set_data_lake_log_publishing calls service with enabled=False and returns settings."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    settings = _make_settings(data_lake_log_publishing=False)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+    mock_set = AsyncMock(return_value=settings)
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.settings.set_data_lake_log_publishing", new=mock_set),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "set_data_lake_log_publishing",
+            {"workspace": WS_NAME, "item": WH_NAME, "enabled": False},
+        )
+
+    assert result["data_lake_log_publishing"] is False
+    _, kwargs = mock_set.call_args
+    assert kwargs.get("enabled") is False
+
+
+async def test_set_data_lake_log_publishing_readonly_blocked(ctx_patch) -> None:
+    """set_data_lake_log_publishing is blocked by FABRIC_MCP_READONLY."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
+        pytest.raises(ToolError, match="read-only"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "set_data_lake_log_publishing",
+            {"workspace": WS_NAME, "item": WH_NAME, "enabled": True},
+        )
+
+
+async def test_set_data_lake_log_publishing_workspace_allowlist_blocks(ctx_patch) -> None:
+    """set_data_lake_log_publishing raises ToolError when workspace is not in allowlist."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
+        pytest.raises(ToolError, match="allowlist"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "set_data_lake_log_publishing",
+            {"workspace": WS_NAME, "item": WH_NAME, "enabled": True},
+        )
+
+
+async def test_set_data_lake_log_publishing_forwards_kind_to_service(mock_ctx, ctx_patch) -> None:
+    """set_data_lake_log_publishing passes kind=entry.kind to the service call."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+    from tests.unit.mcp.conftest import make_item_entry  # noqa: PLC0415
+
+    settings = _make_settings()
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+    mock_set = AsyncMock(return_value=settings)
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.settings.set_data_lake_log_publishing", new=mock_set),
+    ):
+        await mcp._tool_manager.call_tool(
+            "set_data_lake_log_publishing",
+            {"workspace": WS_NAME, "item": WH_NAME, "enabled": True},
+        )
+
+    _, kwargs = mock_set.call_args
+    from fabric_dw.models import WarehouseKind  # noqa: PLC0415
+
+    assert kwargs.get("kind") == WarehouseKind.WAREHOUSE
+
+
+async def test_set_data_lake_log_publishing_rejects_sql_endpoint_via_real_guard(
+    mock_ctx, ctx_patch
+) -> None:
+    """set_data_lake_log_publishing raises ToolError when entry.kind is SQL_ENDPOINT."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+    from tests.unit.mcp.conftest import make_sql_endpoint_entry  # noqa: PLC0415
+
+    mock_ctx.resolver.item = AsyncMock(return_value=make_sql_endpoint_entry())
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.sql.open_connection", side_effect=Exception("should not connect")),
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "set_data_lake_log_publishing",
+            {"workspace": WS_NAME, "item": "MySqlEndpoint", "enabled": True},
         )

@@ -27,12 +27,13 @@ def settings_group() -> None:
     """Manage server-side database settings on Fabric Data Warehouses.
 
     ``settings`` manages server-side warehouse/database configuration
-    (result-set caching, time-travel retention).  For client-side CLI
-    defaults (workspace, warehouse) use the ``config`` group instead.
+    (result-set caching, time-travel retention, Delta Lake log publishing).
+    For client-side CLI defaults (workspace, warehouse) use the ``config``
+    group instead.
 
     ``show`` works on both Data Warehouses and SQL Analytics Endpoints.
-    ``result-set-caching`` and ``retention`` are Data-Warehouse-only —
-    SQL Analytics Endpoints are rejected with an error.
+    ``result-set-caching``, ``retention``, and ``data-lake-log-publishing``
+    are Data-Warehouse-only — SQL Analytics Endpoints are rejected with an error.
     """
 
 
@@ -101,6 +102,48 @@ async def result_set_caching_cmd(
             else:
                 click.echo(
                     f"Result-set caching {'enabled' if enabled else 'disabled'} "
+                    f"on {result.database!r}."
+                )
+    except (ValueError, FabricError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+@settings_group.command("data-lake-log-publishing")
+@click.argument("item", required=False, default=None)
+@click.argument("state", type=click.Choice(["on", "off"], case_sensitive=False))
+@click.pass_obj
+@coro
+async def data_lake_log_publishing_cmd(
+    ctx: CliContext,
+    item: str | None,
+    state: str,
+) -> None:
+    """Enable or disable Delta Lake log publishing on ITEM.
+
+    STATE must be ``on`` or ``off`` (case-insensitive).
+
+    Executes ``ALTER DATABASE CURRENT SET DATA_LAKE_LOG_PUBLISHING = { AUTO | PAUSED }``
+    on the target.  Only supported on Fabric Data Warehouses — SQL Analytics
+    Endpoints are rejected with an error.
+
+    ITEM may be a display name or GUID.  The workspace is resolved from
+    the global ``-w`` option, ``FABRIC_DW_DEFAULT_WORKSPACE`` env var, or
+    the client-side config default.
+    """
+    ws = resolve_workspace(ctx)
+    wh = resolve_warehouse_arg(ctx, item)
+    enabled = state.lower() == "on"
+    try:
+        async with build_http_client(ctx) as http:
+            target, entry = await build_sql_target(http, ws, wh)
+            result = await _settings_svc.set_data_lake_log_publishing(
+                target, enabled=enabled, kind=entry.kind, mode=ctx.auth
+            )
+            if ctx.json_output:
+                render(result.model_dump(by_alias=True, mode="json"), json_output=True)
+            else:
+                click.echo(
+                    f"Delta Lake log publishing {'enabled' if enabled else 'disabled'} "
                     f"on {result.database!r}."
                 )
     except (ValueError, FabricError) as exc:

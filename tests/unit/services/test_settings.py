@@ -23,6 +23,7 @@ _SETTINGS_COLS = [
     "is_result_set_caching_on",
     "time_travel_retention_period_days",
     "time_travel_retention_cutoff_date",
+    "data_lake_log_publishing_desc",
 ]
 
 _SETTINGS_ROW: tuple[object, ...] = (
@@ -30,6 +31,7 @@ _SETTINGS_ROW: tuple[object, ...] = (
     True,
     7,
     _NOW,
+    "AUTO",
 )
 
 _SETTINGS_ROW_CACHING_OFF: tuple[object, ...] = (
@@ -37,6 +39,7 @@ _SETTINGS_ROW_CACHING_OFF: tuple[object, ...] = (
     False,
     7,
     _NOW,
+    "AUTO",
 )
 
 _SETTINGS_ROW_NO_CUTOFF: tuple[object, ...] = (
@@ -44,6 +47,7 @@ _SETTINGS_ROW_NO_CUTOFF: tuple[object, ...] = (
     True,
     30,
     None,
+    "AUTO",
 )
 
 _SETTINGS_ROW_NULL_DAYS: tuple[object, ...] = (
@@ -51,6 +55,15 @@ _SETTINGS_ROW_NULL_DAYS: tuple[object, ...] = (
     True,
     None,  # NULL time_travel_retention_period_days (SQL Analytics Endpoint)
     None,
+    None,  # NULL data_lake_log_publishing_desc (SQL Analytics Endpoint)
+)
+
+_SETTINGS_ROW_DLLP_PAUSED: tuple[object, ...] = (
+    "SalesWarehouse",
+    True,
+    7,
+    _NOW,
+    "PAUSED",
 )
 
 
@@ -70,6 +83,7 @@ class TestGetSettings:
         assert result.result_set_caching is True
         assert result.time_travel_retention_days == 7
         assert result.time_travel_retention_cutoff_date == _NOW
+        assert result.data_lake_log_publishing is True
 
     async def test_none_cutoff_is_none(self) -> None:
         target = _make_target()
@@ -86,16 +100,17 @@ class TestGetSettings:
         assert result.result_set_caching is False
 
     async def test_selects_correct_columns(self) -> None:
-        """Verify the SQL selects the four expected columns."""
+        """Verify the SQL selects the expected columns including the new one."""
         sql = settings._GET_SETTINGS_SQL
         assert "is_result_set_caching_on" in sql
         assert "time_travel_retention_period_days" in sql
         assert "time_travel_retention_cutoff_date" in sql
+        assert "data_lake_log_publishing_desc" in sql
         assert "DB_ID()" in sql
 
     async def test_naive_cutoff_converted_to_utc(self) -> None:
         naive_ts = datetime(2024, 6, 1, 12, 0, 0)  # noqa: DTZ001
-        row: tuple[object, ...] = ("SalesWarehouse", True, 7, naive_ts)
+        row: tuple[object, ...] = ("SalesWarehouse", True, 7, naive_ts, "AUTO")
         target = _make_target()
         conn = _make_conn([row], _SETTINGS_COLS)
         with patch("fabric_dw.sql.open_connection", return_value=conn):
@@ -124,7 +139,7 @@ class TestGetSettings:
     async def test_bare_date_cutoff_promoted_to_midnight_utc(self) -> None:
         """A bare datetime.date returned by the driver must be promoted to midnight UTC."""
         bare = date(2024, 6, 1)
-        row: tuple[object, ...] = ("SalesWarehouse", True, 7, bare)
+        row: tuple[object, ...] = ("SalesWarehouse", True, 7, bare, "AUTO")
         target = _make_target()
         conn = _make_conn([row], _SETTINGS_COLS)
         with patch("fabric_dw.sql.open_connection", return_value=conn):
@@ -134,7 +149,7 @@ class TestGetSettings:
     async def test_quasi_naive_cutoff_treated_as_utc(self) -> None:
         """A quasi-naive cutoff (tzinfo present but utcoffset() returns None) is treated as UTC."""
         quasi_naive = datetime(2024, 6, 1, 12, 0, 0, tzinfo=_NoOffsetTz())
-        row: tuple[object, ...] = ("SalesWarehouse", True, 7, quasi_naive)
+        row: tuple[object, ...] = ("SalesWarehouse", True, 7, quasi_naive, "AUTO")
         target = _make_target()
         conn = _make_conn([row], _SETTINGS_COLS)
         with patch("fabric_dw.sql.open_connection", return_value=conn):
@@ -143,6 +158,30 @@ class TestGetSettings:
         assert result.time_travel_retention_cutoff_date.tzinfo == UTC
         cutoff = result.time_travel_retention_cutoff_date
         assert cutoff == datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC)
+
+    async def test_dllp_auto_maps_to_true(self) -> None:
+        """data_lake_log_publishing_desc == 'AUTO' maps to data_lake_log_publishing=True."""
+        target = _make_target()
+        conn = _make_conn([_SETTINGS_ROW], _SETTINGS_COLS)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await settings.get_settings(target)
+        assert result.data_lake_log_publishing is True
+
+    async def test_dllp_paused_maps_to_false(self) -> None:
+        """data_lake_log_publishing_desc == 'PAUSED' maps to data_lake_log_publishing=False."""
+        target = _make_target()
+        conn = _make_conn([_SETTINGS_ROW_DLLP_PAUSED], _SETTINGS_COLS)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await settings.get_settings(target)
+        assert result.data_lake_log_publishing is False
+
+    async def test_dllp_null_maps_to_false(self) -> None:
+        """NULL data_lake_log_publishing_desc (e.g. SQL Analytics Endpoint) maps to False."""
+        target = _make_target()
+        conn = _make_conn([_SETTINGS_ROW_NULL_DAYS], _SETTINGS_COLS)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await settings.get_settings(target)
+        assert result.data_lake_log_publishing is False
 
 
 # ===========================================================================
@@ -206,7 +245,7 @@ class TestSetTimeTravelRetention:
     async def test_valid_days_returns_settings(self) -> None:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
-        row: tuple[object, ...] = ("SalesWarehouse", True, 30, None)
+        row: tuple[object, ...] = ("SalesWarehouse", True, 30, None, "AUTO")
         read_conn = _make_conn([row], _SETTINGS_COLS)
 
         with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, read_conn]):
@@ -223,7 +262,7 @@ class TestSetTimeTravelRetention:
     async def test_boundary_min_accepted(self) -> None:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
-        row: tuple[object, ...] = ("SalesWarehouse", True, 1, None)
+        row: tuple[object, ...] = ("SalesWarehouse", True, 1, None, "AUTO")
         read_conn = _make_conn([row], _SETTINGS_COLS)
 
         with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, read_conn]):
@@ -233,7 +272,7 @@ class TestSetTimeTravelRetention:
     async def test_boundary_max_accepted(self) -> None:
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
-        row: tuple[object, ...] = ("SalesWarehouse", True, 120, None)
+        row: tuple[object, ...] = ("SalesWarehouse", True, 120, None, "AUTO")
         read_conn = _make_conn([row], _SETTINGS_COLS)
 
         with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, read_conn]):
@@ -251,7 +290,7 @@ class TestSetTimeTravelRetention:
         """ALTER DATABASE must use autocommit=True."""
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
-        row: tuple[object, ...] = ("SalesWarehouse", True, 7, None)
+        row: tuple[object, ...] = ("SalesWarehouse", True, 7, None, "AUTO")
         read_conn = _make_conn([row], _SETTINGS_COLS)
         autocommit_values: list[bool] = []
 
@@ -262,6 +301,79 @@ class TestSetTimeTravelRetention:
         with patch("fabric_dw.sql.open_connection", side_effect=_open):
             await settings.set_time_travel_retention(target, days=7)
         assert autocommit_values[0] is True
+
+
+# ===========================================================================
+# set_data_lake_log_publishing
+# ===========================================================================
+
+
+class TestSetDataLakeLogPublishing:
+    async def test_enable_uses_auto_sql(self) -> None:
+        """AUTO keyword (with =) is used when enabled=True."""
+        assert "AUTO" in settings._SET_DLLP_SQL_AUTO
+        assert "=" in settings._SET_DLLP_SQL_AUTO
+        assert "PAUSED" not in settings._SET_DLLP_SQL_AUTO
+
+    async def test_disable_uses_paused_sql(self) -> None:
+        """PAUSED keyword (with =) is used when enabled=False."""
+        assert "PAUSED" in settings._SET_DLLP_SQL_PAUSED
+        assert "=" in settings._SET_DLLP_SQL_PAUSED
+        assert "AUTO" not in settings._SET_DLLP_SQL_PAUSED
+
+    async def test_enable_returns_settings(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        read_conn = _make_conn([_SETTINGS_ROW], _SETTINGS_COLS)
+
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, read_conn]):
+            result = await settings.set_data_lake_log_publishing(target, enabled=True)
+        assert isinstance(result, WarehouseSettings)
+        assert result.data_lake_log_publishing is True
+
+    async def test_disable_returns_settings(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        read_conn = _make_conn([_SETTINGS_ROW_DLLP_PAUSED], _SETTINGS_COLS)
+
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, read_conn]):
+            result = await settings.set_data_lake_log_publishing(target, enabled=False)
+        assert result.data_lake_log_publishing is False
+
+    async def test_alter_database_runs_with_autocommit(self) -> None:
+        """ALTER DATABASE must use autocommit=True."""
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        read_conn = _make_conn([_SETTINGS_ROW], _SETTINGS_COLS)
+        autocommit_values: list[bool] = []
+
+        def _open(_t: object, **_kw: object) -> object:
+            autocommit_values.append(bool(_kw.get("autocommit", False)))
+            return ddl_conn if not autocommit_values[:-1] else read_conn
+
+        with patch("fabric_dw.sql.open_connection", side_effect=_open):
+            await settings.set_data_lake_log_publishing(target, enabled=True)
+        # First connection (ALTER DATABASE) must be autocommit.
+        assert autocommit_values[0] is True
+
+    async def test_rejects_sql_endpoint(self) -> None:
+        """set_data_lake_log_publishing must raise ItemKindError for SQL_ENDPOINT."""
+        target = _make_target()
+        with pytest.raises(ItemKindError, match="SQL Analytics Endpoints are read-only"):
+            await settings.set_data_lake_log_publishing(
+                target, enabled=True, kind=WarehouseKind.SQL_ENDPOINT
+            )
+
+    async def test_warehouse_allowed(self) -> None:
+        """set_data_lake_log_publishing must not raise for WAREHOUSE (the default)."""
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        read_conn = _make_conn([_SETTINGS_ROW], _SETTINGS_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, read_conn]):
+            result = await settings.set_data_lake_log_publishing(
+                target, enabled=True, kind=WarehouseKind.WAREHOUSE
+            )
+        assert isinstance(result, WarehouseSettings)
 
 
 # ===========================================================================
@@ -289,7 +401,7 @@ class TestPublicConstants:
 
 
 class TestSqlEndpointGuard:
-    """set_result_set_caching and set_time_travel_retention are DWH-only."""
+    """Write operations (set_result_set_caching, set_time_travel_retention, etc.) are DWH-only."""
 
     async def test_set_result_set_caching_rejects_sql_endpoint(self) -> None:
         """set_result_set_caching must raise ItemKindError for SQL_ENDPOINT."""
@@ -322,7 +434,7 @@ class TestSqlEndpointGuard:
         """set_time_travel_retention must not raise for WAREHOUSE (the default)."""
         target = _make_target()
         ddl_conn = _make_conn_for_ddl()
-        row: tuple[object, ...] = ("SalesWarehouse", True, 7, None)
+        row: tuple[object, ...] = ("SalesWarehouse", True, 7, None, "AUTO")
         read_conn = _make_conn([row], _SETTINGS_COLS)
         with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, read_conn]):
             result = await settings.set_time_travel_retention(

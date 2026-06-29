@@ -649,8 +649,9 @@ class WarehouseSettings(_FabricBase):
     """Server-side database settings read from ``sys.databases``.
 
     Both Data Warehouses and SQL Analytics Endpoints expose these settings.
-    The two write operations (:func:`~fabric_dw.services.settings.set_result_set_caching`
-    and :func:`~fabric_dw.services.settings.set_time_travel_retention`) require
+    The write operations (:func:`~fabric_dw.services.settings.set_result_set_caching`,
+    :func:`~fabric_dw.services.settings.set_time_travel_retention`, and
+    :func:`~fabric_dw.services.settings.set_data_lake_log_publishing`) require
     a Data Warehouse (they execute ``ALTER DATABASE CURRENT SET …``).
 
     Attributes:
@@ -659,12 +660,16 @@ class WarehouseSettings(_FabricBase):
         time_travel_retention_days: Time-travel retention period in days.
         time_travel_retention_cutoff_date: The earliest date for which time-travel
             data is retained, or ``None`` when not applicable.
+        data_lake_log_publishing: Whether Delta Lake log publishing is enabled
+            (``True`` = ``AUTO``, ``False`` = ``PAUSED``).  ``None``/``NULL``
+            from the driver (e.g. on SQL Analytics Endpoints) maps to ``False``.
     """
 
     database: str
     result_set_caching: bool
     time_travel_retention_days: int | None
     time_travel_retention_cutoff_date: datetime | None
+    data_lake_log_publishing: bool
 
 
 # ---------------------------------------------------------------------------
