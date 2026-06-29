@@ -683,6 +683,155 @@ class TestCountTableRows:
 
 
 # ===========================================================================
+# export_table
+# ===========================================================================
+
+
+class TestExportTable:
+    async def test_returns_row_count(self, tmp_path: Path) -> None:
+        target = _make_target()
+        rows: list[tuple[object, ...]] = [(1, "Alice"), (2, "Bob"), (3, "Carol")]
+        conn = _make_conn(rows, ["id", "name"])
+        output = tmp_path / "out.parquet"
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            count = await tables.export_table(target, "dbo", "sales", output, "parquet")
+        assert count == 3
+
+    async def test_sql_no_top_when_no_limit(self, tmp_path: Path) -> None:
+        """Without --limit, SELECT * is used (no TOP clause)."""
+        target = _make_target()
+        conn = _make_conn([(1,)], ["id"])
+        output = tmp_path / "out.parquet"
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await tables.export_table(target, "dbo", "sales", output, "parquet")
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0].upper()
+        assert "TOP" not in call_sql
+        assert "SELECT * FROM" in call_sql
+
+    async def test_sql_top_when_limit_given(self, tmp_path: Path) -> None:
+        """With --limit N, SELECT TOP (N) is used."""
+        target = _make_target()
+        conn = _make_conn([(1,)], ["id"])
+        output = tmp_path / "out.parquet"
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await tables.export_table(target, "dbo", "sales", output, "parquet", limit=50)
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0].upper()
+        assert "SELECT TOP (50)" in call_sql
+
+    async def test_sql_uses_bracket_quoting(self, tmp_path: Path) -> None:
+        target = _make_target()
+        conn = _make_conn([(1,)], ["id"])
+        output = tmp_path / "out.parquet"
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await tables.export_table(target, "dbo", "sales", output, "parquet")
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert "[dbo]" in call_sql
+        assert "[sales]" in call_sql
+
+    async def test_as_of_appends_option_clause(self, tmp_path: Path) -> None:
+        target = _make_target()
+        conn = _make_conn([(1,)], ["id"])
+        output = tmp_path / "out.parquet"
+        as_of = datetime(2024, 3, 15, 10, 30, 45, 123_000, tzinfo=UTC)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await tables.export_table(target, "dbo", "sales", output, "parquet", as_of=as_of)
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert "OPTION (FOR TIMESTAMP AS OF '2024-03-15T10:30:45.123')" in call_sql
+
+    async def test_as_of_none_no_option_clause(self, tmp_path: Path) -> None:
+        target = _make_target()
+        conn = _make_conn([(1,)], ["id"])
+        output = tmp_path / "out.parquet"
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await tables.export_table(target, "dbo", "sales", output, "parquet")
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert "OPTION" not in call_sql
+
+    async def test_validates_schema_identifier(self, tmp_path: Path) -> None:
+        target = _make_target()
+        output = tmp_path / "out.parquet"
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await tables.export_table(target, "bad;schema", "sales", output, "parquet")
+
+    async def test_validates_table_name_identifier(self, tmp_path: Path) -> None:
+        target = _make_target()
+        output = tmp_path / "out.parquet"
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await tables.export_table(target, "dbo", "table--injection", output, "parquet")
+
+    async def test_raises_not_found_when_no_columns(self, tmp_path: Path) -> None:
+        target = _make_target()
+        cursor = MagicMock()
+        cursor.description = None
+        cursor.fetchall.return_value = []
+        conn = MagicMock()
+        conn.cursor.return_value = cursor
+        output = tmp_path / "out.parquet"
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(NotFoundError),
+        ):
+            await tables.export_table(target, "dbo", "nonexistent", output, "parquet")
+
+    async def test_write_arrow_called_with_correct_format_parquet(self, tmp_path: Path) -> None:
+        target = _make_target()
+        conn = _make_conn([(1, "x")], ["id", "name"])
+        output = tmp_path / "out.parquet"
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            patch("fabric_dw.services.tables.write_arrow") as mock_write,
+        ):
+            await tables.export_table(target, "dbo", "sales", output, "parquet")
+        mock_write.assert_called_once()
+        _, call_fmt, call_output = mock_write.call_args[0]
+        assert call_fmt == "parquet"
+        assert call_output == output
+
+    async def test_write_arrow_called_with_correct_format_csv(self, tmp_path: Path) -> None:
+        target = _make_target()
+        conn = _make_conn([(1,)], ["id"])
+        output = tmp_path / "out.csv"
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            patch("fabric_dw.services.tables.write_arrow") as mock_write,
+        ):
+            await tables.export_table(target, "dbo", "sales", output, "csv")
+        mock_write.assert_called_once()
+        _, call_fmt, _ = mock_write.call_args[0]
+        assert call_fmt == "csv"
+
+    async def test_return_value_equals_row_count(self, tmp_path: Path) -> None:
+        target = _make_target()
+        rows: list[tuple[object, ...]] = [(i,) for i in range(7)]
+        conn = _make_conn(rows, ["id"])
+        output = tmp_path / "out.parquet"
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            patch("fabric_dw.services.tables.write_arrow"),
+        ):
+            count = await tables.export_table(target, "dbo", "sales", output, "parquet")
+        assert count == 7
+
+    async def test_option_clause_before_semicolon(self, tmp_path: Path) -> None:
+        target = _make_target()
+        conn = _make_conn([(1,)], ["id"])
+        output = tmp_path / "out.parquet"
+        as_of = datetime(2024, 1, 1, tzinfo=UTC)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await tables.export_table(target, "dbo", "sales", output, "parquet", as_of=as_of)
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        option_idx = call_sql.index("OPTION")
+        semicolon_idx = call_sql.rindex(";")
+        assert option_idx < semicolon_idx
+
+
+# ===========================================================================
 # get_cluster_columns
 # ===========================================================================
 

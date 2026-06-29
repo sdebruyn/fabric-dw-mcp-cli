@@ -59,6 +59,7 @@ from fabric_dw.services.schema_infer import (
     infer_columns_from_parquet,
 )
 from fabric_dw.sql import SqlTarget, run_query, run_statements
+from fabric_dw.sql_io import columns_rows_to_arrow, write_arrow
 from fabric_dw.types import validate_tsql_type
 
 __all__ = [
@@ -71,6 +72,7 @@ __all__ = [
     "create_table_from_json",
     "create_table_from_parquet",
     "delete_table",
+    "export_table",
     "get_cluster_columns",
     "get_table_health_metrics",
     "infer_columns_from_csv",
@@ -138,6 +140,10 @@ _READ_TABLE_SQL = "SELECT TOP ({count}) * FROM {schema_q}.{table_q};"
 
 # COUNT_BIG(*) is bigint-safe (avoids INT overflow on wide tables).
 _COUNT_TABLE_SQL = "SELECT COUNT_BIG(*) AS row_count FROM {schema_q}.{table_q};"
+
+# Full-table export — no TOP; limit variant uses TOP when a row cap is requested.
+_EXPORT_TABLE_SQL = "SELECT * FROM {schema_q}.{table_q};"
+_EXPORT_TABLE_LIMIT_SQL = "SELECT TOP ({limit}) * FROM {schema_q}.{table_q};"
 
 _CLUSTER_COLUMNS_SQL = """\
 SELECT c.name AS column_name, ic.data_clustering_ordinal AS clustering_ordinal
@@ -348,6 +354,78 @@ async def count_table_rows(
             msg = f"Table [{schema}].[{table_name}] not found"
             raise NotFoundError(msg)
         return TableRowCount(schema_name=schema, name=table_name, row_count=int(rows[0][0]))
+
+    return await asyncio.to_thread(_run)
+
+
+async def export_table(
+    target: SqlTarget,
+    schema: str,
+    table_name: str,
+    output: Path,
+    fmt: str,
+    *,
+    as_of: datetime | None = None,
+    limit: int | None = None,
+    mode: CredentialMode = CredentialMode.DEFAULT,
+) -> int:
+    """Export all rows of *schema*.*table_name* to a local file.
+
+    Fetches the full result set into memory (V1; streaming is a future follow-up),
+    converts to Arrow via :func:`~fabric_dw.sql_io.columns_rows_to_arrow`, and
+    writes with :func:`~fabric_dw.sql_io.write_arrow`.
+
+    Args:
+        target: The warehouse or SQL Analytics Endpoint to query.
+        schema: The schema name.  Must pass :func:`validate_identifier`.
+        table_name: The table name.  Must pass :func:`validate_identifier`.
+        output: Destination file path.
+        fmt: One of ``"json"``, ``"csv"``, ``"parquet"``.
+        as_of: Optional point-in-time for time-travel exports.  When set, the
+            query includes ``OPTION (FOR TIMESTAMP AS OF '<utc-literal>')``.
+            Naive datetimes are assumed UTC; tz-aware datetimes are converted to
+            UTC.  *None* leaves the SQL unchanged.
+        limit: Optional row cap.  When set, ``SELECT TOP (N)`` is used instead
+            of ``SELECT *``.  *None* exports the full table without a TOP clause.
+        mode: The credential mode for Entra authentication.
+
+    Returns:
+        The number of rows exported as a Python :class:`int`.
+
+    Raises:
+        ValueError: If *schema* or *table_name* fails identifier validation, or
+            if *fmt* is not a recognised :class:`~fabric_dw.sql_io.OutputFormat`.
+        NotFoundError: If the table does not exist (zero columns returned).
+        PermissionDeniedError: If the driver reports a permission error.
+    """
+    validate_identifier(schema)
+    validate_identifier(table_name)
+
+    schema_q = quote_identifier(schema)
+    table_q = quote_identifier(table_name)
+
+    if limit is not None:
+        base_sql = _EXPORT_TABLE_LIMIT_SQL.format(
+            limit=int(limit),
+            schema_q=schema_q,
+            table_q=table_q,
+        )
+    else:
+        base_sql = _EXPORT_TABLE_SQL.format(schema_q=schema_q, table_q=table_q)
+
+    as_of_clause = build_time_travel_option(as_of)
+    # Strip the trailing ";" to insert the (possibly empty) OPTION clause, then re-add it.
+    export_sql = base_sql[:-1] + as_of_clause + ";"
+
+    def _run() -> int:
+        cols, rows = run_query(target, export_sql, mode=mode)
+        if not cols:
+            msg = f"Table [{schema}].[{table_name}] not found"
+            raise NotFoundError(msg)
+        row_list = list(rows)
+        arrow_table = columns_rows_to_arrow(cols, row_list)
+        write_arrow(arrow_table, fmt, output)
+        return len(row_list)
 
     return await asyncio.to_thread(_run)
 

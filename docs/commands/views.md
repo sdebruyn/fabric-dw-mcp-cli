@@ -72,6 +72,55 @@ fdw -w MyWorkspace --json views count SalesWH dbo.vw_sales --as-of 2024-03-15T10
 fdw -w MyWorkspace --json views count SalesWH dbo.vw_sales --ago 1h
 ```
 
+### views export
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Export the full contents of a view to a local file in Parquet, CSV, or JSON format.
+
+The output format is inferred from the `--output` extension (`.parquet`, `.csv`, `.json`, `.pq`). Use `--format` to override.
+
+**Memory caveat:** the full result set is loaded into the Python process before writing. Ensure sufficient RAM, or use `--limit` to export a sample only. A streaming variant is a planned future follow-up.
+
+Use `--as-of` or `--ago` to export the view's data as it was at an earlier point in time (time travel). The view definition itself is not affected; only the underlying data is time-travelled. The same retention window applies as for `views read`.
+
+By default, if the output file already exists it is overwritten. Pass `--no-overwrite` to fail instead.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] views export [OPTIONS] [WAREHOUSE] QUALIFIED_NAME
+```
+
+| Option | Description | Default |
+| --- | --- | --- |
+| `--output PATH` | **Required.** Destination file path. | |
+| `--format {csv\|json\|parquet}` | Output format. Inferred from extension when omitted. | inferred |
+| `--limit N` | Export at most N rows (sampling). Omit for full export. | |
+| `--no-overwrite` | Fail if `--output` already exists. | overwrite |
+| `--as-of ISO8601` | Export as it was at this UTC timestamp. Mutually exclusive with `--ago`. | |
+| `--ago DURATION` | Export as it was this duration ago (e.g. `1h`, `90m`, `2d`). Mutually exclusive with `--as-of`. | |
+
+**Example**
+
+```shell
+# Full export to Parquet (format inferred from extension)
+fdw -w MyWorkspace views export SalesWH dbo.vw_sales --output vw_sales.parquet
+
+# Sample 200 rows as CSV
+fdw -w MyWorkspace views export SalesWH dbo.vw_sales --output sample.csv --limit 200
+
+# Point-in-time export
+fdw -w MyWorkspace views export SalesWH dbo.vw_sales --output snapshot.parquet --ago 2d
+
+# JSON output (machine-readable)
+fdw -w MyWorkspace --json views export SalesWH dbo.vw_sales --output out.parquet
+```
+
+```json
+{"status": "exported", "rows": 12345, "output": "out.parquet"}
+```
+
 ### views create
 
 **Targets:** Data Warehouse / SQL Analytics Endpoint

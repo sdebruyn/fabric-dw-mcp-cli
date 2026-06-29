@@ -19,7 +19,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from datetime import UTC, datetime
+from pathlib import Path
 
+import pyarrow.parquet as pq
 import pytest
 
 from fabric_dw.exceptions import FabricError, NotFoundError
@@ -609,3 +611,72 @@ async def test_get_table_health_metrics_on_sql_endpoint(
     assert isinstance(metrics.rows, list), f"expected list of row tuples, got {type(metrics.rows)}"
     for row in metrics.rows:
         assert isinstance(row, tuple), f"each row must be a tuple, got {type(row)}: {row!r}"
+
+
+# ===========================================================================
+# export_table — Parquet round-trip
+# ===========================================================================
+
+
+async def test_export_table_parquet_roundtrip(
+    warehouse_schema: tuple[SqlTarget, str],
+    tmp_path: Path,
+) -> None:
+    """export_table: seed a table, export as Parquet, read back, assert values."""
+    sql_target, schema = warehouse_schema
+    table_name = "pytest_export_roundtrip"
+    select_body = "SELECT 1 AS id, 'hello' AS greeting UNION ALL SELECT 2, 'world'"
+
+    try:
+        await tables.create_table(sql_target, schema, table_name, select_body)
+
+        output = tmp_path / "export.parquet"
+        row_count = await tables.export_table(sql_target, schema, table_name, output, "parquet")
+
+        assert row_count == 2
+        assert output.exists()
+
+        # Read the Parquet back with pyarrow and verify the contents.
+        pq_table = pq.read_table(str(output))
+        assert pq_table.num_rows == 2
+        col_names = set(pq_table.schema.names)
+        assert "id" in col_names
+        assert "greeting" in col_names
+
+        ids = pq_table.column("id").to_pylist()
+        greetings = pq_table.column("greeting").to_pylist()
+        assert sorted(ids) == [1, 2]
+        assert sorted(greetings) == ["hello", "world"]
+
+    finally:
+        with contextlib.suppress(Exception):
+            await tables.delete_table(sql_target, schema, table_name)
+
+
+async def test_export_table_with_limit(
+    warehouse_schema: tuple[SqlTarget, str],
+    tmp_path: Path,
+) -> None:
+    """export_table with --limit returns at most N rows."""
+    sql_target, schema = warehouse_schema
+    table_name = "pytest_export_limit"
+    # Seed 5 rows and export with limit=2.
+    select_body = (
+        "SELECT 1 AS id UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5"
+    )
+
+    try:
+        await tables.create_table(sql_target, schema, table_name, select_body)
+
+        output = tmp_path / "export_limit.parquet"
+        row_count = await tables.export_table(
+            sql_target, schema, table_name, output, "parquet", limit=2
+        )
+
+        assert row_count == 2
+        pq_table = pq.read_table(str(output))
+        assert pq_table.num_rows == 2
+
+    finally:
+        with contextlib.suppress(Exception):
+            await tables.delete_table(sql_target, schema, table_name)
