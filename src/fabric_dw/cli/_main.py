@@ -47,6 +47,7 @@ _DESTRUCTIVE_CLI_COMMANDS: frozenset[str] = frozenset(
     {
         "functions.drop",
         "permissions.cls.revoke",
+        "permissions.mask.drop",
         "permissions.sql.revoke",
         "procedures.drop",
         "restore-points.delete",

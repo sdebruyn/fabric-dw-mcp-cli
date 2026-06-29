@@ -38,6 +38,7 @@ from fabric_dw.mcp._helpers import (
     resolve_item,
     tool_err,
 )
+from fabric_dw.services import mask as _mask_svc
 from fabric_dw.services import permissions as _permissions_svc
 from fabric_dw.services import rls as _rls_svc
 
@@ -697,3 +698,189 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
         return {"dropped": True, "policy_name": policy_name}
+
+    # -------------------------------------------------------------------------
+    # Dynamic data masking tools
+    # -------------------------------------------------------------------------
+
+    @mcp.tool(name="list_masked_columns")
+    async def list_masked_columns_tool(
+        workspace: str,
+        item: str,
+        table_schema: str | None = None,
+        table_name: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List columns with dynamic data masking from sys.masked_columns.
+
+        Returns all masked columns on the target Data Warehouse or SQL Analytics
+        Endpoint.  Filter by *table_schema* and/or *table_name* to narrow results.
+
+        Args:
+            workspace: Workspace name or GUID.
+            item: Warehouse or SQL endpoint name or GUID.
+            table_schema: Optional schema filter (case-insensitive). Pass ``None``
+                to include all schemas.
+            table_name: Optional table name filter (case-insensitive). Pass ``None``
+                to include all tables.
+        """
+        ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
+        try:
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
+            _log.debug("list_masked_columns ws=%s item=%s", ws_id, entry.id)
+            target = make_sql_target(ws_id, entry, item)
+            result = await _mask_svc.list_masked_columns(
+                target,
+                table_schema=table_schema,
+                table_name=table_name,
+                mode=ctx.auth_mode,
+            )
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        return [c.model_dump(mode="json") for c in result]
+
+    @mutating_tool(mcp, "set_column_mask")
+    async def set_column_mask_tool(  # noqa: PLR0913
+        workspace: str,
+        item: str,
+        table_schema: str,
+        table_name: str,
+        column_name: str,
+        fn_type: str,
+        start: int | None = None,
+        end: int | None = None,
+        prefix: int | None = None,
+        padding: str | None = None,
+        suffix: int | None = None,
+    ) -> dict[str, Any]:
+        """Apply or replace a dynamic data mask on a column.
+
+        Executes ``ALTER TABLE ... ALTER COLUMN ... ADD MASKED WITH (FUNCTION = '...')``.
+        ``ADD MASKED`` replaces any existing mask on the column without error.
+
+        Blocked by ``FABRIC_MCP_READONLY``.
+
+        Supported mask function types:
+
+        - ``"default"`` -- full masking; no extra args.
+        - ``"email"`` -- email masking (exposes first char and ``".com"`` suffix); no extra args.
+        - ``"random"`` -- numeric random mask; requires *start* and *end*.
+        - ``"partial"`` -- custom string partial mask; requires *prefix*, *padding*, and *suffix*.
+
+        Args:
+            workspace: Workspace name or GUID.
+            item: Warehouse or SQL endpoint name or GUID.
+            table_schema: Schema name of the target table.
+            table_name: Name of the target table.
+            column_name: Name of the column to mask.
+            fn_type: Mask function type -- ``"default"``, ``"email"``, ``"random"``,
+                or ``"partial"`` (case-insensitive).
+            start: Lower bound for ``random()`` masking (required when *fn_type* is
+                ``"random"``). Must be <= *end*.
+            end: Upper bound for ``random()`` masking (required when *fn_type* is
+                ``"random"``).
+            prefix: Leading characters to expose for ``partial()`` masking (required
+                when *fn_type* is ``"partial"``).
+            padding: Replacement padding string for ``partial()`` masking (required
+                when *fn_type* is ``"partial"``). Must not contain ``"``, ``)``,
+                ``;``, ``--``, control characters (including U+0085, U+2028,
+                U+2029), and must not exceed 128 characters.
+            suffix: Trailing characters to expose for ``partial()`` masking (required
+                when *fn_type* is ``"partial"``).
+        """
+        ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
+        try:
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
+            target = make_sql_target(ws_id, entry, item)
+            mask_fn_literal = await _mask_svc.set_column_mask(
+                target,
+                table_schema,
+                table_name,
+                column_name,
+                fn_type,
+                start=start,
+                end=end,
+                prefix=prefix,
+                padding=padding,
+                suffix=suffix,
+                mode=ctx.auth_mode,
+            )
+            _log.debug(
+                "set_column_mask ws=%s item=%s table=%s.%s col=%s fn=%r",
+                ws_id,
+                entry.id,
+                table_schema,
+                table_name,
+                column_name,
+                mask_fn_literal,
+            )
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        return {
+            "masked": True,
+            "table_schema": table_schema,
+            "table_name": table_name,
+            "column_name": column_name,
+            "masking_function": mask_fn_literal,
+        }
+
+    @mutating_tool(mcp, "drop_column_mask", destructive=True)
+    async def drop_column_mask_tool(
+        workspace: str,
+        item: str,
+        table_schema: str,
+        table_name: str,
+        column_name: str,
+    ) -> dict[str, Any]:
+        """Remove a dynamic data mask from a column.
+
+        Executes ``ALTER TABLE ... ALTER COLUMN ... DROP MASKED``.
+        This is a permanently destructive operation -- the mask is removed from the
+        column and unmasked values become visible to all users who query the column.
+        Requires ``FABRIC_MCP_ALLOW_DESTRUCTIVE=1``.
+
+        Args:
+            workspace: Workspace name or GUID.
+            item: Warehouse or SQL endpoint name or GUID.
+            table_schema: Schema name of the target table.
+            table_name: Name of the target table.
+            column_name: Name of the column whose mask to remove.
+        """
+        ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
+        try:
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
+            _log.debug(
+                "drop_column_mask ws=%s item=%s table=%s.%s col=%s",
+                ws_id,
+                entry.id,
+                table_schema,
+                table_name,
+                column_name,
+            )
+            target = make_sql_target(ws_id, entry, item)
+            await _mask_svc.drop_column_mask(
+                target,
+                table_schema,
+                table_name,
+                column_name,
+                mode=ctx.auth_mode,
+            )
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        return {
+            "dropped": True,
+            "table_schema": table_schema,
+            "table_name": table_name,
+            "column_name": column_name,
+        }

@@ -6,7 +6,7 @@ title: Permissions
 
 Manage Fabric item-level and T-SQL in-database permissions.
 
-Four distinct permission planes are exposed under the `permissions` top-level group:
+Five distinct permission planes are exposed under the `permissions` top-level group:
 
 - `permissions item` - Fabric item-level permissions (REST admin API). Covers which principals
   have access to a Warehouse or SQL Analytics Endpoint item.
@@ -17,6 +17,7 @@ Four distinct permission planes are exposed under the `permissions` top-level gr
   column lists rather than whole objects.
 - `permissions rls` - Row-level security. Manages security policies with filter and block
   predicates that reference existing predicate functions.
+- `permissions mask` - Dynamic data masking. Applies, inspects, and removes column-level masks.
 
 **Targets:** Data Warehouse / SQL Analytics Endpoint
 
@@ -548,6 +549,120 @@ fdw [-w WORKSPACE] [-y] permissions rls drop [ITEM] [POLICY_NAME]
 fdw -w MyWorkspace -y permissions rls drop SalesWH rls.SalesFilter
 ```
 
+Dynamic data masking (DDM) applies column-level masks that hide sensitive values from users who
+lack the `UNMASK` permission. Masked data is stored unchanged; only the presentation is altered.
+Use `permissions grant` / `permissions revoke` with the `UNMASK` permission token to control
+which principals see unmasked values.
+
+Reference: [Dynamic data masking in Fabric Data Warehouse](https://learn.microsoft.com/fabric/data-warehouse/dynamic-data-masking?WT.mc_id=MVP_310840)
+
+Supported mask functions:
+
+| Type | Arguments | Effect |
+| --- | --- | --- |
+| `default` | none | Full mask per data type (e.g. `XXXX` for strings, `0` for numerics). |
+| `email` | none | Shows first letter and `.com` suffix, e.g. `aXXX@XXXX.com`. |
+| `random` | `--start LOW --end HIGH` | Replaces numeric values with a random number in `[LOW, HIGH]`. |
+| `partial` | `--prefix N --padding STR --suffix M` | Shows `N` leading and `M` trailing characters; fills the rest with `STR`. |
+
+### permissions mask list
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+List all columns with dynamic data masking applied, optionally filtered to a single table.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] [--json] permissions mask list [ITEM] [SCHEMA.TABLE]
+```
+
+| Option | Description |
+| --- | --- |
+| `ITEM` | Data Warehouse or SQL Analytics Endpoint name (optional; uses config default). |
+| `SCHEMA.TABLE` | Restrict output to this table (optional). |
+
+**Example**
+
+```shell
+# All masked columns in the warehouse
+fdw -w MyWorkspace permissions mask list SalesWH
+
+# Masked columns in a single table
+fdw -w MyWorkspace permissions mask list SalesWH dbo.Customers
+```
+
+### permissions mask set
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Apply or replace a dynamic data mask on a single column. If the column already has a mask,
+`ADD MASKED` replaces it without error.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] permissions mask set [ITEM] SCHEMA.TABLE
+    --column COL --function TYPE
+    [--start LOW] [--end HIGH]
+    [--prefix N] [--padding STR] [--suffix M]
+```
+
+| Option | Description |
+| --- | --- |
+| `ITEM` | Data Warehouse or SQL Analytics Endpoint name. |
+| `SCHEMA.TABLE` | Schema-qualified table name (positional). |
+| `--column COL` | Column to apply the mask to (required). |
+| `--function TYPE` | Mask type: `default`, `email`, `random`, or `partial` (required). |
+| `--start LOW` | Lower bound for `random` mask (required when `--function random`). |
+| `--end HIGH` | Upper bound for `random` mask (required when `--function random`). |
+| `--prefix N` | Leading characters to expose for `partial` mask (required when `--function partial`). |
+| `--padding STR` | Replacement text for `partial` mask (required when `--function partial`). Cannot contain `"`, `)`, `;`, `--`, or control characters. |
+| `--suffix M` | Trailing characters to expose for `partial` mask (required when `--function partial`). |
+
+**Example**
+
+```shell
+# Email mask
+fdw -w MyWorkspace permissions mask set SalesWH dbo.Customers \
+    --column Email --function email
+
+# Random numeric mask
+fdw -w MyWorkspace permissions mask set SalesWH dbo.Employees \
+    --column Salary --function random --start 1 --end 99999
+
+# Partial mask showing the last 4 digits of a phone number
+fdw -w MyWorkspace permissions mask set SalesWH dbo.Customers \
+    --column Phone --function partial --prefix 0 --padding "XXX-XXX-" --suffix 4
+```
+
+### permissions mask drop
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Remove a masking function from a column. The column reverts to returning its actual value for
+all users (subject to normal column permissions). This is a destructive operation.
+
+Requires confirmation (`--yes` / `-y`) unless `FABRIC_MCP_ALLOW_DESTRUCTIVE=1` is set.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] [-y] permissions mask drop [ITEM] SCHEMA.TABLE --column COL
+```
+
+| Option | Description |
+| --- | --- |
+| `ITEM` | Data Warehouse or SQL Analytics Endpoint name. |
+| `SCHEMA.TABLE` | Schema-qualified table name (positional). |
+| `--column COL` | Column whose mask to remove (required). |
+
+**Example**
+
+```shell
+fdw -w MyWorkspace -y permissions mask drop SalesWH dbo.Customers --column Email
+```
+
 ## MCP tools
 
 ### list_item_permissions
@@ -696,3 +811,64 @@ because revoke removes an existing permission (destructive operation).
   grantee has granted the permission to (`CASCADE`).
 
 **Returns:** `{ "revoked": true, "permissions": str, "principal": str, "scope": str }`.
+
+### list_masked_columns
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+List columns with dynamic data masking applied, reading from `sys.masked_columns`.
+
+**Parameters:**
+
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): Warehouse or SQL endpoint name or GUID.
+- `table_schema` (`str | null`, optional): schema filter (case-insensitive). Omit for all schemas.
+- `table_name` (`str | null`, optional): table name filter (case-insensitive). Omit for all tables.
+
+**Returns:** `list[MaskedColumn]`: array of records with `schema_name`, `table_name`, `column_name`, and `masking_function`.
+
+### set_column_mask
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Apply or replace a dynamic data mask on a column. Executes
+`ALTER TABLE ... ALTER COLUMN ... ADD MASKED WITH (FUNCTION = '...')`.
+
+Blocked by `FABRIC_MCP_READONLY`. Does NOT require `FABRIC_MCP_ALLOW_DESTRUCTIVE`.
+
+**Parameters:**
+
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): Warehouse or SQL endpoint name or GUID.
+- `table_schema` (`str`): schema name of the target table.
+- `table_name` (`str`): name of the target table.
+- `column_name` (`str`): name of the column to mask.
+- `fn_type` (`str`): mask function type - `"default"`, `"email"`, `"random"`, or `"partial"` (case-insensitive).
+- `start` (`int | null`, optional): lower bound for `random` mask (required when `fn_type` is `"random"`).
+- `end` (`int | null`, optional): upper bound for `random` mask (required when `fn_type` is `"random"`). Must be >= `start`.
+- `prefix` (`int | null`, optional): leading characters to expose for `partial` mask (required when `fn_type` is `"partial"`).
+- `padding` (`str | null`, optional): replacement text for `partial` mask (required when `fn_type` is `"partial"`). Cannot contain `"`, `)`, `;`, `--`, control characters (including U+0085, U+2028, U+2029), and is capped at 128 characters.
+- `suffix` (`int | null`, optional): trailing characters to expose for `partial` mask (required when `fn_type` is `"partial"`).
+
+**Returns:** `{ "masked": true, "table_schema": str, "table_name": str, "column_name": str, "masking_function": str }`.
+
+### drop_column_mask
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Remove a dynamic data mask from a column. Executes
+`ALTER TABLE ... ALTER COLUMN ... DROP MASKED`.
+
+Blocked by `FABRIC_MCP_READONLY`. Also requires `FABRIC_MCP_ALLOW_DESTRUCTIVE=1` because
+removing a mask is destructive: unmasked data becomes visible to all users who can query the
+column.
+
+**Parameters:**
+
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): Warehouse or SQL endpoint name or GUID.
+- `table_schema` (`str`): schema name of the target table.
+- `table_name` (`str`): name of the target table.
+- `column_name` (`str`): name of the column whose mask to remove.
+
+**Returns:** `{ "dropped": true, "table_schema": str, "table_name": str, "column_name": str }`.

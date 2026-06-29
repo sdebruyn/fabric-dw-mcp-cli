@@ -98,6 +98,10 @@ DOMAIN_MAP: dict[str, str] = {
     "drop_security_predicate": "permissions",
     "set_security_policy_state": "permissions",
     "drop_security_policy": "permissions",
+    # Dynamic data masking
+    "list_masked_columns": "permissions",
+    "set_column_mask": "permissions",
+    "drop_column_mask": "permissions",
     # Audit
     "get_audit_settings": "audit",
     "enable_audit": "audit",

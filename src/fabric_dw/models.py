@@ -1128,3 +1128,29 @@ class SecurityPolicy(_FabricBase):
     policy_name: str
     is_enabled: bool
     predicates: list[SecurityPredicate]
+
+
+# ---------------------------------------------------------------------------
+# Dynamic data masking models
+# ---------------------------------------------------------------------------
+
+
+class MaskedColumn(_FabricBase):
+    """A column with a dynamic data masking function applied.
+
+    Sourced from ``sys.masked_columns`` joined to ``sys.columns``,
+    ``sys.objects``, and ``sys.schemas``.
+
+    Attributes:
+        schema_name: Schema of the table that owns the masked column.
+        table_name: Name of the table that owns the masked column.
+        column_name: Name of the masked column.
+        masking_function: The masking function literal stored in the catalog,
+            e.g. ``"default()"``, ``"email()"``, ``"random(1,12)"``, or
+            ``'partial(2,"XXXX",2)'``.
+    """
+
+    schema_name: str
+    table_name: str
+    column_name: str
+    masking_function: str
