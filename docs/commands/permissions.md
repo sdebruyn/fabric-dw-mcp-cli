@@ -851,7 +851,7 @@ Blocked by `FABRIC_MCP_READONLY`. Does NOT require `FABRIC_MCP_ALLOW_DESTRUCTIVE
 - `policy_name` (`str`): qualified policy name (`"schema.name"` or `"name"`).
 - `predicates` (`list[dict]`): list of predicate definitions. Each entry must include:
   - `predicate_type` (`str`): `"FILTER"` or `"BLOCK"`.
-  - `fn_schema` (`str`): schema of the predicate function.
+  - `fn_schema` (`str`, optional): schema of the predicate function. Omit when the function lives in the default schema.
   - `fn_name` (`str`): name of the predicate function.
   - `fn_args` (`list[str]`): column names to pass to the function.
   - `table_schema` (`str`): schema of the target table.
