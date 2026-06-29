@@ -14,7 +14,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/sdebruyn/fabric-dw-mcp-cli" alt="License"></a>
 </p>
 
-Python CLI and MCP server for administering Microsoft Fabric Data Warehouses and SQL Analytics Endpoints.
+Python CLI and MCP server for Microsoft Fabric Data Warehouses and SQL Analytics Endpoints: administer, query, optimize, and secure them from your terminal or your AI agent.
 
 **Full documentation: [fdw.debruyn.dev](https://fdw.debruyn.dev)**
 

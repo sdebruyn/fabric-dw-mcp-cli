@@ -13,7 +13,7 @@ title: Home
   <a href="https://pypi.org/project/fabric-dw/"><img src="https://img.shields.io/pypi/pyversions/fabric-dw" alt="Python versions"></a>
 </p>
 
-> Python CLI + MCP server for Microsoft Fabric Data Warehouse administration.
+> Python CLI and MCP server for Microsoft Fabric Data Warehouses and SQL Analytics Endpoints: administer, query, optimize, and secure them from your terminal or your AI agent.
 
 !!! tip "Just announced"
     Read the story behind `fabric-dw` in the [announcement blog post](https://debruyn.dev/2026/introducing-the-fabric-data-warehouse-cli-and-mcp-server/).
