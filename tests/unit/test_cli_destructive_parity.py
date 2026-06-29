@@ -50,6 +50,14 @@ _MCP_TO_CLI_DESTRUCTIVE_MAP: dict[str, str] = {
     "delete_warehouse": "warehouses.delete",
 }
 
+# CLI commands that reuse an MCP tool already in the map above (same tool, different scope).
+# Excluded from the map-values check to keep _MCP_TO_CLI_DESTRUCTIVE_MAP 1:1 from MCP perspective.
+_EXTRA_CLI_VIA_SHARED_MCP: frozenset[str] = frozenset(
+    {
+        "permissions.cls.revoke",  # shares revoke_permission with permissions.sql.revoke
+    }
+)
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -128,7 +136,7 @@ class TestDestructiveParity:
         _MCP_TO_CLI_DESTRUCTIVE_MAP.values() would be unreachable from MCP
         parity checks — this test catches that gap.
         """
-        map_values = set(_MCP_TO_CLI_DESTRUCTIVE_MAP.values())
+        map_values = set(_MCP_TO_CLI_DESTRUCTIVE_MAP.values()) | _EXTRA_CLI_VIA_SHARED_MCP
         missing = [
             f"{cmd!r} not a value in _MCP_TO_CLI_DESTRUCTIVE_MAP"
             for cmd in sorted(_DESTRUCTIVE_CLI_COMMANDS)
@@ -199,6 +207,9 @@ class TestDestructiveCliCommandsEmitDestructiveOp:
 
     def test_permissions_sql_revoke_is_destructive(self) -> None:
         assert "permissions.sql.revoke" in _DESTRUCTIVE_CLI_COMMANDS
+
+    def test_permissions_cls_revoke_is_destructive(self) -> None:
+        assert "permissions.cls.revoke" in _DESTRUCTIVE_CLI_COMMANDS
 
     def test_warehouses_delete_is_destructive(self) -> None:
         assert "warehouses.delete" in _DESTRUCTIVE_CLI_COMMANDS
@@ -286,6 +297,29 @@ class TestEmitDestructiveOpOnAbort:
         )
         assert destructive is True, (
             f"permissions sql revoke did not emit destructive_op=True on abort; got {destructive!r}"
+        )
+
+    def test_permissions_cls_revoke_emits_destructive_on_abort(self) -> None:
+        """permissions cls revoke aborted at prompt must still report destructive_op=True."""
+        destructive = _invoke_and_capture_destructive(
+            [
+                "-w",
+                "myws",
+                "permissions",
+                "cls",
+                "revoke",
+                "mywarehouse",
+                "SELECT",
+                "--from",
+                "alice@contoso.com",
+                "--object",
+                "dbo.sales",
+                "--columns",
+                "email",
+            ]
+        )
+        assert destructive is True, (
+            f"permissions cls revoke did not emit destructive_op=True on abort; got {destructive!r}"
         )
 
 

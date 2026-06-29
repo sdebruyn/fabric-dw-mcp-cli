@@ -845,3 +845,412 @@ class TestRemovedCommandsAreGone:
         _ = cache_env
         result = runner.invoke(cli, ["-w", WS_GUID, "sql-endpoints", "permissions", "--help"])
         assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# permissions cls
+# ---------------------------------------------------------------------------
+
+
+class TestPermissionsClsGrant:
+    """permissions cls grant -- column-level grant."""
+
+    def test_cls_grant_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_grant = AsyncMock(return_value=None)
+        with (
+            patch(
+                "fabric_dw.cli.commands.permissions.build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.permissions.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_wh_entry())),
+            ),
+            patch("fabric_dw.services.permissions.grant_permission", new=mock_grant),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "permissions",
+                    "cls",
+                    "grant",
+                    WH_GUID,
+                    "SELECT",
+                    "--to",
+                    "alice@contoso.com",
+                    "--object",
+                    "dbo.sales",
+                    "--columns",
+                    "email,phone",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        mock_grant.assert_awaited_once()
+        _args, kwargs = mock_grant.call_args
+        assert kwargs.get("columns") == ["email", "phone"]
+        assert kwargs.get("object_name") == "dbo.sales"
+        assert "Granted" in result.output
+
+    def test_cls_grant_missing_columns_fails(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        result = runner.invoke(
+            cli,
+            [
+                "-w",
+                WS_GUID,
+                "permissions",
+                "cls",
+                "grant",
+                WH_GUID,
+                "SELECT",
+                "--to",
+                "alice@contoso.com",
+                "--object",
+                "dbo.sales",
+                # --columns intentionally omitted
+            ],
+        )
+        assert result.exit_code != 0
+
+    def test_cls_grant_missing_object_fails(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        result = runner.invoke(
+            cli,
+            [
+                "-w",
+                WS_GUID,
+                "permissions",
+                "cls",
+                "grant",
+                WH_GUID,
+                "SELECT",
+                "--to",
+                "alice@contoso.com",
+                "--columns",
+                "col1",
+                # --object intentionally omitted
+            ],
+        )
+        assert result.exit_code != 0
+
+    def test_cls_grant_with_grant_option(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_grant = AsyncMock(return_value=None)
+        with (
+            patch(
+                "fabric_dw.cli.commands.permissions.build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.permissions.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_wh_entry())),
+            ),
+            patch("fabric_dw.services.permissions.grant_permission", new=mock_grant),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "permissions",
+                    "cls",
+                    "grant",
+                    WH_GUID,
+                    "SELECT",
+                    "--to",
+                    "alice@contoso.com",
+                    "--object",
+                    "dbo.sales",
+                    "--columns",
+                    "revenue",
+                    "--with-grant-option",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        _args, kwargs = mock_grant.call_args
+        assert kwargs.get("with_grant_option") is True
+
+    def test_cls_grant_non_column_applicable_permission_fails(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_grant = AsyncMock(side_effect=ValueError("Column-level permissions must be one of"))
+        with (
+            patch(
+                "fabric_dw.cli.commands.permissions.build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.permissions.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_wh_entry())),
+            ),
+            patch("fabric_dw.services.permissions.grant_permission", new=mock_grant),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "permissions",
+                    "cls",
+                    "grant",
+                    WH_GUID,
+                    "INSERT",
+                    "--to",
+                    "alice@contoso.com",
+                    "--object",
+                    "dbo.sales",
+                    "--columns",
+                    "col1",
+                ],
+            )
+        assert result.exit_code != 0
+
+
+class TestPermissionsClsDeny:
+    """permissions cls deny -- column-level deny."""
+
+    def test_cls_deny_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_deny = AsyncMock(return_value=None)
+        with (
+            patch(
+                "fabric_dw.cli.commands.permissions.build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.permissions.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_wh_entry())),
+            ),
+            patch("fabric_dw.services.permissions.deny_permission", new=mock_deny),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "permissions",
+                    "cls",
+                    "deny",
+                    WH_GUID,
+                    "SELECT",
+                    "--to",
+                    "alice@contoso.com",
+                    "--object",
+                    "dbo.sales",
+                    "--columns",
+                    "ssn",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        mock_deny.assert_awaited_once()
+        _args, kwargs = mock_deny.call_args
+        assert kwargs.get("columns") == ["ssn"]
+        assert "Denied" in result.output
+
+
+class TestPermissionsClsRevoke:
+    """permissions cls revoke -- destructive column-level revoke."""
+
+    def test_cls_revoke_exits_zero_with_yes(self, runner: CliRunner, cache_env: Path) -> None:
+        """cls revoke with -y skips the prompt and succeeds."""
+        _ = cache_env
+        mock_revoke = AsyncMock(return_value=None)
+        with (
+            patch(
+                "fabric_dw.cli.commands.permissions.build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.permissions.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_wh_entry())),
+            ),
+            patch("fabric_dw.services.permissions.revoke_permission", new=mock_revoke),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "--yes",
+                    "permissions",
+                    "cls",
+                    "revoke",
+                    WH_GUID,
+                    "SELECT",
+                    "--from",
+                    "alice@contoso.com",
+                    "--object",
+                    "dbo.sales",
+                    "--columns",
+                    "email,phone",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        mock_revoke.assert_awaited_once()
+        _args, kwargs = mock_revoke.call_args
+        assert kwargs.get("columns") == ["email", "phone"]
+        assert "Revoked" in result.output
+
+    def test_cls_revoke_aborts_without_yes(self, runner: CliRunner, cache_env: Path) -> None:
+        """cls revoke without -y aborts when stdin is empty."""
+        _ = cache_env
+        result = runner.invoke(
+            cli,
+            [
+                "-w",
+                WS_GUID,
+                "permissions",
+                "cls",
+                "revoke",
+                WH_GUID,
+                "SELECT",
+                "--from",
+                "alice@contoso.com",
+                "--object",
+                "dbo.sales",
+                "--columns",
+                "email",
+            ],
+        )
+        # Click CliRunner sends empty stdin, so the confirmation aborts
+        assert "Aborted" in result.output or result.exit_code != 0
+
+    def test_cls_revoke_with_cascade(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_revoke = AsyncMock(return_value=None)
+        with (
+            patch(
+                "fabric_dw.cli.commands.permissions.build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.permissions.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_wh_entry())),
+            ),
+            patch("fabric_dw.services.permissions.revoke_permission", new=mock_revoke),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "--yes",
+                    "permissions",
+                    "cls",
+                    "revoke",
+                    WH_GUID,
+                    "SELECT",
+                    "--from",
+                    "alice@contoso.com",
+                    "--object",
+                    "dbo.sales",
+                    "--columns",
+                    "email",
+                    "--cascade",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        _args, kwargs = mock_revoke.call_args
+        assert kwargs.get("cascade") is True
+
+
+class TestPermissionsClsList:
+    """permissions cls list -- show column-level permissions."""
+
+    def test_cls_list_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        col_perm = DatabasePermission(
+            principal_name="alice@contoso.com",
+            principal_type="EXTERNAL_USER",
+            state="GRANT",
+            permission_name="SELECT",
+            securable_class="OBJECT",
+            schema_name="dbo",
+            object_name="sales",
+            column_name="email",
+        )
+        with (
+            patch(
+                "fabric_dw.cli.commands.permissions.build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.permissions.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_wh_entry())),
+            ),
+            patch(
+                "fabric_dw.services.permissions.list_sql_permissions",
+                new=AsyncMock(return_value=[col_perm]),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "permissions",
+                    "cls",
+                    "list",
+                    WH_GUID,
+                    "--object",
+                    "dbo.sales",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+
+    def test_cls_list_filters_out_non_column_rows(self, runner: CliRunner, cache_env: Path) -> None:
+        """Rows without column_name must be excluded from cls list output."""
+        _ = cache_env
+        no_col_perm = DatabasePermission(
+            principal_name="alice@contoso.com",
+            principal_type="EXTERNAL_USER",
+            state="GRANT",
+            permission_name="SELECT",
+            securable_class="OBJECT",
+            schema_name="dbo",
+            object_name="sales",
+            column_name=None,
+        )
+        with (
+            patch(
+                "fabric_dw.cli.commands.permissions.build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.permissions.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_wh_entry())),
+            ),
+            patch(
+                "fabric_dw.services.permissions.list_sql_permissions",
+                new=AsyncMock(return_value=[no_col_perm]),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "--json",
+                    "-w",
+                    WS_GUID,
+                    "permissions",
+                    "cls",
+                    "list",
+                    WH_GUID,
+                    "--object",
+                    "dbo.sales",
+                ],
+            )
+        parsed = json.loads(result.output)
+        # The object-level row (no column) must be filtered out
+        assert parsed == []
+
+    def test_cls_list_missing_object_fails(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        result = runner.invoke(
+            cli,
+            ["-w", WS_GUID, "permissions", "cls", "list", WH_GUID],
+        )
+        assert result.exit_code != 0

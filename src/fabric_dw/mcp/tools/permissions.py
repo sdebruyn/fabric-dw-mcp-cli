@@ -11,12 +11,14 @@ Two planes are exposed:
 
 ``grant_permission``, ``deny_permission``
     T-SQL GRANT / DENY (mutating tools, blocked by FABRIC_MCP_READONLY,
-    NOT destructive-gated).
+    NOT destructive-gated).  Both accept an optional ``columns`` parameter
+    for column-level security (OBJECT scope only).
 
 ``revoke_permission``
     T-SQL REVOKE (mutating tool, blocked by FABRIC_MCP_READONLY,
     ALSO blocked by missing FABRIC_MCP_ALLOW_DESTRUCTIVE -- destructive-gated
-    because revoke removes an existing permission).
+    because revoke removes an existing permission).  Also accepts an optional
+    ``columns`` parameter for column-level security (OBJECT scope only).
 """
 
 from __future__ import annotations
@@ -205,6 +207,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         schema: str | None = None,
         object_name: str | None = None,
         with_grant_option: bool = False,  # noqa: FBT001, FBT002
+        columns: list[str] | None = None,
     ) -> dict[str, Any]:
         """Grant permissions on a securable to a principal.
 
@@ -224,6 +227,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 scope is ``"OBJECT"``).
             with_grant_option: When ``True``, allows the grantee to grant the
                 permission to others (adds ``WITH GRANT OPTION``).
+            columns: Optional list of column names for column-level security
+                (OBJECT scope only; permissions must be SELECT, UPDATE, or
+                REFERENCES).
         """
         ctx = get_context()
         assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
@@ -249,6 +255,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 schema=schema,
                 object_name=object_name,
                 with_grant_option=with_grant_option,
+                columns=columns,
                 mode=ctx.auth_mode,
             )
         except (ValueError, FabricError) as exc:
@@ -258,6 +265,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             "permissions": permissions,
             "principal": principal,
             "scope": scope.upper(),
+            "columns": columns,
         }
 
     @mutating_tool(mcp, "deny_permission")
@@ -269,6 +277,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         scope: str = "DATABASE",
         schema: str | None = None,
         object_name: str | None = None,
+        columns: list[str] | None = None,
     ) -> dict[str, Any]:
         """Deny permissions on a securable to a principal.
 
@@ -286,6 +295,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             schema: Schema name (required when scope is ``"SCHEMA"``).
             object_name: Qualified object name ``<schema>.<object>`` (required when
                 scope is ``"OBJECT"``).
+            columns: Optional list of column names for column-level security
+                (OBJECT scope only; permissions must be SELECT, UPDATE, or
+                REFERENCES).
         """
         ctx = get_context()
         assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
@@ -310,6 +322,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 scope.upper(),
                 schema=schema,
                 object_name=object_name,
+                columns=columns,
                 mode=ctx.auth_mode,
             )
         except (ValueError, FabricError) as exc:
@@ -319,6 +332,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             "permissions": permissions,
             "principal": principal,
             "scope": scope.upper(),
+            "columns": columns,
         }
 
     @mutating_tool(mcp, "revoke_permission", destructive=True)
@@ -330,6 +344,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         scope: str = "DATABASE",
         schema: str | None = None,
         object_name: str | None = None,
+        columns: list[str] | None = None,
         grant_option_only: bool = False,  # noqa: FBT001, FBT002
         cascade: bool = False,  # noqa: FBT001, FBT002
     ) -> dict[str, Any]:
@@ -350,6 +365,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             schema: Schema name (required when scope is ``"SCHEMA"``).
             object_name: Qualified object name ``<schema>.<object>`` (required when
                 scope is ``"OBJECT"``).
+            columns: Optional list of column names for column-level security
+                (OBJECT scope only; permissions must be SELECT, UPDATE, or
+                REFERENCES).
             grant_option_only: When ``True``, revokes only the grant option (adds
                 ``GRANT OPTION FOR``), leaving the base permission in place.
             cascade: When ``True``, cascades the revocation to principals the
@@ -378,6 +396,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 scope.upper(),
                 schema=schema,
                 object_name=object_name,
+                columns=columns,
                 grant_option_only=grant_option_only,
                 cascade=cascade,
                 mode=ctx.auth_mode,
@@ -389,4 +408,5 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             "permissions": permissions,
             "principal": principal,
             "scope": scope.upper(),
+            "columns": columns,
         }

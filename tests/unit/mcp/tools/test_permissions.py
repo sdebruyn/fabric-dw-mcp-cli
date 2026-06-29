@@ -517,3 +517,108 @@ async def test_old_mcp_tool_get_sql_endpoint_permissions_removed() -> None:
     assert "get_sql_endpoint_permissions" not in tool_names, (
         "get_sql_endpoint_permissions still registered; it was replaced by list_item_permissions"
     )
+
+
+# ---------------------------------------------------------------------------
+# Column-level security: grant/deny/revoke with columns parameter
+# ---------------------------------------------------------------------------
+
+
+async def test_grant_permission_with_columns_happy_path(mock_ctx, ctx_patch) -> None:
+    """grant_permission passes columns list to the service correctly."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    mock_svc = AsyncMock(return_value=None)
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {}, clear=False),
+        patch("fabric_dw.services.permissions.grant_permission", new=mock_svc),
+    ):
+        os.environ.pop("FABRIC_MCP_READONLY", None)
+        os.environ.pop("FABRIC_MCP_ALLOW_DESTRUCTIVE", None)
+        result = await mcp._tool_manager.call_tool(
+            "grant_permission",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "permissions": "SELECT",
+                "principal": "alice@contoso.com",
+                "scope": "OBJECT",
+                "object_name": "dbo.sales",
+                "columns": ["email", "phone"],
+            },
+        )
+
+    assert result["granted"] is True
+    _args, kwargs = mock_svc.call_args
+    assert kwargs.get("columns") == ["email", "phone"]
+
+
+async def test_deny_permission_with_columns_happy_path(mock_ctx, ctx_patch) -> None:
+    """deny_permission passes columns list to the service correctly."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    mock_svc = AsyncMock(return_value=None)
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {}),
+        patch("fabric_dw.services.permissions.deny_permission", new=mock_svc),
+    ):
+        os.environ.pop("FABRIC_MCP_READONLY", None)
+        result = await mcp._tool_manager.call_tool(
+            "deny_permission",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "permissions": "SELECT",
+                "principal": "alice@contoso.com",
+                "scope": "OBJECT",
+                "object_name": "dbo.sales",
+                "columns": ["ssn"],
+            },
+        )
+
+    assert result["denied"] is True
+    _args, kwargs = mock_svc.call_args
+    assert kwargs.get("columns") == ["ssn"]
+
+
+async def test_revoke_permission_with_columns_happy_path(mock_ctx, ctx_patch) -> None:
+    """revoke_permission passes columns list to the service correctly (destructive-gated)."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    mock_svc = AsyncMock(return_value=None)
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
+        patch("fabric_dw.services.permissions.revoke_permission", new=mock_svc),
+    ):
+        os.environ.pop("FABRIC_MCP_READONLY", None)
+        result = await mcp._tool_manager.call_tool(
+            "revoke_permission",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "permissions": "SELECT",
+                "principal": "alice@contoso.com",
+                "scope": "OBJECT",
+                "object_name": "dbo.sales",
+                "columns": ["email"],
+            },
+        )
+
+    assert result["revoked"] is True
+    _args, kwargs = mock_svc.call_args
+    assert kwargs.get("columns") == ["email"]

@@ -787,3 +787,257 @@ class TestValidatePermissionsOrder:
         result = _validate_permissions("SELECT,DELETE", "DATABASE")
         # Result must preserve input order: SELECT first, then DELETE.
         assert result == ["SELECT", "DELETE"]
+
+
+# ---------------------------------------------------------------------------
+# Column-level security (CLS)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildColumnList:
+    """Tests for the _build_column_list helper."""
+
+    def test_single_column(self) -> None:
+        from fabric_dw.services.permissions import _build_column_list  # noqa: PLC0415
+
+        result = _build_column_list(["email"])
+        assert result == " ([email])"
+
+    def test_multiple_columns(self) -> None:
+        from fabric_dw.services.permissions import _build_column_list  # noqa: PLC0415
+
+        result = _build_column_list(["first_name", "last_name", "email"])
+        assert result == " ([first_name], [last_name], [email])"
+
+    def test_empty_list_raises(self) -> None:
+        from fabric_dw.services.permissions import _build_column_list  # noqa: PLC0415
+
+        with pytest.raises(ValueError, match="At least one column"):
+            _build_column_list([])
+
+    def test_invalid_identifier_raises(self) -> None:
+        from fabric_dw.services.permissions import _build_column_list  # noqa: PLC0415
+
+        with pytest.raises(ValueError, match="Invalid"):
+            _build_column_list(["ok_col", "bad; col"])
+
+
+class TestColumnApplicablePermissions:
+    """COLUMN_APPLICABLE_PERMISSIONS allowlist."""
+
+    def test_select_is_column_applicable(self) -> None:
+        assert "SELECT" in perms_svc.COLUMN_APPLICABLE_PERMISSIONS
+
+    def test_update_is_column_applicable(self) -> None:
+        assert "UPDATE" in perms_svc.COLUMN_APPLICABLE_PERMISSIONS
+
+    def test_references_is_column_applicable(self) -> None:
+        assert "REFERENCES" in perms_svc.COLUMN_APPLICABLE_PERMISSIONS
+
+    def test_insert_is_not_column_applicable(self) -> None:
+        assert "INSERT" not in perms_svc.COLUMN_APPLICABLE_PERMISSIONS
+
+    def test_delete_is_not_column_applicable(self) -> None:
+        assert "DELETE" not in perms_svc.COLUMN_APPLICABLE_PERMISSIONS
+
+    def test_execute_is_not_column_applicable(self) -> None:
+        assert "EXECUTE" not in perms_svc.COLUMN_APPLICABLE_PERMISSIONS
+
+
+class TestGrantPermissionWithColumns:
+    """grant_permission with column list produces the correct SQL."""
+
+    async def test_grant_select_on_columns_exact_sql(self) -> None:
+        captured: list[str] = []
+
+        def _mock_run_query(_target: object, sql: str, **_kwargs: object) -> tuple:
+            captured.append(sql)
+            return [], []
+
+        with patch("fabric_dw.services.permissions.run_query", side_effect=_mock_run_query):
+            await perms_svc.grant_permission(
+                _TARGET,
+                "SELECT",
+                "alice@contoso.com",
+                "OBJECT",
+                object_name="dbo.sales",
+                columns=["email", "phone"],
+            )
+
+        stmt = captured[0]
+        assert stmt == (
+            "GRANT SELECT ON OBJECT::[dbo].[sales] ([email], [phone]) TO [alice@contoso.com];"
+        )
+
+    async def test_grant_update_on_single_column(self) -> None:
+        captured: list[str] = []
+
+        def _mock_run_query(_target: object, sql: str, **_kwargs: object) -> tuple:
+            captured.append(sql)
+            return [], []
+
+        with patch("fabric_dw.services.permissions.run_query", side_effect=_mock_run_query):
+            await perms_svc.grant_permission(
+                _TARGET,
+                "UPDATE",
+                "editor@contoso.com",
+                "OBJECT",
+                object_name="dbo.customers",
+                columns=["status"],
+            )
+
+        stmt = captured[0]
+        assert stmt == (
+            "GRANT UPDATE ON OBJECT::[dbo].[customers] ([status]) TO [editor@contoso.com];"
+        )
+
+    async def test_grant_with_grant_option_and_columns(self) -> None:
+        captured: list[str] = []
+
+        def _mock_run_query(_target: object, sql: str, **_kwargs: object) -> tuple:
+            captured.append(sql)
+            return [], []
+
+        with patch("fabric_dw.services.permissions.run_query", side_effect=_mock_run_query):
+            await perms_svc.grant_permission(
+                _TARGET,
+                "SELECT",
+                "alice@contoso.com",
+                "OBJECT",
+                object_name="dbo.sales",
+                columns=["revenue"],
+                with_grant_option=True,
+            )
+
+        stmt = captured[0]
+        assert stmt == (
+            "GRANT SELECT ON OBJECT::[dbo].[sales] ([revenue])"
+            " TO [alice@contoso.com] WITH GRANT OPTION;"
+        )
+
+    async def test_columns_with_database_scope_raises(self) -> None:
+        with pytest.raises(ValueError, match="columns may only be specified for OBJECT scope"):
+            await perms_svc.grant_permission(
+                _TARGET,
+                "SELECT",
+                "alice@contoso.com",
+                "DATABASE",
+                columns=["col1"],
+            )
+
+    async def test_columns_with_schema_scope_raises(self) -> None:
+        with pytest.raises(ValueError, match="columns may only be specified for OBJECT scope"):
+            await perms_svc.grant_permission(
+                _TARGET,
+                "SELECT",
+                "alice@contoso.com",
+                "SCHEMA",
+                schema="dbo",
+                columns=["col1"],
+            )
+
+    async def test_non_column_applicable_permission_raises(self) -> None:
+        with pytest.raises(ValueError, match="Column-level permissions must be one of"):
+            await perms_svc.grant_permission(
+                _TARGET,
+                "INSERT",
+                "alice@contoso.com",
+                "OBJECT",
+                object_name="dbo.sales",
+                columns=["col1"],
+            )
+
+
+class TestDenyPermissionWithColumns:
+    """deny_permission with column list produces the correct SQL."""
+
+    async def test_deny_select_on_columns_exact_sql(self) -> None:
+        captured: list[str] = []
+
+        def _mock_run_query(_target: object, sql: str, **_kwargs: object) -> tuple:
+            captured.append(sql)
+            return [], []
+
+        with patch("fabric_dw.services.permissions.run_query", side_effect=_mock_run_query):
+            await perms_svc.deny_permission(
+                _TARGET,
+                "SELECT",
+                "alice@contoso.com",
+                "OBJECT",
+                object_name="dbo.sales",
+                columns=["ssn"],
+            )
+
+        stmt = captured[0]
+        assert stmt == "DENY SELECT ON OBJECT::[dbo].[sales] ([ssn]) TO [alice@contoso.com];"
+
+    async def test_deny_columns_with_schema_scope_raises(self) -> None:
+        with pytest.raises(ValueError, match="columns may only be specified for OBJECT scope"):
+            await perms_svc.deny_permission(
+                _TARGET,
+                "SELECT",
+                "alice@contoso.com",
+                "SCHEMA",
+                schema="dbo",
+                columns=["col1"],
+            )
+
+
+class TestRevokePermissionWithColumns:
+    """revoke_permission with column list produces the correct SQL."""
+
+    async def test_revoke_select_on_columns_exact_sql(self) -> None:
+        captured: list[str] = []
+
+        def _mock_run_query(_target: object, sql: str, **_kwargs: object) -> tuple:
+            captured.append(sql)
+            return [], []
+
+        with patch("fabric_dw.services.permissions.run_query", side_effect=_mock_run_query):
+            await perms_svc.revoke_permission(
+                _TARGET,
+                "SELECT",
+                "alice@contoso.com",
+                "OBJECT",
+                object_name="dbo.sales",
+                columns=["email"],
+            )
+
+        stmt = captured[0]
+        assert stmt == (
+            "REVOKE SELECT ON OBJECT::[dbo].[sales] ([email]) FROM [alice@contoso.com];"
+        )
+
+    async def test_revoke_columns_with_cascade(self) -> None:
+        captured: list[str] = []
+
+        def _mock_run_query(_target: object, sql: str, **_kwargs: object) -> tuple:
+            captured.append(sql)
+            return [], []
+
+        with patch("fabric_dw.services.permissions.run_query", side_effect=_mock_run_query):
+            await perms_svc.revoke_permission(
+                _TARGET,
+                "SELECT",
+                "alice@contoso.com",
+                "OBJECT",
+                object_name="dbo.sales",
+                columns=["email", "phone"],
+                cascade=True,
+            )
+
+        stmt = captured[0]
+        assert stmt == (
+            "REVOKE SELECT ON OBJECT::[dbo].[sales]"
+            " ([email], [phone]) FROM [alice@contoso.com] CASCADE;"
+        )
+
+    async def test_revoke_columns_with_database_scope_raises(self) -> None:
+        with pytest.raises(ValueError, match="columns may only be specified for OBJECT scope"):
+            await perms_svc.revoke_permission(
+                _TARGET,
+                "SELECT",
+                "alice@contoso.com",
+                "DATABASE",
+                columns=["col1"],
+            )

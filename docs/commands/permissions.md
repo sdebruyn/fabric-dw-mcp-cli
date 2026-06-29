@@ -411,3 +411,138 @@ because revoke removes an existing permission (destructive operation).
   grantee has granted the permission to (`CASCADE`).
 
 **Returns:** `{ "revoked": true, "permissions": str, "principal": str, "scope": str }`.
+
+## permissions cls
+
+Column-level security (CLS) restricts access to specific columns of a table. It uses the same
+`GRANT`, `DENY`, and `REVOKE` T-SQL verbs as object-level security, but targets a named column
+list rather than the table as a whole.
+
+Permissions supported at column level: `SELECT`, `UPDATE`, `REFERENCES`.
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Reference: [Column-level security in Microsoft Fabric](https://learn.microsoft.com/fabric/data-warehouse/column-level-security)
+
+### permissions cls grant
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Grant column-level permissions on an object to a principal. Executes
+`GRANT <PERMISSIONS> ON OBJECT::<SCHEMA.TABLE> (<COLUMNS>) TO <PRINCIPAL>`.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] permissions cls grant [ITEM] PERMISSIONS --object SCHEMA.TABLE --columns COL1,COL2 --to PRINCIPAL [OPTIONS]
+```
+
+`PERMISSIONS` is a comma-separated list of column-level permission tokens: `SELECT`, `UPDATE`,
+or `REFERENCES`.
+
+| Option | Description |
+| --- | --- |
+| `--object SCHEMA.TABLE` | Qualified table name. **Required.** |
+| `--columns COL1,COL2` | Comma-separated list of column names. **Required.** |
+| `--to PRINCIPAL` | Grantee principal: Entra UPN, application GUID, or role name. **Required.** |
+| `--with-grant-option` | Allow the grantee to grant the column permission to others (`WITH GRANT OPTION`). |
+
+**Example**
+
+```shell
+# Grant SELECT on specific columns to a user
+fdw -w MyWorkspace permissions cls grant SalesWH SELECT --object dbo.sales --columns email,phone --to alice@contoso.com
+
+# Grant with grant option
+fdw -w MyWorkspace permissions cls grant SalesWH REFERENCES --object dbo.customers --columns ssn --to analysts --with-grant-option
+```
+
+### permissions cls deny
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Deny column-level permissions on an object to a principal. Executes
+`DENY <PERMISSIONS> ON OBJECT::<SCHEMA.TABLE> (<COLUMNS>) TO <PRINCIPAL>`.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] permissions cls deny [ITEM] PERMISSIONS --object SCHEMA.TABLE --columns COL1,COL2 --to PRINCIPAL
+```
+
+| Option | Description |
+| --- | --- |
+| `--object SCHEMA.TABLE` | Qualified table name. **Required.** |
+| `--columns COL1,COL2` | Comma-separated list of column names. **Required.** |
+| `--to PRINCIPAL` | Principal to deny. **Required.** |
+
+**Example**
+
+```shell
+# Deny SELECT on sensitive columns to a user
+fdw -w MyWorkspace permissions cls deny SalesWH SELECT --object dbo.sales --columns email,phone --to alice@contoso.com
+```
+
+### permissions cls revoke
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Revoke column-level permissions on an object from a principal. Executes
+`REVOKE <PERMISSIONS> ON OBJECT::<SCHEMA.TABLE> (<COLUMNS>) FROM <PRINCIPAL>`.
+
+This is a **destructive operation**: it removes an existing column permission. A confirmation
+prompt is shown before executing. Pass `--yes` / `-y` to skip the prompt in scripts.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] [-y] permissions cls revoke [ITEM] PERMISSIONS --object SCHEMA.TABLE --columns COL1,COL2 --from PRINCIPAL [OPTIONS]
+```
+
+| Option | Description |
+| --- | --- |
+| `--object SCHEMA.TABLE` | Qualified table name. **Required.** |
+| `--columns COL1,COL2` | Comma-separated list of column names. **Required.** |
+| `--from PRINCIPAL` | Principal to revoke from. **Required.** |
+| `-y`, `--yes` | Skip the confirmation prompt (non-interactive / scripted use). |
+| `--cascade` | Cascade the revocation to principals the grantee has granted the permission to. |
+
+**Example**
+
+```shell
+# Revoke SELECT from a user (prompts for confirmation)
+fdw -w MyWorkspace permissions cls revoke SalesWH SELECT --object dbo.sales --columns email,phone --from alice@contoso.com
+
+# Revoke without prompt (scripted)
+fdw -w MyWorkspace -y permissions cls revoke SalesWH SELECT --object dbo.sales --columns email,phone --from alice@contoso.com
+
+# Revoke with cascade
+fdw -w MyWorkspace -y permissions cls revoke SalesWH SELECT --object dbo.sales --columns ssn --from analysts --cascade
+```
+
+### permissions cls list
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+List column-level permissions on an object. Queries `sys.database_permissions` and returns only
+rows where `minor_id != 0` (column-level entries), joined to column names from `sys.columns`.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] [--json] permissions cls list [ITEM] --object SCHEMA.TABLE
+```
+
+| Option | Description |
+| --- | --- |
+| `--object SCHEMA.TABLE` | Qualified table name. **Required.** |
+
+**Example**
+
+```shell
+# Tabular output
+fdw -w MyWorkspace permissions cls list SalesWH --object dbo.sales
+
+# Raw JSON
+fdw -w MyWorkspace --json permissions cls list SalesWH --object dbo.sales
+```

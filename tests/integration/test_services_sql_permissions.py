@@ -356,3 +356,94 @@ async def test_revoke_removes_database_scope_grant(
     assert not any(
         p.permission_name == "SELECT" and p.securable_class == "DATABASE" for p in result
     ), f"DATABASE GRANT SELECT still present after revoke for {role_name!r}; got: {result!r}"
+
+
+# ---------------------------------------------------------------------------
+# Column-level security (CLS)
+# ---------------------------------------------------------------------------
+
+
+async def test_grant_select_on_column_appears_in_list(
+    temp_role: tuple[SqlTarget, str, str],
+) -> None:
+    """grant_permission SELECT on a specific column must produce a column-level row.
+
+    The row must have column_name set (minor_id != 0 in sys.database_permissions).
+    """
+    sql_target, schema_name, role_name = temp_role
+    table_name = "pytest_cls_tbl"
+    qualified_name = f"{schema_name}.{table_name}"
+
+    await asyncio.to_thread(
+        run_query,
+        sql_target,
+        f"CREATE TABLE [{schema_name}].[{table_name}] (id INT, email NVARCHAR(255));",
+        autocommit=True,
+        fetch="none",
+    )
+
+    await permissions.grant_permission(
+        sql_target,
+        "SELECT",
+        role_name,
+        "OBJECT",
+        object_name=qualified_name,
+        columns=["email"],
+    )
+
+    result = await permissions.list_sql_permissions(
+        sql_target, principal=role_name, object_name=qualified_name
+    )
+    col_rows = [p for p in result if p.column_name is not None]
+    assert any(
+        p.permission_name == "SELECT"
+        and p.column_name == "email"
+        and p.state in {"GRANT", "GRANT_WITH_GRANT_OPTION"}
+        for p in col_rows
+    ), (
+        f"Expected column-level GRANT SELECT on email for role {role_name!r}; "
+        f"column rows: {col_rows!r}"
+    )
+
+
+async def test_revoke_removes_column_level_grant(
+    temp_role: tuple[SqlTarget, str, str],
+) -> None:
+    """revoke_permission on a specific column must remove the column-level row."""
+    sql_target, schema_name, role_name = temp_role
+    table_name = "pytest_cls_rev_tbl"
+    qualified_name = f"{schema_name}.{table_name}"
+
+    await asyncio.to_thread(
+        run_query,
+        sql_target,
+        f"CREATE TABLE [{schema_name}].[{table_name}] (id INT, phone NVARCHAR(50));",
+        autocommit=True,
+        fetch="none",
+    )
+
+    await permissions.grant_permission(
+        sql_target,
+        "SELECT",
+        role_name,
+        "OBJECT",
+        object_name=qualified_name,
+        columns=["phone"],
+    )
+    await permissions.revoke_permission(
+        sql_target,
+        "SELECT",
+        role_name,
+        "OBJECT",
+        object_name=qualified_name,
+        columns=["phone"],
+    )
+
+    result = await permissions.list_sql_permissions(
+        sql_target, principal=role_name, object_name=qualified_name
+    )
+    col_rows = [p for p in result if p.column_name == "phone"]
+    assert not col_rows, (
+        f"Column-level SELECT on phone still present after revoke for {role_name!r}; "
+        f"got: {col_rows!r}"
+    )
