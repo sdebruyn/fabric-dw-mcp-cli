@@ -377,7 +377,7 @@ async def test_grant_select_on_column_appears_in_list(
     await asyncio.to_thread(
         run_query,
         sql_target,
-        f"CREATE TABLE [{schema_name}].[{table_name}] (id INT, email NVARCHAR(255));",
+        f"CREATE TABLE [{schema_name}].[{table_name}] (id INT, email VARCHAR(255));",
         autocommit=True,
         fetch="none",
     )
@@ -417,7 +417,7 @@ async def test_revoke_removes_column_level_grant(
     await asyncio.to_thread(
         run_query,
         sql_target,
-        f"CREATE TABLE [{schema_name}].[{table_name}] (id INT, phone NVARCHAR(50));",
+        f"CREATE TABLE [{schema_name}].[{table_name}] (id INT, phone VARCHAR(50));",
         autocommit=True,
         fetch="none",
     )
@@ -464,7 +464,7 @@ async def test_deny_select_on_column_appears_in_list(
     await asyncio.to_thread(
         run_query,
         sql_target,
-        f"CREATE TABLE [{schema_name}].[{table_name}] (id INT, ssn NVARCHAR(20));",
+        f"CREATE TABLE [{schema_name}].[{table_name}] (id INT, ssn VARCHAR(20));",
         autocommit=True,
         fetch="none",
     )
