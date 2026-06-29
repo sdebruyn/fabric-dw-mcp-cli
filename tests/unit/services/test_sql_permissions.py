@@ -269,6 +269,39 @@ class TestDenyPermission:
         stmt = captured[0]
         assert stmt == "DENY EXECUTE ON SCHEMA::[dbo] TO [analysts];"
 
+    async def test_deny_select_on_database_exact_sql(self) -> None:
+        captured: list[str] = []
+
+        def _mock_run_query(_target: object, sql: str, **_kwargs: object) -> tuple:
+            captured.append(sql)
+            return [], []
+
+        with patch("fabric_dw.services.permissions.run_query", side_effect=_mock_run_query):
+            await perms_svc.deny_permission(_TARGET, "SELECT", "user@contoso.com", "DATABASE")
+
+        stmt = captured[0]
+        # DATABASE is the implicit scope; no ON clause is emitted.
+        assert stmt == "DENY SELECT TO [user@contoso.com];"
+
+    async def test_deny_select_on_object_exact_sql(self) -> None:
+        captured: list[str] = []
+
+        def _mock_run_query(_target: object, sql: str, **_kwargs: object) -> tuple:
+            captured.append(sql)
+            return [], []
+
+        with patch("fabric_dw.services.permissions.run_query", side_effect=_mock_run_query):
+            await perms_svc.deny_permission(
+                _TARGET,
+                "SELECT",
+                "alice@contoso.com",
+                "OBJECT",
+                object_name="dbo.sales",
+            )
+
+        stmt = captured[0]
+        assert stmt == "DENY SELECT ON OBJECT::[dbo].[sales] TO [alice@contoso.com];"
+
     async def test_deny_invalid_permission_raises(self) -> None:
         with pytest.raises(ValueError, match="Invalid permission"):
             await perms_svc.deny_permission(_TARGET, "SELECTX", "user@contoso.com", "DATABASE")
