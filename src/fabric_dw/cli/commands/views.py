@@ -155,21 +155,45 @@ async def columns_cmd(
 @views_group.command("count")
 @click.argument("item", required=False, default=None)
 @click.argument("qualified_name")
+@click.option(
+    "--as-of",
+    "as_of",
+    default=None,
+    metavar="ISO8601",
+    help=(
+        "Count rows as they were at this UTC timestamp (ISO-8601). Mutually exclusive with --ago."
+    ),
+)
+@click.option(
+    "--ago",
+    "ago",
+    default=None,
+    metavar="DURATION",
+    help=(
+        "Count rows as they were this duration ago (e.g. 1h, 90m, 2d). "
+        "Mutually exclusive with --as-of."
+    ),
+)
 @click.pass_obj
 @coro
 async def count_cmd(
     ctx: CliContext,
     item: str | None,
     qualified_name: str,
+    as_of: str | None,
+    ago: str | None,
 ) -> None:
     """Count rows in QUALIFIED_NAME (schema.view) on ITEM."""
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     schema, view_name = parse_qualified_name(qualified_name, kind="view")
+    as_of_dt = resolve_as_of(as_of, ago)
     try:
         async with build_http_client(ctx) as http:
             target, _entry = await build_sql_target(http, ws, wh)
-            row_count = await _views_svc.count_view_rows(target, schema, view_name, mode=ctx.auth)
+            row_count = await _views_svc.count_view_rows(
+                target, schema, view_name, as_of=as_of_dt, mode=ctx.auth
+            )
             render(
                 {"schema": schema, "name": view_name, "row_count": row_count},
                 json_output=ctx.json_output,

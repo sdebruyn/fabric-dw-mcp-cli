@@ -174,11 +174,18 @@ fdw -w MyWorkspace tables clone SalesWH \
 
 Return the total row count of a table using `SELECT COUNT_BIG(*)`.
 
+Use `--as-of` or `--ago` to count rows as they were at an earlier point in time (time travel). The same retention window applies as for `tables read`.
+
 **Synopsis**
 
 ```
-fdw [-w WORKSPACE] tables count [WAREHOUSE] QUALIFIED_NAME
+fdw [-w WORKSPACE] tables count [OPTIONS] [WAREHOUSE] QUALIFIED_NAME
 ```
+
+| Option | Description |
+| --- | --- |
+| `--as-of ISO8601` | Count rows as they were at this UTC timestamp. Mutually exclusive with `--ago`. | |
+| `--ago DURATION` | Count rows as they were this duration ago (e.g. `1h`, `90m`, `2d`). Mutually exclusive with `--as-of`. | |
 
 **Example**
 
@@ -188,6 +195,12 @@ fdw -w MyWorkspace --json tables count SalesWH dbo.orders
 
 ```json
 {"schema": "dbo", "name": "orders", "row_count": 999999}
+```
+
+```shell
+# Point-in-time row count
+fdw -w MyWorkspace --json tables count SalesWH dbo.orders --as-of 2024-03-15T10:00:00Z
+fdw -w MyWorkspace --json tables count SalesWH dbo.orders --ago 1h
 ```
 
 ### tables create
@@ -608,11 +621,14 @@ Results are ordered by ordinal position. Raises a `ToolError` if the table does 
 
 Return the total row count of a table via `SELECT COUNT_BIG(*)`.
 
+Supports time-travel counts via `as_of`: supply an ISO-8601 UTC timestamp to count rows as they were at that point in time. The same retention window applies as for `read_table`.
+
 **Parameters:**
 
 - `workspace` (`str`): workspace name or GUID.
 - `item` (`str`): warehouse or SQL analytics endpoint name or GUID.
 - `qualified_name` (`str`): dot-separated table name, e.g. `dbo.sales`.
+- `as_of` (`str`, optional): ISO-8601 UTC timestamp for a point-in-time count. Omit to count the latest data.
 
 **Returns:** `{ "schema": str, "name": str, "row_count": int }`: the schema name, table name, and total row count.
 

@@ -742,6 +742,92 @@ async def test_count_table_rows_bad_qualified_name_raises_tool_error(ctx_patch) 
 
 
 # ---------------------------------------------------------------------------
+# count_table_rows — as_of (time-travel)
+# ---------------------------------------------------------------------------
+
+
+async def test_count_table_rows_with_as_of_passes_to_service(mock_ctx, ctx_patch) -> None:
+    """count_table_rows parses as_of ISO-8601 and threads the datetime to the service."""
+    from datetime import datetime  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+    mock_count = AsyncMock(
+        return_value=TableRowCount(schema_name="dbo", name="sales", row_count=10)
+    )
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.tables.count_table_rows", new=mock_count),
+    ):
+        await mcp._tool_manager.call_tool(
+            "count_table_rows",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "qualified_name": "dbo.sales",
+                "as_of": "2024-03-15T10:30:00",
+            },
+        )
+
+    _, kwargs = mock_count.call_args
+    assert kwargs.get("as_of") is not None
+    assert isinstance(kwargs["as_of"], datetime)
+
+
+async def test_count_table_rows_without_as_of_passes_none(mock_ctx, ctx_patch) -> None:
+    """count_table_rows without as_of calls the service with as_of=None."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+    mock_count = AsyncMock(
+        return_value=TableRowCount(schema_name="dbo", name="sales", row_count=0)
+    )
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.tables.count_table_rows", new=mock_count),
+    ):
+        await mcp._tool_manager.call_tool(
+            "count_table_rows",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.sales"},
+        )
+
+    _, kwargs = mock_count.call_args
+    assert kwargs.get("as_of") is None
+
+
+async def test_count_table_rows_invalid_as_of_raises_tool_error(mock_ctx, ctx_patch) -> None:
+    """count_table_rows raises ToolError when as_of is not a valid ISO-8601 string."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with (
+        ctx_patch,
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "count_table_rows",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "qualified_name": "dbo.sales",
+                "as_of": "not-a-date",
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
 # get_cluster_columns — happy path, empty result, SQL endpoint guard, error funnel
 # ---------------------------------------------------------------------------
 

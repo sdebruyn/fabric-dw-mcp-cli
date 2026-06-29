@@ -43,11 +43,18 @@ fdw -w MyWorkspace views columns SalesWH dbo.vw_sales
 
 Return the total row count of a view using `SELECT COUNT_BIG(*)`.
 
+Use `--as-of` or `--ago` to count rows as they were at an earlier point in time (time travel). The same retention window applies as for `views read`.
+
 **Synopsis**
 
 ```
-fdw [-w WORKSPACE] views count [WAREHOUSE] QUALIFIED_NAME
+fdw [-w WORKSPACE] views count [OPTIONS] [WAREHOUSE] QUALIFIED_NAME
 ```
+
+| Option | Description |
+| --- | --- |
+| `--as-of ISO8601` | Count rows as they were at this UTC timestamp. Mutually exclusive with `--ago`. | |
+| `--ago DURATION` | Count rows as they were this duration ago (e.g. `1h`, `90m`, `2d`). Mutually exclusive with `--as-of`. | |
 
 **Example**
 
@@ -57,6 +64,12 @@ fdw -w MyWorkspace --json views count SalesWH dbo.vw_sales
 
 ```json
 {"schema": "dbo", "name": "vw_sales", "row_count": 12345}
+```
+
+```shell
+# Point-in-time row count
+fdw -w MyWorkspace --json views count SalesWH dbo.vw_sales --as-of 2024-03-15T10:00:00Z
+fdw -w MyWorkspace --json views count SalesWH dbo.vw_sales --ago 1h
 ```
 
 ### views create
@@ -266,11 +279,14 @@ fdw -w MyWorkspace views update SalesWH dbo.vw_recent \
 
 Return the total row count of a view via `SELECT COUNT_BIG(*)`.
 
+Supports time-travel counts via `as_of`: supply an ISO-8601 UTC timestamp to count rows as they were at that point in time. The same retention window applies as for `read_view`.
+
 **Parameters:**
 
 - `workspace` (`str`): workspace name or GUID.
 - `item` (`str`): warehouse or SQL analytics endpoint name or GUID.
 - `qualified_name` (`str`): dot-separated schema and view name, e.g. `dbo.vw_sales`.
+- `as_of` (`str`, optional): ISO-8601 UTC timestamp for a point-in-time count. Omit to count the latest data.
 
 **Returns:** `{ "schema": str, "name": str, "row_count": int }`: the schema name, view name, and total row count.
 

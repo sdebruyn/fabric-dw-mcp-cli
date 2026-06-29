@@ -617,6 +617,70 @@ class TestCountTableRows:
         ):
             await tables.count_table_rows(target, "dbo", "missing")
 
+    # -- time-travel (as_of) --
+
+    async def test_as_of_appends_option_for_timestamp(self) -> None:
+        """count_table_rows appends OPTION (FOR TIMESTAMP AS OF ...) when as_of is set."""
+        target = _make_target()
+        conn = _make_conn([(99,)], ["row_count"])
+        as_of = datetime(2024, 3, 15, 10, 30, 45, 123_000, tzinfo=UTC)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await tables.count_table_rows(target, "dbo", "sales", as_of=as_of)
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert "OPTION (FOR TIMESTAMP AS OF '2024-03-15T10:30:45.123')" in call_sql
+
+    async def test_as_of_none_sql_unchanged(self) -> None:
+        """count_table_rows SQL is byte-for-byte identical to the template when as_of is None."""
+        from fabric_dw.services.tables import _COUNT_TABLE_SQL  # noqa: PLC0415
+
+        target = _make_target()
+        conn = _make_conn([(0,)], ["row_count"])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await tables.count_table_rows(target, "dbo", "sales")
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        expected = _COUNT_TABLE_SQL.format(schema_q="[dbo]", table_q="[sales]")
+        assert call_sql == expected
+
+    async def test_as_of_utc_coercion(self) -> None:
+        """count_table_rows coerces a tz-aware non-UTC datetime to UTC before formatting."""
+        target = _make_target()
+        conn = _make_conn([(5,)], ["row_count"])
+        # CET = UTC+1: 11:30 CET == 10:30 UTC
+        cet = timezone(timedelta(hours=1))
+        as_of = datetime(2024, 3, 15, 11, 30, 0, tzinfo=cet)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await tables.count_table_rows(target, "dbo", "sales", as_of=as_of)
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert "2024-03-15T10:30:00.000" in call_sql
+
+    async def test_as_of_millisecond_rounding(self) -> None:
+        """count_table_rows rounds microseconds to the nearest millisecond (half-to-even)."""
+        target = _make_target()
+        conn = _make_conn([(7,)], ["row_count"])
+        # 123_750 us -> round(123.75) -> 124 ms
+        as_of = datetime(2024, 3, 15, 10, 30, 45, 123_750, tzinfo=UTC)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await tables.count_table_rows(target, "dbo", "sales", as_of=as_of)
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert "2024-03-15T10:30:45.124" in call_sql
+
+    async def test_as_of_clause_position_before_semicolon(self) -> None:
+        """OPTION clause appears before the trailing semicolon in the count SQL."""
+        target = _make_target()
+        conn = _make_conn([(3,)], ["row_count"])
+        as_of = datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await tables.count_table_rows(target, "dbo", "sales", as_of=as_of)
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        option_idx = call_sql.index("OPTION")
+        semicolon_idx = call_sql.rindex(";")
+        assert option_idx < semicolon_idx
+
 
 # ===========================================================================
 # get_cluster_columns

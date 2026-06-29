@@ -46,7 +46,12 @@ from fabric_dw.models import (
     TableRowCount,
     WarehouseKind,
 )
-from fabric_dw.services._helpers import _assert_not_sql_endpoint, coerce_to_utc, reject_non_select
+from fabric_dw.services._helpers import (
+    _assert_not_sql_endpoint,
+    build_time_travel_option,
+    coerce_to_utc,
+    reject_non_select,
+)
 from fabric_dw.services.schema_infer import (
     infer_columns_from_csv,
     infer_columns_from_json,
@@ -273,24 +278,16 @@ async def read_table(
     validate_identifier(schema)
     validate_identifier(table_name)
 
-    read_sql = _READ_TABLE_SQL.format(
+    base_sql = _READ_TABLE_SQL.format(
         count=int(count),
         schema_q=quote_identifier(schema),
         table_q=quote_identifier(table_name),
     )
-    if as_of is not None:
-        # Normalise to UTC so the literal is always UTC regardless of the
-        # caller's tzinfo.  Mirror the rounding logic used in clone_table:
-        # round to the nearest millisecond (half-to-even via Python round())
-        # rather than truncating, so 123_750 us -> 124 ms not 123 ms.
-        at = coerce_to_utc(as_of)
-        at_rounded = at.replace(microsecond=0) + timedelta(
-            milliseconds=round(at.microsecond / 1000)
-        )
-        ms_str = f"{at_rounded.microsecond // 1000:03d}"
-        literal = at_rounded.strftime("%Y-%m-%dT%H:%M:%S.") + ms_str
-        # The template ends with ";". Insert the time-travel hint before it.
-        read_sql = f"{read_sql[:-1]} OPTION (FOR TIMESTAMP AS OF '{literal}');"
+    as_of_clause = build_time_travel_option(as_of)
+    # When as_of_clause is empty the result is byte-for-byte identical to base_sql.
+    # The template always ends with ";"; strip it, append the (possibly empty) hint,
+    # then re-add it.
+    read_sql = base_sql[:-1] + as_of_clause + ";"
 
     def _run() -> ResultSet:
         cols, rows = run_query(target, read_sql, mode=mode)
@@ -307,6 +304,7 @@ async def count_table_rows(
     schema: str,
     table_name: str,
     *,
+    as_of: datetime | None = None,
     mode: CredentialMode = CredentialMode.DEFAULT,
 ) -> TableRowCount:
     """Return the total row count of *schema*.*table_name* via ``COUNT_BIG(*)``.
@@ -318,6 +316,10 @@ async def count_table_rows(
         target: The warehouse or SQL Analytics Endpoint to query.
         schema: The schema name.  Must pass :func:`validate_identifier`.
         table_name: The table name.  Must pass :func:`validate_identifier`.
+        as_of: Optional point-in-time for time-travel counts.  When set, the
+            query includes ``OPTION (FOR TIMESTAMP AS OF '<utc-literal>')``.
+            See :func:`~._helpers.build_time_travel_option` for formatting details.
+            *None* leaves the SQL unchanged.
         mode: The credential mode for Entra authentication.
 
     Returns:
@@ -332,10 +334,12 @@ async def count_table_rows(
     validate_identifier(schema)
     validate_identifier(table_name)
 
-    count_sql = _COUNT_TABLE_SQL.format(
+    base_sql = _COUNT_TABLE_SQL.format(
         schema_q=quote_identifier(schema),
         table_q=quote_identifier(table_name),
     )
+    as_of_clause = build_time_travel_option(as_of)
+    count_sql = base_sql[:-1] + as_of_clause + ";"
 
     def _run() -> TableRowCount:
         _cols, rows = run_query(target, count_sql, mode=mode)

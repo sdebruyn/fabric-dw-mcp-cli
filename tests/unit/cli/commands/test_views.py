@@ -496,6 +496,116 @@ class TestViewsCount:
             result = runner.invoke(cli, ["-w", WS_GUID, "views", "count", WH_GUID, "dbo.missing"])
         assert result.exit_code != 0
 
+    def test_count_with_as_of_passes_datetime_to_service(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """--as-of is parsed into a datetime and threaded to count_view_rows."""
+        _ = cache_env
+        mock_count = AsyncMock(return_value=5)
+        with (
+            patch(
+                "fabric_dw.cli.commands.views.build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch("fabric_dw.services.views.count_view_rows", new=mock_count),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "views",
+                    "count",
+                    WH_GUID,
+                    "dbo.vw_sales",
+                    "--as-of",
+                    "2024-03-15T10:30:00",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        _, kwargs = mock_count.call_args
+        assert kwargs.get("as_of") is not None
+        assert isinstance(kwargs["as_of"], datetime)
+
+    def test_count_with_ago_passes_datetime_to_service(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """--ago is parsed into a datetime and threaded to count_view_rows."""
+        _ = cache_env
+        mock_count = AsyncMock(return_value=3)
+        with (
+            patch(
+                "fabric_dw.cli.commands.views.build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch("fabric_dw.services.views.count_view_rows", new=mock_count),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", WS_GUID, "views", "count", WH_GUID, "dbo.vw_sales", "--ago", "1h"],
+            )
+        assert result.exit_code == 0, result.output
+        _, kwargs = mock_count.call_args
+        assert kwargs.get("as_of") is not None
+        assert isinstance(kwargs["as_of"], datetime)
+
+    def test_count_with_both_as_of_and_ago_exits_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """--as-of and --ago together exit nonzero (mutually exclusive)."""
+        _ = cache_env
+        result = runner.invoke(
+            cli,
+            [
+                "-w",
+                WS_GUID,
+                "views",
+                "count",
+                WH_GUID,
+                "dbo.vw_sales",
+                "--as-of",
+                "2024-01-01T00:00:00",
+                "--ago",
+                "1h",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "--as-of" in result.output
+        assert "--ago" in result.output
+        assert "--since" not in result.output
+
+    def test_count_without_time_travel_passes_none_as_of(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """Without --as-of or --ago, service is called with as_of=None."""
+        _ = cache_env
+        mock_count = AsyncMock(return_value=0)
+        with (
+            patch(
+                "fabric_dw.cli.commands.views.build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch("fabric_dw.services.views.count_view_rows", new=mock_count),
+        ):
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "views", "count", WH_GUID, "dbo.vw_sales"]
+            )
+        assert result.exit_code == 0, result.output
+        _, kwargs = mock_count.call_args
+        assert kwargs.get("as_of") is None
+
 
 # ===========================================================================
 # views get

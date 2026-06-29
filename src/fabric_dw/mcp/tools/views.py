@@ -111,6 +111,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         workspace: str,
         item: str,
         qualified_name: str,
+        as_of: str | None = None,
     ) -> dict[str, Any]:
         """Return the total row count of a view via ``SELECT COUNT_BIG(*)``.
 
@@ -120,8 +121,12 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             workspace: Workspace name or GUID.
             item: Warehouse or SQL endpoint name or GUID.
             qualified_name: Dot-separated qualified view name, e.g. ``dbo.vw_sales``.
+            as_of: Optional ISO-8601 UTC timestamp for a point-in-time (time-travel)
+                count.  When supplied the query uses ``OPTION (FOR TIMESTAMP AS OF ...)``.
+                Omit to count the latest data.
         """
         schema, view_name = parse_qualified_name(qualified_name, kind="view")
+        as_of_dt = parse_iso8601(as_of, "as_of")
         ctx = get_context()
         assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
@@ -130,15 +135,16 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
             )
             _log.debug(
-                "count_view_rows ws=%s item=%s view=%s.%s",
+                "count_view_rows ws=%s item=%s view=%s.%s as_of=%s",
                 ws_id,
                 entry.id,
                 schema,
                 view_name,
+                as_of,
             )
             target = make_sql_target(ws_id, entry, item)
             row_count = await views_svc.count_view_rows(
-                target, schema, view_name, mode=ctx.auth_mode
+                target, schema, view_name, as_of=as_of_dt, mode=ctx.auth_mode
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
