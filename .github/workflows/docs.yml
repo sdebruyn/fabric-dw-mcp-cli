@@ -34,7 +34,7 @@ on:
 
 env:
   PROD_PROJECT: fdw-prd
-  STAGING_PROJECT: PLACEHOLDER_STAGING_PROJECT
+  STAGING_PROJECT: fdw-staging
 
 concurrency:
   group: docs-${{ github.ref }}
