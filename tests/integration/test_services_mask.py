@@ -102,7 +102,7 @@ async def test_set_and_list_default_mask(
         schema_name,
         table_name,
         "Email",
-        "default()",
+        fn_type="default",
     )
 
     columns = await mask_svc.list_masked_columns(
@@ -129,7 +129,7 @@ async def test_set_and_list_email_mask(
         schema_name,
         table_name,
         "Email",
-        "email()",
+        fn_type="email",
     )
 
     columns = await mask_svc.list_masked_columns(
@@ -148,15 +148,15 @@ async def test_set_and_list_random_mask(
 ) -> None:
     """set_column_mask (random) -> list_masked_columns round-trip."""
     sql_target, schema_name, table_name = mask_table
-    from fabric_dw.services.mask import _build_mask_function  # noqa: PLC0415
 
-    mask_fn = _build_mask_function("random", start=1, end=999999)
     await mask_svc.set_column_mask(
         sql_target,
         schema_name,
         table_name,
         "Salary",
-        mask_fn,
+        fn_type="random",
+        start=1,
+        end=999999,
     )
 
     columns = await mask_svc.list_masked_columns(
@@ -175,15 +175,16 @@ async def test_set_and_list_partial_mask(
 ) -> None:
     """set_column_mask (partial) -> list_masked_columns round-trip."""
     sql_target, schema_name, table_name = mask_table
-    from fabric_dw.services.mask import _build_mask_function  # noqa: PLC0415
 
-    mask_fn = _build_mask_function("partial", prefix=0, padding="XXX-XXX-", suffix=4)
     await mask_svc.set_column_mask(
         sql_target,
         schema_name,
         table_name,
         "Phone",
-        mask_fn,
+        fn_type="partial",
+        prefix=0,
+        padding="XXX-XXX-",
+        suffix=4,
     )
 
     columns = await mask_svc.list_masked_columns(
@@ -209,7 +210,7 @@ async def test_drop_mask_removes_column_from_list(
         schema_name,
         table_name,
         "Email",
-        "email()",
+        fn_type="email",
     )
 
     # Verify it appears
@@ -251,7 +252,7 @@ async def test_set_mask_replaces_existing_mask(
         schema_name,
         table_name,
         "Email",
-        "default()",
+        fn_type="default",
     )
     # Replace with email()
     await mask_svc.set_column_mask(
@@ -259,7 +260,7 @@ async def test_set_mask_replaces_existing_mask(
         schema_name,
         table_name,
         "Email",
-        "email()",
+        fn_type="email",
     )
 
     columns = await mask_svc.list_masked_columns(
