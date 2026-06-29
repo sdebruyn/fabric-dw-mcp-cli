@@ -546,3 +546,159 @@ fdw -w MyWorkspace permissions cls list SalesWH --object dbo.sales
 # Raw JSON
 fdw -w MyWorkspace --json permissions cls list SalesWH --object dbo.sales
 ```
+
+---
+
+## Row-level security (`permissions rls`)
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Control row-level security (RLS) policies. Each policy contains one or more filter or block
+predicates that reference existing predicate functions (table-valued functions). The CLI
+never authors or modifies predicate function bodies.
+
+### permissions rls list
+
+List all security policies and their predicates.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] [--json] permissions rls list [ITEM]
+```
+
+**Example**
+
+```shell
+fdw -w MyWorkspace permissions rls list SalesWH
+fdw -w MyWorkspace --json permissions rls list SalesWH
+```
+
+---
+
+### permissions rls create
+
+Create a new row-level security policy with one filter or block predicate.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] permissions rls create [ITEM] [POLICY_NAME]
+    { --filter SCHEMA.FN(COL,...) | --block SCHEMA.FN(COL,...) }
+    --on SCHEMA.TABLE
+    [--operation AFTER-INSERT|AFTER-UPDATE|BEFORE-UPDATE|BEFORE-DELETE]
+    [--state on|off]
+```
+
+| Option | Description |
+| --- | --- |
+| `--filter SCHEMA.FN(COL,...)` | Add a FILTER predicate (mutually exclusive with `--block`). |
+| `--block SCHEMA.FN(COL,...)` | Add a BLOCK predicate (mutually exclusive with `--filter`). |
+| `--on SCHEMA.TABLE` | Target table for the predicate (required). |
+| `--operation OP` | Block operation: `after-insert`, `after-update`, `before-update`, `before-delete` (BLOCK only). |
+| `--state on\|off` | Initial policy state (default: `on`). |
+
+**Example**
+
+```shell
+# Filter predicate, enabled
+fdw -w MyWorkspace permissions rls create SalesWH rls.SalesFilter \
+    --filter rls.fn_filter(SalesRep) --on dbo.Sales
+
+# Block predicate, disabled initially
+fdw -w MyWorkspace permissions rls create SalesWH rls.SalesBlock \
+    --block rls.fn_block(SalesRep) --on dbo.Sales \
+    --operation after-insert --state off
+```
+
+---
+
+### permissions rls add-predicate
+
+Add an additional predicate to an existing policy.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] permissions rls add-predicate [ITEM] [POLICY_NAME]
+    { --filter SCHEMA.FN(COL,...) | --block SCHEMA.FN(COL,...) }
+    --on SCHEMA.TABLE
+    [--operation AFTER-INSERT|AFTER-UPDATE|BEFORE-UPDATE|BEFORE-DELETE]
+```
+
+**Example**
+
+```shell
+fdw -w MyWorkspace permissions rls add-predicate SalesWH rls.SalesFilter \
+    --filter rls.fn_filter(Region) --on dbo.Regions
+```
+
+---
+
+### permissions rls drop-predicate
+
+Drop a predicate from an existing policy.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] permissions rls drop-predicate [ITEM] [POLICY_NAME]
+    { --filter | --block }
+    --on SCHEMA.TABLE
+    [--operation AFTER-INSERT|AFTER-UPDATE|BEFORE-UPDATE|BEFORE-DELETE]
+```
+
+| Option | Description |
+| --- | --- |
+| `--filter` | Target a FILTER predicate (flag, no value). |
+| `--block` | Target a BLOCK predicate (flag, no value). |
+| `--on SCHEMA.TABLE` | Table whose predicate is dropped. |
+| `--operation OP` | Block operation to identify the exact BLOCK predicate. |
+
+**Example**
+
+```shell
+fdw -w MyWorkspace permissions rls drop-predicate SalesWH rls.SalesFilter \
+    --filter --on dbo.Sales
+```
+
+---
+
+### permissions rls set-state
+
+Enable or disable an existing security policy (reversible, not destructive).
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] permissions rls set-state [ITEM] [POLICY_NAME]
+    { --enable | --disable }
+```
+
+**Example**
+
+```shell
+fdw -w MyWorkspace permissions rls set-state SalesWH rls.SalesFilter --enable
+fdw -w MyWorkspace permissions rls set-state SalesWH rls.SalesFilter --disable
+```
+
+---
+
+### permissions rls drop
+
+**Destructive.** Drop an entire security policy (and all its predicates).
+
+Requires confirmation (`--yes` / `-y`) or the `FABRIC_MCP_ALLOW_DESTRUCTIVE=1` environment
+variable when called via MCP.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] [-y] permissions rls drop [ITEM] [POLICY_NAME]
+```
+
+**Example**
+
+```shell
+fdw -w MyWorkspace -y permissions rls drop SalesWH rls.SalesFilter
+```

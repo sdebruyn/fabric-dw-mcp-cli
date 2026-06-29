@@ -1081,3 +1081,50 @@ class WarehouseSnapshotApiPayload(_FabricBase):
         ``properties`` dict, or an empty instance if the key is absent.
         """
         return cls.model_validate(as_props(item.get("properties")))
+
+
+# ---------------------------------------------------------------------------
+# Row-level security models
+# ---------------------------------------------------------------------------
+
+
+class SecurityPredicate(_FabricBase):
+    """A single predicate attached to a security policy.
+
+    Sourced from ``sys.security_predicates`` joined to ``sys.security_policies``.
+
+    Attributes:
+        predicate_type: ``FILTER`` or ``BLOCK``.
+        operation: The DML operation for BLOCK predicates as returned by the
+            catalog (e.g. ``AFTER INSERT``, ``BEFORE DELETE``).
+            ``None`` for FILTER predicates.
+        schema_name: Schema of the target table.
+        table_name: Name of the target table.
+        predicate_definition: The full TVF call expression as stored in the
+            catalog (e.g. ``[rls].[fn_filter]([SalesRep])``).
+    """
+
+    predicate_type: str
+    operation: str | None
+    schema_name: str
+    table_name: str
+    predicate_definition: str
+
+
+class SecurityPolicy(_FabricBase):
+    """A security policy with its associated predicates.
+
+    Sourced from ``sys.security_policies`` joined to ``sys.security_predicates``.
+
+    Attributes:
+        policy_schema: Schema in which the policy lives.
+        policy_name: Name of the security policy.
+        is_enabled: Whether the policy is active (STATE = ON).
+        predicates: Ordered list of predicates attached to this policy.
+            Empty when the policy has no predicates.
+    """
+
+    policy_schema: str
+    policy_name: str
+    is_enabled: bool
+    predicates: list[SecurityPredicate]

@@ -50,6 +50,7 @@ _MCP_TO_CLI_DESTRUCTIVE_MAP: dict[str, str | tuple[str, ...]] = {
     "set_cluster_columns": "tables.cluster-by",
     "drop_view": "views.drop",
     "delete_warehouse": "warehouses.delete",
+    "drop_security_policy": "permissions.rls.drop",
 }
 
 # ---------------------------------------------------------------------------
