@@ -974,6 +974,52 @@ class TestViewsExport:
         )
         assert result.exit_code != 0
 
+    def test_export_limit_zero_rejected(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        """--limit 0 must fail with a usage error (IntRange min=1)."""
+        _ = cache_env
+        output = tmp_path / "out.parquet"
+        result = runner.invoke(
+            cli,
+            [
+                "-w",
+                WS_GUID,
+                "views",
+                "export",
+                WH_GUID,
+                "dbo.vw_sales",
+                "--output",
+                str(output),
+                "--limit",
+                "0",
+            ],
+        )
+        assert result.exit_code != 0
+
+    def test_export_limit_negative_rejected(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        """--limit -1 must fail with a usage error (IntRange min=1)."""
+        _ = cache_env
+        output = tmp_path / "out.parquet"
+        result = runner.invoke(
+            cli,
+            [
+                "-w",
+                WS_GUID,
+                "views",
+                "export",
+                WH_GUID,
+                "dbo.vw_sales",
+                "--output",
+                str(output),
+                "--limit",
+                "-1",
+            ],
+        )
+        assert result.exit_code != 0
+
 
 # ===========================================================================
 # views get

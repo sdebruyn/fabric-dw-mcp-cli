@@ -183,7 +183,12 @@ async def count_cmd(
     default=None,
     help="Output format (inferred from --output extension when omitted).",
 )
-@click.option("--limit", default=None, type=int, help="Export at most N rows (sampling).")
+@click.option(
+    "--limit",
+    default=None,
+    type=click.IntRange(min=1),
+    help="Export at most N rows (sampling). Must be >= 1.",
+)
 @click.option(
     "--no-overwrite",
     "no_overwrite",
