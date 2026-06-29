@@ -4,7 +4,7 @@
 
 ## What is collected
 
-Every telemetry event includes a shared envelope of anonymous fields:
+Every telemetry event includes a shared envelope of standard fields:
 
 | Field | Description |
 |---|---|

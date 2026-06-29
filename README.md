@@ -43,8 +43,6 @@ After installation, the `fdw` command is a short alias for `fabric-dw`; both inv
 
 ### CLI
 
-`fdw` is a short alias for `fabric-dw`; both invoke the same entry point.
-
 The workspace is a **global root option** `-w` / `--workspace` placed before the command group. Set a default once with `fdw config set workspace <NAME>` and omit `-w` on every subsequent call. Workspace resolution order: (1) `-w` flag, (2) `FABRIC_DW_DEFAULT_WORKSPACE` env var, (3) configured default.
 
 ```bash
