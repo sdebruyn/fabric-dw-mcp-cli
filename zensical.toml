@@ -22,6 +22,7 @@ nav = [
     { "Configuration & defaults" = "commands/config.md" },
     { "dbt" = "commands/dbt.md" },
     { "Functions" = "commands/functions.md" },
+    { "Permissions" = "commands/permissions.md" },
     { "Queries" = "commands/queries.md" },
     { "Restore Points" = "commands/restore-points.md" },
     { "Running SQL" = "commands/sql.md" },
