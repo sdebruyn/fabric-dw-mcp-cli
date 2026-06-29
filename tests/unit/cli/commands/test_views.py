@@ -369,9 +369,7 @@ class TestViewsRead:
         )
         assert result.exit_code != 0
 
-    def test_read_both_error_names_as_of_and_ago(
-        self, runner: CliRunner, cache_env: Path
-    ) -> None:
+    def test_read_both_error_names_as_of_and_ago(self, runner: CliRunner, cache_env: Path) -> None:
         """Error for --as-of + --ago names both options correctly (not --since)."""
         _ = cache_env
         result = runner.invoke(
@@ -599,9 +597,7 @@ class TestViewsCount:
             ),
             patch("fabric_dw.services.views.count_view_rows", new=mock_count),
         ):
-            result = runner.invoke(
-                cli, ["-w", WS_GUID, "views", "count", WH_GUID, "dbo.vw_sales"]
-            )
+            result = runner.invoke(cli, ["-w", WS_GUID, "views", "count", WH_GUID, "dbo.vw_sales"])
         assert result.exit_code == 0, result.output
         _, kwargs = mock_count.call_args
         assert kwargs.get("as_of") is None

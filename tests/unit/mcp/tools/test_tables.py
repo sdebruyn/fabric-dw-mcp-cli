@@ -785,9 +785,7 @@ async def test_count_table_rows_without_as_of_passes_none(mock_ctx, ctx_patch) -
     item = make_item_entry()
     mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
     mock_ctx.resolver.item = AsyncMock(return_value=item)
-    mock_count = AsyncMock(
-        return_value=TableRowCount(schema_name="dbo", name="sales", row_count=0)
-    )
+    mock_count = AsyncMock(return_value=TableRowCount(schema_name="dbo", name="sales", row_count=0))
 
     with (
         ctx_patch,

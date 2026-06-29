@@ -433,9 +433,7 @@ class TestTablesRead:
         )
         assert result.exit_code != 0
 
-    def test_read_both_error_names_as_of_and_ago(
-        self, runner: CliRunner, cache_env: Path
-    ) -> None:
+    def test_read_both_error_names_as_of_and_ago(self, runner: CliRunner, cache_env: Path) -> None:
         """Error for --as-of + --ago names both options correctly (not --since)."""
         _ = cache_env
         result = runner.invoke(
