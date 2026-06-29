@@ -1,10 +1,10 @@
 # Telemetry
 
-`fabric-dw` collects **anonymous, opt-out usage telemetry** to understand how the tool is used and to prioritise improvements.
+`fabric-dw` collects **opt-out usage telemetry** to understand how the tool is used and to prioritise improvements.
 
 ## What is collected
 
-Every telemetry event includes a shared envelope of anonymous fields:
+Every telemetry event includes a shared envelope of standard fields:
 
 | Field | Description |
 |---|---|
