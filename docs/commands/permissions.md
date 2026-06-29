@@ -6,13 +6,17 @@ title: Permissions
 
 Manage Fabric item-level and T-SQL in-database permissions.
 
-Two distinct permission planes are exposed under the `permissions` top-level group:
+Four distinct permission planes are exposed under the `permissions` top-level group:
 
 - `permissions item` - Fabric item-level permissions (REST admin API). Covers which principals
   have access to a Warehouse or SQL Analytics Endpoint item.
 - `permissions sql` - T-SQL granular in-database permissions. Reads from
   `sys.database_permissions` / `sys.database_principals` and issues `GRANT` / `DENY` / `REVOKE`
   statements.
+- `permissions cls` - Column-level security. Applies `GRANT`, `DENY`, and `REVOKE` to named
+  column lists rather than whole objects.
+- `permissions rls` - Row-level security. Manages security policies with filter and block
+  predicates that reference existing predicate functions.
 
 **Targets:** Data Warehouse / SQL Analytics Endpoint
 
@@ -263,6 +267,287 @@ fdw -w MyWorkspace -y permissions sql revoke SalesWH SELECT --from alice@contoso
 fdw -w MyWorkspace -y permissions sql revoke SalesWH SELECT --from analysts --schema dbo --cascade
 ```
 
+Column-level security (CLS) restricts access to specific columns of a table. It uses the same
+`GRANT`, `DENY`, and `REVOKE` T-SQL verbs as object-level security, but targets a named column
+list rather than the table as a whole.
+
+Permissions supported at column level: `SELECT`, `UPDATE`, `REFERENCES`.
+
+Reference: [Column-level security in Microsoft Fabric](https://learn.microsoft.com/fabric/data-warehouse/column-level-security?WT.mc_id=MVP_310840)
+
+### permissions cls grant
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Grant column-level permissions on an object to a principal. Executes
+`GRANT <PERMISSIONS> ON OBJECT::<SCHEMA.TABLE> (<COLUMNS>) TO <PRINCIPAL>`.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] permissions cls grant [ITEM] PERMISSIONS --object SCHEMA.TABLE --columns COL1,COL2 --to PRINCIPAL [OPTIONS]
+```
+
+`PERMISSIONS` is a comma-separated list of column-level permission tokens: `SELECT`, `UPDATE`,
+or `REFERENCES`.
+
+| Option | Description |
+| --- | --- |
+| `--object SCHEMA.TABLE` | Qualified table name. **Required.** |
+| `--columns COL1,COL2` | Comma-separated list of column names. **Required.** |
+| `--to PRINCIPAL` | Grantee principal: Entra UPN, application GUID, or role name. **Required.** |
+| `--with-grant-option` | Allow the grantee to grant the column permission to others (`WITH GRANT OPTION`). |
+
+**Example**
+
+```shell
+# Grant SELECT on specific columns to a user
+fdw -w MyWorkspace permissions cls grant SalesWH SELECT --object dbo.sales --columns email,phone --to alice@contoso.com
+
+# Grant with grant option
+fdw -w MyWorkspace permissions cls grant SalesWH REFERENCES --object dbo.customers --columns ssn --to analysts --with-grant-option
+```
+
+### permissions cls deny
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Deny column-level permissions on an object to a principal. Executes
+`DENY <PERMISSIONS> ON OBJECT::<SCHEMA.TABLE> (<COLUMNS>) TO <PRINCIPAL>`.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] permissions cls deny [ITEM] PERMISSIONS --object SCHEMA.TABLE --columns COL1,COL2 --to PRINCIPAL
+```
+
+| Option | Description |
+| --- | --- |
+| `--object SCHEMA.TABLE` | Qualified table name. **Required.** |
+| `--columns COL1,COL2` | Comma-separated list of column names. **Required.** |
+| `--to PRINCIPAL` | Principal to deny. **Required.** |
+
+**Example**
+
+```shell
+# Deny SELECT on sensitive columns to a user
+fdw -w MyWorkspace permissions cls deny SalesWH SELECT --object dbo.sales --columns email,phone --to alice@contoso.com
+```
+
+### permissions cls revoke
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Revoke column-level permissions on an object from a principal. Executes
+`REVOKE <PERMISSIONS> ON OBJECT::<SCHEMA.TABLE> (<COLUMNS>) FROM <PRINCIPAL>`.
+
+This is a **destructive operation**: it removes an existing column permission. A confirmation
+prompt is shown before executing. Pass `--yes` / `-y` to skip the prompt in scripts.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] [-y] permissions cls revoke [ITEM] PERMISSIONS --object SCHEMA.TABLE --columns COL1,COL2 --from PRINCIPAL [OPTIONS]
+```
+
+| Option | Description |
+| --- | --- |
+| `--object SCHEMA.TABLE` | Qualified table name. **Required.** |
+| `--columns COL1,COL2` | Comma-separated list of column names. **Required.** |
+| `--from PRINCIPAL` | Principal to revoke from. **Required.** |
+| `-y`, `--yes` | Skip the confirmation prompt (non-interactive / scripted use). |
+| `--cascade` | Cascade the revocation to principals the grantee has granted the permission to. |
+
+**Example**
+
+```shell
+# Revoke SELECT from a user (prompts for confirmation)
+fdw -w MyWorkspace permissions cls revoke SalesWH SELECT --object dbo.sales --columns email,phone --from alice@contoso.com
+
+# Revoke without prompt (scripted)
+fdw -w MyWorkspace -y permissions cls revoke SalesWH SELECT --object dbo.sales --columns email,phone --from alice@contoso.com
+
+# Revoke with cascade
+fdw -w MyWorkspace -y permissions cls revoke SalesWH SELECT --object dbo.sales --columns ssn --from analysts --cascade
+```
+
+### permissions cls list
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+List column-level permissions on an object. Queries `sys.database_permissions` and returns only
+rows where `minor_id != 0` (column-level entries), joined to column names from `sys.columns`.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] [--json] permissions cls list [ITEM] --object SCHEMA.TABLE
+```
+
+| Option | Description |
+| --- | --- |
+| `--object SCHEMA.TABLE` | Qualified table name. **Required.** |
+
+**Example**
+
+```shell
+# Tabular output
+fdw -w MyWorkspace permissions cls list SalesWH --object dbo.sales
+
+# Raw JSON
+fdw -w MyWorkspace --json permissions cls list SalesWH --object dbo.sales
+```
+
+Control row-level security (RLS) policies. Each policy contains one or more filter or block
+predicates that reference existing predicate functions (table-valued functions). The CLI
+never authors or modifies predicate function bodies.
+
+### permissions rls list
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+List all security policies and their predicates.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] [--json] permissions rls list [ITEM]
+```
+
+**Example**
+
+```shell
+fdw -w MyWorkspace permissions rls list SalesWH
+fdw -w MyWorkspace --json permissions rls list SalesWH
+```
+
+### permissions rls create
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Create a new row-level security policy with one filter or block predicate.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] permissions rls create [ITEM] [POLICY_NAME]
+    { --filter SCHEMA.FN(COL,...) | --block SCHEMA.FN(COL,...) }
+    --on SCHEMA.TABLE
+    [--operation AFTER-INSERT|AFTER-UPDATE|BEFORE-UPDATE|BEFORE-DELETE]
+    [--state on|off]
+```
+
+| Option | Description |
+| --- | --- |
+| `--filter SCHEMA.FN(COL,...)` | Add a FILTER predicate (mutually exclusive with `--block`). |
+| `--block SCHEMA.FN(COL,...)` | Add a BLOCK predicate (mutually exclusive with `--filter`). |
+| `--on SCHEMA.TABLE` | Target table for the predicate (required). |
+| `--operation OP` | Block operation: `after-insert`, `after-update`, `before-update`, `before-delete` (BLOCK only). |
+| `--state on\|off` | Initial policy state (default: `on`). |
+
+**Example**
+
+```shell
+# Filter predicate, enabled
+fdw -w MyWorkspace permissions rls create SalesWH rls.SalesFilter \
+    --filter rls.fn_filter(SalesRep) --on dbo.Sales
+
+# Block predicate, disabled initially
+fdw -w MyWorkspace permissions rls create SalesWH rls.SalesBlock \
+    --block rls.fn_block(SalesRep) --on dbo.Sales \
+    --operation after-insert --state off
+```
+
+### permissions rls add-predicate
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Add an additional predicate to an existing policy.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] permissions rls add-predicate [ITEM] [POLICY_NAME]
+    { --filter SCHEMA.FN(COL,...) | --block SCHEMA.FN(COL,...) }
+    --on SCHEMA.TABLE
+    [--operation AFTER-INSERT|AFTER-UPDATE|BEFORE-UPDATE|BEFORE-DELETE]
+```
+
+**Example**
+
+```shell
+fdw -w MyWorkspace permissions rls add-predicate SalesWH rls.SalesFilter \
+    --filter rls.fn_filter(Region) --on dbo.Regions
+```
+
+### permissions rls drop-predicate
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Drop a predicate from an existing policy.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] permissions rls drop-predicate [ITEM] [POLICY_NAME]
+    { --filter | --block }
+    --on SCHEMA.TABLE
+```
+
+| Option | Description |
+| --- | --- |
+| `--filter` | Target a FILTER predicate (flag, no value). |
+| `--block` | Target a BLOCK predicate (flag, no value). |
+| `--on SCHEMA.TABLE` | Table whose predicate is dropped. |
+
+**Example**
+
+```shell
+fdw -w MyWorkspace permissions rls drop-predicate SalesWH rls.SalesFilter \
+    --filter --on dbo.Sales
+```
+
+### permissions rls set-state
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Enable or disable an existing security policy (reversible, not destructive).
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] permissions rls set-state [ITEM] [POLICY_NAME]
+    { --enable | --disable }
+```
+
+**Example**
+
+```shell
+fdw -w MyWorkspace permissions rls set-state SalesWH rls.SalesFilter --enable
+fdw -w MyWorkspace permissions rls set-state SalesWH rls.SalesFilter --disable
+```
+
+### permissions rls drop
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+**Destructive.** Drop an entire security policy (and all its predicates).
+
+Requires confirmation (`--yes` / `-y`) or the `FABRIC_MCP_ALLOW_DESTRUCTIVE=1` environment
+variable when called via MCP.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] [-y] permissions rls drop [ITEM] [POLICY_NAME]
+```
+
+**Example**
+
+```shell
+fdw -w MyWorkspace -y permissions rls drop SalesWH rls.SalesFilter
+```
+
 ## MCP tools
 
 ### list_item_permissions
@@ -411,292 +696,3 @@ because revoke removes an existing permission (destructive operation).
   grantee has granted the permission to (`CASCADE`).
 
 **Returns:** `{ "revoked": true, "permissions": str, "principal": str, "scope": str }`.
-
-## permissions cls
-
-Column-level security (CLS) restricts access to specific columns of a table. It uses the same
-`GRANT`, `DENY`, and `REVOKE` T-SQL verbs as object-level security, but targets a named column
-list rather than the table as a whole.
-
-Permissions supported at column level: `SELECT`, `UPDATE`, `REFERENCES`.
-
-**Targets:** Data Warehouse / SQL Analytics Endpoint
-
-Reference: [Column-level security in Microsoft Fabric](https://learn.microsoft.com/fabric/data-warehouse/column-level-security)
-
-### permissions cls grant
-
-**Targets:** Data Warehouse / SQL Analytics Endpoint
-
-Grant column-level permissions on an object to a principal. Executes
-`GRANT <PERMISSIONS> ON OBJECT::<SCHEMA.TABLE> (<COLUMNS>) TO <PRINCIPAL>`.
-
-**Synopsis**
-
-```
-fdw [-w WORKSPACE] permissions cls grant [ITEM] PERMISSIONS --object SCHEMA.TABLE --columns COL1,COL2 --to PRINCIPAL [OPTIONS]
-```
-
-`PERMISSIONS` is a comma-separated list of column-level permission tokens: `SELECT`, `UPDATE`,
-or `REFERENCES`.
-
-| Option | Description |
-| --- | --- |
-| `--object SCHEMA.TABLE` | Qualified table name. **Required.** |
-| `--columns COL1,COL2` | Comma-separated list of column names. **Required.** |
-| `--to PRINCIPAL` | Grantee principal: Entra UPN, application GUID, or role name. **Required.** |
-| `--with-grant-option` | Allow the grantee to grant the column permission to others (`WITH GRANT OPTION`). |
-
-**Example**
-
-```shell
-# Grant SELECT on specific columns to a user
-fdw -w MyWorkspace permissions cls grant SalesWH SELECT --object dbo.sales --columns email,phone --to alice@contoso.com
-
-# Grant with grant option
-fdw -w MyWorkspace permissions cls grant SalesWH REFERENCES --object dbo.customers --columns ssn --to analysts --with-grant-option
-```
-
-### permissions cls deny
-
-**Targets:** Data Warehouse / SQL Analytics Endpoint
-
-Deny column-level permissions on an object to a principal. Executes
-`DENY <PERMISSIONS> ON OBJECT::<SCHEMA.TABLE> (<COLUMNS>) TO <PRINCIPAL>`.
-
-**Synopsis**
-
-```
-fdw [-w WORKSPACE] permissions cls deny [ITEM] PERMISSIONS --object SCHEMA.TABLE --columns COL1,COL2 --to PRINCIPAL
-```
-
-| Option | Description |
-| --- | --- |
-| `--object SCHEMA.TABLE` | Qualified table name. **Required.** |
-| `--columns COL1,COL2` | Comma-separated list of column names. **Required.** |
-| `--to PRINCIPAL` | Principal to deny. **Required.** |
-
-**Example**
-
-```shell
-# Deny SELECT on sensitive columns to a user
-fdw -w MyWorkspace permissions cls deny SalesWH SELECT --object dbo.sales --columns email,phone --to alice@contoso.com
-```
-
-### permissions cls revoke
-
-**Targets:** Data Warehouse / SQL Analytics Endpoint
-
-Revoke column-level permissions on an object from a principal. Executes
-`REVOKE <PERMISSIONS> ON OBJECT::<SCHEMA.TABLE> (<COLUMNS>) FROM <PRINCIPAL>`.
-
-This is a **destructive operation**: it removes an existing column permission. A confirmation
-prompt is shown before executing. Pass `--yes` / `-y` to skip the prompt in scripts.
-
-**Synopsis**
-
-```
-fdw [-w WORKSPACE] [-y] permissions cls revoke [ITEM] PERMISSIONS --object SCHEMA.TABLE --columns COL1,COL2 --from PRINCIPAL [OPTIONS]
-```
-
-| Option | Description |
-| --- | --- |
-| `--object SCHEMA.TABLE` | Qualified table name. **Required.** |
-| `--columns COL1,COL2` | Comma-separated list of column names. **Required.** |
-| `--from PRINCIPAL` | Principal to revoke from. **Required.** |
-| `-y`, `--yes` | Skip the confirmation prompt (non-interactive / scripted use). |
-| `--cascade` | Cascade the revocation to principals the grantee has granted the permission to. |
-
-**Example**
-
-```shell
-# Revoke SELECT from a user (prompts for confirmation)
-fdw -w MyWorkspace permissions cls revoke SalesWH SELECT --object dbo.sales --columns email,phone --from alice@contoso.com
-
-# Revoke without prompt (scripted)
-fdw -w MyWorkspace -y permissions cls revoke SalesWH SELECT --object dbo.sales --columns email,phone --from alice@contoso.com
-
-# Revoke with cascade
-fdw -w MyWorkspace -y permissions cls revoke SalesWH SELECT --object dbo.sales --columns ssn --from analysts --cascade
-```
-
-### permissions cls list
-
-**Targets:** Data Warehouse / SQL Analytics Endpoint
-
-List column-level permissions on an object. Queries `sys.database_permissions` and returns only
-rows where `minor_id != 0` (column-level entries), joined to column names from `sys.columns`.
-
-**Synopsis**
-
-```
-fdw [-w WORKSPACE] [--json] permissions cls list [ITEM] --object SCHEMA.TABLE
-```
-
-| Option | Description |
-| --- | --- |
-| `--object SCHEMA.TABLE` | Qualified table name. **Required.** |
-
-**Example**
-
-```shell
-# Tabular output
-fdw -w MyWorkspace permissions cls list SalesWH --object dbo.sales
-
-# Raw JSON
-fdw -w MyWorkspace --json permissions cls list SalesWH --object dbo.sales
-```
-
----
-
-## Row-level security (`permissions rls`)
-
-**Targets:** Data Warehouse / SQL Analytics Endpoint
-
-Control row-level security (RLS) policies. Each policy contains one or more filter or block
-predicates that reference existing predicate functions (table-valued functions). The CLI
-never authors or modifies predicate function bodies.
-
-### permissions rls list
-
-List all security policies and their predicates.
-
-**Synopsis**
-
-```
-fdw [-w WORKSPACE] [--json] permissions rls list [ITEM]
-```
-
-**Example**
-
-```shell
-fdw -w MyWorkspace permissions rls list SalesWH
-fdw -w MyWorkspace --json permissions rls list SalesWH
-```
-
----
-
-### permissions rls create
-
-Create a new row-level security policy with one filter or block predicate.
-
-**Synopsis**
-
-```
-fdw [-w WORKSPACE] permissions rls create [ITEM] [POLICY_NAME]
-    { --filter SCHEMA.FN(COL,...) | --block SCHEMA.FN(COL,...) }
-    --on SCHEMA.TABLE
-    [--operation AFTER-INSERT|AFTER-UPDATE|BEFORE-UPDATE|BEFORE-DELETE]
-    [--state on|off]
-```
-
-| Option | Description |
-| --- | --- |
-| `--filter SCHEMA.FN(COL,...)` | Add a FILTER predicate (mutually exclusive with `--block`). |
-| `--block SCHEMA.FN(COL,...)` | Add a BLOCK predicate (mutually exclusive with `--filter`). |
-| `--on SCHEMA.TABLE` | Target table for the predicate (required). |
-| `--operation OP` | Block operation: `after-insert`, `after-update`, `before-update`, `before-delete` (BLOCK only). |
-| `--state on\|off` | Initial policy state (default: `on`). |
-
-**Example**
-
-```shell
-# Filter predicate, enabled
-fdw -w MyWorkspace permissions rls create SalesWH rls.SalesFilter \
-    --filter rls.fn_filter(SalesRep) --on dbo.Sales
-
-# Block predicate, disabled initially
-fdw -w MyWorkspace permissions rls create SalesWH rls.SalesBlock \
-    --block rls.fn_block(SalesRep) --on dbo.Sales \
-    --operation after-insert --state off
-```
-
----
-
-### permissions rls add-predicate
-
-Add an additional predicate to an existing policy.
-
-**Synopsis**
-
-```
-fdw [-w WORKSPACE] permissions rls add-predicate [ITEM] [POLICY_NAME]
-    { --filter SCHEMA.FN(COL,...) | --block SCHEMA.FN(COL,...) }
-    --on SCHEMA.TABLE
-    [--operation AFTER-INSERT|AFTER-UPDATE|BEFORE-UPDATE|BEFORE-DELETE]
-```
-
-**Example**
-
-```shell
-fdw -w MyWorkspace permissions rls add-predicate SalesWH rls.SalesFilter \
-    --filter rls.fn_filter(Region) --on dbo.Regions
-```
-
----
-
-### permissions rls drop-predicate
-
-Drop a predicate from an existing policy.
-
-**Synopsis**
-
-```
-fdw [-w WORKSPACE] permissions rls drop-predicate [ITEM] [POLICY_NAME]
-    { --filter | --block }
-    --on SCHEMA.TABLE
-```
-
-| Option | Description |
-| --- | --- |
-| `--filter` | Target a FILTER predicate (flag, no value). |
-| `--block` | Target a BLOCK predicate (flag, no value). |
-| `--on SCHEMA.TABLE` | Table whose predicate is dropped. |
-
-**Example**
-
-```shell
-fdw -w MyWorkspace permissions rls drop-predicate SalesWH rls.SalesFilter \
-    --filter --on dbo.Sales
-```
-
----
-
-### permissions rls set-state
-
-Enable or disable an existing security policy (reversible, not destructive).
-
-**Synopsis**
-
-```
-fdw [-w WORKSPACE] permissions rls set-state [ITEM] [POLICY_NAME]
-    { --enable | --disable }
-```
-
-**Example**
-
-```shell
-fdw -w MyWorkspace permissions rls set-state SalesWH rls.SalesFilter --enable
-fdw -w MyWorkspace permissions rls set-state SalesWH rls.SalesFilter --disable
-```
-
----
-
-### permissions rls drop
-
-**Destructive.** Drop an entire security policy (and all its predicates).
-
-Requires confirmation (`--yes` / `-y`) or the `FABRIC_MCP_ALLOW_DESTRUCTIVE=1` environment
-variable when called via MCP.
-
-**Synopsis**
-
-```
-fdw [-w WORKSPACE] [-y] permissions rls drop [ITEM] [POLICY_NAME]
-```
-
-**Example**
-
-```shell
-fdw -w MyWorkspace -y permissions rls drop SalesWH rls.SalesFilter
-```
