@@ -46,6 +46,7 @@ from fabric_dw.identifiers import (
     parse_qualified_name,
     quote_identifier,
     quote_principal,
+    validate_column_name,
     validate_identifier,
     validate_principal_name,
 )
@@ -572,6 +573,10 @@ def _build_scope_clause(
 def _build_column_list(columns: list[str]) -> str:
     """Build a T-SQL column list suffix for column-level grants: ``" ([col1], [col2])"``.
 
+    Uses :func:`~fabric_dw.identifiers.validate_column_name` (not
+    ``validate_identifier``) so that legitimate column names containing
+    spaces, hyphens, or leading digits are accepted.
+
     Args:
         columns: Non-empty list of column names to validate and quote.
 
@@ -579,15 +584,66 @@ def _build_column_list(columns: list[str]) -> str:
         A string like ``" ([col1], [col2])"`` (with a leading space).
 
     Raises:
-        ValueError: If *columns* is empty or any name fails identifier validation.
+        ValueError: If *columns* is empty or any name fails validation.
     """
     if not columns:
         msg = "At least one column must be specified"
         raise ValueError(msg)
     for col in columns:
-        validate_identifier(col)
+        validate_column_name(col)
     quoted = ", ".join(quote_identifier(col) for col in columns)
     return f" ({quoted})"
+
+
+def _build_on_part(
+    scope_class: str,
+    *,
+    schema: str | None = None,
+    object_name: str | None = None,
+    perms: list[str],
+    columns: list[str] | None,
+) -> str:
+    """Return the ``on_part`` string (leading space included) for GRANT/DENY/REVOKE.
+
+    When *columns* is provided the function validates that *scope_class* is
+    ``"OBJECT"`` (already uppercased by the caller) and that every permission
+    in *perms* is column-applicable.
+
+    When *columns* is ``None`` the standard scope clause is returned; the
+    DATABASE scope returns an empty string (no ON clause in Fabric T-SQL).
+
+    Args:
+        scope_class: ``"DATABASE"``, ``"SCHEMA"``, or ``"OBJECT"`` (uppercase).
+        schema: Schema name (required for SCHEMA scope).
+        object_name: Qualified object name (required for OBJECT scope).
+        perms: Already-validated list of permission tokens (uppercase).
+        columns: Optional list of column names; ``None`` means no column restriction.
+
+    Returns:
+        The ``on_part`` string with a leading space, or ``""`` for DATABASE scope
+        without columns.
+
+    Raises:
+        ValueError: If *columns* is provided with a non-OBJECT scope, if any
+            permission is not column-applicable, or if identifiers are invalid.
+    """
+    scope_clause = _build_scope_clause(scope_class, schema=schema, object_name=object_name)
+    if columns is not None:
+        if scope_class != "OBJECT":
+            msg = "columns may only be specified for OBJECT scope"
+            raise ValueError(msg)
+        invalid = [p for p in perms if p not in COLUMN_APPLICABLE_PERMISSIONS]
+        if invalid:
+            msg = (
+                f"Column-level permissions must be one of: "
+                f"{', '.join(sorted(COLUMN_APPLICABLE_PERMISSIONS))}; "
+                f"got: {', '.join(invalid)}"
+            )
+            raise ValueError(msg)
+        col_list = _build_column_list(columns)
+        return f" {scope_clause}{col_list}"
+    # DATABASE scope returns an empty scope_clause; guard prevents a leading space
+    return f" {scope_clause}" if scope_clause else ""
 
 
 # ---------------------------------------------------------------------------
@@ -625,28 +681,19 @@ async def grant_permission(
     Raises:
         ValueError: If permissions or identifiers are invalid.
     """
+    scope_class = scope_class.upper()
     perms = _validate_permissions(permissions_str, scope_class)
-    scope_clause = _build_scope_clause(scope_class, schema=schema, object_name=object_name)
     validate_principal_name(principal_name)
     quoted_principal = quote_principal(principal_name)
     perms_clause = ", ".join(perms)
     grant_option_clause = " WITH GRANT OPTION" if with_grant_option else ""
-    if columns is not None:
-        if scope_class.upper() != "OBJECT":
-            msg = "columns may only be specified for OBJECT scope"
-            raise ValueError(msg)
-        invalid = [p for p in perms if p not in COLUMN_APPLICABLE_PERMISSIONS]
-        if invalid:
-            msg = (
-                f"Column-level permissions must be one of: "
-                f"{', '.join(sorted(COLUMN_APPLICABLE_PERMISSIONS))}; "
-                f"got: {', '.join(invalid)}"
-            )
-            raise ValueError(msg)
-        col_list = _build_column_list(columns)
-        on_part = f" {scope_clause}{col_list}"
-    else:
-        on_part = f" {scope_clause}" if scope_clause else ""
+    on_part = _build_on_part(
+        scope_class,
+        schema=schema,
+        object_name=object_name,
+        perms=perms,
+        columns=columns,
+    )
     ddl = f"GRANT {perms_clause}{on_part} TO {quoted_principal}{grant_option_clause};"
 
     def _run() -> None:
@@ -683,27 +730,18 @@ async def deny_permission(
     Raises:
         ValueError: If permissions or identifiers are invalid.
     """
+    scope_class = scope_class.upper()
     perms = _validate_permissions(permissions_str, scope_class)
-    scope_clause = _build_scope_clause(scope_class, schema=schema, object_name=object_name)
     validate_principal_name(principal_name)
     quoted_principal = quote_principal(principal_name)
     perms_clause = ", ".join(perms)
-    if columns is not None:
-        if scope_class.upper() != "OBJECT":
-            msg = "columns may only be specified for OBJECT scope"
-            raise ValueError(msg)
-        invalid = [p for p in perms if p not in COLUMN_APPLICABLE_PERMISSIONS]
-        if invalid:
-            msg = (
-                f"Column-level permissions must be one of: "
-                f"{', '.join(sorted(COLUMN_APPLICABLE_PERMISSIONS))}; "
-                f"got: {', '.join(invalid)}"
-            )
-            raise ValueError(msg)
-        col_list = _build_column_list(columns)
-        on_part = f" {scope_clause}{col_list}"
-    else:
-        on_part = f" {scope_clause}" if scope_clause else ""
+    on_part = _build_on_part(
+        scope_class,
+        schema=schema,
+        object_name=object_name,
+        perms=perms,
+        columns=columns,
+    )
     ddl = f"DENY {perms_clause}{on_part} TO {quoted_principal};"
 
     def _run() -> None:
@@ -746,29 +784,20 @@ async def revoke_permission(
     Raises:
         ValueError: If permissions or identifiers are invalid.
     """
+    scope_class = scope_class.upper()
     perms = _validate_permissions(permissions_str, scope_class)
-    scope_clause = _build_scope_clause(scope_class, schema=schema, object_name=object_name)
     validate_principal_name(principal_name)
     quoted_principal = quote_principal(principal_name)
     perms_clause = ", ".join(perms)
     grant_option_prefix = "GRANT OPTION FOR " if grant_option_only else ""
     cascade_clause = " CASCADE" if cascade else ""
-    if columns is not None:
-        if scope_class.upper() != "OBJECT":
-            msg = "columns may only be specified for OBJECT scope"
-            raise ValueError(msg)
-        invalid = [p for p in perms if p not in COLUMN_APPLICABLE_PERMISSIONS]
-        if invalid:
-            msg = (
-                f"Column-level permissions must be one of: "
-                f"{', '.join(sorted(COLUMN_APPLICABLE_PERMISSIONS))}; "
-                f"got: {', '.join(invalid)}"
-            )
-            raise ValueError(msg)
-        col_list = _build_column_list(columns)
-        on_part = f" {scope_clause}{col_list}"
-    else:
-        on_part = f" {scope_clause}" if scope_clause else ""
+    on_part = _build_on_part(
+        scope_class,
+        schema=schema,
+        object_name=object_name,
+        perms=perms,
+        columns=columns,
+    )
     ddl = (
         f"REVOKE {grant_option_prefix}{perms_clause}{on_part} "
         f"FROM {quoted_principal}{cascade_clause};"

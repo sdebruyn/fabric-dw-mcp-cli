@@ -229,7 +229,8 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 permission to others (adds ``WITH GRANT OPTION``).
             columns: Optional list of column names for column-level security
                 (OBJECT scope only; permissions must be SELECT, UPDATE, or
-                REFERENCES).
+                REFERENCES). Pass ``None`` (omit) for no column restriction.
+                Passing an empty list raises a ``ToolError``.
         """
         ctx = get_context()
         assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
@@ -297,7 +298,8 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 scope is ``"OBJECT"``).
             columns: Optional list of column names for column-level security
                 (OBJECT scope only; permissions must be SELECT, UPDATE, or
-                REFERENCES).
+                REFERENCES). Pass ``None`` (omit) for no column restriction.
+                Passing an empty list raises a ``ToolError``.
         """
         ctx = get_context()
         assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
@@ -367,7 +369,8 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 scope is ``"OBJECT"``).
             columns: Optional list of column names for column-level security
                 (OBJECT scope only; permissions must be SELECT, UPDATE, or
-                REFERENCES).
+                REFERENCES). Pass ``None`` (omit) for no column restriction.
+                Passing an empty list raises a ``ToolError``.
             grant_option_only: When ``True``, revokes only the grant option (adds
                 ``GRANT OPTION FOR``), leaving the base permission in place.
             cascade: When ``True``, cascades the revocation to principals the

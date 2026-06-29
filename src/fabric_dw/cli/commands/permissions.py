@@ -464,6 +464,23 @@ async def sql_revoke_cmd(
 
 
 # ---------------------------------------------------------------------------
+# permissions cls helpers
+# ---------------------------------------------------------------------------
+
+
+def _parse_column_list(columns_str: str) -> list[str]:
+    """Split a comma-separated column string into a non-empty list.
+
+    Raises:
+        click.UsageError: If the parsed list is empty (e.g. ``--columns ","``).
+    """
+    columns = [c.strip() for c in columns_str.split(",") if c.strip()]
+    if not columns:
+        raise click.UsageError("--columns must contain at least one non-empty column name")
+    return columns
+
+
+# ---------------------------------------------------------------------------
 # permissions cls sub-group (column-level security)
 # ---------------------------------------------------------------------------
 
@@ -517,7 +534,7 @@ async def cls_grant_cmd(
     """
     ws = resolve_workspace(ctx)
     it = resolve_warehouse_arg(ctx, item)
-    columns = [c.strip() for c in columns_str.split(",") if c.strip()]
+    columns = _parse_column_list(columns_str)
     try:
         async with build_http_client(ctx) as http:
             target, _entry = await build_sql_target(http, ws, it)
@@ -574,7 +591,7 @@ async def cls_deny_cmd(
     """
     ws = resolve_workspace(ctx)
     it = resolve_warehouse_arg(ctx, item)
-    columns = [c.strip() for c in columns_str.split(",") if c.strip()]
+    columns = _parse_column_list(columns_str)
     try:
         async with build_http_client(ctx) as http:
             target, _entry = await build_sql_target(http, ws, it)
@@ -641,7 +658,7 @@ async def cls_revoke_cmd(
     """
     ws = resolve_workspace(ctx)
     it = resolve_warehouse_arg(ctx, item)
-    columns = [c.strip() for c in columns_str.split(",") if c.strip()]
+    columns = _parse_column_list(columns_str)
     if not confirm_destructive(
         f"Revoke {permissions!r} on {scope_object!r} columns {columns_str!r} from {principal!r}?",
         yes=ctx.yes,

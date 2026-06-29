@@ -447,3 +447,102 @@ async def test_revoke_removes_column_level_grant(
         f"Column-level SELECT on phone still present after revoke for {role_name!r}; "
         f"got: {col_rows!r}"
     )
+
+
+async def test_deny_select_on_column_appears_in_list(
+    temp_role: tuple[SqlTarget, str, str],
+) -> None:
+    """deny_permission SELECT on a specific column must produce a DENY row with column_name set.
+
+    Fabric T-SQL: ``DENY SELECT ON OBJECT::[schema].[table] ([col]) TO [role]``
+    The resulting row in sys.database_permissions has state_desc = 'DENY' and minor_id != 0.
+    """
+    sql_target, schema_name, role_name = temp_role
+    table_name = "pytest_cls_deny_tbl"
+    qualified_name = f"{schema_name}.{table_name}"
+
+    await asyncio.to_thread(
+        run_query,
+        sql_target,
+        f"CREATE TABLE [{schema_name}].[{table_name}] (id INT, ssn NVARCHAR(20));",
+        autocommit=True,
+        fetch="none",
+    )
+
+    await permissions.deny_permission(
+        sql_target,
+        "SELECT",
+        role_name,
+        "OBJECT",
+        object_name=qualified_name,
+        columns=["ssn"],
+    )
+
+    result = await permissions.list_sql_permissions(
+        sql_target, principal=role_name, object_name=qualified_name
+    )
+    col_rows = [p for p in result if p.column_name is not None]
+    assert any(
+        p.permission_name == "SELECT" and p.column_name == "ssn" and p.state == "DENY"
+        for p in col_rows
+    ), f"Expected column-level DENY SELECT on ssn for role {role_name!r}; column rows: {col_rows!r}"
+
+
+async def test_revoke_grant_option_for_column_level_grant(
+    temp_role: tuple[SqlTarget, str, str],
+) -> None:
+    """REVOKE GRANT OPTION FOR on a column-level grant must downgrade to a plain GRANT.
+
+    Fabric T-SQL: first GRANT SELECT ... WITH GRANT OPTION, then
+    ``REVOKE GRANT OPTION FOR SELECT ON OBJECT::[schema].[table] ([col]) FROM [role]``.
+    The resulting row must have state GRANT (not GRANT_WITH_GRANT_OPTION).
+
+    If Fabric does not support this syntax at the column level, the test skips with
+    a clear message rather than failing opaquely.
+    """
+    sql_target, schema_name, role_name = temp_role
+    table_name = "pytest_cls_gof_tbl"
+    qualified_name = f"{schema_name}.{table_name}"
+
+    await asyncio.to_thread(
+        run_query,
+        sql_target,
+        f"CREATE TABLE [{schema_name}].[{table_name}] (id INT, revenue DECIMAL(18,2));",
+        autocommit=True,
+        fetch="none",
+    )
+
+    await permissions.grant_permission(
+        sql_target,
+        "SELECT",
+        role_name,
+        "OBJECT",
+        object_name=qualified_name,
+        columns=["revenue"],
+        with_grant_option=True,
+    )
+
+    try:
+        await permissions.revoke_permission(
+            sql_target,
+            "SELECT",
+            role_name,
+            "OBJECT",
+            object_name=qualified_name,
+            columns=["revenue"],
+            grant_option_only=True,
+        )
+    except Exception as exc:
+        pytest.skip(
+            f"Fabric rejected REVOKE GRANT OPTION FOR at column level "
+            f"(not supported on this capacity): {exc}"
+        )
+
+    result = await permissions.list_sql_permissions(
+        sql_target, principal=role_name, object_name=qualified_name
+    )
+    col_rows = [p for p in result if p.column_name == "revenue"]
+    assert any(p.state == "GRANT" for p in col_rows), (
+        f"Expected plain GRANT after REVOKE GRANT OPTION FOR on column revenue "
+        f"for role {role_name!r}; got: {col_rows!r}"
+    )

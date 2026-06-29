@@ -1041,3 +1041,28 @@ class TestRevokePermissionWithColumns:
                 "DATABASE",
                 columns=["col1"],
             )
+
+    async def test_revoke_grant_option_for_with_columns_exact_sql(self) -> None:
+        """REVOKE GRANT OPTION FOR with columns: exact SQL pin (fix #2)."""
+        captured: list[str] = []
+
+        def _mock_run_query(_target: object, sql: str, **_kwargs: object) -> tuple:
+            captured.append(sql)
+            return [], []
+
+        with patch("fabric_dw.services.permissions.run_query", side_effect=_mock_run_query):
+            await perms_svc.revoke_permission(
+                _TARGET,
+                "SELECT",
+                "alice@contoso.com",
+                "OBJECT",
+                object_name="dbo.sales",
+                columns=["email", "phone"],
+                grant_option_only=True,
+            )
+
+        stmt = captured[0]
+        assert stmt == (
+            "REVOKE GRANT OPTION FOR SELECT ON OBJECT::[dbo].[sales]"
+            " ([email], [phone]) FROM [alice@contoso.com];"
+        )
