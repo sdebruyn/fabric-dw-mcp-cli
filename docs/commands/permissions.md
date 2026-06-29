@@ -757,8 +757,11 @@ Blocked by `FABRIC_MCP_READONLY`. Does NOT require `FABRIC_MCP_ALLOW_DESTRUCTIVE
   when scope is `"OBJECT"`).
 - `with_grant_option` (`bool`, default `false`): when `true`, allows the grantee to grant the
   permission to others (`WITH GRANT OPTION`).
+- `columns` (`list[str] | null`, optional): list of column names for column-level security
+  (OBJECT scope only; permissions must be `SELECT`, `UPDATE`, or `REFERENCES`). Omit or pass
+  `null` for no column restriction. Passing an empty list raises a `ToolError`.
 
-**Returns:** `{ "granted": true, "permissions": str, "principal": str, "scope": str }`.
+**Returns:** `{ "granted": true, "permissions": str, "principal": str, "scope": str, "columns": list | null }`.
 
 ### deny_permission
 
@@ -780,8 +783,11 @@ Blocked by `FABRIC_MCP_READONLY`. Does NOT require `FABRIC_MCP_ALLOW_DESTRUCTIVE
 - `schema` (`str | null`, optional): schema name (required when scope is `"SCHEMA"`).
 - `object_name` (`str | null`, optional): qualified object name (required when scope is
   `"OBJECT"`).
+- `columns` (`list[str] | null`, optional): list of column names for column-level security
+  (OBJECT scope only; permissions must be `SELECT`, `UPDATE`, or `REFERENCES`). Omit or pass
+  `null` for no column restriction. Passing an empty list raises a `ToolError`.
 
-**Returns:** `{ "denied": true, "permissions": str, "principal": str, "scope": str }`.
+**Returns:** `{ "denied": true, "permissions": str, "principal": str, "scope": str, "columns": list | null }`.
 
 ### revoke_permission
 
@@ -805,12 +811,138 @@ because revoke removes an existing permission (destructive operation).
 - `schema` (`str | null`, optional): schema name (required when scope is `"SCHEMA"`).
 - `object_name` (`str | null`, optional): qualified object name (required when scope is
   `"OBJECT"`).
+- `columns` (`list[str] | null`, optional): list of column names for column-level security
+  (OBJECT scope only; permissions must be `SELECT`, `UPDATE`, or `REFERENCES`). Omit or pass
+  `null` for no column restriction. Passing an empty list raises a `ToolError`.
 - `grant_option_only` (`bool`, default `false`): when `true`, revokes only the grant option
   (`GRANT OPTION FOR`), leaving the base permission in place.
 - `cascade` (`bool`, default `false`): when `true`, cascades the revocation to principals the
   grantee has granted the permission to (`CASCADE`).
 
-**Returns:** `{ "revoked": true, "permissions": str, "principal": str, "scope": str }`.
+**Returns:** `{ "revoked": true, "permissions": str, "principal": str, "scope": str, "columns": list | null }`.
+
+### list_security_policies
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+List all row-level security policies and their predicates from `sys.security_policies`.
+
+**Parameters:**
+
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): Warehouse or SQL endpoint name or GUID.
+
+**Returns:** `list[SecurityPolicy]`: array of policy records, each with `policy_schema`, `policy_name`,
+`is_enabled`, and `predicates` (array of objects with `predicate_type`, `operation`, `schema_name`,
+`table_name`, and `predicate_definition`).
+
+### create_security_policy
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Create a row-level security policy with one or more predicates. Executes `CREATE SECURITY POLICY`.
+
+Blocked by `FABRIC_MCP_READONLY`. Does NOT require `FABRIC_MCP_ALLOW_DESTRUCTIVE`.
+
+**Parameters:**
+
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): Warehouse or SQL endpoint name or GUID.
+- `policy_name` (`str`): qualified policy name (`"schema.name"` or `"name"`).
+- `predicates` (`list[dict]`): list of predicate definitions. Each entry must include:
+  - `predicate_type` (`str`): `"FILTER"` or `"BLOCK"`.
+  - `fn_schema` (`str`): schema of the predicate function.
+  - `fn_name` (`str`): name of the predicate function.
+  - `fn_args` (`list[str]`): column names to pass to the function.
+  - `table_schema` (`str`): schema of the target table.
+  - `table_name` (`str`): name of the target table.
+  - `operation` (`str`, optional): block operation - `"AFTER_INSERT"`, `"AFTER_UPDATE"`,
+    `"BEFORE_UPDATE"`, or `"BEFORE_DELETE"` (BLOCK predicates only).
+- `state` (`bool`, default `true`): initial policy state - `true` to enable, `false` to disable.
+
+**Returns:** `{ "created": true, "policy_name": str, "state": bool }`.
+
+### add_security_predicate
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Add a predicate to an existing row-level security policy. Executes
+`ALTER SECURITY POLICY ... ADD FILTER|BLOCK PREDICATE`.
+
+Blocked by `FABRIC_MCP_READONLY`. Does NOT require `FABRIC_MCP_ALLOW_DESTRUCTIVE`.
+
+**Parameters:**
+
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): Warehouse or SQL endpoint name or GUID.
+- `policy_name` (`str`): qualified policy name (`"schema.name"` or `"name"`).
+- `predicate_type` (`str`): `"FILTER"` or `"BLOCK"`.
+- `fn_name` (`str`): name of the predicate function.
+- `fn_args` (`list[str]`): column names to pass to the predicate function.
+- `table_schema` (`str`): schema name of the target table.
+- `table_name` (`str`): name of the target table.
+- `fn_schema` (`str | null`, optional): schema of the predicate function. Omit when the function
+  lives in the default schema.
+- `operation` (`str | null`, optional): block operation - `"AFTER_INSERT"`, `"AFTER_UPDATE"`,
+  `"BEFORE_UPDATE"`, or `"BEFORE_DELETE"` (BLOCK predicates only).
+
+**Returns:** `{ "added": true, "policy_name": str, "predicate_type": str, "table": str }`.
+
+### drop_security_predicate
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Drop a predicate from an existing row-level security policy. Executes
+`ALTER SECURITY POLICY ... DROP FILTER|BLOCK PREDICATE ON`.
+
+Blocked by `FABRIC_MCP_READONLY`. Does NOT require `FABRIC_MCP_ALLOW_DESTRUCTIVE`.
+
+**Parameters:**
+
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): Warehouse or SQL endpoint name or GUID.
+- `policy_name` (`str`): qualified policy name (`"schema.name"` or `"name"`).
+- `predicate_type` (`str`): `"FILTER"` or `"BLOCK"`.
+- `table_schema` (`str`): schema name of the target table.
+- `table_name` (`str`): name of the target table.
+
+**Returns:** `{ "dropped": true, "policy_name": str, "predicate_type": str, "table": str }`.
+
+### set_security_policy_state
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Enable or disable a row-level security policy. Executes
+`ALTER SECURITY POLICY ... WITH (STATE = ON|OFF)`.
+
+Enabling or disabling a policy is reversible. Blocked by `FABRIC_MCP_READONLY`. Does NOT require
+`FABRIC_MCP_ALLOW_DESTRUCTIVE`.
+
+**Parameters:**
+
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): Warehouse or SQL endpoint name or GUID.
+- `policy_name` (`str`): qualified policy name (`"schema.name"` or `"name"`).
+- `enabled` (`bool`): `true` to enable the policy, `false` to disable it.
+
+**Returns:** `{ "policy_name": str, "enabled": bool }`.
+
+### drop_security_policy
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Drop a row-level security policy and all its predicates. Executes `DROP SECURITY POLICY`.
+
+This is a **permanently destructive operation**: the policy and all its predicates are removed.
+Blocked by `FABRIC_MCP_READONLY`. Also requires `FABRIC_MCP_ALLOW_DESTRUCTIVE=1`.
+
+**Parameters:**
+
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): Warehouse or SQL endpoint name or GUID.
+- `policy_name` (`str`): qualified policy name (`"schema.name"` or `"name"`).
+
+**Returns:** `{ "dropped": true, "policy_name": str }`.
 
 ### list_masked_columns
 
