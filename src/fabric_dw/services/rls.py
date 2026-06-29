@@ -224,11 +224,18 @@ def _build_predicate_clause(
         table_schema: Schema of the target table.
         table_name: Name of the target table.
         operation: Block operation token (e.g. ``"AFTER_INSERT"``), or
-            ``None`` to omit the operation clause.
+            ``None`` to omit the operation clause.  Must be ``None`` for
+            FILTER predicates.
 
     Returns:
         The ``ADD ... PREDICATE ...`` clause string (no trailing semicolon).
+
+    Raises:
+        ValueError: If a FILTER predicate is given a non-``None`` operation.
     """
+    if predicate_type == "FILTER" and operation is not None:
+        msg = "FILTER predicates do not accept an operation"
+        raise ValueError(msg)
     fn_call = _build_fn_call(fn_schema, fn_name, fn_args)
     validate_identifier(table_schema)
     validate_identifier(table_name)
@@ -282,9 +289,9 @@ async def list_security_policies(
                 raw_op = d["operation_desc"]
                 pred = SecurityPredicate(
                     predicate_type=str(d["predicate_type_desc"]),
-                    operation=str(raw_op) if raw_op is not None else None,
-                    schema_name=str(d["table_schema"]),
-                    table_name=str(d["table_name"]),
+                    operation=raw_op.replace(" ", "_") if raw_op is not None else None,
+                    schema_name=d["table_schema"],
+                    table_name=d["table_name"],
                     predicate_definition=str(d["predicate_definition"]),
                 )
                 predicates_by_key[key].append(pred)
@@ -344,7 +351,13 @@ async def create_security_policy(
     state_sql = "ON" if state else "OFF"
 
     clauses: list[str] = []
-    for spec in predicates:
+    for i, spec in enumerate(predicates):
+        _required = {"predicate_type", "fn_name", "fn_args", "table_schema", "table_name"}
+        _missing = _required - spec.keys()
+        if _missing:
+            missing_list = ", ".join(sorted(_missing))
+            msg = f"Predicate at index {i} is missing required key(s): {missing_list}"
+            raise ValueError(msg)
         ptype = _validate_predicate_type(str(spec["predicate_type"]))
         op = _validate_operation(spec.get("operation"))  # type: ignore[arg-type]
         fn_schema_raw = spec.get("fn_schema")
@@ -424,16 +437,14 @@ async def drop_predicate(
     table_schema: str,
     table_name: str,
     *,
-    operation: str | None = None,
     mode: CredentialMode = CredentialMode.DEFAULT,
 ) -> None:
     """Drop a predicate from an existing security policy.
 
     Executes ``ALTER SECURITY POLICY ... DROP FILTER|BLOCK PREDICATE ON ...``.
 
-    For BLOCK predicates with an operation clause, the operation disambiguates
-    which predicate to remove when multiple BLOCK predicates target the same
-    table.
+    The T-SQL ``DROP { FILTER | BLOCK } PREDICATE ON`` clause takes no
+    operation qualifier -- the operation is not part of the drop syntax.
 
     Args:
         target: SQL connection target.
@@ -441,8 +452,6 @@ async def drop_predicate(
         predicate_type: ``"FILTER"`` or ``"BLOCK"``.
         table_schema: Schema of the target table.
         table_name: Name of the target table.
-        operation: Block operation token (e.g. ``"AFTER_INSERT"``), or
-            ``None`` to drop without an operation clause.
         mode: Credential mode for Entra authentication.
 
     Raises:
@@ -450,14 +459,10 @@ async def drop_predicate(
     """
     policy_ref = _resolve_policy_ref(policy_name)
     ptype = _validate_predicate_type(predicate_type)
-    op = _validate_operation(operation)
     validate_identifier(table_schema)
     validate_identifier(table_name)
     table_ref = f"{quote_identifier(table_schema)}.{quote_identifier(table_name)}"
-    op_clause = f" {_OPERATION_TO_SQL[op]}" if op is not None else ""
-    ddl = (
-        f"ALTER SECURITY POLICY {policy_ref}\n    DROP {ptype} PREDICATE ON {table_ref}{op_clause};"
-    )
+    ddl = f"ALTER SECURITY POLICY {policy_ref}\n    DROP {ptype} PREDICATE ON {table_ref};"
 
     def _run() -> None:
         run_query(target, ddl, mode=mode, autocommit=True, fetch="none")

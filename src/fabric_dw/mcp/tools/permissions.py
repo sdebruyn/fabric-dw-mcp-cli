@@ -506,11 +506,11 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         item: str,
         policy_name: str,
         predicate_type: str,
-        fn_schema: str,
         fn_name: str,
         fn_args: list[str],
         table_schema: str,
         table_name: str,
+        fn_schema: str | None = None,
         operation: str | None = None,
     ) -> dict[str, Any]:
         """Add a predicate to an existing row-level security policy.
@@ -522,11 +522,12 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             item: Warehouse or SQL endpoint name or GUID.
             policy_name: Qualified policy name (``"schema.name"`` or ``"name"``).
             predicate_type: ``"FILTER"`` or ``"BLOCK"``.
-            fn_schema: Schema name of the predicate function.
             fn_name: Name of the predicate function.
             fn_args: Column names to pass to the predicate function.
             table_schema: Schema name of the target table.
             table_name: Name of the target table.
+            fn_schema: Schema name of the predicate function (optional -- omit
+                when the function lives in the default schema).
             operation: Block operation (BLOCK predicates only) -- one of
                 ``"AFTER_INSERT"``, ``"AFTER_UPDATE"``, ``"BEFORE_UPDATE"``,
                 ``"BEFORE_DELETE"``.
@@ -575,11 +576,11 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         predicate_type: str,
         table_schema: str,
         table_name: str,
-        operation: str | None = None,
     ) -> dict[str, Any]:
         """Drop a predicate from an existing row-level security policy.
 
         Executes ``ALTER SECURITY POLICY ... DROP FILTER|BLOCK PREDICATE ON``.
+        The T-SQL ``DROP PREDICATE ON`` syntax takes no operation qualifier.
 
         Args:
             workspace: Workspace name or GUID.
@@ -588,9 +589,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             predicate_type: ``"FILTER"`` or ``"BLOCK"``.
             table_schema: Schema name of the target table.
             table_name: Name of the target table.
-            operation: Block operation (BLOCK predicates only) -- one of
-                ``"AFTER_INSERT"``, ``"AFTER_UPDATE"``, ``"BEFORE_UPDATE"``,
-                ``"BEFORE_DELETE"``.
         """
         ctx = get_context()
         assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
@@ -613,7 +611,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 predicate_type,
                 table_schema,
                 table_name,
-                operation=operation,
                 mode=ctx.auth_mode,
             )
         except (ValueError, FabricError) as exc:

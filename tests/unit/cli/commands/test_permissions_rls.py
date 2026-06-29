@@ -183,7 +183,7 @@ class TestRlsCreate:
         _, kwargs = mock_svc.call_args
         assert kwargs["state"] is True
         preds = mock_svc.call_args.args[2]
-        assert preds[0]["operation"] == "AFTER_INSERT"
+        assert preds[0]["operation"] == "after-insert"  # CLI passes raw; service normalizes
 
     def test_create_both_filter_and_block_fails(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env

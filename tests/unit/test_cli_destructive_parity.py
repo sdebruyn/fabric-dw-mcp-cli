@@ -327,6 +327,15 @@ class TestEmitDestructiveOpOnAbort:
             f"permissions cls revoke did not emit destructive_op=True on abort; got {destructive!r}"
         )
 
+    def test_permissions_rls_drop_emits_destructive_on_abort(self) -> None:
+        """permissions rls drop aborted at prompt must still report destructive_op=True."""
+        destructive = _invoke_and_capture_destructive(
+            ["-w", "myws", "permissions", "rls", "drop", "mydw", "rls.SalesFilter"]
+        )
+        assert destructive is True, (
+            f"permissions rls drop did not emit destructive_op=True on abort; got {destructive!r}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Non-destructive confirming commands must NOT set destructive_op

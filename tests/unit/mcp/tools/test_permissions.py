@@ -622,3 +622,197 @@ async def test_revoke_permission_with_columns_happy_path(mock_ctx, ctx_patch) ->
     assert result["revoked"] is True
     _args, kwargs = mock_svc.call_args
     assert kwargs.get("columns") == ["email"]
+
+
+# ---------------------------------------------------------------------------
+# RLS tools: list_security_policies, create_security_policy, drop_security_policy
+# add_security_predicate, drop_security_predicate, set_security_policy_state
+# ---------------------------------------------------------------------------
+
+
+async def test_list_security_policies_returns_correct_structure(mock_ctx, ctx_patch) -> None:
+    """list_security_policies returns a list of serialised SecurityPolicy dicts."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+    from fabric_dw.models import SecurityPolicy  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    policy = SecurityPolicy(
+        policy_schema="rls",
+        policy_name="SalesFilter",
+        is_enabled=True,
+        predicates=[],
+    )
+    mock_list = AsyncMock(return_value=[policy])
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.rls.list_security_policies", new=mock_list),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "list_security_policies",
+            {"workspace": WS_NAME, "item": WH_NAME},
+        )
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0]["policy_name"] == "SalesFilter"
+    assert result[0]["policy_schema"] == "rls"
+    assert result[0]["is_enabled"] is True
+
+
+async def test_create_security_policy_calls_service_with_correct_args(mock_ctx, ctx_patch) -> None:
+    """create_security_policy calls the service and returns a success dict."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    mock_svc = AsyncMock(return_value=None)
+    predicates = [
+        {
+            "predicate_type": "FILTER",
+            "fn_name": "fn_filter",
+            "fn_args": ["SalesRep"],
+            "table_schema": "dbo",
+            "table_name": "Sales",
+        }
+    ]
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {}),
+        patch("fabric_dw.services.rls.create_security_policy", new=mock_svc),
+    ):
+        os.environ.pop("FABRIC_MCP_READONLY", None)
+        result = await mcp._tool_manager.call_tool(
+            "create_security_policy",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "policy_name": "rls.SalesFilter",
+                "predicates": predicates,
+                "state": True,
+            },
+        )
+
+    assert result["created"] is True
+    assert result["policy_name"] == "rls.SalesFilter"
+    mock_svc.assert_called_once()
+
+
+async def test_drop_security_policy_blocked_without_destructive_env(mock_ctx, ctx_patch) -> None:
+    """drop_security_policy is blocked when FABRIC_MCP_ALLOW_DESTRUCTIVE is not set."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    os.environ.pop("FABRIC_MCP_READONLY", None)
+    os.environ.pop("FABRIC_MCP_ALLOW_DESTRUCTIVE", None)
+    with ctx_patch, patch.dict(os.environ, {}), pytest.raises(ToolError, match="destructive"):
+        await mcp._tool_manager.call_tool(
+            "drop_security_policy",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "policy_name": "rls.SalesFilter",
+            },
+        )
+
+
+async def test_drop_security_policy_succeeds_with_destructive_env(mock_ctx, ctx_patch) -> None:
+    """drop_security_policy succeeds when FABRIC_MCP_ALLOW_DESTRUCTIVE=1."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    mock_svc = AsyncMock(return_value=None)
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
+        patch("fabric_dw.services.rls.drop_security_policy", new=mock_svc),
+    ):
+        os.environ.pop("FABRIC_MCP_READONLY", None)
+        result = await mcp._tool_manager.call_tool(
+            "drop_security_policy",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "policy_name": "rls.SalesFilter",
+            },
+        )
+
+    assert result["dropped"] is True
+    assert result["policy_name"] == "rls.SalesFilter"
+
+
+async def test_add_security_predicate_fn_schema_optional(mock_ctx, ctx_patch) -> None:
+    """add_security_predicate succeeds without fn_schema (it is optional)."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    mock_svc = AsyncMock(return_value=None)
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {}),
+        patch("fabric_dw.services.rls.add_predicate", new=mock_svc),
+    ):
+        os.environ.pop("FABRIC_MCP_READONLY", None)
+        result = await mcp._tool_manager.call_tool(
+            "add_security_predicate",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "policy_name": "rls.SalesFilter",
+                "predicate_type": "FILTER",
+                "fn_name": "fn_filter",
+                "fn_args": ["SalesRep"],
+                "table_schema": "dbo",
+                "table_name": "Sales",
+                # fn_schema intentionally omitted -- should default to None
+            },
+        )
+
+    assert result["added"] is True
+    # Verify fn_schema=None was passed to the service
+    _, kwargs = mock_svc.call_args
+    assert kwargs.get("fn_schema") is None or mock_svc.call_args[0][3] is None
+
+
+async def test_set_security_policy_state_returns_correct_dict(mock_ctx, ctx_patch) -> None:
+    """set_security_policy_state returns a dict with policy_name and enabled."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    mock_svc = AsyncMock(return_value=None)
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {}),
+        patch("fabric_dw.services.rls.set_policy_state", new=mock_svc),
+    ):
+        os.environ.pop("FABRIC_MCP_READONLY", None)
+        result = await mcp._tool_manager.call_tool(
+            "set_security_policy_state",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "policy_name": "rls.SalesFilter",
+                "enabled": False,
+            },
+        )
+
+    assert result["policy_name"] == "rls.SalesFilter"
+    assert result["enabled"] is False

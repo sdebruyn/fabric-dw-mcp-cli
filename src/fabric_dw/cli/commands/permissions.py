@@ -31,6 +31,7 @@ from fabric_dw.cli.commands._utils import (
     resolve_workspace,
 )
 from fabric_dw.exceptions import FabricError
+from fabric_dw.identifiers import parse_qualified_name as _parse_qualified_name
 from fabric_dw.services import permissions as _permissions_svc
 
 # ---------------------------------------------------------------------------
@@ -743,6 +744,10 @@ async def cls_list_cmd(
 def _parse_table_ref(table_expr: str, option_name: str) -> tuple[str, str]:
     """Split SCHEMA.TABLE into (schema, table_name).
 
+    Delegates to :func:`fabric_dw.identifiers.parse_qualified_name`, converting
+    :class:`ValueError` into a :class:`click.UsageError` prefixed with the
+    option name.
+
     Args:
         table_expr: Qualified table name (e.g. ``"dbo.Sales"``).
         option_name: CLI option name for error messages (e.g. ``"--on"``).
@@ -753,14 +758,10 @@ def _parse_table_ref(table_expr: str, option_name: str) -> tuple[str, str]:
     Raises:
         click.UsageError: If *table_expr* is not a two-part qualified name.
     """
-    if "." not in table_expr:
-        raise click.UsageError(
-            f"{option_name}: expected SCHEMA.TABLE (e.g. dbo.Sales), got {table_expr!r}"
-        )
-    schema, name = table_expr.split(".", 1)
-    if not schema.strip() or not name.strip():
-        raise click.UsageError(f"{option_name}: schema and table name must not be empty")
-    return schema.strip(), name.strip()
+    try:
+        return _parse_qualified_name(table_expr, "table")
+    except ValueError as exc:
+        raise click.UsageError(f"{option_name}: {exc}") from exc
 
 
 def _parse_fn_ref(fn_expr: str, option_name: str) -> tuple[str | None, str, list[str]]:
@@ -805,17 +806,6 @@ def _parse_fn_ref(fn_expr: str, option_name: str) -> tuple[str | None, str, list
             f"{option_name}: at least one column argument is required, e.g. FN(col)"
         )
     return fn_schema, fn_name, cols
-
-
-def _normalise_operation(operation: str | None) -> str | None:
-    """Convert a CLI operation string to the service layer token.
-
-    Maps ``"after-insert"`` -> ``"AFTER_INSERT"`` etc.
-    Returns ``None`` when *operation* is ``None``.
-    """
-    if operation is None:
-        return None
-    return operation.upper().replace("-", "_")
 
 
 # ---------------------------------------------------------------------------
@@ -932,6 +922,8 @@ async def rls_create_cmd(
     it = resolve_warehouse_arg(ctx, item)
 
     if filter_fn is not None:
+        if operation is not None:
+            raise click.UsageError("--operation is only valid with --block predicates")
         fn_schema, fn_name, fn_args = _parse_fn_ref(filter_fn, "--filter")
         predicate_type = "FILTER"
         op: str | None = None  # FILTER predicates have no operation
@@ -940,7 +932,7 @@ async def rls_create_cmd(
             raise click.UsageError("Expected --block value")
         fn_schema, fn_name, fn_args = _parse_fn_ref(block_fn, "--block")
         predicate_type = "BLOCK"
-        op = _normalise_operation(operation)
+        op = operation  # service's _validate_operation normalizes hyphens to underscores
 
     table_schema, table_name = _parse_table_ref(target_table, "--on")
     try:
@@ -1028,6 +1020,8 @@ async def rls_add_predicate_cmd(
     it = resolve_warehouse_arg(ctx, item)
 
     if filter_fn is not None:
+        if operation is not None:
+            raise click.UsageError("--operation is only valid with --block predicates")
         fn_schema, fn_name, fn_args = _parse_fn_ref(filter_fn, "--filter")
         predicate_type = "FILTER"
         op: str | None = None
@@ -1036,7 +1030,7 @@ async def rls_add_predicate_cmd(
             raise click.UsageError("Expected --block value")
         fn_schema, fn_name, fn_args = _parse_fn_ref(block_fn, "--block")
         predicate_type = "BLOCK"
-        op = _normalise_operation(operation)
+        op = operation  # service's _validate_operation normalizes hyphens to underscores
 
     table_schema, table_name = _parse_table_ref(target_table, "--on")
     try:
@@ -1083,15 +1077,6 @@ async def rls_add_predicate_cmd(
     metavar="SCHEMA.TABLE",
     help="Target table whose predicate to drop.",
 )
-@click.option(
-    "--operation",
-    type=click.Choice(
-        ["after-insert", "after-update", "before-update", "before-delete"],
-        case_sensitive=False,
-    ),
-    default=None,
-    help="Block predicate DML operation (identifies which BLOCK predicate to drop).",
-)
 @click.pass_obj
 @coro
 async def rls_drop_predicate_cmd(
@@ -1101,13 +1086,11 @@ async def rls_drop_predicate_cmd(
     predicate_filter: bool,
     predicate_block: bool,
     target_table: str,
-    operation: str | None,
 ) -> None:
     """Drop a predicate from security policy POLICY on ITEM.
 
     Specify exactly one of --filter or --block to identify the predicate type.
-    --on specifies the target table. For BLOCK predicates, use --operation to
-    identify which one when multiple BLOCK predicates target the same table.
+    --on specifies the target table.
     """
     if predicate_filter == predicate_block:
         raise click.UsageError("Specify exactly one of --filter or --block.")
@@ -1116,7 +1099,6 @@ async def rls_drop_predicate_cmd(
     it = resolve_warehouse_arg(ctx, item)
 
     predicate_type = "FILTER" if predicate_filter else "BLOCK"
-    op = _normalise_operation(operation)
 
     table_schema, table_name = _parse_table_ref(target_table, "--on")
     try:
@@ -1128,7 +1110,6 @@ async def rls_drop_predicate_cmd(
                 predicate_type,
                 table_schema,
                 table_name,
-                operation=op,
                 mode=ctx.auth,
             )
     except (ValueError, FabricError) as exc:

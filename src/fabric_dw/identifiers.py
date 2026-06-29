@@ -49,6 +49,10 @@ _PRINCIPAL_NAME_RE = re.compile(r"^[A-Za-z0-9@.\-_'# ]{1,128}\Z")
 _CTRL_LOW = 0x20  # characters below this (0x00-0x1F) are control chars
 _CTRL_DEL = 0x7F  # DEL character
 
+# Unicode line/paragraph separators that must not appear in column names.
+# U+0085 (NEL), U+2028 (LINE SEPARATOR), U+2029 (PARAGRAPH SEPARATOR)
+_UNICODE_LINE_SEPS: frozenset[str] = frozenset({"\x85", "\u2028", "\u2029"})
+
 # Maximum length for SQL Server sysname / NVARCHAR(128) identifier columns.
 _MAX_NAME_LEN = 128
 
@@ -234,6 +238,10 @@ def validate_column_name(name: str) -> str:
     # Reject control characters (NUL, CR, LF, and all < U+0020 or U+007F)
     if any(ord(c) < _CTRL_LOW or ord(c) == _CTRL_DEL for c in name):
         msg = f"Invalid column name {name!r}: contains control character(s)"
+        raise ValueError(msg)
+    # Reject unicode line/paragraph separators (U+0085, U+2028, U+2029)
+    if any(c in _UNICODE_LINE_SEPS for c in name):
+        msg = f"Invalid column name {name!r}: contains unicode line separator"
         raise ValueError(msg)
     if len(name) > _MAX_NAME_LEN:
         msg = f"Invalid column name {name!r}: exceeds 128 characters"

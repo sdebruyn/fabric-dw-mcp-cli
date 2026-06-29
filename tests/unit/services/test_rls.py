@@ -236,7 +236,7 @@ class TestListSecurityPolicies:
 
         pred = result[0].predicates[0]
         assert pred.predicate_type == "BLOCK"
-        assert pred.operation == "AFTER INSERT"
+        assert pred.operation == "AFTER_INSERT"
 
     async def test_multiple_predicates_grouped_under_one_policy(self) -> None:
         rows = [
@@ -352,8 +352,11 @@ class TestCreateSecurityPolicy:
             )
 
         stmt = captured[0]
-        assert "ADD BLOCK PREDICATE" in stmt
-        assert "AFTER INSERT" in stmt
+        assert stmt == (
+            "CREATE SECURITY POLICY [rls].[SalesBlock]\n"
+            "    ADD BLOCK PREDICATE [rls].[fn_block]([SalesRep]) ON [dbo].[Sales] AFTER INSERT\n"
+            "    WITH (STATE = ON);"
+        )
 
     async def test_multi_predicate_create(self) -> None:
         captured: list[str] = []
@@ -389,8 +392,12 @@ class TestCreateSecurityPolicy:
             )
 
         stmt = captured[0]
-        assert "ADD FILTER PREDICATE" in stmt
-        assert "ADD BLOCK PREDICATE" in stmt
+        assert stmt == (
+            "CREATE SECURITY POLICY [rls].[Combined]\n"
+            "    ADD FILTER PREDICATE [rls].[fn_filter]([col]) ON [dbo].[T],\n"
+            "    ADD BLOCK PREDICATE [rls].[fn_block]([col]) ON [dbo].[T] AFTER INSERT\n"
+            "    WITH (STATE = ON);"
+        )
 
     async def test_empty_predicates_raises(self) -> None:
         with pytest.raises(ValueError, match="At least one predicate"):
@@ -531,7 +538,8 @@ class TestDropPredicate:
             "ALTER SECURITY POLICY [rls].[SalesFilter]\n    DROP FILTER PREDICATE ON [dbo].[Sales];"
         )
 
-    async def test_block_predicate_with_operation_exact_sql(self) -> None:
+    async def test_block_predicate_no_operation_clause(self) -> None:
+        """DROP PREDICATE emits no operation clause -- T-SQL syntax has no such clause."""
         captured: list[str] = []
 
         def _mock(_target: object, _sql: str, **_kw: object) -> tuple:
@@ -545,13 +553,11 @@ class TestDropPredicate:
                 "BLOCK",
                 "dbo",
                 "Sales",
-                operation="AFTER_INSERT",
             )
 
         stmt = captured[0]
         assert stmt == (
-            "ALTER SECURITY POLICY [rls].[SalesBlock]\n"
-            "    DROP BLOCK PREDICATE ON [dbo].[Sales] AFTER INSERT;"
+            "ALTER SECURITY POLICY [rls].[SalesBlock]\n    DROP BLOCK PREDICATE ON [dbo].[Sales];"
         )
 
     async def test_block_without_operation_emits_no_op_clause(self) -> None:
@@ -650,3 +656,61 @@ class TestDropSecurityPolicy:
     async def test_invalid_name_raises(self) -> None:
         with pytest.raises(ValueError, match="Invalid"):
             await rls_svc.drop_security_policy(_TARGET, "bad; policy")
+
+
+# ---------------------------------------------------------------------------
+# _build_predicate_clause - FILTER rejects operation
+# ---------------------------------------------------------------------------
+
+
+class TestBuildPredicateClauseFilterRejectsOperation:
+    def test_filter_with_operation_raises(self) -> None:
+        from fabric_dw.services.rls import _build_predicate_clause  # noqa: PLC0415
+
+        with pytest.raises(ValueError, match="FILTER predicates do not accept an operation"):
+            _build_predicate_clause("FILTER", "rls", "fn", ["col"], "dbo", "T", "AFTER_INSERT")
+
+    def test_block_with_operation_succeeds(self) -> None:
+        from fabric_dw.services.rls import _build_predicate_clause  # noqa: PLC0415
+
+        result = _build_predicate_clause("BLOCK", "rls", "fn", ["col"], "dbo", "T", "AFTER_INSERT")
+        assert "AFTER INSERT" in result
+
+
+# ---------------------------------------------------------------------------
+# create_security_policy - missing required key raises ValueError
+# ---------------------------------------------------------------------------
+
+
+class TestCreateSecurityPolicyMissingKeys:
+    async def test_missing_fn_name_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="missing required key"):
+            await rls_svc.create_security_policy(
+                _TARGET,
+                "rls.SalesFilter",
+                [
+                    {
+                        "predicate_type": "FILTER",
+                        # fn_name intentionally omitted
+                        "fn_args": ["col"],
+                        "table_schema": "dbo",
+                        "table_name": "T",
+                    }
+                ],
+            )
+
+    async def test_missing_table_schema_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="missing required key"):
+            await rls_svc.create_security_policy(
+                _TARGET,
+                "rls.SalesFilter",
+                [
+                    {
+                        "predicate_type": "FILTER",
+                        "fn_name": "fn_filter",
+                        "fn_args": ["col"],
+                        # table_schema intentionally omitted
+                        "table_name": "T",
+                    }
+                ],
+            )
