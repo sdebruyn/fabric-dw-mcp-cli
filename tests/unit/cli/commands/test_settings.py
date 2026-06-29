@@ -71,12 +71,14 @@ def _make_settings(
     *,
     result_set_caching: bool = True,
     days: int = 7,
+    data_lake_log_publishing: bool = True,
 ) -> WarehouseSettings:
     return WarehouseSettings(
         database="SalesWarehouse",
         result_set_caching=result_set_caching,
         time_travel_retention_days=days,
         time_travel_retention_cutoff_date=_NOW,
+        data_lake_log_publishing=data_lake_log_publishing,
     )
 
 
@@ -485,5 +487,157 @@ class TestSettingsKindWiring:
         ):
             result = runner.invoke(
                 cli, ["-w", WS_GUID, "settings", "retention", WH_GUID, "--days", "7"]
+            )
+        assert result.exit_code != 0
+
+
+# ===========================================================================
+# settings data-lake-log-publishing
+# ===========================================================================
+
+
+class TestDataLakeLogPublishing:
+    def test_enable_exits_zero(self, runner: CliRunner) -> None:
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.settings.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.settings.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.settings.set_data_lake_log_publishing",
+                new=AsyncMock(return_value=_make_settings(data_lake_log_publishing=True)),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", WS_GUID, "settings", "data-lake-log-publishing", WH_GUID, "on"],
+            )
+        assert result.exit_code == 0
+        assert "enabled" in result.output
+
+    def test_disable_exits_zero(self, runner: CliRunner) -> None:
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.settings.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.settings.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.settings.set_data_lake_log_publishing",
+                new=AsyncMock(return_value=_make_settings(data_lake_log_publishing=False)),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", WS_GUID, "settings", "data-lake-log-publishing", WH_GUID, "off"],
+            )
+        assert result.exit_code == 0
+        assert "disabled" in result.output
+
+    def test_json_output_includes_settings(self, runner: CliRunner) -> None:
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.settings.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.settings.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.settings.set_data_lake_log_publishing",
+                new=AsyncMock(return_value=_make_settings(data_lake_log_publishing=True)),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "--json",
+                    "settings",
+                    "data-lake-log-publishing",
+                    WH_GUID,
+                    "on",
+                ],
+            )
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["data_lake_log_publishing"] is True
+
+    def test_invalid_state_returns_nonzero(self, runner: CliRunner) -> None:
+        result = runner.invoke(
+            cli,
+            ["-w", WS_GUID, "settings", "data-lake-log-publishing", WH_GUID, "maybe"],
+        )
+        assert result.exit_code != 0
+
+    def test_fabric_error_returns_nonzero(self, runner: CliRunner) -> None:
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.settings.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.settings.build_sql_target",
+                new=AsyncMock(side_effect=FabricError("permission denied")),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", WS_GUID, "settings", "data-lake-log-publishing", WH_GUID, "on"],
+            )
+        assert result.exit_code != 0
+
+    def test_forwards_warehouse_kind(self, runner: CliRunner) -> None:
+        """data-lake-log-publishing passes kind=WAREHOUSE when the resolved entry is a Warehouse."""
+        mock_http = AsyncMock()
+        mock_svc = AsyncMock(return_value=_make_settings())
+        with (
+            patch(
+                "fabric_dw.cli.commands.settings.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.settings.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch("fabric_dw.services.settings.set_data_lake_log_publishing", new=mock_svc),
+        ):
+            runner.invoke(
+                cli,
+                ["-w", WS_GUID, "settings", "data-lake-log-publishing", WH_GUID, "on"],
+            )
+        _, kwargs = mock_svc.call_args
+        assert kwargs.get("kind") == WarehouseKind.WAREHOUSE
+
+    def test_rejects_sql_endpoint_via_real_guard(self, runner: CliRunner) -> None:
+        """data-lake-log-publishing surfaces ItemKindError as ClickException for SQL_ENDPOINT."""
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.settings.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.settings.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch("fabric_dw.sql.open_connection", side_effect=ItemKindError("guard")),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", WS_GUID, "settings", "data-lake-log-publishing", WH_GUID, "on"],
             )
         assert result.exit_code != 0

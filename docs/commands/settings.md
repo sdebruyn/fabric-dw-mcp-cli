@@ -10,13 +10,35 @@ Manage **server-side** database settings on a Fabric Data Warehouse or SQL Analy
 
     `settings` manages server-side warehouse/database configuration. For client-side CLI defaults (workspace, warehouse) use [`fdw config`](config.md) instead.
 
-`show` works on both Data Warehouses and SQL Analytics Endpoints. `result-set-caching` and `retention` issue `ALTER DATABASE CURRENT SET …`, which is **not supported on SQL Analytics Endpoints**: running either command against one returns a clean error.
+`show` works on both Data Warehouses and SQL Analytics Endpoints. `result-set-caching`, `retention`, and `data-lake-log-publishing` issue `ALTER DATABASE CURRENT SET …`, which is **not supported on SQL Analytics Endpoints**: running any of them against an endpoint returns a clean error.
 
 The workspace is resolved from the global `-w/--workspace` option, the `FABRIC_DW_DEFAULT_WORKSPACE` environment variable, or the client-side config default. `ITEM` may be a display name or GUID.
 
 **Targets:** Data Warehouse
 
 ## CLI
+
+### settings data-lake-log-publishing
+
+**Targets:** Data Warehouse
+
+Enable or disable Delta Lake log publishing.
+
+Executes `ALTER DATABASE CURRENT SET DATA_LAKE_LOG_PUBLISHING = { AUTO | PAUSED }` on the target.
+
+```shell
+fdw -w <workspace> settings data-lake-log-publishing [ITEM] (on|off)
+```
+
+`STATE` is case-insensitive (`on`, `off`, `ON`, `OFF`). `on` maps to `= AUTO`; `off` maps to `= PAUSED`.
+
+**Example:**
+
+```shell
+fdw -w MyWorkspace settings data-lake-log-publishing MyWarehouse on
+fdw -w MyWorkspace settings data-lake-log-publishing MyWarehouse off
+fdw -w MyWorkspace --json settings data-lake-log-publishing MyWarehouse on
+```
 
 ### settings result-set-caching
 
@@ -88,7 +110,7 @@ fdw -w MyWorkspace --json settings show MyWarehouse
 
 **Guards:** `assert_workspace_allowed`
 
-Return the current server-side database settings for a warehouse. Reads `result_set_caching`, `time_travel_retention_days`, and `time_travel_retention_cutoff_date` from `sys.databases`.
+Return the current server-side database settings for a warehouse. Reads `result_set_caching`, `time_travel_retention_days`, `time_travel_retention_cutoff_date`, and `data_lake_log_publishing` from `sys.databases`.
 
 **Parameters:**
 
@@ -97,7 +119,25 @@ Return the current server-side database settings for a warehouse. Reads `result_
 | `workspace` | `str` | Workspace name or GUID. |
 | `item` | `str` | Warehouse or SQL Analytics Endpoint name or GUID. |
 
-**Returns:** `WarehouseSettings`: `{ database, result_set_caching, time_travel_retention_days, time_travel_retention_cutoff_date }`.
+**Returns:** `WarehouseSettings`: `{ database, result_set_caching, time_travel_retention_days, time_travel_retention_cutoff_date, data_lake_log_publishing }`.
+
+### set_data_lake_log_publishing
+
+**Targets:** Data Warehouse
+
+**Guards:** `assert_writes_allowed`, `assert_workspace_allowed`
+
+Enable or disable Delta Lake log publishing on a warehouse. Executes `ALTER DATABASE CURRENT SET DATA_LAKE_LOG_PUBLISHING = { AUTO | PAUSED }` and returns the effective settings after the change.
+
+**Parameters:**
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `workspace` | `str` | Workspace name or GUID. |
+| `item` | `str` | Warehouse name or GUID. SQL Analytics Endpoints are rejected. |
+| `enabled` | `bool` | `true` to enable Delta Lake log publishing (`= AUTO`), `false` to disable it (`= PAUSED`). |
+
+**Returns:** `WarehouseSettings`: the effective settings after the change.
 
 ### set_result_set_caching
 
@@ -131,6 +171,6 @@ Set the time-travel retention period on a warehouse. Executes `ALTER DATABASE CU
 | --- | --- | --- |
 | `workspace` | `str` | Workspace name or GUID. |
 | `item` | `str` | Warehouse or SQL Analytics Endpoint name or GUID. |
-| `days` | `int` | Retention period in days. Must be in the range 1–120 (inclusive). |
+| `days` | `int` | Retention period in days. Must be in the range 1-120 (inclusive). |
 
 **Returns:** `WarehouseSettings`: the effective settings after the change.

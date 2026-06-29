@@ -2,24 +2,27 @@
 
 Public API
 ----------
-- :func:`get_settings`              — read current settings from ``sys.databases``.
-- :func:`set_result_set_caching`    — toggle result-set caching via ``ALTER DATABASE``.
-- :func:`set_time_travel_retention` — set time-travel retention period via ``ALTER DATABASE``.
+- :func:`get_settings`                  — read current settings from ``sys.databases``.
+- :func:`set_result_set_caching`        — toggle result-set caching via ``ALTER DATABASE``.
+- :func:`set_time_travel_retention`     — set time-travel retention period via ``ALTER DATABASE``.
+- :func:`set_data_lake_log_publishing`  — toggle Delta Lake log publishing via ``ALTER DATABASE``.
 
 SQL-level safety
 ----------------
 ``ALTER DATABASE CURRENT SET …`` statements are DDL that **cannot** be bound via
-SQL parameters.  The two write functions therefore embed values as literals:
+SQL parameters.  The write functions therefore embed values as literals:
 
 - ``set_result_set_caching`` embeds ``ON`` or ``OFF`` — derived from a Python
   :class:`bool`, never from arbitrary user input.
 - ``set_time_travel_retention`` embeds an integer literal after range-validating
   the value as a Python :class:`int` (1-120).  Floats and strings are rejected
   before the literal is formed.
+- ``set_data_lake_log_publishing`` embeds ``AUTO`` or ``PAUSED`` — derived from
+  a Python :class:`bool`, never from arbitrary user input.
 
 Autocommit
 ----------
-Both ``ALTER DATABASE`` statements **must** run with ``autocommit=True``.
+All ``ALTER DATABASE`` statements **must** run with ``autocommit=True``.
 Using a regular (autocommit-off) connection raises:
 
     "ALTER DATABASE statement not allowed within multi-statement transaction."
@@ -32,11 +35,12 @@ SQL Analytics Endpoint note
 ``get_settings`` is dual-target — both Data Warehouses and SQL Analytics
 Endpoints respond to the ``sys.databases`` read query.
 
-The ``ALTER DATABASE`` write operations (``set_result_set_caching`` and
-``set_time_travel_retention``) are DWH-only.  SQL Analytics Endpoints are
-read-only at the SQL layer; ``ALTER DATABASE`` is silently rejected or
-produces unexpected results.  Both write functions guard against this via
-``_assert_not_sql_endpoint`` and accept a ``kind`` parameter (defaulting to
+The ``ALTER DATABASE`` write operations (``set_result_set_caching``,
+``set_time_travel_retention``, and ``set_data_lake_log_publishing``) are
+DWH-only.  SQL Analytics Endpoints are read-only at the SQL layer;
+``ALTER DATABASE`` is silently rejected or produces unexpected results.
+All write functions guard against this via ``_assert_not_sql_endpoint`` and
+accept a ``kind`` parameter (defaulting to
 :attr:`~fabric_dw.models.WarehouseKind.WAREHOUSE`) so that callers can pass
 the resolved item kind.
 """
@@ -58,6 +62,7 @@ __all__ = [
     "RETENTION_MAX",
     "RETENTION_MIN",
     "get_settings",
+    "set_data_lake_log_publishing",
     "set_result_set_caching",
     "set_time_travel_retention",
 ]
@@ -84,10 +89,17 @@ SELECT
     name,
     is_result_set_caching_on,
     time_travel_retention_period_days,
-    time_travel_retention_cutoff_date
+    time_travel_retention_cutoff_date,
+    data_lake_log_publishing_desc
 FROM sys.databases
 WHERE database_id = DB_ID();
 """
+# Dual-target note: sys.databases is readable on both Data Warehouses and SQL
+# Analytics Endpoints.  Warehouse-specific columns (time_travel_* and
+# data_lake_log_publishing_desc) are present in the view on both target types
+# but return NULL on SQL Analytics Endpoints — the same precedent as the existing
+# time_travel_retention_period_days column.  _row_to_settings handles NULL values
+# gracefully: time_travel_retention_days -> None, data_lake_log_publishing -> False.
 
 # ON/OFF are SQL keywords — embedded as a literal derived from a Python bool,
 # never from arbitrary user input.
@@ -96,6 +108,11 @@ _SET_RSC_SQL_OFF = "ALTER DATABASE CURRENT SET RESULT_SET_CACHING OFF;"
 
 # <n> is an int literal (range-validated 1-120); not a SQL parameter.
 _SET_RETENTION_SQL_TEMPLATE = "ALTER DATABASE CURRENT SET TIME_TRAVEL_RETENTION_PERIOD = {n} DAYS;"
+
+# AUTO/PAUSED are SQL keywords — embedded as literals derived from a Python bool,
+# never from arbitrary user input.  The = sign is required (not a space-separated form).
+_SET_DLLP_SQL_AUTO = "ALTER DATABASE CURRENT SET DATA_LAKE_LOG_PUBLISHING = AUTO;"
+_SET_DLLP_SQL_PAUSED = "ALTER DATABASE CURRENT SET DATA_LAKE_LOG_PUBLISHING = PAUSED;"
 
 
 # ---------------------------------------------------------------------------
@@ -116,11 +133,17 @@ def _row_to_settings(cols: list[str], row: tuple[object, ...]) -> WarehouseSetti
         cutoff = datetime(raw_ts.year, raw_ts.month, raw_ts.day, tzinfo=UTC)
     else:
         cutoff = None
+    # data_lake_log_publishing_desc may be NULL on SQL Analytics Endpoints; default to False.
+    # isinstance guard keeps the type narrowed to str before calling .upper(), so
+    # None (NULL) and any unexpected non-string value both map safely to False.
+    raw_dllp = data.get("data_lake_log_publishing_desc")
+    data_lake_log_publishing = isinstance(raw_dllp, str) and raw_dllp.upper() == "AUTO"
     return WarehouseSettings(
         database=str(data["name"]),
         result_set_caching=bool(data["is_result_set_caching_on"]),
         time_travel_retention_days=int(cast("int", raw_days)) if raw_days is not None else None,
         time_travel_retention_cutoff_date=cutoff,
+        data_lake_log_publishing=data_lake_log_publishing,
     )
 
 
@@ -251,6 +274,50 @@ async def set_time_travel_retention(
         raise ValueError(msg)
 
     ddl = _SET_RETENTION_SQL_TEMPLATE.format(n=days_int)
+
+    def _run() -> None:
+        run_query(target, ddl, mode=mode, autocommit=True, fetch="none")
+
+    await asyncio.to_thread(_run)
+    return await get_settings(target, mode=mode)
+
+
+async def set_data_lake_log_publishing(
+    target: SqlTarget,
+    *,
+    enabled: bool,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
+    mode: CredentialMode = CredentialMode.DEFAULT,
+) -> WarehouseSettings:
+    """Enable or disable Delta Lake log publishing on *target*.
+
+    Executes ``ALTER DATABASE CURRENT SET DATA_LAKE_LOG_PUBLISHING = { AUTO | PAUSED }``
+    with autocommit (required for ``ALTER DATABASE`` statements).
+
+    Only supported on Fabric Data Warehouses (not SQL Analytics Endpoints).
+    SQL Analytics Endpoints are rejected with
+    :class:`~fabric_dw.exceptions.ItemKindError`.
+
+    Args:
+        target: The Data Warehouse to alter.
+        enabled: ``True`` to enable Delta Lake log publishing (``= AUTO``),
+            ``False`` to disable it (``= PAUSED``).
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the resolved item.
+            SQL Analytics Endpoints are rejected.
+        mode: The credential mode for Entra authentication.
+
+    Returns:
+        A :class:`~fabric_dw.models.WarehouseSettings` reflecting the settings
+        *after* the change (fetched via a follow-up ``get_settings`` call).
+
+    Raises:
+        ItemKindError: If *kind* is
+            :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
+        PermissionDeniedError: If the driver reports a permission error.
+        AuthError: If the driver reports an authentication failure.
+    """
+    _assert_not_sql_endpoint(kind)
+    ddl = _SET_DLLP_SQL_AUTO if enabled else _SET_DLLP_SQL_PAUSED
 
     def _run() -> None:
         run_query(target, ddl, mode=mode, autocommit=True, fetch="none")
