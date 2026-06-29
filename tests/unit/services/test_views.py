@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -368,6 +368,70 @@ class TestReadView:
         call_sql: str = cursor.execute.call_args[0][0].upper()
         # Assert the full TOP clause to avoid accidental matches on other numbers.
         assert "TOP (10)" in call_sql
+
+    # -- time-travel (as_of) --
+
+    async def test_as_of_appends_option_for_timestamp(self) -> None:
+        """read_view appends OPTION (FOR TIMESTAMP AS OF ...) when as_of is set."""
+        target = _make_target()
+        conn = _make_conn([(1,)], ["id"])
+        as_of = datetime(2024, 3, 15, 10, 30, 45, 123_000, tzinfo=UTC)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await read_view(target, "dbo", "vw_sales", as_of=as_of)
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert "OPTION (FOR TIMESTAMP AS OF '2024-03-15T10:30:45.123')" in call_sql
+
+    async def test_as_of_none_sql_unchanged(self) -> None:
+        """read_view SQL is byte-for-byte identical to the template when as_of is None."""
+        from fabric_dw.services.views import _READ_VIEW_SQL  # noqa: PLC0415
+
+        target = _make_target()
+        conn = _make_conn([(1,)], ["id"])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await read_view(target, "dbo", "vw_sales", count=10)
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        expected = _READ_VIEW_SQL.format(count=10, schema_q="[dbo]", view_q="[vw_sales]")
+        assert call_sql == expected
+
+    async def test_as_of_utc_coercion(self) -> None:
+        """read_view coerces a tz-aware non-UTC datetime to UTC before formatting."""
+        target = _make_target()
+        conn = _make_conn([(1,)], ["id"])
+        # CET = UTC+1: 11:30 CET == 10:30 UTC
+        cet = timezone(timedelta(hours=1))
+        as_of = datetime(2024, 3, 15, 11, 30, 0, tzinfo=cet)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await read_view(target, "dbo", "vw_sales", as_of=as_of)
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert "2024-03-15T10:30:00.000" in call_sql
+
+    async def test_as_of_millisecond_rounding(self) -> None:
+        """read_view rounds microseconds to the nearest millisecond (half-to-even)."""
+        target = _make_target()
+        conn = _make_conn([(1,)], ["id"])
+        # 123_750 us -> round(123.75) -> 124 ms
+        as_of = datetime(2024, 3, 15, 10, 30, 45, 123_750, tzinfo=UTC)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await read_view(target, "dbo", "vw_sales", as_of=as_of)
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert "2024-03-15T10:30:45.124" in call_sql
+
+    async def test_as_of_clause_position_before_semicolon(self) -> None:
+        """OPTION clause appears before the trailing semicolon in the SQL."""
+        target = _make_target()
+        conn = _make_conn([(1,)], ["id"])
+        as_of = datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await read_view(target, "dbo", "vw_sales", as_of=as_of)
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        option_idx = call_sql.index("OPTION")
+        semicolon_idx = call_sql.rindex(";")
+        assert option_idx < semicolon_idx
 
 
 # ===========================================================================

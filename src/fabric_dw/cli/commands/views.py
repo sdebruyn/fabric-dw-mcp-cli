@@ -15,6 +15,7 @@ from fabric_dw.cli.commands._utils import (
     coro,
     load_sql_body,
     parse_qualified_name,
+    resolve_as_of,
     resolve_warehouse_arg,
     resolve_workspace,
 )
@@ -65,6 +66,25 @@ async def list_cmd(ctx: CliContext, item: str | None, schema: str | None) -> Non
     help="Output format.",
 )
 @click.option("--output", default=None, help="Write to this file instead of stdout.")
+@click.option(
+    "--as-of",
+    "as_of",
+    default=None,
+    metavar="ISO8601",
+    help=(
+        "Read the view as it was at this UTC timestamp (ISO-8601). Mutually exclusive with --ago."
+    ),
+)
+@click.option(
+    "--ago",
+    "ago",
+    default=None,
+    metavar="DURATION",
+    help=(
+        "Read the view as it was this duration ago (e.g. 1h, 90m, 2d). "
+        "Mutually exclusive with --as-of."
+    ),
+)
 @click.pass_obj
 @coro
 async def read_cmd(
@@ -74,12 +94,15 @@ async def read_cmd(
     count: int,
     fmt: str,
     output: str | None,
+    as_of: str | None,
+    ago: str | None,
 ) -> None:
     """Read up to COUNT rows from QUALIFIED_NAME (schema.view) on ITEM."""
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     schema, view_name = parse_qualified_name(qualified_name, kind="view")
     output_path = Path(output) if output else None
+    as_of_dt = resolve_as_of(as_of, ago)
 
     # --format takes precedence when explicitly supplied (i.e. differs from the default
     # JSON value); if --format is omitted (or is the default "json"), the global --json
@@ -93,7 +116,7 @@ async def read_cmd(
         async with build_http_client(ctx) as http:
             target, _entry = await build_sql_target(http, ws, wh)
             columns, rows = await _views_svc.read_view(
-                target, schema, view_name, count=count, mode=ctx.auth
+                target, schema, view_name, count=count, as_of=as_of_dt, mode=ctx.auth
             )
             arrow_table = columns_rows_to_arrow(columns, rows)
             write_arrow(arrow_table, effective_fmt, output_path)

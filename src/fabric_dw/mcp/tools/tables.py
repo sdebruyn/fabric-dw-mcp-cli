@@ -83,6 +83,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         item: str,
         qualified_name: str,
         count: Annotated[int, Field(ge=1, le=10000)] = 10,
+        as_of: str | None = None,
     ) -> dict[str, Any]:
         """Return up to *count* rows from a table as JSON-serialisable columns + rows.
 
@@ -91,8 +92,12 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             item: Warehouse or SQL endpoint name or GUID.
             qualified_name: Dot-separated qualified table name, e.g. ``dbo.sales``.
             count: Maximum number of rows to return (1-10000, default 10).
+            as_of: Optional ISO-8601 UTC timestamp for a point-in-time (time-travel)
+                read.  When supplied the query uses ``OPTION (FOR TIMESTAMP AS OF ...)``.
+                Omit to read the latest data.
         """
         schema, table_name = parse_qualified_name(qualified_name, kind="table")
+        as_of_dt = parse_iso8601(as_of, "as_of")
         ctx = get_context()
         assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
@@ -101,16 +106,17 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
             )
             _log.debug(
-                "read_table ws=%s item=%s table=%s.%s count=%d",
+                "read_table ws=%s item=%s table=%s.%s count=%d as_of=%s",
                 ws_id,
                 entry.id,
                 schema,
                 table_name,
                 count,
+                as_of,
             )
             target = make_sql_target(ws_id, entry, item)
             result = await tables_svc.read_table(
-                target, schema, table_name, count=count, mode=ctx.auth_mode
+                target, schema, table_name, count=count, as_of=as_of_dt, mode=ctx.auth_mode
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc

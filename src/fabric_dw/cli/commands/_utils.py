@@ -426,6 +426,35 @@ def resolve_since(since: str | None, ago: str | None) -> datetime | None:
     return None
 
 
+def resolve_as_of(as_of: str | None, ago: str | None) -> datetime | None:
+    """Resolve the effective point-in-time datetime from ``--as-of`` and ``--ago``.
+
+    Exactly one of *as_of* or *ago* may be provided.  When *ago* is given the
+    result is a tz-aware UTC datetime equal to ``datetime.now(UTC) - parse_duration(ago)``.
+
+    Companion to :func:`resolve_since` but names ``--as-of``/``--ago`` in its
+    error message instead of ``--since``/``--ago``.
+
+    Args:
+        as_of: Raw ISO-8601 string from ``--as-of`` (or *None*).
+        ago: Raw duration string from ``--ago`` (or *None*).
+
+    Returns:
+        A :class:`~datetime.datetime` (tz-aware UTC) or *None* when both are absent.
+
+    Raises:
+        click.UsageError: If both *as_of* and *ago* are set, or if either
+            value is invalid.
+    """
+    if as_of is not None and ago is not None:
+        raise click.UsageError("--as-of and --ago are mutually exclusive.")
+    if ago is not None:
+        return datetime.now(UTC) - parse_duration(ago)
+    if as_of is not None:
+        return parse_iso_datetime(as_of, "--as-of")
+    return None
+
+
 #: Shared Click option for ``--ago`` used by query-insights commands.
 AGO_OPTION = click.option(
     "--ago",

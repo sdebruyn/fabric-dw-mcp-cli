@@ -239,6 +239,7 @@ async def read_table(
     table_name: str,
     *,
     count: int = 10,
+    as_of: datetime | None = None,
     mode: CredentialMode = CredentialMode.DEFAULT,
 ) -> ResultSet:
     """Return up to *count* rows from *schema*.*table_name*.
@@ -254,6 +255,11 @@ async def read_table(
         schema: The schema name.  Must pass :func:`validate_identifier`.
         table_name: The table name.  Must pass :func:`validate_identifier`.
         count: Maximum number of rows to return (default 10).
+        as_of: Optional point-in-time for time-travel reads.  When set, the
+            query includes ``OPTION (FOR TIMESTAMP AS OF '<utc-literal>')``.
+            Naive datetimes are assumed UTC (via :func:`~._helpers.coerce_to_utc`);
+            tz-aware datetimes are converted to UTC.  Microseconds are rounded
+            to the nearest millisecond.  *None* leaves the SQL unchanged.
         mode: The credential mode for Entra authentication.
 
     Returns:
@@ -272,6 +278,19 @@ async def read_table(
         schema_q=quote_identifier(schema),
         table_q=quote_identifier(table_name),
     )
+    if as_of is not None:
+        # Normalise to UTC so the literal is always UTC regardless of the
+        # caller's tzinfo.  Mirror the rounding logic used in clone_table:
+        # round to the nearest millisecond (half-to-even via Python round())
+        # rather than truncating, so 123_750 us -> 124 ms not 123 ms.
+        at = coerce_to_utc(as_of)
+        at_rounded = at.replace(microsecond=0) + timedelta(
+            milliseconds=round(at.microsecond / 1000)
+        )
+        ms_str = f"{at_rounded.microsecond // 1000:03d}"
+        literal = at_rounded.strftime("%Y-%m-%dT%H:%M:%S.") + ms_str
+        # The template ends with ";". Insert the time-travel hint before it.
+        read_sql = f"{read_sql[:-1]} OPTION (FOR TIMESTAMP AS OF '{literal}');"
 
     def _run() -> ResultSet:
         cols, rows = run_query(target, read_sql, mode=mode)

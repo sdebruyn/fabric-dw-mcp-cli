@@ -16,14 +16,14 @@ Public API
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import cast
 
 from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import NotFoundError
 from fabric_dw.identifiers import parse_qualified_name, quote_identifier, validate_identifier
 from fabric_dw.models import View
-from fabric_dw.services._helpers import reject_non_select
+from fabric_dw.services._helpers import coerce_to_utc, reject_non_select
 from fabric_dw.sql import SqlTarget, run_query
 
 __all__ = [
@@ -158,6 +158,7 @@ async def read_view(
     view_name: str,
     *,
     count: int = 10,
+    as_of: datetime | None = None,
     mode: CredentialMode = CredentialMode.DEFAULT,
 ) -> tuple[list[str], list[tuple[object, ...]]]:
     """Return up to *count* rows from *schema*.*view_name*.
@@ -170,6 +171,11 @@ async def read_view(
         schema: The schema name.  Must pass :func:`validate_identifier`.
         view_name: The view name.  Must pass :func:`validate_identifier`.
         count: Maximum number of rows to return (default 10).
+        as_of: Optional point-in-time for time-travel reads.  When set, the
+            query includes ``OPTION (FOR TIMESTAMP AS OF '<utc-literal>')``.
+            Naive datetimes are assumed UTC (via :func:`~._helpers.coerce_to_utc`);
+            tz-aware datetimes are converted to UTC.  Microseconds are rounded
+            to the nearest millisecond.  *None* leaves the SQL unchanged.
         mode: The credential mode for Entra authentication.
 
     Returns:
@@ -192,6 +198,19 @@ async def read_view(
         schema_q=quote_identifier(schema),
         view_q=quote_identifier(view_name),
     )
+    if as_of is not None:
+        # Normalise to UTC so the literal is always UTC regardless of the
+        # caller's tzinfo.  Mirror the rounding logic used in clone_table:
+        # round to the nearest millisecond (half-to-even via Python round())
+        # rather than truncating, so 123_750 us -> 124 ms not 123 ms.
+        at = coerce_to_utc(as_of)
+        at_rounded = at.replace(microsecond=0) + timedelta(
+            milliseconds=round(at.microsecond / 1000)
+        )
+        ms_str = f"{at_rounded.microsecond // 1000:03d}"
+        literal = at_rounded.strftime("%Y-%m-%dT%H:%M:%S.") + ms_str
+        # The template ends with ";". Insert the time-travel hint before it.
+        read_sql = f"{read_sql[:-1]} OPTION (FOR TIMESTAMP AS OF '{literal}');"
 
     def _run() -> tuple[list[str], list[tuple[object, ...]]]:
         # run_query raises NotFoundError (via map_driver_error) for SQL error 208

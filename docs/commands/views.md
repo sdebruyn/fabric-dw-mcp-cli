@@ -171,6 +171,8 @@ Read up to `--count` rows from a view and emit them as JSON (default), CSV, or P
 
 CSV and Parquet formats require `--output`. JSON is emitted to stdout by default.
 
+Use `--as-of` or `--ago` to read the view as it was at an earlier point in time (time travel). The data visible through the view is time-travelled; the view definition itself is not affected. Timestamps outside the Fabric retention window (1-120 days, default 30) error server-side.
+
 **Synopsis**
 
 ```
@@ -182,6 +184,8 @@ fdw [-w WORKSPACE] views read [OPTIONS] [WAREHOUSE] QUALIFIED_NAME
 | `--count N` | Maximum rows to return. | `10` |
 | `--format {json\|csv\|parquet}` | Output format. | `json` |
 | `--output PATH` | Write to file instead of stdout. Required for `csv` and `parquet`. | |
+| `--as-of ISO8601` | Read the view as it was at this UTC timestamp. Mutually exclusive with `--ago`. | |
+| `--ago DURATION` | Read the view as it was this duration ago (e.g. `1h`, `90m`, `2d`). Mutually exclusive with `--as-of`. | |
 
 **Example**
 
@@ -194,6 +198,12 @@ fdw -w MyWorkspace views read SalesWH dbo.vw_sales --count 5
   {"id": 1, "amount": 99.99, "customer_id": 42},
   ...
 ]
+```
+
+```shell
+# Point-in-time read
+fdw -w MyWorkspace views read SalesWH dbo.vw_sales --as-of 2024-03-15T10:00:00Z
+fdw -w MyWorkspace views read SalesWH dbo.vw_sales --ago 2d
 ```
 
 ### views rename
@@ -351,12 +361,15 @@ List SQL views on a warehouse or SQL Analytics Endpoint, optionally filtered to 
 
 Return up to `count` rows from a view as JSON-serialisable columns and rows.
 
+Supports time-travel reads via `as_of`: supply an ISO-8601 UTC timestamp to read the view as it was at that point in time. The Fabric retention window is 1-120 days (default 30); timestamps outside the window error server-side.
+
 **Parameters:**
 
 - `workspace` (`str`): workspace name or GUID.
 - `item` (`str`): warehouse or SQL analytics endpoint name or GUID.
 - `qualified_name` (`str`): dot-separated schema and view name, e.g. `dbo.vw_sales`.
 - `count` (`int`, default `10`): maximum rows to return.
+- `as_of` (`str | null`, optional): ISO-8601 UTC timestamp for a point-in-time read, e.g. `2024-03-15T10:00:00Z`. Omit to read the latest data.
 
 **Returns:** `{ "columns": list[str], "rows": list[list] }`: column names and row arrays.
 

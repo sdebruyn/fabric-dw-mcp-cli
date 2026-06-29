@@ -284,6 +284,88 @@ async def test_read_table_workspace_allowlist_blocks(ctx_patch) -> None:
 
 
 # ---------------------------------------------------------------------------
+# read_table — as_of (time-travel)
+# ---------------------------------------------------------------------------
+
+
+async def test_read_table_with_as_of_passes_to_service(mock_ctx, ctx_patch) -> None:
+    """read_table parses as_of ISO-8601 and threads the datetime to the service."""
+    from datetime import datetime  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+    mock_read = AsyncMock(return_value=ResultSet(columns=["id"], rows=[(1,)]))
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.tables.read_table", new=mock_read),
+    ):
+        await mcp._tool_manager.call_tool(
+            "read_table",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "qualified_name": "dbo.sales",
+                "as_of": "2024-03-15T10:30:00",
+            },
+        )
+
+    _, kwargs = mock_read.call_args
+    assert kwargs.get("as_of") is not None
+    assert isinstance(kwargs["as_of"], datetime)
+
+
+async def test_read_table_without_as_of_passes_none(mock_ctx, ctx_patch) -> None:
+    """read_table without as_of calls the service with as_of=None."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+    mock_read = AsyncMock(return_value=ResultSet(columns=["id"], rows=[(1,)]))
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.tables.read_table", new=mock_read),
+    ):
+        await mcp._tool_manager.call_tool(
+            "read_table",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.sales"},
+        )
+
+    _, kwargs = mock_read.call_args
+    assert kwargs.get("as_of") is None
+
+
+async def test_read_table_invalid_as_of_raises_tool_error(mock_ctx, ctx_patch) -> None:
+    """read_table raises ToolError when as_of is not a valid ISO-8601 string."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with (
+        ctx_patch,
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "read_table",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "qualified_name": "dbo.sales",
+                "as_of": "not-a-date",
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
 # delete_table — happy-path return path (line 163)
 # NOTE: SQL-endpoint guard tested in test_server.py — not duplicated here.
 # ---------------------------------------------------------------------------

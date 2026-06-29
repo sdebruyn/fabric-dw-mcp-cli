@@ -16,6 +16,7 @@ from fabric_dw.mcp._guards import (
 from fabric_dw.mcp._helpers import (
     make_sql_target,
     mutating_tool,
+    parse_iso8601,
     parse_qualified_name,
     resolve_item,
     safe_rows,
@@ -63,6 +64,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         item: str,
         qualified_name: str,
         count: Annotated[int, Field(ge=1, le=10000)] = 10,
+        as_of: str | None = None,
     ) -> dict[str, Any]:
         """Return up to *count* rows from a view as JSON-serialisable columns + rows.
 
@@ -71,8 +73,12 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             item: Warehouse or SQL endpoint name or GUID.
             qualified_name: Dot-separated qualified view name, e.g. ``dbo.vw_sales``.
             count: Maximum number of rows to return (1-10000, default 10).
+            as_of: Optional ISO-8601 UTC timestamp for a point-in-time (time-travel)
+                read.  When supplied the query uses ``OPTION (FOR TIMESTAMP AS OF ...)``.
+                Omit to read the latest data.
         """
         schema, view_name = parse_qualified_name(qualified_name, kind="view")
+        as_of_dt = parse_iso8601(as_of, "as_of")
         ctx = get_context()
         assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
@@ -81,16 +87,17 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
             )
             _log.debug(
-                "read_view ws=%s item=%s view=%s.%s count=%d",
+                "read_view ws=%s item=%s view=%s.%s count=%d as_of=%s",
                 ws_id,
                 entry.id,
                 schema,
                 view_name,
                 count,
+                as_of,
             )
             target = make_sql_target(ws_id, entry, item)
             columns, rows = await views_svc.read_view(
-                target, schema, view_name, count=count, mode=ctx.auth_mode
+                target, schema, view_name, count=count, as_of=as_of_dt, mode=ctx.auth_mode
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
