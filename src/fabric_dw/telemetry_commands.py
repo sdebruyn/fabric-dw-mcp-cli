@@ -65,6 +65,7 @@ DOMAIN_MAP: dict[str, str] = {
     "cache": "cache",
     "config": "config",
     "completion": "completion",
+    "permissions": "permissions",
     # ── MCP tool names (explicit overrides / multi-domain tools) ─────────────
     # Workspaces
     "assign_workspace_to_capacity": "workspaces",
@@ -79,12 +80,17 @@ DOMAIN_MAP: dict[str, str] = {
     "rename_warehouse": "warehouses",
     "delete_warehouse": "warehouses",
     "takeover_warehouse": "warehouses",
-    "get_warehouse_permissions": "warehouses",
     # SQL Endpoints
     "list_sql_endpoints": "sql_endpoints",
     "get_sql_endpoint": "sql_endpoints",
     "refresh_sql_endpoint_metadata": "sql_endpoints",
-    "get_sql_endpoint_permissions": "sql_endpoints",
+    "list_item_permissions": "permissions",
+    "list_sql_permissions": "permissions",
+    "list_database_principals": "permissions",
+    "my_permissions": "permissions",
+    "grant_permission": "permissions",
+    "deny_permission": "permissions",
+    "revoke_permission": "permissions",
     # Audit
     "get_audit_settings": "audit",
     "enable_audit": "audit",
@@ -214,6 +220,7 @@ _KNOWN_DOMAINS: frozenset[str] = frozenset(
         "config",
         "completion",
         "settings",
+        "permissions",
     }
 )
 

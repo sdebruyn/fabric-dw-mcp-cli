@@ -7,8 +7,9 @@ decorates and registers that domain's tools against the provided
 Domains
 -------
 - :mod:`.workspaces` — workspace listing, detail, collation
-- :mod:`.warehouses` — warehouse CRUD, takeover, permissions
-- :mod:`.sql_endpoints` — SQL Analytics Endpoint listing, detail, refresh, permissions
+- :mod:`.warehouses` — warehouse CRUD, takeover
+- :mod:`.sql_endpoints` — SQL Analytics Endpoint listing, detail, refresh
+- :mod:`.permissions` — Fabric item-level permissions (REST) and T-SQL GRANT/DENY/REVOKE
 - :mod:`.audit` — SQL audit settings management
 - :mod:`.queries` — running queries, connections, kill session, query-insights DMVs
 - :mod:`.sql_exec` — generic SQL execution (execute_sql)
@@ -37,6 +38,7 @@ from fabric_dw.mcp.tools import (
     dbt,
     functions,
     load,
+    permissions,
     procedures,
     queries,
     restore,
@@ -59,6 +61,7 @@ _DOMAINS = [
     workspaces,
     warehouses,
     sql_endpoints,
+    permissions,
     audit,
     queries,
     sql_exec,

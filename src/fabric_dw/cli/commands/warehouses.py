@@ -5,10 +5,7 @@ from __future__ import annotations
 import click
 
 from fabric_dw.cli._context import CliContext
-from fabric_dw.cli._render import (
-    render,
-    render_permissions_table,
-)
+from fabric_dw.cli._render import render
 from fabric_dw.cli.commands._utils import (
     build_http_client,
     confirm_destructive,
@@ -23,7 +20,6 @@ from fabric_dw.cli.commands._utils import (
 from fabric_dw.exceptions import FabricError
 from fabric_dw.models import WarehouseKind
 from fabric_dw.services import ownership as _ownership_svc
-from fabric_dw.services import permissions as _permissions_svc
 from fabric_dw.services import warehouses as _warehouses_svc
 
 
@@ -252,26 +248,3 @@ async def takeover_cmd(ctx: CliContext, warehouse: str | None) -> None:
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(f"Ownership of warehouse {entry.display_name!r} ({entry.id}) taken.")
-
-
-@warehouses_group.command("permissions")
-@click.argument("warehouse", required=False, default=None)
-@click.pass_obj
-@coro
-async def permissions_cmd(ctx: CliContext, warehouse: str | None) -> None:
-    """List principals with access to WAREHOUSE (name or GUID) in the target workspace.
-
-    Requires Fabric Administrator role.
-    See https://learn.microsoft.com/en-us/fabric/admin/microsoft-fabric-admin for details.
-    """
-    ws = resolve_workspace(ctx)
-    wh = resolve_warehouse_arg(ctx, warehouse)
-    try:
-        async with build_http_client(ctx) as http:
-            ws_id, entry = await resolve_item(http, ws, wh)
-            items = await _permissions_svc.list_item_access(http, ws_id, entry.id)
-            render_permissions_table(
-                items, title="Warehouse Permissions", json_output=ctx.json_output
-            )
-    except (ValueError, FabricError) as exc:
-        raise click.ClickException(str(exc)) from exc

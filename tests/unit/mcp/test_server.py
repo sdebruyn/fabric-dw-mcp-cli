@@ -1042,8 +1042,8 @@ async def test_execute_sql_no_connection_string_raises_tool_error(mock_ctx, ctx_
 # ---------------------------------------------------------------------------
 
 
-async def test_get_warehouse_permissions_happy_path(mock_ctx, ctx_patch) -> None:
-    """get_warehouse_permissions returns a list of serialised ItemAccess dicts."""
+async def test_list_item_permissions_happy_path(mock_ctx, ctx_patch) -> None:
+    """list_item_permissions returns a list of serialised ItemAccess dicts."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     access = _make_item_access()
@@ -1059,8 +1059,8 @@ async def test_get_warehouse_permissions_happy_path(mock_ctx, ctx_patch) -> None
         ),
     ):
         result = await mcp._tool_manager.call_tool(
-            "get_warehouse_permissions",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME},
+            "list_item_permissions",
+            {"workspace": _WS_NAME, "item": _WH_NAME},
         )
 
     assert isinstance(result, list)
@@ -1068,36 +1068,10 @@ async def test_get_warehouse_permissions_happy_path(mock_ctx, ctx_patch) -> None
     assert result[0]["principal"]["displayName"] == "Jacob Hancock"
 
 
-async def test_get_sql_endpoint_permissions_happy_path(mock_ctx, ctx_patch) -> None:
-    """get_sql_endpoint_permissions returns a list of serialised ItemAccess dicts."""
-    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
-
-    access = _make_item_access()
-    item = _make_item_entry()
-    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
-    mock_ctx.resolver.item = AsyncMock(return_value=item)
-
-    with (
-        ctx_patch,
-        patch(
-            "fabric_dw.services.permissions.list_item_access",
-            new=AsyncMock(return_value=[access]),
-        ),
-    ):
-        result = await mcp._tool_manager.call_tool(
-            "get_sql_endpoint_permissions",
-            {"workspace": _WS_NAME, "sql_endpoint": _WH_NAME},
-        )
-
-    assert isinstance(result, list)
-    assert len(result) == 1
-    assert result[0]["principal"]["type"] == "User"
-
-
-async def test_get_warehouse_permissions_permission_denied_becomes_tool_error(
+async def test_list_item_permissions_permission_denied_becomes_tool_error(
     mock_ctx, ctx_patch
 ) -> None:
-    """get_warehouse_permissions wraps PermissionDeniedError into ToolError."""
+    """list_item_permissions wraps PermissionDeniedError into ToolError."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -1115,8 +1089,8 @@ async def test_get_warehouse_permissions_permission_denied_becomes_tool_error(
         pytest.raises(ToolError),
     ):
         await mcp._tool_manager.call_tool(
-            "get_warehouse_permissions",
-            {"workspace": _WS_NAME, "warehouse": _WH_NAME},
+            "list_item_permissions",
+            {"workspace": _WS_NAME, "item": _WH_NAME},
         )
 
 

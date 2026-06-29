@@ -63,39 +63,6 @@ fdw sql-endpoints list --all-workspaces
  MyLakehouseEP      f9e1...
 ```
 
-### sql-endpoints permissions
-
-**Targets:** SQL Analytics Endpoint
-
-List all principals (users, groups, service principals) with access to a SQL Analytics Endpoint, including their effective permissions. Requires **Fabric Administrator** role.
-
-**Synopsis**
-
-```
-fdw [-w WORKSPACE] [--json] sql-endpoints permissions ENDPOINT
-```
-
-| Option | Description |
-| --- | --- |
-| `--json` | Emit raw JSON instead of a Rich table. Pass on the root command. |
-
-**Example**
-
-```shell
-# Tabular output
-fdw -w MyWorkspace sql-endpoints permissions MyLakehouseEP
-
-# Raw JSON
-fdw -w MyWorkspace --json sql-endpoints permissions MyLakehouseEP
-```
-
-```
- Display Name    UPN / App ID             Type    Permissions    Additional Permissions
- --------------- ------------------------ ------- -------------- ----------------------
- Alice           alice@contoso.com        User    Read, Write
- DataPipeline    00000000-0000-...        ServicePrincipal  Read
-```
-
 ### sql-endpoints refresh
 
 **Targets:** SQL Analytics Endpoint
@@ -143,23 +110,6 @@ Return details for a single SQL analytics endpoint.
 - `endpoint` (`str`): endpoint name or GUID.
 
 **Returns:** `Warehouse`: single SQL analytics endpoint object.
-
-### get_sql_endpoint_permissions
-
-**Targets:** SQL Analytics Endpoint
-
-Return all principals (users, groups, service principals) with access to a SQL Analytics Endpoint, including their effective permissions.
-
-!!! note
-
-    Requires **Fabric Administrator** role (`Tenant.Read.All` or `Tenant.ReadWrite.All` scope). See [Microsoft Fabric admin documentation](https://learn.microsoft.com/en-us/fabric/admin/microsoft-fabric-admin?WT.mc_id=MVP_310840) for how to request the role.
-
-**Parameters:**
-
-- `workspace` (`str`): workspace name or GUID.
-- `sql_endpoint` (`str`): SQL analytics endpoint name or GUID.
-
-**Returns:** `list[ItemAccess]`: array of access records, each with `principal` (containing `id`, `displayName`, `type`, and type-specific fields such as `userPrincipalName` or `aadAppId`) and `itemAccessDetails` (containing `type`, `permissions`, and `additionalPermissions`).
 
 ### list_sql_endpoints
 

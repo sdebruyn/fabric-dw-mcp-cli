@@ -610,28 +610,8 @@ class TestEndpointsRefresh:
         assert result.exit_code != 0
 
 
-class TestEndpointsPermissions:
-    """endpoints permissions — happy path and the stale-default cross-workspace 404 UX."""
-
-    def test_permissions_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
-        _ = cache_env
-        mock_http = AsyncMock()
-        with (
-            patch(
-                "fabric_dw.cli.commands.sql_endpoints.build_http_client",
-                new=_make_cm(mock_http, None),
-            ),
-            patch(
-                "fabric_dw.cli.commands.sql_endpoints.resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
-            ),
-            patch(
-                "fabric_dw.services.permissions.list_item_access",
-                new=AsyncMock(return_value=[]),
-            ),
-        ):
-            result = runner.invoke(cli, ["-w", WS_GUID, "sql-endpoints", "permissions", EP_GUID])
-        assert result.exit_code == 0
+# Note: sql-endpoints permissions was removed in favour of permissions item list.
+# See tests/unit/cli/commands/test_permissions.py for the replacement tests.
 
 
 # GUID of a default endpoint that belongs to a *different* workspace than the
@@ -653,7 +633,7 @@ def _configure_default_warehouse(
 class TestEndpointsStaleDefaultHint:
     """A defaulted endpoint missing from the target workspace yields a friendly error."""
 
-    @pytest.mark.parametrize("command", ["permissions", "get", "refresh"])
+    @pytest.mark.parametrize("command", ["get", "refresh"])
     def test_missing_default_endpoint_raises_clear_error(
         self,
         command: str,
@@ -707,7 +687,7 @@ class TestEndpointsStaleDefaultHint:
                 new=AsyncMock(side_effect=NotFoundError("endpoint not found")),
             ),
         ):
-            result = runner.invoke(cli, ["-w", WS_GUID, "sql-endpoints", "permissions", EP_GUID])
+            result = runner.invoke(cli, ["-w", WS_GUID, "sql-endpoints", "get", EP_GUID])
         assert result.exit_code != 0
         # The friendly stale-default wording must NOT appear for an explicit arg.
         assert "configured default" not in result.output

@@ -979,76 +979,8 @@ class TestWarehousesTakeoverErrors:
         assert result.exit_code != 0
 
 
-class TestWarehousesPermissions:
-    """warehouses permissions — happy path + FabricError (lines 241-251)."""
-
-    def test_permissions_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
-        _ = cache_env
-        from fabric_dw.models import (  # noqa: PLC0415
-            ItemAccess,
-            ItemAccessDetail,
-            ItemAccessPrincipal,
-        )
-
-        principal = ItemAccessPrincipal.model_validate(
-            {
-                "id": str(WH_UUID),
-                "displayName": "Alice",
-                "type": "User",
-                "userDetails": {"userPrincipalName": "alice@example.com"},
-            }
-        )
-        detail = ItemAccessDetail.model_validate(
-            {"permissions": ["Read"], "additionalPermissions": []}
-        )
-        access = ItemAccess.model_validate(
-            {
-                "principal": principal.model_dump(by_alias=True, mode="json"),
-                "itemAccessDetails": detail.model_dump(by_alias=True, mode="json"),
-            }
-        )
-
-        mock_http = AsyncMock()
-        with (
-            patch(
-                "fabric_dw.cli.commands.warehouses.build_http_client",
-                new=_make_cm(mock_http, None),
-            ),
-            patch(
-                "fabric_dw.cli.commands.warehouses.resolve_item",
-                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
-            ),
-            patch(
-                "fabric_dw.services.permissions.list_item_access",
-                new=AsyncMock(return_value=[access]),
-            ),
-        ):
-            result = runner.invoke(
-                cli, ["--json", "-w", WS_GUID, "warehouses", "permissions", WH_GUID]
-            )
-        assert result.exit_code == 0
-        parsed = json.loads(result.output)
-        assert isinstance(parsed, list)
-        # Alice's principal must appear in the rendered permissions list
-        assert any(p.get("principal", {}).get("displayName") == "Alice" for p in parsed)
-
-    def test_permissions_fabric_error_exits_nonzero(
-        self, runner: CliRunner, cache_env: Path
-    ) -> None:
-        _ = cache_env
-        mock_http = AsyncMock()
-        with (
-            patch(
-                "fabric_dw.cli.commands.warehouses.build_http_client",
-                new=_make_cm(mock_http, None),
-            ),
-            patch(
-                "fabric_dw.cli.commands.warehouses.resolve_item",
-                new=AsyncMock(side_effect=FabricError("server error")),
-            ),
-        ):
-            result = runner.invoke(cli, ["-w", WS_GUID, "warehouses", "permissions", WH_GUID])
-        assert result.exit_code != 0
+# Note: warehouses permissions was removed in favour of permissions item list.
+# See tests/unit/cli/commands/test_permissions.py for the replacement tests.
 
 
 # ---------------------------------------------------------------------------

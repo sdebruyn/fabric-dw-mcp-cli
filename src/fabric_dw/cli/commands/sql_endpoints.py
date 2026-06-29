@@ -10,7 +10,6 @@ from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._main import _CLI_CONDITIONAL_DESTRUCTIVE_KEY
 from fabric_dw.cli._render import (
     render,
-    render_permissions_table,
     render_refresh_table,
 )
 from fabric_dw.cli.commands._utils import (
@@ -23,7 +22,6 @@ from fabric_dw.cli.commands._utils import (
     validate_workspace_option_or_all_workspaces,
 )
 from fabric_dw.exceptions import FabricError, NotFoundError
-from fabric_dw.services import permissions as _permissions_svc
 from fabric_dw.services import sql_endpoints as _sql_endpoints_svc
 
 if TYPE_CHECKING:
@@ -207,33 +205,5 @@ async def refresh_cmd(ctx: CliContext, item: str | None, recreate_tables: bool) 
                 )
             else:
                 render_refresh_table(statuses)
-    except FabricError as exc:
-        raise click.ClickException(str(exc)) from exc
-
-
-@sql_endpoints_group.command("permissions")
-@click.argument("item", required=False, default=None)
-@click.pass_obj
-@coro
-async def permissions_cmd(ctx: CliContext, item: str | None) -> None:
-    """List principals with access to ITEM (SQL endpoint, name or GUID) in the target workspace.
-
-    Requires Fabric Administrator role.
-    See https://learn.microsoft.com/en-us/fabric/admin/microsoft-fabric-admin for details.
-    """
-    ws = resolve_workspace(ctx)
-    endpoint_explicit = item is not None
-    ep = resolve_warehouse_arg(ctx, item)
-    try:
-        async with build_http_client(ctx) as http:
-            ws_id, entry = await _resolve_endpoint_or_hint(
-                http, ws, ep, endpoint_explicit=endpoint_explicit
-            )
-            items = await _permissions_svc.list_item_access(http, ws_id, entry.id)
-            render_permissions_table(
-                items,
-                title="SQL Analytics Endpoint Permissions",
-                json_output=ctx.json_output,
-            )
     except FabricError as exc:
         raise click.ClickException(str(exc)) from exc
