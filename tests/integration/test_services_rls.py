@@ -2,8 +2,7 @@
 
 Run with: pytest -m integration tests/integration/test_services_rls.py
 
-Covers the create -> list -> set-state -> add-predicate -> drop-predicate -> drop
-round-trip for security policies.
+Covers the create -> list -> set-state -> drop round-trip for security policies.
 
 Each test run creates a minimal TVF inline, uses it for the test, then drops it
 in teardown -- making the suite hermetic without requiring a pre-existing TVF.
