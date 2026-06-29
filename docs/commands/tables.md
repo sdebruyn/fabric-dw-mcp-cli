@@ -174,11 +174,18 @@ fdw -w MyWorkspace tables clone SalesWH \
 
 Return the total row count of a table using `SELECT COUNT_BIG(*)`.
 
+Use `--as-of` or `--ago` to count rows as they were at an earlier point in time (time travel). The same retention window applies as for `tables read`.
+
 **Synopsis**
 
 ```
-fdw [-w WORKSPACE] tables count [WAREHOUSE] QUALIFIED_NAME
+fdw [-w WORKSPACE] tables count [OPTIONS] [WAREHOUSE] QUALIFIED_NAME
 ```
+
+| Option | Description |
+| --- | --- |
+| `--as-of ISO8601` | Count rows as they were at this UTC timestamp. Mutually exclusive with `--ago`. | |
+| `--ago DURATION` | Count rows as they were this duration ago (e.g. `1h`, `90m`, `2d`). Mutually exclusive with `--as-of`. | |
 
 **Example**
 
@@ -188,6 +195,12 @@ fdw -w MyWorkspace --json tables count SalesWH dbo.orders
 
 ```json
 {"schema": "dbo", "name": "orders", "row_count": 999999}
+```
+
+```shell
+# Point-in-time row count
+fdw -w MyWorkspace --json tables count SalesWH dbo.orders --as-of 2024-03-15T10:00:00Z
+fdw -w MyWorkspace --json tables count SalesWH dbo.orders --ago 1h
 ```
 
 ### tables create
@@ -485,6 +498,8 @@ Read up to `--count` rows from a table and emit them as JSON (default), CSV, or 
 
 CSV and Parquet formats require `--output`. JSON is emitted to stdout by default.
 
+Use `--as-of` or `--ago` to read the table as it was at an earlier point in time (time travel). Fabric supports `OPTION (FOR TIMESTAMP AS OF ...)` on `SELECT` statements; the retention window is 1-120 days (default 30). Timestamps outside the retention window error server-side - no client-side pre-validation is performed.
+
 **Synopsis**
 
 ```
@@ -496,6 +511,8 @@ fdw [-w WORKSPACE] tables read [OPTIONS] [WAREHOUSE] QUALIFIED_NAME
 | `--count N` | Maximum rows to return. | `10` |
 | `--format {json\|csv\|parquet}` | Output format. | `json` |
 | `--output PATH` | Write to file instead of stdout. Required for `csv` and `parquet`. | |
+| `--as-of ISO8601` | Read the table as it was at this UTC timestamp. Mutually exclusive with `--ago`. | |
+| `--ago DURATION` | Read the table as it was this duration ago (e.g. `1h`, `90m`, `2d`). Mutually exclusive with `--as-of`. | |
 
 **Example**
 
@@ -508,6 +525,12 @@ fdw -w MyWorkspace tables read SalesWH dbo.orders --count 5
   {"id": 1, "amount": 99.99, "customer_id": 42},
   ...
 ]
+```
+
+```shell
+# Point-in-time read
+fdw -w MyWorkspace tables read SalesWH dbo.orders --as-of 2024-03-15T10:00:00Z
+fdw -w MyWorkspace tables read SalesWH dbo.orders --ago 2d
 ```
 
 ### tables rename
@@ -598,11 +621,14 @@ Results are ordered by ordinal position. Raises a `ToolError` if the table does 
 
 Return the total row count of a table via `SELECT COUNT_BIG(*)`.
 
+Supports time-travel counts via `as_of`: supply an ISO-8601 UTC timestamp to count rows as they were at that point in time. The same retention window applies as for `read_table`.
+
 **Parameters:**
 
 - `workspace` (`str`): workspace name or GUID.
 - `item` (`str`): warehouse or SQL analytics endpoint name or GUID.
 - `qualified_name` (`str`): dot-separated table name, e.g. `dbo.sales`.
+- `as_of` (`str`, optional): ISO-8601 UTC timestamp for a point-in-time count. Omit to count the latest data.
 
 **Returns:** `{ "schema": str, "name": str, "row_count": int }`: the schema name, table name, and total row count.
 
@@ -816,12 +842,15 @@ Load data into a Data Warehouse table via `COPY INTO` from a remote URL. For One
 
 Return up to `count` rows from a table as JSON-serialisable columns and rows.
 
+Supports time-travel reads via `as_of`: supply an ISO-8601 UTC timestamp to read the table as it was at that point in time. The Fabric retention window is 1-120 days (default 30); timestamps outside the window error server-side.
+
 **Parameters:**
 
 - `workspace` (`str`): workspace name or GUID.
 - `item` (`str`): warehouse or SQL analytics endpoint name or GUID.
 - `qualified_name` (`str`): dot-separated table name, e.g. `dbo.sales`.
 - `count` (`int`, default `10`): maximum rows to return.
+- `as_of` (`str | null`, optional): ISO-8601 UTC timestamp for a point-in-time read, e.g. `2024-03-15T10:00:00Z`. Omit to read the latest data.
 
 **Returns:** `{ "columns": list[str], "rows": list[list] }`: column names and row arrays.
 

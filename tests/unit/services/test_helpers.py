@@ -10,6 +10,7 @@ from fabric_dw.exceptions import ItemKindError
 from fabric_dw.models import WarehouseKind
 from fabric_dw.services._helpers import (
     _assert_not_sql_endpoint,
+    build_time_travel_option,
     coerce_to_utc,
     compact,
     reject_non_select,
@@ -198,3 +199,33 @@ class TestAssertNotSqlEndpoint:
         assert settings_guard is _assert_not_sql_endpoint
         assert stats_guard is _assert_not_sql_endpoint
         assert tables_guard is _assert_not_sql_endpoint
+
+
+# ---------------------------------------------------------------------------
+# build_time_travel_option
+# ---------------------------------------------------------------------------
+
+
+class TestBuildTimeTravelOption:
+    """Unit tests for build_time_travel_option and its _format_ms_literal helper."""
+
+    def test_carry_rolls_into_next_second(self) -> None:
+        """999_750 us rounds to 1000 ms; the timedelta carry must produce ...:01.000.
+
+        Without the timedelta carry the naive f-string approach would emit
+        ``...:00.1000``, which is an invalid literal.  This test specifically
+        covers the >=999_500 us branch that was previously untested.
+        """
+        # 2024-01-15T12:00:00.999750 UTC rounds to 2024-01-15T12:00:01.000
+        dt = datetime(2024, 1, 15, 12, 0, 0, 999_750, tzinfo=UTC)
+        result = build_time_travel_option(dt)
+        assert result == " OPTION (FOR TIMESTAMP AS OF '2024-01-15T12:00:01.000')"
+
+    def test_carry_rolls_into_next_minute(self) -> None:
+        """999_750 us on a 59-second boundary must carry all the way to :00.000."""
+        dt = datetime(2024, 1, 15, 12, 0, 59, 999_750, tzinfo=UTC)
+        result = build_time_travel_option(dt)
+        assert result == " OPTION (FOR TIMESTAMP AS OF '2024-01-15T12:01:00.000')"
+
+    def test_none_returns_empty_string(self) -> None:
+        assert build_time_travel_option(None) == ""

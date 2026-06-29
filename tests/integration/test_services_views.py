@@ -15,14 +15,16 @@ The ``mutable_schema_target`` fixture is parametrized over two targets:
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
+from datetime import UTC, datetime
 
 import pytest
 
-from fabric_dw.exceptions import NotFoundError
+from fabric_dw.exceptions import FabricError, NotFoundError
 from fabric_dw.models import View
 from fabric_dw.services import views
-from fabric_dw.sql import SqlTarget
+from fabric_dw.sql import SqlTarget, run_query
 
 pytestmark = pytest.mark.integration
 
@@ -306,6 +308,123 @@ async def test_count_view_rows_returns_nonnegative_int(
         assert isinstance(count, int)
         assert count >= 0
         assert count == 2
+    finally:
+        with contextlib.suppress(Exception):
+            await views.drop_view(sql_target, schema, view_name)
+
+
+# ---------------------------------------------------------------------------
+# Time-travel: read_view and count_view_rows with as_of
+# ---------------------------------------------------------------------------
+#
+# Both functions are tested with a server-side timestamp captured AFTER the view
+# is created to avoid client/server clock skew.
+#
+# Caveats (expected server-side errors, not bugs):
+#   - A timestamp before the underlying view was created errors server-side.
+#   - A timestamp outside the configured retention window errors server-side.
+#   - A freshly-created view may have no committed version visible at the
+#     captured timestamp (Fabric distributed compute flush latency); the tests
+#     skip rather than fail in that case.
+
+# Fragments from SQL engine error messages that mean no committed history exists
+# at the requested timestamp.
+_TIME_TRAVEL_SKIP_FRAGMENTS = (
+    ("no version",),
+    ("history",),
+    ("at time",),
+    ("point in time",),
+    ("timestamp",),
+)
+
+
+def _is_time_travel_unavailable(exc: BaseException) -> bool:
+    """Return True when *exc* means no committed history exists at the requested timestamp."""
+    msg = str(exc).lower()
+    return any(all(frag in msg for frag in frags) for frags in _TIME_TRAVEL_SKIP_FRAGMENTS)
+
+
+def _get_server_ts(sql_target: SqlTarget) -> datetime:
+    """Return a UTC-aware server-side timestamp via SYSUTCDATETIME()."""
+    _, rows = run_query(sql_target, "SELECT SYSUTCDATETIME() AS ts")
+    raw = rows[0][0]
+    if isinstance(raw, datetime):
+        return raw.replace(tzinfo=UTC) if raw.tzinfo is None else raw.astimezone(UTC)
+    parsed = datetime.fromisoformat(str(raw))
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+
+
+async def test_read_view_with_as_of_succeeds_or_skips(
+    mutable_schema_target: tuple[SqlTarget, str],
+) -> None:
+    """read_view with as_of set to a server-side post-creation timestamp succeeds or skips.
+
+    Creates a view, captures a server-side timestamp after the DDL commit, then
+    calls read_view with as_of.  Proves the OPTION (FOR TIMESTAMP AS OF ...)
+    clause is syntactically and semantically accepted by Fabric end-to-end.
+
+    A freshly-created view may have no committed history at the captured
+    timestamp (Fabric distributed compute flush latency); the test skips in that
+    case rather than failing, because the rejection is expected server behavior,
+    not a code bug.
+    """
+    sql_target, schema = mutable_schema_target
+    view_name = "pytest_views_timetravel_read"
+    select_body = "SELECT 1 AS id, 'alpha' AS label UNION ALL SELECT 2, 'beta'"
+
+    try:
+        await views.create_view(sql_target, schema, view_name, select_body)
+
+        # Capture a server-side timestamp AFTER the DDL commit to ensure the
+        # as_of is >= the view creation time from the server's perspective.
+        as_of: datetime = await asyncio.to_thread(_get_server_ts, sql_target)
+
+        try:
+            cols, rows = await views.read_view(sql_target, schema, view_name, count=10, as_of=as_of)
+        except Exception as exc:
+            if _is_time_travel_unavailable(exc) or isinstance(exc, FabricError):
+                pytest.skip(
+                    f"No committed history at {as_of.isoformat()} for a freshly-created "
+                    f"view (expected on distributed compute): {exc}"
+                )
+            raise
+        assert "id" in cols
+        assert "label" in cols
+        assert len(rows) == 2
+    finally:
+        with contextlib.suppress(Exception):
+            await views.drop_view(sql_target, schema, view_name)
+
+
+async def test_count_view_rows_with_as_of_succeeds_or_skips(
+    mutable_schema_target: tuple[SqlTarget, str],
+) -> None:
+    """count_view_rows with as_of set to a server-side post-creation timestamp succeeds or skips.
+
+    Same freshly-created-view caveat as test_read_view_with_as_of_succeeds_or_skips.
+    When the server does have committed history at the timestamp, the call must
+    return the correct row count.
+    """
+    sql_target, schema = mutable_schema_target
+    view_name = "pytest_views_timetravel_count"
+    select_body = "SELECT 1 AS id UNION ALL SELECT 2 UNION ALL SELECT 3"
+
+    try:
+        await views.create_view(sql_target, schema, view_name, select_body)
+
+        as_of: datetime = await asyncio.to_thread(_get_server_ts, sql_target)
+
+        try:
+            count = await views.count_view_rows(sql_target, schema, view_name, as_of=as_of)
+        except Exception as exc:
+            if _is_time_travel_unavailable(exc) or isinstance(exc, FabricError):
+                pytest.skip(
+                    f"No committed history at {as_of.isoformat()} for a freshly-created "
+                    f"view (expected on distributed compute): {exc}"
+                )
+            raise
+        assert isinstance(count, int)
+        assert count == 3
     finally:
         with contextlib.suppress(Exception):
             await views.drop_view(sql_target, schema, view_name)

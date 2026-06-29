@@ -17,7 +17,7 @@ from click.testing import CliRunner
 
 from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._main import cli
-from fabric_dw.cli.commands._utils import parse_duration, resolve_since
+from fabric_dw.cli.commands._utils import parse_duration, resolve_as_of, resolve_since
 from fabric_dw.models import (
     ExecRequestHistory,
     ExecSessionHistory,
@@ -328,6 +328,61 @@ class TestResolveSince:
     def test_invalid_ago_raises_usage_error(self) -> None:
         with pytest.raises(click.UsageError):
             resolve_since(None, "bad")
+
+
+# ---------------------------------------------------------------------------
+# resolve_as_of
+# ---------------------------------------------------------------------------
+
+
+class TestResolveAsOf:
+    """resolve_as_of merges --as-of and --ago into a single datetime | None."""
+
+    def test_both_set_raises_usage_error(self) -> None:
+        with pytest.raises(click.UsageError, match="mutually exclusive"):
+            resolve_as_of("2024-01-01T00:00:00", "1h")
+
+    def test_error_names_as_of_not_since(self) -> None:
+        with pytest.raises(click.UsageError) as exc_info:
+            resolve_as_of("2024-01-01T00:00:00", "1h")
+        msg = str(exc_info.value)
+        assert "--as-of" in msg
+        assert "--ago" in msg
+        assert "--since" not in msg
+
+    def test_ago_set_returns_now_minus_delta(self) -> None:
+        before = datetime.now(UTC)
+        result = resolve_as_of(None, "1h")
+        after = datetime.now(UTC)
+        assert result is not None
+        expected_low = before - timedelta(hours=1)
+        expected_high = after - timedelta(hours=1)
+        assert expected_low <= result <= expected_high
+
+    def test_ago_result_is_tz_aware_utc(self) -> None:
+        result = resolve_as_of(None, "30m")
+        assert result is not None
+        assert result.tzinfo is not None
+        expected = datetime.now(UTC) - timedelta(minutes=30)
+        assert abs((result - expected).total_seconds()) < 5
+
+    def test_as_of_set_returns_parsed_datetime(self) -> None:
+        result = resolve_as_of("2024-06-01T10:00:00Z", None)
+        assert result is not None
+        assert result.year == 2024
+        assert result.month == 6
+        assert result.day == 1
+
+    def test_both_none_returns_none(self) -> None:
+        assert resolve_as_of(None, None) is None
+
+    def test_invalid_as_of_raises_usage_error(self) -> None:
+        with pytest.raises(click.UsageError):
+            resolve_as_of("not-a-date", None)
+
+    def test_invalid_ago_raises_usage_error(self) -> None:
+        with pytest.raises(click.UsageError):
+            resolve_as_of(None, "bad")
 
 
 # ---------------------------------------------------------------------------

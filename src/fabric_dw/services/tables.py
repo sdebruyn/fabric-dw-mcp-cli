@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import cast
 from uuid import uuid4
@@ -46,7 +46,13 @@ from fabric_dw.models import (
     TableRowCount,
     WarehouseKind,
 )
-from fabric_dw.services._helpers import _assert_not_sql_endpoint, coerce_to_utc, reject_non_select
+from fabric_dw.services._helpers import (
+    _assert_not_sql_endpoint,
+    _format_ms_literal,
+    build_time_travel_option,
+    coerce_to_utc,
+    reject_non_select,
+)
 from fabric_dw.services.schema_infer import (
     infer_columns_from_csv,
     infer_columns_from_json,
@@ -239,6 +245,7 @@ async def read_table(
     table_name: str,
     *,
     count: int = 10,
+    as_of: datetime | None = None,
     mode: CredentialMode = CredentialMode.DEFAULT,
 ) -> ResultSet:
     """Return up to *count* rows from *schema*.*table_name*.
@@ -254,6 +261,11 @@ async def read_table(
         schema: The schema name.  Must pass :func:`validate_identifier`.
         table_name: The table name.  Must pass :func:`validate_identifier`.
         count: Maximum number of rows to return (default 10).
+        as_of: Optional point-in-time for time-travel reads.  When set, the
+            query includes ``OPTION (FOR TIMESTAMP AS OF '<utc-literal>')``.
+            Naive datetimes are assumed UTC (via :func:`~._helpers.coerce_to_utc`);
+            tz-aware datetimes are converted to UTC.  Microseconds are rounded
+            to the nearest millisecond.  *None* leaves the SQL unchanged.
         mode: The credential mode for Entra authentication.
 
     Returns:
@@ -267,11 +279,16 @@ async def read_table(
     validate_identifier(schema)
     validate_identifier(table_name)
 
-    read_sql = _READ_TABLE_SQL.format(
+    base_sql = _READ_TABLE_SQL.format(
         count=int(count),
         schema_q=quote_identifier(schema),
         table_q=quote_identifier(table_name),
     )
+    as_of_clause = build_time_travel_option(as_of)
+    # When as_of_clause is empty the result is byte-for-byte identical to base_sql.
+    # The template always ends with ";"; strip it, append the (possibly empty) hint,
+    # then re-add it.
+    read_sql = base_sql[:-1] + as_of_clause + ";"
 
     def _run() -> ResultSet:
         cols, rows = run_query(target, read_sql, mode=mode)
@@ -288,6 +305,7 @@ async def count_table_rows(
     schema: str,
     table_name: str,
     *,
+    as_of: datetime | None = None,
     mode: CredentialMode = CredentialMode.DEFAULT,
 ) -> TableRowCount:
     """Return the total row count of *schema*.*table_name* via ``COUNT_BIG(*)``.
@@ -299,6 +317,10 @@ async def count_table_rows(
         target: The warehouse or SQL Analytics Endpoint to query.
         schema: The schema name.  Must pass :func:`validate_identifier`.
         table_name: The table name.  Must pass :func:`validate_identifier`.
+        as_of: Optional point-in-time for time-travel counts.  When set, the
+            query includes ``OPTION (FOR TIMESTAMP AS OF '<utc-literal>')``.
+            See :func:`~._helpers.build_time_travel_option` for formatting details.
+            *None* leaves the SQL unchanged.
         mode: The credential mode for Entra authentication.
 
     Returns:
@@ -313,10 +335,12 @@ async def count_table_rows(
     validate_identifier(schema)
     validate_identifier(table_name)
 
-    count_sql = _COUNT_TABLE_SQL.format(
+    base_sql = _COUNT_TABLE_SQL.format(
         schema_q=quote_identifier(schema),
         table_q=quote_identifier(table_name),
     )
+    as_of_clause = build_time_travel_option(as_of)
+    count_sql = base_sql[:-1] + as_of_clause + ";"
 
     def _run() -> TableRowCount:
         _cols, rows = run_query(target, count_sql, mode=mode)
@@ -837,18 +861,7 @@ async def clone_table(
         # The AT clause does not support bound parameters in T-SQL DDL, so we
         # embed a fixed-format literal derived from the already-validated datetime
         # object -- never an arbitrary user string.
-        #
-        # Round to the nearest millisecond (half-to-even via Python round())
-        # rather than truncating, so that e.g. 123_750 us -> 124 ms instead
-        # of silently shifting the point-in-time 0.75 ms earlier.
-        # round() can return 1000 for microsecond values >= 999_500 us;
-        # use timedelta to roll the carry into the seconds field correctly.
-        at_rounded = at.replace(microsecond=0) + timedelta(
-            milliseconds=round(at.microsecond / 1000)
-        )
-        ms_part = f"{at_rounded.microsecond // 1000:03d}"
-        at_literal = at_rounded.strftime("%Y-%m-%dT%H:%M:%S.") + ms_part
-        ddl = f"{ddl} AT '{at_literal}'"
+        ddl = f"{ddl} AT '{_format_ms_literal(at)}'"
 
     def _run_ddl() -> None:
         # Clone DDL runs on an autocommit connection so the implicit transaction

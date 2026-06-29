@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Callable, Coroutine, Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Protocol, TypeVar
 from uuid import UUID
 
@@ -15,6 +15,7 @@ from fabric_dw.services.capacities import ACTIVE_STATE
 
 __all__ = [
     "SelectBodyError",
+    "build_time_travel_option",
     "coerce_to_utc",
     "compact",
     "reject_non_select",
@@ -77,6 +78,60 @@ def coerce_to_utc(dt: datetime) -> datetime:
     if dt.tzinfo is None or dt.tzinfo.utcoffset(dt) is None:
         return dt.replace(tzinfo=UTC)
     return dt.astimezone(UTC)
+
+
+def _format_ms_literal(dt: datetime) -> str:
+    """Return a ``yyyy-MM-ddTHH:mm:ss.fff`` literal for *dt*, rounded to the nearest millisecond.
+
+    Uses :class:`~datetime.timedelta` carry so that microsecond values
+    >= 999_500 roll cleanly into the next second rather than producing an
+    invalid ``.1000`` fragment.
+
+    Args:
+        dt: A UTC-aware :class:`~datetime.datetime`.  The caller is responsible
+            for ensuring the value is already in UTC.
+
+    Returns:
+        A string such as ``"2024-03-15T10:30:45.123"``.
+    """
+    # Round to the nearest millisecond (half-to-even via Python round()) rather
+    # than truncating, so e.g. 123_750 us -> 124 ms instead of silently losing
+    # 0.75 ms.  round() can return 1000 for microsecond values >= 999_500 us;
+    # use timedelta to carry the extra millisecond into the seconds field correctly.
+    dt_rounded = dt.replace(microsecond=0) + timedelta(milliseconds=round(dt.microsecond / 1000))
+    ms_str = f"{dt_rounded.microsecond // 1000:03d}"
+    return dt_rounded.strftime("%Y-%m-%dT%H:%M:%S.") + ms_str
+
+
+def build_time_travel_option(as_of: datetime | None) -> str:
+    """Build the Fabric ``OPTION (FOR TIMESTAMP AS OF ...)`` SQL fragment.
+
+    Converts *as_of* to UTC, rounds to the nearest millisecond (half-to-even),
+    and formats the literal as ``yyyy-MM-ddTHH:mm:ss.fff``.
+
+    Args:
+        as_of: The point-in-time datetime, or *None* to return an empty string.
+            Naive datetimes are assumed UTC (via :func:`coerce_to_utc`); tz-aware
+            datetimes are converted to UTC.
+
+    Returns:
+        A string like ``" OPTION (FOR TIMESTAMP AS OF '2024-03-15T10:30:45.123')"``
+        when *as_of* is set, or ``""`` when *as_of* is *None*.
+
+    Note:
+        Callers that assemble SQL from a fixed-format template ending in ``";"``
+        should insert this fragment before re-adding the semicolon::
+
+            as_of_clause = build_time_travel_option(as_of)
+            sql = template[:-1] + as_of_clause + ";"
+
+        When *as_of* is *None* the result is byte-for-byte identical to the
+        original template (no semicolon stripping occurs effectively).
+    """
+    if as_of is None:
+        return ""
+    at = coerce_to_utc(as_of)
+    return f" OPTION (FOR TIMESTAMP AS OF '{_format_ms_literal(at)}')"
 
 
 class _HasNameAndId(Protocol):

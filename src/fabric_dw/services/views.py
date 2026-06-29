@@ -23,7 +23,7 @@ from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import NotFoundError
 from fabric_dw.identifiers import parse_qualified_name, quote_identifier, validate_identifier
 from fabric_dw.models import View
-from fabric_dw.services._helpers import reject_non_select
+from fabric_dw.services._helpers import build_time_travel_option, reject_non_select
 from fabric_dw.sql import SqlTarget, run_query
 
 __all__ = [
@@ -158,6 +158,7 @@ async def read_view(
     view_name: str,
     *,
     count: int = 10,
+    as_of: datetime | None = None,
     mode: CredentialMode = CredentialMode.DEFAULT,
 ) -> tuple[list[str], list[tuple[object, ...]]]:
     """Return up to *count* rows from *schema*.*view_name*.
@@ -170,6 +171,11 @@ async def read_view(
         schema: The schema name.  Must pass :func:`validate_identifier`.
         view_name: The view name.  Must pass :func:`validate_identifier`.
         count: Maximum number of rows to return (default 10).
+        as_of: Optional point-in-time for time-travel reads.  When set, the
+            query includes ``OPTION (FOR TIMESTAMP AS OF '<utc-literal>')``.
+            Naive datetimes are assumed UTC (via :func:`~._helpers.coerce_to_utc`);
+            tz-aware datetimes are converted to UTC.  Microseconds are rounded
+            to the nearest millisecond.  *None* leaves the SQL unchanged.
         mode: The credential mode for Entra authentication.
 
     Returns:
@@ -187,11 +193,14 @@ async def read_view(
 
     # Identifiers are validated; bracket-quote them for the FROM clause.
     # TOP count is an internal int (not user-supplied string), safe to embed.
-    read_sql = _READ_VIEW_SQL.format(
+    base_sql = _READ_VIEW_SQL.format(
         count=int(count),
         schema_q=quote_identifier(schema),
         view_q=quote_identifier(view_name),
     )
+    as_of_clause = build_time_travel_option(as_of)
+    # When as_of_clause is empty the result is byte-for-byte identical to base_sql.
+    read_sql = base_sql[:-1] + as_of_clause + ";"
 
     def _run() -> tuple[list[str], list[tuple[object, ...]]]:
         # run_query raises NotFoundError (via map_driver_error) for SQL error 208
@@ -212,6 +221,7 @@ async def count_view_rows(
     schema: str,
     view_name: str,
     *,
+    as_of: datetime | None = None,
     mode: CredentialMode = CredentialMode.DEFAULT,
 ) -> int:
     """Return the total row count of *schema*.*view_name* via ``COUNT_BIG(*)``.
@@ -223,6 +233,10 @@ async def count_view_rows(
         target: The warehouse or SQL Analytics Endpoint to query.
         schema: The schema name.  Must pass :func:`validate_identifier`.
         view_name: The view name.  Must pass :func:`validate_identifier`.
+        as_of: Optional point-in-time for time-travel counts.  When set, the
+            query includes ``OPTION (FOR TIMESTAMP AS OF '<utc-literal>')``.
+            See :func:`~._helpers.build_time_travel_option` for formatting details.
+            *None* leaves the SQL unchanged.
         mode: The credential mode for Entra authentication.
 
     Returns:
@@ -236,10 +250,12 @@ async def count_view_rows(
     validate_identifier(schema)
     validate_identifier(view_name)
 
-    count_sql = _COUNT_VIEW_SQL.format(
+    base_sql = _COUNT_VIEW_SQL.format(
         schema_q=quote_identifier(schema),
         view_q=quote_identifier(view_name),
     )
+    as_of_clause = build_time_travel_option(as_of)
+    count_sql = base_sql[:-1] + as_of_clause + ";"
 
     def _run() -> int:
         _cols, rows = run_query(target, count_sql, mode=mode)

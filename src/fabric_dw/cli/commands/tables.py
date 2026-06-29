@@ -16,6 +16,8 @@ from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._main import _CLI_CONDITIONAL_DESTRUCTIVE_KEY
 from fabric_dw.cli._render import render, render_result_rows
 from fabric_dw.cli.commands._utils import (
+    AS_OF_OPTION,
+    TIME_TRAVEL_AGO_OPTION,
     build_http_client,
     build_sql_target,
     confirm_destructive,
@@ -23,6 +25,7 @@ from fabric_dw.cli.commands._utils import (
     load_sql_body,
     parse_iso_datetime,
     parse_qualified_name,
+    resolve_as_of,
     resolve_item,
     resolve_warehouse_arg,
     resolve_workspace,
@@ -85,6 +88,8 @@ async def list_cmd(ctx: CliContext, item: str | None, schema: str | None) -> Non
     help="Output format.",
 )
 @click.option("--output", default=None, help="Write to this file instead of stdout.")
+@AS_OF_OPTION
+@TIME_TRAVEL_AGO_OPTION
 @click.pass_obj
 @coro
 async def read_cmd(
@@ -94,12 +99,15 @@ async def read_cmd(
     count: int,
     fmt: str,
     output: str | None,
+    as_of: str | None,
+    ago: str | None,
 ) -> None:
     """Read up to COUNT rows from QUALIFIED_NAME (schema.table) on ITEM."""
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     schema, table_name = parse_qualified_name(qualified_name, kind="table")
     output_path = Path(output) if output else None
+    as_of_dt = resolve_as_of(as_of, ago)
 
     # --format takes precedence when explicitly supplied (i.e. differs from the default
     # JSON value); if --format is omitted (or is the default "json"), the global --json
@@ -113,7 +121,7 @@ async def read_cmd(
         async with build_http_client(ctx) as http:
             target, _entry = await build_sql_target(http, ws, wh)
             result = await _tables_svc.read_table(
-                target, schema, table_name, count=count, mode=ctx.auth
+                target, schema, table_name, count=count, as_of=as_of_dt, mode=ctx.auth
             )
             arrow_table = columns_rows_to_arrow(result.columns, result.rows)
             write_arrow(arrow_table, effective_fmt, output_path)
@@ -186,21 +194,28 @@ async def columns_cmd(
 @tables_group.command("count")
 @click.argument("item", required=False, default=None)
 @click.argument("qualified_name")
+@AS_OF_OPTION
+@TIME_TRAVEL_AGO_OPTION
 @click.pass_obj
 @coro
 async def count_cmd(
     ctx: CliContext,
     item: str | None,
     qualified_name: str,
+    as_of: str | None,
+    ago: str | None,
 ) -> None:
     """Count rows in QUALIFIED_NAME (schema.table) on ITEM."""
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     schema, table_name = parse_qualified_name(qualified_name, kind="table")
+    as_of_dt = resolve_as_of(as_of, ago)
     try:
         async with build_http_client(ctx) as http:
             target, _entry = await build_sql_target(http, ws, wh)
-            result = await _tables_svc.count_table_rows(target, schema, table_name, mode=ctx.auth)
+            result = await _tables_svc.count_table_rows(
+                target, schema, table_name, as_of=as_of_dt, mode=ctx.auth
+            )
             render(
                 result.model_dump(mode="json"),
                 json_output=ctx.json_output,
