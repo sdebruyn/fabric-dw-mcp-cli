@@ -209,15 +209,15 @@ jobs:
           MARKER="<!-- docs-preview-url -->"
           printf '%s\n## Docs preview\n\nPreview URL: %s\n' "$MARKER" "$PREVIEW_URL" > /tmp/preview-comment.md
 
-          COMMENT_ID=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+          COMMENT_ID=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
             --jq '.[] | select(.body | contains("<!-- docs-preview-url -->")) | .id' | head -n1)
 
           if [ -n "$COMMENT_ID" ]; then
             gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" \
-              --field body="$(cat /tmp/preview-comment.md)"
+              -f body=@/tmp/preview-comment.md
           else
             gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
-              --field body="$(cat /tmp/preview-comment.md)"
+              -f body=@/tmp/preview-comment.md
           fi
 
       - name: Update job summary with real preview URL
