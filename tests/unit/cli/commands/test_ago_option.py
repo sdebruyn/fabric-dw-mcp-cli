@@ -347,6 +347,7 @@ class TestResolveAsOf:
             resolve_as_of("2024-01-01T00:00:00", "1h")
         msg = str(exc_info.value)
         assert "--as-of" in msg
+        assert "--ago" in msg
         assert "--since" not in msg
 
     def test_ago_set_returns_now_minus_delta(self) -> None:

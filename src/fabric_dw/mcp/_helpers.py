@@ -344,9 +344,20 @@ def parse_iso8601(value: str | None, param: str) -> datetime | None:
     if value is None:
         return None
     try:
-        return datetime.fromisoformat(value)
+        dt = datetime.fromisoformat(value)
     except ValueError as exc:
         raise ToolError(f"invalid {param} {value!r}: expected ISO-8601") from exc
+    # Sanity range check matching the CLI's parse_iso_datetime guard: reject
+    # obviously-wrong years (e.g. epoch 0 or year 9999) that would produce an
+    # opaque server error rather than a clear ToolError.
+    _year_min = 2000
+    _year_max = 2100
+    if not (_year_min <= dt.year <= _year_max):
+        raise ToolError(
+            f"invalid {param} {value!r}: year {dt.year} is out of the expected range "
+            f"({_year_min}-{_year_max}). Check the timestamp."
+        )
+    return dt
 
 
 def parse_qualified_name(qualified_name: str, kind: str = "object") -> tuple[str, str]:

@@ -80,6 +80,29 @@ def coerce_to_utc(dt: datetime) -> datetime:
     return dt.astimezone(UTC)
 
 
+def _format_ms_literal(dt: datetime) -> str:
+    """Return a ``yyyy-MM-ddTHH:mm:ss.fff`` literal for *dt*, rounded to the nearest millisecond.
+
+    Uses :class:`~datetime.timedelta` carry so that microsecond values
+    >= 999_500 roll cleanly into the next second rather than producing an
+    invalid ``.1000`` fragment.
+
+    Args:
+        dt: A UTC-aware :class:`~datetime.datetime`.  The caller is responsible
+            for ensuring the value is already in UTC.
+
+    Returns:
+        A string such as ``"2024-03-15T10:30:45.123"``.
+    """
+    # Round to the nearest millisecond (half-to-even via Python round()) rather
+    # than truncating, so e.g. 123_750 us -> 124 ms instead of silently losing
+    # 0.75 ms.  round() can return 1000 for microsecond values >= 999_500 us;
+    # use timedelta to carry the extra millisecond into the seconds field correctly.
+    dt_rounded = dt.replace(microsecond=0) + timedelta(milliseconds=round(dt.microsecond / 1000))
+    ms_str = f"{dt_rounded.microsecond // 1000:03d}"
+    return dt_rounded.strftime("%Y-%m-%dT%H:%M:%S.") + ms_str
+
+
 def build_time_travel_option(as_of: datetime | None) -> str:
     """Build the Fabric ``OPTION (FOR TIMESTAMP AS OF ...)`` SQL fragment.
 
@@ -108,14 +131,7 @@ def build_time_travel_option(as_of: datetime | None) -> str:
     if as_of is None:
         return ""
     at = coerce_to_utc(as_of)
-    # Round to the nearest millisecond (half-to-even via Python round()) rather
-    # than truncating, so 123_750 us -> 124 ms instead of silently losing 0.75 ms.
-    # round() can return 1000 for microsecond values >= 999_500 us; use timedelta
-    # to carry correctly into the seconds field.
-    at_rounded = at.replace(microsecond=0) + timedelta(milliseconds=round(at.microsecond / 1000))
-    ms_str = f"{at_rounded.microsecond // 1000:03d}"
-    literal = at_rounded.strftime("%Y-%m-%dT%H:%M:%S.") + ms_str
-    return f" OPTION (FOR TIMESTAMP AS OF '{literal}')"
+    return f" OPTION (FOR TIMESTAMP AS OF '{_format_ms_literal(at)}')"
 
 
 class _HasNameAndId(Protocol):

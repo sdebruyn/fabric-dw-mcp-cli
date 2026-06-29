@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import cast
 from uuid import uuid4
@@ -48,6 +48,7 @@ from fabric_dw.models import (
 )
 from fabric_dw.services._helpers import (
     _assert_not_sql_endpoint,
+    _format_ms_literal,
     build_time_travel_option,
     coerce_to_utc,
     reject_non_select,
@@ -860,18 +861,7 @@ async def clone_table(
         # The AT clause does not support bound parameters in T-SQL DDL, so we
         # embed a fixed-format literal derived from the already-validated datetime
         # object -- never an arbitrary user string.
-        #
-        # Round to the nearest millisecond (half-to-even via Python round())
-        # rather than truncating, so that e.g. 123_750 us -> 124 ms instead
-        # of silently shifting the point-in-time 0.75 ms earlier.
-        # round() can return 1000 for microsecond values >= 999_500 us;
-        # use timedelta to roll the carry into the seconds field correctly.
-        at_rounded = at.replace(microsecond=0) + timedelta(
-            milliseconds=round(at.microsecond / 1000)
-        )
-        ms_part = f"{at_rounded.microsecond // 1000:03d}"
-        at_literal = at_rounded.strftime("%Y-%m-%dT%H:%M:%S.") + ms_part
-        ddl = f"{ddl} AT '{at_literal}'"
+        ddl = f"{ddl} AT '{_format_ms_literal(at)}'"
 
     def _run_ddl() -> None:
         # Clone DDL runs on an autocommit connection so the implicit transaction

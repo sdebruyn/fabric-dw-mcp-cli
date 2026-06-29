@@ -455,6 +455,30 @@ def resolve_as_of(as_of: str | None, ago: str | None) -> datetime | None:
     return None
 
 
+#: Shared Click option for ``--as-of`` used by time-travel commands (tables/views read + count).
+AS_OF_OPTION = click.option(
+    "--as-of",
+    "as_of",
+    default=None,
+    metavar="ISO8601",
+    help=(
+        "Point-in-time snapshot: read as it was at this UTC timestamp (ISO-8601). "
+        "Mutually exclusive with --ago."
+    ),
+)
+
+#: Shared Click option for ``--ago`` used by time-travel commands (tables/views read + count).
+TIME_TRAVEL_AGO_OPTION = click.option(
+    "--ago",
+    "ago",
+    default=None,
+    metavar="DURATION",
+    help=(
+        "Point-in-time snapshot: read as it was this duration ago (e.g. 1h, 90m, 2d). "
+        "Mutually exclusive with --as-of."
+    ),
+)
+
 #: Shared Click option for ``--ago`` used by query-insights commands.
 AGO_OPTION = click.option(
     "--ago",

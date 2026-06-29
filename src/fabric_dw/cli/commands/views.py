@@ -9,6 +9,8 @@ import click
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import confirm, render
 from fabric_dw.cli.commands._utils import (
+    AS_OF_OPTION,
+    TIME_TRAVEL_AGO_OPTION,
     build_http_client,
     build_sql_target,
     confirm_destructive,
@@ -66,25 +68,8 @@ async def list_cmd(ctx: CliContext, item: str | None, schema: str | None) -> Non
     help="Output format.",
 )
 @click.option("--output", default=None, help="Write to this file instead of stdout.")
-@click.option(
-    "--as-of",
-    "as_of",
-    default=None,
-    metavar="ISO8601",
-    help=(
-        "Read the view as it was at this UTC timestamp (ISO-8601). Mutually exclusive with --ago."
-    ),
-)
-@click.option(
-    "--ago",
-    "ago",
-    default=None,
-    metavar="DURATION",
-    help=(
-        "Read the view as it was this duration ago (e.g. 1h, 90m, 2d). "
-        "Mutually exclusive with --as-of."
-    ),
-)
+@AS_OF_OPTION
+@TIME_TRAVEL_AGO_OPTION
 @click.pass_obj
 @coro
 async def read_cmd(
@@ -155,25 +140,8 @@ async def columns_cmd(
 @views_group.command("count")
 @click.argument("item", required=False, default=None)
 @click.argument("qualified_name")
-@click.option(
-    "--as-of",
-    "as_of",
-    default=None,
-    metavar="ISO8601",
-    help=(
-        "Count rows as they were at this UTC timestamp (ISO-8601). Mutually exclusive with --ago."
-    ),
-)
-@click.option(
-    "--ago",
-    "ago",
-    default=None,
-    metavar="DURATION",
-    help=(
-        "Count rows as they were this duration ago (e.g. 1h, 90m, 2d). "
-        "Mutually exclusive with --as-of."
-    ),
-)
+@AS_OF_OPTION
+@TIME_TRAVEL_AGO_OPTION
 @click.pass_obj
 @coro
 async def count_cmd(
