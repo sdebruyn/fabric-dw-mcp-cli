@@ -237,7 +237,7 @@ class TestOpenConnection:
 
         conn = open_connection(_make_target())
         # The returned object is a _PooledConnection wrapper; its _raw is the mock_conn.
-        assert conn._raw is mock_conn  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert conn._raw is mock_conn  # type: ignore[attr-defined]
 
     def test_driver_called_with_augmented_string(self, monkeypatch: pytest.MonkeyPatch) -> None:
         mock_mssql, _, _ = _make_mock_mssql()
@@ -952,7 +952,7 @@ class TestConnectionPool:
         # Second checkout: reuses the pooled connection (connect not called again).
         conn2 = open_connection(target)
         assert mock_mssql.connect.call_count == 1
-        assert conn2._raw is mock_conn  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert conn2._raw is mock_conn  # type: ignore[attr-defined]
         conn2.close()
 
     def test_different_keys_do_not_share(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -974,7 +974,7 @@ class TestConnectionPool:
         cb = open_connection(target_b)
         # Each key always opened its own fresh connection.
         assert mock_mssql.connect.call_count == 2
-        assert cb._raw is conn_b  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert cb._raw is conn_b  # type: ignore[attr-defined]
         cb.close()
 
     def test_idle_eviction_on_checkout(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1016,7 +1016,7 @@ class TestConnectionPool:
         # Checkout sees t=idle_limit+1, age=idle_limit+1 > idle_limit — evicts.
         conn2 = open_connection(_make_target())
         assert mock_mssql.connect.call_count == 2
-        assert conn2._raw is mock_conn_fresh  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert conn2._raw is mock_conn_fresh  # type: ignore[attr-defined]
         # The old connection must have been physically closed.
         mock_conn_old.close.assert_called_once()
         conn2.close()
@@ -1039,7 +1039,7 @@ class TestConnectionPool:
 
         conn2 = open_connection(target)
         assert mock_mssql.connect.call_count == 2, "fresh conn should have been opened"
-        assert conn2._raw is mock_conn_fresh  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert conn2._raw is mock_conn_fresh  # type: ignore[attr-defined]
         conn2.close()
 
     def test_failed_query_does_not_pool_connection(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1968,7 +1968,7 @@ class TestOpenConnectionOidcTokenInjection:
         conn2 = open_connection(target)
         assert mock_mssql.connect.call_count == 1, "connect must NOT be called on pool hit"
         assert token_call_count == 1, "get_sql_token_struct must NOT be called on pool hit"
-        assert conn2._raw is mock_conn  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert conn2._raw is mock_conn  # type: ignore[attr-defined]
         conn2.close()
 
 
