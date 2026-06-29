@@ -345,6 +345,7 @@ _COMMAND_MAP: dict[str, str] = {
     "config": "fabric_dw.cli.commands.config:config_group",
     "dbt": "fabric_dw.cli.commands.dbt:dbt_group",
     "functions": "fabric_dw.cli.commands.functions:functions_group",
+    "permissions": "fabric_dw.cli.commands.permissions:permissions_group",
     "procedures": "fabric_dw.cli.commands.procedures:procedures_group",
     "queries": "fabric_dw.cli.commands.queries:queries_group",
     "restore-points": "fabric_dw.cli.commands.restore_points:restore_points_group",
@@ -370,6 +371,9 @@ _SHORT_HELP_MAP: dict[str, str] = {
     "dbt": "Scaffold and manage dbt projects for Fabric Data Warehouses.",
     "functions": (
         "Manage T-SQL user-defined functions on Fabric warehouses and SQL Analytics Endpoints."
+    ),
+    "permissions": (
+        "Manage Fabric item-level and T-SQL in-database permissions (GRANT/DENY/REVOKE)."
     ),
     "procedures": "Manage stored procedures on Fabric warehouses and SQL Analytics Endpoints.",
     "queries": (

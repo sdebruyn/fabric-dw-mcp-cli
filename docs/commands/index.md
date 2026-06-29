@@ -16,6 +16,7 @@ Each page below covers one command domain: CLI synopsis, options, and examples a
 - **[Configuration & defaults](config.md)**: Store a default workspace and/or warehouse to avoid repeating them on every invocation.
 - **[dbt](dbt.md)**: Scaffold a dbt project pre-wired to a Fabric Data Warehouse.
 - **[Functions](functions.md)**: Manage T-SQL user-defined functions.
+- **[Permissions](permissions.md)**: Manage Fabric item-level and T-SQL in-database permissions (GRANT/DENY/REVOKE).
 - **[Queries](queries.md)**: Inspect and manage running queries.
 - **[Restore Points](restore-points.md)**: Create, list, rename, and delete warehouse restore points.
 - **[Running SQL](sql.md)**: Execute SQL statements and capture estimated execution plans.

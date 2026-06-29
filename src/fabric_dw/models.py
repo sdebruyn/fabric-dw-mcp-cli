@@ -984,6 +984,53 @@ class SqlResult(_FabricBase):
 
 
 # ---------------------------------------------------------------------------
+# T-SQL in-database permission models
+# ---------------------------------------------------------------------------
+
+
+class DatabasePrincipal(_FabricBase):
+    """A database principal from ``sys.database_principals``.
+
+    Attributes:
+        name: The principal name (Entra UPN, app GUID, role name, etc.).
+        type: The principal type description (e.g. ``SQL_USER``,
+            ``EXTERNAL_USER``, ``DATABASE_ROLE``).
+        authentication_type: The authentication type description (e.g.
+            ``INSTANCE``, ``EXTERNAL``).
+    """
+
+    name: str
+    type: str
+    authentication_type: str
+
+
+class DatabasePermission(_FabricBase):
+    """A single row from ``sys.database_permissions`` joined to ``sys.database_principals``.
+
+    Attributes:
+        principal_name: The grantee principal name.
+        principal_type: The principal type description.
+        state: Permission state — one of ``GRANT``, ``DENY``, or
+            ``GRANT_WITH_GRANT_OPTION``.
+        permission_name: The permission name (e.g. ``SELECT``, ``EXECUTE``).
+        securable_class: The securable class — ``DATABASE``, ``SCHEMA``, or
+            ``OBJECT``.
+        schema_name: The schema name (for ``SCHEMA`` and ``OBJECT`` class securables;
+            ``None`` for ``DATABASE``).
+        object_name: The object name (for ``OBJECT`` class securables; ``None``
+            otherwise).
+    """
+
+    principal_name: str
+    principal_type: str
+    state: str
+    permission_name: str
+    securable_class: str
+    schema_name: str | None = None
+    object_name: str | None = None
+
+
+# ---------------------------------------------------------------------------
 # API payload helpers — boundary validation for raw HTTP response bodies
 # ---------------------------------------------------------------------------
 

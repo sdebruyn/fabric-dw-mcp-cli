@@ -16,7 +16,6 @@ from fabric_dw.mcp._guards import (
 )
 from fabric_dw.mcp._helpers import fabric_err, mutating_tool, resolve_item, tool_err
 from fabric_dw.services import ownership as ownership_svc
-from fabric_dw.services import permissions as _permissions_svc
 from fabric_dw.services import warehouses
 
 __all__ = ["register"]
@@ -181,24 +180,3 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         except FabricError as exc:
             raise fabric_err(exc) from exc
         return {"taken_over": True, "warehouse_id": str(item.id)}
-
-    @mcp.tool(name="get_warehouse_permissions")
-    async def get_warehouse_permissions(workspace: str, warehouse: str) -> list[dict[str, Any]]:
-        """Return principals with access to a Warehouse item.
-
-        Requires Fabric Administrator role (admin API).
-
-        See https://learn.microsoft.com/en-us/fabric/admin/microsoft-fabric-admin for details.
-        """
-        ctx = get_context()
-        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
-        try:
-            ws_id, item = await resolve_item(ctx.resolver, workspace, warehouse)
-            assert_workspace_allowed(
-                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
-            )
-            _log.debug("get_warehouse_permissions ws=%s item=%s", ws_id, item.id)
-            result = await _permissions_svc.list_item_access(ctx.http, ws_id, item.id)
-        except FabricError as exc:
-            raise fabric_err(exc) from exc
-        return [a.model_dump(by_alias=True, mode="json") for a in result]
