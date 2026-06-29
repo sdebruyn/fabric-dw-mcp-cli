@@ -1,6 +1,6 @@
 """Permissions sub-commands for the fabric-dw CLI.
 
-Two distinct permission planes are exposed under the ``permissions`` top-level group:
+Three distinct permission planes are exposed under the ``permissions`` top-level group:
 
 ``permissions item``
     Fabric item-level permissions (REST admin API).  Moved from ``warehouses permissions``
@@ -9,6 +9,10 @@ Two distinct permission planes are exposed under the ``permissions`` top-level g
 ``permissions sql``
     T-SQL granular in-database permissions.  Reads from ``sys.database_permissions`` /
     ``sys.database_principals`` and issues ``GRANT`` / ``DENY`` / ``REVOKE`` statements.
+
+``permissions cls``
+    Column-level security: ``GRANT`` / ``DENY`` / ``REVOKE`` on specific columns of a
+    table, targeting ``minor_id != 0`` rows in ``sys.database_permissions``.
 """
 
 from __future__ import annotations
@@ -457,3 +461,275 @@ async def sql_revoke_cmd(
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(f"Revoked {permissions!r} on {scope_class} from {principal!r}.")
+
+
+# ---------------------------------------------------------------------------
+# permissions cls helpers
+# ---------------------------------------------------------------------------
+
+
+def _parse_column_list(columns_str: str) -> list[str]:
+    """Split a comma-separated column string into a non-empty list.
+
+    Raises:
+        click.UsageError: If the parsed list is empty (e.g. ``--columns ","``).
+    """
+    columns = [c.strip() for c in columns_str.split(",") if c.strip()]
+    if not columns:
+        raise click.UsageError("--columns must contain at least one non-empty column name")
+    return columns
+
+
+# ---------------------------------------------------------------------------
+# permissions cls sub-group (column-level security)
+# ---------------------------------------------------------------------------
+
+
+@permissions_group.group("cls")
+def cls_group() -> None:
+    """Column-level security: GRANT / DENY / REVOKE on specific columns of a table."""
+
+
+@cls_group.command("grant")
+@click.argument("item", required=False, default=None)
+@click.argument("permissions")
+@click.option("--to", "principal", required=True, metavar="PRINCIPAL", help="Grantee principal.")
+@click.option(
+    "--object",
+    "scope_object",
+    required=True,
+    metavar="SCHEMA.TABLE",
+    help="Qualified table name (e.g. dbo.sales).",
+)
+@click.option(
+    "--columns",
+    "columns_str",
+    required=True,
+    metavar="COL1,COL2,...",
+    help="Comma-separated list of column names to grant.",
+)
+@click.option(
+    "--with-grant-option",
+    "with_grant_option",
+    is_flag=True,
+    default=False,
+    help="Allow the grantee to grant the permission to others.",
+)
+@click.pass_obj
+@coro
+async def cls_grant_cmd(
+    ctx: CliContext,
+    item: str | None,
+    permissions: str,
+    principal: str,
+    scope_object: str,
+    columns_str: str,
+    with_grant_option: bool,
+) -> None:
+    """Grant column-level PERMISSIONS on ITEM to PRINCIPAL.
+
+    PERMISSIONS: comma-separated list (e.g. SELECT). Allowed: SELECT, UPDATE, REFERENCES.
+    Use --object to specify the qualified table name and --columns for the column list.
+    Use --to to specify the grantee principal (Entra UPN, GUID, or role name).
+    """
+    ws = resolve_workspace(ctx)
+    it = resolve_warehouse_arg(ctx, item)
+    columns = _parse_column_list(columns_str)
+    try:
+        async with build_http_client(ctx) as http:
+            target, _entry = await build_sql_target(http, ws, it)
+            await _permissions_svc.grant_permission(
+                target,
+                permissions,
+                principal,
+                "OBJECT",
+                object_name=scope_object,
+                with_grant_option=with_grant_option,
+                columns=columns,
+                mode=ctx.auth,
+            )
+    except (ValueError, FabricError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Granted {permissions!r} on {scope_object!r} cols {columns!r} to {principal!r}.")
+
+
+@cls_group.command("deny")
+@click.argument("item", required=False, default=None)
+@click.argument("permissions")
+@click.option("--to", "principal", required=True, metavar="PRINCIPAL", help="Principal to deny.")
+@click.option(
+    "--object",
+    "scope_object",
+    required=True,
+    metavar="SCHEMA.TABLE",
+    help="Qualified table name (e.g. dbo.sales).",
+)
+@click.option(
+    "--columns",
+    "columns_str",
+    required=True,
+    metavar="COL1,COL2,...",
+    help="Comma-separated list of column names to deny.",
+)
+@click.pass_obj
+@coro
+async def cls_deny_cmd(
+    ctx: CliContext,
+    item: str | None,
+    permissions: str,
+    principal: str,
+    scope_object: str,
+    columns_str: str,
+) -> None:
+    """Deny column-level PERMISSIONS on ITEM to PRINCIPAL.
+
+    PERMISSIONS: comma-separated list (e.g. SELECT). Allowed: SELECT, UPDATE, REFERENCES.
+    Use --object to specify the qualified table name and --columns for the column list.
+    Use --to to specify the principal (Entra UPN, GUID, or role name).
+    """
+    ws = resolve_workspace(ctx)
+    it = resolve_warehouse_arg(ctx, item)
+    columns = _parse_column_list(columns_str)
+    try:
+        async with build_http_client(ctx) as http:
+            target, _entry = await build_sql_target(http, ws, it)
+            await _permissions_svc.deny_permission(
+                target,
+                permissions,
+                principal,
+                "OBJECT",
+                object_name=scope_object,
+                columns=columns,
+                mode=ctx.auth,
+            )
+    except (ValueError, FabricError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Denied {permissions!r} on {scope_object!r} cols {columns!r} to {principal!r}.")
+
+
+@cls_group.command("revoke")
+@click.argument("item", required=False, default=None)
+@click.argument("permissions")
+@click.option(
+    "--from", "principal", required=True, metavar="PRINCIPAL", help="Principal to revoke from."
+)
+@click.option(
+    "--object",
+    "scope_object",
+    required=True,
+    metavar="SCHEMA.TABLE",
+    help="Qualified table name (e.g. dbo.sales).",
+)
+@click.option(
+    "--columns",
+    "columns_str",
+    required=True,
+    metavar="COL1,COL2,...",
+    help="Comma-separated list of column names to revoke.",
+)
+@click.option(
+    "--grant-option-only",
+    "grant_option_only",
+    is_flag=True,
+    default=False,
+    help="Revoke only the GRANT OPTION, not the base permission.",
+)
+@click.option(
+    "--cascade",
+    "cascade",
+    is_flag=True,
+    default=False,
+    help="Cascade the revocation to principals the grantee has granted to.",
+)
+@click.pass_obj
+@coro
+async def cls_revoke_cmd(
+    ctx: CliContext,
+    item: str | None,
+    permissions: str,
+    principal: str,
+    scope_object: str,
+    columns_str: str,
+    grant_option_only: bool,
+    cascade: bool,
+) -> None:
+    """Revoke column-level PERMISSIONS on ITEM from PRINCIPAL.
+
+    PERMISSIONS: comma-separated list (e.g. SELECT). Allowed: SELECT, UPDATE, REFERENCES.
+    Use --object to specify the qualified table name and --columns for the column list.
+    Use --from to specify the principal (Entra UPN, GUID, or role name).
+
+    This is a destructive operation: it removes an existing column-level permission.
+    A confirmation prompt is shown unless --yes / -y is passed.
+    """
+    ws = resolve_workspace(ctx)
+    it = resolve_warehouse_arg(ctx, item)
+    # Parse and validate columns before the confirm prompt so invalid input
+    # raises UsageError immediately without prompting.
+    columns = _parse_column_list(columns_str)
+    if not confirm_destructive(
+        f"Revoke {permissions!r} on {scope_object!r} columns {columns!r} from {principal!r}?",
+        yes=ctx.yes,
+    ):
+        click.echo("Aborted.")
+        return
+    try:
+        async with build_http_client(ctx) as http:
+            target, _entry = await build_sql_target(http, ws, it)
+            await _permissions_svc.revoke_permission(
+                target,
+                permissions,
+                principal,
+                "OBJECT",
+                object_name=scope_object,
+                columns=columns,
+                grant_option_only=grant_option_only,
+                cascade=cascade,
+                mode=ctx.auth,
+            )
+    except (ValueError, FabricError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Revoked {permissions!r} on {scope_object!r} cols {columns!r} from {principal!r}.")
+
+
+@cls_group.command("list")
+@click.argument("item", required=False, default=None)
+@click.option(
+    "--object",
+    "scope_object",
+    required=True,
+    metavar="SCHEMA.TABLE",
+    help="Qualified table name to list column-level permissions for.",
+)
+@click.pass_obj
+@coro
+async def cls_list_cmd(
+    ctx: CliContext,
+    item: str | None,
+    scope_object: str,
+) -> None:
+    """List column-level permissions on ITEM for a specific table.
+
+    Shows only rows that apply to specific columns (minor_id != 0 in sys.database_permissions).
+    Use --object to specify the qualified table name.
+    """
+    ws = resolve_workspace(ctx)
+    it = resolve_warehouse_arg(ctx, item)
+    try:
+        async with build_http_client(ctx) as http:
+            target, _entry = await build_sql_target(http, ws, it)
+            perms = await _permissions_svc.list_sql_permissions(
+                target,
+                object_name=scope_object,
+                mode=ctx.auth,
+            )
+            # Filter to column-level rows only (those where column_name is resolved)
+            col_perms = [p for p in perms if p.column_name is not None]
+            render(
+                [p.model_dump(mode="json") for p in col_perms],
+                json_output=ctx.json_output,
+                table_title="Column-Level Permissions",
+                prune_null_columns=True,
+            )
+    except (ValueError, FabricError) as exc:
+        raise click.ClickException(str(exc)) from exc

@@ -33,9 +33,11 @@ from fabric_dw.mcp._helpers import _DESTRUCTIVE_MCP_TOOLS
 # Kept here rather than in the production module since it has no runtime use.
 # Conditional tools (refresh_sql_endpoint_metadata, import_table_from_url) are
 # excluded — they carry their own runtime flag logic.
-_MCP_TO_CLI_DESTRUCTIVE_MAP: dict[str, str] = {
+# Values are either a single CLI dotted name (str) or a tuple when one MCP tool maps to
+# multiple CLI commands (e.g. revoke_permission covers both sql and cls variants).
+_MCP_TO_CLI_DESTRUCTIVE_MAP: dict[str, str | tuple[str, ...]] = {
     "drop_function": "functions.drop",
-    "revoke_permission": "permissions.sql.revoke",
+    "revoke_permission": ("permissions.sql.revoke", "permissions.cls.revoke"),
     "drop_procedure": "procedures.drop",
     "delete_restore_point": "restore-points.delete",
     "restore_warehouse_in_place": "restore-points.restore",
@@ -96,14 +98,19 @@ class TestDestructiveParity:
     """Bidirectional drift-guard between CLI and MCP destructive sets."""
 
     def test_every_mapped_mcp_tool_has_a_cli_counterpart(self) -> None:
-        """Every entry in _MCP_TO_CLI_DESTRUCTIVE_MAP must map to a known CLI command.
+        """Every entry in _MCP_TO_CLI_DESTRUCTIVE_MAP must map to known CLI command(s).
 
-        The CLI counterpart must be in ``_DESTRUCTIVE_CLI_COMMANDS``.
+        Values may be a single string or a tuple of strings; every element must
+        appear in ``_DESTRUCTIVE_CLI_COMMANDS``.
         """
         missing: list[str] = []
-        for mcp_tool, cli_cmd in _MCP_TO_CLI_DESTRUCTIVE_MAP.items():
-            if cli_cmd not in _DESTRUCTIVE_CLI_COMMANDS:
-                missing.append(f"{mcp_tool!r} → {cli_cmd!r} not in _DESTRUCTIVE_CLI_COMMANDS")
+        for mcp_tool, cli_val in _MCP_TO_CLI_DESTRUCTIVE_MAP.items():
+            cli_cmds: tuple[str, ...] = (cli_val,) if isinstance(cli_val, str) else cli_val
+            missing.extend(
+                f"{mcp_tool!r} -> {cli_cmd!r} not in _DESTRUCTIVE_CLI_COMMANDS"
+                for cli_cmd in cli_cmds
+                if cli_cmd not in _DESTRUCTIVE_CLI_COMMANDS
+            )
         assert not missing, "\n".join(missing)
 
     def test_every_destructive_mcp_tool_appears_in_map(self) -> None:
@@ -124,11 +131,16 @@ class TestDestructiveParity:
     def test_every_cli_destructive_command_appears_in_map_values(self) -> None:
         """Every entry in _DESTRUCTIVE_CLI_COMMANDS must appear as a map value.
 
-        A new CLI destructive command added to the frozenset but not to
-        _MCP_TO_CLI_DESTRUCTIVE_MAP.values() would be unreachable from MCP
-        parity checks — this test catches that gap.
+        Values may be strings or tuples; every element is flattened before
+        checking.  A new CLI destructive command missing from the map would
+        be unreachable from MCP parity checks -- this test catches that gap.
         """
-        map_values = set(_MCP_TO_CLI_DESTRUCTIVE_MAP.values())
+        map_values: set[str] = set()
+        for v in _MCP_TO_CLI_DESTRUCTIVE_MAP.values():
+            if isinstance(v, str):
+                map_values.add(v)
+            else:
+                map_values.update(v)
         missing = [
             f"{cmd!r} not a value in _MCP_TO_CLI_DESTRUCTIVE_MAP"
             for cmd in sorted(_DESTRUCTIVE_CLI_COMMANDS)
@@ -199,6 +211,9 @@ class TestDestructiveCliCommandsEmitDestructiveOp:
 
     def test_permissions_sql_revoke_is_destructive(self) -> None:
         assert "permissions.sql.revoke" in _DESTRUCTIVE_CLI_COMMANDS
+
+    def test_permissions_cls_revoke_is_destructive(self) -> None:
+        assert "permissions.cls.revoke" in _DESTRUCTIVE_CLI_COMMANDS
 
     def test_warehouses_delete_is_destructive(self) -> None:
         assert "warehouses.delete" in _DESTRUCTIVE_CLI_COMMANDS
@@ -286,6 +301,29 @@ class TestEmitDestructiveOpOnAbort:
         )
         assert destructive is True, (
             f"permissions sql revoke did not emit destructive_op=True on abort; got {destructive!r}"
+        )
+
+    def test_permissions_cls_revoke_emits_destructive_on_abort(self) -> None:
+        """permissions cls revoke aborted at prompt must still report destructive_op=True."""
+        destructive = _invoke_and_capture_destructive(
+            [
+                "-w",
+                "myws",
+                "permissions",
+                "cls",
+                "revoke",
+                "mywarehouse",
+                "SELECT",
+                "--from",
+                "alice@contoso.com",
+                "--object",
+                "dbo.sales",
+                "--columns",
+                "email",
+            ]
+        )
+        assert destructive is True, (
+            f"permissions cls revoke did not emit destructive_op=True on abort; got {destructive!r}"
         )
 
 

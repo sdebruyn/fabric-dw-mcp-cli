@@ -16,6 +16,7 @@ __all__ = [
     "parse_qualified_name",
     "quote_identifier",
     "quote_principal",
+    "validate_column_name",
     "validate_identifier",
     "validate_principal_name",
 ]
@@ -47,6 +48,9 @@ _PRINCIPAL_NAME_RE = re.compile(r"^[A-Za-z0-9@.\-_'# ]{1,128}\Z")
 # ASCII control character boundaries (used in validate_principal_name).
 _CTRL_LOW = 0x20  # characters below this (0x00-0x1F) are control chars
 _CTRL_DEL = 0x7F  # DEL character
+
+# Maximum length for SQL Server sysname / NVARCHAR(128) identifier columns.
+_MAX_NAME_LEN = 128
 
 
 # ---------------------------------------------------------------------------
@@ -182,6 +186,59 @@ def quote_principal(name: str) -> str:
     """
     escaped = name.strip().replace("]", "]]")
     return f"[{escaped}]"
+
+
+def validate_column_name(name: str) -> str:
+    """Validate a column name for use inside bracket-quoted SQL identifiers.
+
+    Column names are always wrapped in ``[...]`` by :func:`quote_identifier`
+    before being embedded in SQL, so they may contain characters that the
+    stricter :func:`validate_identifier` rejects (spaces, hyphens, leading
+    digits, etc.).  This validator permits that broader character set while
+    still blocking every pattern that enables injection:
+
+    Explicitly rejected (belt-and-suspenders, before any escaping):
+
+    - ``]`` -- closes the bracket-quoted identifier; enables injection even
+      with escaping as the subsequent character would escape the wrong thing.
+    - ``;`` -- SQL statement separator.
+    - ``--`` -- SQL line-comment prefix.
+    - Control characters (``< U+0020`` or ``U+007F``) -- NUL, CR, LF, etc.
+
+    Constraints:
+
+    - Must not be empty.
+    - Length cap: 128 characters (``sysname`` / ``NVARCHAR(128)`` limit).
+
+    Defence-in-depth note: :func:`quote_identifier` still escapes any ``]``
+    characters found inside the string as ``]]``, so the hard rejection of
+    ``]`` here is redundant but retained as an additional safety layer.
+
+    Args:
+        name: The raw column name supplied by the caller.
+
+    Returns:
+        *name* unchanged if valid.
+
+    Raises:
+        ValueError: If *name* contains forbidden characters, is empty, or
+            exceeds 128 characters.
+    """
+    if not name:
+        msg = "Column name must not be empty"
+        raise ValueError(msg)
+    # Fast-path rejections (belt-and-suspenders)
+    if "]" in name or ";" in name or "--" in name:
+        msg = f"Invalid column name {name!r}: contains forbidden character(s)"
+        raise ValueError(msg)
+    # Reject control characters (NUL, CR, LF, and all < U+0020 or U+007F)
+    if any(ord(c) < _CTRL_LOW or ord(c) == _CTRL_DEL for c in name):
+        msg = f"Invalid column name {name!r}: contains control character(s)"
+        raise ValueError(msg)
+    if len(name) > _MAX_NAME_LEN:
+        msg = f"Invalid column name {name!r}: exceeds 128 characters"
+        raise ValueError(msg)
+    return name
 
 
 def parse_qualified_name(qualified: str, kind: str = "object") -> tuple[str, str]:
