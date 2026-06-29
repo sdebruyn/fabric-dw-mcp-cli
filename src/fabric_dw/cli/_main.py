@@ -46,6 +46,7 @@ _CLI_SEGMENTS_KEY = _CLI_TELEMETRY_KEY + "_segments"
 _DESTRUCTIVE_CLI_COMMANDS: frozenset[str] = frozenset(
     {
         "functions.drop",
+        "permissions.sql.revoke",
         "procedures.drop",
         "restore-points.delete",
         "restore-points.restore",

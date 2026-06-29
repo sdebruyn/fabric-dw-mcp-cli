@@ -588,9 +588,10 @@ class TestPermissionsSqlDeny:
 
 
 class TestPermissionsSqlRevoke:
-    """permissions sql revoke."""
+    """permissions sql revoke -- destructive operation, requires confirmation."""
 
-    def test_revoke_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_revoke_exits_zero_with_yes(self, runner: CliRunner, cache_env: Path) -> None:
+        """revoke with -y skips the prompt and succeeds."""
         _ = cache_env
         mock_revoke = AsyncMock(return_value=None)
         with (
@@ -609,6 +610,7 @@ class TestPermissionsSqlRevoke:
                 [
                     "-w",
                     WS_GUID,
+                    "-y",
                     "permissions",
                     "sql",
                     "revoke",
@@ -622,7 +624,42 @@ class TestPermissionsSqlRevoke:
         mock_revoke.assert_awaited_once()
         assert "Revoked" in result.output
 
-    def test_revoke_with_cascade(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_revoke_aborts_without_yes(self, runner: CliRunner, cache_env: Path) -> None:
+        """revoke without -y, declining the prompt: abort cleanly (exit 0, no service call)."""
+        _ = cache_env
+        mock_revoke = AsyncMock(return_value=None)
+        with (
+            patch(
+                "fabric_dw.cli.commands.permissions.build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.permissions.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_wh_entry())),
+            ),
+            patch("fabric_dw.services.permissions.revoke_permission", new=mock_revoke),
+        ):
+            # CliRunner with empty stdin causes click.confirm to return the default (False).
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "permissions",
+                    "sql",
+                    "revoke",
+                    WH_GUID,
+                    "SELECT",
+                    "--from",
+                    "alice@contoso.com",
+                ],
+                input="\n",  # empty confirmation -> decline
+            )
+        assert result.exit_code == 0, result.output
+        mock_revoke.assert_not_awaited()
+        assert "Aborted" in result.output
+
+    def test_revoke_with_cascade_and_yes(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_revoke = AsyncMock(return_value=None)
         with (
@@ -641,6 +678,7 @@ class TestPermissionsSqlRevoke:
                 [
                     "-w",
                     WS_GUID,
+                    "-y",
                     "permissions",
                     "sql",
                     "revoke",
@@ -655,7 +693,7 @@ class TestPermissionsSqlRevoke:
         _args, kwargs = mock_revoke.call_args
         assert kwargs.get("cascade") is True
 
-    def test_revoke_grant_option_only(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_revoke_grant_option_only_with_yes(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_revoke = AsyncMock(return_value=None)
         with (
@@ -674,6 +712,7 @@ class TestPermissionsSqlRevoke:
                 [
                     "-w",
                     WS_GUID,
+                    "-y",
                     "permissions",
                     "sql",
                     "revoke",
@@ -696,6 +735,7 @@ class TestPermissionsSqlRevoke:
             [
                 "-w",
                 WS_GUID,
+                "-y",
                 "permissions",
                 "sql",
                 "revoke",
@@ -709,6 +749,76 @@ class TestPermissionsSqlRevoke:
             ],
         )
         assert result.exit_code != 0
+
+
+class TestGrantDenyDoNotPrompt:
+    """grant and deny must NOT show a confirmation prompt (not destructive-gated)."""
+
+    def test_grant_does_not_prompt(self, runner: CliRunner, cache_env: Path) -> None:
+        """grant_permission succeeds without --yes or any stdin input."""
+        _ = cache_env
+        mock_grant = AsyncMock(return_value=None)
+        with (
+            patch(
+                "fabric_dw.cli.commands.permissions.build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.permissions.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_wh_entry())),
+            ),
+            patch("fabric_dw.services.permissions.grant_permission", new=mock_grant),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "permissions",
+                    "sql",
+                    "grant",
+                    WH_GUID,
+                    "SELECT",
+                    "--to",
+                    "alice@contoso.com",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        mock_grant.assert_awaited_once()
+        assert "WARNING" not in result.output
+
+    def test_deny_does_not_prompt(self, runner: CliRunner, cache_env: Path) -> None:
+        """deny_permission succeeds without --yes or any stdin input."""
+        _ = cache_env
+        mock_deny = AsyncMock(return_value=None)
+        with (
+            patch(
+                "fabric_dw.cli.commands.permissions.build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.permissions.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_wh_entry())),
+            ),
+            patch("fabric_dw.services.permissions.deny_permission", new=mock_deny),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "permissions",
+                    "sql",
+                    "deny",
+                    WH_GUID,
+                    "SELECT",
+                    "--to",
+                    "alice@contoso.com",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        mock_deny.assert_awaited_once()
+        assert "WARNING" not in result.output
 
 
 # ---------------------------------------------------------------------------

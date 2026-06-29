@@ -20,6 +20,7 @@ from fabric_dw.cli._render import render, render_permissions_table
 from fabric_dw.cli.commands._utils import (
     build_http_client,
     build_sql_target,
+    confirm_destructive,
     coro,
     resolve_item,
     resolve_warehouse_arg,
@@ -426,10 +427,19 @@ async def sql_revoke_cmd(
 
     PERMISSIONS: comma-separated list (e.g. SELECT,INSERT).
     Use --from to specify the principal (Entra UPN, GUID, or role name).
+
+    This is a destructive operation: it removes an existing permission.
+    A confirmation prompt is shown unless --yes / -y is passed.
     """
     ws = resolve_workspace(ctx)
     it = resolve_warehouse_arg(ctx, item)
     scope_class, schema, object_name = _resolve_scope(scope_database, scope_schema, scope_object)
+    if not confirm_destructive(
+        f"Revoke {permissions!r} on {scope_class} from {principal!r}?",
+        yes=ctx.yes,
+    ):
+        click.echo("Aborted.")
+        return
     try:
         async with build_http_client(ctx) as http:
             target, _entry = await build_sql_target(http, ws, it)

@@ -228,15 +228,19 @@ fdw -w MyWorkspace permissions sql deny SalesWH EXECUTE --to analysts --schema d
 Revoke permissions on a securable from a principal. Executes
 `REVOKE <PERMISSIONS> ON <SCOPE> FROM <PRINCIPAL>`.
 
+This is a **destructive operation**: it removes an existing permission. A confirmation prompt
+is shown before executing. Pass `--yes` / `-y` to skip the prompt in scripts.
+
 **Synopsis**
 
 ```
-fdw [-w WORKSPACE] permissions sql revoke [ITEM] PERMISSIONS --from PRINCIPAL [OPTIONS]
+fdw [-w WORKSPACE] [-y] permissions sql revoke [ITEM] PERMISSIONS --from PRINCIPAL [OPTIONS]
 ```
 
 | Option | Description |
 | --- | --- |
 | `--from PRINCIPAL` | Principal to revoke from. **Required.** |
+| `-y`, `--yes` | Skip the confirmation prompt (non-interactive / scripted use). |
 | `--grant-option-only` | Revoke only the `GRANT OPTION`, leaving the base permission in place. |
 | `--cascade` | Cascade the revocation to principals the grantee has granted to. |
 | `--database` | Target the DATABASE scope (default). |
@@ -246,14 +250,17 @@ fdw [-w WORKSPACE] permissions sql revoke [ITEM] PERMISSIONS --from PRINCIPAL [O
 **Example**
 
 ```shell
-# Revoke SELECT from a user at database scope
+# Revoke SELECT from a user at database scope (prompts for confirmation)
 fdw -w MyWorkspace permissions sql revoke SalesWH SELECT --from alice@contoso.com
 
+# Revoke without prompt (scripted)
+fdw -w MyWorkspace -y permissions sql revoke SalesWH SELECT --from alice@contoso.com
+
 # Revoke only the grant option
-fdw -w MyWorkspace permissions sql revoke SalesWH SELECT --from alice@contoso.com --grant-option-only
+fdw -w MyWorkspace -y permissions sql revoke SalesWH SELECT --from alice@contoso.com --grant-option-only
 
 # Revoke with cascade
-fdw -w MyWorkspace permissions sql revoke SalesWH SELECT --from analysts --schema dbo --cascade
+fdw -w MyWorkspace -y permissions sql revoke SalesWH SELECT --from analysts --schema dbo --cascade
 ```
 
 ## MCP tools
@@ -383,7 +390,9 @@ Blocked by `FABRIC_MCP_READONLY`. Does NOT require `FABRIC_MCP_ALLOW_DESTRUCTIVE
 Revoke permissions on a securable from a principal. Executes
 `REVOKE <permissions> ON <scope> FROM <principal>`.
 
-Blocked by `FABRIC_MCP_READONLY`. Does NOT require `FABRIC_MCP_ALLOW_DESTRUCTIVE`.
+Blocked by `FABRIC_MCP_READONLY`. Also requires `FABRIC_MCP_ALLOW_DESTRUCTIVE=1`
+because revoke removes an existing permission (destructive operation).
+`grant_permission` and `deny_permission` do NOT require `FABRIC_MCP_ALLOW_DESTRUCTIVE`.
 
 **Parameters:**
 

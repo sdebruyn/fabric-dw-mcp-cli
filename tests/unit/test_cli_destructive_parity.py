@@ -35,6 +35,7 @@ from fabric_dw.mcp._helpers import _DESTRUCTIVE_MCP_TOOLS
 # excluded — they carry their own runtime flag logic.
 _MCP_TO_CLI_DESTRUCTIVE_MAP: dict[str, str] = {
     "drop_function": "functions.drop",
+    "revoke_permission": "permissions.sql.revoke",
     "drop_procedure": "procedures.drop",
     "delete_restore_point": "restore-points.delete",
     "restore_warehouse_in_place": "restore-points.restore",
@@ -196,6 +197,9 @@ class TestDestructiveCliCommandsEmitDestructiveOp:
     def test_views_drop_is_destructive(self) -> None:
         assert "views.drop" in _DESTRUCTIVE_CLI_COMMANDS
 
+    def test_permissions_sql_revoke_is_destructive(self) -> None:
+        assert "permissions.sql.revoke" in _DESTRUCTIVE_CLI_COMMANDS
+
     def test_warehouses_delete_is_destructive(self) -> None:
         assert "warehouses.delete" in _DESTRUCTIVE_CLI_COMMANDS
 
@@ -263,6 +267,25 @@ class TestEmitDestructiveOpOnAbort:
         )
         assert destructive is True, (
             f"schemas delete did not emit destructive_op=True on abort; got {destructive!r}"
+        )
+
+    def test_permissions_sql_revoke_emits_destructive_on_abort(self) -> None:
+        """permissions sql revoke aborted at prompt must still report destructive_op=True."""
+        destructive = _invoke_and_capture_destructive(
+            [
+                "-w",
+                "myws",
+                "permissions",
+                "sql",
+                "revoke",
+                "mywarehouse",
+                "SELECT",
+                "--from",
+                "alice@contoso.com",
+            ]
+        )
+        assert destructive is True, (
+            f"permissions sql revoke did not emit destructive_op=True on abort; got {destructive!r}"
         )
 
 

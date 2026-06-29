@@ -4,9 +4,11 @@ Coverage
 --------
 1. Read tools (list_sql_permissions, list_database_principals, my_permissions)
    return data correctly.
-2. Mutating tools (grant_permission, deny_permission, revoke_permission) are
-   blocked by FABRIC_MCP_READONLY but NOT by missing FABRIC_MCP_ALLOW_DESTRUCTIVE.
-3. Allowlist guard: invalid permissions produce ToolError.
+2. grant_permission and deny_permission are blocked by FABRIC_MCP_READONLY but
+   NOT by missing FABRIC_MCP_ALLOW_DESTRUCTIVE.
+3. revoke_permission is blocked by FABRIC_MCP_READONLY AND by missing
+   FABRIC_MCP_ALLOW_DESTRUCTIVE (destructive-gated).
+4. Allowlist guard: invalid permissions produce ToolError.
 """
 
 from __future__ import annotations
@@ -351,7 +353,7 @@ async def test_deny_permission_not_destructive_gated(mock_ctx, ctx_patch) -> Non
 
 
 async def test_revoke_permission_happy_path(mock_ctx, ctx_patch) -> None:
-    """revoke_permission returns success dict when READONLY is not set."""
+    """revoke_permission returns success dict when READONLY is not set and ALLOW_DESTRUCTIVE=1."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     item = make_item_entry()
@@ -360,7 +362,7 @@ async def test_revoke_permission_happy_path(mock_ctx, ctx_patch) -> None:
 
     with (
         ctx_patch,
-        patch.dict(os.environ, {}),
+        patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
         patch("fabric_dw.services.permissions.revoke_permission", new=AsyncMock(return_value=None)),
     ):
         os.environ.pop("FABRIC_MCP_READONLY", None)
@@ -406,8 +408,33 @@ async def test_revoke_permission_blocked_by_readonly(mock_ctx, ctx_patch) -> Non
         )
 
 
-async def test_revoke_permission_not_destructive_gated(mock_ctx, ctx_patch) -> None:
-    """revoke_permission works WITHOUT FABRIC_MCP_ALLOW_DESTRUCTIVE."""
+async def test_revoke_permission_blocked_by_missing_destructive_env(mock_ctx, ctx_patch) -> None:
+    """revoke_permission is blocked when FABRIC_MCP_ALLOW_DESTRUCTIVE is unset."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    os.environ.pop("FABRIC_MCP_READONLY", None)
+    os.environ.pop("FABRIC_MCP_ALLOW_DESTRUCTIVE", None)
+    with ctx_patch, patch.dict(os.environ, {}), pytest.raises(ToolError, match="destructive"):
+        await mcp._tool_manager.call_tool(
+            "revoke_permission",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "permissions": "SELECT",
+                "principal": "alice@contoso.com",
+                "scope": "DATABASE",
+            },
+        )
+
+
+async def test_revoke_permission_allowed_when_destructive_env_set(mock_ctx, ctx_patch) -> None:
+    """revoke_permission succeeds when FABRIC_MCP_ALLOW_DESTRUCTIVE=1 is set."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     item = make_item_entry()
@@ -416,11 +443,10 @@ async def test_revoke_permission_not_destructive_gated(mock_ctx, ctx_patch) -> N
 
     with (
         ctx_patch,
-        patch.dict(os.environ, {}),
+        patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
         patch("fabric_dw.services.permissions.revoke_permission", new=AsyncMock(return_value=None)),
     ):
         os.environ.pop("FABRIC_MCP_READONLY", None)
-        os.environ.pop("FABRIC_MCP_ALLOW_DESTRUCTIVE", None)
         result = await mcp._tool_manager.call_tool(
             "revoke_permission",
             {

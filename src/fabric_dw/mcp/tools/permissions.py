@@ -9,9 +9,14 @@ Two planes are exposed:
 ``list_sql_permissions``, ``list_database_principals``, ``my_permissions``
     T-SQL in-database permission reads (read-only tools).
 
-``grant_permission``, ``deny_permission``, ``revoke_permission``
-    T-SQL GRANT / DENY / REVOKE (mutating tools, blocked by FABRIC_MCP_READONLY,
+``grant_permission``, ``deny_permission``
+    T-SQL GRANT / DENY (mutating tools, blocked by FABRIC_MCP_READONLY,
     NOT destructive-gated).
+
+``revoke_permission``
+    T-SQL REVOKE (mutating tool, blocked by FABRIC_MCP_READONLY,
+    ALSO blocked by missing FABRIC_MCP_ALLOW_DESTRUCTIVE -- destructive-gated
+    because revoke removes an existing permission).
 """
 
 from __future__ import annotations
@@ -186,7 +191,8 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         return result
 
     # -------------------------------------------------------------------------
-    # T-SQL writes - mutating (FABRIC_MCP_READONLY blocks), NOT destructive
+    # T-SQL writes - grant/deny: mutating (FABRIC_MCP_READONLY blocks), NOT destructive
+    # T-SQL writes - revoke: mutating AND destructive (also requires FABRIC_MCP_ALLOW_DESTRUCTIVE)
     # -------------------------------------------------------------------------
 
     @mutating_tool(mcp, "grant_permission")
@@ -315,7 +321,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             "scope": scope.upper(),
         }
 
-    @mutating_tool(mcp, "revoke_permission")
+    @mutating_tool(mcp, "revoke_permission", destructive=True)
     async def revoke_permission_tool(  # noqa: PLR0913
         workspace: str,
         item: str,
@@ -330,8 +336,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         """Revoke permissions on a securable from a principal.
 
         Executes ``REVOKE <permissions> ON <scope> FROM <principal>``.
-        Blocked by ``FABRIC_MCP_READONLY``.  Does NOT require
-        ``FABRIC_MCP_ALLOW_DESTRUCTIVE``.
+        Blocked by ``FABRIC_MCP_READONLY``.  Requires
+        ``FABRIC_MCP_ALLOW_DESTRUCTIVE=1`` because revoke removes an existing
+        permission (destructive operation).
 
         Args:
             workspace: Workspace name or GUID.
