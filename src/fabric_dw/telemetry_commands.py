@@ -91,6 +91,13 @@ DOMAIN_MAP: dict[str, str] = {
     "grant_permission": "permissions",
     "deny_permission": "permissions",
     "revoke_permission": "permissions",
+    # RLS
+    "list_security_policies": "permissions",
+    "create_security_policy": "permissions",
+    "add_security_predicate": "permissions",
+    "drop_security_predicate": "permissions",
+    "set_security_policy_state": "permissions",
+    "drop_security_policy": "permissions",
     # Audit
     "get_audit_settings": "audit",
     "enable_audit": "audit",

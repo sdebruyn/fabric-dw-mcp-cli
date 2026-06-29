@@ -50,6 +50,7 @@ _MCP_TO_CLI_DESTRUCTIVE_MAP: dict[str, str | tuple[str, ...]] = {
     "set_cluster_columns": "tables.cluster-by",
     "drop_view": "views.drop",
     "delete_warehouse": "warehouses.delete",
+    "drop_security_policy": "permissions.rls.drop",
 }
 
 # ---------------------------------------------------------------------------
@@ -324,6 +325,15 @@ class TestEmitDestructiveOpOnAbort:
         )
         assert destructive is True, (
             f"permissions cls revoke did not emit destructive_op=True on abort; got {destructive!r}"
+        )
+
+    def test_permissions_rls_drop_emits_destructive_on_abort(self) -> None:
+        """permissions rls drop aborted at prompt must still report destructive_op=True."""
+        destructive = _invoke_and_capture_destructive(
+            ["-w", "myws", "permissions", "rls", "drop", "mydw", "rls.SalesFilter"]
+        )
+        assert destructive is True, (
+            f"permissions rls drop did not emit destructive_op=True on abort; got {destructive!r}"
         )
 
 

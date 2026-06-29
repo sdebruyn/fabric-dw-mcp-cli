@@ -60,6 +60,7 @@ _DESTRUCTIVE_CLI_COMMANDS: frozenset[str] = frozenset(
         "tables.cluster-by",
         "views.drop",
         "warehouses.delete",
+        "permissions.rls.drop",
     }
 )
 

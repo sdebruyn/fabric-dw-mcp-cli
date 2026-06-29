@@ -7,6 +7,7 @@ import pytest
 from fabric_dw.identifiers import (
     parse_qualified_name,
     quote_identifier,
+    validate_column_name,
     validate_identifier,
 )
 
@@ -184,3 +185,31 @@ class TestParseQualifiedName:
     def test_whitespace_object_raises_with_kind_label(self) -> None:
         with pytest.raises(ValueError, match="view part must not be empty"):
             parse_qualified_name("dbo.  ", kind="view")
+
+
+# ---------------------------------------------------------------------------
+# validate_column_name -- unicode line separator rejection
+# ---------------------------------------------------------------------------
+
+
+class TestValidateColumnNameUnicodeLineSeps:
+    """validate_column_name must reject unicode line/paragraph separators."""
+
+    def test_nel_u0085_rejected(self) -> None:
+        with pytest.raises(ValueError, match="unicode line separator"):
+            validate_column_name("col\x85name")
+
+    def test_line_separator_u2028_rejected(self) -> None:
+        with pytest.raises(ValueError, match="unicode line separator"):
+            validate_column_name("col\u2028name")
+
+    def test_paragraph_separator_u2029_rejected(self) -> None:
+        with pytest.raises(ValueError, match="unicode line separator"):
+            validate_column_name("col\u2029name")
+
+    def test_normal_column_name_still_valid(self) -> None:
+        assert validate_column_name("my column") == "my column"
+
+    def test_empty_column_name_still_rejected(self) -> None:
+        with pytest.raises(ValueError, match="empty"):
+            validate_column_name("")

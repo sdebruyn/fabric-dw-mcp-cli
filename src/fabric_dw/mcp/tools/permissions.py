@@ -39,6 +39,7 @@ from fabric_dw.mcp._helpers import (
     tool_err,
 )
 from fabric_dw.services import permissions as _permissions_svc
+from fabric_dw.services import rls as _rls_svc
 
 __all__ = ["register"]
 
@@ -413,3 +414,286 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             "scope": scope.upper(),
             "columns": columns,
         }
+
+    # -------------------------------------------------------------------------
+    # Row-level security (RLS) tools
+    # -------------------------------------------------------------------------
+
+    @mcp.tool(name="list_security_policies")
+    async def list_security_policies_tool(workspace: str, item: str) -> list[dict[str, Any]]:
+        """List row-level security policies from sys.security_policies.
+
+        Returns all security policies and their predicates for the target
+        Data Warehouse or SQL Analytics Endpoint.
+
+        Args:
+            workspace: Workspace name or GUID.
+            item: Warehouse or SQL endpoint name or GUID.
+        """
+        ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
+        try:
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
+            _log.debug("list_security_policies ws=%s item=%s", ws_id, entry.id)
+            target = make_sql_target(ws_id, entry, item)
+            result = await _rls_svc.list_security_policies(target, mode=ctx.auth_mode)
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        return [p.model_dump(mode="json") for p in result]
+
+    @mutating_tool(mcp, "create_security_policy")
+    async def create_security_policy_tool(
+        workspace: str,
+        item: str,
+        policy_name: str,
+        predicates: list[dict[str, Any]],
+        state: bool = True,  # noqa: FBT001, FBT002
+    ) -> dict[str, Any]:
+        """Create a row-level security policy.
+
+        Executes ``CREATE SECURITY POLICY`` with one or more filter or block
+        predicates.  Each entry in *predicates* must include:
+
+        - ``predicate_type``: ``"FILTER"`` or ``"BLOCK"``
+        - ``fn_schema``: schema of the predicate function
+        - ``fn_name``: name of the predicate function
+        - ``fn_args``: list of column names to pass to the function
+        - ``table_schema``: schema of the target table
+        - ``table_name``: name of the target table
+        - ``operation`` (optional): block operation -- ``"AFTER_INSERT"``,
+          ``"AFTER_UPDATE"``, ``"BEFORE_UPDATE"``, or ``"BEFORE_DELETE"``
+          (BLOCK predicates only)
+
+        Args:
+            workspace: Workspace name or GUID.
+            item: Warehouse or SQL endpoint name or GUID.
+            policy_name: Qualified policy name (``"schema.name"`` or ``"name"``).
+            predicates: List of predicate definitions (see above).
+            state: Initial policy state -- ``True`` to enable, ``False`` to disable
+                (default: ``True``).
+        """
+        ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
+        try:
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
+            _log.debug(
+                "create_security_policy ws=%s item=%s policy=%r",
+                ws_id,
+                entry.id,
+                policy_name,
+            )
+            target = make_sql_target(ws_id, entry, item)
+            await _rls_svc.create_security_policy(
+                target,
+                policy_name,
+                predicates,
+                state=state,
+                mode=ctx.auth_mode,
+            )
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        return {"created": True, "policy_name": policy_name, "state": state}
+
+    @mutating_tool(mcp, "add_security_predicate")
+    async def add_security_predicate_tool(  # noqa: PLR0913
+        workspace: str,
+        item: str,
+        policy_name: str,
+        predicate_type: str,
+        fn_name: str,
+        fn_args: list[str],
+        table_schema: str,
+        table_name: str,
+        fn_schema: str | None = None,
+        operation: str | None = None,
+    ) -> dict[str, Any]:
+        """Add a predicate to an existing row-level security policy.
+
+        Executes ``ALTER SECURITY POLICY ... ADD FILTER|BLOCK PREDICATE``.
+
+        Args:
+            workspace: Workspace name or GUID.
+            item: Warehouse or SQL endpoint name or GUID.
+            policy_name: Qualified policy name (``"schema.name"`` or ``"name"``).
+            predicate_type: ``"FILTER"`` or ``"BLOCK"``.
+            fn_name: Name of the predicate function.
+            fn_args: Column names to pass to the predicate function.
+            table_schema: Schema name of the target table.
+            table_name: Name of the target table.
+            fn_schema: Schema name of the predicate function (optional -- omit
+                when the function lives in the default schema).
+            operation: Block operation (BLOCK predicates only) -- one of
+                ``"AFTER_INSERT"``, ``"AFTER_UPDATE"``, ``"BEFORE_UPDATE"``,
+                ``"BEFORE_DELETE"``.
+        """
+        ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
+        try:
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
+            _log.debug(
+                "add_security_predicate ws=%s item=%s policy=%r type=%r",
+                ws_id,
+                entry.id,
+                policy_name,
+                predicate_type,
+            )
+            target = make_sql_target(ws_id, entry, item)
+            await _rls_svc.add_predicate(
+                target,
+                policy_name,
+                predicate_type,
+                fn_schema,
+                fn_name,
+                fn_args,
+                table_schema,
+                table_name,
+                operation=operation,
+                mode=ctx.auth_mode,
+            )
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        return {
+            "added": True,
+            "policy_name": policy_name,
+            "predicate_type": predicate_type,
+            "table": f"{table_schema}.{table_name}",
+        }
+
+    @mutating_tool(mcp, "drop_security_predicate")
+    async def drop_security_predicate_tool(  # noqa: PLR0913
+        workspace: str,
+        item: str,
+        policy_name: str,
+        predicate_type: str,
+        table_schema: str,
+        table_name: str,
+    ) -> dict[str, Any]:
+        """Drop a predicate from an existing row-level security policy.
+
+        Executes ``ALTER SECURITY POLICY ... DROP FILTER|BLOCK PREDICATE ON``.
+        The T-SQL ``DROP PREDICATE ON`` syntax takes no operation qualifier.
+
+        Args:
+            workspace: Workspace name or GUID.
+            item: Warehouse or SQL endpoint name or GUID.
+            policy_name: Qualified policy name (``"schema.name"`` or ``"name"``).
+            predicate_type: ``"FILTER"`` or ``"BLOCK"``.
+            table_schema: Schema name of the target table.
+            table_name: Name of the target table.
+        """
+        ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
+        try:
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
+            _log.debug(
+                "drop_security_predicate ws=%s item=%s policy=%r type=%r",
+                ws_id,
+                entry.id,
+                policy_name,
+                predicate_type,
+            )
+            target = make_sql_target(ws_id, entry, item)
+            await _rls_svc.drop_predicate(
+                target,
+                policy_name,
+                predicate_type,
+                table_schema,
+                table_name,
+                mode=ctx.auth_mode,
+            )
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        return {
+            "dropped": True,
+            "policy_name": policy_name,
+            "predicate_type": predicate_type,
+            "table": f"{table_schema}.{table_name}",
+        }
+
+    @mutating_tool(mcp, "set_security_policy_state")
+    async def set_security_policy_state_tool(
+        workspace: str,
+        item: str,
+        policy_name: str,
+        enabled: bool,  # noqa: FBT001
+    ) -> dict[str, Any]:
+        """Enable or disable a row-level security policy.
+
+        Executes ``ALTER SECURITY POLICY ... WITH (STATE = ON|OFF)``.
+        Not destructive -- enabling or disabling a policy is reversible.
+
+        Args:
+            workspace: Workspace name or GUID.
+            item: Warehouse or SQL endpoint name or GUID.
+            policy_name: Qualified policy name (``"schema.name"`` or ``"name"``).
+            enabled: ``True`` to enable the policy, ``False`` to disable it.
+        """
+        ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
+        try:
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
+            _log.debug(
+                "set_security_policy_state ws=%s item=%s policy=%r enabled=%r",
+                ws_id,
+                entry.id,
+                policy_name,
+                enabled,
+            )
+            target = make_sql_target(ws_id, entry, item)
+            await _rls_svc.set_policy_state(
+                target, policy_name, enabled=enabled, mode=ctx.auth_mode
+            )
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        return {"policy_name": policy_name, "enabled": enabled}
+
+    @mutating_tool(mcp, "drop_security_policy", destructive=True)
+    async def drop_security_policy_tool(
+        workspace: str,
+        item: str,
+        policy_name: str,
+    ) -> dict[str, Any]:
+        """Drop a row-level security policy.
+
+        Executes ``DROP SECURITY POLICY``.  This is a permanently destructive
+        operation -- the policy and all its predicates are removed.
+        Requires ``FABRIC_MCP_ALLOW_DESTRUCTIVE=1``.
+
+        Args:
+            workspace: Workspace name or GUID.
+            item: Warehouse or SQL endpoint name or GUID.
+            policy_name: Qualified policy name (``"schema.name"`` or ``"name"``).
+        """
+        ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
+        try:
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
+            _log.debug(
+                "drop_security_policy ws=%s item=%s policy=%r",
+                ws_id,
+                entry.id,
+                policy_name,
+            )
+            target = make_sql_target(ws_id, entry, item)
+            await _rls_svc.drop_security_policy(target, policy_name, mode=ctx.auth_mode)
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        return {"dropped": True, "policy_name": policy_name}
