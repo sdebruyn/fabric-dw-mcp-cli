@@ -871,4 +871,4 @@ column.
 - `table_name` (`str`): name of the target table.
 - `column_name` (`str`): name of the column whose mask to remove.
 
-**Returns:** `{ "unmasked": true, "table_schema": str, "table_name": str, "column_name": str }`.
+**Returns:** `{ "dropped": true, "table_schema": str, "table_name": str, "column_name": str }`.
