@@ -178,28 +178,52 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: staging
-      url: https://pr-${{ github.event.number }}.${{ env.STAGING_PROJECT }}.pages.dev
+      # The real preview URL comes from the wrangler-action step output and
+      # cannot be referenced here (this block is evaluated before steps run).
+      # The URL is surfaced as a sticky PR comment and in the job summary instead.
     concurrency:
       group: docs-preview-pr-${{ github.event.number }}
       cancel-in-progress: true
     permissions:
       contents: read
+      pull-requests: write
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: docs-site
           path: docs_build/site
 
-      - uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd  # v3
+      - id: deploy
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd  # v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_PAGES_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy docs_build/site --project-name=${{ env.STAGING_PROJECT }} --branch=pr-${{ github.event.number }}
 
-      - name: Post preview URL to job summary
+      - name: Post preview URL as sticky PR comment
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.number }}
+          PREVIEW_URL: ${{ steps.deploy.outputs.pages-deployment-alias-url || steps.deploy.outputs.deployment-url }}
+        run: |
+          MARKER="<!-- docs-preview-url -->"
+          printf '%s\n## Docs preview\n\nPreview URL: %s\n' "$MARKER" "$PREVIEW_URL" > /tmp/preview-comment.md
+
+          COMMENT_ID=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --jq '.[] | select(.body | contains("<!-- docs-preview-url -->")) | .id' | head -n1)
+
+          if [ -n "$COMMENT_ID" ]; then
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" \
+              -f body=@/tmp/preview-comment.md
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+              -f body=@/tmp/preview-comment.md
+          fi
+
+      - name: Update job summary with real preview URL
+        env:
+          PREVIEW_URL: ${{ steps.deploy.outputs.pages-deployment-alias-url || steps.deploy.outputs.deployment-url }}
         run: |
           echo "## PR Preview" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Preview URL: https://pr-${PR_NUMBER}.${STAGING_PROJECT}.pages.dev" >> "$GITHUB_STEP_SUMMARY"
+          echo "Preview URL: ${PREVIEW_URL}" >> "$GITHUB_STEP_SUMMARY"
