@@ -789,6 +789,41 @@ async def test_add_security_predicate_fn_schema_optional(mock_ctx, ctx_patch) ->
     assert kwargs.get("fn_schema") is None or mock_svc.call_args[0][3] is None
 
 
+async def test_drop_security_predicate_dispatches_correct_args(mock_ctx, ctx_patch) -> None:
+    """drop_security_predicate calls drop_predicate with the right args and no operation kwarg."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    mock_svc = AsyncMock(return_value=None)
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {}),
+        patch("fabric_dw.services.rls.drop_predicate", new=mock_svc),
+    ):
+        os.environ.pop("FABRIC_MCP_READONLY", None)
+        result = await mcp._tool_manager.call_tool(
+            "drop_security_predicate",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "policy_name": "rls.SalesFilter",
+                "predicate_type": "FILTER",
+                "table_schema": "dbo",
+                "table_name": "Sales",
+            },
+        )
+
+    assert result["dropped"] is True
+    assert result["policy_name"] == "rls.SalesFilter"
+    mock_svc.assert_called_once()
+    # Verify no 'operation' kwarg is forwarded to the service.
+    _, kwargs = mock_svc.call_args
+    assert "operation" not in kwargs
+
+
 async def test_set_security_policy_state_returns_correct_dict(mock_ctx, ctx_patch) -> None:
     """set_security_policy_state returns a dict with policy_name and enabled."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415

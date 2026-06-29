@@ -645,7 +645,6 @@ Drop a predicate from an existing policy.
 fdw [-w WORKSPACE] permissions rls drop-predicate [ITEM] [POLICY_NAME]
     { --filter | --block }
     --on SCHEMA.TABLE
-    [--operation AFTER-INSERT|AFTER-UPDATE|BEFORE-UPDATE|BEFORE-DELETE]
 ```
 
 | Option | Description |
@@ -653,7 +652,6 @@ fdw [-w WORKSPACE] permissions rls drop-predicate [ITEM] [POLICY_NAME]
 | `--filter` | Target a FILTER predicate (flag, no value). |
 | `--block` | Target a BLOCK predicate (flag, no value). |
 | `--on SCHEMA.TABLE` | Table whose predicate is dropped. |
-| `--operation OP` | Block operation to identify the exact BLOCK predicate. |
 
 **Example**
 
