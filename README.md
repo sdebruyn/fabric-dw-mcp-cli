@@ -43,28 +43,77 @@ After installation, the `fdw` command is a short alias for `fabric-dw`; both inv
 
 ### CLI
 
-The workspace is now a **global root option** `-w` / `--workspace` placed before the command group. Set a default once with `fabric-dw config set workspace <NAME>` and omit `-w` on every subsequent call.
+`fdw` is a short alias for `fabric-dw`; both invoke the same entry point.
 
-Workspace resolution order: (1) `-w` flag, (2) `FABRIC_DW_DEFAULT_WORKSPACE` env var, (3) configured default.
+The workspace is a **global root option** `-w` / `--workspace` placed before the command group. Set a default once with `fdw config set workspace <NAME>` and omit `-w` on every subsequent call. Workspace resolution order: (1) `-w` flag, (2) `FABRIC_DW_DEFAULT_WORKSPACE` env var, (3) configured default.
 
 ```bash
-# List all workspaces you have access to
-uvx fabric-dw workspaces list
+# Run without installing; install to get the fdw alias
+uvx fabric-dw --help
 
-# Set a default workspace so you don't have to repeat -w every time
-uvx fabric-dw config set workspace MyWorkspace
+# Set a default workspace once; all subsequent commands pick it up
+fdw config set workspace SalesWS
+```
 
-# List warehouses and SQL Analytics Endpoints in the default workspace
-uvx fabric-dw warehouses list
+```bash
+# -- Run and explain SQL --
 
-# Or pass -w explicitly for a one-off override
-uvx fabric-dw -w MyWorkspace warehouses list
+# Execute a query against a warehouse
+fdw sql exec SalesWH -q "SELECT TOP 10 * FROM dbo.orders ORDER BY order_date DESC"
 
-# Execute a SQL query against a warehouse in the configured default workspace
-uvx fabric-dw sql exec SalesWH -q "SELECT TOP 10 * FROM dbo.my_table"
+# Capture an estimated execution plan as SVG -- no SSMS or Windows needed
+fdw sql plan SalesWH -f query.sql --format svg -o plan.svg
 
-# List restore points for a warehouse
-uvx fabric-dw -w MyWorkspace restore-points list SalesWH
+# -- Performance mission-control --
+
+# See what is running right now
+fdw queries running SalesWH
+
+# Long-running queries from the past hour
+fdw queries long-running SalesWH --ago 1h
+
+# Kill a runaway session by ID
+fdw queries kill SalesWH 55
+
+# Most-repeated queries over the past 24 hours
+fdw queries frequent SalesWH --ago 24h
+
+# -- Optimize --
+
+# Inspect a statistics histogram with inline terminal bar charts
+fdw statistics show SalesWH dbo.orders st_order_date --histogram
+
+# Re-cluster a table on a new key (transactional CTAS-swap, auto-rollback on failure)
+fdw tables cluster-by SalesWH dbo.orders --cluster-by customer_id
+
+# -- Time travel + export --
+
+# Browse the table as it looked 2 hours ago
+fdw tables read SalesWH dbo.orders --ago 2h
+
+# Export a point-in-time snapshot to Parquet
+fdw tables export SalesWH dbo.orders --output snapshot.parquet --ago 2h
+
+# -- Governance --
+
+# Grant SELECT on a specific table
+fdw permissions sql grant SalesWH SELECT --to analyst@company.com --object dbo.orders
+
+# Deny access to sensitive columns (column-level security)
+fdw permissions cls deny SalesWH SELECT --to contractor@company.com \
+    --object dbo.orders --columns salary,bonus
+
+# Create a row-level security policy (filter rows by SalesRep)
+fdw permissions rls create SalesWH rls.SalesFilter \
+    --filter "rls.fn_sales_filter(SalesRep)" --on dbo.orders
+
+# -- Load + scaffold --
+
+# Load a local Parquet file and auto-create the table from its schema
+fdw tables load SalesWH dbo.orders --file orders.parquet --create
+
+# Scaffold a full dbt-fabric project wired to the warehouse
+fdw dbt init SalesWH ./my-dbt-project --project-name sales_dw --with-sources
 ```
 
 ### MCP Server
@@ -82,7 +131,7 @@ Add to your MCP client configuration (e.g. Claude Desktop, VS Code):
 }
 ```
 
-The MCP server exposes all CLI operations (workspaces, warehouses, SQL endpoints, audit, queries, snapshots, restore points, schemas, tables, views) as MCP tools. Set `FABRIC_AUTH` in the environment if you need a non-default auth mode.
+The MCP server exposes all CLI operations as MCP tools (workspaces, warehouses, SQL endpoints, schemas, tables, views, queries, snapshots, restore points, audit, statistics, permissions, sql-pools). Bundled Claude Code agent skills (query-optimizer, warehouse-performance, dbt-setup) are included for deeper AI-assisted analysis. Set `FABRIC_AUTH` in the environment if you need a non-default auth mode.
 
 ## Run in Docker
 
