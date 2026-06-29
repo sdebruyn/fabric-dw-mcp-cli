@@ -1194,3 +1194,213 @@ async def rls_drop_cmd(ctx: CliContext, item: str | None, policy: str) -> None:
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(f"Dropped security policy {policy!r}.")
+
+
+# ---------------------------------------------------------------------------
+# permissions mask sub-group (dynamic data masking)
+# ---------------------------------------------------------------------------
+
+
+from fabric_dw.services import mask as _mask_svc  # noqa: E402
+
+
+@permissions_group.group("mask")
+def mask_group() -> None:
+    """Dynamic data masking: apply or remove column masks."""
+
+
+def _parse_mask_table_ref(table_expr: str) -> tuple[str, str]:
+    """Split SCHEMA.TABLE into (schema, table_name) for mask commands.
+
+    Args:
+        table_expr: Qualified table name (e.g. ``"dbo.Sales"``).
+
+    Returns:
+        ``(schema, table_name)`` tuple.
+
+    Raises:
+        click.UsageError: If *table_expr* is not a two-part qualified name.
+    """
+    try:
+        return _parse_qualified_name(table_expr, "table")
+    except ValueError as exc:
+        raise click.UsageError(f"TABLE: {exc}") from exc
+
+
+@mask_group.command("list")
+@click.argument("item", required=False, default=None)
+@click.argument("table", required=False, default=None, metavar="[SCHEMA.TABLE]")
+@click.pass_obj
+@coro
+async def mask_list_cmd(ctx: CliContext, item: str | None, table: str | None) -> None:
+    """List columns with dynamic data masks on ITEM.
+
+    When TABLE is given (as SCHEMA.TABLE), only masks for that table are shown.
+    """
+    ws = resolve_workspace(ctx)
+    it = resolve_warehouse_arg(ctx, item)
+    table_schema: str | None = None
+    table_name: str | None = None
+    if table is not None:
+        table_schema, table_name = _parse_mask_table_ref(table)
+    try:
+        async with build_http_client(ctx) as http:
+            target, _entry = await build_sql_target(http, ws, it)
+            columns = await _mask_svc.list_masked_columns(
+                target,
+                table_schema=table_schema,
+                table_name=table_name,
+                mode=ctx.auth,
+            )
+            from fabric_dw.cli._render import render  # noqa: PLC0415
+
+            render(
+                [c.model_dump(mode="json") for c in columns],
+                json_output=ctx.json_output,
+                table_title="Masked Columns",
+                prune_null_columns=True,
+            )
+    except (ValueError, FabricError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+@mask_group.command("set")
+@click.argument("item", required=False, default=None)
+@click.argument("table", metavar="SCHEMA.TABLE")
+@click.option(
+    "--column",
+    "column_name",
+    required=True,
+    metavar="COL",
+    help="Column to apply the mask to.",
+)
+@click.option(
+    "--function",
+    "fn_type",
+    required=True,
+    type=click.Choice(["default", "email", "random", "partial"], case_sensitive=False),
+    help="Mask function type.",
+)
+@click.option("--start", "start", type=int, default=None, help="Lower bound for random() mask.")
+@click.option("--end", "end", type=int, default=None, help="Upper bound for random() mask.")
+@click.option(
+    "--prefix",
+    "prefix",
+    type=int,
+    default=None,
+    help="Leading characters to expose for partial() mask.",
+)
+@click.option(
+    "--padding",
+    "padding",
+    default=None,
+    metavar="STR",
+    help="Replacement padding string for partial() mask.",
+)
+@click.option(
+    "--suffix",
+    "suffix",
+    type=int,
+    default=None,
+    help="Trailing characters to expose for partial() mask.",
+)
+@click.pass_obj
+@coro
+async def mask_set_cmd(
+    ctx: CliContext,
+    item: str | None,
+    table: str,
+    column_name: str,
+    fn_type: str,
+    start: int | None,
+    end: int | None,
+    prefix: int | None,
+    padding: str | None,
+    suffix: int | None,
+) -> None:
+    """Apply or replace a dynamic data mask on a column of ITEM.
+
+    TABLE must be in SCHEMA.TABLE format.  Specify the mask function with
+    --function and any required arguments:
+
+    \b
+      default  -- no extra args required
+      email    -- no extra args required
+      random   -- requires --start and --end
+      partial  -- requires --prefix, --padding, and --suffix
+    """
+    table_schema, table_name = _parse_mask_table_ref(table)
+    ws = resolve_workspace(ctx)
+    it = resolve_warehouse_arg(ctx, item)
+    try:
+        async with build_http_client(ctx) as http:
+            target, _entry = await build_sql_target(http, ws, it)
+            mask_fn_literal = await _mask_svc.set_column_mask(
+                target,
+                table_schema,
+                table_name,
+                column_name,
+                fn_type,
+                start=start,
+                end=end,
+                prefix=prefix,
+                padding=padding,
+                suffix=suffix,
+                mode=ctx.auth,
+            )
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+    except FabricError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(
+        f"Mask {mask_fn_literal!r} applied to [{table_schema}].[{table_name}].[{column_name}]."
+    )
+
+
+@mask_group.command("drop")
+@click.argument("item", required=False, default=None)
+@click.argument("table", metavar="SCHEMA.TABLE")
+@click.option(
+    "--column",
+    "column_name",
+    required=True,
+    metavar="COL",
+    help="Column whose mask to remove.",
+)
+@click.pass_obj
+@coro
+async def mask_drop_cmd(
+    ctx: CliContext,
+    item: str | None,
+    table: str,
+    column_name: str,
+) -> None:
+    """Remove a dynamic data mask from a column of ITEM.
+
+    TABLE must be in SCHEMA.TABLE format.
+
+    This is a destructive operation: the mask is permanently removed.
+    A confirmation prompt is shown unless --yes / -y is passed.
+    """
+    table_schema, table_name = _parse_mask_table_ref(table)
+    if not confirm_destructive(
+        f"Remove mask from [{table_schema}].[{table_name}].[{column_name}]?",
+        yes=ctx.yes,
+    ):
+        click.echo("Aborted.")
+        return
+    ws = resolve_workspace(ctx)
+    it = resolve_warehouse_arg(ctx, item)
+    try:
+        async with build_http_client(ctx) as http:
+            target, _entry = await build_sql_target(http, ws, it)
+            await _mask_svc.drop_column_mask(
+                target,
+                table_schema,
+                table_name,
+                column_name,
+                mode=ctx.auth,
+            )
+    except (ValueError, FabricError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Mask removed from [{table_schema}].[{table_name}].[{column_name}].")

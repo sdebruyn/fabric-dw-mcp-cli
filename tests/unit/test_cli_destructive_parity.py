@@ -51,6 +51,7 @@ _MCP_TO_CLI_DESTRUCTIVE_MAP: dict[str, str | tuple[str, ...]] = {
     "drop_view": "views.drop",
     "delete_warehouse": "warehouses.delete",
     "drop_security_policy": "permissions.rls.drop",
+    "drop_column_mask": "permissions.mask.drop",
 }
 
 # ---------------------------------------------------------------------------
@@ -219,6 +220,9 @@ class TestDestructiveCliCommandsEmitDestructiveOp:
     def test_warehouses_delete_is_destructive(self) -> None:
         assert "warehouses.delete" in _DESTRUCTIVE_CLI_COMMANDS
 
+    def test_permissions_mask_drop_is_destructive(self) -> None:
+        assert "permissions.mask.drop" in _DESTRUCTIVE_CLI_COMMANDS
+
 
 # ---------------------------------------------------------------------------
 # Emit-level tests: emit_command_invoked is called with destructive=True
@@ -334,6 +338,25 @@ class TestEmitDestructiveOpOnAbort:
         )
         assert destructive is True, (
             f"permissions rls drop did not emit destructive_op=True on abort; got {destructive!r}"
+        )
+
+    def test_permissions_mask_drop_emits_destructive_on_abort(self) -> None:
+        """permissions mask drop aborted at prompt must still report destructive_op=True."""
+        destructive = _invoke_and_capture_destructive(
+            [
+                "-w",
+                "myws",
+                "permissions",
+                "mask",
+                "drop",
+                "mydw",
+                "dbo.Employees",
+                "--column",
+                "Email",
+            ]
+        )
+        assert destructive is True, (
+            f"permissions mask drop did not emit destructive_op=True on abort; got {destructive!r}"
         )
 
 

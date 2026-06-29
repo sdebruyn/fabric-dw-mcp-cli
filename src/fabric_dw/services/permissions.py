@@ -88,6 +88,9 @@ _ACCESS_DETAILS_KEY = "accessDetails"
 # ---------------------------------------------------------------------------
 
 #: Permissions valid on OBJECT-class securables (tables, views, functions, procedures).
+#: UNMASK is included here so that ``GRANT UNMASK ON OBJECT::[schema].[table] TO [principal]``
+#: and the column-level form ``GRANT UNMASK ON OBJECT::[s].[t] ([col]) TO [principal]``
+#: are accepted.  Reference: https://learn.microsoft.com/fabric/data-warehouse/dynamic-data-masking
 OBJECT_PERMISSIONS: frozenset[str] = frozenset(
     {
         "SELECT",
@@ -100,6 +103,7 @@ OBJECT_PERMISSIONS: frozenset[str] = frozenset(
         "CONTROL",
         "VIEW DEFINITION",
         "TAKE OWNERSHIP",
+        "UNMASK",
     }
 )
 
@@ -119,6 +123,8 @@ SCHEMA_PERMISSIONS: frozenset[str] = frozenset(
 )
 
 #: Permissions valid on DATABASE-class securables.
+#: UNMASK is included here so that ``GRANT UNMASK TO [principal]`` (database scope) is accepted.
+#: Reference: https://learn.microsoft.com/fabric/data-warehouse/dynamic-data-masking
 DATABASE_PERMISSIONS: frozenset[str] = frozenset(
     {
         "CONNECT",
@@ -136,6 +142,7 @@ DATABASE_PERMISSIONS: frozenset[str] = frozenset(
         "CREATE PROCEDURE",
         "CREATE FUNCTION",
         "CREATE SCHEMA",
+        "UNMASK",
     }
 )
 
@@ -147,8 +154,13 @@ _ALLOWLISTS: dict[str, frozenset[str]] = {
 }
 
 #: Permissions that may be applied at column-level within OBJECT scope.
-#: See https://learn.microsoft.com/fabric/data-warehouse/column-level-security
-COLUMN_APPLICABLE_PERMISSIONS: frozenset[str] = frozenset({"SELECT", "UPDATE", "REFERENCES"})
+#: Includes UNMASK so that ``GRANT UNMASK ON OBJECT::[s].[t] ([col]) TO [principal]``
+#: can be issued via the existing ``permissions sql grant`` / ``permissions cls grant`` commands.
+#: See https://learn.microsoft.com/fabric/data-warehouse/column-level-security and
+#: https://learn.microsoft.com/fabric/data-warehouse/dynamic-data-masking
+COLUMN_APPLICABLE_PERMISSIONS: frozenset[str] = frozenset(
+    {"SELECT", "UPDATE", "REFERENCES", "UNMASK"}
+)
 
 # ---------------------------------------------------------------------------
 # SQL templates (reads)
