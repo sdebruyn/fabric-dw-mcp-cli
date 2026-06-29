@@ -550,9 +550,7 @@ async def cls_grant_cmd(
             )
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
-    click.echo(
-        f"Granted {permissions!r} on {scope_object!r} cols {columns_str!r} to {principal!r}."
-    )
+    click.echo(f"Granted {permissions!r} on {scope_object!r} cols {columns!r} to {principal!r}.")
 
 
 @cls_group.command("deny")
@@ -606,7 +604,7 @@ async def cls_deny_cmd(
             )
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
-    click.echo(f"Denied {permissions!r} on {scope_object!r} cols {columns_str!r} to {principal!r}.")
+    click.echo(f"Denied {permissions!r} on {scope_object!r} cols {columns!r} to {principal!r}.")
 
 
 @cls_group.command("revoke")
@@ -630,6 +628,13 @@ async def cls_deny_cmd(
     help="Comma-separated list of column names to revoke.",
 )
 @click.option(
+    "--grant-option-only",
+    "grant_option_only",
+    is_flag=True,
+    default=False,
+    help="Revoke only the GRANT OPTION, not the base permission.",
+)
+@click.option(
     "--cascade",
     "cascade",
     is_flag=True,
@@ -645,6 +650,7 @@ async def cls_revoke_cmd(
     principal: str,
     scope_object: str,
     columns_str: str,
+    grant_option_only: bool,
     cascade: bool,
 ) -> None:
     """Revoke column-level PERMISSIONS on ITEM from PRINCIPAL.
@@ -658,9 +664,11 @@ async def cls_revoke_cmd(
     """
     ws = resolve_workspace(ctx)
     it = resolve_warehouse_arg(ctx, item)
+    # Parse and validate columns before the confirm prompt so invalid input
+    # raises UsageError immediately without prompting.
     columns = _parse_column_list(columns_str)
     if not confirm_destructive(
-        f"Revoke {permissions!r} on {scope_object!r} columns {columns_str!r} from {principal!r}?",
+        f"Revoke {permissions!r} on {scope_object!r} columns {columns!r} from {principal!r}?",
         yes=ctx.yes,
     ):
         click.echo("Aborted.")
@@ -675,14 +683,13 @@ async def cls_revoke_cmd(
                 "OBJECT",
                 object_name=scope_object,
                 columns=columns,
+                grant_option_only=grant_option_only,
                 cascade=cascade,
                 mode=ctx.auth,
             )
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
-    click.echo(
-        f"Revoked {permissions!r} on {scope_object!r} cols {columns_str!r} from {principal!r}."
-    )
+    click.echo(f"Revoked {permissions!r} on {scope_object!r} cols {columns!r} from {principal!r}.")
 
 
 @cls_group.command("list")

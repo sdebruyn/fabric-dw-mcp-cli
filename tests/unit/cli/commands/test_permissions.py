@@ -1157,6 +1157,46 @@ class TestPermissionsClsRevoke:
         _args, kwargs = mock_revoke.call_args
         assert kwargs.get("cascade") is True
 
+    def test_cls_revoke_with_grant_option_only(self, runner: CliRunner, cache_env: Path) -> None:
+        """--grant-option-only must pass grant_option_only=True to revoke_permission."""
+        _ = cache_env
+        mock_revoke = AsyncMock(return_value=None)
+        with (
+            patch(
+                "fabric_dw.cli.commands.permissions.build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.permissions.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_wh_entry())),
+            ),
+            patch("fabric_dw.services.permissions.revoke_permission", new=mock_revoke),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "--yes",
+                    "permissions",
+                    "cls",
+                    "revoke",
+                    WH_GUID,
+                    "SELECT",
+                    "--from",
+                    "alice@contoso.com",
+                    "--object",
+                    "dbo.sales",
+                    "--columns",
+                    "revenue",
+                    "--grant-option-only",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        _args, kwargs = mock_revoke.call_args
+        assert kwargs.get("grant_option_only") is True
+        assert kwargs.get("columns") == ["revenue"]
+
 
 class TestPermissionsClsList:
     """permissions cls list -- show column-level permissions."""
