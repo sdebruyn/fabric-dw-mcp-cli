@@ -225,6 +225,88 @@ async def count_cmd(
         raise click.ClickException(str(exc)) from exc
 
 
+@tables_group.command("export")
+@click.argument("item", required=False, default=None)
+@click.argument("qualified_name")
+@click.option("--output", required=True, type=click.Path(), help="Destination file path.")
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice([f.value for f in OutputFormat], case_sensitive=False),
+    default=None,
+    help="Output format (inferred from --output extension when omitted).",
+)
+@click.option("--limit", default=None, type=int, help="Export at most N rows (sampling).")
+@click.option(
+    "--no-overwrite",
+    "no_overwrite",
+    is_flag=True,
+    default=False,
+    help="Fail if the output file already exists instead of overwriting.",
+)
+@AS_OF_OPTION
+@TIME_TRAVEL_AGO_OPTION
+@click.pass_obj
+@coro
+async def export_cmd(
+    ctx: CliContext,
+    item: str | None,
+    qualified_name: str,
+    output: str,
+    fmt: str | None,
+    limit: int | None,
+    no_overwrite: bool,
+    as_of: str | None,
+    ago: str | None,
+) -> None:
+    """Export all rows of QUALIFIED_NAME (schema.table) on ITEM to a local file.
+
+    The output format is inferred from the --output extension (.parquet, .csv, .json)
+    when --format is omitted.  Pass --format to override.
+
+    WARNING: exporting large tables loads all rows into memory. Use --limit for sampling.
+    """
+    ws = resolve_workspace(ctx)
+    wh = resolve_warehouse_arg(ctx, item)
+    schema, table_name = parse_qualified_name(qualified_name, kind="table")
+    as_of_dt = resolve_as_of(as_of, ago)
+    output_path = Path(output)
+
+    # Infer format from extension when --format is omitted.
+    if fmt is None:
+        try:
+            fmt = infer_file_format(output_path)
+        except ValueError as exc:
+            raise click.UsageError(str(exc)) from exc
+
+    if no_overwrite and output_path.exists():
+        raise click.UsageError(f"Output file already exists: {output_path}")
+
+    try:
+        async with build_http_client(ctx) as http:
+            target, _entry = await build_sql_target(http, ws, wh)
+            row_count = await _tables_svc.export_table(
+                target,
+                schema,
+                table_name,
+                output_path,
+                fmt,
+                as_of=as_of_dt,
+                limit=limit,
+                mode=ctx.auth,
+            )
+    except (ValueError, FabricError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if ctx.json_output:
+        import json  # noqa: PLC0415
+
+        payload = {"status": "exported", "rows": row_count, "output": str(output_path)}
+        click.echo(json.dumps(payload))
+    else:
+        click.echo(f"Exported {row_count} row(s) to {output_path}.")
+
+
 @tables_group.command("health-check")
 @click.argument("item", required=False, default=None)
 @click.argument("qualified_name")

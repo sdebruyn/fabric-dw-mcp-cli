@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
+from pathlib import Path
 from typing import cast
 
 from fabric_dw.auth import CredentialMode
@@ -25,11 +26,13 @@ from fabric_dw.identifiers import parse_qualified_name, quote_identifier, valida
 from fabric_dw.models import View
 from fabric_dw.services._helpers import build_time_travel_option, reject_non_select
 from fabric_dw.sql import SqlTarget, run_query
+from fabric_dw.sql_io import columns_rows_to_arrow, write_arrow
 
 __all__ = [
     "count_view_rows",
     "create_view",
     "drop_view",
+    "export_view",
     "get_view",
     "list_views",
     "read_view",
@@ -47,6 +50,10 @@ _READ_VIEW_SQL = "SELECT TOP ({count}) * FROM {schema_q}.{view_q};"
 
 # COUNT_BIG(*) is bigint-safe (avoids INT overflow on wide views).
 _COUNT_VIEW_SQL = "SELECT COUNT_BIG(*) AS row_count FROM {schema_q}.{view_q};"
+
+# Full-view export — no TOP; limit variant uses TOP when a row cap is requested.
+_EXPORT_VIEW_SQL = "SELECT * FROM {schema_q}.{view_q};"
+_EXPORT_VIEW_LIMIT_SQL = "SELECT TOP ({limit}) * FROM {schema_q}.{view_q};"
 
 _LIST_VIEWS_SQL = """\
 SELECT
@@ -263,6 +270,78 @@ async def count_view_rows(
             msg = f"View [{schema}].[{view_name}] not found"
             raise NotFoundError(msg)
         return int(rows[0][0])
+
+    return await asyncio.to_thread(_run)
+
+
+async def export_view(
+    target: SqlTarget,
+    schema: str,
+    view_name: str,
+    output: Path,
+    fmt: str,
+    *,
+    as_of: datetime | None = None,
+    limit: int | None = None,
+    mode: CredentialMode = CredentialMode.DEFAULT,
+) -> int:
+    """Export all rows of *schema*.*view_name* to a local file.
+
+    Fetches the full result set into memory (V1; streaming is a future follow-up),
+    converts to Arrow via :func:`~fabric_dw.sql_io.columns_rows_to_arrow`, and
+    writes with :func:`~fabric_dw.sql_io.write_arrow`.
+
+    Args:
+        target: The warehouse or SQL Analytics Endpoint to query.
+        schema: The schema name.  Must pass :func:`validate_identifier`.
+        view_name: The view name.  Must pass :func:`validate_identifier`.
+        output: Destination file path.
+        fmt: One of ``"json"``, ``"csv"``, ``"parquet"``.
+        as_of: Optional point-in-time for time-travel exports.  When set, the
+            query includes ``OPTION (FOR TIMESTAMP AS OF '<utc-literal>')``.
+            Naive datetimes are assumed UTC; tz-aware datetimes are converted to
+            UTC.  *None* leaves the SQL unchanged.
+        limit: Optional row cap.  When set, ``SELECT TOP (N)`` is used instead
+            of ``SELECT *``.  *None* exports the full view without a TOP clause.
+        mode: The credential mode for Entra authentication.
+
+    Returns:
+        The number of rows exported as a Python :class:`int`.
+
+    Raises:
+        ValueError: If *schema* or *view_name* fails identifier validation, or
+            if *fmt* is not a recognised :class:`~fabric_dw.sql_io.OutputFormat`.
+        NotFoundError: If the view does not exist (zero columns returned).
+        PermissionDeniedError: If the driver reports a permission error.
+    """
+    validate_identifier(schema)
+    validate_identifier(view_name)
+
+    schema_q = quote_identifier(schema)
+    view_q = quote_identifier(view_name)
+
+    if limit is not None:
+        base_sql = _EXPORT_VIEW_LIMIT_SQL.format(
+            limit=int(limit),
+            schema_q=schema_q,
+            view_q=view_q,
+        )
+    else:
+        base_sql = _EXPORT_VIEW_SQL.format(schema_q=schema_q, view_q=view_q)
+
+    as_of_clause = build_time_travel_option(as_of)
+    # Strip the trailing ";" to insert the (possibly empty) OPTION clause, then re-add it.
+    export_sql = base_sql[:-1] + as_of_clause + ";"
+
+    def _run() -> int:
+        cols, rows = run_query(target, export_sql, mode=mode)
+        if not cols:
+            msg = f"View [{schema}].[{view_name}] not found"
+            raise NotFoundError(msg)
+        row_list = list(rows)
+        arrow_table = columns_rows_to_arrow(cols, row_list)
+        write_arrow(arrow_table, fmt, output)
+        return len(row_list)
 
     return await asyncio.to_thread(_run)
 

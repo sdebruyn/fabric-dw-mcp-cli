@@ -679,6 +679,356 @@ class TestTablesCount:
 
 
 # ===========================================================================
+# tables export
+# ===========================================================================
+
+
+class TestTablesExport:
+    def test_export_exits_zero_parquet(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        _ = cache_env
+        output = tmp_path / "out.parquet"
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.export_table",
+                new=AsyncMock(return_value=42),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", WS_GUID, "tables", "export", WH_GUID, "dbo.sales", "--output", str(output)],
+            )
+        assert result.exit_code == 0, result.output
+        assert "42 row(s)" in result.output
+
+    def test_export_format_inferred_from_extension_csv(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        _ = cache_env
+        output = tmp_path / "out.csv"
+        mock_export = AsyncMock(return_value=5)
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch("fabric_dw.services.tables.export_table", new=mock_export),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", WS_GUID, "tables", "export", WH_GUID, "dbo.sales", "--output", str(output)],
+            )
+        assert result.exit_code == 0, result.output
+        # Positional signature: (target, schema, table_name, output, fmt, ...)
+        call_args = mock_export.call_args[0]
+        assert call_args[4] == "csv"
+
+    def test_export_format_flag_overrides_extension(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        _ = cache_env
+        output = tmp_path / "out.csv"
+        mock_export = AsyncMock(return_value=3)
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch("fabric_dw.services.tables.export_table", new=mock_export),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "tables",
+                    "export",
+                    WH_GUID,
+                    "dbo.sales",
+                    "--output",
+                    str(output),
+                    "--format",
+                    "parquet",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        call_args = mock_export.call_args[0]
+        # Positional signature: (target, schema, table_name, output, fmt, ...)
+        assert call_args[4] == "parquet"
+
+    def test_export_unknown_extension_without_format_fails(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        _ = cache_env
+        output = tmp_path / "out.xyz"
+        result = runner.invoke(
+            cli,
+            ["-w", WS_GUID, "tables", "export", WH_GUID, "dbo.sales", "--output", str(output)],
+        )
+        assert result.exit_code != 0
+
+    def test_export_no_overwrite_fails_when_file_exists(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        _ = cache_env
+        output = tmp_path / "out.parquet"
+        output.write_bytes(b"x")  # file already exists
+        result = runner.invoke(
+            cli,
+            [
+                "-w",
+                WS_GUID,
+                "tables",
+                "export",
+                WH_GUID,
+                "dbo.sales",
+                "--output",
+                str(output),
+                "--no-overwrite",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "already exists" in result.output
+
+    def test_export_default_overwrites_existing_file(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        _ = cache_env
+        output = tmp_path / "out.parquet"
+        output.write_bytes(b"old")
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch("fabric_dw.services.tables.export_table", new=AsyncMock(return_value=1)),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "tables",
+                    "export",
+                    WH_GUID,
+                    "dbo.sales",
+                    "--output",
+                    str(output),
+                ],
+            )
+        assert result.exit_code == 0, result.output
+
+    def test_export_limit_threads_through(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        _ = cache_env
+        output = tmp_path / "out.parquet"
+        mock_export = AsyncMock(return_value=10)
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch("fabric_dw.services.tables.export_table", new=mock_export),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "tables",
+                    "export",
+                    WH_GUID,
+                    "dbo.sales",
+                    "--output",
+                    str(output),
+                    "--limit",
+                    "100",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        _, kwargs = mock_export.call_args
+        assert kwargs.get("limit") == 100
+
+    def test_export_as_of_passes_datetime(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        _ = cache_env
+        output = tmp_path / "out.parquet"
+        mock_export = AsyncMock(return_value=1)
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch("fabric_dw.services.tables.export_table", new=mock_export),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "tables",
+                    "export",
+                    WH_GUID,
+                    "dbo.sales",
+                    "--output",
+                    str(output),
+                    "--as-of",
+                    "2024-03-15T10:30:00",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        _, kwargs = mock_export.call_args
+        assert kwargs.get("as_of") is not None
+        assert isinstance(kwargs["as_of"], datetime)
+
+    def test_export_ago_and_as_of_mutually_exclusive(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        _ = cache_env
+        output = tmp_path / "out.parquet"
+        result = runner.invoke(
+            cli,
+            [
+                "-w",
+                WS_GUID,
+                "tables",
+                "export",
+                WH_GUID,
+                "dbo.sales",
+                "--output",
+                str(output),
+                "--as-of",
+                "2024-01-01T00:00:00",
+                "--ago",
+                "1h",
+            ],
+        )
+        assert result.exit_code != 0
+
+    def test_export_json_flag_emits_status_object(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        _ = cache_env
+        output = tmp_path / "out.parquet"
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch("fabric_dw.services.tables.export_table", new=AsyncMock(return_value=7)),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "--json",
+                    "tables",
+                    "export",
+                    WH_GUID,
+                    "dbo.sales",
+                    "--output",
+                    str(output),
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        parsed = json.loads(result.output)
+        assert parsed["status"] == "exported"
+        assert parsed["rows"] == 7
+        assert "output" in parsed
+
+    def test_export_bad_qualified_name_exits_nonzero(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        _ = cache_env
+        output = tmp_path / "out.parquet"
+        result = runner.invoke(
+            cli,
+            ["-w", WS_GUID, "tables", "export", WH_GUID, "nodot", "--output", str(output)],
+        )
+        assert result.exit_code != 0
+
+    def test_export_fabric_error_exits_nonzero(
+        self, runner: CliRunner, cache_env: Path, tmp_path: Path
+    ) -> None:
+        _ = cache_env
+        output = tmp_path / "out.parquet"
+        from fabric_dw.exceptions import NotFoundError  # noqa: PLC0415
+
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(AsyncMock()),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.export_table",
+                new=AsyncMock(side_effect=NotFoundError("table not found")),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "tables",
+                    "export",
+                    WH_GUID,
+                    "dbo.missing",
+                    "--output",
+                    str(output),
+                ],
+            )
+        assert result.exit_code != 0
+
+    def test_export_output_required(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        result = runner.invoke(
+            cli,
+            ["-w", WS_GUID, "tables", "export", WH_GUID, "dbo.sales"],
+        )
+        assert result.exit_code != 0
+
+
+# ===========================================================================
 # tables create
 # ===========================================================================
 

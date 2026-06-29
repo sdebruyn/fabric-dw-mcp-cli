@@ -125,6 +125,7 @@ DOMAIN_MAP: dict[str, str] = {
     "get_table_columns": "tables",
     "get_table_health_metrics": "tables",
     "list_tables": "tables",
+    "export_table": "tables",
     "read_table": "tables",
     "count_table_rows": "tables",
     "get_cluster_columns": "tables",
@@ -139,6 +140,7 @@ DOMAIN_MAP: dict[str, str] = {
     # Views
     "get_view_columns": "views",
     "list_views": "views",
+    "export_view": "views",
     "read_view": "views",
     "count_view_rows": "views",
     "get_view": "views",
