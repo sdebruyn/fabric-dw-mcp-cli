@@ -84,7 +84,7 @@ fdw warehouses create SalesWH --description "dbt target warehouse"
 If a service principal or team needs access (for example, the identity that will run dbt in CI), grant it now:
 
 - [`fdw warehouses takeover`](../commands/warehouses.md#warehouses-takeover) - take ownership of the warehouse.
-- [`fdw warehouses permissions`](../commands/warehouses.md#warehouses-permissions) - list principals and their effective permissions (requires the **Fabric Administrator** role).
+- [`fdw permissions item list`](../commands/permissions.md#permissions-item-list) - list principals and their effective permissions (requires the **Fabric Administrator** role).
 
 !!! tip "AI-assistant equivalent"
 

@@ -1019,6 +1019,8 @@ class DatabasePermission(_FabricBase):
             ``None`` for ``DATABASE``).
         object_name: The object name (for ``OBJECT`` class securables; ``None``
             otherwise).
+        column_name: The column name for column-level grants (``minor_id != 0``);
+            ``None`` for table-level or non-OBJECT securables.
     """
 
     principal_name: str
@@ -1028,6 +1030,7 @@ class DatabasePermission(_FabricBase):
     securable_class: str
     schema_name: str | None = None
     object_name: str | None = None
+    column_name: str | None = None
 
 
 # ---------------------------------------------------------------------------

@@ -26,17 +26,23 @@ __all__ = [
 
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}\Z")
 
-# Principal names in Fabric include Entra UPNs (user@domain.com), app GUIDs
-# (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx), and display names (possibly with
-# spaces and hyphens).  The pattern is therefore deliberately broader than the
-# plain-identifier regex.
+# Principal names in Fabric include Entra UPNs (user@domain.com), B2B guest
+# UPNs (user_domain.com#EXT#@tenant.onmicrosoft.com), app GUIDs
+# (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx), display names (possibly with spaces,
+# hyphens, or apostrophes such as "O'Brien"), and database role names.  The
+# pattern is therefore deliberately broader than the plain-identifier regex.
 #
-# Allowed characters: letters (a-z A-Z), digits (0-9), @, ., -, _, and
-# internal spaces (spaces are trimmed at validation time).
+# Allowed characters: letters (a-z A-Z), digits (0-9), @, ., -, _, ',
+# # (used in B2B guest UPN suffix), and internal spaces (trimmed at
+# validation time).
 # Hard-rejected: ], ;, control characters (< 0x20 or 0x7F), and the SQL
 # line-comment prefix --.
 # Maximum length: 128 characters (SQL Server NVARCHAR(128) for sysname).
-_PRINCIPAL_NAME_RE = re.compile(r"^[A-Za-z0-9@.\-_ ]{1,128}\Z")
+#
+# Safety note: ' and # are only injected via quote_principal(), which wraps the
+# entire name in bracket-quotes ([...]).  Inside bracket-quotes, neither ' nor #
+# enables SQL injection.  They are therefore safe to allow here.
+_PRINCIPAL_NAME_RE = re.compile(r"^[A-Za-z0-9@.\-_'# ]{1,128}\Z")
 
 # ASCII control character boundaries (used in validate_principal_name).
 _CTRL_LOW = 0x20  # characters below this (0x00-0x1F) are control chars
@@ -110,9 +116,9 @@ def quote_identifier(name: str) -> str:
 def validate_principal_name(name: str) -> str:
     """Validate that *name* is a safe Fabric database principal name.
 
-    Accepted characters: letters, digits, ``@``, ``.``, ``-``, ``_``, and
-    internal spaces (leading/trailing spaces are stripped before matching).
-    Maximum length: 128 characters.
+    Accepted characters: letters, digits, ``@``, ``.``, ``-``, ``_``, ``'``,
+    ``#``, and internal spaces (leading/trailing spaces are stripped before
+    matching).  Maximum length: 128 characters.
 
     Explicit fast-path rejections (belt-and-suspenders):
 
@@ -121,9 +127,10 @@ def validate_principal_name(name: str) -> str:
     - ``--`` — line comment.
     - Control characters (< U+0020 or U+007F) — not valid in principal names.
 
-    This validator handles Entra UPNs (``user@contoso.com``), application
-    GUIDs (``xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx``), and role/user display
-    names that may contain spaces.
+    This validator handles Entra UPNs (``user@contoso.com``), B2B guest UPNs
+    (``user_contoso.com#EXT#@tenant.onmicrosoft.com``), application GUIDs
+    (``xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx``), and role/user display names that
+    may contain spaces, apostrophes (e.g. ``O'Brien``), or ``#`` characters.
 
     Args:
         name: The raw principal name supplied by the caller.
@@ -150,7 +157,7 @@ def validate_principal_name(name: str) -> str:
     if not _PRINCIPAL_NAME_RE.match(stripped):
         msg = (
             f"Invalid principal name {name!r}: "
-            "allowed characters are letters, digits, @, ., -, _, and spaces (max 128)"
+            "allowed characters are letters, digits, @, ., -, _, ', #, and spaces (max 128)"
         )
         raise ValueError(msg)
     return name

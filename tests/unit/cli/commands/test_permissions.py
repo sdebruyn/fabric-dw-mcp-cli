@@ -349,7 +349,7 @@ class TestPermissionsSqlMine:
         ):
             result = runner.invoke(
                 cli,
-                ["-w", WS_GUID, "permissions", "sql", "mine", WH_GUID, "schema:dbo"],
+                ["-w", WS_GUID, "permissions", "sql", "mine", WH_GUID, "--scope", "schema:dbo"],
             )
         assert result.exit_code == 0, result.output
         _args, kwargs = mock_svc.call_args
@@ -708,4 +708,30 @@ class TestPermissionsSqlRevoke:
                 "dbo.sales",
             ],
         )
+        assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# Removal contract: old command names must no longer exist
+# ---------------------------------------------------------------------------
+
+
+class TestRemovedCommandsAreGone:
+    """Verify that the old per-item-kind permissions commands were removed."""
+
+    def test_warehouses_permissions_command_removed(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """'warehouses permissions' must no longer exist (moved to 'permissions item list')."""
+        _ = cache_env
+        result = runner.invoke(cli, ["-w", WS_GUID, "warehouses", "permissions", "--help"])
+        # Should produce a "No such command" error, not exit 0.
+        assert result.exit_code != 0
+
+    def test_sql_endpoints_permissions_command_removed(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """'sql-endpoints permissions' must no longer exist."""
+        _ = cache_env
+        result = runner.invoke(cli, ["-w", WS_GUID, "sql-endpoints", "permissions", "--help"])
         assert result.exit_code != 0

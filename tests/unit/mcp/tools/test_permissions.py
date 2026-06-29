@@ -433,3 +433,61 @@ async def test_revoke_permission_not_destructive_gated(mock_ctx, ctx_patch) -> N
         )
 
     assert result["revoked"] is True
+
+
+# ---------------------------------------------------------------------------
+# scope.upper() in return dicts
+# ---------------------------------------------------------------------------
+
+
+async def test_grant_permission_scope_uppercased_in_result(mock_ctx, ctx_patch) -> None:
+    """grant_permission must uppercase the scope value in the returned dict."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {}),
+        patch("fabric_dw.services.permissions.grant_permission", new=AsyncMock(return_value=None)),
+    ):
+        os.environ.pop("FABRIC_MCP_READONLY", None)
+        result = await mcp._tool_manager.call_tool(
+            "grant_permission",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "permissions": "SELECT",
+                "principal": "alice@contoso.com",
+                "scope": "database",  # lowercase input
+            },
+        )
+
+    assert result["scope"] == "DATABASE"
+
+
+# ---------------------------------------------------------------------------
+# Removal contract: old MCP tool names must not be registered
+# ---------------------------------------------------------------------------
+
+
+async def test_old_mcp_tool_get_warehouse_permissions_removed() -> None:
+    """get_warehouse_permissions must NOT be registered (moved to list_item_permissions)."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    tool_names = {t.name for t in mcp._tool_manager.list_tools()}
+    assert "get_warehouse_permissions" not in tool_names, (
+        "get_warehouse_permissions still registered; it was replaced by list_item_permissions"
+    )
+
+
+async def test_old_mcp_tool_get_sql_endpoint_permissions_removed() -> None:
+    """get_sql_endpoint_permissions must NOT be registered."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    tool_names = {t.name for t in mcp._tool_manager.list_tools()}
+    assert "get_sql_endpoint_permissions" not in tool_names, (
+        "get_sql_endpoint_permissions still registered; it was replaced by list_item_permissions"
+    )

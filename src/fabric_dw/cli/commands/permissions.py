@@ -13,8 +13,6 @@ Two distinct permission planes are exposed under the ``permissions`` top-level g
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import click
 
 from fabric_dw.cli._context import CliContext
@@ -29,10 +27,6 @@ from fabric_dw.cli.commands._utils import (
 )
 from fabric_dw.exceptions import FabricError
 from fabric_dw.services import permissions as _permissions_svc
-
-if TYPE_CHECKING:
-    pass
-
 
 # ---------------------------------------------------------------------------
 # Top-level group
@@ -209,7 +203,12 @@ async def sql_principals_cmd(
 
 @sql_group.command("mine")
 @click.argument("item", required=False, default=None)
-@click.argument("scope", required=False, default=None)
+@click.option(
+    "--scope",
+    default=None,
+    metavar="SCOPE",
+    help=("Securable scope: 'database' (default), 'schema:<name>', or 'object:<schema>.<object>'."),
+)
 @click.pass_obj
 @coro
 async def sql_mine_cmd(
@@ -219,7 +218,8 @@ async def sql_mine_cmd(
 ) -> None:
     """Show permissions for the current connection on ITEM.
 
-    SCOPE: 'database' (default), 'schema:<name>', or 'object:<schema>.<object>'.
+    Use --scope to target a specific securable: 'database' (default),
+    'schema:<name>', or 'object:<schema>.<object>'.
     """
     ws = resolve_workspace(ctx)
     it = resolve_warehouse_arg(ctx, item)

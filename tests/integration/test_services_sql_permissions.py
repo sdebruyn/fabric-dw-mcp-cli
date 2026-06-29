@@ -303,3 +303,56 @@ async def test_my_permissions_schema_scope_returns_list(
     assert isinstance(result, list)
     for row in result:
         assert "permission_name" in row, f"Missing 'permission_name' key in row: {row!r}"
+
+
+# ---------------------------------------------------------------------------
+# DATABASE scope grant (validates the BLOCKER fix: no ON clause emitted)
+# ---------------------------------------------------------------------------
+
+
+async def test_grant_select_on_database_scope(
+    temp_role: tuple[SqlTarget, str, str],
+) -> None:
+    """grant_permission SELECT at DATABASE scope must succeed and appear in list_sql_permissions.
+
+    This validates the fix for the DATABASE scope ON clause: Fabric T-SQL requires
+    ``GRANT SELECT TO [role]`` without an ON clause for database-level grants.
+    """
+    sql_target, _schema_name, role_name = temp_role
+
+    await permissions.grant_permission(sql_target, "SELECT", role_name, "DATABASE")
+
+    result = await permissions.list_sql_permissions(sql_target, principal=role_name)
+    assert any(p.permission_name == "SELECT" and p.securable_class == "DATABASE" for p in result), (
+        f"Expected DATABASE-scope GRANT SELECT for role {role_name!r}; got: {result!r}"
+    )
+
+
+async def test_deny_select_on_database_scope(
+    temp_role: tuple[SqlTarget, str, str],
+) -> None:
+    """deny_permission SELECT at DATABASE scope must produce a DENY row."""
+    sql_target, _schema_name, role_name = temp_role
+
+    await permissions.deny_permission(sql_target, "SELECT", role_name, "DATABASE")
+
+    result = await permissions.list_sql_permissions(sql_target, principal=role_name)
+    assert any(
+        p.permission_name == "SELECT" and p.securable_class == "DATABASE" and p.state == "DENY"
+        for p in result
+    ), f"Expected DATABASE-scope DENY SELECT for role {role_name!r}; got: {result!r}"
+
+
+async def test_revoke_removes_database_scope_grant(
+    temp_role: tuple[SqlTarget, str, str],
+) -> None:
+    """revoke_permission must remove a DATABASE-scope grant."""
+    sql_target, _schema_name, role_name = temp_role
+
+    await permissions.grant_permission(sql_target, "SELECT", role_name, "DATABASE")
+    await permissions.revoke_permission(sql_target, "SELECT", role_name, "DATABASE")
+
+    result = await permissions.list_sql_permissions(sql_target, principal=role_name)
+    assert not any(
+        p.permission_name == "SELECT" and p.securable_class == "DATABASE" for p in result
+    ), f"DATABASE GRANT SELECT still present after revoke for {role_name!r}; got: {result!r}"

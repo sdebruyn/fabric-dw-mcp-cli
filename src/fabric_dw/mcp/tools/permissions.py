@@ -247,7 +247,12 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
-        return {"granted": True, "permissions": permissions, "principal": principal, "scope": scope}
+        return {
+            "granted": True,
+            "permissions": permissions,
+            "principal": principal,
+            "scope": scope.upper(),
+        }
 
     @mutating_tool(mcp, "deny_permission")
     async def deny_permission_tool(  # noqa: PLR0913
@@ -303,7 +308,12 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             )
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
-        return {"denied": True, "permissions": permissions, "principal": principal, "scope": scope}
+        return {
+            "denied": True,
+            "permissions": permissions,
+            "principal": principal,
+            "scope": scope.upper(),
+        }
 
     @mutating_tool(mcp, "revoke_permission")
     async def revoke_permission_tool(  # noqa: PLR0913
@@ -371,5 +381,5 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             "revoked": True,
             "permissions": permissions,
             "principal": principal,
-            "scope": scope,
+            "scope": scope.upper(),
         }

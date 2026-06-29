@@ -58,6 +58,15 @@ class TestValidatePrincipalNameAccepted:
     def test_underscores_allowed(self) -> None:
         assert validate_principal_name("my_app_principal") == "my_app_principal"
 
+    def test_b2b_guest_upn_hash_accepted(self) -> None:
+        """B2B guest UPNs contain # and must be accepted."""
+        guest_upn = "user_contoso.com#EXT#@tenant.onmicrosoft.com"
+        assert validate_principal_name(guest_upn) == guest_upn
+
+    def test_apostrophe_in_name_accepted(self) -> None:
+        """Display names with apostrophes (O'Brien) must be accepted."""
+        assert validate_principal_name("O'Brien") == "O'Brien"
+
 
 class TestValidatePrincipalNameRejected:
     """Dangerous or invalid principal names that must be rejected."""
@@ -110,9 +119,9 @@ class TestValidatePrincipalNameRejected:
         with pytest.raises(ValueError, match="allowed characters"):
             validate_principal_name("domain\\user")
 
-    def test_single_quote_rejected(self) -> None:
-        with pytest.raises(ValueError, match="allowed characters"):
-            validate_principal_name("alice'@contoso.com")
+    def test_single_quote_now_accepted(self) -> None:
+        """Single quotes are safe inside bracket-quoting and must now be accepted."""
+        assert validate_principal_name("alice'@contoso.com") == "alice'@contoso.com"
 
     def test_angle_bracket_rejected(self) -> None:
         with pytest.raises(ValueError, match="allowed characters"):

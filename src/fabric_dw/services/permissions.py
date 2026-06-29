@@ -154,7 +154,8 @@ SELECT
     pe.permission_name,
     pe.class_desc AS securable_class,
     pe.major_id,
-    pe.minor_id
+    pe.minor_id,
+    COL_NAME(pe.major_id, pe.minor_id) AS column_name
 FROM sys.database_principals AS pr
 JOIN sys.database_permissions AS pe
     ON pe.grantee_principal_id = pr.principal_id
@@ -165,7 +166,6 @@ ORDER BY pr.name, pe.class_desc, pe.permission_name;
 _LIST_PRINCIPALS_SQL = """\
 SELECT name, type_desc, authentication_type_desc
 FROM sys.database_principals
-WHERE type NOT IN ('R', 'A')
 ORDER BY name;
 """
 
@@ -282,12 +282,11 @@ def _resolve_schema_names(
 ) -> dict[int, str]:
     """Return a mapping from schema_id -> schema_name."""
     s_cols, s_rows = run_query(target, _RESOLVE_SCHEMA_SQL, mode=mode)
-    return {
-        int(dict(zip(s_cols, row, strict=True))["schema_id"]): str(
-            dict(zip(s_cols, row, strict=True))["schema_name"]
-        )
-        for row in s_rows
-    }
+    result: dict[int, str] = {}
+    for row in s_rows:
+        d = dict(zip(s_cols, row, strict=True))
+        result[int(d["schema_id"])] = str(d["schema_name"])
+    return result
 
 
 async def list_sql_permissions(
@@ -326,6 +325,8 @@ async def list_sql_permissions(
             perm_name = str(d["permission_name"])
             class_desc = str(d["securable_class"])
             major_id = int(d["major_id"]) if d["major_id"] is not None else 0
+            col_name_raw = d.get("column_name")
+            col_name: str | None = str(col_name_raw) if col_name_raw is not None else None
 
             sec_class: str
             sec_schema: str | None = None
@@ -336,13 +337,13 @@ async def list_sql_permissions(
             elif class_desc == "SCHEMA":
                 sec_class = "SCHEMA"
                 sec_schema = schema_map.get(major_id)
+                col_name = None  # column grants only apply to OBJECT securables
             elif class_desc == "OBJECT_OR_COLUMN":
                 sec_class = "OBJECT"
                 schema_n, object_n = obj_map.get(major_id, (None, None))
                 sec_schema = schema_n
                 sec_object = object_n
             else:
-                # Skip unsupported class types (e.g. column-level)
                 continue
 
             # Apply optional filters
@@ -370,6 +371,7 @@ async def list_sql_permissions(
                     securable_class=sec_class,
                     schema_name=sec_schema,
                     object_name=sec_object,
+                    column_name=col_name,
                 )
             )
         return permissions
@@ -450,15 +452,19 @@ async def my_permissions(
         elif scope.lower().startswith("schema:"):
             schema_part = scope[len("schema:") :]
             validate_identifier(schema_part)
-            quoted = quote_identifier(schema_part)
-            sql = _MY_PERMISSIONS_SCHEMA_SQL.format(schema=f"'{quoted}'")
+            # sys.fn_my_permissions expects an unbracketed, dot-qualified name
+            # inside the string literal.  validate_identifier already restricts
+            # the charset to [A-Za-z_][A-Za-z0-9_], so embedding it unbracketed
+            # in a single-quoted literal is safe.
+            sql = _MY_PERMISSIONS_SCHEMA_SQL.format(schema=f"'{schema_part}'")
         elif scope.lower().startswith("object:"):
             obj_part = scope[len("object:") :]
             schema_name, obj_name = parse_qualified_name(obj_part, "object")
             validate_identifier(schema_name)
             validate_identifier(obj_name)
-            quoted_fq = f"{quote_identifier(schema_name)}.{quote_identifier(obj_name)}"
-            sql = _MY_PERMISSIONS_OBJECT_SQL.format(obj=f"'{quoted_fq}'")
+            # Pass as 'schema.object' (unbracketed) -- sys.fn_my_permissions
+            # cannot resolve bracket-quoted names in this context.
+            sql = _MY_PERMISSIONS_OBJECT_SQL.format(obj=f"'{schema_name}.{obj_name}'")
         else:
             msg = (
                 f"Invalid scope {scope!r}: expected 'database', "
@@ -488,7 +494,7 @@ def _validate_permissions(permissions_str: str, scope_class: str) -> list[str]:
         scope_class: One of ``"DATABASE"``, ``"SCHEMA"``, ``"OBJECT"``.
 
     Returns:
-        Sorted list of valid upper-cased permission tokens.
+        List of valid upper-cased permission tokens (input order preserved).
 
     Raises:
         ValueError: If the scope is unknown or any token is not in the allowlist.
@@ -535,7 +541,9 @@ def _build_scope_clause(
         ValueError: If required arguments are missing or identifiers are invalid.
     """
     if scope_class == "DATABASE":
-        return "ON DATABASE::CURRENT"
+        # DATABASE is the implicit scope in Fabric T-SQL; the ON clause is omitted
+        # entirely.  ``GRANT SELECT TO [principal]`` is the correct form.
+        return ""
     if scope_class == "SCHEMA":
         if not schema:
             msg = "--schema NAME is required for SCHEMA scope"
@@ -591,7 +599,8 @@ async def grant_permission(
     quoted_principal = quote_principal(principal_name)
     perms_clause = ", ".join(perms)
     grant_option_clause = " WITH GRANT OPTION" if with_grant_option else ""
-    ddl = f"GRANT {perms_clause} {scope_clause} TO {quoted_principal}{grant_option_clause};"
+    on_part = f" {scope_clause}" if scope_clause else ""
+    ddl = f"GRANT {perms_clause}{on_part} TO {quoted_principal}{grant_option_clause};"
 
     def _run() -> None:
         run_query(target, ddl, mode=mode, autocommit=True, fetch="none")
@@ -628,7 +637,8 @@ async def deny_permission(
     validate_principal_name(principal_name)
     quoted_principal = quote_principal(principal_name)
     perms_clause = ", ".join(perms)
-    ddl = f"DENY {perms_clause} {scope_clause} TO {quoted_principal};"
+    on_part = f" {scope_clause}" if scope_clause else ""
+    ddl = f"DENY {perms_clause}{on_part} TO {quoted_principal};"
 
     def _run() -> None:
         run_query(target, ddl, mode=mode, autocommit=True, fetch="none")
@@ -673,8 +683,9 @@ async def revoke_permission(
     perms_clause = ", ".join(perms)
     grant_option_prefix = "GRANT OPTION FOR " if grant_option_only else ""
     cascade_clause = " CASCADE" if cascade else ""
+    on_part = f" {scope_clause}" if scope_clause else ""
     ddl = (
-        f"REVOKE {grant_option_prefix}{perms_clause} {scope_clause} "
+        f"REVOKE {grant_option_prefix}{perms_clause}{on_part} "
         f"FROM {quoted_principal}{cascade_clause};"
     )
 
