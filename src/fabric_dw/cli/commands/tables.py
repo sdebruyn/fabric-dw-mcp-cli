@@ -1500,3 +1500,35 @@ async def rename_cmd(
             render(t.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
+
+
+@tables_group.command("transfer")
+@click.argument("item", required=False, default=None)
+@click.argument("qualified_name")
+@click.option("--target-schema", required=True, help="Schema to move the table into.")
+@click.pass_obj
+@coro
+async def transfer_cmd(
+    ctx: CliContext,
+    item: str | None,
+    qualified_name: str,
+    target_schema: str,
+) -> None:
+    """Move QUALIFIED_NAME (schema.table) on ITEM to --target-schema.
+
+    ITEM must be a Data Warehouse; transferring a table on a SQL Analytics
+    Endpoint is not supported and can break the OneLake sync, so SQL
+    Analytics Endpoints are rejected.
+    """
+    ws = resolve_workspace(ctx)
+    wh = resolve_warehouse_arg(ctx, item)
+    parse_qualified_name(qualified_name, kind="table")
+    try:
+        async with build_http_client(ctx) as http:
+            target, entry = await build_sql_target(http, ws, wh)
+            t = await _tables_svc.transfer_table(
+                target, qualified_name, target_schema, kind=entry.kind, mode=ctx.auth
+            )
+            render(t.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
+    except (ValueError, FabricError) as exc:
+        raise click.ClickException(str(exc)) from exc

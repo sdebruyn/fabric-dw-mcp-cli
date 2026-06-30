@@ -15,6 +15,7 @@ Public API
 - :func:`delete_table`            — ``DROP TABLE [schema].[table]``.
 - :func:`clear_table`             — ``TRUNCATE TABLE [schema].[table]``.
 - :func:`rename_table`            — ``EXEC sp_rename`` (Data-Warehouse-only).
+- :func:`transfer_table`          — ``ALTER SCHEMA ... TRANSFER OBJECT::...`` (Data-Warehouse-only).
 - :func:`recluster_table`         — transactional CTAS-swap to change (or remove) clustering.
 - :func:`get_table_health_metrics` — ``EXEC sp_get_table_health_metrics`` (SQL endpoint only).
 
@@ -47,6 +48,7 @@ from fabric_dw.models import (
     WarehouseKind,
 )
 from fabric_dw.services._helpers import (
+    _alter_schema_transfer,
     _assert_not_sql_endpoint,
     _format_ms_literal,
     build_time_travel_option,
@@ -82,6 +84,7 @@ __all__ = [
     "read_table",
     "recluster_table",
     "rename_table",
+    "transfer_table",
     "validate_identifier",
 ]
 
@@ -166,6 +169,13 @@ WHERE s.name = ? AND t.name = ?;
 # sp_rename: @objname = 'schema.oldtable', @newname = 'newtable', @objtype = 'OBJECT'
 # Names are bound as ? parameters (string args to the proc, not SQL identifiers).
 _SP_RENAME_SQL = "EXEC sp_rename ?, ?, 'OBJECT'"
+
+# Target schemas that are always invalid for ALTER SCHEMA TRANSFER (Microsoft
+# reserves these system schemas).  validate_identifier() accepts these strings
+# since they are well-formed identifiers, so this explicit check catches them
+# before any network I/O.  Compared case-insensitively (casefold) because
+# Fabric's default collation is case-insensitive for identifier matching.
+_RESERVED_TRANSFER_TARGET_SCHEMAS = frozenset({"sys", "information_schema"})
 
 # sp_get_table_health_metrics: single positional arg is the two-part name as a string
 # literal.  The name is built from validated/quoted identifiers so no raw user input
@@ -1280,6 +1290,79 @@ async def rename_table(
         return await _fetch_table(target, schema, new_name, mode=mode)
     except NotFoundError:
         msg = f"Table [{schema}].[{new_name}] not found after rename"
+        raise NotFoundError(msg) from None
+
+
+async def transfer_table(
+    target: SqlTarget,
+    qualified: str,
+    target_schema: str,
+    *,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
+    mode: CredentialMode = CredentialMode.DEFAULT,
+) -> Table:
+    """Move a table to another schema via ``ALTER SCHEMA ... TRANSFER OBJECT::...``.
+
+    Table transfer is Warehouse-only: Microsoft documents that transferring a
+    table between schemas via T-SQL is not supported on the Fabric SQL
+    Analytics Endpoint and can break the OneLake sync, so this mirrors
+    :func:`rename_table` and guards with
+    :func:`~fabric_dw.services._helpers._assert_not_sql_endpoint`.
+
+    .. warning::
+
+        Permissions granted directly on the table are dropped by the engine
+        when the schema changes.  Dependent views and stored procedures that
+        reference the table by its old schema-qualified name are **not**
+        automatically updated and may need refreshing after the transfer.
+
+    Args:
+        target: The warehouse to connect to.
+        qualified: The current fully-qualified name of the form ``schema.table``.
+            Parsed with :func:`~fabric_dw.identifiers.parse_qualified_name`.
+        target_schema: The schema to move the table into.  Must pass
+            :func:`validate_identifier`.  ``sys`` and ``information_schema``
+            are rejected up front as they are never valid transfer targets.
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
+            SQL Endpoint items are rejected with :class:`~fabric_dw.exceptions.ItemKindError`.
+        mode: The credential mode for Entra authentication.
+
+    Returns:
+        A :class:`~fabric_dw.models.Table` reflecting the moved table
+        (fetched via ``sys.tables`` from *target_schema* after the transfer).
+
+    Raises:
+        ItemKindError: If *kind* is :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
+        ValueError: If *qualified* cannot be parsed, if any identifier component
+            fails identifier validation, or if *target_schema* is ``sys`` or
+            ``information_schema``.
+        NotFoundError: If the transferred table cannot be found in
+            ``sys.tables`` under *target_schema* after the transfer.
+        PermissionDeniedError: If the driver reports a permission error.
+    """
+    _assert_not_sql_endpoint(kind)
+
+    schema, table_name = parse_qualified_name(qualified)
+    validate_identifier(schema)
+    validate_identifier(table_name)
+    validate_identifier(target_schema)
+
+    if target_schema.casefold() in _RESERVED_TRANSFER_TARGET_SCHEMAS:
+        msg = f"Target schema {target_schema!r} is reserved and cannot be a TRANSFER target"
+        raise ValueError(msg)
+
+    await _alter_schema_transfer(
+        target,
+        source_schema=schema,
+        object_name=table_name,
+        target_schema=target_schema,
+        mode=mode,
+    )
+
+    try:
+        return await _fetch_table(target, target_schema, table_name, mode=mode)
+    except NotFoundError:
+        msg = f"Table [{target_schema}].[{table_name}] not found after transfer"
         raise NotFoundError(msg) from None
 
 

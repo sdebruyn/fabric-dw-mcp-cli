@@ -4,7 +4,7 @@ title: Tables
 
 # Tables
 
-Manage SQL tables on Microsoft Fabric Data Warehouses and SQL Analytics Endpoints. Commands and tools cover listing, counting, reading, creating (including CTAS, empty DDL from schema inference, and zero-copy clone), deleting, clearing, renaming, and loading data via `COPY INTO` from local files or remote URLs.
+Manage SQL tables on Microsoft Fabric Data Warehouses and SQL Analytics Endpoints. Commands and tools cover listing, counting, reading, creating (including CTAS, empty DDL from schema inference, and zero-copy clone), deleting, clearing, renaming, transferring to another schema, and loading data via `COPY INTO` from local files or remote URLs.
 
 **Targets:** Data Warehouse / SQL Analytics Endpoint
 
@@ -606,6 +606,34 @@ fdw [-w WORKSPACE] tables rename [OPTIONS] [ITEM] QUALIFIED_NAME
 fdw -w MyWorkspace tables rename SalesWH dbo.orders_2025 --new-name orders_archive_2025
 ```
 
+### tables transfer
+
+**Targets:** Data Warehouse only
+
+Move a table to another schema via `ALTER SCHEMA ... TRANSFER OBJECT::...`. The command emits exactly `ALTER SCHEMA [target_schema] TRANSFER OBJECT::[schema].[table]`, with every identifier validated and bracket-quoted before being embedded in the DDL.
+
+**CAUTION:** Transferring a table on a SQL Analytics Endpoint is not supported and can break the OneLake sync, so this command is rejected there - use a Fabric Data Warehouse. Permissions granted directly on the table are dropped by the engine when the schema changes. Dependent views and stored procedures that reference the table by its old schema-qualified name are not automatically updated and may need refreshing after the transfer.
+
+Reference: [ALTER SCHEMA (Transact-SQL)](https://learn.microsoft.com/sql/t-sql/statements/alter-schema-transact-sql?view=fabric&WT.mc_id=MVP_310840)
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] tables transfer [OPTIONS] [ITEM] QUALIFIED_NAME
+```
+
+`QUALIFIED_NAME` is the current dot-separated `schema.table_name`.
+
+| Option | Description |
+| --- | --- |
+| `--target-schema TEXT` | **Required.** Schema to move the table into. |
+
+**Example**
+
+```shell
+fdw -w MyWorkspace tables transfer SalesWH dbo.orders_2025 --target-schema archive
+```
+
 ## MCP tools
 
 ### clear_table
@@ -917,6 +945,25 @@ Rename a SQL table via `sp_rename`. Only supported on Fabric Data Warehouses (SQ
 - `new_name` (`str`): new bare table name (no schema prefix), e.g. `sales_v2`.
 
 **Returns:** `Table`: the updated table record.
+
+### transfer_table
+
+**Targets:** Data Warehouse only
+
+Move a SQL table to another schema via `ALTER SCHEMA ... TRANSFER OBJECT::...`. Only supported on Fabric Data Warehouses: transferring a table between schemas via T-SQL is not supported on the Fabric SQL Analytics Endpoint and can break the OneLake sync, so SQL Analytics Endpoints are rejected with a `ToolError`.
+
+**CAUTION:** Permissions granted directly on the table are dropped by the engine when the schema changes. Dependent views and stored procedures that reference the table by its old schema-qualified name are **NOT** automatically updated and may need refreshing after the transfer.
+
+Reference: [ALTER SCHEMA (Transact-SQL)](https://learn.microsoft.com/sql/t-sql/statements/alter-schema-transact-sql?view=fabric&WT.mc_id=MVP_310840)
+
+**Parameters:**
+
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse name or GUID. SQL Analytics Endpoints are rejected.
+- `qualified_name` (`str`): current dot-separated qualified table name, e.g. `dbo.sales`.
+- `target_schema` (`str`): schema to move the table into, e.g. `archive`.
+
+**Returns:** `Table`: the moved table record, fetched from the new schema.
 
 ### set_cluster_columns
 

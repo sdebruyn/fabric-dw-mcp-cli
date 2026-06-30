@@ -3,18 +3,21 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta, timezone
+from unittest.mock import patch
 
 import pytest
 
 from fabric_dw.exceptions import ItemKindError
 from fabric_dw.models import WarehouseKind
 from fabric_dw.services._helpers import (
+    _alter_schema_transfer,
     _assert_not_sql_endpoint,
     build_time_travel_option,
     coerce_to_utc,
     compact,
     reject_non_select,
 )
+from tests.unit.services._helpers import _make_conn_for_ddl, _make_target
 
 # ---------------------------------------------------------------------------
 # coerce_to_utc
@@ -199,6 +202,71 @@ class TestAssertNotSqlEndpoint:
         assert settings_guard is _assert_not_sql_endpoint
         assert stats_guard is _assert_not_sql_endpoint
         assert tables_guard is _assert_not_sql_endpoint
+
+
+# ---------------------------------------------------------------------------
+# _alter_schema_transfer (shared by table/view/function/procedure transfer)
+# ---------------------------------------------------------------------------
+
+
+class TestAlterSchemaTransfer:
+    """_alter_schema_transfer builds and runs the ALTER SCHEMA TRANSFER DDL."""
+
+    async def test_emits_exact_ddl_shape(self) -> None:
+        target = _make_target()
+        conn = _make_conn_for_ddl()
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await _alter_schema_transfer(
+                target,
+                source_schema="dbo",
+                object_name="sales",
+                target_schema="archive",
+            )
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert call_sql == "ALTER SCHEMA [archive] TRANSFER OBJECT::[dbo].[sales]"
+
+    async def test_commits_after_execute(self) -> None:
+        target = _make_target()
+        conn = _make_conn_for_ddl()
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await _alter_schema_transfer(
+                target,
+                source_schema="dbo",
+                object_name="sales",
+                target_schema="archive",
+            )
+        conn.commit.assert_called_once()
+
+    async def test_rejects_invalid_source_schema(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await _alter_schema_transfer(
+                target,
+                source_schema="bad--schema",
+                object_name="sales",
+                target_schema="archive",
+            )
+
+    async def test_rejects_invalid_object_name(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await _alter_schema_transfer(
+                target,
+                source_schema="dbo",
+                object_name="bad;name",
+                target_schema="archive",
+            )
+
+    async def test_rejects_invalid_target_schema(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await _alter_schema_transfer(
+                target,
+                source_schema="dbo",
+                object_name="sales",
+                target_schema="bad]schema",
+            )
 
 
 # ---------------------------------------------------------------------------

@@ -27,6 +27,7 @@ import pytest
 from fabric_dw.exceptions import FabricError, NotFoundError
 from fabric_dw.models import Table
 from fabric_dw.services import columns as columns_svc
+from fabric_dw.services import schemas as schemas_svc
 from fabric_dw.services import tables
 from fabric_dw.sql import SqlTarget, run_query
 
@@ -282,6 +283,103 @@ async def test_rename_table_roundtrip(
             await tables.delete_table(sql_target, schema, old_name)
         with contextlib.suppress(Exception):
             await tables.delete_table(sql_target, schema, new_name)
+
+
+async def test_transfer_table_roundtrip(
+    warehouse_schema: tuple[SqlTarget, str],
+) -> None:
+    """Create a table, transfer it to a second schema, assert old gone / new present."""
+    sql_target, schema = warehouse_schema
+    table_name = "pytest_tables_transfer_dst"
+    select_body = "SELECT 42 AS answer"
+    target_schema_name = f"{schema}_target"
+
+    await schemas_svc.create_schema(sql_target, target_schema_name)
+    try:
+        created = await tables.create_table(sql_target, schema, table_name, select_body)
+        assert isinstance(created, Table)
+        assert created.schema_name == schema
+
+        moved = await tables.transfer_table(
+            sql_target, f"{schema}.{table_name}", target_schema_name
+        )
+        assert isinstance(moved, Table)
+        assert moved.name == table_name
+        assert moved.schema_name == target_schema_name
+        assert moved.qualified_name == f"{target_schema_name}.{table_name}"
+
+        all_tables = await tables.list_tables(sql_target)
+        in_target = {t.name for t in all_tables if t.schema_name == target_schema_name}
+        in_source = {t.name for t in all_tables if t.schema_name == schema}
+        assert table_name in in_target, f"{table_name!r} not found in {target_schema_name!r}"
+        assert table_name not in in_source, f"{table_name!r} still present in {schema!r}"
+
+    finally:
+        with contextlib.suppress(Exception):
+            await tables.delete_table(sql_target, schema, table_name)
+        with contextlib.suppress(Exception):
+            await tables.delete_table(sql_target, target_schema_name, table_name)
+        with contextlib.suppress(Exception):
+            await schemas_svc.delete_schema(sql_target, target_schema_name, cascade=True)
+
+
+async def test_transfer_table_missing_target_schema_raises(
+    warehouse_schema: tuple[SqlTarget, str],
+) -> None:
+    """transfer_table against a nonexistent target schema raises a FabricError.
+
+    GOTCHA (see the ``_NOT_FOUND_FRAGMENTS`` note in ``fabric_dw.sql_errors``,
+    intentionally NOT changed by this test): the engine's "cannot find the
+    object" message for a missing schema is not mapped to NotFoundError, so a
+    missing target schema surfaces as a generic FabricServerError instead.
+    This test documents that observed behaviour rather than asserting it is
+    desired -- a tighter _NOT_FOUND_FRAGMENTS match is a separate follow-up.
+    """
+    sql_target, schema = warehouse_schema
+    table_name = "pytest_tables_transfer_missing_schema"
+    select_body = "SELECT 1 AS id"
+
+    try:
+        await tables.create_table(sql_target, schema, table_name, select_body)
+        with pytest.raises(FabricError) as exc_info:
+            await tables.transfer_table(
+                sql_target, f"{schema}.{table_name}", "pytest_nonexistent_schema_zzz"
+            )
+        # Document what actually surfaces today: NOT a NotFoundError.
+        assert not isinstance(exc_info.value, NotFoundError)
+    finally:
+        with contextlib.suppress(Exception):
+            await tables.delete_table(sql_target, schema, table_name)
+
+
+async def test_transfer_table_name_collision_raises(
+    warehouse_schema: tuple[SqlTarget, str],
+) -> None:
+    """transfer_table raises when an object of the same name already exists in the target schema.
+
+    Documents the exception type the engine surfaces for a genuine name
+    collision in the target schema (as opposed to the missing-schema/missing-
+    object gotcha covered separately above).
+    """
+    sql_target, schema = warehouse_schema
+    table_name = "pytest_tables_transfer_collision"
+    target_schema_name = f"{schema}_collision_target"
+    select_body = "SELECT 1 AS id"
+
+    await schemas_svc.create_schema(sql_target, target_schema_name)
+    try:
+        await tables.create_table(sql_target, schema, table_name, select_body)
+        await tables.create_table(sql_target, target_schema_name, table_name, select_body)
+
+        with pytest.raises(FabricError):
+            await tables.transfer_table(sql_target, f"{schema}.{table_name}", target_schema_name)
+    finally:
+        with contextlib.suppress(Exception):
+            await tables.delete_table(sql_target, schema, table_name)
+        with contextlib.suppress(Exception):
+            await tables.delete_table(sql_target, target_schema_name, table_name)
+        with contextlib.suppress(Exception):
+            await schemas_svc.delete_schema(sql_target, target_schema_name, cascade=True)
 
 
 async def test_count_table_rows_returns_nonnegative_int(

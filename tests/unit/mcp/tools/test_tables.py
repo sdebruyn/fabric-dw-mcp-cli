@@ -1150,3 +1150,128 @@ async def test_get_table_health_metrics_warehouse_raises_tool_error(mock_ctx, ct
             "get_table_health_metrics",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.FactSales"},
         )
+
+
+# ---------------------------------------------------------------------------
+# transfer_table
+# ---------------------------------------------------------------------------
+
+
+async def test_transfer_table_happy_path(mock_ctx, ctx_patch) -> None:
+    """transfer_table resolves item, calls the service, and returns the moved Table dict."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    moved = _make_table(schema="archive", name="sales")
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+    mock_transfer = AsyncMock(return_value=moved)
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.tables.transfer_table", new=mock_transfer),
+        patch.dict(os.environ, {"FABRIC_MCP_WRITES": "true"}),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "transfer_table",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "qualified_name": "dbo.sales",
+                "target_schema": "archive",
+            },
+        )
+
+    mock_transfer.assert_called_once()
+    assert result["name"] == "sales"
+    assert result["schema_name"] == "archive"
+
+
+async def test_transfer_table_readonly_blocked(mock_ctx, ctx_patch) -> None:
+    """transfer_table raises ToolError when FABRIC_MCP_READONLY is set."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
+        pytest.raises(ToolError, match="read-only"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "transfer_table",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "qualified_name": "dbo.sales",
+                "target_schema": "archive",
+            },
+        )
+
+
+async def test_transfer_table_sql_endpoint_raises_tool_error(mock_ctx, ctx_patch) -> None:
+    """transfer_table raises ToolError when the item is a SQL Analytics Endpoint."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_sql_endpoint_entry())
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_WRITES": "true"}),
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "transfer_table",
+            {
+                "workspace": WS_NAME,
+                "item": "MySqlEndpoint",
+                "qualified_name": "dbo.sales",
+                "target_schema": "archive",
+            },
+        )
+
+    assert "read-only" in str(exc_info.value).lower()
+
+
+async def test_transfer_table_undotted_qualified_name_raises_tool_error(
+    mock_ctx,  # noqa: ARG001
+    ctx_patch,
+) -> None:
+    """transfer_table must raise ToolError immediately for an undotted qualified_name."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with (
+        ctx_patch,
+        pytest.raises(ToolError, match="qualified name"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "transfer_table",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "qualified_name": "nodot",
+                "target_schema": "archive",
+            },
+        )
+
+
+async def test_transfer_table_workspace_allowlist_blocks(ctx_patch) -> None:
+    """transfer_table raises ToolError when workspace is not in FABRIC_MCP_WORKSPACES."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
+        pytest.raises(ToolError, match="allowlist"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "transfer_table",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "qualified_name": "dbo.sales",
+                "target_schema": "archive",
+            },
+        )

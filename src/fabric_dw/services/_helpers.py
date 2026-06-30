@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from collections.abc import Callable, Coroutine, Mapping, Sequence
@@ -9,9 +10,12 @@ from datetime import UTC, datetime, timedelta
 from typing import Protocol, TypeVar
 from uuid import UUID
 
+from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import ItemKindError
+from fabric_dw.identifiers import quote_identifier, validate_identifier
 from fabric_dw.models import WarehouseKind
 from fabric_dw.services.capacities import ACTIVE_STATE
+from fabric_dw.sql import SqlTarget, run_query
 
 __all__ = [
     "SelectBodyError",
@@ -53,6 +57,77 @@ def _assert_not_sql_endpoint(kind: WarehouseKind) -> None:
     """
     if kind == WarehouseKind.SQL_ENDPOINT:
         raise ItemKindError(_SQL_ENDPOINT_READONLY_MSG)
+
+
+# ---------------------------------------------------------------------------
+# ALTER SCHEMA TRANSFER helper
+#
+# Shared by table/view/function/procedure "transfer to another schema"
+# operations.  Builds and runs a single parameterised DDL statement from
+# validated, bracket-quoted identifiers -- no SQL parsing is involved.
+# ---------------------------------------------------------------------------
+
+
+async def _alter_schema_transfer(
+    target: SqlTarget,
+    *,
+    source_schema: str,
+    object_name: str,
+    target_schema: str,
+    mode: CredentialMode = CredentialMode.DEFAULT,
+) -> None:
+    """Move an object to another schema via ``ALTER SCHEMA ... TRANSFER OBJECT::...``.
+
+    Emits exactly::
+
+        ALTER SCHEMA [target_schema] TRANSFER OBJECT::[source_schema].[object_name]
+
+    Fabric's T-SQL syntax only allows the ``OBJECT::`` entity class -- the
+    canonical Microsoft example is ``ALTER SCHEMA Sales TRANSFER
+    OBJECT::dbo.Region;`` -- so the prefix is always emitted explicitly.  All
+    three identifiers are validated via :func:`~fabric_dw.identifiers.validate_identifier`
+    and bracket-quoted via :func:`~fabric_dw.identifiers.quote_identifier`
+    before being embedded in the DDL string.  This is a parameterised DDL
+    statement built from validated identifiers, not SQL parsing or rewriting.
+
+    This helper does **not** re-fetch the moved object -- callers re-fetch it
+    from *target_schema* using their own object-specific lookup (e.g.
+    ``_fetch_table``).
+
+    Args:
+        target: The warehouse or SQL Analytics Endpoint to connect to.
+        source_schema: The object's current schema.  Must pass
+            :func:`validate_identifier`.
+        object_name: The (unqualified) object name.  Must pass
+            :func:`validate_identifier`.
+        target_schema: The schema to move the object into.  Must pass
+            :func:`validate_identifier`.
+        mode: The credential mode for Entra authentication.
+
+    Raises:
+        ValueError: If *source_schema*, *object_name*, or *target_schema*
+            fails identifier validation.
+        PermissionDeniedError: If the driver reports an ALTER SCHEMA permission error.
+        FabricError: If the engine reports an error executing the DDL -- e.g.
+            a missing source object or missing target schema.  Such errors may
+            surface as a generic :class:`~fabric_dw.exceptions.FabricServerError`
+            rather than :class:`~fabric_dw.exceptions.NotFoundError`, because
+            the engine's "cannot find the object" message is not in
+            ``_NOT_FOUND_FRAGMENTS`` (:mod:`fabric_dw.sql_errors`).
+    """
+    validate_identifier(source_schema)
+    validate_identifier(object_name)
+    validate_identifier(target_schema)
+
+    ddl = (
+        f"ALTER SCHEMA {quote_identifier(target_schema)} "
+        f"TRANSFER OBJECT::{quote_identifier(source_schema)}.{quote_identifier(object_name)}"
+    )
+
+    def _run_ddl() -> None:
+        run_query(target, ddl, mode=mode, commit=True, fetch="none")
+
+    await asyncio.to_thread(_run_ddl)
 
 
 # ---------------------------------------------------------------------------
