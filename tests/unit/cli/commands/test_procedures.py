@@ -643,3 +643,237 @@ class TestProceduresDrop:
                 cli, ["--yes", "-w", WS_GUID, "procedures", "drop", WH_GUID, "dbo.usp_load"]
             )
         assert result.exit_code != 0
+
+
+# ===========================================================================
+# procedures transfer
+# ===========================================================================
+
+
+class TestProceduresTransfer:
+    def test_transfer_with_yes_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        moved = StoredProcedure(
+            schema_name="archive",
+            name="usp_load",
+            qualified_name="archive.usp_load",
+            definition=None,
+            created=_NOW,
+            modified=_NOW,
+        )
+        with (
+            patch(
+                "fabric_dw.cli.commands.procedures.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.procedures.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.procedures.transfer_procedure",
+                new=AsyncMock(return_value=moved),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "--yes",
+                    "-w",
+                    WS_GUID,
+                    "procedures",
+                    "transfer",
+                    WH_GUID,
+                    "dbo.usp_load",
+                    "--target-schema",
+                    "archive",
+                ],
+            )
+        assert result.exit_code == 0
+
+    def test_transfer_declined_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        """Declining transfer is a clean no-op (exit 0)."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.procedures.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.procedures.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "procedures",
+                    "transfer",
+                    WH_GUID,
+                    "dbo.usp_load",
+                    "--target-schema",
+                    "archive",
+                ],
+                input="n\n",
+            )
+        assert result.exit_code == 0
+        assert "Aborted." in result.output
+
+    def test_transfer_forwards_args(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_transfer = AsyncMock(
+            return_value=StoredProcedure(
+                schema_name="archive",
+                name="usp_load",
+                qualified_name="archive.usp_load",
+                definition=None,
+                created=_NOW,
+                modified=_NOW,
+            )
+        )
+        with (
+            patch(
+                "fabric_dw.cli.commands.procedures.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.procedures.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch("fabric_dw.services.procedures.transfer_procedure", new=mock_transfer),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "--yes",
+                    "-w",
+                    WS_GUID,
+                    "procedures",
+                    "transfer",
+                    WH_GUID,
+                    "dbo.usp_load",
+                    "--target-schema",
+                    "archive",
+                ],
+            )
+        assert result.exit_code == 0
+        mock_transfer.assert_awaited_once()
+        args, _kwargs = mock_transfer.call_args
+        assert args[1] == "dbo.usp_load"
+        assert args[2] == "archive"
+
+    def test_transfer_works_on_sql_endpoint(self, runner: CliRunner, cache_env: Path) -> None:
+        """transfer on a SQL Analytics Endpoint must succeed — no DW-only guard."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        moved = StoredProcedure(
+            schema_name="archive",
+            name="usp_load",
+            qualified_name="archive.usp_load",
+            definition=None,
+            created=_NOW,
+            modified=_NOW,
+        )
+        with (
+            patch(
+                "fabric_dw.cli.commands.procedures.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.procedures.build_sql_target",
+                new=AsyncMock(
+                    return_value=(
+                        _make_sql_target(),
+                        _make_item_entry(kind=WarehouseKind.SQL_ENDPOINT),
+                    )
+                ),
+            ),
+            patch(
+                "fabric_dw.services.procedures.transfer_procedure",
+                new=AsyncMock(return_value=moved),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "--yes",
+                    "-w",
+                    WS_GUID,
+                    "procedures",
+                    "transfer",
+                    WH_GUID,
+                    "dbo.usp_load",
+                    "--target-schema",
+                    "archive",
+                ],
+            )
+        assert result.exit_code == 0
+
+    def test_transfer_bad_qualified_name_exits_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        result = runner.invoke(
+            cli,
+            [
+                "-w",
+                WS_GUID,
+                "procedures",
+                "transfer",
+                WH_GUID,
+                "no_dot",
+                "--target-schema",
+                "archive",
+            ],
+        )
+        assert result.exit_code != 0
+
+    def test_transfer_missing_target_schema_exits_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        result = runner.invoke(
+            cli,
+            ["-w", WS_GUID, "procedures", "transfer", WH_GUID, "dbo.usp_load"],
+        )
+        assert result.exit_code != 0
+
+    def test_transfer_permission_denied_returns_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.procedures.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.procedures.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.procedures.transfer_procedure",
+                new=AsyncMock(side_effect=PermissionDeniedError("no permission")),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "--yes",
+                    "-w",
+                    WS_GUID,
+                    "procedures",
+                    "transfer",
+                    WH_GUID,
+                    "dbo.usp_load",
+                    "--target-schema",
+                    "archive",
+                ],
+            )
+        assert result.exit_code != 0

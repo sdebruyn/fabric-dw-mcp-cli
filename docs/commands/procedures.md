@@ -132,6 +132,42 @@ fdw -w MyWorkspace procedures update SalesWH dbo.usp_archive_orders \
   --from-file ./procs/usp_archive_orders_v2.sql
 ```
 
+### procedures transfer
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Move a stored procedure to another schema via `ALTER SCHEMA ... TRANSFER OBJECT::...`. The command emits exactly `ALTER SCHEMA [target_schema] TRANSFER OBJECT::[schema].[proc]`, with every identifier validated and bracket-quoted before being embedded in the DDL.
+
+!!! warning "Definition text is not rewritten"
+    `ALTER SCHEMA ... TRANSFER` moves the procedure, but it does **not** rewrite
+    the schema name inside the object's stored definition
+    (`sys.sql_modules.definition`, `OBJECT_DEFINITION()`). After a transfer,
+    `get_procedure` may still show the *old* schema name in the `CREATE ... AS`
+    header, even though the procedure now lives in the new schema. This tool does
+    not rewrite the definition text: doing so would require parsing and
+    regenerating SQL, which this project deliberately avoids. See
+    [ALTER SCHEMA (Transact-SQL)](https://learn.microsoft.com/sql/t-sql/statements/alter-schema-transact-sql?view=fabric&WT.mc_id=MVP_310840#remarks).
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] procedures transfer [OPTIONS] [ITEM] QUALIFIED_NAME
+```
+
+`QUALIFIED_NAME` is the current dot-separated `schema.proc_name`.
+
+| Option | Description |
+| --- | --- |
+| `--target-schema TEXT` | **Required.** Schema to move the procedure into. |
+
+You will be asked to confirm unless `--yes` is passed.
+
+**Example**
+
+```shell
+fdw -w MyWorkspace procedures transfer SalesWH dbo.usp_archive_orders --target-schema archive
+```
+
 ## MCP tools
 
 ### create_procedure
@@ -194,6 +230,31 @@ List stored procedures on a warehouse or SQL Analytics Endpoint, optionally filt
 - `schema` (`str | null`, optional): when provided, only procedures in this schema are returned.
 
 **Returns:** `list[StoredProcedure]`: array of procedure objects, each with `schema_name`, `name`, `qualified_name`, `created`, and `modified`.
+
+### transfer_procedure
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Move a stored procedure to another schema via `ALTER SCHEMA ... TRANSFER OBJECT::...`. Supported on both Fabric Data Warehouses and SQL Analytics Endpoints; unlike `transfer_table`, no endpoint guard is applied here.
+
+!!! warning "Definition text is not rewritten"
+    `ALTER SCHEMA ... TRANSFER` moves the procedure, but it does **not** rewrite
+    the schema name inside the object's stored definition
+    (`sys.sql_modules.definition`, `OBJECT_DEFINITION()`). After a transfer,
+    `get_procedure` may still show the *old* schema name in the `CREATE ... AS`
+    header, even though the procedure now lives in the new schema. This tool does
+    not rewrite the definition text: doing so would require parsing and
+    regenerating SQL, which this project deliberately avoids. See
+    [ALTER SCHEMA (Transact-SQL)](https://learn.microsoft.com/sql/t-sql/statements/alter-schema-transact-sql?view=fabric&WT.mc_id=MVP_310840#remarks).
+
+**Parameters:**
+
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`): current dot-separated qualified procedure name, e.g. `dbo.usp_load`.
+- `target_schema` (`str`): schema to move the procedure into, e.g. `archive`.
+
+**Returns:** `StoredProcedure`: the moved procedure record, fetched from the new schema.
 
 ### update_procedure
 

@@ -736,6 +736,7 @@ _ALL_MUTATING_TOOLS: list[str] = [
     "create_procedure",
     "update_procedure",
     "drop_procedure",
+    "transfer_procedure",
     # snapshots.py
     "create_snapshot",
     "rename_snapshot",

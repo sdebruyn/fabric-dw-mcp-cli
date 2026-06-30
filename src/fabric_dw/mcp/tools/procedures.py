@@ -188,3 +188,49 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
         return {"dropped": True}
+
+    @mutating_tool(mcp, "transfer_procedure")
+    async def transfer_procedure(
+        workspace: str, item: str, qualified_name: str, target_schema: str
+    ) -> dict[str, Any]:
+        """Move a stored procedure to another schema via ``ALTER SCHEMA ... TRANSFER OBJECT::...``.
+
+        Stored procedures are supported on both Fabric Data Warehouses and
+        SQL Analytics Endpoints; unlike ``transfer_table``, no endpoint guard
+        is applied here.
+
+        CAUTION: ``ALTER SCHEMA ... TRANSFER`` moves the procedure but does
+        NOT rewrite the schema name inside its stored definition. After a
+        transfer, ``get_procedure`` may still show the OLD schema name in the
+        ``CREATE ... AS`` header even though the procedure now lives in the
+        new schema.
+
+        Args:
+            workspace: Workspace name or GUID.
+            item: Warehouse or SQL endpoint name or GUID.
+            qualified_name: Current dot-separated qualified procedure name,
+                e.g. ``dbo.usp_load``.
+            target_schema: Schema to move the procedure into, e.g. ``archive``.
+        """
+        parse_qualified_name(qualified_name, kind="procedure")
+        ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
+        try:
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
+            _log.debug(
+                "transfer_procedure ws=%s item=%s qualified=%r target_schema=%r",
+                ws_id,
+                entry.id,
+                qualified_name,
+                target_schema,
+            )
+            target = make_sql_target(ws_id, entry, item)
+            result = await procedures_svc.transfer_procedure(
+                target, qualified_name, target_schema, mode=ctx.auth_mode
+            )
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        return result.model_dump(mode="json")

@@ -26,6 +26,7 @@ import pytest
 from fabric_dw.exceptions import NotFoundError
 from fabric_dw.models import StoredProcedure
 from fabric_dw.services import procedures
+from fabric_dw.services import schemas as schemas_svc
 from fabric_dw.sql import SqlTarget
 
 pytestmark = pytest.mark.integration
@@ -162,6 +163,55 @@ async def test_drop_procedure_removes_procedure(
     # get_procedure must raise NotFoundError
     with pytest.raises(NotFoundError):
         await procedures.get_procedure(sql_target, schema, proc_name)
+
+
+async def test_transfer_procedure_roundtrip(
+    mutable_schema_target: tuple[SqlTarget, str],
+) -> None:
+    """Create a procedure, transfer it to a second schema, assert old gone / new present.
+
+    Runs on both the Data Warehouse and the SQL Analytics Endpoint (no
+    endpoint guard on procedure transfer, unlike tables).
+    """
+    sql_target, schema = mutable_schema_target
+    proc_name = "pytest_procs_transfer_dst"
+    body = "BEGIN SELECT 42 AS answer END"
+    target_schema_name = f"{schema}_target"
+
+    await schemas_svc.create_schema(sql_target, target_schema_name)
+    try:
+        created = await procedures.create_procedure(sql_target, schema, proc_name, body)
+        assert isinstance(created, StoredProcedure)
+        assert created.schema_name == schema
+
+        moved = await procedures.transfer_procedure(
+            sql_target, f"{schema}.{proc_name}", target_schema_name
+        )
+        assert isinstance(moved, StoredProcedure)
+        assert moved.name == proc_name
+        assert moved.schema_name == target_schema_name
+        assert moved.qualified_name == f"{target_schema_name}.{proc_name}"
+
+        all_procs = await procedures.list_procedures(sql_target)
+        in_target = {p.name for p in all_procs if p.schema_name == target_schema_name}
+        in_source = {p.name for p in all_procs if p.schema_name == schema}
+        assert proc_name in in_target, f"{proc_name!r} not found in {target_schema_name!r}"
+        assert proc_name not in in_source, f"{proc_name!r} still present in {schema!r}"
+
+        # Stale-definition caveat (documented, not a bug): ALTER SCHEMA TRANSFER
+        # moves the procedure but does not rewrite the schema name embedded in
+        # the stored CREATE ... AS header, so `moved.definition` may still read
+        # like it belongs to the old schema even though the procedure now lives
+        # in `target_schema_name`. We don't assert on the header text here -- this
+        # comment just documents the known, by-design discrepancy for readers.
+
+    finally:
+        with contextlib.suppress(Exception):
+            await procedures.drop_procedure(sql_target, schema, proc_name)
+        with contextlib.suppress(Exception):
+            await procedures.drop_procedure(sql_target, target_schema_name, proc_name)
+        with contextlib.suppress(Exception):
+            await schemas_svc.delete_schema(sql_target, target_schema_name, cascade=True)
 
 
 async def test_create_procedure_full_roundtrip(

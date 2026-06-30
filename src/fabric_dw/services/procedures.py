@@ -8,12 +8,15 @@ Public API
 - :func:`create_procedure`    — issue CREATE PROCEDURE … AS <body>.
 - :func:`update_procedure`    — issue CREATE OR ALTER PROCEDURE … AS <body>.
 - :func:`drop_procedure`      — issue DROP PROCEDURE.
+- :func:`transfer_procedure`  — ``ALTER SCHEMA ... TRANSFER OBJECT::...``.
 
 Note: Stored procedures are supported on **both** Fabric Data Warehouses and
 SQL Analytics Endpoints — no endpoint guard is applied here.  See Microsoft
 documentation: DROP PROCEDURE and ALTER PROCEDURE both list
 "SQL analytics endpoint in Microsoft Fabric" and "Warehouse in Microsoft Fabric"
-in their "Applies to" lists.
+in their "Applies to" lists.  This also applies to :func:`transfer_procedure`,
+which is not subject to the table-only OneLake-sync restriction documented on
+:func:`~fabric_dw.services.tables.transfer_table`.
 """
 
 from __future__ import annotations
@@ -24,8 +27,9 @@ from typing import cast
 
 from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import NotFoundError
-from fabric_dw.identifiers import quote_identifier, validate_identifier
+from fabric_dw.identifiers import parse_qualified_name, quote_identifier, validate_identifier
 from fabric_dw.models import StoredProcedure
+from fabric_dw.services._helpers import _alter_schema_transfer
 from fabric_dw.sql import SqlTarget, run_query
 
 __all__ = [
@@ -33,6 +37,7 @@ __all__ = [
     "drop_procedure",
     "get_procedure",
     "list_procedures",
+    "transfer_procedure",
     "update_procedure",
     "validate_identifier",
 ]
@@ -298,3 +303,86 @@ async def drop_procedure(
         run_query(target, ddl, mode=mode, commit=True, fetch="none")
 
     await asyncio.to_thread(_run)
+
+
+async def transfer_procedure(
+    target: SqlTarget,
+    qualified: str,
+    target_schema: str,
+    *,
+    mode: CredentialMode = CredentialMode.DEFAULT,
+) -> StoredProcedure:
+    """Move a stored procedure to another schema via ``ALTER SCHEMA ... TRANSFER OBJECT::...``.
+
+    Supported on both Fabric Data Warehouses and SQL Analytics Endpoints —
+    unlike :func:`~fabric_dw.services.tables.transfer_table`, procedure
+    transfer is not subject to the table-only OneLake-sync restriction, so no
+    :func:`~fabric_dw.services._helpers._assert_not_sql_endpoint` guard is
+    applied here.
+
+    .. warning::
+
+        ``OBJECT::[schema].[name]`` matches *any* schema-scoped object with
+        that name, not only stored procedures.  If a table, view, or function
+        happens to share the qualified name, the engine transfers that
+        object instead.  When the post-transfer re-fetch then finds no
+        procedure named *procedure_name* in *target_schema*,
+        :class:`~fabric_dw.exceptions.NotFoundError` is raised with a message
+        that calls this out explicitly.
+
+    .. warning::
+
+        ``ALTER SCHEMA ... TRANSFER`` moves the procedure but does **not**
+        rewrite the schema name inside its stored definition
+        (``sys.sql_modules.definition``).  After a transfer,
+        :func:`get_procedure` may still show the *old* schema name in the
+        ``CREATE ... AS`` header even though the procedure now lives in the
+        new schema.  This is not rewritten here -- doing so would require
+        parsing and regenerating SQL, which this project deliberately avoids.
+
+    Args:
+        target: The warehouse or SQL Analytics Endpoint to connect to.
+        qualified: The current fully-qualified name of the form ``schema.proc``.
+            Parsed with :func:`~fabric_dw.identifiers.parse_qualified_name`.
+        target_schema: The schema to move the procedure into.  Must pass
+            :func:`validate_identifier`.  System schemas (``sys``,
+            ``INFORMATION_SCHEMA``, ``guest``, fixed ``db_*`` role schemas)
+            are rejected by
+            :func:`~fabric_dw.services._helpers._alter_schema_transfer`.
+        mode: The credential mode for Entra authentication.
+
+    Returns:
+        The moved :class:`~fabric_dw.models.StoredProcedure` (fetched via
+        :func:`get_procedure` from *target_schema* after the transfer).
+
+    Raises:
+        ValueError: If *qualified* cannot be parsed, if any identifier component
+            fails identifier validation, or if *target_schema* is a system schema.
+        NotFoundError: If no procedure named *procedure_name* is found in
+            *target_schema* after the transfer -- see the warning above about
+            non-procedure objects.
+        PermissionDeniedError: If the driver reports a permission error.
+    """
+    schema, procedure_name = parse_qualified_name(qualified)
+    validate_identifier(schema)
+    validate_identifier(procedure_name)
+    validate_identifier(target_schema)
+
+    await _alter_schema_transfer(
+        target,
+        source_schema=schema,
+        object_name=procedure_name,
+        target_schema=target_schema,
+        mode=mode,
+    )
+
+    try:
+        return await get_procedure(target, target_schema, procedure_name, mode=mode)
+    except NotFoundError:
+        msg = (
+            f"No procedure named [{target_schema}].[{procedure_name}] was found after "
+            "the transfer. ALTER SCHEMA TRANSFER moves any schema-scoped "
+            "object with that name, not only procedures -- if a table, view, "
+            "or function shared this name, check whether it was moved instead."
+        )
+        raise NotFoundError(msg) from None

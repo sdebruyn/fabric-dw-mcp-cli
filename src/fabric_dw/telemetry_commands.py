@@ -173,6 +173,7 @@ DOMAIN_MAP: dict[str, str] = {
     "create_procedure": "procedures",
     "update_procedure": "procedures",
     "drop_procedure": "procedures",
+    "transfer_procedure": "procedures",
     # Functions
     "list_functions": "functions",
     "get_function": "functions",

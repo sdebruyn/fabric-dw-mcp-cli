@@ -173,3 +173,42 @@ async def drop_cmd(
                 click.echo(f"Procedure [{schema}].[{proc_name}] dropped.")
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
+
+
+@procedures_group.command("transfer")
+@click.argument("item", required=False, default=None)
+@click.argument("qualified_name")
+@click.option("--target-schema", required=True, help="Schema to move the procedure into.")
+@click.pass_obj
+@coro
+async def transfer_cmd(
+    ctx: CliContext,
+    item: str | None,
+    qualified_name: str,
+    target_schema: str,
+) -> None:
+    """Move QUALIFIED_NAME (schema.proc) on ITEM to --target-schema.
+
+    Stored procedures are supported on both Fabric Data Warehouses and SQL
+    Analytics Endpoints. You will be asked to confirm unless --yes is passed.
+    """
+    ws = resolve_workspace(ctx)
+    wh = resolve_warehouse_arg(ctx, item)
+    parse_qualified_name(qualified_name, kind="procedure")
+    try:
+        async with build_http_client(ctx) as http:
+            target, entry = await build_sql_target(http, ws, wh)
+            confirmed = confirm(
+                f"Transfer procedure {qualified_name!r} to schema {target_schema!r} on"
+                f" {entry.display_name!r}?",
+                yes=ctx.yes,
+            )
+            if not confirmed:
+                click.echo("Aborted.")
+                return
+            p = await _procs_svc.transfer_procedure(
+                target, qualified_name, target_schema, mode=ctx.auth
+            )
+            render(p.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
+    except (ValueError, FabricError) as exc:
+        raise click.ClickException(str(exc)) from exc
