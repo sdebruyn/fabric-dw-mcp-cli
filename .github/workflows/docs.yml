@@ -214,10 +214,10 @@ jobs:
 
           if [ -n "$COMMENT_ID" ]; then
             gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" \
-              -f body=@/tmp/preview-comment.md
+              -F body=@/tmp/preview-comment.md
           else
             gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
-              -f body=@/tmp/preview-comment.md
+              -F body=@/tmp/preview-comment.md
           fi
 
       - name: Update job summary with real preview URL
