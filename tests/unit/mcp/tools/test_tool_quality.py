@@ -713,6 +713,7 @@ _ALL_MUTATING_TOOLS: list[str] = [
     "update_view",
     "drop_view",
     "rename_view",
+    "transfer_view",
     # warehouses.py
     "create_warehouse",
     "rename_warehouse",

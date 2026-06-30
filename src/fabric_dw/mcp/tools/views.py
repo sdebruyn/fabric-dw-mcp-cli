@@ -359,3 +359,51 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
         return result.model_dump(mode="json")
+
+    @mutating_tool(mcp, "transfer_view")
+    async def transfer_view(
+        workspace: str, item: str, qualified_name: str, target_schema: str
+    ) -> dict[str, Any]:
+        """Move a SQL view to another schema via ``ALTER SCHEMA ... TRANSFER OBJECT::...``.
+
+        Works on both Data Warehouses and SQL Analytics Endpoints — no DW-only
+        guard is applied.
+
+        CAUTION: ``ALTER SCHEMA ... TRANSFER`` moves the view but does **not**
+        rewrite the schema name inside the view's stored definition
+        (``sys.sql_modules.definition``, ``OBJECT_DEFINITION()``). After a
+        transfer, the returned (and any subsequent ``get_view``) ``definition``
+        may still show the *old* schema name in the ``CREATE ... AS`` header,
+        even though the view now lives in the new schema. This tool does not
+        rewrite the definition text — doing so would require parsing and
+        regenerating SQL, which this project deliberately avoids.
+
+        Args:
+            workspace: Workspace name or GUID.
+            item: Warehouse or SQL endpoint name or GUID.
+            qualified_name: Current dot-separated qualified view name,
+                e.g. ``dbo.vw_sales``.
+            target_schema: Schema to move the view into, e.g. ``archive``.
+        """
+        parse_qualified_name(qualified_name, kind="view")
+        ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
+        try:
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
+            _log.debug(
+                "transfer_view ws=%s item=%s qualified=%r target_schema=%r",
+                ws_id,
+                entry.id,
+                qualified_name,
+                target_schema,
+            )
+            target = make_sql_target(ws_id, entry, item)
+            result = await views_svc.transfer_view(
+                target, qualified_name, target_schema, mode=ctx.auth_mode
+            )
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        return result.model_dump(mode="json")

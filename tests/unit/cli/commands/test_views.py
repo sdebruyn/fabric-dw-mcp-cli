@@ -1669,6 +1669,188 @@ class TestViewsRename:
 
 
 # ===========================================================================
+# views transfer
+# ===========================================================================
+
+
+class TestViewsTransfer:
+    def _make_moved_view(self) -> View:
+        return View(
+            schema_name="archive",
+            name="vw_sales",
+            qualified_name="archive.vw_sales",
+            definition=None,
+            created=_NOW,
+            modified=_NOW,
+        )
+
+    def test_transfer_with_yes_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_transfer = AsyncMock(return_value=self._make_moved_view())
+        with (
+            patch(
+                "fabric_dw.cli.commands.views.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.views.transfer_view",
+                new=mock_transfer,
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "--yes",
+                    "--json",
+                    "views",
+                    "transfer",
+                    WH_GUID,
+                    "dbo.vw_sales",
+                    "--target-schema",
+                    "archive",
+                ],
+            )
+        assert result.exit_code == 0
+        mock_transfer.assert_awaited_once()
+        args, _kwargs = mock_transfer.call_args
+        # service is called positionally: target, qualified_name, target_schema
+        assert args[1] == "dbo.vw_sales"
+        assert args[2] == "archive"
+        parsed = json.loads(result.output)
+        assert parsed["name"] == "vw_sales"
+        assert parsed["schema_name"] == "archive"
+
+    def test_transfer_declined_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        """Declining transfer is a clean no-op (exit 0)."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.views.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "views",
+                    "transfer",
+                    WH_GUID,
+                    "dbo.vw_sales",
+                    "--target-schema",
+                    "archive",
+                ],
+                input="n\n",
+            )
+        assert result.exit_code == 0
+        assert "Aborted." in result.output
+
+    def test_transfer_missing_target_schema_fails(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        result = runner.invoke(cli, ["-w", WS_GUID, "views", "transfer", WH_GUID, "dbo.vw_sales"])
+        assert result.exit_code != 0
+
+    def test_transfer_bad_qualified_name_exits_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        result = runner.invoke(
+            cli,
+            ["-w", WS_GUID, "views", "transfer", WH_GUID, "nodot", "--target-schema", "archive"],
+        )
+        assert result.exit_code != 0
+
+    def test_transfer_reserved_target_schema_returns_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.views.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.views.transfer_view",
+                new=AsyncMock(
+                    side_effect=ValueError(
+                        "Target schema 'sys' is a reserved system schema and cannot be "
+                        "an ALTER SCHEMA TRANSFER target"
+                    )
+                ),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "--yes",
+                    "views",
+                    "transfer",
+                    WH_GUID,
+                    "dbo.vw_sales",
+                    "--target-schema",
+                    "sys",
+                ],
+            )
+        assert result.exit_code != 0
+        assert "reserved system schema" in result.output
+
+    def test_transfer_permission_denied_returns_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.views.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.views.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.views.transfer_view",
+                new=AsyncMock(side_effect=PermissionDeniedError("no permission")),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "--yes",
+                    "views",
+                    "transfer",
+                    WH_GUID,
+                    "dbo.vw_sales",
+                    "--target-schema",
+                    "archive",
+                ],
+            )
+        assert result.exit_code != 0
+
+
+# ===========================================================================
 # views columns
 # ===========================================================================
 

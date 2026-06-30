@@ -1384,6 +1384,135 @@ class TestRenameView:
 
 
 # ===========================================================================
+# transfer_view
+# ===========================================================================
+
+
+class TestTransferView:
+    async def test_emits_alter_schema_transfer(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        moved_row = ("archive", "vw_sales", _NOW, _LATER, "SELECT id, amount FROM dbo.sales")
+        fetch_conn = _make_conn([moved_row], _GET_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await views.transfer_view(target, "dbo.vw_sales", "archive")
+        cursor = ddl_conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert call_sql == "ALTER SCHEMA [archive] TRANSFER OBJECT::[dbo].[vw_sales]"
+
+    async def test_returns_view_from_target_schema(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        moved_row = ("archive", "vw_sales", _NOW, _LATER, "SELECT id, amount FROM dbo.sales")
+        fetch_conn = _make_conn([moved_row], _GET_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            result = await views.transfer_view(target, "dbo.vw_sales", "archive")
+        assert isinstance(result, View)
+        assert result.schema_name == "archive"
+        assert result.name == "vw_sales"
+        assert result.qualified_name == "archive.vw_sales"
+
+    async def test_commits_after_execute(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        moved_row = ("archive", "vw_sales", _NOW, _LATER, "SELECT id, amount FROM dbo.sales")
+        fetch_conn = _make_conn([moved_row], _GET_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await views.transfer_view(target, "dbo.vw_sales", "archive")
+        ddl_conn.commit.assert_called_once()
+
+    async def test_does_not_reject_sql_endpoint_target(self) -> None:
+        """transfer_view must NOT raise for a SQL-endpoint target (no DW-only guard)."""
+        from fabric_dw.models import WarehouseKind  # noqa: PLC0415
+
+        target = MagicMock()
+        target.kind = WarehouseKind.SQL_ENDPOINT
+
+        ddl_conn = _make_conn_for_ddl()
+        moved_row = ("archive", "vw_sales", _NOW, _LATER, "SELECT id, amount FROM dbo.sales")
+        fetch_conn = _make_conn([moved_row], _GET_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            result = await views.transfer_view(target, "dbo.vw_sales", "archive")
+
+        assert result.schema_name == "archive"
+
+    async def test_rejects_undotted_qualified_name(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="qualified"):
+            await views.transfer_view(target, "nodot", "archive")
+
+    async def test_rejects_invalid_schema_in_qualified_name(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await views.transfer_view(target, "bad--schema.vw_sales", "archive")
+
+    async def test_rejects_invalid_view_in_qualified_name(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await views.transfer_view(target, "dbo.bad--view", "archive")
+
+    async def test_rejects_invalid_target_schema(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await views.transfer_view(target, "dbo.vw_sales", "bad--schema")
+
+    @pytest.mark.parametrize(
+        "reserved", ["sys", "information_schema", "SYS", "Information_Schema", "guest", "db_owner"]
+    )
+    async def test_rejects_reserved_target_schema(self, reserved: str) -> None:
+        """transfer_view propagates the system-schema rejection from the shared helper.
+
+        The check itself (and its full enumeration of system schemas) is
+        exercised exhaustively in TestAlterSchemaTransfer; this is a thin
+        pass-through test confirming transfer_view does not bypass it.
+        """
+        target = _make_target()
+        with pytest.raises(ValueError, match="reserved system schema"):
+            await views.transfer_view(target, "dbo.vw_sales", reserved)
+
+    async def test_raises_not_found_when_fetch_returns_empty(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([], _GET_COLS)
+        with (
+            patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]),
+            pytest.raises(NotFoundError, match="No view named"),
+        ):
+            await views.transfer_view(target, "dbo.vw_sales", "archive")
+
+    async def test_not_found_message_warns_about_non_view_objects(self) -> None:
+        """The post-transfer NotFoundError must call out that a same-named
+        non-view object (table/function/procedure) may have been moved
+        instead, since OBJECT::[schema].[name] matches any schema-scoped
+        object, not only views.
+        """
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([], _GET_COLS)
+        with (
+            patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]),
+            pytest.raises(NotFoundError, match="not only views"),
+        ):
+            await views.transfer_view(target, "dbo.vw_sales", "archive")
+
+    async def test_transfer_view_returns_raw_definition(self) -> None:
+        """transfer_view returns the raw Fabric definition without header-patching.
+
+        Documents the stale-definition caveat: the fetched View's definition
+        is whatever sys.sql_modules reports verbatim, which may still
+        reference the old schema name after a transfer.
+        """
+        raw_def = "CREATE VIEW [dbo].[vw_sales] AS SELECT id, amount FROM dbo.sales"
+        moved_row = ("archive", "vw_sales", _NOW, _LATER, raw_def)
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([moved_row], _GET_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            result = await views.transfer_view(target, "dbo.vw_sales", "archive")
+        assert result.definition == raw_def
+
+
+# ===========================================================================
 # read_view — Row normalisation (#718)
 # ===========================================================================
 # _FakeRow is imported from tests.unit.services._helpers (shared definition).
