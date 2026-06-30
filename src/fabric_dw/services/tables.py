@@ -48,9 +48,9 @@ from fabric_dw.models import (
     WarehouseKind,
 )
 from fabric_dw.services._helpers import (
-    _alter_schema_transfer,
     _assert_not_sql_endpoint,
     _format_ms_literal,
+    _transfer_object,
     build_time_travel_option,
     coerce_to_utc,
     reject_non_select,
@@ -1348,28 +1348,16 @@ async def transfer_table(
     _assert_not_sql_endpoint(kind)
 
     schema, table_name = parse_qualified_name(qualified)
-    validate_identifier(schema)
-    validate_identifier(table_name)
-    validate_identifier(target_schema)
 
-    await _alter_schema_transfer(
+    return await _transfer_object(
         target,
         source_schema=schema,
         object_name=table_name,
         target_schema=target_schema,
+        object_label="table",
+        fetch=lambda: _fetch_table(target, target_schema, table_name, mode=mode),
         mode=mode,
     )
-
-    try:
-        return await _fetch_table(target, target_schema, table_name, mode=mode)
-    except NotFoundError:
-        msg = (
-            f"No table named [{target_schema}].[{table_name}] was found after "
-            "the transfer. ALTER SCHEMA TRANSFER moves any schema-scoped "
-            "object with that name, not only tables -- if a view, function, "
-            "or procedure shared this name, check whether it was moved instead."
-        )
-        raise NotFoundError(msg) from None
 
 
 # ---------------------------------------------------------------------------

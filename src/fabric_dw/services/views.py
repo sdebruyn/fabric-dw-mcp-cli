@@ -26,7 +26,7 @@ from fabric_dw.exceptions import NotFoundError
 from fabric_dw.identifiers import parse_qualified_name, quote_identifier, validate_identifier
 from fabric_dw.models import View
 from fabric_dw.services._helpers import (
-    _alter_schema_transfer,
+    _transfer_object,
     build_time_travel_option,
     reject_non_select,
 )
@@ -641,25 +641,13 @@ async def transfer_view(
         PermissionDeniedError: If the driver reports a permission error.
     """
     schema, view_name = parse_qualified_name(qualified)
-    validate_identifier(schema)
-    validate_identifier(view_name)
-    validate_identifier(target_schema)
 
-    await _alter_schema_transfer(
+    return await _transfer_object(
         target,
         source_schema=schema,
         object_name=view_name,
         target_schema=target_schema,
+        object_label="view",
+        fetch=lambda: get_view(target, target_schema, view_name, mode=mode),
         mode=mode,
     )
-
-    try:
-        return await get_view(target, target_schema, view_name, mode=mode)
-    except NotFoundError:
-        msg = (
-            f"No view named [{target_schema}].[{view_name}] was found after "
-            "the transfer. ALTER SCHEMA TRANSFER moves any schema-scoped "
-            "object with that name, not only views -- if a table, function, "
-            "or procedure shared this name, check whether it was moved instead."
-        )
-        raise NotFoundError(msg) from None

@@ -30,7 +30,7 @@ from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import NotFoundError
 from fabric_dw.identifiers import parse_qualified_name, quote_identifier, validate_identifier
 from fabric_dw.models import Function, FunctionDetails, FunctionKind, FunctionParameter
-from fabric_dw.services._helpers import _alter_schema_transfer
+from fabric_dw.services._helpers import _transfer_object
 from fabric_dw.sql import SqlTarget, run_query
 
 # Valid values for the ``kind`` parameter of :func:`list_functions`.
@@ -471,28 +471,16 @@ async def transfer_function(
         PermissionDeniedError: If the driver reports a permission error.
     """
     schema, fn_name = parse_qualified_name(qualified, kind="function")
-    validate_identifier(schema)
-    validate_identifier(fn_name)
-    validate_identifier(target_schema)
 
-    await _alter_schema_transfer(
+    return await _transfer_object(
         target,
         source_schema=schema,
         object_name=fn_name,
         target_schema=target_schema,
+        object_label="function",
+        fetch=lambda: get_function(target, target_schema, fn_name, mode=mode),
         mode=mode,
     )
-
-    try:
-        return await get_function(target, target_schema, fn_name, mode=mode)
-    except NotFoundError:
-        msg = (
-            f"No function named [{target_schema}].[{fn_name}] was found after "
-            "the transfer. ALTER SCHEMA TRANSFER moves any schema-scoped "
-            "object with that name, not only functions -- if a table, view, "
-            "or procedure shared this name, check whether it was moved instead."
-        )
-        raise NotFoundError(msg) from None
 
 
 async def drop_function(
