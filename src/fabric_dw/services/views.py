@@ -11,6 +11,7 @@ Public API
 - :func:`update_view`         — issue CREATE OR ALTER VIEW … AS <select_body>.
 - :func:`drop_view`           — issue DROP VIEW.
 - :func:`rename_view`         — rename a view via sp_rename (both DW and SQL endpoint).
+- :func:`transfer_view`       — ``ALTER SCHEMA ... TRANSFER OBJECT::...`` (both DW/SQL endpoint).
 """
 
 from __future__ import annotations
@@ -24,7 +25,11 @@ from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import NotFoundError
 from fabric_dw.identifiers import parse_qualified_name, quote_identifier, validate_identifier
 from fabric_dw.models import View
-from fabric_dw.services._helpers import build_time_travel_option, reject_non_select
+from fabric_dw.services._helpers import (
+    _alter_schema_transfer,
+    build_time_travel_option,
+    reject_non_select,
+)
 from fabric_dw.sql import SqlTarget, run_query
 from fabric_dw.sql_io import columns_rows_to_arrow, write_arrow
 
@@ -37,6 +42,7 @@ __all__ = [
     "list_views",
     "read_view",
     "rename_view",
+    "transfer_view",
     "update_view",
     "validate_identifier",
 ]
@@ -574,4 +580,86 @@ async def rename_view(
         return await get_view(target, schema, new_name, mode=mode)
     except NotFoundError:
         msg = f"View [{schema}].[{new_name}] not found after rename"
+        raise NotFoundError(msg) from None
+
+
+async def transfer_view(
+    target: SqlTarget,
+    qualified: str,
+    target_schema: str,
+    *,
+    mode: CredentialMode = CredentialMode.DEFAULT,
+) -> View:
+    """Move a view to another schema via ``ALTER SCHEMA ... TRANSFER OBJECT::...``.
+
+    Works on both Data Warehouses and SQL Analytics Endpoints — no DW-only guard
+    is applied.  Transferring a view does not carry the OneLake-sync risk that
+    restricts :func:`~fabric_dw.services.tables.transfer_table` to Warehouses.
+
+    .. warning::
+
+        ``OBJECT::[schema].[name]`` matches *any* schema-scoped object with
+        that name, not only views.  If a table, function, or procedure
+        happens to share the qualified name, the engine transfers that
+        object instead.  When the post-transfer re-fetch then finds no view
+        named *view_name* in *target_schema*,
+        :class:`~fabric_dw.exceptions.NotFoundError` is raised with a message
+        that calls this out explicitly.
+
+    .. warning::
+
+        ``ALTER SCHEMA ... TRANSFER`` moves the view but does **not** rewrite
+        the schema name stored in the view's definition
+        (``sys.sql_modules.definition``, ``OBJECT_DEFINITION()``).  The
+        returned ``definition`` may still show the old schema name in the
+        ``CREATE ... AS`` header even though the view now lives in
+        *target_schema*.  This is a deliberate limitation: rewriting the
+        definition text would require parsing and regenerating SQL, which
+        this project does not do (see the "No SQL parsing" rule in
+        ``CLAUDE.md``).
+
+    Args:
+        target: The warehouse or SQL Analytics Endpoint to connect to.
+        qualified: The current fully-qualified name of the form ``schema.view``.
+            Parsed with :func:`~fabric_dw.identifiers.parse_qualified_name`.
+        target_schema: The schema to move the view into.  Must pass
+            :func:`validate_identifier`.  System schemas (``sys``,
+            ``INFORMATION_SCHEMA``, ``guest``, fixed ``db_*`` role schemas)
+            are rejected by
+            :func:`~fabric_dw.services._helpers._alter_schema_transfer`.
+        mode: The credential mode for Entra authentication.
+
+    Returns:
+        A :class:`~fabric_dw.models.View` reflecting the moved view (fetched
+        via :func:`get_view` from *target_schema* after the transfer).
+
+    Raises:
+        ValueError: If *qualified* cannot be parsed, if any identifier component
+            fails identifier validation, or if *target_schema* is a system schema.
+        NotFoundError: If no view named *view_name* is found in *target_schema*
+            after the transfer -- see the warning above about non-view objects.
+        PermissionDeniedError: If the driver reports a permission error.
+    """
+    schema, view_name = parse_qualified_name(qualified)
+    validate_identifier(schema)
+    validate_identifier(view_name)
+    validate_identifier(target_schema)
+
+    await _alter_schema_transfer(
+        target,
+        source_schema=schema,
+        object_name=view_name,
+        target_schema=target_schema,
+        mode=mode,
+    )
+
+    try:
+        return await get_view(target, target_schema, view_name, mode=mode)
+    except NotFoundError:
+        msg = (
+            f"No view named [{target_schema}].[{view_name}] was found after "
+            "the transfer. ALTER SCHEMA TRANSFER moves any schema-scoped "
+            "object with that name, not only views -- if a table, function, "
+            "or procedure shared this name, check whether it was moved instead."
+        )
         raise NotFoundError(msg) from None

@@ -23,6 +23,7 @@ import pytest
 
 from fabric_dw.exceptions import FabricError, NotFoundError
 from fabric_dw.models import View
+from fabric_dw.services import schemas as schemas_svc
 from fabric_dw.services import views
 from fabric_dw.sql import SqlTarget, run_query
 
@@ -292,6 +293,53 @@ async def test_rename_view_creates_new_and_removes_old(
             await views.drop_view(sql_target, schema, old_name)
         with contextlib.suppress(Exception):
             await views.drop_view(sql_target, schema, new_name)
+
+
+async def test_transfer_view_roundtrip(
+    mutable_schema_target: tuple[SqlTarget, str],
+) -> None:
+    """Create a view, transfer it to a second schema, assert old gone / new present.
+
+    Runs on both targets (Data Warehouse and SQL Analytics Endpoint) via the
+    parametrized mutable_schema_target fixture, since transfer_view applies no
+    DW-only guard.
+    """
+    sql_target, schema = mutable_schema_target
+    view_name = "pytest_views_transfer_dst"
+    select_body = "SELECT 42 AS the_answer"
+    target_schema_name = f"{schema}_target"
+
+    await schemas_svc.create_schema(sql_target, target_schema_name)
+    try:
+        created = await views.create_view(sql_target, schema, view_name, select_body)
+        assert isinstance(created, View)
+        assert created.schema_name == schema
+
+        moved = await views.transfer_view(sql_target, f"{schema}.{view_name}", target_schema_name)
+        assert isinstance(moved, View)
+        assert moved.name == view_name
+        assert moved.schema_name == target_schema_name
+        assert moved.qualified_name == f"{target_schema_name}.{view_name}"
+        # Documented caveat (see the "Definition text is not rewritten" admonition
+        # in docs/commands/views.md): ALTER SCHEMA TRANSFER does not rewrite the
+        # schema name stored in sys.sql_modules.definition, so moved.definition
+        # may still reference the OLD schema in its CREATE ... AS header, even
+        # though qualified_name above correctly reports the NEW schema. This is
+        # not asserted as a hard failure -- it documents the caveat in-place.
+
+        all_views = await views.list_views(sql_target)
+        in_target = {v.name for v in all_views if v.schema_name == target_schema_name}
+        in_source = {v.name for v in all_views if v.schema_name == schema}
+        assert view_name in in_target, f"{view_name!r} not found in {target_schema_name!r}"
+        assert view_name not in in_source, f"{view_name!r} still present in {schema!r}"
+
+    finally:
+        with contextlib.suppress(Exception):
+            await views.drop_view(sql_target, schema, view_name)
+        with contextlib.suppress(Exception):
+            await views.drop_view(sql_target, target_schema_name, view_name)
+        with contextlib.suppress(Exception):
+            await schemas_svc.delete_schema(sql_target, target_schema_name, cascade=True)
 
 
 async def test_count_view_rows_returns_nonnegative_int(

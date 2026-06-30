@@ -166,6 +166,7 @@ DOMAIN_MAP: dict[str, str] = {
     "update_view": "views",
     "drop_view": "views",
     "rename_view": "views",
+    "transfer_view": "views",
     # Stored procedures
     "list_procedures": "procedures",
     "get_procedure": "procedures",

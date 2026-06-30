@@ -292,6 +292,42 @@ fdw [-w WORKSPACE] views rename [OPTIONS] [WAREHOUSE] QUALIFIED_NAME
 fdw -w MyWorkspace views rename SalesWH dbo.vw_recent --new-name vw_revenue
 ```
 
+### views transfer
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Move a view to another schema via `ALTER SCHEMA ... TRANSFER OBJECT::...`. The command emits exactly `ALTER SCHEMA [target_schema] TRANSFER OBJECT::[schema].[view]`, with every identifier validated and bracket-quoted before being embedded in the DDL.
+
+**CAUTION:** `OBJECT::[schema].[name]` matches any schema-scoped object with that name, not only views. If a table, function, or procedure shares the qualified name, the engine transfers that object instead.
+
+!!! warning "Definition text is not rewritten"
+    `ALTER SCHEMA ... TRANSFER` moves the view, but it does **not** rewrite the
+    schema name inside the object's stored definition
+    (`sys.sql_modules.definition`, `OBJECT_DEFINITION()`). After a transfer,
+    `get_view` may still show the *old* schema name in the `CREATE ... AS`
+    header, even though the view now lives in the new schema. This tool does
+    not rewrite the definition text: doing so would require parsing and
+    regenerating SQL, which this project deliberately avoids. See
+    [ALTER SCHEMA (Transact-SQL)](https://learn.microsoft.com/sql/t-sql/statements/alter-schema-transact-sql?view=fabric&WT.mc_id=MVP_310840#remarks).
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] views transfer [OPTIONS] [ITEM] QUALIFIED_NAME
+```
+
+`QUALIFIED_NAME` is the current dot-separated `schema.view_name`.
+
+| Option | Description |
+| --- | --- |
+| `--target-schema TEXT` | **Required.** Schema to move the view into. |
+
+**Example**
+
+```shell
+fdw -w MyWorkspace views transfer SalesWH dbo.vw_recent --target-schema archive
+```
+
 ### views update
 
 **Targets:** Data Warehouse / SQL Analytics Endpoint
@@ -452,6 +488,33 @@ Rename a SQL view via `sp_rename`. Works on both Data Warehouses and SQL Analyti
 - `new_name` (`str`): new bare view name (no schema prefix), e.g. `vw_revenue`.
 
 **Returns:** `View`: the updated view object (fetched after rename, includes `definition`).
+
+### transfer_view
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Move a SQL view to another schema via `ALTER SCHEMA ... TRANSFER OBJECT::...`. Works on both Fabric Data Warehouses and SQL Analytics Endpoints, no DW-only guard is applied.
+
+**CAUTION:** `OBJECT::[schema].[name]` matches any schema-scoped object with that name, not only views. If a table, function, or procedure shares the qualified name, the engine transfers that object instead.
+
+!!! warning "Definition text is not rewritten"
+    `ALTER SCHEMA ... TRANSFER` moves the view, but it does **not** rewrite the
+    schema name inside the object's stored definition
+    (`sys.sql_modules.definition`, `OBJECT_DEFINITION()`). After a transfer,
+    `get_view` may still show the *old* schema name in the `CREATE ... AS`
+    header, even though the view now lives in the new schema. This tool does
+    not rewrite the definition text: doing so would require parsing and
+    regenerating SQL, which this project deliberately avoids. See
+    [ALTER SCHEMA (Transact-SQL)](https://learn.microsoft.com/sql/t-sql/statements/alter-schema-transact-sql?view=fabric&WT.mc_id=MVP_310840#remarks).
+
+**Parameters:**
+
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL analytics endpoint name or GUID.
+- `qualified_name` (`str`): current dot-separated qualified view name, e.g. `dbo.vw_sales`.
+- `target_schema` (`str`): schema to move the view into, e.g. `archive`.
+
+**Returns:** `View`: the moved view record, fetched from the new schema. The `definition` field may still reference the old schema name (see warning above).
 
 ### update_view
 
