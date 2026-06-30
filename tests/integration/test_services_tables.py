@@ -24,7 +24,7 @@ from pathlib import Path
 import pyarrow.parquet as pq
 import pytest
 
-from fabric_dw.exceptions import FabricError, NotFoundError
+from fabric_dw.exceptions import FabricError, FabricServerError, NotFoundError
 from fabric_dw.models import Table
 from fabric_dw.services import columns as columns_svc
 from fabric_dw.services import schemas as schemas_svc
@@ -326,14 +326,21 @@ async def test_transfer_table_roundtrip(
 async def test_transfer_table_missing_target_schema_raises(
     warehouse_schema: tuple[SqlTarget, str],
 ) -> None:
-    """transfer_table against a nonexistent target schema raises a FabricError.
+    """transfer_table against a nonexistent target schema raises FabricServerError.
 
     GOTCHA (see the ``_NOT_FOUND_FRAGMENTS`` note in ``fabric_dw.sql_errors``,
-    intentionally NOT changed by this test): the engine's "cannot find the
-    object" message for a missing schema is not mapped to NotFoundError, so a
-    missing target schema surfaces as a generic FabricServerError instead.
-    This test documents that observed behaviour rather than asserting it is
-    desired -- a tighter _NOT_FOUND_FRAGMENTS match is a separate follow-up.
+    intentionally NOT changed by this test): SQL Server's "specified schema
+    name ... does not exist" message for ``ALTER SCHEMA`` does not match any
+    fragment in ``_NOT_FOUND_FRAGMENTS`` / ``_PERMISSION_DENIED_FRAGMENTS`` /
+    ``_AUTH_FAILED_FRAGMENTS``, so :func:`~fabric_dw.sql_errors.map_driver_error`
+    returns ``None`` and the error falls through to
+    :func:`~fabric_dw.sql_errors._wrap_unmapped_driver_error`, which wraps any
+    ``ddbc_error``-carrying driver exception as a non-retriable
+    :class:`~fabric_dw.exceptions.FabricServerError`. This test pins that
+    specific (not ideal) exception type rather than the broad
+    :class:`~fabric_dw.exceptions.FabricError` parent, so a future
+    ``_NOT_FOUND_FRAGMENTS`` fix (a separate, tightly-scoped follow-up) will
+    intentionally break this assertion as a signal to update it.
     """
     sql_target, schema = warehouse_schema
     table_name = "pytest_tables_transfer_missing_schema"
@@ -341,12 +348,13 @@ async def test_transfer_table_missing_target_schema_raises(
 
     try:
         await tables.create_table(sql_target, schema, table_name, select_body)
-        with pytest.raises(FabricError) as exc_info:
+        with pytest.raises(FabricServerError) as exc_info:
             await tables.transfer_table(
                 sql_target, f"{schema}.{table_name}", "pytest_nonexistent_schema_zzz"
             )
         # Document what actually surfaces today: NOT a NotFoundError.
         assert not isinstance(exc_info.value, NotFoundError)
+        assert exc_info.value.is_retriable is False
     finally:
         with contextlib.suppress(Exception):
             await tables.delete_table(sql_target, schema, table_name)
@@ -355,11 +363,14 @@ async def test_transfer_table_missing_target_schema_raises(
 async def test_transfer_table_name_collision_raises(
     warehouse_schema: tuple[SqlTarget, str],
 ) -> None:
-    """transfer_table raises when an object of the same name already exists in the target schema.
+    """transfer_table raises FabricServerError on a name collision in the target schema.
 
-    Documents the exception type the engine surfaces for a genuine name
-    collision in the target schema (as opposed to the missing-schema/missing-
-    object gotcha covered separately above).
+    SQL Server's "There is already an object named ... in the database"
+    message does not match any fragment in ``_NOT_FOUND_FRAGMENTS`` /
+    ``_PERMISSION_DENIED_FRAGMENTS`` / ``_AUTH_FAILED_FRAGMENTS`` either, so
+    (same as the missing-target-schema gotcha above) it falls through to the
+    generic, non-retriable :class:`~fabric_dw.exceptions.FabricServerError`
+    wrap rather than a more specific error type.
     """
     sql_target, schema = warehouse_schema
     table_name = "pytest_tables_transfer_collision"
@@ -371,8 +382,9 @@ async def test_transfer_table_name_collision_raises(
         await tables.create_table(sql_target, schema, table_name, select_body)
         await tables.create_table(sql_target, target_schema_name, table_name, select_body)
 
-        with pytest.raises(FabricError):
+        with pytest.raises(FabricServerError) as exc_info:
             await tables.transfer_table(sql_target, f"{schema}.{table_name}", target_schema_name)
+        assert exc_info.value.is_retriable is False
     finally:
         with contextlib.suppress(Exception):
             await tables.delete_table(sql_target, schema, table_name)

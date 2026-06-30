@@ -2146,6 +2146,11 @@ class TestTablesTransfer:
             )
         assert result.exit_code == 0
         mock_transfer.assert_awaited_once()
+        args, kwargs = mock_transfer.call_args
+        # service is called positionally: target, qualified_name, target_schema
+        assert args[1] == "dbo.sales"
+        assert args[2] == "archive"
+        assert kwargs["kind"] == _make_item_entry().kind
         parsed = json.loads(result.output)
         assert parsed["name"] == "sales"
         assert parsed["schema_name"] == "archive"

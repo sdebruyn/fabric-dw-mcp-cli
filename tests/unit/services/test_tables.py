@@ -1859,10 +1859,18 @@ class TestTransferTable:
         with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await tables.transfer_table(target, "dbo.sales", "bad--schema")
 
-    @pytest.mark.parametrize("reserved", ["sys", "information_schema", "SYS", "Information_Schema"])
+    @pytest.mark.parametrize(
+        "reserved", ["sys", "information_schema", "SYS", "Information_Schema", "guest", "db_owner"]
+    )
     async def test_rejects_reserved_target_schema(self, reserved: str) -> None:
+        """transfer_table propagates the system-schema rejection from the shared helper.
+
+        The check itself (and its full enumeration of system schemas) is
+        exercised exhaustively in TestAlterSchemaTransfer; this is a thin
+        pass-through test confirming transfer_table does not bypass it.
+        """
         target = _make_target()
-        with pytest.raises(ValueError, match="reserved"):
+        with pytest.raises(ValueError, match="reserved system schema"):
             await tables.transfer_table(target, "dbo.sales", reserved)
 
     async def test_raises_not_found_when_fetch_returns_empty(self) -> None:
@@ -1871,7 +1879,22 @@ class TestTransferTable:
         fetch_conn = _make_conn([], _LIST_COLS)
         with (
             patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]),
-            pytest.raises(NotFoundError, match="not found after transfer"),
+            pytest.raises(NotFoundError, match="No table named"),
+        ):
+            await tables.transfer_table(target, "dbo.sales", "archive")
+
+    async def test_not_found_message_warns_about_non_table_objects(self) -> None:
+        """The post-transfer NotFoundError must call out that a same-named
+        non-table object (view/function/procedure) may have been moved
+        instead, since OBJECT::[schema].[name] matches any schema-scoped
+        object, not only tables.
+        """
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([], _LIST_COLS)
+        with (
+            patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]),
+            pytest.raises(NotFoundError, match="not only tables"),
         ):
             await tables.transfer_table(target, "dbo.sales", "archive")
 

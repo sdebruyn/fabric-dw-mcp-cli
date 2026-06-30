@@ -170,13 +170,6 @@ WHERE s.name = ? AND t.name = ?;
 # Names are bound as ? parameters (string args to the proc, not SQL identifiers).
 _SP_RENAME_SQL = "EXEC sp_rename ?, ?, 'OBJECT'"
 
-# Target schemas that are always invalid for ALTER SCHEMA TRANSFER (Microsoft
-# reserves these system schemas).  validate_identifier() accepts these strings
-# since they are well-formed identifiers, so this explicit check catches them
-# before any network I/O.  Compared case-insensitively (casefold) because
-# Fabric's default collation is case-insensitive for identifier matching.
-_RESERVED_TRANSFER_TARGET_SCHEMAS = frozenset({"sys", "information_schema"})
-
 # sp_get_table_health_metrics: single positional arg is the two-part name as a string
 # literal.  The name is built from validated/quoted identifiers so no raw user input
 # is ever embedded.  The literal is enclosed in single quotes as T-SQL requires.
@@ -1305,9 +1298,20 @@ async def transfer_table(
 
     Table transfer is Warehouse-only: Microsoft documents that transferring a
     table between schemas via T-SQL is not supported on the Fabric SQL
-    Analytics Endpoint and can break the OneLake sync, so this mirrors
-    :func:`rename_table` and guards with
-    :func:`~fabric_dw.services._helpers._assert_not_sql_endpoint`.
+    Analytics Endpoint and can break the OneLake sync.  This restriction is
+    specific to tables -- it does not apply to views, functions, or stored
+    procedures, which are not subject to the same OneLake-sync risk and do
+    not guard with :func:`~fabric_dw.services._helpers._assert_not_sql_endpoint`.
+
+    .. warning::
+
+        ``OBJECT::[schema].[name]`` matches *any* schema-scoped object with
+        that name, not only tables.  If a view, function, or procedure
+        happens to share the qualified name, the engine transfers that
+        object instead (and drops its permissions).  When the post-transfer
+        re-fetch then finds no table named *table_name* in *target_schema*,
+        :class:`~fabric_dw.exceptions.NotFoundError` is raised with a message
+        that calls this out explicitly.
 
     .. warning::
 
@@ -1321,8 +1325,10 @@ async def transfer_table(
         qualified: The current fully-qualified name of the form ``schema.table``.
             Parsed with :func:`~fabric_dw.identifiers.parse_qualified_name`.
         target_schema: The schema to move the table into.  Must pass
-            :func:`validate_identifier`.  ``sys`` and ``information_schema``
-            are rejected up front as they are never valid transfer targets.
+            :func:`validate_identifier`.  System schemas (``sys``,
+            ``INFORMATION_SCHEMA``, ``guest``, fixed ``db_*`` role schemas)
+            are rejected by
+            :func:`~fabric_dw.services._helpers._alter_schema_transfer`.
         kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
             SQL Endpoint items are rejected with :class:`~fabric_dw.exceptions.ItemKindError`.
         mode: The credential mode for Entra authentication.
@@ -1334,10 +1340,9 @@ async def transfer_table(
     Raises:
         ItemKindError: If *kind* is :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
         ValueError: If *qualified* cannot be parsed, if any identifier component
-            fails identifier validation, or if *target_schema* is ``sys`` or
-            ``information_schema``.
-        NotFoundError: If the transferred table cannot be found in
-            ``sys.tables`` under *target_schema* after the transfer.
+            fails identifier validation, or if *target_schema* is a system schema.
+        NotFoundError: If no table named *table_name* is found in *target_schema*
+            after the transfer -- see the warning above about non-table objects.
         PermissionDeniedError: If the driver reports a permission error.
     """
     _assert_not_sql_endpoint(kind)
@@ -1346,10 +1351,6 @@ async def transfer_table(
     validate_identifier(schema)
     validate_identifier(table_name)
     validate_identifier(target_schema)
-
-    if target_schema.casefold() in _RESERVED_TRANSFER_TARGET_SCHEMAS:
-        msg = f"Target schema {target_schema!r} is reserved and cannot be a TRANSFER target"
-        raise ValueError(msg)
 
     await _alter_schema_transfer(
         target,
@@ -1362,7 +1363,12 @@ async def transfer_table(
     try:
         return await _fetch_table(target, target_schema, table_name, mode=mode)
     except NotFoundError:
-        msg = f"Table [{target_schema}].[{table_name}] not found after transfer"
+        msg = (
+            f"No table named [{target_schema}].[{table_name}] was found after "
+            "the transfer. ALTER SCHEMA TRANSFER moves any schema-scoped "
+            "object with that name, not only tables -- if a view, function, "
+            "or procedure shared this name, check whether it was moved instead."
+        )
         raise NotFoundError(msg) from None
 
 

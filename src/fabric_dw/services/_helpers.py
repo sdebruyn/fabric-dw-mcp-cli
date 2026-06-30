@@ -15,6 +15,7 @@ from fabric_dw.exceptions import ItemKindError
 from fabric_dw.identifiers import quote_identifier, validate_identifier
 from fabric_dw.models import WarehouseKind
 from fabric_dw.services.capacities import ACTIVE_STATE
+from fabric_dw.services.schemas import _SYSTEM_SCHEMAS
 from fabric_dw.sql import SqlTarget, run_query
 
 __all__ = [
@@ -67,6 +68,25 @@ def _assert_not_sql_endpoint(kind: WarehouseKind) -> None:
 # validated, bracket-quoted identifiers -- no SQL parsing is involved.
 # ---------------------------------------------------------------------------
 
+# Reuse the single canonical system-schema list from services.schemas (sys,
+# INFORMATION_SCHEMA, guest, and the fixed db_* role schemas) rather than a
+# second, narrower copy -- these schemas are never valid ALTER SCHEMA TRANSFER
+# targets either.  Pre-casefolded once at import time.
+#
+# Case-insensitive comparison is a deliberate, conservative client-side
+# choice, not a claim about the warehouse's actual collation: Fabric
+# Warehouses use a fixed case-sensitive binary collation
+# (Latin1_General_100_BIN2_UTF8) for user data, so a schema literally named
+# e.g. "Sys" (distinct from the engine's "sys") is technically possible on
+# the server and would be wrongly rejected here.  We accept that asymmetry
+# because (a) creating a schema that differs from a system schema only by
+# case is already confusing and best avoided, and (b) it is consistent with
+# how this codebase treats every other identifier comparison in this guard
+# family (e.g. validate_identifier's own forbidden-character checks) as a
+# fail-closed, "when in doubt, reject" client-side safety net rather than an
+# authoritative mirror of server-side semantics.
+_SYSTEM_SCHEMAS_CASEFOLDED: frozenset[str] = frozenset(s.casefold() for s in _SYSTEM_SCHEMAS)
+
 
 async def _alter_schema_transfer(
     target: SqlTarget,
@@ -90,6 +110,15 @@ async def _alter_schema_transfer(
     before being embedded in the DDL string.  This is a parameterised DDL
     statement built from validated identifiers, not SQL parsing or rewriting.
 
+    *target_schema* is rejected up front when it is a system schema (``sys``,
+    ``INFORMATION_SCHEMA``, ``guest``, or a fixed ``db_*`` role schema --
+    see :data:`~fabric_dw.services.schemas._SYSTEM_SCHEMAS`).  Those names
+    pass :func:`validate_identifier` (they are well-formed identifiers) but
+    Microsoft documents that they are never valid ALTER SCHEMA TRANSFER
+    targets, so this check catches them before any network I/O.  All four
+    transfer operations (table/view/function/procedure) inherit this check
+    for free since they all call this shared helper.
+
     This helper does **not** re-fetch the moved object -- callers re-fetch it
     from *target_schema* using their own object-specific lookup (e.g.
     ``_fetch_table``).
@@ -101,12 +130,13 @@ async def _alter_schema_transfer(
         object_name: The (unqualified) object name.  Must pass
             :func:`validate_identifier`.
         target_schema: The schema to move the object into.  Must pass
-            :func:`validate_identifier`.
+            :func:`validate_identifier` and must not be a system schema.
         mode: The credential mode for Entra authentication.
 
     Raises:
         ValueError: If *source_schema*, *object_name*, or *target_schema*
-            fails identifier validation.
+            fails identifier validation, or if *target_schema* is a system
+            schema.
         PermissionDeniedError: If the driver reports an ALTER SCHEMA permission error.
         FabricError: If the engine reports an error executing the DDL -- e.g.
             a missing source object or missing target schema.  Such errors may
@@ -118,6 +148,13 @@ async def _alter_schema_transfer(
     validate_identifier(source_schema)
     validate_identifier(object_name)
     validate_identifier(target_schema)
+
+    if target_schema.casefold() in _SYSTEM_SCHEMAS_CASEFOLDED:
+        msg = (
+            f"Target schema {target_schema!r} is a reserved system schema and "
+            "cannot be an ALTER SCHEMA TRANSFER target"
+        )
+        raise ValueError(msg)
 
     ddl = (
         f"ALTER SCHEMA {quote_identifier(target_schema)} "

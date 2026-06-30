@@ -63,6 +63,13 @@ class TestResolveDomain:
     def test_known_mcp_tool_generate_dbt_profile(self) -> None:
         assert resolve_domain("generate_dbt_profile") == "dbt"
 
+    def test_known_mcp_tool_transfer_table(self) -> None:
+        assert resolve_domain("transfer_table") == "tables"
+
+    def test_domain_map_transfer_table_entry_is_tables(self) -> None:
+        """Pin the explicit DOMAIN_MAP entry itself (not just the resolved domain)."""
+        assert DOMAIN_MAP["transfer_table"] == "tables"
+
     def test_unknown_returns_unknown(self) -> None:
         assert resolve_domain("does_not_exist_abc") == "unknown"
 

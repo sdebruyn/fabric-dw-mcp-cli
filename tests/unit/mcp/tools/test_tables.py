@@ -1183,6 +1183,11 @@ async def test_transfer_table_happy_path(mock_ctx, ctx_patch) -> None:
         )
 
     mock_transfer.assert_called_once()
+    args, kwargs = mock_transfer.call_args
+    # service is called positionally: target, qualified_name, target_schema
+    assert args[1] == "dbo.sales"
+    assert args[2] == "archive"
+    assert kwargs["kind"] == item.kind
     assert result["name"] == "sales"
     assert result["schema_name"] == "archive"
 

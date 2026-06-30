@@ -17,6 +17,7 @@ from fabric_dw.services._helpers import (
     compact,
     reject_non_select,
 )
+from fabric_dw.services.schemas import _SYSTEM_SCHEMAS
 from tests.unit.services._helpers import _make_conn_for_ddl, _make_target
 
 # ---------------------------------------------------------------------------
@@ -267,6 +268,48 @@ class TestAlterSchemaTransfer:
                 object_name="sales",
                 target_schema="bad]schema",
             )
+
+    @pytest.mark.parametrize("reserved", sorted(_SYSTEM_SCHEMAS))
+    async def test_rejects_every_system_schema_as_target(self, reserved: str) -> None:
+        """Every name in the canonical _SYSTEM_SCHEMAS list must be rejected as a
+        TRANSFER target.  This is the single source of truth that all four
+        transfer operations (table/view/function/procedure) inherit by
+        calling this shared helper -- a sibling service does not need to
+        re-test the full enumeration.
+        """
+        target = _make_target()
+        with pytest.raises(ValueError, match="reserved system schema"):
+            await _alter_schema_transfer(
+                target,
+                source_schema="dbo",
+                object_name="sales",
+                target_schema=reserved,
+            )
+
+    async def test_rejects_system_schema_case_insensitively(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="reserved system schema"):
+            await _alter_schema_transfer(
+                target,
+                source_schema="dbo",
+                object_name="sales",
+                target_schema="SYS",
+            )
+
+    async def test_reserved_target_schema_check_fires_before_any_connection(self) -> None:
+        """The reserved-schema rejection must happen before any network I/O."""
+        target = _make_target()
+        with (
+            patch("fabric_dw.sql.open_connection") as mock_open,
+            pytest.raises(ValueError, match="reserved system schema"),
+        ):
+            await _alter_schema_transfer(
+                target,
+                source_schema="dbo",
+                object_name="sales",
+                target_schema="sys",
+            )
+        mock_open.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
