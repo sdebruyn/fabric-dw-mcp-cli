@@ -61,10 +61,12 @@ You should see the top-level help output listing available commands.
 The recommended runner is [`uvx`](https://docs.astral.sh/uv/guides/tools/), which fetches and runs the published package on demand without any global install:
 
 ```bash
-uvx fabric-dw-mcp
+uvx --from fabric-dw fabric-dw-mcp
 ```
 
-Every client snippet below configures `uvx fabric-dw-mcp` as the entry point, so your AI tool always picks up the latest published version. Pin a version with `uvx fabric-dw-mcp@2026.6.0` if you need reproducibility.
+The package is named `fabric-dw`, but the MCP entry point it ships is `fabric-dw-mcp`. Because the two names differ, `uvx` needs `--from fabric-dw` to know which package provides the `fabric-dw-mcp` command - `uvx fabric-dw-mcp` on its own would try to fetch a (non-existent) package called `fabric-dw-mcp` and fail.
+
+Every client snippet below configures `uvx --from fabric-dw fabric-dw-mcp` as the entry point, so your AI tool always picks up the latest published version. Pin a version with `uvx --from fabric-dw==2026.6.0 fabric-dw-mcp` if you need reproducibility.
 
 You will also need an Azure credential the server can use to call the Fabric REST and SQL APIs. Set the `FABRIC_AUTH` environment variable to select a source (see [Authentication](#authentication) above):
 
@@ -86,20 +88,22 @@ Source: <https://code.claude.com/docs/en/mcp>
 Add the server at **user scope** (available in all your projects):
 
 ```bash
-claude mcp add --scope user \
+claude mcp add fabric-dw --scope user \
   --env FABRIC_AUTH=default \
-  fabric-dw -- uvx fabric-dw-mcp
+  -- uvx --from fabric-dw fabric-dw-mcp
 ```
+
+The server name (`fabric-dw`) must come before the `--env` flags: `--env` accepts multiple values, so a name placed after it is swallowed as an environment variable and the command fails with `Invalid environment variable format`.
 
 For service-principal auth, pass the extra variables:
 
 ```bash
-claude mcp add --scope user \
+claude mcp add fabric-dw --scope user \
   --env FABRIC_AUTH=sp \
   --env AZURE_TENANT_ID=<tenant-id> \
   --env AZURE_CLIENT_ID=<client-id> \
   --env AZURE_CLIENT_SECRET=<client-secret> \
-  fabric-dw -- uvx fabric-dw-mcp
+  -- uvx --from fabric-dw fabric-dw-mcp
 ```
 
 To share the server configuration with your team instead, use `--scope project`. Claude Code writes a `.mcp.json` file to the project root; check that file into version control. Scope reference:
@@ -117,7 +121,7 @@ The equivalent `.mcp.json` snippet (project scope, `default` auth):
   "mcpServers": {
     "fabric-dw": {
       "command": "uvx",
-      "args": ["fabric-dw-mcp"],
+      "args": ["--from", "fabric-dw", "fabric-dw-mcp"],
       "env": {
         "FABRIC_AUTH": "default"
       }
@@ -139,7 +143,7 @@ Add this snippet to `~/.cursor/mcp.json` (global, all projects) or `.cursor/mcp.
   "mcpServers": {
     "fabric-dw": {
       "command": "uvx",
-      "args": ["fabric-dw-mcp"],
+      "args": ["--from", "fabric-dw", "fabric-dw-mcp"],
       "env": {
         "FABRIC_AUTH": "default"
       }
@@ -155,7 +159,7 @@ For service-principal auth:
   "mcpServers": {
     "fabric-dw": {
       "command": "uvx",
-      "args": ["fabric-dw-mcp"],
+      "args": ["--from", "fabric-dw", "fabric-dw-mcp"],
       "env": {
         "FABRIC_AUTH": "sp",
         "AZURE_TENANT_ID": "<tenant-id>",
@@ -183,7 +187,7 @@ Add the server in `.vscode/mcp.json` (workspace-level, check into VCS) or open t
     "fabric-dw": {
       "type": "stdio",
       "command": "uvx",
-      "args": ["fabric-dw-mcp"],
+      "args": ["--from", "fabric-dw", "fabric-dw-mcp"],
       "env": {
         "FABRIC_AUTH": "default"
       }
@@ -200,7 +204,7 @@ For service-principal auth:
     "fabric-dw": {
       "type": "stdio",
       "command": "uvx",
-      "args": ["fabric-dw-mcp"],
+      "args": ["--from", "fabric-dw", "fabric-dw-mcp"],
       "env": {
         "FABRIC_AUTH": "sp",
         "AZURE_TENANT_ID": "<tenant-id>",
@@ -229,7 +233,7 @@ The Copilot CLI (`gh copilot`) stores its MCP configuration separately from VS C
     "fabric-dw": {
       "type": "stdio",
       "command": "uvx",
-      "args": ["fabric-dw-mcp"],
+      "args": ["--from", "fabric-dw", "fabric-dw-mcp"],
       "env": {
         "FABRIC_AUTH": "default"
       }
@@ -246,7 +250,7 @@ For service-principal auth:
     "fabric-dw": {
       "type": "stdio",
       "command": "uvx",
-      "args": ["fabric-dw-mcp"],
+      "args": ["--from", "fabric-dw", "fabric-dw-mcp"],
       "env": {
         "FABRIC_AUTH": "sp",
         "AZURE_TENANT_ID": "<tenant-id>",
@@ -258,7 +262,7 @@ For service-principal auth:
 }
 ```
 
-You can also add the server interactively without editing the file: start the CLI, enter `/mcp add`, choose **STDIO** as the server type, set the command to `uvx fabric-dw-mcp`, and add `FABRIC_AUTH=default` as an environment variable.
+You can also add the server interactively without editing the file: start the CLI, enter `/mcp add`, choose **STDIO** as the server type, set the command to `uvx` with arguments `--from fabric-dw fabric-dw-mcp`, and add `FABRIC_AUTH=default` as an environment variable.
 
 To share the configuration with a project instead of setting it globally, add a `.mcp.json` file (or `.github/mcp.json`) in the project root with the same `mcpServers` block. Project-level configuration takes precedence over user-level when server names conflict.
 
@@ -270,7 +274,7 @@ The GitHub Copilot desktop app is built on top of Copilot CLI and shares the sam
 
 To add or manage MCP servers directly from the desktop app, open **Settings → MCP Servers**. The app provides a catalog of popular servers and accepts custom server definitions without requiring manual file edits.
 
-To register `fabric-dw-mcp` via the settings UI, choose **Add custom server**, select **STDIO** as the type, set the command to `uvx`, the arguments to `fabric-dw-mcp`, and add `FABRIC_AUTH=default` as an environment variable. The app writes the result to `~/.copilot/mcp-config.json` using the same format shown in the [CLI section](#cli_1) above.
+To register `fabric-dw-mcp` via the settings UI, choose **Add custom server**, select **STDIO** as the type, set the command to `uvx`, the arguments to `--from fabric-dw fabric-dw-mcp`, and add `FABRIC_AUTH=default` as an environment variable. The app writes the result to `~/.copilot/mcp-config.json` using the same format shown in the [CLI section](#cli_1) above.
 
 ### Continue
 
@@ -287,6 +291,8 @@ mcpServers:
     type: stdio
     command: uvx
     args:
+      - --from
+      - fabric-dw
       - fabric-dw-mcp
     env:
       FABRIC_AUTH: default
@@ -314,7 +320,7 @@ Alternatively, if you prefer to stay in JSON and already have a `.continue/confi
       "name": "fabric-dw",
       "type": "stdio",
       "command": "uvx",
-      "args": ["fabric-dw-mcp"],
+      "args": ["--from", "fabric-dw", "fabric-dw-mcp"],
       "env": {
         "FABRIC_AUTH": "default"
       }
@@ -332,7 +338,7 @@ Add to `~/.codex/config.toml` (global) or `.codex/config.toml` in a project dire
 ```toml
 [mcp_servers.fabric-dw]
 command = "uvx"
-args = ["fabric-dw-mcp"]
+args = ["--from", "fabric-dw", "fabric-dw-mcp"]
 
 [mcp_servers.fabric-dw.env]
 FABRIC_AUTH = "default"
@@ -343,7 +349,7 @@ For service-principal auth:
 ```toml
 [mcp_servers.fabric-dw]
 command = "uvx"
-args = ["fabric-dw-mcp"]
+args = ["--from", "fabric-dw", "fabric-dw-mcp"]
 
 [mcp_servers.fabric-dw.env]
 FABRIC_AUTH = "sp"
@@ -357,7 +363,7 @@ If you prefer to read secrets from the environment rather than hard-coding them 
 ```toml
 [mcp_servers.fabric-dw]
 command = "uvx"
-args = ["fabric-dw-mcp"]
+args = ["--from", "fabric-dw", "fabric-dw-mcp"]
 env_vars = ["FABRIC_AUTH", "AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET"]
 ```
 
