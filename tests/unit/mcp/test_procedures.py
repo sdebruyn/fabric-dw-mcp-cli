@@ -444,3 +444,129 @@ async def test_drop_procedure_on_sql_endpoint_no_error(
         )
 
     assert result == {"dropped": True}
+
+
+# ===========================================================================
+# transfer_procedure
+# ===========================================================================
+
+
+async def test_transfer_procedure_happy_path(mock_ctx, ctx_patch) -> None:
+    """transfer_procedure returns the moved procedure."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = _make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+    moved = StoredProcedure(
+        schema_name="archive",
+        name="usp_load",
+        qualified_name="archive.usp_load",
+        definition="BEGIN SELECT 1 AS id END",
+        created=_NOW,
+        modified=_NOW,
+    )
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.procedures.transfer_procedure",
+            new=AsyncMock(return_value=moved),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "transfer_procedure",
+            {
+                "workspace": _WS_NAME,
+                "item": _WH_NAME,
+                "qualified_name": "dbo.usp_load",
+                "target_schema": "archive",
+            },
+        )
+
+    assert isinstance(result, dict)
+    assert result["schema_name"] == "archive"
+    assert result["name"] == "usp_load"
+
+
+async def test_transfer_procedure_forwards_args(mock_ctx, ctx_patch) -> None:
+    """transfer_procedure forwards qualified_name and target_schema to the service."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = _make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+    mock_transfer = AsyncMock(return_value=_make_proc())
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.procedures.transfer_procedure", new=mock_transfer),
+    ):
+        await mcp._tool_manager.call_tool(
+            "transfer_procedure",
+            {
+                "workspace": _WS_NAME,
+                "item": _WH_NAME,
+                "qualified_name": "dbo.usp_load",
+                "target_schema": "archive",
+            },
+        )
+
+    mock_transfer.assert_awaited_once()
+    args, kwargs = mock_transfer.call_args
+    assert args[1] == "dbo.usp_load"
+    assert args[2] == "archive"
+    assert kwargs.get("mode") is not None
+
+
+async def test_transfer_procedure_blocked_in_readonly(
+    mock_ctx, ctx_patch, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """transfer_procedure raises ToolError when FABRIC_MCP_READONLY is set."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    monkeypatch.setenv("FABRIC_MCP_READONLY", "1")
+    item = _make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with ctx_patch, pytest.raises(ToolError, match="read-only"):
+        await mcp._tool_manager.call_tool(
+            "transfer_procedure",
+            {
+                "workspace": _WS_NAME,
+                "item": _WH_NAME,
+                "qualified_name": "dbo.usp_load",
+                "target_schema": "archive",
+            },
+        )
+
+
+async def test_transfer_procedure_on_sql_endpoint_no_error(mock_ctx, ctx_patch) -> None:
+    """transfer_procedure must NOT raise for SQL Analytics Endpoint — no DW-only guard."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = _make_item_entry(kind=WarehouseKind.SQL_ENDPOINT)
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.procedures.transfer_procedure",
+            new=AsyncMock(return_value=_make_proc()),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "transfer_procedure",
+            {
+                "workspace": _WS_NAME,
+                "item": _WH_NAME,
+                "qualified_name": "dbo.usp_load",
+                "target_schema": "archive",
+            },
+        )
+
+    assert isinstance(result, dict)

@@ -26,6 +26,7 @@ _GET_COLS = ["schema_name", "name", "created", "modified", "definition"]
 _PROC_ROW_1 = ("dbo", "usp_load", _NOW, _LATER)
 _PROC_ROW_2 = ("finance", "usp_monthly", _NOW, _NOW)
 _PROC_ROW_GET = ("dbo", "usp_load", _NOW, _LATER, "BEGIN SELECT 1 AS id END")
+_PROC_ROW_GET_MOVED = ("archive", "usp_load", _NOW, _LATER, "BEGIN SELECT 1 AS id END")
 
 
 # ===========================================================================
@@ -558,3 +559,112 @@ class TestDropProcedure:
             pytest.raises(RuntimeError, match="connection reset"),
         ):
             await procedures.drop_procedure(target, "dbo", "usp_load")
+
+
+# ===========================================================================
+# transfer_procedure
+# ===========================================================================
+
+
+class TestTransferProcedure:
+    async def test_emits_alter_schema_transfer(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_PROC_ROW_GET_MOVED], _GET_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await procedures.transfer_procedure(target, "dbo.usp_load", "archive")
+        cursor = ddl_conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert call_sql == "ALTER SCHEMA [archive] TRANSFER OBJECT::[dbo].[usp_load]"
+
+    async def test_returns_procedure_from_target_schema(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_PROC_ROW_GET_MOVED], _GET_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            result = await procedures.transfer_procedure(target, "dbo.usp_load", "archive")
+        assert isinstance(result, StoredProcedure)
+        assert result.schema_name == "archive"
+        assert result.name == "usp_load"
+        assert result.qualified_name == "archive.usp_load"
+
+    async def test_commits_after_execute(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_PROC_ROW_GET_MOVED], _GET_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await procedures.transfer_procedure(target, "dbo.usp_load", "archive")
+        ddl_conn.commit.assert_called_once()
+
+    async def test_no_endpoint_guard_raises(self) -> None:
+        """transfer_procedure must NOT raise for SQL Analytics Endpoint targets.
+
+        This asserts the absence of a DW-only guard: stored procedure transfer
+        is supported on both Fabric Data Warehouses and SQL Analytics Endpoints.
+        """
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([_PROC_ROW_GET_MOVED], _GET_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            # Must not raise — no endpoint guard, no `kind` parameter at all.
+            result = await procedures.transfer_procedure(target, "dbo.usp_load", "archive")
+        assert isinstance(result, StoredProcedure)
+
+    async def test_rejects_undotted_qualified_name(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="qualified"):
+            await procedures.transfer_procedure(target, "nodot", "archive")
+
+    async def test_rejects_invalid_schema_in_qualified_name(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await procedures.transfer_procedure(target, "bad--schema.usp_load", "archive")
+
+    async def test_rejects_invalid_procedure_in_qualified_name(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await procedures.transfer_procedure(target, "dbo.bad--proc", "archive")
+
+    async def test_rejects_invalid_target_schema(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await procedures.transfer_procedure(target, "dbo.usp_load", "bad--schema")
+
+    @pytest.mark.parametrize(
+        "reserved", ["sys", "information_schema", "SYS", "Information_Schema", "guest", "db_owner"]
+    )
+    async def test_rejects_reserved_target_schema(self, reserved: str) -> None:
+        """transfer_procedure propagates the system-schema rejection from the shared helper.
+
+        The check itself (and its full enumeration of system schemas) is
+        exercised exhaustively in TestAlterSchemaTransfer; this is a thin
+        pass-through test confirming transfer_procedure does not bypass it.
+        """
+        target = _make_target()
+        with pytest.raises(ValueError, match="reserved system schema"):
+            await procedures.transfer_procedure(target, "dbo.usp_load", reserved)
+
+    async def test_raises_not_found_when_fetch_returns_empty(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([], _GET_COLS)
+        with (
+            patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]),
+            pytest.raises(NotFoundError, match="No procedure named"),
+        ):
+            await procedures.transfer_procedure(target, "dbo.usp_load", "archive")
+
+    async def test_not_found_message_warns_about_non_procedure_objects(self) -> None:
+        """The post-transfer NotFoundError must call out that a same-named
+        non-procedure object (table/view/function) may have been moved
+        instead, since OBJECT::[schema].[name] matches any schema-scoped
+        object, not only procedures.
+        """
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([], _GET_COLS)
+        with (
+            patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]),
+            pytest.raises(NotFoundError, match="not only procedures"),
+        ):
+            await procedures.transfer_procedure(target, "dbo.usp_load", "archive")
