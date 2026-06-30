@@ -7,11 +7,11 @@ import logging
 import re
 from collections.abc import Callable, Coroutine, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Protocol, TypeVar
+from typing import Literal, Protocol, TypeVar
 from uuid import UUID
 
 from fabric_dw.auth import CredentialMode
-from fabric_dw.exceptions import ItemKindError
+from fabric_dw.exceptions import ItemKindError, NotFoundError
 from fabric_dw.identifiers import quote_identifier, validate_identifier
 from fabric_dw.models import WarehouseKind
 from fabric_dw.services.capacities import ACTIVE_STATE
@@ -175,6 +175,144 @@ async def _alter_schema_transfer(
         run_query(target, ddl, mode=mode, commit=True, fetch="none")
 
     await asyncio.to_thread(_run_ddl)
+
+
+# ---------------------------------------------------------------------------
+# Shared transfer_* wrapper boilerplate
+#
+# Every transfer_table/transfer_view/transfer_function/transfer_procedure
+# service function repeats two pieces of boilerplate around
+# _alter_schema_transfer: the post-transfer NotFoundError wrapping message
+# (only the object noun differs) and -- previously -- a caller-side
+# validate_identifier pass that _alter_schema_transfer already performs.
+# _transfer_object below is the single place both live now.
+# ---------------------------------------------------------------------------
+
+# The four object kinds that ALTER SCHEMA TRANSFER OBJECT::... can move.
+# Typed as a Literal (not bare str) so a typo'd or mis-cased object_label
+# (e.g. "Table", "tabel") fails ty/lint at every call site instead of only
+# surfacing as garbled wording on the rare post-transfer NotFoundError path.
+_TransferableObjectLabel = Literal["table", "view", "function", "procedure"]
+
+# Canonical order used to build the "not only X -- if Y, Z, or W ..." phrase
+# in the post-transfer NotFoundError message below.  Shared across all four
+# transfer operations so the four rendered messages can never drift from a
+# single ordering or wording.
+_TRANSFERABLE_OBJECT_LABELS: tuple[_TransferableObjectLabel, ...] = (
+    "table",
+    "view",
+    "function",
+    "procedure",
+)
+
+
+def _other_object_labels_phrase(object_label: _TransferableObjectLabel) -> str:
+    """Return e.g. ``"a view, function, or procedure"`` for ``object_label="table"``.
+
+    Scales to however many labels :data:`_TRANSFERABLE_OBJECT_LABELS` holds
+    (not hardcoded to four) and fails loudly rather than silently dropping a
+    label: if *object_label* is somehow not an exact member of
+    :data:`_TRANSFERABLE_OBJECT_LABELS` at runtime (the ``Literal`` type only
+    guards static call sites), every entry would otherwise survive the filter
+    and the wrong count would be rendered without any error.
+
+    Args:
+        object_label: One of :data:`_TRANSFERABLE_OBJECT_LABELS`.
+
+    Returns:
+        The other labels (in :data:`_TRANSFERABLE_OBJECT_LABELS` order),
+        formatted as a natural-language enumeration with a leading "a" and an
+        "or" before the last item.
+
+    Raises:
+        ValueError: If *object_label* is not in :data:`_TRANSFERABLE_OBJECT_LABELS`.
+    """
+    if object_label not in _TRANSFERABLE_OBJECT_LABELS:
+        msg = (
+            f"Unknown object_label {object_label!r}; expected one of "
+            f"{', '.join(_TRANSFERABLE_OBJECT_LABELS)}"
+        )
+        raise ValueError(msg)
+
+    others = [label for label in _TRANSFERABLE_OBJECT_LABELS if label != object_label]
+    if len(others) == 1:
+        return f"a {others[0]}"
+    return f"a {', '.join(others[:-1])}, or {others[-1]}"
+
+
+async def _transfer_object(
+    target: SqlTarget,
+    *,
+    source_schema: str,
+    object_name: str,
+    target_schema: str,
+    object_label: _TransferableObjectLabel,
+    fetch: Callable[[], Coroutine[object, object, _T]],
+    mode: CredentialMode = CredentialMode.DEFAULT,
+) -> _T:
+    """Run :func:`_alter_schema_transfer`, then re-fetch via *fetch*, wrapping ``NotFoundError``.
+
+    Shared by the four ``transfer_*`` service functions
+    (:func:`~fabric_dw.services.tables.transfer_table`,
+    :func:`~fabric_dw.services.views.transfer_view`,
+    :func:`~fabric_dw.services.functions.transfer_function`,
+    :func:`~fabric_dw.services.procedures.transfer_procedure`).  Each caller
+    remains responsible for its own pre-transfer guard (only ``transfer_table``
+    applies a Warehouse-only :func:`_assert_not_sql_endpoint` guard) and for
+    parsing the caller's *qualified* string into *source_schema*/*object_name*
+    up front -- this helper only runs the transfer DDL and the re-fetch.
+
+    Identifier validation for all three of *source_schema*, *object_name*, and
+    *target_schema* happens inside :func:`_alter_schema_transfer`; callers must
+    NOT re-validate them beforehand -- that earlier caller-side validation was
+    redundant and has been removed from every ``transfer_*`` function.
+
+    Args:
+        target: The warehouse or SQL Analytics Endpoint to connect to.
+        source_schema: The object's current schema.
+        object_name: The (unqualified) object name.
+        target_schema: The schema to move the object into.
+        object_label: Singular noun for the object kind -- one of
+            :data:`_TRANSFERABLE_OBJECT_LABELS` (``"table"``, ``"view"``,
+            ``"function"``, ``"procedure"``).  Used to render the
+            ``NotFoundError`` message below.
+        fetch: Zero-argument async callable that re-fetches the object from
+            *target_schema* after the transfer, e.g.
+            ``lambda: _fetch_table(target, target_schema, table_name, mode=mode)``.
+            Its return value is returned unchanged on success.
+        mode: The credential mode for Entra authentication.
+
+    Returns:
+        Whatever *fetch* returns.
+
+    Raises:
+        ValueError: See :func:`_alter_schema_transfer`.
+        NotFoundError: If *fetch* raises :class:`~fabric_dw.exceptions.NotFoundError`,
+            re-raised with a message warning that ``ALTER SCHEMA TRANSFER
+            OBJECT::`` moves any schema-scoped object sharing that name, not
+            only objects of *object_label*'s kind.
+        PermissionDeniedError: See :func:`_alter_schema_transfer`.
+        FabricError: See :func:`_alter_schema_transfer`.
+    """
+    await _alter_schema_transfer(
+        target,
+        source_schema=source_schema,
+        object_name=object_name,
+        target_schema=target_schema,
+        mode=mode,
+    )
+
+    try:
+        return await fetch()
+    except NotFoundError:
+        others = _other_object_labels_phrase(object_label)
+        msg = (
+            f"No {object_label} named [{target_schema}].[{object_name}] was found after "
+            "the transfer. ALTER SCHEMA TRANSFER moves any schema-scoped "
+            f"object with that name, not only {object_label}s -- if {others} "
+            "shared this name, check whether it was moved instead."
+        )
+        raise NotFoundError(msg) from None
 
 
 # ---------------------------------------------------------------------------

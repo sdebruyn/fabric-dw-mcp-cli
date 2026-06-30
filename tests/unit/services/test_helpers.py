@@ -7,11 +7,14 @@ from unittest.mock import patch
 
 import pytest
 
-from fabric_dw.exceptions import ItemKindError
+from fabric_dw.exceptions import ItemKindError, NotFoundError
 from fabric_dw.models import WarehouseKind
 from fabric_dw.services._helpers import (
     _alter_schema_transfer,
     _assert_not_sql_endpoint,
+    _other_object_labels_phrase,
+    _transfer_object,
+    _TransferableObjectLabel,
     build_time_travel_option,
     coerce_to_utc,
     compact,
@@ -310,6 +313,105 @@ class TestAlterSchemaTransfer:
                 target_schema="sys",
             )
         mock_open.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _other_object_labels_phrase / _transfer_object
+# ---------------------------------------------------------------------------
+
+
+class TestOtherObjectLabelsPhrase:
+    """_other_object_labels_phrase builds the "not only X -- if ..." enumeration."""
+
+    @pytest.mark.parametrize(
+        ("object_label", "expected"),
+        [
+            ("table", "a view, function, or procedure"),
+            ("view", "a table, function, or procedure"),
+            ("function", "a table, view, or procedure"),
+            ("procedure", "a table, view, or function"),
+        ],
+    )
+    def test_renders_the_other_three_labels(
+        self, object_label: _TransferableObjectLabel, expected: str
+    ) -> None:
+        assert _other_object_labels_phrase(object_label) == expected
+
+    def test_rejects_unknown_label(self) -> None:
+        """A label outside _TRANSFERABLE_OBJECT_LABELS must fail loudly rather
+        than silently keeping all four entries and rendering a wrong list.
+        """
+        with pytest.raises(ValueError, match="Unknown object_label"):
+            _other_object_labels_phrase("Table")  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+
+
+class TestTransferObjectNotFoundMessage:
+    """_transfer_object's post-transfer NotFoundError message, pinned in full.
+
+    These assert the COMPLETE message string (not just a substring) for every
+    object kind, so the exact wording -- the Oxford comma, the "--", and the
+    pluralisation -- can never silently drift.  This is the text every
+    transfer_* function in tables.py/views.py/functions.py/procedures.py
+    relied on before the #950 consolidation; the values below were
+    reconstructed from the pre-refactor source to confirm byte-for-byte
+    equivalence.
+    """
+
+    @pytest.mark.parametrize(
+        ("object_label", "expected"),
+        [
+            (
+                "table",
+                "No table named [archive].[sales] was found after the transfer. "
+                "ALTER SCHEMA TRANSFER moves any schema-scoped object with that "
+                "name, not only tables -- if a view, function, or procedure "
+                "shared this name, check whether it was moved instead.",
+            ),
+            (
+                "view",
+                "No view named [archive].[sales] was found after the transfer. "
+                "ALTER SCHEMA TRANSFER moves any schema-scoped object with that "
+                "name, not only views -- if a table, function, or procedure "
+                "shared this name, check whether it was moved instead.",
+            ),
+            (
+                "function",
+                "No function named [archive].[sales] was found after the transfer. "
+                "ALTER SCHEMA TRANSFER moves any schema-scoped object with that "
+                "name, not only functions -- if a table, view, or procedure "
+                "shared this name, check whether it was moved instead.",
+            ),
+            (
+                "procedure",
+                "No procedure named [archive].[sales] was found after the transfer. "
+                "ALTER SCHEMA TRANSFER moves any schema-scoped object with that "
+                "name, not only procedures -- if a table, view, or function "
+                "shared this name, check whether it was moved instead.",
+            ),
+        ],
+    )
+    async def test_pins_full_message_per_object_label(
+        self, object_label: _TransferableObjectLabel, expected: str
+    ) -> None:
+        target = _make_target()
+        conn = _make_conn_for_ddl()
+
+        async def _raise_not_found() -> None:
+            raise NotFoundError("not found")
+
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(NotFoundError) as excinfo,
+        ):
+            await _transfer_object(
+                target,
+                source_schema="dbo",
+                object_name="sales",
+                target_schema="archive",
+                object_label=object_label,
+                fetch=_raise_not_found,
+            )
+        assert str(excinfo.value) == expected
 
 
 # ---------------------------------------------------------------------------
