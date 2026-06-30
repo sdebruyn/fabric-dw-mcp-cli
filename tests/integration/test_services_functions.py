@@ -29,6 +29,7 @@ import pytest
 from fabric_dw.exceptions import NotFoundError
 from fabric_dw.models import FunctionDetails, FunctionKind
 from fabric_dw.services import functions
+from fabric_dw.services import schemas as schemas_svc
 from fabric_dw.sql import SqlTarget
 
 pytestmark = pytest.mark.integration
@@ -280,3 +281,56 @@ async def test_create_inline_tvf_and_list_by_kind(
     finally:
         with contextlib.suppress(Exception):
             await functions.drop_function(sql_target, schema, fn_name)
+
+
+async def test_transfer_function_roundtrip(
+    mutable_schema_target: tuple[SqlTarget, str],
+) -> None:
+    """Create a function, transfer it to a second schema, assert old gone / new present.
+
+    Function DDL applies on both Data Warehouses and SQL Analytics Endpoints
+    (no endpoint guard), so this runs on both targets via mutable_schema_target
+    -- unlike tables.transfer_table, which is Data-Warehouse-only.
+    """
+    sql_target, schema = mutable_schema_target
+    fn_name = "pytest_fns_transfer_dst"
+    target_schema_name = f"{schema}_target"
+
+    await schemas_svc.create_schema(sql_target, target_schema_name)
+    try:
+        created = await functions.create_function(
+            sql_target, schema, fn_name, _SCALAR_INLINEABLE_BODY
+        )
+        assert isinstance(created, FunctionDetails)
+        assert created.schema_name == schema
+
+        moved = await functions.transfer_function(
+            sql_target, f"{schema}.{fn_name}", target_schema_name
+        )
+        assert isinstance(moved, FunctionDetails)
+        assert moved.name == fn_name
+        assert moved.schema_name == target_schema_name
+        assert moved.qualified_name == f"{target_schema_name}.{fn_name}"
+
+        # Stale-definition note (documented behaviour, not asserted as a hard
+        # failure): ALTER SCHEMA TRANSFER moves the function but does not
+        # rewrite the schema name embedded in the CREATE FUNCTION header
+        # stored in sys.sql_modules.definition. `moved.definition` may
+        # therefore still reference the OLD schema name even though the
+        # function now lives in target_schema_name -- see the docs
+        # admonition in docs/commands/functions.md ("Definition text is not
+        # rewritten") and the project's no-SQL-parsing policy.
+
+        all_fns = await functions.list_functions(sql_target)
+        in_target = {f.name for f in all_fns if f.schema_name == target_schema_name}
+        in_source = {f.name for f in all_fns if f.schema_name == schema}
+        assert fn_name in in_target, f"{fn_name!r} not found in {target_schema_name!r}"
+        assert fn_name not in in_source, f"{fn_name!r} still present in {schema!r}"
+
+    finally:
+        with contextlib.suppress(Exception):
+            await functions.drop_function(sql_target, schema, fn_name)
+        with contextlib.suppress(Exception):
+            await functions.drop_function(sql_target, target_schema_name, fn_name)
+        with contextlib.suppress(Exception):
+            await schemas_svc.delete_schema(sql_target, target_schema_name, cascade=True)

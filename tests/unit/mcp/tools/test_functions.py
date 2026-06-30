@@ -330,6 +330,136 @@ async def test_update_function_happy_path(mock_ctx, ctx_patch) -> None:
 
 
 # ---------------------------------------------------------------------------
+# transfer_function — mutating tool
+# ---------------------------------------------------------------------------
+
+
+async def test_transfer_function_happy_path(mock_ctx, ctx_patch) -> None:
+    """transfer_function resolves item, calls the service, and returns the moved function dict."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    moved = _make_fn_details(schema="archive", name="fn_clean")
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+    mock_transfer = AsyncMock(return_value=moved)
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.functions.transfer_function", new=mock_transfer),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "transfer_function",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "qualified_name": "dbo.fn_clean",
+                "target_schema": "archive",
+            },
+        )
+
+    mock_transfer.assert_called_once()
+    args, _kwargs = mock_transfer.call_args
+    # service is called positionally: target, qualified_name, target_schema
+    assert args[1] == "dbo.fn_clean"
+    assert args[2] == "archive"
+    assert result["name"] == "fn_clean"
+    assert result["schema_name"] == "archive"
+
+
+async def test_transfer_function_on_sql_endpoint_succeeds(mock_ctx, ctx_patch) -> None:
+    """transfer_function on a SQL Analytics Endpoint must succeed — no endpoint guard."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    moved = _make_fn_details(schema="archive", name="fn_clean")
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_sql_endpoint_entry())
+    mock_transfer = AsyncMock(return_value=moved)
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.functions.transfer_function", new=mock_transfer),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "transfer_function",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "qualified_name": "dbo.fn_clean",
+                "target_schema": "archive",
+            },
+        )
+
+    mock_transfer.assert_called_once()
+    assert result["name"] == "fn_clean"
+    assert result["schema_name"] == "archive"
+
+
+async def test_transfer_function_readonly_blocked(mock_ctx, ctx_patch) -> None:
+    """transfer_function raises ToolError when FABRIC_MCP_READONLY is set."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
+        pytest.raises(ToolError, match="read-only"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "transfer_function",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "qualified_name": "dbo.fn_clean",
+                "target_schema": "archive",
+            },
+        )
+
+
+async def test_transfer_function_undotted_qualified_name_raises_tool_error(
+    mock_ctx,  # noqa: ARG001
+    ctx_patch,
+) -> None:
+    """transfer_function must raise ToolError immediately for an undotted qualified_name."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with (
+        ctx_patch,
+        pytest.raises(ToolError, match="qualified name"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "transfer_function",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "qualified_name": "nodot",
+                "target_schema": "archive",
+            },
+        )
+
+
+async def test_transfer_function_workspace_allowlist_blocks(ctx_patch) -> None:
+    """transfer_function raises ToolError when workspace is not in FABRIC_MCP_WORKSPACES."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
+        pytest.raises(ToolError, match="allowlist"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "transfer_function",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "qualified_name": "dbo.fn_clean",
+                "target_schema": "archive",
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
 # drop_function — destructive mutating tool
 # ---------------------------------------------------------------------------
 

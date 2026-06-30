@@ -659,6 +659,113 @@ class TestUpdateFunction:
 
 
 # ===========================================================================
+# transfer_function
+# ===========================================================================
+
+
+class TestTransferFunction:
+    async def test_emits_alter_schema_transfer(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        moved_row = ("archive", "fn_clean", "FN", "SQL_SCALAR_FUNCTION", _NOW, _LATER, "...", 1)
+        conn_fn = _make_conn([moved_row], _GET_COLS)
+        conn_params = _make_conn([_PARAM_RETURN, _PARAM_INPUT], _PARAM_COLS)
+
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, conn_fn, conn_params]):
+            await functions.transfer_function(target, "dbo.fn_clean", "archive")
+
+        cursor = ddl_conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert call_sql == "ALTER SCHEMA [archive] TRANSFER OBJECT::[dbo].[fn_clean]"
+
+    async def test_returns_function_details_from_target_schema(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        moved_row = ("archive", "fn_clean", "FN", "SQL_SCALAR_FUNCTION", _NOW, _LATER, "...", 1)
+        conn_fn = _make_conn([moved_row], _GET_COLS)
+        conn_params = _make_conn([_PARAM_RETURN, _PARAM_INPUT], _PARAM_COLS)
+
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, conn_fn, conn_params]):
+            result = await functions.transfer_function(target, "dbo.fn_clean", "archive")
+
+        assert isinstance(result, FunctionDetails)
+        assert result.schema_name == "archive"
+        assert result.name == "fn_clean"
+        assert result.qualified_name == "archive.fn_clean"
+
+    async def test_commits_after_execute(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        moved_row = ("archive", "fn_clean", "FN", "SQL_SCALAR_FUNCTION", _NOW, _LATER, "...", 1)
+        conn_fn = _make_conn([moved_row], _GET_COLS)
+        conn_params = _make_conn([_PARAM_RETURN, _PARAM_INPUT], _PARAM_COLS)
+
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, conn_fn, conn_params]):
+            await functions.transfer_function(target, "dbo.fn_clean", "archive")
+
+        ddl_conn.commit.assert_called_once()
+
+    async def test_rejects_undotted_qualified_name(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="qualified"):
+            await functions.transfer_function(target, "nodot", "archive")
+
+    async def test_rejects_invalid_schema_in_qualified_name(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await functions.transfer_function(target, "bad--schema.fn_clean", "archive")
+
+    async def test_rejects_invalid_function_in_qualified_name(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await functions.transfer_function(target, "dbo.bad--fn", "archive")
+
+    async def test_rejects_invalid_target_schema(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await functions.transfer_function(target, "dbo.fn_clean", "bad--schema")
+
+    @pytest.mark.parametrize(
+        "reserved", ["sys", "information_schema", "SYS", "Information_Schema", "guest", "db_owner"]
+    )
+    async def test_rejects_reserved_target_schema(self, reserved: str) -> None:
+        """transfer_function propagates the system-schema rejection from the shared helper.
+
+        The check itself (and its full enumeration of system schemas) is
+        exercised exhaustively in TestAlterSchemaTransfer; this is a thin
+        pass-through test confirming transfer_function does not bypass it.
+        """
+        target = _make_target()
+        with pytest.raises(ValueError, match="reserved system schema"):
+            await functions.transfer_function(target, "dbo.fn_clean", reserved)
+
+    async def test_raises_not_found_when_fetch_returns_empty(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        conn_fn = _make_conn([], _GET_COLS)
+        with (
+            patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, conn_fn]),
+            pytest.raises(NotFoundError, match="No function named"),
+        ):
+            await functions.transfer_function(target, "dbo.fn_clean", "archive")
+
+    async def test_not_found_message_warns_about_non_function_objects(self) -> None:
+        """The post-transfer NotFoundError must call out that a same-named
+        non-function object (table/view/procedure) may have been moved
+        instead, since OBJECT::[schema].[name] matches any schema-scoped
+        object, not only functions.
+        """
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        conn_fn = _make_conn([], _GET_COLS)
+        with (
+            patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, conn_fn]),
+            pytest.raises(NotFoundError, match="not only functions"),
+        ):
+            await functions.transfer_function(target, "dbo.fn_clean", "archive")
+
+
+# ===========================================================================
 # drop_function
 # ===========================================================================
 
