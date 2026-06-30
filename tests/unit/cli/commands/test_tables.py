@@ -2104,6 +2104,196 @@ class TestTablesRename:
         assert result.exit_code != 0
 
 
+class TestTablesTransfer:
+    def test_transfer_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        moved = Table(
+            schema_name="archive",
+            name="sales",
+            qualified_name="archive.sales",
+            created=_NOW,
+            modified=_NOW,
+        )
+        mock_transfer = AsyncMock(return_value=moved)
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.transfer_table",
+                new=mock_transfer,
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "--json",
+                    "tables",
+                    "transfer",
+                    WH_GUID,
+                    "dbo.sales",
+                    "--target-schema",
+                    "archive",
+                ],
+            )
+        assert result.exit_code == 0
+        mock_transfer.assert_awaited_once()
+        args, kwargs = mock_transfer.call_args
+        # service is called positionally: target, qualified_name, target_schema
+        assert args[1] == "dbo.sales"
+        assert args[2] == "archive"
+        assert kwargs["kind"] == _make_item_entry().kind
+        parsed = json.loads(result.output)
+        assert parsed["name"] == "sales"
+        assert parsed["schema_name"] == "archive"
+
+    def test_transfer_missing_target_schema_fails(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        result = runner.invoke(cli, ["-w", WS_GUID, "tables", "transfer", WH_GUID, "dbo.sales"])
+        assert result.exit_code != 0
+
+    def test_transfer_undotted_qualified_name_fails_before_io(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """An undotted QUALIFIED_NAME must yield a UsageError before any I/O is performed."""
+        _ = cache_env
+        result = runner.invoke(
+            cli,
+            ["-w", WS_GUID, "tables", "transfer", WH_GUID, "nodot", "--target-schema", "archive"],
+        )
+        assert result.exit_code != 0
+        assert "table" in result.output.lower() or "Usage" in result.output
+
+    def test_transfer_sql_endpoint_rejected(self, runner: CliRunner, cache_env: Path) -> None:
+        """SQL Endpoint items must be rejected by the service-layer guard."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_transfer = AsyncMock(side_effect=ItemKindError("read-only"))
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.transfer_table",
+                new=mock_transfer,
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "tables",
+                    "transfer",
+                    SE_GUID,
+                    "dbo.sales",
+                    "--target-schema",
+                    "archive",
+                ],
+            )
+        assert result.exit_code != 0
+        assert "read-only" in result.output
+        # The CLI must forward kind=SQL_ENDPOINT — the rejection is enforced
+        # by the service-layer guard, not faked by the CLI hardcoding WAREHOUSE.
+        _, kwargs = mock_transfer.call_args
+        assert kwargs["kind"] == _make_sql_endpoint_entry().kind
+
+    def test_transfer_reserved_target_schema_returns_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """--target-schema sys / information_schema must surface as a non-zero CLI exit.
+
+        Exercises the CLI's ValueError -> ClickException conversion for the
+        reserved-system-schema rejection raised by the shared
+        _alter_schema_transfer helper (acceptance criterion for this feature,
+        already covered 4x via parametrize at the service layer in
+        TestTransferTable.test_rejects_reserved_target_schema).
+        """
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.transfer_table",
+                new=AsyncMock(
+                    side_effect=ValueError(
+                        "Target schema 'sys' is a reserved system schema and cannot be "
+                        "an ALTER SCHEMA TRANSFER target"
+                    )
+                ),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "tables",
+                    "transfer",
+                    WH_GUID,
+                    "dbo.sales",
+                    "--target-schema",
+                    "sys",
+                ],
+            )
+        assert result.exit_code != 0
+        assert "reserved system schema" in result.output
+
+    def test_transfer_permission_denied_returns_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.transfer_table",
+                new=AsyncMock(side_effect=PermissionDeniedError("no permission")),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "tables",
+                    "transfer",
+                    WH_GUID,
+                    "dbo.sales",
+                    "--target-schema",
+                    "archive",
+                ],
+            )
+        assert result.exit_code != 0
+
+
 # ===========================================================================
 # tables create — empty DDL path
 # ===========================================================================

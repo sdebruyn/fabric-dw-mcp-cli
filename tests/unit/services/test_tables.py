@@ -1792,6 +1792,125 @@ class TestRenameTable:
 
 
 # ===========================================================================
+# transfer_table
+# ===========================================================================
+
+
+class TestTransferTable:
+    async def test_emits_alter_schema_transfer(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        moved_row: tuple[object, ...] = ("archive", "sales", _NOW, _LATER)
+        fetch_conn = _make_conn([moved_row], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await tables.transfer_table(target, "dbo.sales", "archive")
+        cursor = ddl_conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert call_sql == "ALTER SCHEMA [archive] TRANSFER OBJECT::[dbo].[sales]"
+
+    async def test_returns_table_from_target_schema(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        moved_row: tuple[object, ...] = ("archive", "sales", _NOW, _LATER)
+        fetch_conn = _make_conn([moved_row], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            result = await tables.transfer_table(target, "dbo.sales", "archive")
+        assert isinstance(result, Table)
+        assert result.schema_name == "archive"
+        assert result.name == "sales"
+        assert result.qualified_name == "archive.sales"
+
+    async def test_commits_after_execute(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        moved_row: tuple[object, ...] = ("archive", "sales", _NOW, _LATER)
+        fetch_conn = _make_conn([moved_row], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            await tables.transfer_table(target, "dbo.sales", "archive")
+        ddl_conn.commit.assert_called_once()
+
+    async def test_transfer_table_rejects_sql_endpoint(self) -> None:
+        target = _make_target()
+        with pytest.raises(ItemKindError, match="read-only"):
+            await tables.transfer_table(
+                target,
+                "dbo.sales",
+                "archive",
+                kind=WarehouseKind.SQL_ENDPOINT,
+            )
+
+    async def test_rejects_undotted_qualified_name(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="qualified"):
+            await tables.transfer_table(target, "nodot", "archive")
+
+    async def test_rejects_invalid_schema_in_qualified_name(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await tables.transfer_table(target, "bad--schema.sales", "archive")
+
+    async def test_rejects_invalid_table_in_qualified_name(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await tables.transfer_table(target, "dbo.bad--table", "archive")
+
+    async def test_rejects_invalid_target_schema(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await tables.transfer_table(target, "dbo.sales", "bad--schema")
+
+    @pytest.mark.parametrize(
+        "reserved", ["sys", "information_schema", "SYS", "Information_Schema", "guest", "db_owner"]
+    )
+    async def test_rejects_reserved_target_schema(self, reserved: str) -> None:
+        """transfer_table propagates the system-schema rejection from the shared helper.
+
+        The check itself (and its full enumeration of system schemas) is
+        exercised exhaustively in TestAlterSchemaTransfer; this is a thin
+        pass-through test confirming transfer_table does not bypass it.
+        """
+        target = _make_target()
+        with pytest.raises(ValueError, match="reserved system schema"):
+            await tables.transfer_table(target, "dbo.sales", reserved)
+
+    async def test_raises_not_found_when_fetch_returns_empty(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([], _LIST_COLS)
+        with (
+            patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]),
+            pytest.raises(NotFoundError, match="No table named"),
+        ):
+            await tables.transfer_table(target, "dbo.sales", "archive")
+
+    async def test_not_found_message_warns_about_non_table_objects(self) -> None:
+        """The post-transfer NotFoundError must call out that a same-named
+        non-table object (view/function/procedure) may have been moved
+        instead, since OBJECT::[schema].[name] matches any schema-scoped
+        object, not only tables.
+        """
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        fetch_conn = _make_conn([], _LIST_COLS)
+        with (
+            patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]),
+            pytest.raises(NotFoundError, match="not only tables"),
+        ):
+            await tables.transfer_table(target, "dbo.sales", "archive")
+
+    async def test_warehouse_kind_allowed(self) -> None:
+        target = _make_target()
+        ddl_conn = _make_conn_for_ddl()
+        moved_row: tuple[object, ...] = ("archive", "sales", _NOW, _LATER)
+        fetch_conn = _make_conn([moved_row], _LIST_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[ddl_conn, fetch_conn]):
+            result = await tables.transfer_table(
+                target, "dbo.sales", "archive", kind=WarehouseKind.WAREHOUSE
+            )
+        assert isinstance(result, Table)
+
+
+# ===========================================================================
 # create_empty_table
 # ===========================================================================
 

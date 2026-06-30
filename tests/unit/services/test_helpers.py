@@ -3,18 +3,22 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta, timezone
+from unittest.mock import patch
 
 import pytest
 
 from fabric_dw.exceptions import ItemKindError
 from fabric_dw.models import WarehouseKind
 from fabric_dw.services._helpers import (
+    _alter_schema_transfer,
     _assert_not_sql_endpoint,
     build_time_travel_option,
     coerce_to_utc,
     compact,
     reject_non_select,
 )
+from fabric_dw.services.schemas import _SYSTEM_SCHEMAS
+from tests.unit.services._helpers import _make_conn_for_ddl, _make_target
 
 # ---------------------------------------------------------------------------
 # coerce_to_utc
@@ -199,6 +203,113 @@ class TestAssertNotSqlEndpoint:
         assert settings_guard is _assert_not_sql_endpoint
         assert stats_guard is _assert_not_sql_endpoint
         assert tables_guard is _assert_not_sql_endpoint
+
+
+# ---------------------------------------------------------------------------
+# _alter_schema_transfer (shared by table/view/function/procedure transfer)
+# ---------------------------------------------------------------------------
+
+
+class TestAlterSchemaTransfer:
+    """_alter_schema_transfer builds and runs the ALTER SCHEMA TRANSFER DDL."""
+
+    async def test_emits_exact_ddl_shape(self) -> None:
+        target = _make_target()
+        conn = _make_conn_for_ddl()
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await _alter_schema_transfer(
+                target,
+                source_schema="dbo",
+                object_name="sales",
+                target_schema="archive",
+            )
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert call_sql == "ALTER SCHEMA [archive] TRANSFER OBJECT::[dbo].[sales]"
+
+    async def test_commits_after_execute(self) -> None:
+        target = _make_target()
+        conn = _make_conn_for_ddl()
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await _alter_schema_transfer(
+                target,
+                source_schema="dbo",
+                object_name="sales",
+                target_schema="archive",
+            )
+        conn.commit.assert_called_once()
+
+    async def test_rejects_invalid_source_schema(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await _alter_schema_transfer(
+                target,
+                source_schema="bad--schema",
+                object_name="sales",
+                target_schema="archive",
+            )
+
+    async def test_rejects_invalid_object_name(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await _alter_schema_transfer(
+                target,
+                source_schema="dbo",
+                object_name="bad;name",
+                target_schema="archive",
+            )
+
+    async def test_rejects_invalid_target_schema(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await _alter_schema_transfer(
+                target,
+                source_schema="dbo",
+                object_name="sales",
+                target_schema="bad]schema",
+            )
+
+    @pytest.mark.parametrize("reserved", sorted(_SYSTEM_SCHEMAS))
+    async def test_rejects_every_system_schema_as_target(self, reserved: str) -> None:
+        """Every name in the canonical _SYSTEM_SCHEMAS list must be rejected as a
+        TRANSFER target.  This is the single source of truth that all four
+        transfer operations (table/view/function/procedure) inherit by
+        calling this shared helper -- a sibling service does not need to
+        re-test the full enumeration.
+        """
+        target = _make_target()
+        with pytest.raises(ValueError, match="reserved system schema"):
+            await _alter_schema_transfer(
+                target,
+                source_schema="dbo",
+                object_name="sales",
+                target_schema=reserved,
+            )
+
+    async def test_rejects_system_schema_case_insensitively(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="reserved system schema"):
+            await _alter_schema_transfer(
+                target,
+                source_schema="dbo",
+                object_name="sales",
+                target_schema="SYS",
+            )
+
+    async def test_reserved_target_schema_check_fires_before_any_connection(self) -> None:
+        """The reserved-schema rejection must happen before any network I/O."""
+        target = _make_target()
+        with (
+            patch("fabric_dw.sql.open_connection") as mock_open,
+            pytest.raises(ValueError, match="reserved system schema"),
+        ):
+            await _alter_schema_transfer(
+                target,
+                source_schema="dbo",
+                object_name="sales",
+                target_schema="sys",
+            )
+        mock_open.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

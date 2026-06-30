@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from collections.abc import Callable, Coroutine, Mapping, Sequence
@@ -9,9 +10,13 @@ from datetime import UTC, datetime, timedelta
 from typing import Protocol, TypeVar
 from uuid import UUID
 
+from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import ItemKindError
+from fabric_dw.identifiers import quote_identifier, validate_identifier
 from fabric_dw.models import WarehouseKind
 from fabric_dw.services.capacities import ACTIVE_STATE
+from fabric_dw.services.schemas import _SYSTEM_SCHEMAS
+from fabric_dw.sql import SqlTarget, run_query
 
 __all__ = [
     "SelectBodyError",
@@ -53,6 +58,123 @@ def _assert_not_sql_endpoint(kind: WarehouseKind) -> None:
     """
     if kind == WarehouseKind.SQL_ENDPOINT:
         raise ItemKindError(_SQL_ENDPOINT_READONLY_MSG)
+
+
+# ---------------------------------------------------------------------------
+# ALTER SCHEMA TRANSFER helper
+#
+# Shared by table/view/function/procedure "transfer to another schema"
+# operations.  Builds and runs a single parameterised DDL statement from
+# validated, bracket-quoted identifiers -- no SQL parsing is involved.
+# ---------------------------------------------------------------------------
+
+# Reuse the single canonical system-schema list from services.schemas (sys,
+# INFORMATION_SCHEMA, guest, and the fixed db_* role schemas) rather than a
+# second, narrower copy -- these schemas are never valid ALTER SCHEMA TRANSFER
+# targets either.  Pre-casefolded once at import time.
+#
+# Case-insensitive comparison is a deliberate, conservative client-side
+# choice, not a claim about the warehouse's actual collation: Fabric
+# Warehouses use a fixed case-sensitive binary collation
+# (Latin1_General_100_BIN2_UTF8) for user data, so a schema literally named
+# e.g. "Sys" (distinct from the engine's "sys") is technically possible on
+# the server and would be wrongly rejected here.  We accept that asymmetry
+# because (a) creating a schema that differs from a system schema only by
+# case is already confusing and best avoided, and (b) it is consistent with
+# how this codebase treats every other identifier comparison in this guard
+# family (e.g. validate_identifier's own forbidden-character checks) as a
+# fail-closed, "when in doubt, reject" client-side safety net rather than an
+# authoritative mirror of server-side semantics.
+_SYSTEM_SCHEMAS_CASEFOLDED: frozenset[str] = frozenset(s.casefold() for s in _SYSTEM_SCHEMAS)
+
+
+async def _alter_schema_transfer(
+    target: SqlTarget,
+    *,
+    source_schema: str,
+    object_name: str,
+    target_schema: str,
+    mode: CredentialMode = CredentialMode.DEFAULT,
+) -> None:
+    """Move an object to another schema via ``ALTER SCHEMA ... TRANSFER OBJECT::...``.
+
+    Emits exactly::
+
+        ALTER SCHEMA [target_schema] TRANSFER OBJECT::[source_schema].[object_name]
+
+    Fabric's T-SQL syntax only allows the ``OBJECT::`` entity class -- the
+    canonical Microsoft example is ``ALTER SCHEMA Sales TRANSFER
+    OBJECT::dbo.Region;`` -- so the prefix is always emitted explicitly.  All
+    three identifiers are validated via :func:`~fabric_dw.identifiers.validate_identifier`
+    and bracket-quoted via :func:`~fabric_dw.identifiers.quote_identifier`
+    before being embedded in the DDL string.  This is a parameterised DDL
+    statement built from validated identifiers, not SQL parsing or rewriting.
+
+    *target_schema* is rejected up front when it is a system schema (``sys``,
+    ``INFORMATION_SCHEMA``, ``guest``, or a fixed ``db_*`` role schema --
+    see :data:`~fabric_dw.services.schemas._SYSTEM_SCHEMAS`).  Those names
+    pass :func:`validate_identifier` (they are well-formed identifiers) but
+    Microsoft documents that they are never valid ALTER SCHEMA TRANSFER
+    targets, so this check catches them before any network I/O.  All four
+    transfer operations (table/view/function/procedure) inherit this check
+    for free since they all call this shared helper.
+
+    This system-schema check is intentionally one-sided: only *target_schema*
+    is screened, not *source_schema*.  No real caller ever owns a regular,
+    movable user object inside ``sys``/``INFORMATION_SCHEMA``/``guest``/a
+    ``db_*`` role schema -- those schemas hold engine catalog views and
+    fixed-role placeholders, not transferable user objects -- so a
+    *source_schema* in that set would already fail at the engine with a
+    "cannot find the object" style error.  Screening only the destination,
+    where the documented restriction actually lives, keeps the check focused
+    on the one direction Microsoft calls out as always invalid.
+
+    This helper does **not** re-fetch the moved object -- callers re-fetch it
+    from *target_schema* using their own object-specific lookup (e.g.
+    ``_fetch_table``).
+
+    Args:
+        target: The warehouse or SQL Analytics Endpoint to connect to.
+        source_schema: The object's current schema.  Must pass
+            :func:`validate_identifier`.
+        object_name: The (unqualified) object name.  Must pass
+            :func:`validate_identifier`.
+        target_schema: The schema to move the object into.  Must pass
+            :func:`validate_identifier` and must not be a system schema.
+        mode: The credential mode for Entra authentication.
+
+    Raises:
+        ValueError: If *source_schema*, *object_name*, or *target_schema*
+            fails identifier validation, or if *target_schema* is a system
+            schema.
+        PermissionDeniedError: If the driver reports an ALTER SCHEMA permission error.
+        FabricError: If the engine reports an error executing the DDL -- e.g.
+            a missing source object or missing target schema.  Such errors may
+            surface as a generic :class:`~fabric_dw.exceptions.FabricServerError`
+            rather than :class:`~fabric_dw.exceptions.NotFoundError`, because
+            the engine's "cannot find the object" message is not in
+            ``_NOT_FOUND_FRAGMENTS`` (:mod:`fabric_dw.sql_errors`).
+    """
+    validate_identifier(source_schema)
+    validate_identifier(object_name)
+    validate_identifier(target_schema)
+
+    if target_schema.casefold() in _SYSTEM_SCHEMAS_CASEFOLDED:
+        msg = (
+            f"Target schema {target_schema!r} is a reserved system schema and "
+            "cannot be an ALTER SCHEMA TRANSFER target"
+        )
+        raise ValueError(msg)
+
+    ddl = (
+        f"ALTER SCHEMA {quote_identifier(target_schema)} "
+        f"TRANSFER OBJECT::{quote_identifier(source_schema)}.{quote_identifier(object_name)}"
+    )
+
+    def _run_ddl() -> None:
+        run_query(target, ddl, mode=mode, commit=True, fetch="none")
+
+    await asyncio.to_thread(_run_ddl)
 
 
 # ---------------------------------------------------------------------------

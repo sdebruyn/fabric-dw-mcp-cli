@@ -151,6 +151,7 @@ DOMAIN_MAP: dict[str, str] = {
     "create_empty_table": "tables",
     "clone_table": "tables",
     "rename_table": "tables",
+    "transfer_table": "tables",
     "delete_table": "tables",
     "clear_table": "tables",
     "load_table_from_url": "tables",

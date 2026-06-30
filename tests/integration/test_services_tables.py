@@ -24,9 +24,10 @@ from pathlib import Path
 import pyarrow.parquet as pq
 import pytest
 
-from fabric_dw.exceptions import FabricError, NotFoundError
+from fabric_dw.exceptions import FabricError, FabricServerError, NotFoundError
 from fabric_dw.models import Table
 from fabric_dw.services import columns as columns_svc
+from fabric_dw.services import schemas as schemas_svc
 from fabric_dw.services import tables
 from fabric_dw.sql import SqlTarget, run_query
 
@@ -282,6 +283,115 @@ async def test_rename_table_roundtrip(
             await tables.delete_table(sql_target, schema, old_name)
         with contextlib.suppress(Exception):
             await tables.delete_table(sql_target, schema, new_name)
+
+
+async def test_transfer_table_roundtrip(
+    warehouse_schema: tuple[SqlTarget, str],
+) -> None:
+    """Create a table, transfer it to a second schema, assert old gone / new present."""
+    sql_target, schema = warehouse_schema
+    table_name = "pytest_tables_transfer_dst"
+    select_body = "SELECT 42 AS answer"
+    target_schema_name = f"{schema}_target"
+
+    await schemas_svc.create_schema(sql_target, target_schema_name)
+    try:
+        created = await tables.create_table(sql_target, schema, table_name, select_body)
+        assert isinstance(created, Table)
+        assert created.schema_name == schema
+
+        moved = await tables.transfer_table(
+            sql_target, f"{schema}.{table_name}", target_schema_name
+        )
+        assert isinstance(moved, Table)
+        assert moved.name == table_name
+        assert moved.schema_name == target_schema_name
+        assert moved.qualified_name == f"{target_schema_name}.{table_name}"
+
+        all_tables = await tables.list_tables(sql_target)
+        in_target = {t.name for t in all_tables if t.schema_name == target_schema_name}
+        in_source = {t.name for t in all_tables if t.schema_name == schema}
+        assert table_name in in_target, f"{table_name!r} not found in {target_schema_name!r}"
+        assert table_name not in in_source, f"{table_name!r} still present in {schema!r}"
+
+    finally:
+        with contextlib.suppress(Exception):
+            await tables.delete_table(sql_target, schema, table_name)
+        with contextlib.suppress(Exception):
+            await tables.delete_table(sql_target, target_schema_name, table_name)
+        with contextlib.suppress(Exception):
+            await schemas_svc.delete_schema(sql_target, target_schema_name, cascade=True)
+
+
+async def test_transfer_table_missing_target_schema_raises(
+    warehouse_schema: tuple[SqlTarget, str],
+) -> None:
+    """transfer_table against a nonexistent target schema raises FabricServerError.
+
+    GOTCHA (see the ``_NOT_FOUND_FRAGMENTS`` note in ``fabric_dw.sql_errors``,
+    intentionally NOT changed by this test): SQL Server's "specified schema
+    name ... does not exist" message for ``ALTER SCHEMA`` does not match any
+    fragment in ``_NOT_FOUND_FRAGMENTS`` / ``_PERMISSION_DENIED_FRAGMENTS`` /
+    ``_AUTH_FAILED_FRAGMENTS``, so :func:`~fabric_dw.sql_errors.map_driver_error`
+    returns ``None`` and the error falls through to
+    :func:`~fabric_dw.sql_errors._wrap_unmapped_driver_error`, which wraps any
+    ``ddbc_error``-carrying driver exception as a non-retriable
+    :class:`~fabric_dw.exceptions.FabricServerError`. This test pins that
+    specific (not ideal) exception type rather than the broad
+    :class:`~fabric_dw.exceptions.FabricError` parent, so a future
+    ``_NOT_FOUND_FRAGMENTS`` fix (a separate, tightly-scoped follow-up) will
+    intentionally break this assertion as a signal to update it.
+    """
+    sql_target, schema = warehouse_schema
+    table_name = "pytest_tables_transfer_missing_schema"
+    select_body = "SELECT 1 AS id"
+
+    try:
+        await tables.create_table(sql_target, schema, table_name, select_body)
+        with pytest.raises(FabricServerError) as exc_info:
+            await tables.transfer_table(
+                sql_target, f"{schema}.{table_name}", "pytest_nonexistent_schema_zzz"
+            )
+        # Document what actually surfaces today: NOT a NotFoundError.
+        assert not isinstance(exc_info.value, NotFoundError)
+        assert exc_info.value.is_retriable is False
+    finally:
+        with contextlib.suppress(Exception):
+            await tables.delete_table(sql_target, schema, table_name)
+
+
+async def test_transfer_table_name_collision_raises(
+    warehouse_schema: tuple[SqlTarget, str],
+) -> None:
+    """transfer_table raises FabricServerError on a name collision in the target schema.
+
+    SQL Server's "There is already an object named ... in the database"
+    message does not match any fragment in ``_NOT_FOUND_FRAGMENTS`` /
+    ``_PERMISSION_DENIED_FRAGMENTS`` / ``_AUTH_FAILED_FRAGMENTS`` either, so
+    (same as the missing-target-schema gotcha above) it falls through to the
+    generic, non-retriable :class:`~fabric_dw.exceptions.FabricServerError`
+    wrap rather than a more specific error type.
+    """
+    sql_target, schema = warehouse_schema
+    table_name = "pytest_tables_transfer_collision"
+    target_schema_name = f"{schema}_collision_target"
+    select_body = "SELECT 1 AS id"
+
+    await schemas_svc.create_schema(sql_target, target_schema_name)
+    try:
+        await tables.create_table(sql_target, schema, table_name, select_body)
+        await tables.create_table(sql_target, target_schema_name, table_name, select_body)
+
+        with pytest.raises(FabricServerError) as exc_info:
+            await tables.transfer_table(sql_target, f"{schema}.{table_name}", target_schema_name)
+        assert exc_info.value.is_retriable is False
+    finally:
+        with contextlib.suppress(Exception):
+            await tables.delete_table(sql_target, schema, table_name)
+        with contextlib.suppress(Exception):
+            await tables.delete_table(sql_target, target_schema_name, table_name)
+        with contextlib.suppress(Exception):
+            await schemas_svc.delete_schema(sql_target, target_schema_name, cascade=True)
 
 
 async def test_count_table_rows_returns_nonnegative_int(
