@@ -28,7 +28,7 @@ from pathlib import Path
 import pyarrow.parquet as pq
 import pytest
 
-from fabric_dw.exceptions import FabricError, FabricServerError, NotFoundError
+from fabric_dw.exceptions import FabricServerError, NotFoundError
 from fabric_dw.models import Table
 from fabric_dw.services import columns as columns_svc
 from fabric_dw.services import schemas as schemas_svc
@@ -74,24 +74,6 @@ async def test_get_table_columns_on_seeded_table(
     assert len(result) == 2
     col_names = {c["name"] for c in result}
     assert col_names == {"id", "name"}
-
-
-# ---------------------------------------------------------------------------
-# Fragments that indicate the SQL engine rejected an AT timestamp because the
-# table has no committed history at the requested point in time.  These are
-# expected and trigger a pytest.skip rather than a test failure.
-_CLONE_AT_SKIP_FRAGMENTS = (
-    ("clone", "point in time"),
-    ("no version",),
-    ("history",),
-    ("at time",),
-)
-
-
-def _is_clone_at_unavailable(exc: BaseException) -> bool:
-    """Return True when *exc* is a SQL engine rejection of an AT timestamp."""
-    msg = str(exc).lower()
-    return any(all(frag in msg for frag in frags) for frags in _CLONE_AT_SKIP_FRAGMENTS)
 
 
 async def test_list_tables_returns_list(
@@ -177,17 +159,19 @@ async def test_clone_table_at_point_in_time(
 ) -> None:
     """clone_table with AT timestamp clones the table at the specified point in time.
 
-    The AT timestamp must be >= the object creation time and <= the clone
-    transaction time.  We capture the timestamp via ``SELECT SYSUTCDATETIME()``
-    executed against the same server AFTER the table is created.  This
-    eliminates client/server clock skew (the server timestamp is always >= the
-    DDL commit on the same server) and ensures the AT is in the past relative to
-    the subsequent clone transaction.
-
-    If the engine rejects the timestamp because the table has no committed
-    history at the requested point (e.g. some engines require a version to
-    have been committed *before* the AT time), the test is skipped rather than
-    failed, as this is an expected engine limitation for freshly-created tables.
+    CLONE OF ... AT is Warehouse-only and is governed by the same automatic,
+    from-creation time-travel retention as the ``as_of`` read tests above (see
+    https://learn.microsoft.com/fabric/data-warehouse/clone-table
+    ?WT.mc_id=MVP_310840: "Warehouse in Microsoft Fabric automatically
+    preserves and maintains the data history").  The AT timestamp must be >=
+    the object creation time and <= the clone transaction time.  We capture
+    the timestamp via ``SELECT SYSUTCDATETIME()`` executed against the same
+    server AFTER the source table's CTAS has been awaited to completion (a
+    synchronous commit), which guarantees AT >= creation time, and the sleep
+    below guarantees AT < the clone transaction time.  With both bounds
+    satisfied there is no documented case where the engine still rejects the
+    timestamp, so this asserts directly with no skip: a failure here is a
+    real regression.
     """
     sql_target, schema = warehouse_schema
     source_name = "pytest_clone_at_source"
@@ -228,25 +212,12 @@ async def test_clone_table_at_point_in_time(
         # 5 s is comfortably larger than any observed inter-node clock skew.
         await asyncio.sleep(5)
 
-        try:
-            cloned = await tables.clone_table(
-                sql_target,
-                f"{schema}.{source_name}",
-                f"{schema}.{clone_name}",
-                at=at_dt,
-            )
-        except Exception as exc:
-            # A freshly-created table may have no committed history older than
-            # the AT timestamp; the engine raises a SQL error when the AT time
-            # predates any committed version.  Skip only for those expected
-            # SQL/driver rejections; re-raise Python-level bugs (TypeError etc.)
-            # so regressions are not silently hidden.
-            if not isinstance(exc, FabricError) and not _is_clone_at_unavailable(exc):
-                raise
-            pytest.skip(
-                f"Point-in-time clone not feasible on a freshly created table "
-                f"(no history at {at_dt.isoformat()}): {exc}"
-            )
+        cloned = await tables.clone_table(
+            sql_target,
+            f"{schema}.{source_name}",
+            f"{schema}.{clone_name}",
+            at=at_dt,
+        )
 
         assert isinstance(cloned, Table)
         assert cloned.name == clone_name
