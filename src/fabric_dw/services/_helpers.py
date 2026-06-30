@@ -7,7 +7,7 @@ import logging
 import re
 from collections.abc import Callable, Coroutine, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Protocol, TypeVar
+from typing import Literal, Protocol, TypeVar
 from uuid import UUID
 
 from fabric_dw.auth import CredentialMode
@@ -188,26 +188,56 @@ async def _alter_schema_transfer(
 # _transfer_object below is the single place both live now.
 # ---------------------------------------------------------------------------
 
+# The four object kinds that ALTER SCHEMA TRANSFER OBJECT::... can move.
+# Typed as a Literal (not bare str) so a typo'd or mis-cased object_label
+# (e.g. "Table", "tabel") fails ty/lint at every call site instead of only
+# surfacing as garbled wording on the rare post-transfer NotFoundError path.
+_TransferableObjectLabel = Literal["table", "view", "function", "procedure"]
+
 # Canonical order used to build the "not only X -- if Y, Z, or W ..." phrase
 # in the post-transfer NotFoundError message below.  Shared across all four
 # transfer operations so the four rendered messages can never drift from a
 # single ordering or wording.
-_TRANSFERABLE_OBJECT_LABELS: tuple[str, ...] = ("table", "view", "function", "procedure")
+_TRANSFERABLE_OBJECT_LABELS: tuple[_TransferableObjectLabel, ...] = (
+    "table",
+    "view",
+    "function",
+    "procedure",
+)
 
 
-def _other_object_labels_phrase(object_label: str) -> str:
+def _other_object_labels_phrase(object_label: _TransferableObjectLabel) -> str:
     """Return e.g. ``"a view, function, or procedure"`` for ``object_label="table"``.
+
+    Scales to however many labels :data:`_TRANSFERABLE_OBJECT_LABELS` holds
+    (not hardcoded to four) and fails loudly rather than silently dropping a
+    label: if *object_label* is somehow not an exact member of
+    :data:`_TRANSFERABLE_OBJECT_LABELS` at runtime (the ``Literal`` type only
+    guards static call sites), every entry would otherwise survive the filter
+    and the wrong count would be rendered without any error.
 
     Args:
         object_label: One of :data:`_TRANSFERABLE_OBJECT_LABELS`.
 
     Returns:
-        The other three labels (in :data:`_TRANSFERABLE_OBJECT_LABELS` order),
+        The other labels (in :data:`_TRANSFERABLE_OBJECT_LABELS` order),
         formatted as a natural-language enumeration with a leading "a" and an
         "or" before the last item.
+
+    Raises:
+        ValueError: If *object_label* is not in :data:`_TRANSFERABLE_OBJECT_LABELS`.
     """
+    if object_label not in _TRANSFERABLE_OBJECT_LABELS:
+        msg = (
+            f"Unknown object_label {object_label!r}; expected one of "
+            f"{', '.join(_TRANSFERABLE_OBJECT_LABELS)}"
+        )
+        raise ValueError(msg)
+
     others = [label for label in _TRANSFERABLE_OBJECT_LABELS if label != object_label]
-    return f"a {others[0]}, {others[1]}, or {others[2]}"
+    if len(others) == 1:
+        return f"a {others[0]}"
+    return f"a {', '.join(others[:-1])}, or {others[-1]}"
 
 
 async def _transfer_object(
@@ -216,7 +246,7 @@ async def _transfer_object(
     source_schema: str,
     object_name: str,
     target_schema: str,
-    object_label: str,
+    object_label: _TransferableObjectLabel,
     fetch: Callable[[], Coroutine[object, object, _T]],
     mode: CredentialMode = CredentialMode.DEFAULT,
 ) -> _T:
