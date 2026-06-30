@@ -1066,3 +1066,36 @@ class TestRevokePermissionWithColumns:
             "REVOKE GRANT OPTION FOR SELECT ON OBJECT::[dbo].[sales]"
             " ([email], [phone]) FROM [alice@contoso.com];"
         )
+
+    async def test_revoke_grant_option_for_with_columns_and_cascade_exact_sql(self) -> None:
+        """REVOKE GRANT OPTION FOR + columns + CASCADE: exact SQL pin for the 3-way combination.
+
+        Fabric requires CASCADE whenever GRANT OPTION FOR is revoked from a principal
+        that holds the permission WITH GRANT OPTION, including at column level. The
+        integration test ``test_revoke_grant_option_for_column_level_grant`` depends on
+        this exact statement shape; pin it here so a future f-string refactor of
+        ``revoke_permission`` can't silently break the 3-way path.
+        """
+        captured: list[str] = []
+
+        def _mock_run_query(_target: object, sql: str, **_kwargs: object) -> tuple:
+            captured.append(sql)
+            return [], []
+
+        with patch("fabric_dw.services.permissions.run_query", side_effect=_mock_run_query):
+            await perms_svc.revoke_permission(
+                _TARGET,
+                "SELECT",
+                "alice@contoso.com",
+                "OBJECT",
+                object_name="dbo.sales",
+                columns=["email"],
+                grant_option_only=True,
+                cascade=True,
+            )
+
+        stmt = captured[0]
+        assert stmt == (
+            "REVOKE GRANT OPTION FOR SELECT ON OBJECT::[dbo].[sales]"
+            " ([email]) FROM [alice@contoso.com] CASCADE;"
+        )

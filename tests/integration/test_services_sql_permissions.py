@@ -494,11 +494,14 @@ async def test_revoke_grant_option_for_column_level_grant(
     """REVOKE GRANT OPTION FOR on a column-level grant must downgrade to a plain GRANT.
 
     Fabric T-SQL: first GRANT SELECT ... WITH GRANT OPTION, then
-    ``REVOKE GRANT OPTION FOR SELECT ON OBJECT::[schema].[table] ([col]) FROM [role]``.
+    ``REVOKE GRANT OPTION FOR SELECT ON OBJECT::[schema].[table] ([col]) FROM [role] CASCADE``.
     The resulting row must have state GRANT (not GRANT_WITH_GRANT_OPTION).
 
-    If Fabric does not support this syntax at the column level, the test skips with
-    a clear message rather than failing opaquely.
+    CASCADE is required here, not optional: per the T-SQL REVOKE reference, "The REVOKE
+    statement will fail if CASCADE is not specified when you are revoking a permission
+    from a principal that was granted that permission with GRANT OPTION specified." This
+    applies regardless of whether the grantee has actually re-granted the permission to
+    anyone else, and it is not a column-level limitation.
     """
     sql_target, schema_name, role_name = temp_role
     table_name = "pytest_cls_gof_tbl"
@@ -522,21 +525,16 @@ async def test_revoke_grant_option_for_column_level_grant(
         with_grant_option=True,
     )
 
-    try:
-        await permissions.revoke_permission(
-            sql_target,
-            "SELECT",
-            role_name,
-            "OBJECT",
-            object_name=qualified_name,
-            columns=["revenue"],
-            grant_option_only=True,
-        )
-    except Exception as exc:
-        pytest.skip(
-            f"Fabric rejected REVOKE GRANT OPTION FOR at column level "
-            f"(not supported on this capacity): {exc}"
-        )
+    await permissions.revoke_permission(
+        sql_target,
+        "SELECT",
+        role_name,
+        "OBJECT",
+        object_name=qualified_name,
+        columns=["revenue"],
+        grant_option_only=True,
+        cascade=True,
+    )
 
     result = await permissions.list_sql_permissions(
         sql_target, principal=role_name, object_name=qualified_name
