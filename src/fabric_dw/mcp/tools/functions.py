@@ -184,6 +184,51 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             raise tool_err(exc) from exc
         return result.model_dump(mode="json")
 
+    @mutating_tool(mcp, "transfer_function")
+    async def transfer_function(
+        workspace: str, item: str, qualified_name: str, target_schema: str
+    ) -> dict[str, Any]:
+        """Move a T-SQL user-defined function to another schema via ALTER SCHEMA TRANSFER.
+
+        Function DDL is supported on both Data Warehouses and SQL Analytics
+        Endpoints -- unlike table transfer, no endpoint guard applies here.
+
+        CAUTION: ``ALTER SCHEMA ... TRANSFER`` does not rewrite the schema name
+        inside the function's stored definition (``sys.sql_modules.definition``).
+        After a transfer, ``get_function`` may still show the *old* schema name
+        in the ``CREATE ... AS`` header, even though the function now lives in
+        the new schema. This tool does not rewrite the definition text.
+
+        Args:
+            workspace: Workspace name or GUID.
+            item: Warehouse or SQL Analytics Endpoint name or GUID.
+            qualified_name: Current dot-separated qualified function name, e.g.
+                ``dbo.fn_clean_input``.
+            target_schema: Schema to move the function into, e.g. ``archive``.
+        """
+        parse_qualified_name(qualified_name, kind="function")
+        ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
+        try:
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
+            _log.debug(
+                "transfer_function ws=%s item=%s qualified=%r target_schema=%r",
+                ws_id,
+                entry.id,
+                qualified_name,
+                target_schema,
+            )
+            target = make_sql_target(ws_id, entry, item)
+            result = await functions_svc.transfer_function(
+                target, qualified_name, target_schema, mode=ctx.auth_mode
+            )
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        return result.model_dump(mode="json")
+
     @mutating_tool(mcp, "drop_function", destructive=True)
     async def drop_function(
         workspace: str,

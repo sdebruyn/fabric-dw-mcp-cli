@@ -524,6 +524,210 @@ class TestFunctionsUpdate:
 
 
 # ===========================================================================
+# functions transfer
+# ===========================================================================
+
+
+class TestFunctionsTransfer:
+    def test_transfer_with_yes_flag(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        moved = FunctionDetails(
+            schema_name="archive",
+            name="fn_clean",
+            qualified_name="archive.fn_clean",
+            kind=FunctionKind.SCALAR,
+            is_inlineable=True,
+            definition=None,
+            parameters=[],
+            created=_NOW,
+            modified=_NOW,
+        )
+        mock_transfer = AsyncMock(return_value=moved)
+        with (
+            patch(
+                "fabric_dw.cli.commands.functions.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.functions.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.functions.transfer_function",
+                new=mock_transfer,
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "--yes",
+                    "-w",
+                    WS_GUID,
+                    "--json",
+                    "functions",
+                    "transfer",
+                    WH_GUID,
+                    "dbo.fn_clean",
+                    "--target-schema",
+                    "archive",
+                ],
+            )
+        assert result.exit_code == 0
+        mock_transfer.assert_awaited_once()
+        args, _kwargs = mock_transfer.call_args
+        # service is called positionally: target, qualified_name, target_schema
+        assert args[1] == "dbo.fn_clean"
+        assert args[2] == "archive"
+        parsed = json.loads(result.output)
+        assert parsed["name"] == "fn_clean"
+        assert parsed["schema_name"] == "archive"
+
+    def test_transfer_aborted_without_yes(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.functions.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.functions.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch("fabric_dw.services.functions.transfer_function", new=AsyncMock()),
+        ):
+            # Decline the prompt
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "functions",
+                    "transfer",
+                    WH_GUID,
+                    "dbo.fn_clean",
+                    "--target-schema",
+                    "archive",
+                ],
+                input="n\n",
+            )
+        assert result.exit_code == 0
+        assert "Aborted" in result.output
+
+    def test_transfer_missing_target_schema_fails(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        result = runner.invoke(
+            cli, ["-w", WS_GUID, "functions", "transfer", WH_GUID, "dbo.fn_clean"]
+        )
+        assert result.exit_code != 0
+
+    def test_transfer_undotted_qualified_name_fails_before_io(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """An undotted QUALIFIED_NAME must yield a UsageError before any I/O is performed."""
+        _ = cache_env
+        result = runner.invoke(
+            cli,
+            [
+                "-w",
+                WS_GUID,
+                "functions",
+                "transfer",
+                WH_GUID,
+                "nodot",
+                "--target-schema",
+                "archive",
+            ],
+        )
+        assert result.exit_code != 0
+
+    def test_transfer_reserved_target_schema_returns_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """--target-schema sys / information_schema must surface as a non-zero CLI exit.
+
+        Exercises the CLI's ValueError -> ClickException conversion for the
+        reserved-system-schema rejection raised by the shared
+        _alter_schema_transfer helper (acceptance criterion for this feature,
+        already covered 4x via parametrize at the service layer in
+        TestTransferFunction.test_rejects_reserved_target_schema).
+        """
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.functions.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.functions.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.functions.transfer_function",
+                new=AsyncMock(
+                    side_effect=ValueError(
+                        "Target schema 'sys' is a reserved system schema and cannot be "
+                        "an ALTER SCHEMA TRANSFER target"
+                    )
+                ),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "--yes",
+                    "-w",
+                    WS_GUID,
+                    "functions",
+                    "transfer",
+                    WH_GUID,
+                    "dbo.fn_clean",
+                    "--target-schema",
+                    "sys",
+                ],
+            )
+        assert result.exit_code != 0
+        assert "reserved system schema" in result.output
+
+    def test_transfer_permission_denied_returns_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.functions.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.functions.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.functions.transfer_function",
+                new=AsyncMock(side_effect=PermissionDeniedError("no permission")),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "--yes",
+                    "-w",
+                    WS_GUID,
+                    "functions",
+                    "transfer",
+                    WH_GUID,
+                    "dbo.fn_clean",
+                    "--target-schema",
+                    "archive",
+                ],
+            )
+        assert result.exit_code != 0
+
+
+# ===========================================================================
 # functions drop
 # ===========================================================================
 

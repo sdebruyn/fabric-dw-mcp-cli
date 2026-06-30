@@ -179,6 +179,7 @@ DOMAIN_MAP: dict[str, str] = {
     "get_function": "functions",
     "create_function": "functions",
     "update_function": "functions",
+    "transfer_function": "functions",
     "drop_function": "functions",
     # Statistics
     "list_statistics": "statistics",

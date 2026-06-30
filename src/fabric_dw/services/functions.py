@@ -7,6 +7,7 @@ Public API
 - :func:`get_function`        — fetch a single function with its definition and parameters.
 - :func:`create_function`     — issue CREATE FUNCTION [<schema>].[<name>] AS <body>.
 - :func:`update_function`     — issue CREATE OR ALTER FUNCTION [<schema>].[<name>] AS <body>.
+- :func:`transfer_function`   — issue ALTER SCHEMA ... TRANSFER OBJECT::... (both targets).
 - :func:`drop_function`       — issue DROP FUNCTION; no-op on missing when if_exists=True.
 
 Note: User-defined functions are supported on **both** Fabric Data Warehouses and
@@ -27,8 +28,9 @@ from typing import Literal, cast
 
 from fabric_dw.auth import CredentialMode
 from fabric_dw.exceptions import NotFoundError
-from fabric_dw.identifiers import quote_identifier, validate_identifier
+from fabric_dw.identifiers import parse_qualified_name, quote_identifier, validate_identifier
 from fabric_dw.models import Function, FunctionDetails, FunctionKind, FunctionParameter
+from fabric_dw.services._helpers import _alter_schema_transfer
 from fabric_dw.sql import SqlTarget, run_query
 
 # Valid values for the ``kind`` parameter of :func:`list_functions`.
@@ -40,6 +42,7 @@ __all__ = [
     "drop_function",
     "get_function",
     "list_functions",
+    "transfer_function",
     "update_function",
     "validate_identifier",
     "validate_kind",
@@ -410,6 +413,86 @@ async def update_function(
 
     await asyncio.to_thread(_run)
     return await get_function(target, schema, function_name, mode=mode)
+
+
+async def transfer_function(
+    target: SqlTarget,
+    qualified: str,
+    target_schema: str,
+    *,
+    mode: CredentialMode = CredentialMode.DEFAULT,
+) -> FunctionDetails:
+    """Move a function to another schema via ``ALTER SCHEMA ... TRANSFER OBJECT::...``.
+
+    Supported on both Fabric Data Warehouses and SQL Analytics Endpoints —
+    unlike :func:`~fabric_dw.services.tables.transfer_table`, no endpoint
+    guard applies here, mirroring the rest of this module's function DDL.
+
+    .. warning::
+
+        ``OBJECT::[schema].[name]`` matches *any* schema-scoped object with
+        that name, not only functions.  If a table, view, or procedure
+        happens to share the qualified name, the engine transfers that
+        object instead.  When the post-transfer re-fetch then finds no
+        function named *function_name* in *target_schema*,
+        :class:`~fabric_dw.exceptions.NotFoundError` is raised with a message
+        that calls this out explicitly.
+
+    .. warning::
+
+        ``ALTER SCHEMA ... TRANSFER`` does not rewrite the schema name inside
+        the function's stored definition (``sys.sql_modules.definition``).
+        After a transfer, the re-fetched :class:`~fabric_dw.models.FunctionDetails`
+        may still show the *old* schema name in the ``CREATE ... AS`` header.
+        This is a stale-text display issue only; the function itself has moved.
+
+    Args:
+        target: The warehouse or SQL Analytics Endpoint to connect to.
+        qualified: The current fully-qualified name of the form ``schema.fn``.
+            Parsed with :func:`~fabric_dw.identifiers.parse_qualified_name`.
+        target_schema: The schema to move the function into.  Must pass
+            :func:`validate_identifier`.  System schemas (``sys``,
+            ``INFORMATION_SCHEMA``, ``guest``, fixed ``db_*`` role schemas)
+            are rejected by
+            :func:`~fabric_dw.services._helpers._alter_schema_transfer`.
+        mode: The credential mode for Entra authentication.
+
+    Returns:
+        A :class:`~fabric_dw.models.FunctionDetails` reflecting the moved
+        function (fetched via :func:`get_function` from *target_schema* after
+        the transfer).
+
+    Raises:
+        ValueError: If *qualified* cannot be parsed, if any identifier component
+            fails identifier validation, or if *target_schema* is a system schema.
+        NotFoundError: If no function named *function_name* is found in
+            *target_schema* after the transfer -- see the warning above about
+            non-function objects.
+        PermissionDeniedError: If the driver reports a permission error.
+    """
+    schema, fn_name = parse_qualified_name(qualified, kind="function")
+    validate_identifier(schema)
+    validate_identifier(fn_name)
+    validate_identifier(target_schema)
+
+    await _alter_schema_transfer(
+        target,
+        source_schema=schema,
+        object_name=fn_name,
+        target_schema=target_schema,
+        mode=mode,
+    )
+
+    try:
+        return await get_function(target, target_schema, fn_name, mode=mode)
+    except NotFoundError:
+        msg = (
+            f"No function named [{target_schema}].[{fn_name}] was found after "
+            "the transfer. ALTER SCHEMA TRANSFER moves any schema-scoped "
+            "object with that name, not only functions -- if a table, view, "
+            "or procedure shared this name, check whether it was moved instead."
+        )
+        raise NotFoundError(msg) from None
 
 
 async def drop_function(

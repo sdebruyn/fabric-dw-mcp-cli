@@ -141,6 +141,42 @@ fdw -w MyWorkspace functions update SalesWH dbo.fn_clean_input \
   --from-file ./fns/fn_clean_input_v2.sql
 ```
 
+### functions transfer
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Move a T-SQL user-defined function to another schema via `ALTER SCHEMA ... TRANSFER OBJECT::...`. The command emits exactly `ALTER SCHEMA [target_schema] TRANSFER OBJECT::[schema].[fn]`, with every identifier validated and bracket-quoted before being embedded in the DDL. Function DDL is supported on both Data Warehouses and SQL Analytics Endpoints, so no endpoint guard applies.
+
+!!! warning "Definition text is not rewritten"
+    `ALTER SCHEMA ... TRANSFER` moves the function, but it does **not** rewrite
+    the schema name inside the object's stored definition
+    (`sys.sql_modules.definition`, `OBJECT_DEFINITION()`). After a transfer,
+    `get_function` may still show the *old* schema name in the `CREATE ... AS`
+    header, even though the function now lives in the new schema. This tool does
+    not rewrite the definition text: doing so would require parsing and
+    regenerating SQL, which this project deliberately avoids. See
+    [ALTER SCHEMA (Transact-SQL)](https://learn.microsoft.com/sql/t-sql/statements/alter-schema-transact-sql?view=fabric&WT.mc_id=MVP_310840#remarks).
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] functions transfer [OPTIONS] [ITEM] QUALIFIED_NAME
+```
+
+`QUALIFIED_NAME` is the current dot-separated `schema.fn_name`.
+
+| Option | Description |
+| --- | --- |
+| `--target-schema TEXT` | **Required.** Schema to move the function into. |
+
+You will be asked to confirm unless `--yes` is passed.
+
+**Example**
+
+```shell
+fdw -w MyWorkspace functions transfer SalesWH dbo.fn_clean_input --target-schema archive
+```
+
 ## MCP tools
 
 ### create_function
@@ -228,3 +264,28 @@ Redefine a T-SQL user-defined function via `CREATE OR ALTER FUNCTION`.
 - `body` (`str`): the new function body (parameter list, RETURNS clause, and implementation).
 
 **Returns:** `FunctionDetails`: the updated function object.
+
+### transfer_function
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Move a T-SQL user-defined function to another schema via `ALTER SCHEMA ... TRANSFER OBJECT::...`. Function DDL is supported on both Data Warehouses and SQL Analytics Endpoints, so no endpoint guard applies.
+
+!!! warning "Definition text is not rewritten"
+    `ALTER SCHEMA ... TRANSFER` moves the function, but it does **not** rewrite
+    the schema name inside the object's stored definition
+    (`sys.sql_modules.definition`, `OBJECT_DEFINITION()`). After a transfer,
+    `get_function` may still show the *old* schema name in the `CREATE ... AS`
+    header, even though the function now lives in the new schema. This tool does
+    not rewrite the definition text: doing so would require parsing and
+    regenerating SQL, which this project deliberately avoids. See
+    [ALTER SCHEMA (Transact-SQL)](https://learn.microsoft.com/sql/t-sql/statements/alter-schema-transact-sql?view=fabric&WT.mc_id=MVP_310840#remarks).
+
+**Parameters:**
+
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL Analytics Endpoint name or GUID.
+- `qualified_name` (`str`): current dot-separated qualified function name, e.g. `dbo.fn_clean_input`.
+- `target_schema` (`str`): schema to move the function into, e.g. `archive`.
+
+**Returns:** `FunctionDetails`: the moved function record, fetched from the new schema.
