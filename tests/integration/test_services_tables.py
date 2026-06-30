@@ -22,8 +22,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from datetime import UTC, datetime
+import time
+from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import TypeVar
 
 import pyarrow.parquet as pq
 import pytest
@@ -33,9 +35,16 @@ from fabric_dw.models import Table
 from fabric_dw.services import columns as columns_svc
 from fabric_dw.services import schemas as schemas_svc
 from fabric_dw.services import tables
-from fabric_dw.sql import SqlTarget, run_query
+from fabric_dw.sql import SqlTarget
 
-from .conftest import SEED_SCHEMA_NAME, SharedSqlEndpointTarget, SharedWarehouseTarget
+from .conftest import (
+    SEED_SCHEMA_NAME,
+    SharedSqlEndpointTarget,
+    SharedWarehouseTarget,
+    get_server_timestamp,
+)
+
+_T = TypeVar("_T")
 
 pytestmark = pytest.mark.integration
 
@@ -189,20 +198,7 @@ async def test_clone_table_at_point_in_time(
         # Using a client-side timestamp risks client/server clock skew (~60ms)
         # where the client clock trails the server, making the AT appear to be
         # *before* the object was created from the server's perspective.
-        def _get_server_ts() -> datetime:
-            _, rows = run_query(sql_target, "SELECT SYSUTCDATETIME() AS ts")
-            raw = rows[0][0]
-            # mssql_python returns datetime objects; ensure timezone-aware UTC.
-            if isinstance(raw, datetime):
-                return raw.replace(tzinfo=UTC) if raw.tzinfo is None else raw.astimezone(UTC)
-            # Fallback: parse ISO string if the driver returns a string.
-            # Then attach UTC only if the parsed datetime is
-            # naive; if it already carries an offset, convert instead so the offset
-            # is not silently discarded.
-            parsed = datetime.fromisoformat(str(raw))
-            return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
-
-        at_dt: datetime = await asyncio.to_thread(_get_server_ts)
+        at_dt = await asyncio.to_thread(get_server_timestamp, sql_target)
 
         # Sleep so the upcoming clone transaction starts well after `at_dt`.
         # Without this buffer, Fabric's distributed compute can assign a
@@ -419,6 +415,12 @@ async def test_count_table_rows_returns_nonnegative_int(
 #   - A timestamp before the object's creation time raises a SQL error.
 #   - A timestamp outside the configured retention window (1-120 days, default
 #     30) raises a SQL error.
+#
+# All as_of timestamps below are captured via the shared
+# ``conftest.get_server_timestamp`` helper (``SELECT SYSUTCDATETIME()`` on
+# the target itself) rather than the client clock, so a CI runner clock that
+# runs ahead of the Fabric server can never push as_of into the server's
+# near-future.
 
 
 async def test_read_table_with_as_of_returns_seeded_rows(
@@ -433,7 +435,7 @@ async def test_read_table_with_as_of_returns_seeded_rows(
     Warehouse-only: see the comment block above for why.
     """
     sql_target = shared_warehouse.sql_target
-    as_of = datetime.now(tz=UTC)
+    as_of = await asyncio.to_thread(get_server_timestamp, sql_target)
     result = await tables.read_table(sql_target, SEED_SCHEMA_NAME, "colors", count=10, as_of=as_of)
     assert "id" in result.columns
     assert "name" in result.columns
@@ -451,7 +453,7 @@ async def test_count_table_rows_with_as_of_returns_seeded_count(
     block above for why.
     """
     sql_target = shared_warehouse.sql_target
-    as_of = datetime.now(tz=UTC)
+    as_of = await asyncio.to_thread(get_server_timestamp, sql_target)
     result = await tables.count_table_rows(sql_target, SEED_SCHEMA_NAME, "colors", as_of=as_of)
     assert isinstance(result.row_count, int)
     assert result.row_count == 3  # Three seeded rows: red, green, blue
@@ -468,7 +470,7 @@ async def test_read_table_as_of_matches_read_without_as_of(
     """
     sql_target = shared_warehouse.sql_target
     result_plain = await tables.read_table(sql_target, SEED_SCHEMA_NAME, "colors", count=100)
-    as_of = datetime.now(tz=UTC)
+    as_of = await asyncio.to_thread(get_server_timestamp, sql_target)
     result_timed = await tables.read_table(
         sql_target, SEED_SCHEMA_NAME, "colors", count=100, as_of=as_of
     )
@@ -485,11 +487,72 @@ async def test_count_table_rows_as_of_matches_count_without_as_of(
     """
     sql_target = shared_warehouse.sql_target
     result_plain = await tables.count_table_rows(sql_target, SEED_SCHEMA_NAME, "colors")
-    as_of = datetime.now(tz=UTC)
+    as_of = await asyncio.to_thread(get_server_timestamp, sql_target)
     result_timed = await tables.count_table_rows(
         sql_target, SEED_SCHEMA_NAME, "colors", as_of=as_of
     )
     assert result_plain.row_count == result_timed.row_count
+
+
+# ---------------------------------------------------------------------------
+# Time-travel: read_table and count_table_rows with as_of on a FRESH table
+# ---------------------------------------------------------------------------
+#
+# Unlike the long-lived seeded sample.colors above, these tables are created
+# moments before the as_of read.  The CTAS commit is synchronous and the
+# as_of timestamp is captured strictly after it, so in principle the read is
+# already deterministic.  As defense-in-depth against a theoretical (never
+# observed) just-after-commit propagation delay between the connection that
+# ran the CTAS and the connection that runs the as_of read, the read/count is
+# wrapped in a short, bounded retry: only the narrow "no committed
+# history/version yet" error shape is retried, anything else propagates
+# immediately, and the loop's last exception propagates (never a skip) once
+# the window is exhausted.  This keeps the assertion exactly as strong as a
+# plain call while removing the timing dependency as a source of flakiness.
+
+# Total time budget for the just-after-commit retry below.  Generous relative
+# to the empirically observed (~5s) inter-node clock skew bound used by
+# test_clone_table_at_point_in_time's sleep, while staying short enough that
+# a genuine regression still fails fast.
+_AS_OF_RETRY_TIMEOUT_S = 15.0
+# Delay between retry attempts.
+_AS_OF_RETRY_POLL_INTERVAL_S = 1.0
+
+# Fragments from SQL engine error messages that mean the requested as_of
+# timestamp has no committed history/version yet for the object.  Only these
+# are retried by _retry_until_queryable; every other error propagates on the
+# first attempt so a real bug fails immediately instead of waiting out the
+# whole retry window.
+_NOT_YET_QUERYABLE_FRAGMENTS = (
+    ("no version",),
+    ("history",),
+    ("at time",),
+    ("point in time",),
+    ("timestamp",),
+)
+
+
+def _is_not_yet_queryable(exc: BaseException) -> bool:
+    """Return True when *exc* means the as_of point in time has no committed history yet."""
+    msg = str(exc).lower()
+    return any(all(frag in msg for frag in frags) for frags in _NOT_YET_QUERYABLE_FRAGMENTS)
+
+
+async def _retry_until_queryable(call: Callable[[], Awaitable[_T]]) -> _T:
+    """Retry *call* until it succeeds or the bounded retry window elapses.
+
+    Only retries on :func:`_is_not_yet_queryable` errors; any other exception
+    (a real bug, a permission error, etc.) is re-raised immediately.  Once the
+    window is exhausted the last exception propagates -- this never skips.
+    """
+    deadline = time.monotonic() + _AS_OF_RETRY_TIMEOUT_S
+    while True:
+        try:
+            return await call()
+        except Exception as exc:
+            if not _is_not_yet_queryable(exc) or time.monotonic() >= deadline:
+                raise
+            await asyncio.sleep(_AS_OF_RETRY_POLL_INTERVAL_S)
 
 
 async def test_time_travel_on_fresh_table_read(
@@ -497,13 +560,10 @@ async def test_time_travel_on_fresh_table_read(
 ) -> None:
     """read_table with as_of set to a server-side timestamp (after DDL) returns the seeded rows.
 
-    The server-side timestamp is captured via ``SYSUTCDATETIME()`` AFTER the
-    CTAS that creates the table has been awaited to completion, so the as_of
-    is guaranteed to be at or after the commit.  Warehouse DDL commits are
-    synchronous (the CTAS statement does not return until committed) and
-    warehouse time travel has no separate propagation delay documented by
-    Microsoft Learn, so this is deterministic, not a "succeeds or skips"
-    scenario: a failure here means a real regression.
+    The server-side timestamp is captured via ``get_server_timestamp`` AFTER
+    the CTAS that creates the table has been awaited to completion, so the
+    as_of is guaranteed to be at or after the commit.  See the comment block
+    above this test group for the bounded-retry rationale.
     """
     sql_target, schema = warehouse_schema
     table_name = "pytest_timetravel_read"
@@ -514,17 +574,11 @@ async def test_time_travel_on_fresh_table_read(
 
         # Capture a server-side timestamp after the DDL commit to avoid
         # client/server clock skew (same technique as test_clone_table_at_point_in_time).
-        def _get_server_ts() -> datetime:
-            _, rows = run_query(sql_target, "SELECT SYSUTCDATETIME() AS ts")
-            raw = rows[0][0]
-            if isinstance(raw, datetime):
-                return raw.replace(tzinfo=UTC) if raw.tzinfo is None else raw.astimezone(UTC)
-            parsed = datetime.fromisoformat(str(raw))
-            return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+        as_of = await asyncio.to_thread(get_server_timestamp, sql_target)
 
-        as_of: datetime = await asyncio.to_thread(_get_server_ts)
-
-        result = await tables.read_table(sql_target, schema, table_name, count=10, as_of=as_of)
+        result = await _retry_until_queryable(
+            lambda: tables.read_table(sql_target, schema, table_name, count=10, as_of=as_of)
+        )
         assert len(result.rows) == 2
     finally:
         with contextlib.suppress(Exception):
@@ -545,17 +599,11 @@ async def test_time_travel_on_fresh_table_count(
     try:
         await tables.create_table(sql_target, schema, table_name, select_body)
 
-        def _get_server_ts() -> datetime:
-            _, rows = run_query(sql_target, "SELECT SYSUTCDATETIME() AS ts")
-            raw = rows[0][0]
-            if isinstance(raw, datetime):
-                return raw.replace(tzinfo=UTC) if raw.tzinfo is None else raw.astimezone(UTC)
-            parsed = datetime.fromisoformat(str(raw))
-            return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+        as_of = await asyncio.to_thread(get_server_timestamp, sql_target)
 
-        as_of: datetime = await asyncio.to_thread(_get_server_ts)
-
-        result = await tables.count_table_rows(sql_target, schema, table_name, as_of=as_of)
+        result = await _retry_until_queryable(
+            lambda: tables.count_table_rows(sql_target, schema, table_name, as_of=as_of)
+        )
         assert result.row_count == 3
     finally:
         with contextlib.suppress(Exception):

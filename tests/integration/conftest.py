@@ -5,6 +5,7 @@ import os
 import time
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, NamedTuple
 from uuid import UUID
 
@@ -75,6 +76,34 @@ _SNAP_SQL_READINESS_POLL_S = 5.0
 # Dual-target mutating tests MUST use the ``mutable_schema_target`` fixture;
 # ``warehouse_schema`` is for DWH-only DDL (e.g. tables) only.
 SEED_SCHEMA_NAME = "sample"
+
+
+def get_server_timestamp(target: SqlTarget) -> datetime:
+    """Return a UTC-aware server-side timestamp via ``SELECT SYSUTCDATETIME()``.
+
+    Capturing the timestamp from the same server the test will read/clone
+    against avoids client/server clock skew: a client clock that trails the
+    server could make an ``as_of``/``AT`` value appear to be *before* an
+    object's creation time, and a client clock that leads the server could
+    make it appear to be in the server's near-future.
+
+    This is synchronous (TDS), so async callers must offload it via
+    ``asyncio.to_thread``.  Shared by the time-travel (``as_of=``) and
+    point-in-time clone (``AT``) integration tests in
+    ``test_services_tables.py`` to avoid duplicating the UTC-normalisation
+    logic across call sites; ``test_services_views.py`` has an
+    as-yet-unconsolidated analog of the same logic (``_get_server_ts``).
+    """
+    _, rows = run_query(target, "SELECT SYSUTCDATETIME() AS ts")
+    raw = rows[0][0]
+    # mssql_python returns datetime objects; ensure timezone-aware UTC.
+    if isinstance(raw, datetime):
+        return raw.replace(tzinfo=UTC) if raw.tzinfo is None else raw.astimezone(UTC)
+    # Fallback: parse ISO string if the driver returns a string.  Attach UTC
+    # only if the parsed datetime is naive; if it already carries an offset,
+    # convert instead so the offset is not silently discarded.
+    parsed = datetime.fromisoformat(str(raw))
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
 
 
 class SharedWarehouseTarget(NamedTuple):
