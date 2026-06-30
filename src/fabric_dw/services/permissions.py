@@ -789,8 +789,10 @@ async def revoke_permission(
             ``COLUMN_APPLICABLE_PERMISSIONS``.
         grant_option_only: When ``True``, only revokes the ``GRANT OPTION FOR``
             (leaves the base permission in place).
-        cascade: When ``True``, adds ``CASCADE`` (required when the grantee has
-            granted the permission to others).
+        cascade: When ``True``, adds ``CASCADE``. Required whenever the principal
+            holds the permission ``WITH GRANT OPTION`` and you revoke it (or
+            revoke ``GRANT OPTION FOR`` it), regardless of whether that
+            principal has actually re-granted it to anyone else.
         mode: Credential mode for Entra authentication.
 
     Raises:
