@@ -294,12 +294,21 @@ fdw tables clone \
   --at 2026-05-20T14:00:00
 ```
 
-**Rename** a table or view (`sp_rename`; the new name must be **unqualified**: you can't move objects across schemas):
+**Rename** a table or view (`sp_rename`; the new name must be **unqualified** - `sp_rename` itself can't move an object across schemas, it only renames in place):
 
 ```shell
 fdw tables rename SalesWH sales.orders_2025 --new-name orders_archive_2025
 fdw views rename SalesWH sales.vw_recent --new-name vw_revenue
 ```
+
+**Move** a table or view to a different schema with `transfer` (`ALTER SCHEMA ... TRANSFER OBJECT::...`; a separate operation from rename, and the way to actually relocate an object):
+
+```shell
+fdw tables transfer SalesWH sales.orders_2025 --target-schema archive
+fdw views transfer SalesWH sales.vw_recent --target-schema archive
+```
+
+The same operation is available for functions and procedures. See [Tables](../commands/tables.md#tables-transfer), [Views](../commands/views.md#views-transfer), [Functions](../commands/functions.md#functions-transfer), and [Procedures](../commands/procedures.md#procedures-transfer) for the full flag reference, including two caveats worth knowing up front: table transfer is **Data Warehouse only** (it's rejected on a SQL Analytics Endpoint, since moving a table between schemas there can break the OneLake sync), and for views, functions, and procedures the transfer does not rewrite the stored definition text, so the object's `CREATE ... AS` header may still show the old schema name afterward.
 
 **Clear** a table (`TRUNCATE TABLE`: removes all rows, keeps the structure):
 
@@ -323,7 +332,7 @@ fdw --yes schemas delete SalesWH sales --cascade
 
 `schemas delete --cascade` first drops **all tables, views, functions, and stored procedures** in the schema. Without `--cascade`, the engine rejects `DROP SCHEMA` on a non-empty schema. On a SQL Analytics Endpoint, cascade can't drop tables (no `DROP TABLE` there), so a schema still holding tables won't drop - remove them from the warehouse first.
 
-**MCP equivalents:** `clone_table`, `rename_table` / `rename_view`, `clear_table`, `get_table_health_metrics`, `drop_view`, `delete_table`, `delete_schema(..., cascade=True)`.
+**MCP equivalents:** `clone_table`, `rename_table` / `rename_view`, `transfer_table` / `transfer_view`, `clear_table`, `get_table_health_metrics`, `drop_view`, `delete_table`, `delete_schema(..., cascade=True)`.
 
 ### Destructive operations and the `--yes` flag
 
@@ -400,6 +409,7 @@ Every authoring and inspection step above maps to an MCP tool. The exceptions ar
 | Row count | `tables count` | `count_table_rows` |
 | Clone table | `tables clone` | `clone_table` |
 | Rename table | `tables rename` | `rename_table` |
+| Transfer table to another schema | `tables transfer` | `transfer_table` |
 | Set / remove clustering | `tables cluster-by` | `set_cluster_columns` |
 | Clustering columns | `tables cluster-columns` | `get_cluster_columns` |
 | Truncate table | `tables clear` | `clear_table` |
@@ -415,6 +425,7 @@ Every authoring and inspection step above maps to an MCP tool. The exceptions ar
 | Read view rows | `views read` | `read_view` |
 | View row count | `views count` | `count_view_rows` |
 | Rename view | `views rename` | `rename_view` |
+| Transfer view to another schema | `views transfer` | `transfer_view` |
 | Drop view | `views drop` | `drop_view` |
 | Create statistic | `statistics create` | `create_statistics` |
 | Update statistic | `statistics update` | `update_statistics` |
