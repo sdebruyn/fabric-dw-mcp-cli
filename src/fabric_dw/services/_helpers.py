@@ -119,6 +119,16 @@ async def _alter_schema_transfer(
     transfer operations (table/view/function/procedure) inherit this check
     for free since they all call this shared helper.
 
+    This system-schema check is intentionally one-sided: only *target_schema*
+    is screened, not *source_schema*.  No real caller ever owns a regular,
+    movable user object inside ``sys``/``INFORMATION_SCHEMA``/``guest``/a
+    ``db_*`` role schema -- those schemas hold engine catalog views and
+    fixed-role placeholders, not transferable user objects -- so a
+    *source_schema* in that set would already fail at the engine with a
+    "cannot find the object" style error.  Screening only the destination,
+    where the documented restriction actually lives, keeps the check focused
+    on the one direction Microsoft calls out as always invalid.
+
     This helper does **not** re-fetch the moved object -- callers re-fetch it
     from *target_schema* using their own object-specific lookup (e.g.
     ``_fetch_table``).

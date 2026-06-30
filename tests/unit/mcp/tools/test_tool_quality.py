@@ -730,6 +730,7 @@ _ALL_MUTATING_TOOLS: list[str] = [
     "clear_table",
     "clone_table",
     "rename_table",
+    "transfer_table",
     # procedures.py
     "create_procedure",
     "update_procedure",

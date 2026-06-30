@@ -2176,6 +2176,7 @@ class TestTablesTransfer:
         """SQL Endpoint items must be rejected by the service-layer guard."""
         _ = cache_env
         mock_http = AsyncMock()
+        mock_transfer = AsyncMock(side_effect=ItemKindError("read-only"))
         with (
             patch(
                 "fabric_dw.cli.commands.tables.build_http_client",
@@ -2187,7 +2188,7 @@ class TestTablesTransfer:
             ),
             patch(
                 "fabric_dw.services.tables.transfer_table",
-                new=AsyncMock(side_effect=ItemKindError("read-only")),
+                new=mock_transfer,
             ),
         ):
             result = runner.invoke(
@@ -2205,6 +2206,58 @@ class TestTablesTransfer:
             )
         assert result.exit_code != 0
         assert "read-only" in result.output
+        # The CLI must forward kind=SQL_ENDPOINT — the rejection is enforced
+        # by the service-layer guard, not faked by the CLI hardcoding WAREHOUSE.
+        _, kwargs = mock_transfer.call_args
+        assert kwargs["kind"] == _make_sql_endpoint_entry().kind
+
+    def test_transfer_reserved_target_schema_returns_nonzero(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """--target-schema sys / information_schema must surface as a non-zero CLI exit.
+
+        Exercises the CLI's ValueError -> ClickException conversion for the
+        reserved-system-schema rejection raised by the shared
+        _alter_schema_transfer helper (acceptance criterion for this feature,
+        already covered 4x via parametrize at the service layer in
+        TestTransferTable.test_rejects_reserved_target_schema).
+        """
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.transfer_table",
+                new=AsyncMock(
+                    side_effect=ValueError(
+                        "Target schema 'sys' is a reserved system schema and cannot be "
+                        "an ALTER SCHEMA TRANSFER target"
+                    )
+                ),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "tables",
+                    "transfer",
+                    WH_GUID,
+                    "dbo.sales",
+                    "--target-schema",
+                    "sys",
+                ],
+            )
+        assert result.exit_code != 0
+        assert "reserved system schema" in result.output
 
     def test_transfer_permission_denied_returns_nonzero(
         self, runner: CliRunner, cache_env: Path
