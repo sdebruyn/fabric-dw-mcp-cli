@@ -366,6 +366,34 @@ async def test_transfer_function_happy_path(mock_ctx, ctx_patch) -> None:
     assert result["schema_name"] == "archive"
 
 
+async def test_transfer_function_on_sql_endpoint_succeeds(mock_ctx, ctx_patch) -> None:
+    """transfer_function on a SQL Analytics Endpoint must succeed — no endpoint guard."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    moved = _make_fn_details(schema="archive", name="fn_clean")
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_sql_endpoint_entry())
+    mock_transfer = AsyncMock(return_value=moved)
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.functions.transfer_function", new=mock_transfer),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "transfer_function",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "qualified_name": "dbo.fn_clean",
+                "target_schema": "archive",
+            },
+        )
+
+    mock_transfer.assert_called_once()
+    assert result["name"] == "fn_clean"
+    assert result["schema_name"] == "archive"
+
+
 async def test_transfer_function_readonly_blocked(mock_ctx, ctx_patch) -> None:
     """transfer_function raises ToolError when FABRIC_MCP_READONLY is set."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
