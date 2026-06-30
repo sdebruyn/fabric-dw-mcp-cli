@@ -12,26 +12,39 @@ Fixture notes:
 - ``shared_sql_endpoint``: used for the SQL-endpoint-only ``get_table_health_metrics``
   test (``sp_get_table_health_metrics`` targets lakehouse Delta tables and is only
   available on SQL Analytics Endpoints, not on Data Warehouses).
+- ``shared_warehouse``: used directly (not via ``read_target``) for the time-travel
+  (``as_of=``) tests on the pre-seeded schema, which only run against the warehouse
+  because time travel is structurally unavailable on the hand-seeded SQL endpoint
+  table — see the comment block above those tests for details.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-from datetime import UTC, datetime
+import time
+from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import TypeVar
 
 import pyarrow.parquet as pq
 import pytest
 
-from fabric_dw.exceptions import FabricError, FabricServerError, NotFoundError
+from fabric_dw.exceptions import FabricServerError, NotFoundError
 from fabric_dw.models import Table
 from fabric_dw.services import columns as columns_svc
 from fabric_dw.services import schemas as schemas_svc
 from fabric_dw.services import tables
-from fabric_dw.sql import SqlTarget, run_query
+from fabric_dw.sql import SqlTarget
 
-from .conftest import SEED_SCHEMA_NAME, SharedSqlEndpointTarget
+from .conftest import (
+    SEED_SCHEMA_NAME,
+    SharedSqlEndpointTarget,
+    SharedWarehouseTarget,
+    get_server_timestamp,
+)
+
+_T = TypeVar("_T")
 
 pytestmark = pytest.mark.integration
 
@@ -70,24 +83,6 @@ async def test_get_table_columns_on_seeded_table(
     assert len(result) == 2
     col_names = {c["name"] for c in result}
     assert col_names == {"id", "name"}
-
-
-# ---------------------------------------------------------------------------
-# Fragments that indicate the SQL engine rejected an AT timestamp because the
-# table has no committed history at the requested point in time.  These are
-# expected and trigger a pytest.skip rather than a test failure.
-_CLONE_AT_SKIP_FRAGMENTS = (
-    ("clone", "point in time"),
-    ("no version",),
-    ("history",),
-    ("at time",),
-)
-
-
-def _is_clone_at_unavailable(exc: BaseException) -> bool:
-    """Return True when *exc* is a SQL engine rejection of an AT timestamp."""
-    msg = str(exc).lower()
-    return any(all(frag in msg for frag in frags) for frags in _CLONE_AT_SKIP_FRAGMENTS)
 
 
 async def test_list_tables_returns_list(
@@ -173,17 +168,19 @@ async def test_clone_table_at_point_in_time(
 ) -> None:
     """clone_table with AT timestamp clones the table at the specified point in time.
 
-    The AT timestamp must be >= the object creation time and <= the clone
-    transaction time.  We capture the timestamp via ``SELECT SYSUTCDATETIME()``
-    executed against the same server AFTER the table is created.  This
-    eliminates client/server clock skew (the server timestamp is always >= the
-    DDL commit on the same server) and ensures the AT is in the past relative to
-    the subsequent clone transaction.
-
-    If the engine rejects the timestamp because the table has no committed
-    history at the requested point (e.g. some engines require a version to
-    have been committed *before* the AT time), the test is skipped rather than
-    failed, as this is an expected engine limitation for freshly-created tables.
+    CLONE OF ... AT is Warehouse-only and is governed by the same automatic,
+    from-creation time-travel retention as the ``as_of`` read tests above (see
+    https://learn.microsoft.com/fabric/data-warehouse/clone-table
+    ?WT.mc_id=MVP_310840: "Warehouse in Microsoft Fabric automatically
+    preserves and maintains the data history").  The AT timestamp must be >=
+    the object creation time and <= the clone transaction time.  We capture
+    the timestamp via ``SELECT SYSUTCDATETIME()`` executed against the same
+    server AFTER the source table's CTAS has been awaited to completion (a
+    synchronous commit), which guarantees AT >= creation time, and the sleep
+    below guarantees AT < the clone transaction time.  With both bounds
+    satisfied there is no documented case where the engine still rejects the
+    timestamp, so this asserts directly with no skip: a failure here is a
+    real regression.
     """
     sql_target, schema = warehouse_schema
     source_name = "pytest_clone_at_source"
@@ -201,20 +198,7 @@ async def test_clone_table_at_point_in_time(
         # Using a client-side timestamp risks client/server clock skew (~60ms)
         # where the client clock trails the server, making the AT appear to be
         # *before* the object was created from the server's perspective.
-        def _get_server_ts() -> datetime:
-            _, rows = run_query(sql_target, "SELECT SYSUTCDATETIME() AS ts")
-            raw = rows[0][0]
-            # mssql_python returns datetime objects; ensure timezone-aware UTC.
-            if isinstance(raw, datetime):
-                return raw.replace(tzinfo=UTC) if raw.tzinfo is None else raw.astimezone(UTC)
-            # Fallback: parse ISO string if the driver returns a string.
-            # Then attach UTC only if the parsed datetime is
-            # naive; if it already carries an offset, convert instead so the offset
-            # is not silently discarded.
-            parsed = datetime.fromisoformat(str(raw))
-            return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
-
-        at_dt: datetime = await asyncio.to_thread(_get_server_ts)
+        at_dt = await asyncio.to_thread(get_server_timestamp, sql_target)
 
         # Sleep so the upcoming clone transaction starts well after `at_dt`.
         # Without this buffer, Fabric's distributed compute can assign a
@@ -224,25 +208,12 @@ async def test_clone_table_at_point_in_time(
         # 5 s is comfortably larger than any observed inter-node clock skew.
         await asyncio.sleep(5)
 
-        try:
-            cloned = await tables.clone_table(
-                sql_target,
-                f"{schema}.{source_name}",
-                f"{schema}.{clone_name}",
-                at=at_dt,
-            )
-        except Exception as exc:
-            # A freshly-created table may have no committed history older than
-            # the AT timestamp; the engine raises a SQL error when the AT time
-            # predates any committed version.  Skip only for those expected
-            # SQL/driver rejections; re-raise Python-level bugs (TypeError etc.)
-            # so regressions are not silently hidden.
-            if not isinstance(exc, FabricError) and not _is_clone_at_unavailable(exc):
-                raise
-            pytest.skip(
-                f"Point-in-time clone not feasible on a freshly created table "
-                f"(no history at {at_dt.isoformat()}): {exc}"
-            )
+        cloned = await tables.clone_table(
+            sql_target,
+            f"{schema}.{source_name}",
+            f"{schema}.{clone_name}",
+            at=at_dt,
+        )
 
         assert isinstance(cloned, Table)
         assert cloned.name == clone_name
@@ -417,21 +388,142 @@ async def test_count_table_rows_returns_nonnegative_int(
 # Time-travel: read_table and count_table_rows with as_of
 # ---------------------------------------------------------------------------
 #
-# The pre-seeded ``sample.colors`` table (created during session setup, well
-# before these tests run) provides stable, known-count data.  Using a "current"
-# timestamp as as_of is safe because the table has a long committed history.
+# These tests run against the WAREHOUSE ONLY (``shared_warehouse``, not the
+# dual-target ``read_target`` fixture).  The two Fabric surfaces have
+# structurally different time-travel availability:
 #
-# Caveats (expected server-side errors, not bugs):
+#   - Warehouse: every table is automatically versioned, and retention "begins
+#     automatically from the moment the warehouse is created" (default 30
+#     days, see https://learn.microsoft.com/fabric/data-warehouse/time-travel
+#     ?WT.mc_id=MVP_310840).  The pre-seeded sample.colors table is created
+#     during session setup, well before these tests run, so a "now" as_of
+#     timestamp is always within its committed history.  A failure here is a
+#     real regression, not an environment limitation, so these tests assert
+#     directly with no skip.
+#   - SQL analytics endpoint: time travel "is only enabled for SQL analytics
+#     endpoints created with the New metadata sync (preview) enabled" (same
+#     doc above).  The endpoint's sample.colors in this test suite is a
+#     hand-written minimal Delta table uploaded straight to OneLake (see
+#     ``_seed_lakehouse_sample_data`` in conftest.py), not a table produced by
+#     that metadata-sync path, so ``FOR TIMESTAMP AS OF`` structurally cannot
+#     succeed against it ("The object isn't versioned, so time travel isn't
+#     supported.").  There is no setup that would make this leg pass, so it is
+#     intentionally not exercised here rather than silently skipped per-test.
+#
+# Caveats that remain real, expected server-side errors on the warehouse leg
+# (not exercised by these tests, just documented):
 #   - A timestamp before the object's creation time raises a SQL error.
 #   - A timestamp outside the configured retention window (1-120 days, default
 #     30) raises a SQL error.
-#   - A freshly-created table may have no committed history at the requested
-#     point; this is tested in ``test_time_travel_on_fresh_table_*`` below and
-#     handled by a pytest.skip rather than a failure.
+#
+# All as_of timestamps below are captured via the shared
+# ``conftest.get_server_timestamp`` helper (``SELECT SYSUTCDATETIME()`` on
+# the target itself) rather than the client clock, so a CI runner clock that
+# runs ahead of the Fabric server can never push as_of into the server's
+# near-future.
 
-# Fragments from SQL engine error messages that mean the requested timestamp has
-# no committed history for the object (expected on freshly-created tables).
-_TIME_TRAVEL_SKIP_FRAGMENTS = (
+
+async def test_read_table_with_as_of_returns_seeded_rows(
+    shared_warehouse: SharedWarehouseTarget,
+) -> None:
+    """read_table with as_of=now succeeds and returns the seeded rows.
+
+    Uses the pre-seeded sample.colors table (created during session setup) so
+    that any current timestamp is guaranteed to be within its committed history.
+    Proves that the generated OPTION (FOR TIMESTAMP AS OF ...) clause is
+    syntactically and semantically accepted by the Fabric SQL engine end-to-end.
+    Warehouse-only: see the comment block above for why.
+    """
+    sql_target = shared_warehouse.sql_target
+    as_of = await asyncio.to_thread(get_server_timestamp, sql_target)
+    result = await tables.read_table(sql_target, SEED_SCHEMA_NAME, "colors", count=10, as_of=as_of)
+    assert "id" in result.columns
+    assert "name" in result.columns
+    assert len(result.rows) == 3  # Three seeded rows: red, green, blue
+
+
+async def test_count_table_rows_with_as_of_returns_seeded_count(
+    shared_warehouse: SharedWarehouseTarget,
+) -> None:
+    """count_table_rows with as_of=now succeeds and returns the seeded row count.
+
+    Same guarantee as test_read_table_with_as_of_returns_seeded_rows: the
+    pre-seeded sample.colors table has a long committed history, so any current
+    timestamp is a valid point-in-time anchor.  Warehouse-only: see the comment
+    block above for why.
+    """
+    sql_target = shared_warehouse.sql_target
+    as_of = await asyncio.to_thread(get_server_timestamp, sql_target)
+    result = await tables.count_table_rows(sql_target, SEED_SCHEMA_NAME, "colors", as_of=as_of)
+    assert isinstance(result.row_count, int)
+    assert result.row_count == 3  # Three seeded rows: red, green, blue
+
+
+async def test_read_table_as_of_matches_read_without_as_of(
+    shared_warehouse: SharedWarehouseTarget,
+) -> None:
+    """read_table with as_of=now returns the same data as read without as_of.
+
+    Confirms the OPTION clause is non-destructive: for stable seeded data,
+    a current point-in-time read must match a plain (latest) read.
+    Warehouse-only: see the comment block above for why.
+    """
+    sql_target = shared_warehouse.sql_target
+    result_plain = await tables.read_table(sql_target, SEED_SCHEMA_NAME, "colors", count=100)
+    as_of = await asyncio.to_thread(get_server_timestamp, sql_target)
+    result_timed = await tables.read_table(
+        sql_target, SEED_SCHEMA_NAME, "colors", count=100, as_of=as_of
+    )
+    assert result_plain.columns == result_timed.columns
+    assert sorted(str(r) for r in result_plain.rows) == sorted(str(r) for r in result_timed.rows)
+
+
+async def test_count_table_rows_as_of_matches_count_without_as_of(
+    shared_warehouse: SharedWarehouseTarget,
+) -> None:
+    """count_table_rows with as_of=now returns the same count as without as_of.
+
+    Warehouse-only: see the comment block above for why.
+    """
+    sql_target = shared_warehouse.sql_target
+    result_plain = await tables.count_table_rows(sql_target, SEED_SCHEMA_NAME, "colors")
+    as_of = await asyncio.to_thread(get_server_timestamp, sql_target)
+    result_timed = await tables.count_table_rows(
+        sql_target, SEED_SCHEMA_NAME, "colors", as_of=as_of
+    )
+    assert result_plain.row_count == result_timed.row_count
+
+
+# ---------------------------------------------------------------------------
+# Time-travel: read_table and count_table_rows with as_of on a FRESH table
+# ---------------------------------------------------------------------------
+#
+# Unlike the long-lived seeded sample.colors above, these tables are created
+# moments before the as_of read.  The CTAS commit is synchronous and the
+# as_of timestamp is captured strictly after it, so in principle the read is
+# already deterministic.  As defense-in-depth against a theoretical (never
+# observed) just-after-commit propagation delay between the connection that
+# ran the CTAS and the connection that runs the as_of read, the read/count is
+# wrapped in a short, bounded retry: only the narrow "no committed
+# history/version yet" error shape is retried, anything else propagates
+# immediately, and the loop's last exception propagates (never a skip) once
+# the window is exhausted.  This keeps the assertion exactly as strong as a
+# plain call while removing the timing dependency as a source of flakiness.
+
+# Total time budget for the just-after-commit retry below.  Generous relative
+# to the empirically observed (~5s) inter-node clock skew bound used by
+# test_clone_table_at_point_in_time's sleep, while staying short enough that
+# a genuine regression still fails fast.
+_AS_OF_RETRY_TIMEOUT_S = 15.0
+# Delay between retry attempts.
+_AS_OF_RETRY_POLL_INTERVAL_S = 1.0
+
+# Fragments from SQL engine error messages that mean the requested as_of
+# timestamp has no committed history/version yet for the object.  Only these
+# are retried by _retry_until_queryable; every other error propagates on the
+# first attempt so a real bug fails immediately instead of waiting out the
+# whole retry window.
+_NOT_YET_QUERYABLE_FRAGMENTS = (
     ("no version",),
     ("history",),
     ("at time",),
@@ -440,106 +532,38 @@ _TIME_TRAVEL_SKIP_FRAGMENTS = (
 )
 
 
-def _is_time_travel_unavailable(exc: BaseException) -> bool:
-    """Return True when *exc* means no committed history exists at the requested timestamp."""
+def _is_not_yet_queryable(exc: BaseException) -> bool:
+    """Return True when *exc* means the as_of point in time has no committed history yet."""
     msg = str(exc).lower()
-    return any(all(frag in msg for frag in frags) for frags in _TIME_TRAVEL_SKIP_FRAGMENTS)
+    return any(all(frag in msg for frag in frags) for frags in _NOT_YET_QUERYABLE_FRAGMENTS)
 
 
-async def test_read_table_with_as_of_returns_seeded_rows(
-    read_target: SqlTarget,
-) -> None:
-    """read_table with as_of=now succeeds and returns the seeded rows.
+async def _retry_until_queryable(call: Callable[[], Awaitable[_T]]) -> _T:
+    """Retry *call* until it succeeds or the bounded retry window elapses.
 
-    Uses the pre-seeded sample.colors table (created during session setup) so
-    that any current timestamp is guaranteed to be within its committed history.
-    Proves that the generated OPTION (FOR TIMESTAMP AS OF ...) clause is
-    syntactically and semantically accepted by the Fabric SQL engine end-to-end.
+    Only retries on :func:`_is_not_yet_queryable` errors; any other exception
+    (a real bug, a permission error, etc.) is re-raised immediately.  Once the
+    window is exhausted the last exception propagates -- this never skips.
     """
-    as_of = datetime.now(tz=UTC)
-    try:
-        result = await tables.read_table(
-            read_target, SEED_SCHEMA_NAME, "colors", count=10, as_of=as_of
-        )
-    except Exception as exc:
-        if _is_time_travel_unavailable(exc):
-            pytest.skip(f"No committed history at {as_of.isoformat()}: {exc}")
-        raise
-    assert "id" in result.columns
-    assert "name" in result.columns
-    assert len(result.rows) == 3  # Three seeded rows: red, green, blue
-
-
-async def test_count_table_rows_with_as_of_returns_seeded_count(
-    read_target: SqlTarget,
-) -> None:
-    """count_table_rows with as_of=now succeeds and returns the seeded row count.
-
-    Same guarantee as test_read_table_with_as_of_returns_seeded_rows: the
-    pre-seeded sample.colors table has a long committed history, so any current
-    timestamp is a valid point-in-time anchor.
-    """
-    as_of = datetime.now(tz=UTC)
-    try:
-        result = await tables.count_table_rows(read_target, SEED_SCHEMA_NAME, "colors", as_of=as_of)
-    except Exception as exc:
-        if _is_time_travel_unavailable(exc):
-            pytest.skip(f"No committed history at {as_of.isoformat()}: {exc}")
-        raise
-    assert isinstance(result.row_count, int)
-    assert result.row_count == 3  # Three seeded rows: red, green, blue
-
-
-async def test_read_table_as_of_matches_read_without_as_of(
-    read_target: SqlTarget,
-) -> None:
-    """read_table with as_of=now returns the same data as read without as_of.
-
-    Confirms the OPTION clause is non-destructive: for stable seeded data,
-    a current point-in-time read must match a plain (latest) read.
-    """
-    result_plain = await tables.read_table(read_target, SEED_SCHEMA_NAME, "colors", count=100)
-    as_of = datetime.now(tz=UTC)
-    try:
-        result_timed = await tables.read_table(
-            read_target, SEED_SCHEMA_NAME, "colors", count=100, as_of=as_of
-        )
-    except Exception as exc:
-        if _is_time_travel_unavailable(exc):
-            pytest.skip(f"No committed history at {as_of.isoformat()}: {exc}")
-        raise
-    assert result_plain.columns == result_timed.columns
-    assert sorted(str(r) for r in result_plain.rows) == sorted(str(r) for r in result_timed.rows)
-
-
-async def test_count_table_rows_as_of_matches_count_without_as_of(
-    read_target: SqlTarget,
-) -> None:
-    """count_table_rows with as_of=now returns the same count as without as_of."""
-    result_plain = await tables.count_table_rows(read_target, SEED_SCHEMA_NAME, "colors")
-    as_of = datetime.now(tz=UTC)
-    try:
-        result_timed = await tables.count_table_rows(
-            read_target, SEED_SCHEMA_NAME, "colors", as_of=as_of
-        )
-    except Exception as exc:
-        if _is_time_travel_unavailable(exc):
-            pytest.skip(f"No committed history at {as_of.isoformat()}: {exc}")
-        raise
-    assert result_plain.row_count == result_timed.row_count
+    deadline = time.monotonic() + _AS_OF_RETRY_TIMEOUT_S
+    while True:
+        try:
+            return await call()
+        except Exception as exc:
+            if not _is_not_yet_queryable(exc) or time.monotonic() >= deadline:
+                raise
+            await asyncio.sleep(_AS_OF_RETRY_POLL_INTERVAL_S)
 
 
 async def test_time_travel_on_fresh_table_read(
     warehouse_schema: tuple[SqlTarget, str],
 ) -> None:
-    """read_table with as_of set to a server-side timestamp (after DDL) succeeds or skips.
+    """read_table with as_of set to a server-side timestamp (after DDL) returns the seeded rows.
 
-    A freshly-created table may have no committed version visible at the
-    captured server timestamp (Fabric distributed compute may not have flushed
-    the write to the time-travel history yet).  The test skips rather than fails
-    in that case, because the server-side rejection is expected behavior, not a
-    code bug.  When the table DOES have a committed history, the call must return
-    the seeded rows.
+    The server-side timestamp is captured via ``get_server_timestamp`` AFTER
+    the CTAS that creates the table has been awaited to completion, so the
+    as_of is guaranteed to be at or after the commit.  See the comment block
+    above this test group for the bounded-retry rationale.
     """
     sql_target, schema = warehouse_schema
     table_name = "pytest_timetravel_read"
@@ -550,25 +574,11 @@ async def test_time_travel_on_fresh_table_read(
 
         # Capture a server-side timestamp after the DDL commit to avoid
         # client/server clock skew (same technique as test_clone_table_at_point_in_time).
-        def _get_server_ts() -> datetime:
-            _, rows = run_query(sql_target, "SELECT SYSUTCDATETIME() AS ts")
-            raw = rows[0][0]
-            if isinstance(raw, datetime):
-                return raw.replace(tzinfo=UTC) if raw.tzinfo is None else raw.astimezone(UTC)
-            parsed = datetime.fromisoformat(str(raw))
-            return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+        as_of = await asyncio.to_thread(get_server_timestamp, sql_target)
 
-        as_of: datetime = await asyncio.to_thread(_get_server_ts)
-
-        try:
-            result = await tables.read_table(sql_target, schema, table_name, count=10, as_of=as_of)
-        except Exception as exc:
-            if _is_time_travel_unavailable(exc) or isinstance(exc, FabricError):
-                pytest.skip(
-                    f"No committed history at {as_of.isoformat()} for a freshly-created "
-                    f"table (expected on distributed compute): {exc}"
-                )
-            raise
+        result = await _retry_until_queryable(
+            lambda: tables.read_table(sql_target, schema, table_name, count=10, as_of=as_of)
+        )
         assert len(result.rows) == 2
     finally:
         with contextlib.suppress(Exception):
@@ -578,9 +588,9 @@ async def test_time_travel_on_fresh_table_read(
 async def test_time_travel_on_fresh_table_count(
     warehouse_schema: tuple[SqlTarget, str],
 ) -> None:
-    """count_table_rows with as_of set to a server-side timestamp succeeds or skips.
+    """count_table_rows with as_of set to a server-side timestamp returns the seeded count.
 
-    Same freshly-created-table caveat as test_time_travel_on_fresh_table_read.
+    Same determinism rationale as test_time_travel_on_fresh_table_read.
     """
     sql_target, schema = warehouse_schema
     table_name = "pytest_timetravel_count"
@@ -589,25 +599,11 @@ async def test_time_travel_on_fresh_table_count(
     try:
         await tables.create_table(sql_target, schema, table_name, select_body)
 
-        def _get_server_ts() -> datetime:
-            _, rows = run_query(sql_target, "SELECT SYSUTCDATETIME() AS ts")
-            raw = rows[0][0]
-            if isinstance(raw, datetime):
-                return raw.replace(tzinfo=UTC) if raw.tzinfo is None else raw.astimezone(UTC)
-            parsed = datetime.fromisoformat(str(raw))
-            return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+        as_of = await asyncio.to_thread(get_server_timestamp, sql_target)
 
-        as_of: datetime = await asyncio.to_thread(_get_server_ts)
-
-        try:
-            result = await tables.count_table_rows(sql_target, schema, table_name, as_of=as_of)
-        except Exception as exc:
-            if _is_time_travel_unavailable(exc) or isinstance(exc, FabricError):
-                pytest.skip(
-                    f"No committed history at {as_of.isoformat()} for a freshly-created "
-                    f"table (expected on distributed compute): {exc}"
-                )
-            raise
+        result = await _retry_until_queryable(
+            lambda: tables.count_table_rows(sql_target, schema, table_name, as_of=as_of)
+        )
         assert result.row_count == 3
     finally:
         with contextlib.suppress(Exception):
