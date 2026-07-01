@@ -103,10 +103,25 @@ async def test_takeover_sends_empty_body() -> None:
 async def test_takeover_403_already_owner_raises_clear_message() -> None:
     """HTTP 403 with ArtifactTakeOverNotAllowedByOwner -> clear 'already owner' message.
 
+    Uses the real error envelope returned by the legacy Power BI ``/takeover``
+    endpoint (see issue #955): the code is nested under ``error.code`` (and
+    mirrored under ``error["pbi.error"]["code"]``), NOT at the top level. A
+    body with only a top-level ``errorCode`` key would not reproduce the bug.
+
     The misleading role hint must NOT appear in the error; the caller is not
     missing a role — they already own the warehouse.
     """
-    body = {"errorCode": _ALREADY_OWNER_ERROR_CODE, "message": "Caller is already the owner."}
+    body = {
+        "error": {
+            "code": _ALREADY_OWNER_ERROR_CODE,
+            "pbi.error": {
+                "code": _ALREADY_OWNER_ERROR_CODE,
+                "parameters": {"ErrorMessage": "Owner is not allowed to takeover"},
+                "details": [],
+                "exceptionCulprit": 1,
+            },
+        }
+    }
     respx.post(_EXPECTED_URL).mock(return_value=respx.MockResponse(403, json=body))
 
     async with FabricHttpClient(credential=_make_credential(), rps=10) as http:
@@ -117,12 +132,34 @@ async def test_takeover_403_already_owner_raises_clear_message() -> None:
     assert "already the owner" in error_text
     # The generic role hint must NOT appear for this specific error code.
     assert _TAKEOVER_HINT not in error_text
+    # The raw REST URL and raw JSON body must not leak into the message.
+    assert _EXPECTED_URL not in error_text
+    assert "pbi.error" not in error_text
+
+
+@respx.mock
+async def test_takeover_403_already_owner_top_level_error_code_shape() -> None:
+    """A top-level ``errorCode`` (Fabric-REST style) is also recognised.
+
+    Defensive coverage: some Fabric endpoints return the code at the top
+    level instead of nested under ``error``. Both shapes must be detected.
+    """
+    body = {"errorCode": _ALREADY_OWNER_ERROR_CODE, "message": "Caller is already the owner."}
+    respx.post(_EXPECTED_URL).mock(return_value=respx.MockResponse(403, json=body))
+
+    async with FabricHttpClient(credential=_make_credential(), rps=10) as http:
+        with pytest.raises(PermissionDeniedError) as exc_info:
+            await takeover(http, _WORKSPACE_ID, _WAREHOUSE_ID)
+
+    error_text = str(exc_info.value)
+    assert "already the owner" in error_text
+    assert _TAKEOVER_HINT not in error_text
 
 
 @respx.mock
 async def test_takeover_403_generic_still_shows_role_hint() -> None:
     """A generic HTTP 403 (not ArtifactTakeOverNotAllowedByOwner) still shows the role hint."""
-    body = {"errorCode": "Forbidden", "message": "Caller lacks the required role."}
+    body = {"error": {"code": "Forbidden", "message": "Caller lacks the required role."}}
     respx.post(_EXPECTED_URL).mock(return_value=respx.MockResponse(403, json=body))
 
     async with FabricHttpClient(credential=_make_credential(), rps=10) as http:
