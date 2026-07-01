@@ -17,7 +17,7 @@ Public API
 - :func:`rename_table`            — ``EXEC sp_rename`` (Data-Warehouse-only).
 - :func:`transfer_table`          — ``ALTER SCHEMA ... TRANSFER OBJECT::...`` (Data-Warehouse-only).
 - :func:`recluster_table`         — transactional CTAS-swap to change (or remove) clustering.
-- :func:`get_table_dependents`    — views/procedures referencing a table by name.
+- :func:`get_table_dependents`    — objects referencing a table by name.
 - :func:`get_table_health_metrics` — ``EXEC sp_get_table_health_metrics`` (SQL endpoint only).
 
 List-source note
@@ -504,9 +504,10 @@ async def get_table_dependents(
     schema: str,
     table_name: str,
     *,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
     mode: CredentialMode = CredentialMode.DEFAULT,
 ) -> list[str]:
-    """Return schema-qualified names of views/procedures that reference *table_name*.
+    """Return schema-qualified names of objects that reference *table_name* by name.
 
     Queries ``sys.sql_expression_dependencies`` (joined to ``sys.objects`` /
     ``sys.schemas`` to resolve the referencing entity's name), a catalog view
@@ -515,15 +516,26 @@ async def get_table_dependents(
     dependents; this is not an error. Used to scope the CLUSTER BY rebuild
     advisory (#957) to tables that actually have dependents.
 
+    Limitation: ``sys.sql_expression_dependencies`` only tracks statically
+    resolvable by-name references. A dependent that references the table
+    exclusively through dynamic SQL (``EXEC(...)`` / ``sp_executesql``) is
+    invisible to this query and will not be reported — detecting that would
+    require parsing SQL text, which this repo does not do.
+
     Args:
         target: The warehouse to query.
         schema: The schema name.  Must pass :func:`validate_identifier`.
         table_name: The table name.  Must pass :func:`validate_identifier`.
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.  When
+            :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`, the current
+            (and only) caller — the CLUSTER BY advisory — does not apply
+            (clustering is Data-Warehouse-only), so no query is issued and an
+            empty list is returned.
         mode: The credential mode for Entra authentication.
 
     Returns:
         A (possibly empty) list of ``"schema.name"`` strings, one per distinct
-        referencing view or stored procedure.
+        referencing object (view, stored procedure, function, or trigger).
 
     Raises:
         ValueError: If *schema* or *table_name* fails identifier validation.
@@ -531,6 +543,8 @@ async def get_table_dependents(
     """
     validate_identifier(schema)
     validate_identifier(table_name)
+    if kind == WarehouseKind.SQL_ENDPOINT:
+        return []
     qualified = f"{quote_identifier(schema)}.{quote_identifier(table_name)}"
 
     def _run() -> list[str]:
