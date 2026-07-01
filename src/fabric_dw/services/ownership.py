@@ -16,6 +16,37 @@ _TAKEOVER_HINT = "takeover requires Admin/Member/Contributor role on the workspa
 _ALREADY_OWNER_ERROR_CODE = "ArtifactTakeOverNotAllowedByOwner"
 
 
+def _fabric_error_code(body: dict[str, object] | None) -> str | None:
+    """Extract the error code from a Fabric or Power BI error envelope.
+
+    The core Fabric REST API puts the code at the top level
+    (``{"errorCode": "..."}``), while the legacy Power BI namespace used by
+    ``/takeover`` nests it under ``error`` (and mirrors it under
+    ``error["pbi.error"]``)::
+
+        {"error": {"code": "...", "pbi.error": {"code": "..."}}}
+
+    Checks the top-level key first, then falls back to the nested shapes.
+    Returns ``None`` if *body* is ``None`` or none of the keys are present.
+    """
+    if body is None:
+        return None
+    top_level = body.get("errorCode")
+    if isinstance(top_level, str):
+        return top_level
+    error = body.get("error")
+    if isinstance(error, dict):
+        code = error.get("code")
+        if isinstance(code, str):
+            return code
+        pbi_error = error.get("pbi.error")
+        if isinstance(pbi_error, dict):
+            pbi_code = pbi_error.get("code")
+            if isinstance(pbi_code, str):
+                return pbi_code
+    return None
+
+
 async def takeover(
     http: FabricHttpClient,
     workspace_id: UUID,
@@ -65,10 +96,12 @@ async def takeover(
     try:
         await http.request("POST", HttpBase.POWERBI, path, json=None)
     except PermissionDeniedError as exc:
-        # Detect the "already owner" case: Fabric returns 403 with errorCode
-        # ArtifactTakeOverNotAllowedByOwner when the caller already owns the item.
+        # Detect the "already owner" case: Fabric returns 403 with the
+        # ArtifactTakeOverNotAllowedByOwner code when the caller already owns
+        # the item. See _fabric_error_code() for the envelope shapes this
+        # code can be nested under.
         # Surface a clear, accurate message instead of the generic role hint.
-        error_code = exc.body.get("errorCode") if exc.body is not None else None
+        error_code = _fabric_error_code(exc.body)
         if error_code == _ALREADY_OWNER_ERROR_CODE:
             raise PermissionDeniedError(
                 "You are already the owner of this warehouse; nothing to take over.",
