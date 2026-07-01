@@ -157,6 +157,52 @@ async def test_takeover_403_already_owner_top_level_error_code_shape() -> None:
 
 
 @respx.mock
+async def test_takeover_403_already_owner_pbi_error_fallback_shape() -> None:
+    """The ``error["pbi.error"]["code"]`` fallback is used when ``error.code`` is absent.
+
+    Exercises the fallback branch of ``_fabric_error_code`` directly: a body
+    where ``error`` has no ``code`` key but does carry a nested ``pbi.error.code``.
+    """
+    body = {
+        "error": {
+            "pbi.error": {
+                "code": _ALREADY_OWNER_ERROR_CODE,
+                "parameters": {"ErrorMessage": "Owner is not allowed to takeover"},
+            }
+        }
+    }
+    respx.post(_EXPECTED_URL).mock(return_value=respx.MockResponse(403, json=body))
+
+    async with FabricHttpClient(credential=_make_credential(), rps=10) as http:
+        with pytest.raises(PermissionDeniedError) as exc_info:
+            await takeover(http, _WORKSPACE_ID, _WAREHOUSE_ID)
+
+    error_text = str(exc_info.value)
+    assert "already the owner" in error_text
+    assert _TAKEOVER_HINT not in error_text
+
+
+@respx.mock
+async def test_takeover_403_no_recognisable_error_code_shows_role_hint() -> None:
+    """A body with no code at any known key falls through to the generic role hint.
+
+    Exercises the terminal ``return None`` of ``_fabric_error_code``: an
+    ``error`` dict with neither ``code`` nor ``pbi.error``, and no top-level
+    ``errorCode`` either.
+    """
+    body = {"error": {"message": "Something else went wrong."}}
+    respx.post(_EXPECTED_URL).mock(return_value=respx.MockResponse(403, json=body))
+
+    async with FabricHttpClient(credential=_make_credential(), rps=10) as http:
+        with pytest.raises(PermissionDeniedError) as exc_info:
+            await takeover(http, _WORKSPACE_ID, _WAREHOUSE_ID)
+
+    error_text = str(exc_info.value)
+    assert _TAKEOVER_HINT in error_text
+    assert "already the owner" not in error_text
+
+
+@respx.mock
 async def test_takeover_403_generic_still_shows_role_hint() -> None:
     """A generic HTTP 403 (not ArtifactTakeOverNotAllowedByOwner) still shows the role hint."""
     body = {"error": {"code": "Forbidden", "message": "Caller lacks the required role."}}

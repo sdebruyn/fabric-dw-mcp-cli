@@ -96,8 +96,10 @@ async def takeover(
     try:
         await http.request("POST", HttpBase.POWERBI, path, json=None)
     except PermissionDeniedError as exc:
-        # Detect the "already owner" case: Fabric returns 403 with errorCode
-        # ArtifactTakeOverNotAllowedByOwner when the caller already owns the item.
+        # Detect the "already owner" case: Fabric returns 403 with the
+        # ArtifactTakeOverNotAllowedByOwner code when the caller already owns
+        # the item. See _fabric_error_code() for the envelope shapes this
+        # code can be nested under.
         # Surface a clear, accurate message instead of the generic role hint.
         error_code = _fabric_error_code(exc.body)
         if error_code == _ALREADY_OWNER_ERROR_CODE:
