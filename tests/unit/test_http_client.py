@@ -22,6 +22,7 @@ from fabric_dw.auth import FABRIC_SCOPE, SQL_SCOPE
 from fabric_dw.exceptions import (
     AuthError,
     BadRequestError,
+    CapacityInactiveError,
     FabricError,
     FabricServerError,
     NotFoundError,
@@ -35,6 +36,7 @@ from fabric_dw.http_client import (
     FabricHttpClient,
     HttpBase,
     _parse_retry_after,
+    fabric_error_code,
 )
 
 # ---------------------------------------------------------------------------
@@ -118,6 +120,39 @@ def test_parse_retry_after_http_date() -> None:
     result = _parse_retry_after("Wed, 21 Oct 2026 07:28:00 GMT")
     # frozen at 07:27:00 → 60 seconds until 07:28:00
     assert result == pytest.approx(60.0, abs=1.0)
+
+
+# ---------------------------------------------------------------------------
+# fabric_error_code
+# ---------------------------------------------------------------------------
+
+
+def test_fabric_error_code_none_body() -> None:
+    """A None body has no error code."""
+    assert fabric_error_code(None) is None
+
+
+def test_fabric_error_code_top_level_shape() -> None:
+    """The core Fabric REST shape puts the code at the top level."""
+    assert fabric_error_code({"errorCode": "ItemNotFound"}) == "ItemNotFound"
+
+
+def test_fabric_error_code_nested_error_shape() -> None:
+    """The legacy Power BI shape nests the code under error.code."""
+    assert fabric_error_code({"error": {"code": "Forbidden"}}) == "Forbidden"
+
+
+def test_fabric_error_code_pbi_error_fallback_shape() -> None:
+    """The pbi.error fallback is used when error.code is absent."""
+    body: dict[str, object] = {
+        "error": {"pbi.error": {"code": "ArtifactTakeOverNotAllowedByOwner"}}
+    }
+    assert fabric_error_code(body) == "ArtifactTakeOverNotAllowedByOwner"
+
+
+def test_fabric_error_code_no_recognisable_shape_returns_none() -> None:
+    """A body with none of the known keys returns None."""
+    assert fabric_error_code({"error": {"message": "something went wrong"}}) is None
 
 
 # ---------------------------------------------------------------------------
@@ -268,6 +303,68 @@ async def test_404_raises_not_found() -> None:
         async with client:
             with pytest.raises(NotFoundError):
                 await client.request("GET", HttpBase.FABRIC, "/items")
+
+
+# ---------------------------------------------------------------------------
+# 404 CapacityNotActive -> CapacityInactiveError (issue #962)
+# ---------------------------------------------------------------------------
+
+
+async def test_404_capacity_not_active_raises_capacity_inactive_error() -> None:
+    """HTTP 404 with errorCode CapacityNotActive maps to CapacityInactiveError.
+
+    REST/item commands (e.g. snapshots create) must surface the same
+    friendly "capacity is paused or inactive" message the SQL connect path
+    already uses, not a raw HTTP 404 + backend body.
+    """
+    body = {
+        "errorCode": "CapacityNotActive",
+        "message": "Capacity 00000000-0000-0000-0000-000000000000 is not active",
+    }
+    with respx.mock:
+        respx.get("https://api.fabric.microsoft.com/v1/items").mock(
+            return_value=httpx.Response(404, json=body)
+        )
+        client = await _get_client()
+        async with client:
+            with pytest.raises(CapacityInactiveError) as exc_info:
+                await client.request("GET", HttpBase.FABRIC, "/items")
+
+    error_text = str(exc_info.value)
+    assert "paused or inactive" in error_text
+    assert "https://learn.microsoft.com/fabric/data-warehouse/pause-resume" in error_text
+    # The raw REST URL and raw JSON body must not leak into the message.
+    assert "https://api.fabric.microsoft.com" not in error_text
+    assert "CapacityNotActive" not in error_text
+
+
+async def test_404_capacity_not_active_nested_envelope_shape() -> None:
+    """The nested ``error.code`` envelope shape is also recognised for CapacityNotActive."""
+    body = {"error": {"code": "CapacityNotActive", "message": "Capacity is not active"}}
+    with respx.mock:
+        respx.get("https://api.fabric.microsoft.com/v1/items").mock(
+            return_value=httpx.Response(404, json=body)
+        )
+        client = await _get_client()
+        async with client:
+            with pytest.raises(CapacityInactiveError) as exc_info:
+                await client.request("GET", HttpBase.FABRIC, "/items")
+
+    assert "paused or inactive" in str(exc_info.value)
+
+
+async def test_404_generic_still_raises_not_found() -> None:
+    """A 404 with an unrelated (or missing) error code is unchanged: plain NotFoundError."""
+    with respx.mock:
+        respx.get("https://api.fabric.microsoft.com/v1/items").mock(
+            return_value=httpx.Response(404, json={"errorCode": "ItemNotFound"})
+        )
+        client = await _get_client()
+        async with client:
+            with pytest.raises(NotFoundError) as exc_info:
+                await client.request("GET", HttpBase.FABRIC, "/items")
+
+    assert not isinstance(exc_info.value, CapacityInactiveError)
 
 
 # ---------------------------------------------------------------------------
