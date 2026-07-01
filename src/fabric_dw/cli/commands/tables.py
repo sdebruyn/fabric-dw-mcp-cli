@@ -738,12 +738,20 @@ async def cluster_by_cmd(
             ):
                 click.echo("Aborted.")
                 return
-            click.echo(
-                "WARNING: Dependent views and stored procedures referencing this table "
-                "are NOT automatically updated by this CLUSTER BY rebuild (CTAS-swap) "
-                "and may need refreshing.",
-                err=True,
+            # #957: only warn when the table actually has dependents (checked via
+            # sys.sql_expression_dependencies, a parameterized metadata query — not
+            # SQL text parsing). A clean rebuild of a table with no dependents
+            # should produce no warning.
+            dependents = await _tables_svc.get_table_dependents(
+                target, schema, table_name, mode=ctx.auth
             )
+            if dependents:
+                click.echo(
+                    "WARNING: Dependent views and stored procedures referencing this table "
+                    "are NOT automatically updated by this CLUSTER BY rebuild (CTAS-swap) "
+                    "and may need refreshing: " + ", ".join(sorted(dependents)),
+                    err=True,
+                )
             t = await _tables_svc.recluster_table(
                 target,
                 schema,

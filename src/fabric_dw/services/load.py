@@ -714,10 +714,13 @@ async def copy_into_from_url(
     # "Option 'MAXERRORS' is not supported for specified format 'PARQUET'".
     # Clear the value here (defence-in-depth alongside the gate in
     # _build_copy_into_sql) so every caller — local-file and URL — is covered.
+    # The message stays format-neutral (never "Parquet") and drops the internal
+    # function-name prefix (#956): a --format json load stages as Parquet
+    # internally, but that implementation detail should not leak into
+    # user-facing text — "CSV loads only" is true and unambiguous either way.
     if max_errors is not None and file_type == "PARQUET":
         _logger.warning(
-            "copy_into_from_url: --max-errors is not supported for Parquet COPY INTO "
-            "(Fabric rejects MAXERRORS for FILE_TYPE='PARQUET'); ignoring max_errors=%d",
+            "--max-errors is only supported for CSV loads; ignoring max_errors=%d",
             max_errors,
         )
         max_errors = None

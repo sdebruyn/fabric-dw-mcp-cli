@@ -951,13 +951,18 @@ class TestMaxErrorsParquetWarning:
 
         assert result.rows_loaded == 2
 
-        # A WARNING must have been logged mentioning max-errors and Parquet.
+        # A WARNING must have been logged mentioning max-errors, but it must stay
+        # format-neutral (#956): no "Parquet" wording and no leaked internal
+        # function name, since the same message covers json-converted loads too.
         warning_messages = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
         assert any(
             "max-errors" in msg.lower() or "max_errors" in msg.lower() for msg in warning_messages
         ), f"Expected a warning about max_errors/max-errors; got: {warning_messages}"
-        assert any("parquet" in msg.lower() for msg in warning_messages), (
-            f"Expected warning to mention 'parquet'; got: {warning_messages}"
+        assert not any("parquet" in msg.lower() for msg in warning_messages), (
+            f"Warning must not mention 'parquet'; got: {warning_messages}"
+        )
+        assert not any("copy_into_from_url" in msg for msg in warning_messages), (
+            f"Warning must not leak the internal function name; got: {warning_messages}"
         )
 
     async def test_copy_into_from_url_csv_with_max_errors_no_warning(
@@ -994,7 +999,12 @@ class TestMaxErrorsParquetWarning:
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """When format=json (converted to Parquet) and max_errors is set, a WARNING
-        must be emitted (via copy_into_from_url) and the load must succeed."""
+        must be emitted (via copy_into_from_url) and the load must succeed.
+
+        The message must not say "Parquet" (#956): the user asked for json, and the
+        client-side conversion to Parquet is an internal implementation detail that
+        would otherwise confuse a --format json caller.
+        """
         json_file = tmp_path / "data.json"
         json_file.write_text('{"id": 1}\n', encoding="utf-8")
 
@@ -1031,13 +1041,17 @@ class TestMaxErrorsParquetWarning:
         # Load must succeed.
         assert result.rows_loaded == 1
 
-        # A WARNING must have been logged mentioning max-errors and Parquet.
+        # A WARNING must have been logged mentioning max-errors, without saying
+        # "Parquet" or leaking the internal copy_into_from_url function name.
         warning_messages = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
         assert any(
             "max-errors" in msg.lower() or "max_errors" in msg.lower() for msg in warning_messages
         ), f"Expected a warning about max_errors/max-errors; got: {warning_messages}"
-        assert any("parquet" in msg.lower() for msg in warning_messages), (
-            f"Expected warning to mention 'parquet'; got: {warning_messages}"
+        assert not any("parquet" in msg.lower() for msg in warning_messages), (
+            f"Warning must not mention 'parquet' for a json-format load; got: {warning_messages}"
+        )
+        assert not any("copy_into_from_url" in msg for msg in warning_messages), (
+            f"Warning must not leak the internal function name; got: {warning_messages}"
         )
 
     async def test_parquet_load_with_max_errors_emits_warning(
