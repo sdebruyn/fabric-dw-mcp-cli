@@ -58,9 +58,11 @@ fabric_dw.exceptions.PermissionDenied: permission was denied on the object ...
 
 ## Capacity paused - cryptic 5xx or 404 errors
 
-**Symptoms:** Commands fail with `FabricServerError` (HTTP 5xx) or `NotFound` (HTTP 404) even though the workspace and warehouse clearly exist. The Fabric portal may show the capacity as **Paused**.
+**Symptoms:** Commands fail even though the workspace and warehouse clearly exist. The Fabric portal may show the capacity as **Paused**.
 
-**What happened:** Microsoft Fabric capacities can be paused to save cost. While paused, the Fabric REST API returns unreliable error codes instead of a clear "capacity is paused" message.
+**What happened:** Microsoft Fabric capacities can be paused to save cost. `sql exec` and other SQL-path commands, as well as REST/item commands that hit a plain HTTP 404 with error code `CapacityNotActive` (for example `snapshots create`), surface a clean `CapacityInactiveError` message: "The Fabric capacity for this workspace is paused or inactive. Resume it before running SQL, see [learn.microsoft.com/fabric/data-warehouse/pause-resume](https://learn.microsoft.com/fabric/data-warehouse/pause-resume?WT.mc_id=MVP_310840)".
+
+Some REST error shapes are not yet mapped to that message and can still look cryptic: a non-retriable HTTP 5xx, or the HTTP 400 "Datamart server error" that `restore-points create` can return, which does not reliably mention the capacity at all. If you see either of those and the capacity is paused, treat it as the same root cause.
 
 **Resolution:** Resume the capacity before running commands.
 

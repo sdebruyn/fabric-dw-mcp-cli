@@ -65,8 +65,10 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 
 from fabric_dw import auth, telemetry
 from fabric_dw.exceptions import (
+    CAPACITY_INACTIVE_MESSAGE,
     AuthError,
     BadRequestError,
+    CapacityInactiveError,
     FabricError,
     FabricServerError,
     NotFoundError,
@@ -81,6 +83,7 @@ _logger = logging.getLogger("fabric_dw.http")
 __all__ = [
     "FabricHttpClient",
     "HttpBase",
+    "fabric_error_code",
 ]
 
 # Module-level defaults (used as constructor defaults)
@@ -107,6 +110,11 @@ _STATUS_TO_EXC: dict[int, type[FabricError]] = {
     http.HTTPStatus.FORBIDDEN: PermissionDeniedError,
     http.HTTPStatus.NOT_FOUND: NotFoundError,
 }
+
+# Fabric error code returned (as a plain HTTP 404) when the REST/item API call
+# targets a workspace whose backing capacity is paused/inactive. Indistinguishable
+# from a genuine "item not found" 404 unless the error envelope is inspected.
+_CAPACITY_NOT_ACTIVE_ERROR_CODE = "CapacityNotActive"
 
 
 class HttpBase(StrEnum):
@@ -188,6 +196,40 @@ def _parse_json_body(resp: httpx.Response) -> dict[str, object] | None:
             return parsed
     except (ValueError, json.JSONDecodeError):
         pass
+    return None
+
+
+def fabric_error_code(body: dict[str, object] | None) -> str | None:
+    """Extract the error code from a Fabric or Power BI error envelope.
+
+    The core Fabric REST API puts the code at the top level
+    (``{"errorCode": "..."}``), while the legacy Power BI namespace (used by,
+    e.g., the warehouse ``/takeover`` endpoint) nests it under ``error`` (and
+    mirrors it under ``error["pbi.error"]``)::
+
+        {"error": {"code": "...", "pbi.error": {"code": "..."}}}
+
+    Checks the top-level key first, then falls back to the nested shapes.
+    Returns ``None`` if *body* is ``None`` or none of the keys are present.
+    Shared by callers that need to branch on a specific Fabric error code
+    (e.g. ``ArtifactTakeOverNotAllowedByOwner``, ``CapacityNotActive``)
+    rather than string-matching the raw response text.
+    """
+    if body is None:
+        return None
+    top_level = body.get("errorCode")
+    if isinstance(top_level, str):
+        return top_level
+    error = body.get("error")
+    if isinstance(error, dict):
+        code = error.get("code")
+        if isinstance(code, str):
+            return code
+        pbi_error = error.get("pbi.error")
+        if isinstance(pbi_error, dict):
+            pbi_code = pbi_error.get("code")
+            if isinstance(pbi_code, str):
+                return pbi_code
     return None
 
 
@@ -577,6 +619,12 @@ class FabricHttpClient:
         for any 5xx response.  JSON body is parsed best-effort (only
         ``ValueError``/``json.JSONDecodeError`` are suppressed).  The
         ``x-ms-request-id`` header is captured for all raised exceptions.
+
+        A 404 whose error envelope carries the ``CapacityNotActive`` code is
+        special-cased to ``CapacityInactiveError`` with the same friendly,
+        actionable message the SQL connect path uses, instead of the generic
+        ``NotFoundError`` with the raw backend body -- a paused capacity is
+        not the same failure as a missing item.
         """
         status = resp.status_code
         request_id = resp.headers.get("x-ms-request-id")
@@ -586,6 +634,16 @@ class FabricHttpClient:
 
         exc_class = _STATUS_TO_EXC.get(status)
         if exc_class is not None:
+            if (
+                status == http.HTTPStatus.NOT_FOUND
+                and fabric_error_code(body) == _CAPACITY_NOT_ACTIVE_ERROR_CODE
+            ):
+                raise CapacityInactiveError(
+                    CAPACITY_INACTIVE_MESSAGE,
+                    status=status,
+                    request_id=request_id,
+                    body=body,
+                )
             raise exc_class(
                 f"HTTP {status} for {url}: {resp.text}",
                 status=status,

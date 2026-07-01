@@ -160,7 +160,7 @@ async def test_takeover_403_already_owner_top_level_error_code_shape() -> None:
 async def test_takeover_403_already_owner_pbi_error_fallback_shape() -> None:
     """The ``error["pbi.error"]["code"]`` fallback is used when ``error.code`` is absent.
 
-    Exercises the fallback branch of ``_fabric_error_code`` directly: a body
+    Exercises the fallback branch of ``fabric_error_code`` directly: a body
     where ``error`` has no ``code`` key but does carry a nested ``pbi.error.code``.
     """
     body = {
@@ -186,7 +186,7 @@ async def test_takeover_403_already_owner_pbi_error_fallback_shape() -> None:
 async def test_takeover_403_no_recognisable_error_code_shows_role_hint() -> None:
     """A body with no code at any known key falls through to the generic role hint.
 
-    Exercises the terminal ``return None`` of ``_fabric_error_code``: an
+    Exercises the terminal ``return None`` of ``fabric_error_code``: an
     ``error`` dict with neither ``code`` nor ``pbi.error``, and no top-level
     ``errorCode`` either.
     """

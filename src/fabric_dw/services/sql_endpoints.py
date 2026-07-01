@@ -7,7 +7,12 @@ import logging
 from uuid import UUID
 
 from fabric_dw._fabric_api import resolve_lakehouse_connection_string
-from fabric_dw.exceptions import FabricServerError, NotFoundError, PermissionDeniedError
+from fabric_dw.exceptions import (
+    CapacityInactiveError,
+    FabricServerError,
+    NotFoundError,
+    PermissionDeniedError,
+)
 from fabric_dw.http_client import FabricHttpClient, HttpBase
 from fabric_dw.models import TableSyncStatus, Warehouse, WarehouseKind
 from fabric_dw.services._helpers import scan_all_workspaces
@@ -100,8 +105,10 @@ async def list_all_workspaces(http: FabricHttpClient) -> list[Warehouse]:
     defensive fallback applies: a non-retriable 5xx per workspace is silently
     skipped at ``DEBUG`` level.
 
-    Workspaces that raise :class:`~fabric_dw.exceptions.PermissionDeniedError`
-    or :class:`~fabric_dw.exceptions.NotFoundError` are skipped with a
+    Workspaces that raise :class:`~fabric_dw.exceptions.PermissionDeniedError`,
+    :class:`~fabric_dw.exceptions.NotFoundError`, or
+    :class:`~fabric_dw.exceptions.CapacityInactiveError` (capacity paused
+    between the proactive filter and the fan-out call) are skipped with a
     per-workspace ``WARNING`` log; a summary ``WARNING`` is logged after the scan.
 
     Args:
@@ -137,7 +144,11 @@ async def list_all_workspaces(http: FabricHttpClient) -> list[Warehouse]:
         workspaces,
         lambda ws: list_endpoints(http, ws.id),
         logger=_logger,
-        skip_errors=(PermissionDeniedError, NotFoundError),
+        # CapacityInactiveError: proactive capacity filtering is best-effort
+        # (see _get_capacity_states_safe above) and the capacity can also flip
+        # inactive between the filter check and the fan-out call; skip that one
+        # workspace like an inaccessible one instead of aborting the whole scan.
+        skip_errors=(PermissionDeniedError, NotFoundError, CapacityInactiveError),
         capacity_states=capacity_states,
     )
 

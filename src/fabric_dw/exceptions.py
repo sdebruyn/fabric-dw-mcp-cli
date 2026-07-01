@@ -117,6 +117,17 @@ class FabricServerError(FabricError):
         self.is_retriable = is_retriable
 
 
+# Actionable message surfaced to the caller when the Fabric capacity backing a
+# workspace is paused/inactive.  Shared by the SQL connect-error path
+# (fabric_dw.sql_pool) and the REST/item HTTP error path (fabric_dw.http_client)
+# so both surfaces present the identical, actionable wording.
+CAPACITY_INACTIVE_MESSAGE: str = (
+    "The Fabric capacity for this workspace is paused or inactive. "
+    "Resume it before running SQL, see "
+    "https://learn.microsoft.com/fabric/data-warehouse/pause-resume"
+)
+
+
 class CapacityInactiveError(FabricError):
     """Raised when the Fabric capacity backing the workspace is paused or inactive.
 

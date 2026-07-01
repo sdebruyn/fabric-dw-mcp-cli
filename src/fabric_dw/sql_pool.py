@@ -35,7 +35,12 @@ from typing import TYPE_CHECKING, Any, Never
 
 from fabric_dw.auth import CredentialMode, get_sql_token_struct
 from fabric_dw.config import UserConfig as _UserConfig
-from fabric_dw.exceptions import CapacityInactiveError, FabricCliError, FabricError
+from fabric_dw.exceptions import (
+    CAPACITY_INACTIVE_MESSAGE,
+    CapacityInactiveError,
+    FabricCliError,
+    FabricError,
+)
 from fabric_dw.sql_errors import _is_connect_retryable
 
 if TYPE_CHECKING:
@@ -580,13 +585,6 @@ def _make_pool_key(target: SqlTarget, mode: CredentialMode) -> _PoolKey:
 # in the driver message returned at connect time.
 _CAPACITY_INACTIVE_FRAGMENT: str = "capacity is currently not active"
 
-# Actionable message surfaced to the caller when the capacity is paused.
-_CAPACITY_INACTIVE_MSG: str = (
-    "The Fabric capacity for this workspace is paused or inactive. "
-    "Resume it before running SQL, see "
-    "https://learn.microsoft.com/fabric/data-warehouse/pause-resume"
-)
-
 
 def _translate_connect_error(exc: Exception) -> Never:
     """Translate a driver-level connect failure into a clean FabricError.
@@ -628,7 +626,7 @@ def _translate_connect_error(exc: Exception) -> Never:
     # so the error is never silently retried for ~120 s).
     msg = str(exc).lower()
     if _CAPACITY_INACTIVE_FRAGMENT in msg:
-        err: FabricError = CapacityInactiveError(_CAPACITY_INACTIVE_MSG)
+        err: FabricError = CapacityInactiveError(CAPACITY_INACTIVE_MESSAGE)
         err.__cause__ = exc
         raise err
     # Step 3: retryable driver errors -- re-raise bare to preserve ddbc_error.
