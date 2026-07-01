@@ -121,7 +121,7 @@ fdw -w MyWorkspace audit remove-group SalesWH BATCH_COMPLETED_GROUP
 
 **Targets:** Data Warehouse / SQL Analytics Endpoint
 
-Set the audit action groups for a warehouse or SQL Analytics Endpoint. Pass `--group` / `-g` once per action group. This replaces the existing list of groups.
+Set the audit action groups for a warehouse or SQL Analytics Endpoint. Pass `--group` / `-g` once per action group. This replaces the existing list of groups; it does not toggle the audit enabled/disabled state, so if auditing was Disabled before the call it remains Disabled afterwards.
 
 **Synopsis**
 

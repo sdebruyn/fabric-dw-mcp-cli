@@ -181,6 +181,10 @@ async def set_groups_cmd(ctx: CliContext, item: str | None, groups: tuple[str, .
     Pass --group for each action group name, e.g.
     --group BATCH_COMPLETED_GROUP --group SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP.
 
+    Only replaces the action groups. Does not toggle the audit enabled or
+    disabled state; if auditing was Disabled before the call it remains Disabled
+    afterwards.
+
     NOTE: Each audit write reads current settings via an eventually-consistent GET
     that lags PATCHes by minutes. Two rapid writes may silently revert the first.
     Space audit writes at least a few minutes apart.
@@ -191,7 +195,7 @@ async def set_groups_cmd(ctx: CliContext, item: str | None, groups: tuple[str, .
         async with build_http_client(ctx) as http:
             ws_id, entry = await resolve_item(http, ws, wh)
             obj = await _audit_svc.set_action_groups(
-                http, ws_id, entry.id, list(groups), entry.kind
+                http, ws_id, entry.id, list(groups), entry.kind, ensure_enabled=False
             )
             render(obj.model_dump(by_alias=True, mode="json"), json_output=ctx.json_output)
     except (ValueError, FabricError) as exc:

@@ -424,6 +424,79 @@ class TestAuditSetGroups:
         assert "BATCH_COMPLETED_GROUP" in groups_arg
         assert "SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP" in groups_arg
 
+    def test_set_groups_passes_ensure_enabled_false(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """set-groups always passes ensure_enabled=False to the service.
+
+        Regression guard for #960: aligns the CLI with the MCP tool
+        set_audit_action_groups (#876/#878) -- set-groups must not silently
+        enable auditing on a Disabled warehouse, so it must call
+        set_action_groups with ensure_enabled=False.
+        """
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_http.request = AsyncMock(return_value=_make_response(200, AUDIT_SETTINGS_PAYLOAD))
+        mock_set_groups = AsyncMock(return_value=_make_audit_settings())
+        with (
+            patch(
+                "fabric_dw.cli.commands.audit.build_http_client",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.audit.resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+            patch("fabric_dw.cli.commands.audit._audit_svc.set_action_groups", new=mock_set_groups),
+        ):
+            runner.invoke(
+                cli,
+                ["-w", WS_GUID, "audit", "set-groups", WH_GUID, "--group", "BATCH_COMPLETED_GROUP"],
+            )
+
+        _, kwargs = mock_set_groups.call_args
+        assert kwargs.get("ensure_enabled") is False
+
+    def test_set_groups_disabled_warehouse_state_unchanged(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """set-groups on a Disabled warehouse replaces groups and leaves state Disabled.
+
+        Regression guard for #960: unlike add-group/remove-group/set-retention,
+        set-groups does not require auditing to already be enabled and must not
+        enable it as a side effect -- consistent with the MCP tool
+        set_audit_action_groups (#876/#878).
+        """
+        _ = cache_env
+        groups = ["BATCH_COMPLETED_GROUP"]
+        settings = _make_audit_settings().model_copy(
+            update={"state": "Disabled", "action_groups": groups}
+        )
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.audit.build_http_client",
+                new=_make_cm(mock_http, None),
+            ),
+            patch(
+                "fabric_dw.cli.commands.audit.resolve_item",
+                new=AsyncMock(return_value=(WS_UUID, _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.cli.commands.audit._audit_svc.set_action_groups",
+                new=AsyncMock(return_value=settings),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", WS_GUID, "--json", "audit", "set-groups", WH_GUID, "--group", groups[0]],
+            )
+
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["state"] == "Disabled"
+        assert groups[0] in parsed["auditActionsAndGroups"]
+
     def test_set_groups_invalid_name_returns_nonzero(
         self, runner: CliRunner, cache_env: Path
     ) -> None:
