@@ -3681,6 +3681,10 @@ class TestTablesClusterBy:
                 new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch("fabric_dw.services.tables.recluster_table", new=mock_recluster),
+            patch(
+                "fabric_dw.services.tables.get_table_dependents",
+                new=AsyncMock(return_value=[]),
+            ),
         ):
             result = runner.invoke(
                 cli,
@@ -3714,6 +3718,10 @@ class TestTablesClusterBy:
                 new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch("fabric_dw.services.tables.recluster_table", new=mock_recluster),
+            patch(
+                "fabric_dw.services.tables.get_table_dependents",
+                new=AsyncMock(return_value=[]),
+            ),
         ):
             result = runner.invoke(
                 cli,
@@ -3752,6 +3760,10 @@ class TestTablesClusterBy:
                 new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch("fabric_dw.services.tables.recluster_table", new=mock_recluster),
+            patch(
+                "fabric_dw.services.tables.get_table_dependents",
+                new=AsyncMock(return_value=[]),
+            ),
         ):
             result = runner.invoke(
                 cli,
@@ -3777,6 +3789,10 @@ class TestTablesClusterBy:
                 "fabric_dw.services.tables.recluster_table",
                 new=AsyncMock(side_effect=ItemKindError("clustering")),
             ),
+            patch(
+                "fabric_dw.services.tables.get_table_dependents",
+                new=AsyncMock(return_value=[]),
+            ),
         ):
             result = runner.invoke(
                 cli,
@@ -3784,8 +3800,10 @@ class TestTablesClusterBy:
             )
         assert result.exit_code != 0
 
-    def test_always_prints_warning(self, runner: CliRunner, cache_env: Path) -> None:
-        """The dependent-views warning is emitted when the swap proceeds; not --verbose gated."""
+    def test_warning_emitted_when_table_has_dependents(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """The dependent-views warning is emitted when the table has dependents (#957)."""
         _ = cache_env
         mock_http = AsyncMock()
         mock_recluster = AsyncMock(return_value=_make_table())
@@ -3799,6 +3817,10 @@ class TestTablesClusterBy:
                 new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
             ),
             patch("fabric_dw.services.tables.recluster_table", new=mock_recluster),
+            patch(
+                "fabric_dw.services.tables.get_table_dependents",
+                new=AsyncMock(return_value=["dbo.v_sales_summary"]),
+            ),
         ):
             result = runner.invoke(
                 cli,
@@ -3810,7 +3832,37 @@ class TestTablesClusterBy:
         # default on the runner fixture).
         assert "WARNING" in result.output
         assert "CTAS-swap" in result.output
+        assert "dbo.v_sales_summary" in result.output
         assert "sp_rename" not in result.output
+
+    def test_no_warning_when_table_has_no_dependents(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """No dependent-views warning when the table has zero dependents (#957)."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_recluster = AsyncMock(return_value=_make_table())
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch("fabric_dw.services.tables.recluster_table", new=mock_recluster),
+            patch(
+                "fabric_dw.services.tables.get_table_dependents",
+                new=AsyncMock(return_value=[]),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", WS_GUID, "--yes", "tables", "cluster-by", WH_GUID, "dbo.sales"],
+            )
+        assert result.exit_code == 0, result.output
+        assert "CTAS-swap" not in result.output
 
 
 # ===========================================================================

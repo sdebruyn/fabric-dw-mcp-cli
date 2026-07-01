@@ -717,9 +717,15 @@ async def cluster_by_cmd(
     Omit --cluster-by entirely to remove clustering (rebuilds without CLUSTER BY).
 
     \b
-    WARNING: Dependent views and stored procedures that reference this table by
-    name are NOT automatically updated by this CLUSTER BY rebuild (which
-    recreates the table via CTAS and sp_rename) and may need refreshing.
+    WARNING: If this table has dependent objects (views, stored procedures,
+    etc. that reference it by name), a warning is printed before the rebuild —
+    those objects are NOT automatically updated by this CLUSTER BY rebuild
+    (which recreates the table via CTAS and sp_rename) and may need
+    refreshing. Dependents are detected via catalog metadata
+    (sys.sql_expression_dependencies), which only tracks statically
+    resolvable by-name references; a dependent that reaches this table only
+    through dynamic SQL (EXEC(...) / sp_executesql) will NOT be detected and
+    no warning will be printed for it.
 
     Only supported on Fabric Data Warehouses (not SQL Analytics Endpoints).
     This operation copies the full table — runtime is proportional to table size.
@@ -738,12 +744,22 @@ async def cluster_by_cmd(
             ):
                 click.echo("Aborted.")
                 return
-            click.echo(
-                "WARNING: Dependent views and stored procedures referencing this table "
-                "are NOT automatically updated by this CLUSTER BY rebuild (CTAS-swap) "
-                "and may need refreshing.",
-                err=True,
+            # #957: only warn when the table actually has dependents (checked via
+            # sys.sql_expression_dependencies, a parameterized metadata query — not
+            # SQL text parsing). A clean rebuild of a table with no dependents
+            # should produce no warning. Passing kind short-circuits the query
+            # for SQL Analytics Endpoints (recluster_table rejects those anyway).
+            dependents = await _tables_svc.get_table_dependents(
+                target, schema, table_name, kind=entry.kind, mode=ctx.auth
             )
+            if dependents:
+                click.echo(
+                    "WARNING: Dependent objects referencing this table by name "
+                    "(views, stored procedures, etc.) are NOT automatically updated "
+                    "by this CLUSTER BY rebuild (CTAS-swap) and may need refreshing: "
+                    + ", ".join(sorted(dependents)),
+                    err=True,
+                )
             t = await _tables_svc.recluster_table(
                 target,
                 schema,

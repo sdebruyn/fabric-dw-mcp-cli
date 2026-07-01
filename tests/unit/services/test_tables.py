@@ -929,6 +929,86 @@ class TestGetClusterColumns:
 
 
 # ===========================================================================
+# get_table_dependents (#957)
+# ===========================================================================
+
+
+class TestGetTableDependents:
+    async def test_maps_rows_to_qualified_names(self) -> None:
+        target = _make_target()
+        rows: list[tuple[object, ...]] = [("dbo", "v_sales_summary"), ("rpt", "p_refresh_sales")]
+        conn = _make_conn(rows, ["referencing_schema", "referencing_name"])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await tables.get_table_dependents(target, "dbo", "sales")
+        assert result == ["dbo.v_sales_summary", "rpt.p_refresh_sales"]
+
+    async def test_returns_empty_list_when_no_dependents(self) -> None:
+        target = _make_target()
+        conn = _make_conn([], ["referencing_schema", "referencing_name"])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await tables.get_table_dependents(target, "dbo", "sales")
+        assert result == []
+
+    async def test_sql_references_sys_sql_expression_dependencies(self) -> None:
+        target = _make_target()
+        conn = _make_conn([], ["referencing_schema", "referencing_name"])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await tables.get_table_dependents(target, "dbo", "sales")
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert "sys.sql_expression_dependencies" in call_sql
+        assert "OBJECT_ID(?)" in call_sql
+
+    async def test_binds_bracket_quoted_qualified_name_as_param(self) -> None:
+        """The OBJECT_ID(?) parameter must be the bracket-quoted 'schema.table'
+        string, bound — never concatenated into the query text."""
+        target = _make_target()
+        conn = _make_conn([], ["referencing_schema", "referencing_name"])
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await tables.get_table_dependents(target, "myschema", "mytable")
+        cursor = conn.cursor.return_value
+        call_args = cursor.execute.call_args
+        params = call_args[0][1] if len(call_args[0]) > 1 else (call_args[1] or {}).get("params")
+        assert params is not None
+        assert list(params) == ["[myschema].[mytable]"]
+
+    async def test_validates_schema_identifier(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await tables.get_table_dependents(target, "bad;schema", "sales")
+
+    async def test_validates_table_name_identifier(self) -> None:
+        target = _make_target()
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+            await tables.get_table_dependents(target, "dbo", "bad--table")
+
+    async def test_sql_endpoint_short_circuits_without_query(self) -> None:
+        """SQL Analytics Endpoints don't support CLUSTER BY (the only caller of
+        this function), so no I/O should be issued for them (#959 review)."""
+        target = _make_target()
+        with patch("fabric_dw.sql.open_connection") as mock_open:
+            result = await tables.get_table_dependents(
+                target, "dbo", "sales", kind=WarehouseKind.SQL_ENDPOINT
+            )
+        assert result == []
+        mock_open.assert_not_called()
+
+    async def test_permission_denied_propagates(self) -> None:
+        target = _make_target()
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.execute.side_effect = Exception(
+            "permission was denied on object sys.sql_expression_dependencies"
+        )
+        conn.cursor.return_value = cursor
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(PermissionDeniedError),
+        ):
+            await tables.get_table_dependents(target, "dbo", "sales")
+
+
+# ===========================================================================
 # ResultSet native-type fidelity
 # ===========================================================================
 

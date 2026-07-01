@@ -17,6 +17,7 @@ Public API
 - :func:`rename_table`            — ``EXEC sp_rename`` (Data-Warehouse-only).
 - :func:`transfer_table`          — ``ALTER SCHEMA ... TRANSFER OBJECT::...`` (Data-Warehouse-only).
 - :func:`recluster_table`         — transactional CTAS-swap to change (or remove) clustering.
+- :func:`get_table_dependents`    — objects referencing a table by name.
 - :func:`get_table_health_metrics` — ``EXEC sp_get_table_health_metrics`` (SQL endpoint only).
 
 List-source note
@@ -76,6 +77,7 @@ __all__ = [
     "delete_table",
     "export_table",
     "get_cluster_columns",
+    "get_table_dependents",
     "get_table_health_metrics",
     "infer_columns_from_csv",
     "infer_columns_from_json",
@@ -156,6 +158,19 @@ JOIN sys.columns c ON t.object_id = c.object_id
 JOIN sys.index_columns ic ON c.object_id = ic.object_id AND c.column_id = ic.column_id
 WHERE ic.data_clustering_ordinal > 0 AND s.name = ? AND t.name = ?
 ORDER BY ic.data_clustering_ordinal;
+"""
+
+# sys.sql_expression_dependencies is a catalog view populated by the engine at
+# object-creation time via by-name resolution — this is metadata lookup, not
+# SQL text parsing.  referenced_id is resolved through OBJECT_ID(?) so the
+# table's bracket-quoted qualified name is passed as a bound parameter, never
+# concatenated into the query text.
+_TABLE_DEPENDENTS_SQL = """\
+SELECT DISTINCT rs.name AS referencing_schema, ro.name AS referencing_name
+FROM sys.sql_expression_dependencies sed
+JOIN sys.objects ro ON ro.object_id = sed.referencing_id
+JOIN sys.schemas rs ON rs.schema_id = ro.schema_id
+WHERE sed.referenced_id = OBJECT_ID(?);
 """
 
 _FETCH_TABLE_SQL = """\
@@ -480,6 +495,66 @@ async def get_cluster_columns(
         return [
             ClusterColumn(column_name=str(row[0]), clustering_ordinal=int(row[1])) for row in rows
         ]
+
+    return await asyncio.to_thread(_run)
+
+
+async def get_table_dependents(
+    target: SqlTarget,
+    schema: str,
+    table_name: str,
+    *,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
+    mode: CredentialMode = CredentialMode.DEFAULT,
+) -> list[str]:
+    """Return schema-qualified names of objects that reference *table_name* by name.
+
+    Queries ``sys.sql_expression_dependencies`` (joined to ``sys.objects`` /
+    ``sys.schemas`` to resolve the referencing entity's name), a catalog view
+    the engine populates from by-name resolution at object-creation time — no
+    SQL text is parsed. Returns an empty list when the table has no known
+    dependents; this is not an error. Used to scope the CLUSTER BY rebuild
+    advisory (#957) to tables that actually have dependents.
+
+    Limitation: ``sys.sql_expression_dependencies`` only tracks statically
+    resolvable by-name references. A dependent that references the table
+    exclusively through dynamic SQL (``EXEC(...)`` / ``sp_executesql``) is
+    invisible to this query and will not be reported — detecting that would
+    require parsing SQL text, which this repo does not do.
+
+    Args:
+        target: The warehouse to query.
+        schema: The schema name.  Must pass :func:`validate_identifier`.
+        table_name: The table name.  Must pass :func:`validate_identifier`.
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.  When
+            :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`, the current
+            (and only) caller — the CLUSTER BY advisory — does not apply
+            (clustering is Data-Warehouse-only), so no query is issued and an
+            empty list is returned.
+        mode: The credential mode for Entra authentication.
+
+    Returns:
+        A (possibly empty) list of ``"schema.name"`` strings, one per distinct
+        referencing object (view, stored procedure, function, or trigger).
+
+    Raises:
+        ValueError: If *schema* or *table_name* fails identifier validation.
+        PermissionDeniedError: If the driver reports a permission error.
+    """
+    validate_identifier(schema)
+    validate_identifier(table_name)
+    if kind == WarehouseKind.SQL_ENDPOINT:
+        return []
+    qualified = f"{quote_identifier(schema)}.{quote_identifier(table_name)}"
+
+    def _run() -> list[str]:
+        _cols, rows = run_query(
+            target,
+            _TABLE_DEPENDENTS_SQL,
+            params=[qualified],
+            mode=mode,
+        )
+        return [f"{row[0]}.{row[1]}" for row in rows]
 
     return await asyncio.to_thread(_run)
 

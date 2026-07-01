@@ -82,9 +82,9 @@ Change (or remove) the data-clustering columns of an existing table via a transa
 
 **Performance note:** This operation copies the entire table. Runtime is proportional to table size.
 
-!!! warning "Dependent views and stored procedures"
+!!! warning "Dependent objects"
 
-    Dependent views and stored procedures that reference this table by name are **NOT** automatically updated by `sp_rename` and may need refreshing after the swap.
+    Dependent objects (views, stored procedures, etc.) that reference this table by name are **NOT** automatically updated by `sp_rename` and may need refreshing after the swap. The CLI checks for dependents via catalog metadata (`sys.sql_expression_dependencies`) and only prints this warning when the table actually has some. That catalog view only tracks statically resolvable by-name references, so a dependent that reaches the table exclusively through dynamic SQL (`EXEC(...)` / `sp_executesql`) is not detected and produces no warning.
 
 The operation is atomic: all three steps run inside a single transaction. Any failure rolls back automatically - no orphan temp table is left behind.
 
