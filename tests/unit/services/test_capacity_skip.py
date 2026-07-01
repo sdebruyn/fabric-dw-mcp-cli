@@ -498,6 +498,51 @@ async def test_genuine_403_still_warns(caplog: pytest.LogCaptureFixture) -> None
 
 
 # ---------------------------------------------------------------------------
+# (g2) A per-workspace CapacityNotActive 404 is skipped like an access error
+# (issue #962: the REST/item CapacityNotActive mapping to CapacityInactiveError
+# must not abort the whole -A scan when the capacity flips inactive between
+# the proactive filter and the fan-out call).
+# ---------------------------------------------------------------------------
+
+
+async def test_capacity_inactive_error_skipped_like_access_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A CapacityInactiveError from one workspace is skipped; other workspaces still return."""
+    from fabric_dw.exceptions import CapacityInactiveError  # noqa: PLC0415
+    from fabric_dw.services.warehouses import list_all_workspaces  # noqa: PLC0415
+
+    ws_a = _make_workspace(_WS_ACTIVE, _CAP_ACTIVE)
+    ws_b = _make_workspace(_WS_INACTIVE, _CAP_INACTIVE)
+    wh_a = _make_wh(_WS_ACTIVE, _WH_ACTIVE)
+
+    with (
+        caplog.at_level(logging.WARNING, logger="fabric_dw.warehouses"),
+        patch(
+            "fabric_dw.services.warehouses._list_all_workspaces",
+            new=AsyncMock(return_value=[ws_a, ws_b]),
+        ),
+        patch(
+            "fabric_dw.services.warehouses.get_capacity_states",
+            new=AsyncMock(return_value=None),  # fallback mode: both workspaces are attempted
+        ),
+        patch(
+            "fabric_dw.services.warehouses.list_warehouses",
+            new=AsyncMock(
+                side_effect=[[wh_a], CapacityInactiveError("capacity is paused or inactive")]
+            ),
+        ),
+    ):
+        result = await list_all_workspaces(AsyncMock())
+
+    # The other workspace's results are still returned; the scan is not aborted.
+    assert len(result) == 1
+    assert result[0].id == _WH_ACTIVE
+    warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("skipping workspace" in r.message for r in warning_records)
+
+
+# ---------------------------------------------------------------------------
 # (h) An unexpected error still surfaces (propagates)
 # ---------------------------------------------------------------------------
 

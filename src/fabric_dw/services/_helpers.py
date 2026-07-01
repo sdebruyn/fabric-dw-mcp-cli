@@ -527,7 +527,7 @@ async def scan_all_workspaces(
             ``list[T]`` of items for that workspace.
         logger: Logger for per-workspace and summary warnings.
         skip_errors: Exception types to skip with a WARNING log (e.g.
-            PermissionDeniedError, NotFoundError).
+            PermissionDeniedError, NotFoundError, CapacityInactiveError).
         capacity_states: Optional ``{capacity_id_lower: state}`` map for
             proactive capacity filtering.  Pass ``None`` to disable proactive
             filtering and rely on the defensive fallback only.
