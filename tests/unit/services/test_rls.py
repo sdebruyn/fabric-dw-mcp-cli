@@ -256,17 +256,16 @@ class TestCreateSecurityPolicy:
 
         assert "STATE = OFF" in captured[0]
 
-    async def test_predicate_type_key_has_no_effect(self) -> None:
-        """There is no predicate-type concept (#966): a stray "predicate_type": "BLOCK"
-        key in the spec dict is simply not read, and the built clause is FILTER
-        regardless -- there is no code path that could turn it into BLOCK."""
-        captured: list[str] = []
-
-        def _mock(_target: object, _sql: str, **_kw: object) -> tuple:
-            captured.append(_sql)
-            return [], []
-
-        with patch("fabric_dw.services.rls.run_query", side_effect=_mock):
+    async def test_unknown_predicate_key_rejected(self) -> None:
+        """A spec carrying "predicate_type" is rejected (#967): silently ignoring it and
+        always building FILTER would let a caller believe a BLOCK-style write-block is
+        enforced when only a FILTER read-filter was actually created. This is generic
+        key-set hygiene, not a predicate-type/BLOCK-aware check -- see
+        test_unknown_predicate_key_rejected_is_generic_not_block_specific below."""
+        with (
+            patch("fabric_dw.services.rls.run_query") as mock_run,
+            pytest.raises(ValueError, match="unknown key"),
+        ):
             await rls_svc.create_security_policy(
                 _TARGET,
                 "rls.SalesFilter",
@@ -281,10 +280,47 @@ class TestCreateSecurityPolicy:
                     }
                 ],
             )
+        # No SQL is ever built or executed for a rejected spec.
+        mock_run.assert_not_called()
 
-        stmt = captured[0]
-        assert "ADD FILTER PREDICATE" in stmt
-        assert "BLOCK" not in stmt
+    async def test_operation_key_rejected(self) -> None:
+        """ "operation" is likewise not a recognised key (#967) -- it only ever meant
+        anything for BLOCK predicates, which do not exist here."""
+        with pytest.raises(ValueError, match="unknown key"):
+            await rls_svc.create_security_policy(
+                _TARGET,
+                "rls.SalesFilter",
+                [
+                    {
+                        "fn_schema": "rls",
+                        "fn_name": "fn_filter",
+                        "fn_args": ["SalesRep"],
+                        "table_schema": "dbo",
+                        "table_name": "Sales",
+                        "operation": "AFTER_INSERT",
+                    }
+                ],
+            )
+
+    async def test_unknown_predicate_key_rejected_is_generic_not_block_specific(self) -> None:
+        """The rejection has no concept of "BLOCK" or "predicate type" at all -- any
+        unrecognised key is rejected identically, including one that has nothing to do
+        with predicate types (proving this is not a disguised BLOCK-vs-FILTER allowlist)."""
+        with pytest.raises(ValueError, match="unknown key"):
+            await rls_svc.create_security_policy(
+                _TARGET,
+                "rls.SalesFilter",
+                [
+                    {
+                        "fn_schema": "rls",
+                        "fn_name": "fn_filter",
+                        "fn_args": ["SalesRep"],
+                        "table_schema": "dbo",
+                        "table_name": "Sales",
+                        "foo": "bar",
+                    }
+                ],
+            )
 
     async def test_multi_predicate_create(self) -> None:
         captured: list[str] = []

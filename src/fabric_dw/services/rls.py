@@ -242,7 +242,10 @@ async def create_security_policy(
     no predicate-type option (#966): Fabric Data Warehouse supports FILTER
     predicates only, so every predicate built here is a FILTER predicate.
 
-    Each element of *predicates* must be a dict with keys:
+    Each element of *predicates* must be a dict with exactly these keys (no
+    more, no fewer -- unrecognised keys are rejected rather than silently
+    ignored, so e.g. a stray ``"predicate_type": "BLOCK"`` surfaces as an
+    error instead of silently building a FILTER predicate):
 
     - ``fn_schema``: schema of the predicate function (``str`` or ``None``)
     - ``fn_name``: name of the predicate function
@@ -260,7 +263,8 @@ async def create_security_policy(
         mode: Credential mode for Entra authentication.
 
     Raises:
-        ValueError: If *predicates* is empty or any spec is invalid.
+        ValueError: If *predicates* is empty, a spec is missing a required
+            key, or a spec contains an unrecognised key.
     """
     if not predicates:
         msg = "At least one predicate is required to create a security policy"
@@ -272,10 +276,21 @@ async def create_security_policy(
     clauses: list[str] = []
     for i, spec in enumerate(predicates):
         _required = {"fn_name", "fn_args", "table_schema", "table_name"}
+        _allowed = _required | {"fn_schema"}
         _missing = _required - spec.keys()
         if _missing:
             missing_list = ", ".join(sorted(_missing))
             msg = f"Predicate at index {i} is missing required key(s): {missing_list}"
+            raise ValueError(msg)
+        # Reject unrecognised keys outright rather than silently ignoring them (#967).
+        # This is generic key-set hygiene, not a predicate-type check: a stray
+        # "predicate_type": "BLOCK" is caught the same way a typo like "table" would
+        # be, so a caller never gets a silent FILTER built from a spec that implied
+        # something else was requested.
+        _unknown = spec.keys() - _allowed
+        if _unknown:
+            unknown_list = ", ".join(sorted(_unknown))
+            msg = f"Predicate at index {i} has unknown key(s): {unknown_list}"
             raise ValueError(msg)
         fn_schema_raw = spec.get("fn_schema")
         fn_schema = str(fn_schema_raw) if fn_schema_raw else None

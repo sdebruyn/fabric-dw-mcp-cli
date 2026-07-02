@@ -701,6 +701,49 @@ async def test_create_security_policy_calls_service_with_correct_args(mock_ctx, 
     mock_svc.assert_called_once()
 
 
+async def test_create_security_policy_rejects_predicate_type_key(mock_ctx, ctx_patch) -> None:
+    """A predicates entry carrying "predicate_type" surfaces a ToolError (#967) instead of
+    silently building a FILTER predicate -- exercises the real service validation (only
+    run_query is mocked), since silently downgrading an intended BLOCK to FILTER would be
+    a security-relevant footgun for an MCP caller."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    predicates = [
+        {
+            "predicate_type": "BLOCK",
+            "fn_name": "fn_block",
+            "fn_args": ["SalesRep"],
+            "table_schema": "dbo",
+            "table_name": "Sales",
+        }
+    ]
+    os.environ.pop("FABRIC_MCP_READONLY", None)
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {}),
+        patch("fabric_dw.services.rls.run_query") as mock_run_query,
+        pytest.raises(ToolError, match="unknown key"),
+    ):
+        await mcp._tool_manager.call_tool(
+            "create_security_policy",
+            {
+                "workspace": WS_NAME,
+                "item": WH_NAME,
+                "policy_name": "rls.SalesBlock",
+                "predicates": predicates,
+                "state": True,
+            },
+        )
+    # No SQL is ever built or executed for a rejected spec.
+    mock_run_query.assert_not_called()
+
+
 async def test_drop_security_policy_blocked_without_destructive_env(mock_ctx, ctx_patch) -> None:
     """drop_security_policy is blocked when FABRIC_MCP_ALLOW_DESTRUCTIVE is not set."""
     from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
