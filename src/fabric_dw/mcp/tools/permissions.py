@@ -455,18 +455,17 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
     ) -> dict[str, Any]:
         """Create a row-level security policy.
 
-        Executes ``CREATE SECURITY POLICY`` with one or more filter or block
-        predicates.  Each entry in *predicates* must include:
+        Executes ``CREATE SECURITY POLICY`` with one or more filter
+        predicates. Fabric Data Warehouse currently supports FILTER
+        predicates only -- BLOCK is rejected by both CREATE and ALTER
+        SECURITY POLICY. Each entry in *predicates* must include:
 
-        - ``predicate_type``: ``"FILTER"`` or ``"BLOCK"``
+        - ``predicate_type``: ``"FILTER"`` (the only supported value)
         - ``fn_schema``: schema of the predicate function
         - ``fn_name``: name of the predicate function
         - ``fn_args``: list of column names to pass to the function
         - ``table_schema``: schema of the target table
         - ``table_name``: name of the target table
-        - ``operation`` (optional): block operation -- ``"AFTER_INSERT"``,
-          ``"AFTER_UPDATE"``, ``"BEFORE_UPDATE"``, or ``"BEFORE_DELETE"``
-          (BLOCK predicates only)
 
         Args:
             workspace: Workspace name or GUID.
@@ -506,32 +505,29 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         workspace: str,
         item: str,
         policy_name: str,
-        predicate_type: str,
         fn_name: str,
         fn_args: list[str],
         table_schema: str,
         table_name: str,
         fn_schema: str | None = None,
-        operation: str | None = None,
     ) -> dict[str, Any]:
-        """Add a predicate to an existing row-level security policy.
+        """Add a FILTER predicate to an existing row-level security policy.
 
-        Executes ``ALTER SECURITY POLICY ... ADD FILTER|BLOCK PREDICATE``.
+        Executes ``ALTER SECURITY POLICY ... ADD FILTER PREDICATE``. Fabric
+        Data Warehouse currently supports FILTER predicates only -- BLOCK is
+        rejected by ALTER SECURITY POLICY, so no predicate-type or operation
+        parameter is offered.
 
         Args:
             workspace: Workspace name or GUID.
             item: Warehouse or SQL endpoint name or GUID.
             policy_name: Qualified policy name (``"schema.name"`` or ``"name"``).
-            predicate_type: ``"FILTER"`` or ``"BLOCK"``.
             fn_name: Name of the predicate function.
             fn_args: Column names to pass to the predicate function.
             table_schema: Schema name of the target table.
             table_name: Name of the target table.
             fn_schema: Schema name of the predicate function (optional -- omit
                 when the function lives in the default schema).
-            operation: Block operation (BLOCK predicates only) -- one of
-                ``"AFTER_INSERT"``, ``"AFTER_UPDATE"``, ``"BEFORE_UPDATE"``,
-                ``"BEFORE_DELETE"``.
         """
         ctx = get_context()
         assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
@@ -541,23 +537,21 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
             )
             _log.debug(
-                "add_security_predicate ws=%s item=%s policy=%r type=%r",
+                "add_security_predicate ws=%s item=%s policy=%r",
                 ws_id,
                 entry.id,
                 policy_name,
-                predicate_type,
             )
             target = make_sql_target(ws_id, entry, item)
             await _rls_svc.add_predicate(
                 target,
                 policy_name,
-                predicate_type,
+                "FILTER",
                 fn_schema,
                 fn_name,
                 fn_args,
                 table_schema,
                 table_name,
-                operation=operation,
                 mode=ctx.auth_mode,
             )
         except (ValueError, FabricError) as exc:
@@ -565,29 +559,29 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         return {
             "added": True,
             "policy_name": policy_name,
-            "predicate_type": predicate_type,
+            "predicate_type": "FILTER",
             "table": f"{table_schema}.{table_name}",
         }
 
     @mutating_tool(mcp, "drop_security_predicate")
-    async def drop_security_predicate_tool(  # noqa: PLR0913
+    async def drop_security_predicate_tool(
         workspace: str,
         item: str,
         policy_name: str,
-        predicate_type: str,
         table_schema: str,
         table_name: str,
     ) -> dict[str, Any]:
-        """Drop a predicate from an existing row-level security policy.
+        """Drop the FILTER predicate from an existing row-level security policy.
 
-        Executes ``ALTER SECURITY POLICY ... DROP FILTER|BLOCK PREDICATE ON``.
-        The T-SQL ``DROP PREDICATE ON`` syntax takes no operation qualifier.
+        Executes ``ALTER SECURITY POLICY ... DROP FILTER PREDICATE ON``. The
+        T-SQL ``DROP PREDICATE ON`` syntax takes no operation qualifier.
+        Fabric Data Warehouse currently supports FILTER predicates only, so
+        no predicate-type parameter is offered.
 
         Args:
             workspace: Workspace name or GUID.
             item: Warehouse or SQL endpoint name or GUID.
             policy_name: Qualified policy name (``"schema.name"`` or ``"name"``).
-            predicate_type: ``"FILTER"`` or ``"BLOCK"``.
             table_schema: Schema name of the target table.
             table_name: Name of the target table.
         """
@@ -599,17 +593,16 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
                 workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
             )
             _log.debug(
-                "drop_security_predicate ws=%s item=%s policy=%r type=%r",
+                "drop_security_predicate ws=%s item=%s policy=%r",
                 ws_id,
                 entry.id,
                 policy_name,
-                predicate_type,
             )
             target = make_sql_target(ws_id, entry, item)
             await _rls_svc.drop_predicate(
                 target,
                 policy_name,
-                predicate_type,
+                "FILTER",
                 table_schema,
                 table_name,
                 mode=ctx.auth_mode,
@@ -619,7 +612,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
         return {
             "dropped": True,
             "policy_name": policy_name,
-            "predicate_type": predicate_type,
+            "predicate_type": "FILTER",
             "table": f"{table_schema}.{table_name}",
         }
 

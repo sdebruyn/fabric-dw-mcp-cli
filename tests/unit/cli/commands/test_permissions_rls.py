@@ -147,45 +147,8 @@ class TestRlsCreate:
             )
         assert result.exit_code == 0, result.output
 
-    def test_create_block_with_operation(self, runner: CliRunner, cache_env: Path) -> None:
-        _ = cache_env
-        mock_svc = AsyncMock(return_value=None)
-        with (
-            patch(
-                "fabric_dw.cli.commands.permissions.build_http_client",
-                new=_make_http_cm(AsyncMock()),
-            ),
-            patch(
-                "fabric_dw.cli.commands.permissions.build_sql_target",
-                new=AsyncMock(return_value=(_make_sql_target(), _make_wh_entry())),
-            ),
-            patch("fabric_dw.services.rls.create_security_policy", new=mock_svc),
-        ):
-            result = runner.invoke(
-                cli,
-                [
-                    "-w",
-                    WS_GUID,
-                    "permissions",
-                    "rls",
-                    "create",
-                    WH_GUID,
-                    "rls.SalesBlock",
-                    "--block",
-                    "rls.fn_block(SalesRep)",
-                    "--on",
-                    "dbo.Sales",
-                    "--operation",
-                    "after-insert",
-                ],
-            )
-        assert result.exit_code == 0, result.output
-        _, kwargs = mock_svc.call_args
-        assert kwargs["state"] is True
-        preds = mock_svc.call_args.args[2]
-        assert preds[0]["operation"] == "after-insert"  # CLI passes raw; service normalizes
-
-    def test_create_both_filter_and_block_fails(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_create_no_block_option(self, runner: CliRunner, cache_env: Path) -> None:
+        """--block is not offered (#966): Fabric rejects BLOCK PREDICATE for CREATE."""
         _ = cache_env
         result = runner.invoke(
             cli,
@@ -206,10 +169,34 @@ class TestRlsCreate:
             ],
         )
         assert result.exit_code != 0
+        assert "no such option" in result.output.lower()
 
-    def test_create_neither_filter_nor_block_fails(
-        self, runner: CliRunner, cache_env: Path
-    ) -> None:
+    def test_create_no_operation_option(self, runner: CliRunner, cache_env: Path) -> None:
+        """--operation is not offered (#966): it only ever applied to BLOCK predicates."""
+        _ = cache_env
+        result = runner.invoke(
+            cli,
+            [
+                "-w",
+                WS_GUID,
+                "permissions",
+                "rls",
+                "create",
+                WH_GUID,
+                "rls.Policy",
+                "--filter",
+                "rls.fn(col)",
+                "--on",
+                "dbo.T",
+                "--operation",
+                "after-insert",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "no such option" in result.output.lower()
+
+    def test_create_without_filter_fails(self, runner: CliRunner, cache_env: Path) -> None:
+        """--filter is required now that it is the only predicate option."""
         _ = cache_env
         result = runner.invoke(
             cli,
@@ -301,6 +288,47 @@ class TestRlsAddPredicate:
                 ],
             )
         assert result.exit_code == 0, result.output
+        assert mock_svc.call_args.args[2] == "FILTER"
+
+    def test_add_no_block_option(self, runner: CliRunner, cache_env: Path) -> None:
+        """--block is not offered (#966): Fabric rejects BLOCK PREDICATE for ALTER."""
+        _ = cache_env
+        result = runner.invoke(
+            cli,
+            [
+                "-w",
+                WS_GUID,
+                "permissions",
+                "rls",
+                "add-predicate",
+                WH_GUID,
+                "rls.SalesFilter",
+                "--block",
+                "rls.fn_block(col)",
+                "--on",
+                "dbo.Sales",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "no such option" in result.output.lower()
+
+    def test_add_without_filter_fails(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        result = runner.invoke(
+            cli,
+            [
+                "-w",
+                WS_GUID,
+                "permissions",
+                "rls",
+                "add-predicate",
+                WH_GUID,
+                "rls.SalesFilter",
+                "--on",
+                "dbo.Sales",
+            ],
+        )
+        assert result.exit_code != 0
 
 
 # ---------------------------------------------------------------------------
@@ -309,7 +337,8 @@ class TestRlsAddPredicate:
 
 
 class TestRlsDropPredicate:
-    def test_drop_filter_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_drop_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        """No predicate-type selector is offered -- only FILTER exists, identified by --on."""
         _ = cache_env
         mock_svc = AsyncMock(return_value=None)
         with (
@@ -333,14 +362,16 @@ class TestRlsDropPredicate:
                     "drop-predicate",
                     WH_GUID,
                     "rls.SalesFilter",
-                    "--filter",
                     "--on",
                     "dbo.Sales",
                 ],
             )
         assert result.exit_code == 0, result.output
+        assert mock_svc.call_args.args[2] == "FILTER"
 
-    def test_drop_both_flags_fails(self, runner: CliRunner, cache_env: Path) -> None:
+    def test_drop_no_filter_or_block_option(self, runner: CliRunner, cache_env: Path) -> None:
+        """Neither --filter nor --block is offered (#966): only FILTER predicates exist,
+        so there is nothing left to select between."""
         _ = cache_env
         result = runner.invoke(
             cli,
@@ -353,12 +384,12 @@ class TestRlsDropPredicate:
                 WH_GUID,
                 "rls.P",
                 "--filter",
-                "--block",
                 "--on",
                 "dbo.T",
             ],
         )
         assert result.exit_code != 0
+        assert "no such option" in result.output.lower()
 
 
 # ---------------------------------------------------------------------------

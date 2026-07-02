@@ -853,16 +853,9 @@ async def rls_list_cmd(ctx: CliContext, item: str | None) -> None:
 @click.option(
     "--filter",
     "filter_fn",
-    default=None,
+    required=True,
     metavar="SCHEMA.FN(col,...)",
-    help="Filter predicate function reference (mutually exclusive with --block).",
-)
-@click.option(
-    "--block",
-    "block_fn",
-    default=None,
-    metavar="SCHEMA.FN(col,...)",
-    help="Block predicate function reference (mutually exclusive with --filter).",
+    help="Filter predicate function reference.",
 )
 @click.option(
     "--on",
@@ -870,15 +863,6 @@ async def rls_list_cmd(ctx: CliContext, item: str | None) -> None:
     required=True,
     metavar="SCHEMA.TABLE",
     help="Target table for the predicate (e.g. dbo.Sales).",
-)
-@click.option(
-    "--operation",
-    type=click.Choice(
-        ["after-insert", "after-update", "before-update", "before-delete"],
-        case_sensitive=False,
-    ),
-    default=None,
-    help="Block predicate DML operation (required for BLOCK when ambiguous).",
 )
 @click.option(
     "--state",
@@ -893,47 +877,30 @@ async def rls_create_cmd(
     ctx: CliContext,
     item: str | None,
     policy: str,
-    filter_fn: str | None,
-    block_fn: str | None,
+    filter_fn: str,
     target_table: str,
-    operation: str | None,
     state: str,
 ) -> None:
-    """Create a security policy POLICY on ITEM with an initial predicate.
+    """Create a security policy POLICY on ITEM with an initial FILTER predicate.
 
-    Specify exactly one of --filter or --block to define the initial predicate.
+    Fabric Data Warehouse currently supports FILTER predicates only -- BLOCK
+    predicates are rejected by both CREATE and ALTER SECURITY POLICY, so
+    --block is not offered.
+
     Use 'permissions rls add-predicate' to add further predicates.
 
     POLICY may be schema-qualified (e.g. rls.MySalesFilter) or bare (MySalesFilter).
     --on specifies the target table (e.g. dbo.Sales).
 
-    Examples:
+    Example:
 
         fdw -w MyWS permissions rls create MyWH rls.SalesFilter \\
             --filter "rls.fn_filter(SalesRep)" --on dbo.Sales
-
-        fdw -w MyWS permissions rls create MyWH rls.SalesBlock \\
-            --block "rls.fn_block(SalesRep)" --on dbo.Sales --operation after-insert
     """
-    if (filter_fn is None) == (block_fn is None):
-        raise click.UsageError("Specify exactly one of --filter or --block.")
-
     ws = resolve_workspace(ctx)
     it = resolve_warehouse_arg(ctx, item)
 
-    if filter_fn is not None:
-        if operation is not None:
-            raise click.UsageError("--operation is only valid with --block predicates")
-        fn_schema, fn_name, fn_args = _parse_fn_ref(filter_fn, "--filter")
-        predicate_type = "FILTER"
-        op: str | None = None  # FILTER predicates have no operation
-    else:
-        if block_fn is None:  # pragma: no cover
-            raise click.UsageError("Expected --block value")
-        fn_schema, fn_name, fn_args = _parse_fn_ref(block_fn, "--block")
-        predicate_type = "BLOCK"
-        op = operation  # service's _validate_operation normalizes hyphens to underscores
-
+    fn_schema, fn_name, fn_args = _parse_fn_ref(filter_fn, "--filter")
     table_schema, table_name = _parse_table_ref(target_table, "--on")
     try:
         async with build_http_client(ctx) as http:
@@ -943,13 +910,12 @@ async def rls_create_cmd(
                 policy,
                 [
                     {
-                        "predicate_type": predicate_type,
+                        "predicate_type": "FILTER",
                         "fn_schema": fn_schema,
                         "fn_name": fn_name,
                         "fn_args": fn_args,
                         "table_schema": table_schema,
                         "table_name": table_name,
-                        "operation": op,
                     }
                 ],
                 state=state.lower() == "on",
@@ -957,9 +923,7 @@ async def rls_create_cmd(
             )
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
-    click.echo(
-        f"Created security policy {policy!r} with {predicate_type} predicate on {target_table!r}."
-    )
+    click.echo(f"Created security policy {policy!r} with FILTER predicate on {target_table!r}.")
 
 
 @rls_group.command("add-predicate")
@@ -968,16 +932,9 @@ async def rls_create_cmd(
 @click.option(
     "--filter",
     "filter_fn",
-    default=None,
+    required=True,
     metavar="SCHEMA.FN(col,...)",
-    help="Filter predicate function reference (mutually exclusive with --block).",
-)
-@click.option(
-    "--block",
-    "block_fn",
-    default=None,
-    metavar="SCHEMA.FN(col,...)",
-    help="Block predicate function reference (mutually exclusive with --filter).",
+    help="Filter predicate function reference.",
 )
 @click.option(
     "--on",
@@ -986,52 +943,28 @@ async def rls_create_cmd(
     metavar="SCHEMA.TABLE",
     help="Target table for the predicate (e.g. dbo.Sales).",
 )
-@click.option(
-    "--operation",
-    type=click.Choice(
-        ["after-insert", "after-update", "before-update", "before-delete"],
-        case_sensitive=False,
-    ),
-    default=None,
-    help="Block predicate DML operation.",
-)
 @click.pass_obj
 @coro
 async def rls_add_predicate_cmd(
     ctx: CliContext,
     item: str | None,
     policy: str,
-    filter_fn: str | None,
-    block_fn: str | None,
+    filter_fn: str,
     target_table: str,
-    operation: str | None,
 ) -> None:
-    """Add a predicate to an existing security policy POLICY on ITEM.
+    """Add a FILTER predicate to an existing security policy POLICY on ITEM.
 
-    Specify exactly one of --filter or --block.
+    Fabric Data Warehouse currently supports FILTER predicates only -- BLOCK
+    predicates are rejected by ALTER SECURITY POLICY, so --block is not
+    offered.
 
     POLICY may be schema-qualified (e.g. rls.MySalesFilter) or bare (MySalesFilter).
     --on specifies the target table.
     """
-    if (filter_fn is None) == (block_fn is None):
-        raise click.UsageError("Specify exactly one of --filter or --block.")
-
     ws = resolve_workspace(ctx)
     it = resolve_warehouse_arg(ctx, item)
 
-    if filter_fn is not None:
-        if operation is not None:
-            raise click.UsageError("--operation is only valid with --block predicates")
-        fn_schema, fn_name, fn_args = _parse_fn_ref(filter_fn, "--filter")
-        predicate_type = "FILTER"
-        op: str | None = None
-    else:
-        if block_fn is None:  # pragma: no cover
-            raise click.UsageError("Expected --block value")
-        fn_schema, fn_name, fn_args = _parse_fn_ref(block_fn, "--block")
-        predicate_type = "BLOCK"
-        op = operation  # service's _validate_operation normalizes hyphens to underscores
-
+    fn_schema, fn_name, fn_args = _parse_fn_ref(filter_fn, "--filter")
     table_schema, table_name = _parse_table_ref(target_table, "--on")
     try:
         async with build_http_client(ctx) as http:
@@ -1039,43 +972,28 @@ async def rls_add_predicate_cmd(
             await _rls_svc.add_predicate(
                 target,
                 policy,
-                predicate_type,
+                "FILTER",
                 fn_schema,
                 fn_name,
                 fn_args,
                 table_schema,
                 table_name,
-                operation=op,
                 mode=ctx.auth,
             )
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
-    click.echo(f"Added {predicate_type} predicate to policy {policy!r} on {target_table!r}.")
+    click.echo(f"Added FILTER predicate to policy {policy!r} on {target_table!r}.")
 
 
 @rls_group.command("drop-predicate")
 @click.argument("item", required=False, default=None)
 @click.argument("policy")
 @click.option(
-    "--filter",
-    "predicate_filter",
-    is_flag=True,
-    default=False,
-    help="Drop a FILTER predicate (mutually exclusive with --block).",
-)
-@click.option(
-    "--block",
-    "predicate_block",
-    is_flag=True,
-    default=False,
-    help="Drop a BLOCK predicate (mutually exclusive with --filter).",
-)
-@click.option(
     "--on",
     "target_table",
     required=True,
     metavar="SCHEMA.TABLE",
-    help="Target table whose predicate to drop.",
+    help="Target table whose FILTER predicate to drop.",
 )
 @click.pass_obj
 @coro
@@ -1083,22 +1001,16 @@ async def rls_drop_predicate_cmd(
     ctx: CliContext,
     item: str | None,
     policy: str,
-    predicate_filter: bool,
-    predicate_block: bool,
     target_table: str,
 ) -> None:
-    """Drop a predicate from security policy POLICY on ITEM.
+    """Drop the FILTER predicate from security policy POLICY on ITEM.
 
-    Specify exactly one of --filter or --block to identify the predicate type.
+    Fabric Data Warehouse currently supports FILTER predicates only, so this
+    always drops a FILTER predicate; --block is not offered.
     --on specifies the target table.
     """
-    if predicate_filter == predicate_block:
-        raise click.UsageError("Specify exactly one of --filter or --block.")
-
     ws = resolve_workspace(ctx)
     it = resolve_warehouse_arg(ctx, item)
-
-    predicate_type = "FILTER" if predicate_filter else "BLOCK"
 
     table_schema, table_name = _parse_table_ref(target_table, "--on")
     try:
@@ -1107,14 +1019,14 @@ async def rls_drop_predicate_cmd(
             await _rls_svc.drop_predicate(
                 target,
                 policy,
-                predicate_type,
+                "FILTER",
                 table_schema,
                 table_name,
                 mode=ctx.auth,
             )
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
-    click.echo(f"Dropped {predicate_type} predicate from policy {policy!r} on {target_table!r}.")
+    click.echo(f"Dropped FILTER predicate from policy {policy!r} on {target_table!r}.")
 
 
 @rls_group.command("set-state")

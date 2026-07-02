@@ -4,6 +4,13 @@ Reads from ``sys.security_policies`` / ``sys.security_predicates`` and issues
 ``CREATE SECURITY POLICY``, ``ALTER SECURITY POLICY``, and
 ``DROP SECURITY POLICY`` statements.
 
+FILTER predicates only (#966)
+------------------------------
+Fabric Data Warehouse rejects BLOCK predicates for both ``CREATE`` and
+``ALTER SECURITY POLICY`` ("BLOCK PREDICATE is not supported"). BLOCK support
+was removed after #919 shipped it untested; only FILTER predicates are
+exposed and validated here.
+
 Statement-building safety
 --------------------------
 All statements are built from:
@@ -13,9 +20,7 @@ All statements are built from:
 - Column names for predicate function arguments validated via
   :func:`~fabric_dw.identifiers.validate_column_name` +
   :func:`~fabric_dw.identifiers.quote_identifier`.
-- Fixed allowlists for predicate type (``FILTER`` / ``BLOCK``) and
-  block operation (``AFTER_INSERT`` / ``AFTER_UPDATE`` / ``BEFORE_UPDATE`` /
-  ``BEFORE_DELETE``).
+- A fixed allowlist for predicate type (``FILTER`` only).
 
 No SQL text is ever parsed or rewritten.
 """
@@ -37,7 +42,6 @@ from fabric_dw.models import SecurityPolicy, SecurityPredicate
 from fabric_dw.sql import SqlTarget, run_query
 
 __all__ = [
-    "VALID_BLOCK_OPERATIONS",
     "VALID_PREDICATE_TYPES",
     "add_predicate",
     "create_security_policy",
@@ -51,21 +55,10 @@ __all__ = [
 # Allowlists
 # ---------------------------------------------------------------------------
 
-#: Valid predicate type tokens (uppercase).
-VALID_PREDICATE_TYPES: frozenset[str] = frozenset({"FILTER", "BLOCK"})
-
-#: Valid block operation tokens (uppercase, underscore-separated).
-VALID_BLOCK_OPERATIONS: frozenset[str] = frozenset(
-    {"AFTER_INSERT", "AFTER_UPDATE", "BEFORE_UPDATE", "BEFORE_DELETE"}
-)
-
-#: Maps internal operation token to SQL clause fragment.
-_OPERATION_TO_SQL: dict[str, str] = {
-    "AFTER_INSERT": "AFTER INSERT",
-    "AFTER_UPDATE": "AFTER UPDATE",
-    "BEFORE_UPDATE": "BEFORE UPDATE",
-    "BEFORE_DELETE": "BEFORE DELETE",
-}
+#: Valid predicate type tokens (uppercase). BLOCK is intentionally absent
+#: (#966): Fabric Data Warehouse rejects it for both CREATE and ALTER
+#: SECURITY POLICY.
+VALID_PREDICATE_TYPES: frozenset[str] = frozenset({"FILTER"})
 
 # ---------------------------------------------------------------------------
 # SQL templates (read)
@@ -99,45 +92,19 @@ def _validate_predicate_type(predicate_type: str) -> str:
         predicate_type: Raw predicate type string (case-insensitive).
 
     Returns:
-        The uppercase token -- ``"FILTER"`` or ``"BLOCK"``.
+        The uppercase token -- currently only ``"FILTER"``.
 
     Raises:
-        ValueError: If *predicate_type* is not ``FILTER`` or ``BLOCK``.
+        ValueError: If *predicate_type* is not ``FILTER``. In particular,
+            ``"BLOCK"`` is rejected here (#966): Fabric Data Warehouse
+            rejects BLOCK PREDICATE for both CREATE and ALTER SECURITY
+            POLICY, so it is never sent to the server.
     """
     upper = predicate_type.upper()
     if upper not in VALID_PREDICATE_TYPES:
         msg = (
             f"Invalid predicate type {predicate_type!r}: "
             f"must be one of {', '.join(sorted(VALID_PREDICATE_TYPES))}"
-        )
-        raise ValueError(msg)
-    return upper
-
-
-def _validate_operation(operation: str | None) -> str | None:
-    """Validate and normalise a block predicate operation token.
-
-    Accepts tokens with underscores (``AFTER_INSERT``) or spaces
-    (``AFTER INSERT``), case-insensitively, and returns the canonical
-    underscore form.  Returns ``None`` when *operation* is ``None``.
-
-    Args:
-        operation: Operation token or ``None`` for no restriction.
-
-    Returns:
-        Normalised uppercase token (e.g. ``"AFTER_INSERT"``) or ``None``.
-
-    Raises:
-        ValueError: If *operation* is not in :data:`VALID_BLOCK_OPERATIONS`.
-    """
-    if operation is None:
-        return None
-    # Normalise spaces or hyphens to underscores before checking.
-    upper = operation.upper().replace(" ", "_").replace("-", "_")
-    if upper not in VALID_BLOCK_OPERATIONS:
-        msg = (
-            f"Invalid block operation {operation!r}: "
-            f"must be one of {', '.join(sorted(VALID_BLOCK_OPERATIONS))}"
         )
         raise ValueError(msg)
     return upper
@@ -212,38 +179,27 @@ def _build_predicate_clause(
     fn_args: list[str],
     table_schema: str,
     table_name: str,
-    operation: str | None,
 ) -> str:
-    """Build one ``ADD FILTER|BLOCK PREDICATE fn(...) ON table [OP]`` clause.
+    """Build one ``ADD FILTER PREDICATE fn(...) ON table`` clause.
 
     Args:
-        predicate_type: ``"FILTER"`` or ``"BLOCK"`` (already validated).
+        predicate_type: ``"FILTER"`` (already validated; this is the only
+            token :data:`VALID_PREDICATE_TYPES` accepts).
         fn_schema: Schema of the predicate function (may be ``None``).
         fn_name: Name of the predicate function.
         fn_args: Column name arguments for the predicate function.
         table_schema: Schema of the target table.
         table_name: Name of the target table.
-        operation: Block operation token (e.g. ``"AFTER_INSERT"``), or
-            ``None`` to omit the operation clause.  Must be ``None`` for
-            FILTER predicates.
 
     Returns:
-        The ``ADD ... PREDICATE ...`` clause string (no trailing semicolon).
-
-    Raises:
-        ValueError: If a FILTER predicate is given a non-``None`` operation.
+        The ``ADD FILTER PREDICATE ...`` clause string (no trailing
+        semicolon).
     """
-    if predicate_type == "FILTER" and operation is not None:
-        msg = "FILTER predicates do not accept an operation"
-        raise ValueError(msg)
     fn_call = _build_fn_call(fn_schema, fn_name, fn_args)
     validate_identifier(table_schema)
     validate_identifier(table_name)
     table_ref = f"{quote_identifier(table_schema)}.{quote_identifier(table_name)}"
-    clause = f"ADD {predicate_type} PREDICATE {fn_call} ON {table_ref}"
-    if predicate_type == "BLOCK" and operation is not None:
-        clause += f" {_OPERATION_TO_SQL[operation]}"
-    return clause
+    return f"ADD {predicate_type} PREDICATE {fn_call} ON {table_ref}"
 
 
 # ---------------------------------------------------------------------------
@@ -319,17 +275,17 @@ async def create_security_policy(
 ) -> None:
     """Create a security policy with one or more predicates.
 
-    Executes ``CREATE SECURITY POLICY ... ADD FILTER|BLOCK PREDICATE ...``.
+    Executes ``CREATE SECURITY POLICY ... ADD FILTER PREDICATE ...``.
 
     Each element of *predicates* must be a dict with keys:
 
-    - ``predicate_type``: ``"FILTER"`` or ``"BLOCK"``
+    - ``predicate_type``: ``"FILTER"`` (the only supported value; see
+      :data:`VALID_PREDICATE_TYPES`)
     - ``fn_schema``: schema of the predicate function (``str`` or ``None``)
     - ``fn_name``: name of the predicate function
     - ``fn_args``: list of column name strings
     - ``table_schema``: schema of the target table
     - ``table_name``: name of the target table
-    - ``operation``: block operation token (``None`` for FILTER or unspecified)
 
     Args:
         target: SQL connection target.
@@ -359,7 +315,6 @@ async def create_security_policy(
             msg = f"Predicate at index {i} is missing required key(s): {missing_list}"
             raise ValueError(msg)
         ptype = _validate_predicate_type(str(spec["predicate_type"]))
-        op = _validate_operation(spec.get("operation"))  # type: ignore[arg-type]
         fn_schema_raw = spec.get("fn_schema")
         fn_schema = str(fn_schema_raw) if fn_schema_raw else None
         fn_name = str(spec["fn_name"])
@@ -367,9 +322,7 @@ async def create_security_policy(
         table_schema = str(spec["table_schema"])
         table_name = str(spec["table_name"])
         clauses.append(
-            _build_predicate_clause(
-                ptype, fn_schema, fn_name, fn_args, table_schema, table_name, op
-            )
+            _build_predicate_clause(ptype, fn_schema, fn_name, fn_args, table_schema, table_name)
         )
 
     predicate_sql = ",\n    ".join(clauses)
@@ -393,24 +346,22 @@ async def add_predicate(
     table_schema: str,
     table_name: str,
     *,
-    operation: str | None = None,
     mode: CredentialMode = CredentialMode.DEFAULT,
 ) -> None:
     """Add a predicate to an existing security policy.
 
-    Executes ``ALTER SECURITY POLICY ... ADD FILTER|BLOCK PREDICATE ...``.
+    Executes ``ALTER SECURITY POLICY ... ADD FILTER PREDICATE ...``.
 
     Args:
         target: SQL connection target.
         policy_name: Security policy name (optionally schema-qualified).
-        predicate_type: ``"FILTER"`` or ``"BLOCK"``.
+        predicate_type: ``"FILTER"`` (the only supported value; see
+            :data:`VALID_PREDICATE_TYPES`).
         fn_schema: Schema of the predicate function, or ``None``.
         fn_name: Name of the predicate function.
         fn_args: Column name arguments for the predicate function.
         table_schema: Schema of the target table.
         table_name: Name of the target table.
-        operation: Block operation token (e.g. ``"AFTER_INSERT"``), or
-            ``None`` to omit the operation clause.
         mode: Credential mode for Entra authentication.
 
     Raises:
@@ -418,10 +369,7 @@ async def add_predicate(
     """
     policy_ref = _resolve_policy_ref(policy_name)
     ptype = _validate_predicate_type(predicate_type)
-    op = _validate_operation(operation)
-    clause = _build_predicate_clause(
-        ptype, fn_schema, fn_name, fn_args, table_schema, table_name, op
-    )
+    clause = _build_predicate_clause(ptype, fn_schema, fn_name, fn_args, table_schema, table_name)
     ddl = f"ALTER SECURITY POLICY {policy_ref}\n    {clause};"
 
     def _run() -> None:
@@ -441,15 +389,16 @@ async def drop_predicate(
 ) -> None:
     """Drop a predicate from an existing security policy.
 
-    Executes ``ALTER SECURITY POLICY ... DROP FILTER|BLOCK PREDICATE ON ...``.
+    Executes ``ALTER SECURITY POLICY ... DROP FILTER PREDICATE ON ...``.
 
-    The T-SQL ``DROP { FILTER | BLOCK } PREDICATE ON`` clause takes no
-    operation qualifier -- the operation is not part of the drop syntax.
+    The T-SQL ``DROP FILTER PREDICATE ON`` clause takes no operation
+    qualifier -- the operation is not part of the drop syntax.
 
     Args:
         target: SQL connection target.
         policy_name: Security policy name (optionally schema-qualified).
-        predicate_type: ``"FILTER"`` or ``"BLOCK"``.
+        predicate_type: ``"FILTER"`` (the only supported value; see
+            :data:`VALID_PREDICATE_TYPES`).
         table_schema: Schema of the target table.
         table_name: Name of the target table.
         mode: Credential mode for Entra authentication.

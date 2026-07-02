@@ -774,7 +774,6 @@ async def test_add_security_predicate_fn_schema_optional(mock_ctx, ctx_patch) ->
                 "workspace": WS_NAME,
                 "item": WH_NAME,
                 "policy_name": "rls.SalesFilter",
-                "predicate_type": "FILTER",
                 "fn_name": "fn_filter",
                 "fn_args": ["SalesRep"],
                 "table_schema": "dbo",
@@ -784,13 +783,32 @@ async def test_add_security_predicate_fn_schema_optional(mock_ctx, ctx_patch) ->
         )
 
     assert result["added"] is True
-    # Verify fn_schema=None was passed to the service
-    _, kwargs = mock_svc.call_args
-    assert kwargs.get("fn_schema") is None or mock_svc.call_args[0][3] is None
+    assert result["predicate_type"] == "FILTER"
+    # Verify "FILTER" and fn_schema=None were passed to the service positionally.
+    args, _kwargs = mock_svc.call_args
+    assert args[2] == "FILTER"
+    assert args[3] is None
+
+
+async def test_add_drop_security_predicate_schemas_omit_predicate_type() -> None:
+    """predicate_type / operation are not accepted parameters (#966): FILTER is implicit
+    since it is the only value Fabric supports, so the tool schemas no longer offer a
+    choice (this is pure schema introspection -- no I/O, no mocked resolver needed)."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    tools = {t.name: t for t in await mcp.list_tools()}
+
+    add_props = tools["add_security_predicate"].inputSchema["properties"]
+    assert "predicate_type" not in add_props
+    assert "operation" not in add_props
+
+    drop_props = tools["drop_security_predicate"].inputSchema["properties"]
+    assert "predicate_type" not in drop_props
+    assert "operation" not in drop_props
 
 
 async def test_drop_security_predicate_dispatches_correct_args(mock_ctx, ctx_patch) -> None:
-    """drop_security_predicate calls drop_predicate with the right args and no operation kwarg."""
+    """drop_security_predicate calls drop_predicate with FILTER and no operation kwarg."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     item = make_item_entry()
@@ -810,7 +828,6 @@ async def test_drop_security_predicate_dispatches_correct_args(mock_ctx, ctx_pat
                 "workspace": WS_NAME,
                 "item": WH_NAME,
                 "policy_name": "rls.SalesFilter",
-                "predicate_type": "FILTER",
                 "table_schema": "dbo",
                 "table_name": "Sales",
             },
@@ -818,9 +835,11 @@ async def test_drop_security_predicate_dispatches_correct_args(mock_ctx, ctx_pat
 
     assert result["dropped"] is True
     assert result["policy_name"] == "rls.SalesFilter"
+    assert result["predicate_type"] == "FILTER"
     mock_svc.assert_called_once()
-    # Verify no 'operation' kwarg is forwarded to the service.
-    _, kwargs = mock_svc.call_args
+    # Verify "FILTER" was passed positionally and no 'operation' kwarg is forwarded.
+    args, kwargs = mock_svc.call_args
+    assert args[2] == "FILTER"
     assert "operation" not in kwargs
 
 
