@@ -146,6 +146,15 @@ def test_version_fields_are_mutually_consistent() -> None:
     source_of_truth = _load_json(CLAUDE_PLUGIN)["version"]
     assert source_of_truth, f"{CLAUDE_PLUGIN} must declare a non-empty version"
 
+    # COPILOT_PLUGIN's own "version" field is required, not merely checked-if-present: it is
+    # the Copilot CLI mirror the publish.yml sync-plugin-manifest job bumps in lockstep with
+    # CLAUDE_PLUGIN, so it silently dropping the field would otherwise go uncaught below.
+    copilot_version = _load_json(COPILOT_PLUGIN).get("version")
+    assert copilot_version, f"{COPILOT_PLUGIN} must declare a non-empty version"
+    assert copilot_version == source_of_truth, (
+        f"{COPILOT_PLUGIN} declares version {copilot_version!r}, expected {source_of_truth!r}"
+    )
+
     for path in _MANIFEST_PATHS:
         data = _load_json(path)
         candidates: list[Any] = [data.get("version")]

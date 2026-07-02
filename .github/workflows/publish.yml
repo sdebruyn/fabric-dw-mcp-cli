@@ -210,11 +210,12 @@ jobs:
             # Monotonicity guard: refuse to write a version older than what is already on HEAD.
             # Prevents an old re-run or stale workflow_dispatch from regressing a manifest.
             current_version=$(python3 -c "import json; print(json.load(open('$plugin_json'))['version'])")
-            # Single physical line, no leading whitespace before "import": a multi-line
-            # python -c body indented to satisfy this YAML block's minimum indentation would
-            # pass that literal leading whitespace to python3, which raises IndentationError
-            # since "import sys" would not be the first statement at column 0.
-            is_downgrade=$(python3 -c "import sys; cur = tuple(int(x) for x in sys.argv[1].split('.')); new = tuple(int(x) for x in sys.argv[2].split('.')); print('yes' if new < cur else 'no')" "$current_version" "$version")
+            is_downgrade=$(python3 -c "
+          import sys
+          cur = tuple(int(x) for x in sys.argv[1].split('.'))
+          new = tuple(int(x) for x in sys.argv[2].split('.'))
+          print('yes' if new < cur else 'no')
+          " "$current_version" "$version")
             if [ "$is_downgrade" = "yes" ]; then
               echo "Notice: tag '$version' is older than current $plugin_json '$current_version' - skipping to prevent downgrade."
               continue
