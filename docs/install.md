@@ -39,6 +39,34 @@ uvx fabric-dw --help
 
 [`uvx`](https://docs.astral.sh/uv/guides/tools/) fetches and runs the published package on demand without a global install. No setup is required beyond having `uv` available.
 
+### Persistent install with uv tool install
+
+If you want `fdw` to stay on `PATH` between sessions instead of being fetched on demand, use [`uv tool install`](https://docs.astral.sh/uv/guides/tools/) - the `uv` equivalent of `pipx install`:
+
+```bash
+uv tool install fabric-dw
+```
+
+Unlike `uvx`, which re-fetches and runs the package on demand without installing anything, `uv tool install` installs both entry points the package ships - `fdw` (this CLI) and `fabric-dw-mcp` (the [MCP server](#mcp)) - as persistent executables on `PATH`.
+
+Upgrade to the latest release with:
+
+```bash
+uv tool upgrade fabric-dw
+```
+
+`fabric-dw` also publishes prerelease dev builds. To install the latest one, allow prereleases explicitly:
+
+```bash
+uv tool install --prerelease allow fabric-dw
+```
+
+Uninstall with:
+
+```bash
+uv tool uninstall fabric-dw
+```
+
 ### Verify
 
 After installation, confirm the CLI is available:
@@ -67,6 +95,8 @@ uvx --from fabric-dw fabric-dw-mcp
 The package is named `fabric-dw`, but the MCP entry point it ships is `fabric-dw-mcp`. Because the two names differ, `uvx` needs `--from fabric-dw` to know which package provides the `fabric-dw-mcp` command - `uvx fabric-dw-mcp` on its own would try to fetch a (non-existent) package called `fabric-dw-mcp` and fail.
 
 Every client snippet below configures `uvx --from fabric-dw fabric-dw-mcp` as the entry point, so your AI tool always picks up the latest published version. Pin a version with `uvx --from fabric-dw==2026.6.0 fabric-dw-mcp` if you need reproducibility.
+
+Prefer a persistent install over fetching on demand? Run `uv tool install fabric-dw` once (see [Persistent install with uv tool install](#persistent-install-with-uv-tool-install) above); it also puts `fabric-dw-mcp` directly on `PATH`, so client configs can point their `command` at `fabric-dw-mcp` with no `args` instead of `uvx --from fabric-dw fabric-dw-mcp`.
 
 You will also need an Azure credential the server can use to call the Fabric REST and SQL APIs. Set the `FABRIC_AUTH` environment variable to select a source (see [Authentication](#authentication) above):
 

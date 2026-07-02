@@ -35,9 +35,11 @@ Authentication is configured via the `FABRIC_AUTH` environment variable. The def
 pip install fabric-dw
 # or run without installing:
 uvx fabric-dw --help
+# or install persistently on PATH:
+uv tool install fabric-dw
 ```
 
-After installation, the `fdw` command is a short alias for `fabric-dw`; both invoke the same entry point.
+After installation, the `fdw` command is a short alias for `fabric-dw`; both invoke the same entry point. See the [Install](https://fdw.debruyn.dev/install/) docs for MCP server setup, upgrading, and prerelease builds.
 
 ## Quick Start
 
