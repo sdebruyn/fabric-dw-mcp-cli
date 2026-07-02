@@ -128,10 +128,17 @@ jobs:
           mv server.json.tmp server.json
 
       - name: Install mcp-publisher
+        # This job holds id-token: write, so the downloaded binary is checksummed before it
+        # is extracted or executed. Hash pinned from the v1.7.9 release's checksums file
+        # (mcp-publisher_linux_amd64.tar.gz); bump both the version and the hash together.
         if: steps.prerelease.outputs.is_prerelease == 'false'
+        env:
+          MCP_PUBLISHER_SHA256: ab128162b0616090b47cf245afe0a23f3ef08936fdce19074f5ba0a4469281ac
         run: |
-          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/download/v1.7.9/mcp-publisher_linux_amd64.tar.gz" \
-            | tar xz mcp-publisher
+          curl -fsSL -o mcp-publisher.tar.gz \
+            "https://github.com/modelcontextprotocol/registry/releases/download/v1.7.9/mcp-publisher_linux_amd64.tar.gz"
+          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum -c -
+          tar xzf mcp-publisher.tar.gz mcp-publisher
 
       - name: Publish to MCP Registry (OIDC)
         if: steps.prerelease.outputs.is_prerelease == 'false'

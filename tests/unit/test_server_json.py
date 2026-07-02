@@ -57,6 +57,22 @@ def test_oci_identifier_points_at_the_published_ghcr_image() -> None:
     assert identifier.startswith("ghcr.io/sdebruyn/fabric-dw:")
 
 
+def test_oci_package_omits_fields_the_registry_rejects_for_oci() -> None:
+    """The registry's server-side OCI validator rejects registryBaseUrl/version/fileSha256.
+
+    For "oci" packages the registry (internal/validators/registries/oci.go) hard-errors on
+    these three fields: the registry host and version must live in `identifier` instead
+    (e.g. "ghcr.io/owner/image:1.0.0"). `mcp-publisher validate` only runs the JSON-schema
+    check, where these fields are schema-legal, so this only surfaces at `publish` time -
+    locking it in here so a regression fails fast in the unit suite instead of the first
+    live publish.
+    """
+    package = _SERVER_JSON["packages"][0]
+    assert "registryBaseUrl" not in package
+    assert "version" not in package
+    assert "fileSha256" not in package
+
+
 def test_stdio_transport() -> None:
     """The MCP server communicates over stdio (no HTTP/SSE port to expose)."""
     assert _SERVER_JSON["packages"][0]["transport"]["type"] == "stdio"

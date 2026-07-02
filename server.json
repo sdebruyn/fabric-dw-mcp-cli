@@ -12,7 +12,6 @@
   "packages": [
     {
       "registryType": "oci",
-      "registryBaseUrl": "https://ghcr.io",
       "identifier": "ghcr.io/sdebruyn/fabric-dw:2026.6.0",
       "transport": {
         "type": "stdio"
