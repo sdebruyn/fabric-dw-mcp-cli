@@ -15,8 +15,8 @@ Five distinct permission planes are exposed under the `permissions` top-level gr
   statements.
 - `permissions cls` - Column-level security. Applies `GRANT`, `DENY`, and `REVOKE` to named
   column lists rather than whole objects.
-- `permissions rls` - Row-level security. Manages security policies with filter and block
-  predicates that reference existing predicate functions.
+- `permissions rls` - Row-level security. Manages security policies with FILTER predicates that
+  reference existing predicate functions (BLOCK predicates are not supported by Fabric).
 - `permissions mask` - Dynamic data masking. Applies, inspects, and removes column-level masks.
 
 **Targets:** Data Warehouse / SQL Analytics Endpoint
@@ -399,9 +399,13 @@ fdw -w MyWorkspace permissions cls list SalesWH --object dbo.sales
 fdw -w MyWorkspace --json permissions cls list SalesWH --object dbo.sales
 ```
 
-Control row-level security (RLS) policies. Each policy contains one or more filter or block
-predicates that reference existing predicate functions (table-valued functions). The CLI
-never authors or modifies predicate function bodies.
+Control row-level security (RLS) policies. Each policy contains one or more FILTER predicates
+that reference existing predicate functions (table-valued functions). The CLI never authors or
+modifies predicate function bodies.
+
+**Note:** Fabric Data Warehouse currently supports FILTER predicates only. BLOCK predicates are
+rejected by both `CREATE SECURITY POLICY` and `ALTER SECURITY POLICY`, so `--block` is not
+offered by any `rls` command.
 
 ### permissions rls list
 
@@ -426,52 +430,42 @@ fdw -w MyWorkspace --json permissions rls list SalesWH
 
 **Targets:** Data Warehouse / SQL Analytics Endpoint
 
-Create a new row-level security policy with one filter or block predicate.
+Create a new row-level security policy with one FILTER predicate.
 
 **Synopsis**
 
 ```
 fdw [-w WORKSPACE] permissions rls create [ITEM] [POLICY_NAME]
-    { --filter SCHEMA.FN(COL,...) | --block SCHEMA.FN(COL,...) }
+    --filter SCHEMA.FN(COL,...)
     --on SCHEMA.TABLE
-    [--operation AFTER-INSERT|AFTER-UPDATE|BEFORE-UPDATE|BEFORE-DELETE]
     [--state on|off]
 ```
 
 | Option | Description |
 | --- | --- |
-| `--filter SCHEMA.FN(COL,...)` | Add a FILTER predicate (mutually exclusive with `--block`). |
-| `--block SCHEMA.FN(COL,...)` | Add a BLOCK predicate (mutually exclusive with `--filter`). |
+| `--filter SCHEMA.FN(COL,...)` | The FILTER predicate function reference (required). |
 | `--on SCHEMA.TABLE` | Target table for the predicate (required). |
-| `--operation OP` | Block operation: `after-insert`, `after-update`, `before-update`, `before-delete` (BLOCK only). |
 | `--state on\|off` | Initial policy state (default: `on`). |
 
 **Example**
 
 ```shell
-# Filter predicate, enabled
 fdw -w MyWorkspace permissions rls create SalesWH rls.SalesFilter \
     --filter rls.fn_filter(SalesRep) --on dbo.Sales
-
-# Block predicate, disabled initially
-fdw -w MyWorkspace permissions rls create SalesWH rls.SalesBlock \
-    --block rls.fn_block(SalesRep) --on dbo.Sales \
-    --operation after-insert --state off
 ```
 
 ### permissions rls add-predicate
 
 **Targets:** Data Warehouse / SQL Analytics Endpoint
 
-Add an additional predicate to an existing policy.
+Add an additional FILTER predicate to an existing policy.
 
 **Synopsis**
 
 ```
 fdw [-w WORKSPACE] permissions rls add-predicate [ITEM] [POLICY_NAME]
-    { --filter SCHEMA.FN(COL,...) | --block SCHEMA.FN(COL,...) }
+    --filter SCHEMA.FN(COL,...)
     --on SCHEMA.TABLE
-    [--operation AFTER-INSERT|AFTER-UPDATE|BEFORE-UPDATE|BEFORE-DELETE]
 ```
 
 **Example**
@@ -485,27 +479,24 @@ fdw -w MyWorkspace permissions rls add-predicate SalesWH rls.SalesFilter \
 
 **Targets:** Data Warehouse / SQL Analytics Endpoint
 
-Drop a predicate from an existing policy.
+Drop the FILTER predicate from an existing policy for a given table.
 
 **Synopsis**
 
 ```
 fdw [-w WORKSPACE] permissions rls drop-predicate [ITEM] [POLICY_NAME]
-    { --filter | --block }
     --on SCHEMA.TABLE
 ```
 
 | Option | Description |
 | --- | --- |
-| `--filter` | Target a FILTER predicate (flag, no value). |
-| `--block` | Target a BLOCK predicate (flag, no value). |
-| `--on SCHEMA.TABLE` | Table whose predicate is dropped. |
+| `--on SCHEMA.TABLE` | Table whose FILTER predicate is dropped. |
 
 **Example**
 
 ```shell
 fdw -w MyWorkspace permissions rls drop-predicate SalesWH rls.SalesFilter \
-    --filter --on dbo.Sales
+    --on dbo.Sales
 ```
 
 ### permissions rls set-state
@@ -840,7 +831,10 @@ List all row-level security policies and their predicates from `sys.security_pol
 
 **Targets:** Data Warehouse / SQL Analytics Endpoint
 
-Create a row-level security policy with one or more predicates. Executes `CREATE SECURITY POLICY`.
+Create a row-level security policy with one or more FILTER predicates. Executes
+`CREATE SECURITY POLICY`.
+
+There is no predicate-type option (#966): Fabric Data Warehouse supports FILTER predicates only.
 
 Blocked by `FABRIC_MCP_READONLY`. Does NOT require `FABRIC_MCP_ALLOW_DESTRUCTIVE`.
 
@@ -850,14 +844,11 @@ Blocked by `FABRIC_MCP_READONLY`. Does NOT require `FABRIC_MCP_ALLOW_DESTRUCTIVE
 - `item` (`str`): Warehouse or SQL endpoint name or GUID.
 - `policy_name` (`str`): qualified policy name (`"schema.name"` or `"name"`).
 - `predicates` (`list[dict]`): list of predicate definitions. Each entry must include:
-  - `predicate_type` (`str`): `"FILTER"` or `"BLOCK"`.
   - `fn_schema` (`str`, optional): schema of the predicate function. Omit when the function lives in the default schema.
   - `fn_name` (`str`): name of the predicate function.
   - `fn_args` (`list[str]`): column names to pass to the function.
   - `table_schema` (`str`): schema of the target table.
   - `table_name` (`str`): name of the target table.
-  - `operation` (`str`, optional): block operation - `"AFTER_INSERT"`, `"AFTER_UPDATE"`,
-    `"BEFORE_UPDATE"`, or `"BEFORE_DELETE"` (BLOCK predicates only).
 - `state` (`bool`, default `true`): initial policy state - `true` to enable, `false` to disable.
 
 **Returns:** `{ "created": true, "policy_name": str, "state": bool }`.
@@ -866,8 +857,11 @@ Blocked by `FABRIC_MCP_READONLY`. Does NOT require `FABRIC_MCP_ALLOW_DESTRUCTIVE
 
 **Targets:** Data Warehouse / SQL Analytics Endpoint
 
-Add a predicate to an existing row-level security policy. Executes
-`ALTER SECURITY POLICY ... ADD FILTER|BLOCK PREDICATE`.
+Add a FILTER predicate to an existing row-level security policy. Executes
+`ALTER SECURITY POLICY ... ADD FILTER PREDICATE`.
+
+Fabric Data Warehouse currently supports FILTER predicates only, so no `predicate_type` or
+`operation` parameter is offered.
 
 Blocked by `FABRIC_MCP_READONLY`. Does NOT require `FABRIC_MCP_ALLOW_DESTRUCTIVE`.
 
@@ -876,24 +870,24 @@ Blocked by `FABRIC_MCP_READONLY`. Does NOT require `FABRIC_MCP_ALLOW_DESTRUCTIVE
 - `workspace` (`str`): workspace name or GUID.
 - `item` (`str`): Warehouse or SQL endpoint name or GUID.
 - `policy_name` (`str`): qualified policy name (`"schema.name"` or `"name"`).
-- `predicate_type` (`str`): `"FILTER"` or `"BLOCK"`.
 - `fn_name` (`str`): name of the predicate function.
 - `fn_args` (`list[str]`): column names to pass to the predicate function.
 - `table_schema` (`str`): schema name of the target table.
 - `table_name` (`str`): name of the target table.
 - `fn_schema` (`str | null`, optional): schema of the predicate function. Omit when the function
   lives in the default schema.
-- `operation` (`str | null`, optional): block operation - `"AFTER_INSERT"`, `"AFTER_UPDATE"`,
-  `"BEFORE_UPDATE"`, or `"BEFORE_DELETE"` (BLOCK predicates only).
 
-**Returns:** `{ "added": true, "policy_name": str, "predicate_type": str, "table": str }`.
+**Returns:** `{ "added": true, "policy_name": str, "predicate_type": "FILTER", "table": str }`.
 
 ### drop_security_predicate
 
 **Targets:** Data Warehouse / SQL Analytics Endpoint
 
-Drop a predicate from an existing row-level security policy. Executes
-`ALTER SECURITY POLICY ... DROP FILTER|BLOCK PREDICATE ON`.
+Drop the FILTER predicate from an existing row-level security policy. Executes
+`ALTER SECURITY POLICY ... DROP FILTER PREDICATE ON`.
+
+Fabric Data Warehouse currently supports FILTER predicates only, so no `predicate_type`
+parameter is offered.
 
 Blocked by `FABRIC_MCP_READONLY`. Does NOT require `FABRIC_MCP_ALLOW_DESTRUCTIVE`.
 
@@ -902,11 +896,10 @@ Blocked by `FABRIC_MCP_READONLY`. Does NOT require `FABRIC_MCP_ALLOW_DESTRUCTIVE
 - `workspace` (`str`): workspace name or GUID.
 - `item` (`str`): Warehouse or SQL endpoint name or GUID.
 - `policy_name` (`str`): qualified policy name (`"schema.name"` or `"name"`).
-- `predicate_type` (`str`): `"FILTER"` or `"BLOCK"`.
 - `table_schema` (`str`): schema name of the target table.
 - `table_name` (`str`): name of the target table.
 
-**Returns:** `{ "dropped": true, "policy_name": str, "predicate_type": str, "table": str }`.
+**Returns:** `{ "dropped": true, "policy_name": str, "predicate_type": "FILTER", "table": str }`.
 
 ### set_security_policy_state
 

@@ -33,73 +33,6 @@ _LIST_COLS = [
 
 
 # ---------------------------------------------------------------------------
-# _validate_predicate_type
-# ---------------------------------------------------------------------------
-
-
-class TestValidatePredicateType:
-    def test_filter_accepted(self) -> None:
-        from fabric_dw.services.rls import _validate_predicate_type  # noqa: PLC0415
-
-        assert _validate_predicate_type("FILTER") == "FILTER"
-
-    def test_block_accepted(self) -> None:
-        from fabric_dw.services.rls import _validate_predicate_type  # noqa: PLC0415
-
-        assert _validate_predicate_type("BLOCK") == "BLOCK"
-
-    def test_case_insensitive(self) -> None:
-        from fabric_dw.services.rls import _validate_predicate_type  # noqa: PLC0415
-
-        assert _validate_predicate_type("filter") == "FILTER"
-        assert _validate_predicate_type("block") == "BLOCK"
-
-    def test_invalid_raises(self) -> None:
-        from fabric_dw.services.rls import _validate_predicate_type  # noqa: PLC0415
-
-        with pytest.raises(ValueError, match="Invalid predicate type"):
-            _validate_predicate_type("SELECT")
-
-
-# ---------------------------------------------------------------------------
-# _validate_operation
-# ---------------------------------------------------------------------------
-
-
-class TestValidateOperation:
-    def test_none_returns_none(self) -> None:
-        from fabric_dw.services.rls import _validate_operation  # noqa: PLC0415
-
-        assert _validate_operation(None) is None
-
-    def test_after_insert_accepted(self) -> None:
-        from fabric_dw.services.rls import _validate_operation  # noqa: PLC0415
-
-        assert _validate_operation("AFTER_INSERT") == "AFTER_INSERT"
-
-    def test_space_separated_normalised(self) -> None:
-        from fabric_dw.services.rls import _validate_operation  # noqa: PLC0415
-
-        assert _validate_operation("AFTER INSERT") == "AFTER_INSERT"
-
-    def test_hyphen_normalised(self) -> None:
-        from fabric_dw.services.rls import _validate_operation  # noqa: PLC0415
-
-        assert _validate_operation("after-insert") == "AFTER_INSERT"
-
-    def test_before_delete_accepted(self) -> None:
-        from fabric_dw.services.rls import _validate_operation  # noqa: PLC0415
-
-        assert _validate_operation("BEFORE_DELETE") == "BEFORE_DELETE"
-
-    def test_invalid_raises(self) -> None:
-        from fabric_dw.services.rls import _validate_operation  # noqa: PLC0415
-
-        with pytest.raises(ValueError, match="Invalid block operation"):
-            _validate_operation("AFTER_COMMIT")
-
-
-# ---------------------------------------------------------------------------
 # _resolve_policy_ref
 # ---------------------------------------------------------------------------
 
@@ -282,13 +215,11 @@ class TestCreateSecurityPolicy:
                 "rls.SalesFilter",
                 [
                     {
-                        "predicate_type": "FILTER",
                         "fn_schema": "rls",
                         "fn_name": "fn_filter",
                         "fn_args": ["SalesRep"],
                         "table_schema": "dbo",
                         "table_name": "Sales",
-                        "operation": None,
                     }
                 ],
             )
@@ -313,13 +244,11 @@ class TestCreateSecurityPolicy:
                 "MyPolicy",
                 [
                     {
-                        "predicate_type": "FILTER",
                         "fn_schema": None,
                         "fn_name": "fn_filter",
                         "fn_args": ["col"],
                         "table_schema": "dbo",
                         "table_name": "T",
-                        "operation": None,
                     }
                 ],
                 state=False,
@@ -327,22 +256,44 @@ class TestCreateSecurityPolicy:
 
         assert "STATE = OFF" in captured[0]
 
-    async def test_block_predicate_with_operation(self) -> None:
-        captured: list[str] = []
-
-        def _mock(_target: object, _sql: str, **_kw: object) -> tuple:
-            captured.append(_sql)
-            return [], []
-
-        with patch("fabric_dw.services.rls.run_query", side_effect=_mock):
+    async def test_unknown_predicate_key_rejected(self) -> None:
+        """A spec carrying "predicate_type" is rejected (#967): silently ignoring it and
+        always building FILTER would let a caller believe a BLOCK-style write-block is
+        enforced when only a FILTER read-filter was actually created. This is generic
+        key-set hygiene, not a predicate-type/BLOCK-aware check -- see
+        test_unknown_predicate_key_rejected_is_generic_not_block_specific below."""
+        with (
+            patch("fabric_dw.services.rls.run_query") as mock_run,
+            pytest.raises(ValueError, match="unknown key"),
+        ):
             await rls_svc.create_security_policy(
                 _TARGET,
-                "rls.SalesBlock",
+                "rls.SalesFilter",
                 [
                     {
                         "predicate_type": "BLOCK",
                         "fn_schema": "rls",
-                        "fn_name": "fn_block",
+                        "fn_name": "fn_filter",
+                        "fn_args": ["SalesRep"],
+                        "table_schema": "dbo",
+                        "table_name": "Sales",
+                    }
+                ],
+            )
+        # No SQL is ever built or executed for a rejected spec.
+        mock_run.assert_not_called()
+
+    async def test_operation_key_rejected(self) -> None:
+        """ "operation" is likewise not a recognised key (#967) -- it only ever meant
+        anything for BLOCK predicates, which do not exist here."""
+        with pytest.raises(ValueError, match="unknown key"):
+            await rls_svc.create_security_policy(
+                _TARGET,
+                "rls.SalesFilter",
+                [
+                    {
+                        "fn_schema": "rls",
+                        "fn_name": "fn_filter",
                         "fn_args": ["SalesRep"],
                         "table_schema": "dbo",
                         "table_name": "Sales",
@@ -351,12 +302,25 @@ class TestCreateSecurityPolicy:
                 ],
             )
 
-        stmt = captured[0]
-        assert stmt == (
-            "CREATE SECURITY POLICY [rls].[SalesBlock]\n"
-            "    ADD BLOCK PREDICATE [rls].[fn_block]([SalesRep]) ON [dbo].[Sales] AFTER INSERT\n"
-            "    WITH (STATE = ON);"
-        )
+    async def test_unknown_predicate_key_rejected_is_generic_not_block_specific(self) -> None:
+        """The rejection has no concept of "BLOCK" or "predicate type" at all -- any
+        unrecognised key is rejected identically, including one that has nothing to do
+        with predicate types (proving this is not a disguised BLOCK-vs-FILTER allowlist)."""
+        with pytest.raises(ValueError, match="unknown key"):
+            await rls_svc.create_security_policy(
+                _TARGET,
+                "rls.SalesFilter",
+                [
+                    {
+                        "fn_schema": "rls",
+                        "fn_name": "fn_filter",
+                        "fn_args": ["SalesRep"],
+                        "table_schema": "dbo",
+                        "table_name": "Sales",
+                        "foo": "bar",
+                    }
+                ],
+            )
 
     async def test_multi_predicate_create(self) -> None:
         captured: list[str] = []
@@ -371,22 +335,18 @@ class TestCreateSecurityPolicy:
                 "rls.Combined",
                 [
                     {
-                        "predicate_type": "FILTER",
                         "fn_schema": "rls",
-                        "fn_name": "fn_filter",
-                        "fn_args": ["col"],
+                        "fn_name": "fn_filter_a",
+                        "fn_args": ["col_a"],
                         "table_schema": "dbo",
                         "table_name": "T",
-                        "operation": None,
                     },
                     {
-                        "predicate_type": "BLOCK",
                         "fn_schema": "rls",
-                        "fn_name": "fn_block",
-                        "fn_args": ["col"],
+                        "fn_name": "fn_filter_b",
+                        "fn_args": ["col_b"],
                         "table_schema": "dbo",
-                        "table_name": "T",
-                        "operation": "AFTER_INSERT",
+                        "table_name": "U",
                     },
                 ],
             )
@@ -394,8 +354,8 @@ class TestCreateSecurityPolicy:
         stmt = captured[0]
         assert stmt == (
             "CREATE SECURITY POLICY [rls].[Combined]\n"
-            "    ADD FILTER PREDICATE [rls].[fn_filter]([col]) ON [dbo].[T],\n"
-            "    ADD BLOCK PREDICATE [rls].[fn_block]([col]) ON [dbo].[T] AFTER INSERT\n"
+            "    ADD FILTER PREDICATE [rls].[fn_filter_a]([col_a]) ON [dbo].[T],\n"
+            "    ADD FILTER PREDICATE [rls].[fn_filter_b]([col_b]) ON [dbo].[U]\n"
             "    WITH (STATE = ON);"
         )
 
@@ -410,13 +370,11 @@ class TestCreateSecurityPolicy:
                 "bad; policy",
                 [
                     {
-                        "predicate_type": "FILTER",
                         "fn_schema": "rls",
                         "fn_name": "fn",
                         "fn_args": ["col"],
                         "table_schema": "dbo",
                         "table_name": "T",
-                        "operation": None,
                     }
                 ],
             )
@@ -439,7 +397,6 @@ class TestAddPredicate:
             await rls_svc.add_predicate(
                 _TARGET,
                 "rls.SalesFilter",
-                "FILTER",
                 "rls",
                 "fn_filter",
                 ["SalesRep"],
@@ -452,63 +409,6 @@ class TestAddPredicate:
             "ALTER SECURITY POLICY [rls].[SalesFilter]\n"
             "    ADD FILTER PREDICATE [rls].[fn_filter]([SalesRep]) ON [dbo].[Sales];"
         )
-
-    async def test_block_predicate_with_operation_exact_sql(self) -> None:
-        captured: list[str] = []
-
-        def _mock(_target: object, _sql: str, **_kw: object) -> tuple:
-            captured.append(_sql)
-            return [], []
-
-        with patch("fabric_dw.services.rls.run_query", side_effect=_mock):
-            await rls_svc.add_predicate(
-                _TARGET,
-                "rls.SalesBlock",
-                "BLOCK",
-                "rls",
-                "fn_block",
-                ["SalesRep"],
-                "dbo",
-                "Sales",
-                operation="AFTER_INSERT",
-            )
-
-        stmt = captured[0]
-        assert stmt == (
-            "ALTER SECURITY POLICY [rls].[SalesBlock]\n"
-            "    ADD BLOCK PREDICATE [rls].[fn_block]([SalesRep]) ON [dbo].[Sales] AFTER INSERT;"
-        )
-
-    async def test_block_predicate_without_operation(self) -> None:
-        captured: list[str] = []
-
-        def _mock(_target: object, _sql: str, **_kw: object) -> tuple:
-            captured.append(_sql)
-            return [], []
-
-        with patch("fabric_dw.services.rls.run_query", side_effect=_mock):
-            await rls_svc.add_predicate(
-                _TARGET,
-                "rls.SalesBlock",
-                "BLOCK",
-                "rls",
-                "fn_block",
-                ["SalesRep"],
-                "dbo",
-                "Sales",
-            )
-
-        stmt = captured[0]
-        # No AFTER/BEFORE clause when operation is None
-        assert "ADD BLOCK PREDICATE" in stmt
-        assert "AFTER" not in stmt
-        assert "BEFORE" not in stmt
-
-    async def test_invalid_predicate_type_raises(self) -> None:
-        with pytest.raises(ValueError, match="Invalid predicate type"):
-            await rls_svc.add_predicate(
-                _TARGET, "MyPolicy", "DENY", "rls", "fn", ["col"], "dbo", "T"
-            )
 
 
 # ---------------------------------------------------------------------------
@@ -528,7 +428,6 @@ class TestDropPredicate:
             await rls_svc.drop_predicate(
                 _TARGET,
                 "rls.SalesFilter",
-                "FILTER",
                 "dbo",
                 "Sales",
             )
@@ -537,47 +436,6 @@ class TestDropPredicate:
         assert stmt == (
             "ALTER SECURITY POLICY [rls].[SalesFilter]\n    DROP FILTER PREDICATE ON [dbo].[Sales];"
         )
-
-    async def test_block_predicate_no_operation_clause(self) -> None:
-        """DROP PREDICATE emits no operation clause -- T-SQL syntax has no such clause."""
-        captured: list[str] = []
-
-        def _mock(_target: object, _sql: str, **_kw: object) -> tuple:
-            captured.append(_sql)
-            return [], []
-
-        with patch("fabric_dw.services.rls.run_query", side_effect=_mock):
-            await rls_svc.drop_predicate(
-                _TARGET,
-                "rls.SalesBlock",
-                "BLOCK",
-                "dbo",
-                "Sales",
-            )
-
-        stmt = captured[0]
-        assert stmt == (
-            "ALTER SECURITY POLICY [rls].[SalesBlock]\n    DROP BLOCK PREDICATE ON [dbo].[Sales];"
-        )
-
-    async def test_block_without_operation_emits_no_op_clause(self) -> None:
-        captured: list[str] = []
-
-        def _mock(_target: object, _sql: str, **_kw: object) -> tuple:
-            captured.append(_sql)
-            return [], []
-
-        with patch("fabric_dw.services.rls.run_query", side_effect=_mock):
-            await rls_svc.drop_predicate(
-                _TARGET,
-                "rls.SalesBlock",
-                "BLOCK",
-                "dbo",
-                "Sales",
-            )
-
-        stmt = captured[0]
-        assert "DROP BLOCK PREDICATE ON [dbo].[Sales];" in stmt
 
 
 # ---------------------------------------------------------------------------
@@ -659,22 +517,16 @@ class TestDropSecurityPolicy:
 
 
 # ---------------------------------------------------------------------------
-# _build_predicate_clause - FILTER rejects operation
+# _build_predicate_clause - FILTER-only clause shape
 # ---------------------------------------------------------------------------
 
 
-class TestBuildPredicateClauseFilterRejectsOperation:
-    def test_filter_with_operation_raises(self) -> None:
+class TestBuildPredicateClause:
+    def test_filter_clause_exact_sql(self) -> None:
         from fabric_dw.services.rls import _build_predicate_clause  # noqa: PLC0415
 
-        with pytest.raises(ValueError, match="FILTER predicates do not accept an operation"):
-            _build_predicate_clause("FILTER", "rls", "fn", ["col"], "dbo", "T", "AFTER_INSERT")
-
-    def test_block_with_operation_succeeds(self) -> None:
-        from fabric_dw.services.rls import _build_predicate_clause  # noqa: PLC0415
-
-        result = _build_predicate_clause("BLOCK", "rls", "fn", ["col"], "dbo", "T", "AFTER_INSERT")
-        assert "AFTER INSERT" in result
+        result = _build_predicate_clause("rls", "fn", ["col"], "dbo", "T")
+        assert result == "ADD FILTER PREDICATE [rls].[fn]([col]) ON [dbo].[T]"
 
 
 # ---------------------------------------------------------------------------
@@ -690,7 +542,6 @@ class TestCreateSecurityPolicyMissingKeys:
                 "rls.SalesFilter",
                 [
                     {
-                        "predicate_type": "FILTER",
                         # fn_name intentionally omitted
                         "fn_args": ["col"],
                         "table_schema": "dbo",
@@ -706,7 +557,6 @@ class TestCreateSecurityPolicyMissingKeys:
                 "rls.SalesFilter",
                 [
                     {
-                        "predicate_type": "FILTER",
                         "fn_name": "fn_filter",
                         "fn_args": ["col"],
                         # table_schema intentionally omitted
