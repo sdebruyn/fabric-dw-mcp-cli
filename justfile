@@ -40,7 +40,8 @@ build:
 # Single source of truth: update this regex in one place only.
 _CALVER_RE := '^20[0-9]{2}\.([1-9]|1[0-2])\.(0|[1-9][0-9]*)$'
 
-# Bump plugin.json to VERSION (must be a stable calver like 2026.6.1; no prerelease suffixes).
+# Bump plugin.json (and its Copilot CLI mirror) to VERSION (must be a stable calver
+# like 2026.6.1; no prerelease suffixes).
 # Run: just release VERSION  →  open a release-prep PR  →  merge  →  just tag VERSION
 release VERSION:
     #!/usr/bin/env bash
@@ -49,18 +50,23 @@ release VERSION:
         echo "error: '{{ VERSION }}' is not a stable calver (expected YYYY.M.N, month 1–12, no leading zeros, no prerelease suffix)" >&2
         exit 1
     fi
-    plugin_json=".claude-plugin/plugin.json"
-    # Replace only the version value; keep key order, indentation, and trailing newline byte-identical.
-    # sed -i '' on macOS; sed -i on Linux — detect via uname.
-    if [ "$(uname)" = "Darwin" ]; then
-        sed -i '' 's/"version": "[^"]*"/"version": "{{ VERSION }}"/' "$plugin_json"
-    else
-        sed -i 's/"version": "[^"]*"/"version": "{{ VERSION }}"/' "$plugin_json"
-    fi
-    echo "plugin.json version set to {{ VERSION }}"
+    # .github/plugin/plugin.json is the GitHub Copilot CLI mirror of .claude-plugin/plugin.json
+    # (see publish.yml's sync-plugin-manifest job) and must move in lockstep — both carry a
+    # "version" field. The marketplace.json files intentionally omit "version" so need no bump.
+    plugin_jsons=(".claude-plugin/plugin.json" ".github/plugin/plugin.json")
+    for plugin_json in "${plugin_jsons[@]}"; do
+        # Replace only the version value; keep key order, indentation, and trailing newline byte-identical.
+        # sed -i '' on macOS; sed -i on Linux — detect via uname.
+        if [ "$(uname)" = "Darwin" ]; then
+            sed -i '' 's/"version": "[^"]*"/"version": "{{ VERSION }}"/' "$plugin_json"
+        else
+            sed -i 's/"version": "[^"]*"/"version": "{{ VERSION }}"/' "$plugin_json"
+        fi
+    done
+    echo "plugin.json and .github/plugin/plugin.json version set to {{ VERSION }}"
     echo ""
     echo "Next steps:"
-    echo "  1. git add .claude-plugin/plugin.json && git commit -m 'chore: release {{ VERSION }}'"
+    echo "  1. git add .claude-plugin/plugin.json .github/plugin/plugin.json && git commit -m 'chore: release {{ VERSION }}'"
     echo "  2. Open a release-prep PR and merge it to main."
     echo "  3. After merge: just tag {{ VERSION }}"
 
