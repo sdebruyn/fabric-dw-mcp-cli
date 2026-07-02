@@ -781,6 +781,9 @@ async def copy_into_from_url(
             # Other already-mapped high-level errors (NotFoundError,
             # PermissionDeniedError, AuthError) are re-raised as-is; they carry
             # their own actionable messages and do not contain SQL statement text.
+            # This also covers a connect-retry-exhaustion FabricError (#972): it
+            # is not a credential leak, since that wrap only ever fires on the
+            # pre-connect path, before the secret-bearing COPY INTO SQL is sent.
             raise
         except Exception as exc:
             # Truly unmapped exceptions that carry no ddbc_error attribute (e.g.

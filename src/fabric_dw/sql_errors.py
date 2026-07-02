@@ -80,6 +80,10 @@ _TRANSIENT_FRAGMENTS = (
     "communication link failure",
     "connection was forcibly closed",
     "a transport-level error",
+    # Covers the DDBC "TCP Provider: Error code <hex>" family, including the
+    # connect/login timeout 0x102 (decimal 258) seen during a slow/warming-up
+    # Fabric capacity (#972), retryable because the connection never reached
+    # the server, so no statement could have been executed.
     "tcp provider",
     # Generic socket/timeout seen during heavy transient:
     "connection timed out",
