@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "fabric-dw": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["--from", "fabric-dw", "fabric-dw-mcp"],
+      "env": {}
+    }
+  }
+}

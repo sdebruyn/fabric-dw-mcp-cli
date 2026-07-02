@@ -12,13 +12,26 @@ title: Agent Skills
 | `warehouse-performance` | "investigate warehouse performance", "why is my warehouse slow", "tune sql pools", "find expensive queries", "find the most frequent queries", "check sql pool pressure", "enable result set caching" | Surfaces long-running and frequent queries plus SQL pool insights, audits statistics health, checks result-set caching, reviews and tunes SQL pool configuration, and produces a prioritized findings report (all mutating actions gated on confirmation) |
 | `dbt-setup` | "set up dbt", "scaffold a dbt project", "create dbt profile", "generate dbt sources" | Generates a complete dbt-fabric scaffold (profiles, project, column-rich sources, requirements) and writes it to disk |
 
-All three skills require the [fabric-dw MCP server](install.md#mcp) to be configured in your AI client.
+All three skills require the [fabric-dw MCP server](install.md#mcp) to be configured in your AI client. Installing the plugin also registers the MCP server automatically, so no separate MCP setup is needed for either client below.
 
 ## Install via Claude Code Plugin
 
 The recommended installation path for Claude Code users is the **fabric-dw plugin**. Skills are installed from GitHub without cloning the repo and are namespaced as `/fabric-dw:query-optimizer`, `/fabric-dw:warehouse-performance`, and `/fabric-dw:dbt-setup`.
 
-Add the following to your `.claude/settings.json` (project-scoped) or `~/.claude/settings.json` (personal):
+```
+/plugin marketplace add sdebruyn/fabric-dw-mcp-cli
+/plugin install fabric-dw@fabric-dw
+```
+
+After installing, the skills are available as slash commands:
+
+```
+/fabric-dw:query-optimizer
+/fabric-dw:warehouse-performance
+/fabric-dw:dbt-setup
+```
+
+Alternatively, add the marketplace and plugin directly to your `.claude/settings.json` (project-scoped) or `~/.claude/settings.json` (personal):
 
 ```json
 {
@@ -33,24 +46,25 @@ Add the following to your `.claude/settings.json` (project-scoped) or `~/.claude
 }
 ```
 
-After saving, the skills are available as slash commands:
-
-```
-/fabric-dw:query-optimizer
-/fabric-dw:warehouse-performance
-/fabric-dw:dbt-setup
-```
-
 !!! note "Version caching"
-    The plugin version is pinned in `.claude-plugin/plugin.json`. If a new release changes skill content, bump the plugin version to force cached copies to update.
+    The plugin version is pinned in `plugins/fabric-dw/.claude-plugin/plugin.json`. If a new release changes skill content, bump the plugin version to force cached copies to update.
+
+## Install via GitHub Copilot CLI
+
+The same three skills and the bundled MCP server install in one command in [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/plugins-finding-installing):
+
+```
+/plugin marketplace add sdebruyn/fabric-dw-mcp-cli
+/plugin install fabric-dw@fabric-dw
+```
 
 ## Install as raw SKILL.md files
 
 If you are using a different AI assistant, the Claude API directly, or any tool that supports the `SKILL.md` format but not the Claude Code plugin mechanism, download or reference the raw skill files:
 
-- **query-optimizer**: [`https://raw.githubusercontent.com/sdebruyn/fabric-dw-mcp-cli/main/skills/query-optimizer/SKILL.md`](https://raw.githubusercontent.com/sdebruyn/fabric-dw-mcp-cli/main/skills/query-optimizer/SKILL.md)
-- **warehouse-performance**: [`https://raw.githubusercontent.com/sdebruyn/fabric-dw-mcp-cli/main/skills/warehouse-performance/SKILL.md`](https://raw.githubusercontent.com/sdebruyn/fabric-dw-mcp-cli/main/skills/warehouse-performance/SKILL.md)
-- **dbt-setup**: [`https://raw.githubusercontent.com/sdebruyn/fabric-dw-mcp-cli/main/skills/dbt-setup/SKILL.md`](https://raw.githubusercontent.com/sdebruyn/fabric-dw-mcp-cli/main/skills/dbt-setup/SKILL.md)
+- **query-optimizer**: [`https://raw.githubusercontent.com/sdebruyn/fabric-dw-mcp-cli/main/plugins/fabric-dw/skills/query-optimizer/SKILL.md`](https://raw.githubusercontent.com/sdebruyn/fabric-dw-mcp-cli/main/plugins/fabric-dw/skills/query-optimizer/SKILL.md)
+- **warehouse-performance**: [`https://raw.githubusercontent.com/sdebruyn/fabric-dw-mcp-cli/main/plugins/fabric-dw/skills/warehouse-performance/SKILL.md`](https://raw.githubusercontent.com/sdebruyn/fabric-dw-mcp-cli/main/plugins/fabric-dw/skills/warehouse-performance/SKILL.md)
+- **dbt-setup**: [`https://raw.githubusercontent.com/sdebruyn/fabric-dw-mcp-cli/main/plugins/fabric-dw/skills/dbt-setup/SKILL.md`](https://raw.githubusercontent.com/sdebruyn/fabric-dw-mcp-cli/main/plugins/fabric-dw/skills/dbt-setup/SKILL.md)
 
 Place each file at one of the Claude Code personal or project skill paths:
 
@@ -63,7 +77,7 @@ For example, to install `query-optimizer` at project scope:
 
 ```bash
 mkdir -p .claude/skills/query-optimizer
-curl -fsSL https://raw.githubusercontent.com/sdebruyn/fabric-dw-mcp-cli/main/skills/query-optimizer/SKILL.md \
+curl -fsSL https://raw.githubusercontent.com/sdebruyn/fabric-dw-mcp-cli/main/plugins/fabric-dw/skills/query-optimizer/SKILL.md \
   -o .claude/skills/query-optimizer/SKILL.md
 ```
 

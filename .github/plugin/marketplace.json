@@ -1,0 +1,46 @@
+{
+  "name": "fabric-dw",
+  "owner": {
+    "name": "Sam Debruyn",
+    "email": "sam@debruyn.dev"
+  },
+  "metadata": {
+    "description": "Agent skills and MCP server for Microsoft Fabric Data Warehouses"
+  },
+  "plugins": [
+    {
+      "name": "fabric-dw",
+      "source": "./plugins/fabric-dw",
+      "description": "Agent skills for Fabric Data Warehouse: query performance analysis, warehouse-wide performance investigation and tuning, and dbt project bootstrap.",
+      "author": {
+        "name": "Sam Debruyn",
+        "email": "sam@debruyn.dev"
+      },
+      "skills": [
+        "./skills/dbt-setup",
+        "./skills/query-optimizer",
+        "./skills/warehouse-performance"
+      ],
+      "keywords": [
+        "microsoft-fabric",
+        "fabric",
+        "data-warehouse",
+        "mcp",
+        "model-context-protocol",
+        "sql-analytics-endpoint",
+        "agent-skills",
+        "dbt"
+      ],
+      "license": "MIT",
+      "repository": "https://github.com/sdebruyn/fabric-dw-mcp-cli",
+      "mcpServers": {
+        "fabric-dw": {
+          "type": "stdio",
+          "command": "uvx",
+          "args": ["--from", "fabric-dw", "fabric-dw-mcp"],
+          "env": {}
+        }
+      }
+    }
+  ]
+}

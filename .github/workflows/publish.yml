@@ -66,7 +66,7 @@ jobs:
             exit 0
           fi
           # Stable tag: log plugin.json version for reference (mismatch is not an error here).
-          plugin_version=$(python3 -c "import json; print(json.load(open('.claude-plugin/plugin.json'))['version'])")
+          plugin_version=$(python3 -c "import json; print(json.load(open('plugins/fabric-dw/.claude-plugin/plugin.json'))['version'])")
           if [ "$plugin_version" != "$version" ]; then
             echo "plugin.json is at '$plugin_version'; tag is '$version'. The sync-plugin-manifest job will bump it."
           else
@@ -156,7 +156,7 @@ jobs:
           prerelease: ${{ steps.prerelease.outputs.is_prerelease }}
 
   sync-plugin-manifest:
-    name: Sync plugin.json to default branch
+    name: Sync plugin manifests to default branch
     runs-on: ubuntu-latest
     needs: publish
     # Run only for tag/dispatch triggers (never for branch pushes or PRs).
@@ -181,12 +181,12 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_BUMP_TOKEN }}
 
-      - name: Bump plugin.json version on default branch
+      - name: Bump plugin manifest versions on default branch
         run: |
           version="${EFFECTIVE_TAG#v}"
           # Skip prerelease tags (aN/bN/rcN suffixes or .dev in the version string).
           if echo "$version" | grep -qE '(a|b|rc)[0-9]*$|\.dev'; then
-            echo "Prerelease tag '$version' - plugin.json tracks stable only; skipping bump."
+            echo "Prerelease tag '$version' - plugin manifests track stable only; skipping bump."
             exit 0
           fi
           # Strict calver validation BEFORE touching any file. Guards against junk
@@ -196,41 +196,55 @@ jobs:
             echo "::error::Derived version '$version' does not match expected calver format (YYYY.M.N). Aborting." >&2
             exit 1
           fi
-          plugin_json=".claude-plugin/plugin.json"
-          # Monotonicity guard: refuse to write a version older than what is already on HEAD.
-          # Prevents an old re-run or stale workflow_dispatch from regressing plugin.json.
-          current_version=$(python3 -c "import json; print(json.load(open('$plugin_json'))['version'])")
-          is_downgrade=$(python3 -c "
+          # plugins/fabric-dw/.claude-plugin/plugin.json is the version source of truth;
+          # plugins/fabric-dw/.github/plugin/plugin.json is its Copilot CLI mirror and must
+          # never drift from it. Both carry a "version" field, so both are bumped here. The
+          # root marketplace.json files intentionally omit "version" (optional per the Claude
+          # Code / Copilot CLI marketplace schema) so they need no bump.
+          plugin_manifests=(
+            "plugins/fabric-dw/.claude-plugin/plugin.json"
+            "plugins/fabric-dw/.github/plugin/plugin.json"
+          )
+          changed=()
+          for plugin_json in "${plugin_manifests[@]}"; do
+            # Monotonicity guard: refuse to write a version older than what is already on HEAD.
+            # Prevents an old re-run or stale workflow_dispatch from regressing a manifest.
+            current_version=$(python3 -c "import json; print(json.load(open('$plugin_json'))['version'])")
+            is_downgrade=$(python3 -c "
           import sys
           cur = tuple(int(x) for x in sys.argv[1].split('.'))
           new = tuple(int(x) for x in sys.argv[2].split('.'))
           print('yes' if new < cur else 'no')
           " "$current_version" "$version")
-          if [ "$is_downgrade" = "yes" ]; then
-            echo "Notice: tag '$version' is older than current plugin.json '$current_version' - skipping to prevent downgrade."
-            exit 0
-          fi
-          # Set the version in plugin.json, preserving key order, indentation, and
-          # trailing newline byte-for-byte (same sed approach as the 'just release' recipe).
-          sed -i 's/"version": "[^"]*"/"version": "'"$version"'"/' "$plugin_json"
-          # No-op guard: if the file is already at this version, skip the commit.
-          if git diff --quiet "$plugin_json"; then
-            echo "plugin.json already at '$version' - nothing to commit."
+            if [ "$is_downgrade" = "yes" ]; then
+              echo "Notice: tag '$version' is older than current $plugin_json '$current_version' - skipping to prevent downgrade."
+              continue
+            fi
+            # Set the version in the manifest, preserving key order, indentation, and
+            # trailing newline byte-for-byte (same sed approach as the 'just release' recipe).
+            sed -i 's/"version": "[^"]*"/"version": "'"$version"'"/' "$plugin_json"
+            if ! git diff --quiet "$plugin_json"; then
+              changed+=("$plugin_json")
+            fi
+          done
+          # No-op guard: if no manifest changed, skip the commit.
+          if [ "${#changed[@]}" -eq 0 ]; then
+            echo "Plugin manifests already at '$version' - nothing to commit."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "$plugin_json"
+          git add "${changed[@]}"
           # [skip ci] is REQUIRED: a PAT push (unlike GITHUB_TOKEN) triggers workflow runs,
           # so omitting it would spawn an unwanted dev-build on the default branch.
-          git commit -m "chore: bump plugin.json to $version [skip ci]"
+          git commit -m "chore: bump plugin manifests to $version [skip ci]"
           # Push with bounded retry to handle non-fast-forward races
           # (the default branch may have advanced after the tag was cut).
           max_attempts=3
           attempt=1
           while [ "$attempt" -le "$max_attempts" ]; do
             if git push origin "$DEFAULT_BRANCH"; then
-              echo "Pushed plugin.json bump for $version to $DEFAULT_BRANCH."
+              echo "Pushed plugin manifest bump for $version to $DEFAULT_BRANCH."
               break
             fi
             if [ "$attempt" -eq "$max_attempts" ]; then
