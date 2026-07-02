@@ -1224,7 +1224,7 @@ class TestIsTransientConnectionError:
         """Regression guard for #972: the exact driver message from the issue.
 
         0x102 (decimal 258) is the DDBC connect/login timeout.  Matches via the
-        generic "tcp provider" fragment — see the comment in
+        generic "tcp provider" fragment, see the comment in
         fabric_dw.sql_errors._TRANSIENT_FRAGMENTS.
         """
         exc = Exception(
@@ -2640,7 +2640,7 @@ class TestAuthFailedConnectRetry:
         assert fake_time.sleep.call_args.args[0] == _sql_module._CONNECT_RETRY_DELAYS[0]
 
     # ------------------------------------------------------------------
-    # #972 — TCP 0x102 connect/login timeout: retry + retry-exhaustion wrap
+    # #972: TCP 0x102 connect/login timeout, retry + retry-exhaustion wrap
     # ------------------------------------------------------------------
 
     @staticmethod
@@ -2683,7 +2683,7 @@ class TestAuthFailedConnectRetry:
         """Retry exhaustion on the #972 TCP 0x102 error raises a clean FabricError.
 
         When the connect error persists past the retry deadline, run_query must
-        raise a clean FabricError (with a retry hint) — never the raw driver
+        raise a clean FabricError (with a retry hint), never the raw driver
         exception type.  This is the core regression guard for #972: a raw
         mssql_python.OperationalError must not reach the CLI/MCP boundary.
         """
@@ -2701,14 +2701,14 @@ class TestAuthFailedConnectRetry:
         # Must be a clean FabricError, not the raw driver exception type.
         assert not isinstance(exc_info.value, type(driver_exc))
         # __cause__ must be the original driver exception itself (not a copy,
-        # and not the wrapper self-referencing — regression guard for the
+        # and not the wrapper self-referencing: regression guard for the
         # `raise ... from exc` self-cause bug found in review).
         assert exc_info.value.__cause__ is driver_exc
         assert exc_info.value.__cause__ is not exc_info.value
         msg = str(exc_info.value)
         assert "0x102" in msg
         assert "retry" in msg.lower()
-        # Only one connect attempt — the deadline was already exceeded.
+        # Only one connect attempt: the deadline was already exceeded.
         assert mock_mssql.connect.call_count == 1
 
     def test_connect_retry_exhausted_preserves_original_cause_of_pretyped_error(
@@ -2717,7 +2717,7 @@ class TestAuthFailedConnectRetry:
         """Retry exhaustion on an already-typed FabricCliError must not self-cause.
 
         When the connect exception is already a FabricCliError (pre-typed by
-        _translate_connect_error Step 1 — e.g. a retried AuthError), it is
+        _translate_connect_error Step 1, e.g. a retried AuthError), it is
         returned unchanged by _wrap_connect_retry_exhausted().  It must keep
         its ORIGINAL __cause__ (e.g. the underlying Azure exception it was
         built from) rather than being overwritten to reference itself
@@ -2739,7 +2739,7 @@ class TestAuthFailedConnectRetry:
             run_query(_make_target(), "SELECT 1")
 
         # Pass-through: the exact same AuthError instance, with its original
-        # cause intact — never re-pointed at itself.
+        # cause intact, never re-pointed at itself.
         assert exc_info.value is pretyped
         assert exc_info.value.__cause__ is underlying
         assert exc_info.value.__cause__ is not exc_info.value
@@ -2970,7 +2970,7 @@ class TestWrapConnectRetryExhausted:
 
         result = _sql_module._wrap_connect_retry_exhausted(pretyped)
 
-        # Same object, original cause preserved — never re-pointed at itself.
+        # Same object, original cause preserved, never re-pointed at itself.
         assert result is pretyped
         assert result.__cause__ is underlying
         assert result.__cause__ is not result

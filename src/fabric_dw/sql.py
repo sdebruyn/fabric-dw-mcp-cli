@@ -349,19 +349,19 @@ def _wrap_connect_retry_exhausted(exc: BaseException) -> BaseException:
     when the wall-clock deadline expires.  It is either:
 
     - Already a :class:`~fabric_dw.exceptions.FabricCliError` (e.g. an
-      ``AuthError`` whose message happened to match a retryable fragment) —
+      ``AuthError`` whose message happened to match a retryable fragment):
       returned unchanged, it is already clean.
     - A raw driver exception (e.g. ``mssql_python.exceptions.OperationalError``
       for a TCP connect/login timeout, DDBC error code 0x102) re-raised bare by
       :func:`~fabric_dw.sql_pool._translate_connect_error` Step 3 *specifically*
-      so this loop could retry it — wrapped here in a
+      so this loop could retry it, wrapped here in a
       :class:`~fabric_dw.exceptions.FabricError` so a raw driver traceback never
       reaches the CLI/MCP boundary once the retry window is spent (#972).
 
     ``__cause__`` is set explicitly on the wrap branch (chains to the driver
     exception) and left untouched on the pass-through branch (preserves the
     FabricCliError's own original cause, if any).  Callers must raise the
-    return value **without** ``from exc`` — since the pass-through branch
+    return value **without** ``from exc``, since the pass-through branch
     returns ``exc`` itself, ``raise ... from exc`` would set
     ``exc.__cause__ = exc`` (a self-reference) and discard the real cause.
     """
@@ -426,7 +426,7 @@ def _with_connect_retry(
         Any non-retryable exception from ``open_connection`` immediately.
         A clean, renderable exception (see :func:`_wrap_connect_retry_exhausted`)
         wrapping the last retryable exception when the wall-clock deadline
-        passes — never a raw driver exception (#972).
+        passes: never a raw driver exception (#972).
     """
     deadline = time.monotonic() + _resolve_sql_retry_deadline_s()
     last_exc: BaseException | None = None
@@ -441,7 +441,7 @@ def _with_connect_retry(
                 raise
             last_exc = exc
             if time.monotonic() >= deadline:
-                # Budget exhausted — surface the last retryable error, wrapped
+                # Budget exhausted, surface the last retryable error, wrapped
                 # so a raw driver exception never escapes the connect path (#972).
                 # No `from exc` here (deliberately, not an oversight):
                 # _wrap_connect_retry_exhausted() already sets __cause__ itself for

@@ -118,7 +118,7 @@ class TestCliTopLevelErrorGuard:
     raw Python traceback (#972).
 
     Click's own ``BaseCommand.main()`` only cleanly handles ``ClickException``/
-    ``UsageError``/``Abort``/EPIPE ``OSError`` — anything else (e.g. a raw
+    ``UsageError``/``Abort``/EPIPE ``OSError``; anything else (e.g. a raw
     driver error that slipped past a connect-retry-exhaustion path) propagates
     unchanged.  ``main()`` wraps ``cli()`` with a defense-in-depth guard; these
     tests exercise that guard directly by replacing ``cli()`` with a callable
@@ -166,7 +166,7 @@ class TestCliTopLevelErrorGuard:
         """The full traceback stays available behind the existing -v / --verbose convention.
 
         Verbose logging is enabled via ``setup_logging(DEBUG)`` on the
-        ``fabric_dw`` logger — never shown by default, since it may contain
+        ``fabric_dw`` logger, never shown by default, since it may contain
         driver internals.
         """
         monkeypatch.setattr(sys, "argv", ["fdw", "sql", "-q", "SELECT 1"])

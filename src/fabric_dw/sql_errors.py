@@ -82,7 +82,7 @@ _TRANSIENT_FRAGMENTS = (
     "a transport-level error",
     # Covers the DDBC "TCP Provider: Error code <hex>" family, including the
     # connect/login timeout 0x102 (decimal 258) seen during a slow/warming-up
-    # Fabric capacity (#972) — retryable because the connection never reached
+    # Fabric capacity (#972), retryable because the connection never reached
     # the server, so no statement could have been executed.
     "tcp provider",
     # Generic socket/timeout seen during heavy transient:
