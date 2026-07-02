@@ -156,7 +156,6 @@ async def rls_policy_fixture(
             f"{schema_name}.{policy_name}",
             [
                 {
-                    "predicate_type": "FILTER",
                     "fn_schema": schema_name,
                     "fn_name": fn_name,
                     "fn_args": ["user_id"],
@@ -233,7 +232,6 @@ async def test_drop_security_policy(
             qualified,
             [
                 {
-                    "predicate_type": "FILTER",
                     "fn_schema": schema_name,
                     "fn_name": fn_name,
                     "fn_args": ["user_id"],
