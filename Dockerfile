@@ -36,6 +36,11 @@ LABEL org.opencontainers.image.title="fabric-dw" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.licenses="MIT"
 
+# MCP Registry ownership verification for the "oci" package type in server.json: the
+# registry checks this annotation against server.json's `name`, not identifier-matching
+# (unlike PyPI/NuGet/cargo, which check an `mcp-name:` string in the package README).
+LABEL io.modelcontextprotocol.server.name="io.github.sdebruyn/fabric-dw-mcp"
+
 # Install system dependencies using BuildKit cache mount for faster rebuilds.
 # ca-certificates: required for TLS connections to Fabric REST APIs and Azure AD.
 # mssql-python (the SQL driver) bundles its own native driver (no separate ODBC
