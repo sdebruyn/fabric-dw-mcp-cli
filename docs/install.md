@@ -111,6 +111,12 @@ Two optional environment variables tune the HTTP retry budget:
 | `FABRIC_DW_MAX_429_RETRIES` | Maximum consecutive 429 responses before raising `RateLimitedError` | 10 |
 | `FABRIC_DW_RETRY_DEADLINE_S` | Combined wall-clock deadline (seconds) for 429-loop + 5xx retries | 300.0 |
 
+### Install from the MCP Registry
+
+`fabric-dw-mcp` is also published to the official [MCP Registry](https://registry.modelcontextprotocol.io) as `io.github.sdebruyn/fabric-dw-mcp` on every stable release. Registry-aware clients (VS Code `@mcp`, and others that support registry discovery) can find and install it by that name instead of hand-writing a client config.
+
+The registry entry runs the server as the `ghcr.io/sdebruyn/fabric-dw` Docker image (its `ENTRYPOINT` starts `fabric-dw-mcp` directly), so a client that installs from the registry needs Docker, not `uv`/`uvx`. The `uvx --from fabric-dw fabric-dw-mcp` and `pip install fabric-dw` paths above remain the recommended setup for manual client configs and do not require Docker.
+
 ### Claude Code
 
 Source: <https://code.claude.com/docs/en/mcp>

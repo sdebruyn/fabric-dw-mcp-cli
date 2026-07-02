@@ -1,0 +1,61 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.sdebruyn/fabric-dw-mcp",
+  "title": "fabric-dw",
+  "description": "MCP server for Microsoft Fabric Data Warehouses and SQL Analytics Endpoints",
+  "websiteUrl": "https://fdw.debruyn.dev",
+  "repository": {
+    "url": "https://github.com/sdebruyn/fabric-dw-mcp-cli",
+    "source": "github"
+  },
+  "version": "2026.6.0",
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/sdebruyn/fabric-dw:2026.6.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "FABRIC_AUTH",
+          "description": "Azure credential source: 'default' (DefaultAzureCredential chain), 'sp' (service principal, needs AZURE_TENANT_ID/AZURE_CLIENT_ID/AZURE_CLIENT_SECRET), or 'interactive' (browser sign-in).",
+          "default": "default",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "FABRIC_MCP_READONLY",
+          "description": "Set to 1 to restrict execute_sql to SELECT/WITH statements and block all mutating tools.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "FABRIC_MCP_ALLOW_DESTRUCTIVE",
+          "description": "Set to 1 to enable permanently-destructive tools (delete_*, clear_table, restore_warehouse_in_place). Disabled by default.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "FABRIC_MCP_WORKSPACES",
+          "description": "Comma-separated workspace names or GUIDs the server may touch. Unset allows all workspaces.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "FABRIC_MCP_ALLOW_REMOTE",
+          "description": "Set to 1 to allow the HTTP transport to bind on a non-loopback address. Always front with an authenticating reverse proxy.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "FABRIC_LOG_LEVEL",
+          "description": "Log level for the MCP server (DEBUG, INFO, WARNING, ERROR, CRITICAL).",
+          "default": "INFO",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ]
+}
