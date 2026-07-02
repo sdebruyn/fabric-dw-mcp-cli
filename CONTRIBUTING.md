@@ -127,11 +127,11 @@ The plugin version (`plugin.json`) is auto-bumped from stable git tags by the Pu
 
 1. **Tag**: run `just tag X.Y.Z` (e.g. `just tag 2026.7.0`) **from a clean, up-to-date local `main`**. The version must follow `YYYY.M.N` (year `20xx`, month `1–12` with no leading zero, patch `0` or a positive integer without a leading zero, no prerelease suffix).
 2. **Publish**: the `Publish` CI workflow fires on the tag push, ships the package to PyPI, and creates a GitHub Release.
-3. **Auto-bump**: the `sync-plugin-manifest` job (in the same workflow) checks out the default branch, updates `.claude-plugin/plugin.json` to match the tag, and commits directly using a PAT. No manual PR needed.
+3. **Auto-bump**: the `sync-plugin-manifest` job (in the same workflow) checks out the default branch, updates `plugins/fabric-dw/.claude-plugin/plugin.json` and its GitHub Copilot CLI mirror `plugins/fabric-dw/.github/plugin/plugin.json` to match the tag, and commits directly using a PAT. No manual PR needed.
 
 ### Optional: pre-bump via release-prep PR
 
-If you prefer to commit the `plugin.json` bump before tagging (e.g. for review purposes), `just release X.Y.Z` is still available. It writes the version into `plugin.json` so you can open a release-prep PR. After the PR is merged, `just tag X.Y.Z` proceeds as normal. The CI `sync-plugin-manifest` job will detect that `plugin.json` is already correct and skip the auto-commit.
+If you prefer to commit the `plugin.json` bump before tagging (e.g. for review purposes), `just release X.Y.Z` is still available. It writes the version into both `plugin.json` copies so you can open a release-prep PR. After the PR is merged, `just tag X.Y.Z` proceeds as normal. The CI `sync-plugin-manifest` job will detect that `plugin.json` is already correct and skip the auto-commit.
 
 ### Required one-time repo setup
 

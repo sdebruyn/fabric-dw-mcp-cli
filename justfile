@@ -50,10 +50,14 @@ release VERSION:
         echo "error: '{{ VERSION }}' is not a stable calver (expected YYYY.M.N, month 1–12, no leading zeros, no prerelease suffix)" >&2
         exit 1
     fi
-    # .github/plugin/plugin.json is the GitHub Copilot CLI mirror of .claude-plugin/plugin.json
-    # (see publish.yml's sync-plugin-manifest job) and must move in lockstep — both carry a
-    # "version" field. The marketplace.json files intentionally omit "version" so need no bump.
-    plugin_jsons=(".claude-plugin/plugin.json" ".github/plugin/plugin.json")
+    # plugins/fabric-dw/.github/plugin/plugin.json is the GitHub Copilot CLI mirror of
+    # plugins/fabric-dw/.claude-plugin/plugin.json (see publish.yml's sync-plugin-manifest
+    # job) and must move in lockstep — both carry a "version" field. The root marketplace.json
+    # files intentionally omit "version" so need no bump.
+    plugin_jsons=(
+        "plugins/fabric-dw/.claude-plugin/plugin.json"
+        "plugins/fabric-dw/.github/plugin/plugin.json"
+    )
     for plugin_json in "${plugin_jsons[@]}"; do
         # Replace only the version value; keep key order, indentation, and trailing newline byte-identical.
         # sed -i '' on macOS; sed -i on Linux — detect via uname.
@@ -63,10 +67,10 @@ release VERSION:
             sed -i 's/"version": "[^"]*"/"version": "{{ VERSION }}"/' "$plugin_json"
         fi
     done
-    echo "plugin.json and .github/plugin/plugin.json version set to {{ VERSION }}"
+    echo "plugin.json and its Copilot CLI mirror set to {{ VERSION }}"
     echo ""
     echo "Next steps:"
-    echo "  1. git add .claude-plugin/plugin.json .github/plugin/plugin.json && git commit -m 'chore: release {{ VERSION }}'"
+    echo "  1. git add plugins/fabric-dw/.claude-plugin/plugin.json plugins/fabric-dw/.github/plugin/plugin.json && git commit -m 'chore: release {{ VERSION }}'"
     echo "  2. Open a release-prep PR and merge it to main."
     echo "  3. After merge: just tag {{ VERSION }}"
 
@@ -109,7 +113,7 @@ tag VERSION:
         exit 1
     fi
     # Informational: log current plugin.json version (mismatch is not an error).
-    plugin_version=$(git show HEAD:.claude-plugin/plugin.json | python3 -c "import json,sys; print(json.load(sys.stdin)['version'])")
+    plugin_version=$(git show HEAD:plugins/fabric-dw/.claude-plugin/plugin.json | python3 -c "import json,sys; print(json.load(sys.stdin)['version'])")
     if [ "$plugin_version" != "{{ VERSION }}" ]; then
         echo "Note: plugin.json is at '$plugin_version'; CI will auto-bump it to '{{ VERSION }}' after the tag fires."
     fi

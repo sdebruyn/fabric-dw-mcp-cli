@@ -66,7 +66,7 @@ jobs:
             exit 0
           fi
           # Stable tag: log plugin.json version for reference (mismatch is not an error here).
-          plugin_version=$(python3 -c "import json; print(json.load(open('.claude-plugin/plugin.json'))['version'])")
+          plugin_version=$(python3 -c "import json; print(json.load(open('plugins/fabric-dw/.claude-plugin/plugin.json'))['version'])")
           if [ "$plugin_version" != "$version" ]; then
             echo "plugin.json is at '$plugin_version'; tag is '$version'. The sync-plugin-manifest job will bump it."
           else
@@ -196,22 +196,25 @@ jobs:
             echo "::error::Derived version '$version' does not match expected calver format (YYYY.M.N). Aborting." >&2
             exit 1
           fi
-          # .claude-plugin/plugin.json is the version source of truth; .github/plugin/plugin.json
-          # is its Copilot CLI mirror and must never drift from it. Both carry a "version" field,
-          # so both are bumped here. The marketplace.json files intentionally omit "version"
-          # (optional per the Claude Code / Copilot CLI marketplace schema) so they need no bump.
-          plugin_manifests=(".claude-plugin/plugin.json" ".github/plugin/plugin.json")
+          # plugins/fabric-dw/.claude-plugin/plugin.json is the version source of truth;
+          # plugins/fabric-dw/.github/plugin/plugin.json is its Copilot CLI mirror and must
+          # never drift from it. Both carry a "version" field, so both are bumped here. The
+          # root marketplace.json files intentionally omit "version" (optional per the Claude
+          # Code / Copilot CLI marketplace schema) so they need no bump.
+          plugin_manifests=(
+            "plugins/fabric-dw/.claude-plugin/plugin.json"
+            "plugins/fabric-dw/.github/plugin/plugin.json"
+          )
           changed=()
           for plugin_json in "${plugin_manifests[@]}"; do
             # Monotonicity guard: refuse to write a version older than what is already on HEAD.
             # Prevents an old re-run or stale workflow_dispatch from regressing a manifest.
             current_version=$(python3 -c "import json; print(json.load(open('$plugin_json'))['version'])")
-            is_downgrade=$(python3 -c "
-            import sys
-            cur = tuple(int(x) for x in sys.argv[1].split('.'))
-            new = tuple(int(x) for x in sys.argv[2].split('.'))
-            print('yes' if new < cur else 'no')
-            " "$current_version" "$version")
+            # Single physical line, no leading whitespace before "import": a multi-line
+            # python -c body indented to satisfy this YAML block's minimum indentation would
+            # pass that literal leading whitespace to python3, which raises IndentationError
+            # since "import sys" would not be the first statement at column 0.
+            is_downgrade=$(python3 -c "import sys; cur = tuple(int(x) for x in sys.argv[1].split('.')); new = tuple(int(x) for x in sys.argv[2].split('.')); print('yes' if new < cur else 'no')" "$current_version" "$version")
             if [ "$is_downgrade" = "yes" ]; then
               echo "Notice: tag '$version' is older than current $plugin_json '$current_version' - skipping to prevent downgrade."
               continue

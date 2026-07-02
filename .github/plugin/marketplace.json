@@ -10,7 +10,7 @@
   "plugins": [
     {
       "name": "fabric-dw",
-      "source": ".",
+      "source": "./plugins/fabric-dw",
       "description": "Agent skills for Fabric Data Warehouse: query performance analysis, warehouse-wide performance investigation and tuning, and dbt project bootstrap.",
       "author": {
         "name": "Sam Debruyn",

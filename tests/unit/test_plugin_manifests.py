@@ -4,8 +4,13 @@ Validates the Claude Code and GitHub Copilot CLI plugin/marketplace manifests
 stay internally consistent: the two marketplace.json mirrors are byte-identical,
 every skills[] path resolves to a real SKILL.md with frontmatter, mcpServers
 entries are well-formed and bundle the stable (not dev) MCP server, and any
-"version" fields present agree with .claude-plugin/plugin.json (the single
-source of truth bumped by the publish.yml sync-plugin-manifest job).
+"version" fields present agree with plugins/fabric-dw/.claude-plugin/plugin.json
+(the single source of truth bumped by the publish.yml sync-plugin-manifest job).
+
+The plugin lives in the plugins/fabric-dw/ subdirectory (not the repo root) so
+that its own stable .mcp.json does not collide with the repo's root .mcp.json,
+which is a dev config for local testing (see #762) and must never be part of
+what an installed plugin bundles.
 """
 
 from __future__ import annotations
@@ -18,13 +23,21 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).parent.parent.parent
+PLUGIN_ROOT = REPO_ROOT / "plugins" / "fabric-dw"
 
 CLAUDE_MARKETPLACE = REPO_ROOT / ".claude-plugin" / "marketplace.json"
 COPILOT_MARKETPLACE = REPO_ROOT / ".github" / "plugin" / "marketplace.json"
-CLAUDE_PLUGIN = REPO_ROOT / ".claude-plugin" / "plugin.json"
-COPILOT_PLUGIN = REPO_ROOT / ".github" / "plugin" / "plugin.json"
+CLAUDE_PLUGIN = PLUGIN_ROOT / ".claude-plugin" / "plugin.json"
+COPILOT_PLUGIN = PLUGIN_ROOT / ".github" / "plugin" / "plugin.json"
+PLUGIN_MCP_JSON = PLUGIN_ROOT / ".mcp.json"
 
-_MANIFEST_PATHS = [CLAUDE_MARKETPLACE, COPILOT_MARKETPLACE, CLAUDE_PLUGIN, COPILOT_PLUGIN]
+_MANIFEST_PATHS = [
+    CLAUDE_MARKETPLACE,
+    COPILOT_MARKETPLACE,
+    CLAUDE_PLUGIN,
+    COPILOT_PLUGIN,
+    PLUGIN_MCP_JSON,
+]
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -71,15 +84,22 @@ def test_plugin_name_matches_across_manifests() -> None:
 
 
 def test_skills_paths_exist_and_have_valid_frontmatter() -> None:
-    """Every skills[] entry resolves to a directory with a SKILL.md carrying name + description."""
+    """Every skills[] entry resolves to a directory with a SKILL.md carrying name + description.
+
+    Skill paths in the marketplace entry are relative to the plugin's "source" directory,
+    not the repo root, so this resolves against the manifest's own declared source instead
+    of a hardcoded PLUGIN_ROOT constant - a drift between the two would fail loudly here.
+    """
     marketplace = _load_json(CLAUDE_MARKETPLACE)
     entry = _marketplace_plugin_entry(marketplace)
-    skills = entry["skills"]
+    plugin_source = REPO_ROOT / entry["source"].removeprefix("./")
+    assert plugin_source.is_dir(), f"marketplace source {entry['source']!r} does not exist"
 
+    skills = entry["skills"]
     assert skills, "expected at least one skill in the marketplace plugin entry"
 
     for skill_path in skills:
-        skill_dir = REPO_ROOT / skill_path.removeprefix("./")
+        skill_dir = plugin_source / skill_path.removeprefix("./")
         skill_md = skill_dir / "SKILL.md"
         assert skill_md.is_file(), f"missing SKILL.md for {skill_path!r} at {skill_md}"
 
@@ -94,11 +114,7 @@ def test_skills_paths_exist_and_have_valid_frontmatter() -> None:
         )
 
 
-@pytest.mark.parametrize(
-    "path",
-    [CLAUDE_MARKETPLACE, COPILOT_MARKETPLACE, CLAUDE_PLUGIN, COPILOT_PLUGIN],
-    ids=lambda p: str(p.relative_to(REPO_ROOT)),
-)
+@pytest.mark.parametrize("path", _MANIFEST_PATHS, ids=lambda p: str(p.relative_to(REPO_ROOT)))
 def test_mcp_servers_are_well_formed(path: Path) -> None:
     """Every mcpServers entry declares a command, and "stdio" is the only type used."""
     data = _load_json(path)
@@ -126,9 +142,9 @@ def test_bundled_mcp_server_is_stable_not_dev(path: Path) -> None:
 
 
 def test_version_fields_are_mutually_consistent() -> None:
-    """Any manifest that carries a "version" field agrees with .claude-plugin/plugin.json."""
+    """Any manifest that carries a "version" field agrees with CLAUDE_PLUGIN (source of truth)."""
     source_of_truth = _load_json(CLAUDE_PLUGIN)["version"]
-    assert source_of_truth, ".claude-plugin/plugin.json must declare a non-empty version"
+    assert source_of_truth, f"{CLAUDE_PLUGIN} must declare a non-empty version"
 
     for path in _MANIFEST_PATHS:
         data = _load_json(path)
@@ -142,5 +158,5 @@ def test_version_fields_are_mutually_consistent() -> None:
             if version is not None:
                 assert version == source_of_truth, (
                     f"{path} declares version {version!r}, expected {source_of_truth!r} "
-                    "to match .claude-plugin/plugin.json"
+                    f"to match {CLAUDE_PLUGIN}"
                 )
