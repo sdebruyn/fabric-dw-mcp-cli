@@ -50,6 +50,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
 from fabric_dw.auth import CredentialMode
+from fabric_dw.exceptions import FabricCliError, FabricError
 from fabric_dw.sql_errors import (
     _clean_driver_error_message,  # noqa: F401 (test shim: _sql_module._clean_driver_error_message)
     _is_connect_retryable,
@@ -341,6 +342,29 @@ def tenant_from_connection_string_host(host: object) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+def _wrap_connect_retry_exhausted(exc: BaseException) -> BaseException:
+    """Return a clean, renderable exception for a connect-retry budget exhaustion.
+
+    ``exc`` is the last retryable exception seen by :func:`_with_connect_retry`
+    when the wall-clock deadline expires.  It is either:
+
+    - Already a :class:`~fabric_dw.exceptions.FabricCliError` (e.g. an
+      ``AuthError`` whose message happened to match a retryable fragment) —
+      returned unchanged, it is already clean.
+    - A raw driver exception (e.g. ``mssql_python.exceptions.OperationalError``
+      for a TCP connect/login timeout, DDBC error code 0x102) re-raised bare by
+      :func:`~fabric_dw.sql_pool._translate_connect_error` Step 3 *specifically*
+      so this loop could retry it — wrapped here in a
+      :class:`~fabric_dw.exceptions.FabricError` so a raw driver traceback never
+      reaches the CLI/MCP boundary once the retry window is spent (#972).
+    """
+    if isinstance(exc, FabricCliError):
+        return exc
+    wrapped = FabricError(f"SQL connection failed: {exc}; please retry")
+    wrapped.__cause__ = exc
+    return wrapped
+
+
 def _with_connect_retry(
     target: SqlTarget,
     mode: CredentialMode,
@@ -393,7 +417,9 @@ def _with_connect_retry(
 
     Raises:
         Any non-retryable exception from ``open_connection`` immediately.
-        The last retryable exception when the wall-clock deadline passes.
+        A clean, renderable exception (see :func:`_wrap_connect_retry_exhausted`)
+        wrapping the last retryable exception when the wall-clock deadline
+        passes — never a raw driver exception (#972).
     """
     deadline = time.monotonic() + _resolve_sql_retry_deadline_s()
     last_exc: BaseException | None = None
@@ -408,8 +434,9 @@ def _with_connect_retry(
                 raise
             last_exc = exc
             if time.monotonic() >= deadline:
-                # Budget exhausted — surface the last retryable error.
-                raise
+                # Budget exhausted — surface the last retryable error, wrapped
+                # so a raw driver exception never escapes the connect path (#972).
+                raise _wrap_connect_retry_exhausted(exc) from exc
             # Back off before the next attempt.  _CONNECT_RETRY_DELAYS is
             # indexed from 0 (= delay before attempt 2); clamp to last value.
             delay = _CONNECT_RETRY_DELAYS[min(attempt, len(_CONNECT_RETRY_DELAYS) - 1)]

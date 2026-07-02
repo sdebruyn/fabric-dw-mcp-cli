@@ -1220,6 +1220,23 @@ class TestIsTransientConnectionError:
         exc = Exception("TCP Provider: Error code 0x68")
         assert is_transient_connection_error(exc) is True
 
+    def test_tcp_provider_0x102_connect_login_timeout_is_transient(self) -> None:
+        """Regression guard for #972: the exact driver message from the issue.
+
+        0x102 (decimal 258) is the DDBC connect/login timeout.  Matches via the
+        generic "tcp provider" fragment — see the comment in
+        fabric_dw.sql_errors._TRANSIENT_FRAGMENTS.
+        """
+        exc = Exception(
+            "Driver Error: Client unable to establish connection; "
+            "DDBC Error: [Microsoft]TCP Provider: Error code 0x102"
+        )
+        assert is_transient_connection_error(exc) is True
+
+        from fabric_dw.sql_errors import _is_connect_retryable  # noqa: PLC0415
+
+        assert _is_connect_retryable(exc) is True
+
     def test_database_was_not_found_is_not_transient(self) -> None:
         # "database was not found" was removed from _TRANSIENT_FRAGMENTS because
         # the real Fabric driver wraps it with native error 18456, so
@@ -2621,6 +2638,74 @@ class TestAuthFailedConnectRetry:
         assert fake_time.sleep.call_count == 1
         # First backoff interval is _CONNECT_RETRY_DELAYS[0] = 5 s.
         assert fake_time.sleep.call_args.args[0] == _sql_module._CONNECT_RETRY_DELAYS[0]
+
+    # ------------------------------------------------------------------
+    # #972 — TCP 0x102 connect/login timeout: retry + retry-exhaustion wrap
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _make_tcp_0x102_exc() -> Exception:
+        """Return a driver exception shaped like the real #972 report.
+
+        A dedicated subclass (not a bare ``Exception``) stands in for
+        ``mssql_python.exceptions.OperationalError`` so tests can assert that
+        the raised error is NOT this raw driver type once retries are exhausted.
+        """
+
+        class _OperationalError(Exception):
+            pass
+
+        return _OperationalError(
+            "Driver Error: Client unable to establish connection; "
+            "DDBC Error: [Microsoft]TCP Provider: Error code 0x102"
+        )
+
+    def test_tcp_0x102_connect_retried_then_succeeds(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The exact #972 driver message is retried on the connect path."""
+        fake_time = self._fake_time_within_deadline(n_failures=1)
+        monkeypatch.setattr(_sql_module, "time", fake_time)
+
+        mock_mssql, good_conn, good_cursor = _make_mock_mssql()
+        good_cursor.description = [("n",)]
+        good_cursor.fetchall.return_value = [(1,)]
+
+        mock_mssql.connect.side_effect = [self._make_tcp_0x102_exc(), good_conn]
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        _cols, rows = run_query(_make_target(), "SELECT 1")
+
+        assert rows == [(1,)]
+        assert mock_mssql.connect.call_count == 2
+
+    def test_connect_retry_exhausted_wraps_raw_driver_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Retry exhaustion on the #972 TCP 0x102 error raises a clean FabricError.
+
+        When the connect error persists past the retry deadline, run_query must
+        raise a clean FabricError (with a retry hint) — never the raw driver
+        exception type.  This is the core regression guard for #972: a raw
+        mssql_python.OperationalError must not reach the CLI/MCP boundary.
+        """
+        fake_time = self._fake_time_past_deadline()
+        monkeypatch.setattr(_sql_module, "time", fake_time)
+
+        mock_mssql, _, _ = _make_mock_mssql()
+        driver_exc = self._make_tcp_0x102_exc()
+        mock_mssql.connect.side_effect = driver_exc
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with pytest.raises(FabricError) as exc_info:
+            run_query(_make_target(), "SELECT 1")
+
+        # Must be a clean FabricError, not the raw driver exception type.
+        assert not isinstance(exc_info.value, type(driver_exc))
+        assert isinstance(exc_info.value.__cause__, type(driver_exc))
+        msg = str(exc_info.value)
+        assert "0x102" in msg
+        assert "retry" in msg.lower()
+        # Only one connect attempt — the deadline was already exceeded.
+        assert mock_mssql.connect.call_count == 1
 
     def test_auth_failed_on_execute_phase_not_retried(
         self, monkeypatch: pytest.MonkeyPatch

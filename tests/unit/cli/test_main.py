@@ -20,6 +20,7 @@ from fabric_dw.auth import CredentialMode
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._main import cli
 from fabric_dw.config import Defaults, UserConfig, save_config
+from fabric_dw.logging import setup_logging
 
 
 class TestCliHelp:
@@ -110,6 +111,106 @@ class TestCliUnknownCommand:
         runner = CliRunner()
         result = runner.invoke(cli, ["not-a-real-command"])
         assert result.exit_code != 0
+
+
+class TestCliTopLevelErrorGuard:
+    """fabric_dw.cli.main() must never let an unexpected exception surface as a
+    raw Python traceback (#972).
+
+    Click's own ``BaseCommand.main()`` only cleanly handles ``ClickException``/
+    ``UsageError``/``Abort``/EPIPE ``OSError`` — anything else (e.g. a raw
+    driver error that slipped past a connect-retry-exhaustion path) propagates
+    unchanged.  ``main()`` wraps ``cli()`` with a defense-in-depth guard; these
+    tests exercise that guard directly by replacing ``cli()`` with a callable
+    that raises, mirroring the existing ``TestHelpTelemetrySuppression`` pattern.
+    """
+
+    def test_unexpected_exception_prints_clean_single_line_error(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr(sys, "argv", ["fdw", "sql", "-q", "SELECT 1"])
+
+        def _boom() -> None:
+            raise RuntimeError(
+                "Driver Error: Client unable to establish connection; "
+                "DDBC Error: [Microsoft]TCP Provider: Error code 0x102"
+            )
+
+        with patch.object(_cli_pkg, "cli", _boom), pytest.raises(SystemExit) as exc_info:
+            _cli_pkg.main()
+
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert captured.err.startswith("Error:")
+        assert "TCP Provider" in captured.err
+        assert "Traceback" not in captured.err
+        assert captured.err.strip().count("\n") == 0, "error output must be a single line"
+        assert captured.out == ""
+
+    def test_unexpected_exception_omits_traceback_by_default(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr(sys, "argv", ["fdw", "sql", "-q", "SELECT 1"])
+
+        def _boom() -> None:
+            raise RuntimeError("boom")
+
+        with patch.object(_cli_pkg, "cli", _boom), pytest.raises(SystemExit):
+            _cli_pkg.main()
+
+        assert "Traceback" not in capsys.readouterr().err
+
+    def test_unexpected_exception_includes_traceback_when_debug_logging_enabled(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The full traceback stays available behind the existing -v / --verbose convention.
+
+        Verbose logging is enabled via ``setup_logging(DEBUG)`` on the
+        ``fabric_dw`` logger — never shown by default, since it may contain
+        driver internals.
+        """
+        monkeypatch.setattr(sys, "argv", ["fdw", "sql", "-q", "SELECT 1"])
+        setup_logging(logging.DEBUG)  # mirrors what the -v flag does
+
+        def _boom() -> None:
+            raise RuntimeError("boom")
+
+        with patch.object(_cli_pkg, "cli", _boom), pytest.raises(SystemExit):
+            _cli_pkg.main()
+
+        assert "Traceback (most recent call last)" in capsys.readouterr().err
+
+    def test_click_exception_from_real_command_is_unaffected(self) -> None:
+        """A ClickException raised inside an actual command still renders via Click.
+
+        Unaffected by the new top-level guard (no behaviour regression).
+        """
+        runner = CliRunner()
+        result = runner.invoke(cli, ["not-a-real-command"])
+        assert result.exit_code != 0
+        assert "Traceback" not in result.output
+
+    def test_keyboard_interrupt_is_not_swallowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys, "argv", ["fdw", "sql", "-q", "SELECT 1"])
+
+        def _boom() -> None:
+            raise KeyboardInterrupt
+
+        with patch.object(_cli_pkg, "cli", _boom), pytest.raises(KeyboardInterrupt):
+            _cli_pkg.main()
+
+    def test_system_exit_from_cli_propagates_unchanged(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "argv", ["fdw", "sql", "-q", "SELECT 1"])
+
+        def _exit_5() -> None:
+            raise SystemExit(5)
+
+        with patch.object(_cli_pkg, "cli", _exit_5), pytest.raises(SystemExit) as exc_info:
+            _cli_pkg.main()
+
+        assert exc_info.value.code == 5
 
 
 class TestCliVersion:
