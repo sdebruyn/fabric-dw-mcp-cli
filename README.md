@@ -133,6 +133,8 @@ Add to your MCP client configuration (e.g. Claude Desktop, VS Code):
 
 The MCP server exposes all CLI operations as MCP tools (workspaces, warehouses, SQL endpoints, schemas, tables, views, queries, snapshots, restore points, audit, statistics, permissions, sql-pools). Bundled Claude Code agent skills (query-optimizer, warehouse-performance, dbt-setup) are included for deeper AI-assisted analysis. Set `FABRIC_AUTH` in the environment if you need a non-default auth mode.
 
+Both the skills and the MCP server install in one command via the `fabric-dw` plugin marketplace, for Claude Code and GitHub Copilot CLI alike: `/plugin marketplace add sdebruyn/fabric-dw-mcp-cli` then `/plugin install fabric-dw@fabric-dw`. See the [Agent Skills](https://fdw.debruyn.dev/skills/) docs for details.
+
 ## Run in Docker
 
 The Docker image's default `ENTRYPOINT` is the **MCP server** (`fabric-dw-mcp`). Use it as-is with your MCP client, or override the entrypoint to run the CLI instead.

@@ -1,9 +1,7 @@
 {
   "name": "fabric-dw",
-  "displayName": "Fabric DW Agent Skills",
-  "version": "2026.6.0",
   "description": "Agent skills for Fabric Data Warehouse: query performance analysis, warehouse-wide performance investigation and tuning, and dbt project bootstrap.",
-  "homepage": "https://github.com/sdebruyn/fabric-dw-mcp-cli",
+  "version": "2026.6.0",
   "author": {
     "name": "Sam Debruyn",
     "email": "sam@debruyn.dev"
