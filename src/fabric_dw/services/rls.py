@@ -273,10 +273,11 @@ async def create_security_policy(
     policy_ref = _resolve_policy_ref(policy_name)
     state_sql = "ON" if state else "OFF"
 
+    _required = {"fn_name", "fn_args", "table_schema", "table_name"}
+    _allowed = _required | {"fn_schema"}
+
     clauses: list[str] = []
     for i, spec in enumerate(predicates):
-        _required = {"fn_name", "fn_args", "table_schema", "table_name"}
-        _allowed = _required | {"fn_schema"}
         _missing = _required - spec.keys()
         if _missing:
             missing_list = ", ".join(sorted(_missing))
