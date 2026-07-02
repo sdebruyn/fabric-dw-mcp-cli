@@ -8,8 +8,10 @@ FILTER predicates only (#966)
 ------------------------------
 Fabric Data Warehouse rejects BLOCK predicates for both ``CREATE`` and
 ``ALTER SECURITY POLICY`` ("BLOCK PREDICATE is not supported"). BLOCK support
-was removed after #919 shipped it untested; only FILTER predicates are
-exposed and validated here.
+was added in #919 but shipped untested and always fails against real Fabric,
+so it has been removed entirely: this module builds FILTER predicates only,
+and no function here accepts a predicate-type argument -- there is nothing
+to choose between.
 
 Statement-building safety
 --------------------------
@@ -20,7 +22,6 @@ All statements are built from:
 - Column names for predicate function arguments validated via
   :func:`~fabric_dw.identifiers.validate_column_name` +
   :func:`~fabric_dw.identifiers.quote_identifier`.
-- A fixed allowlist for predicate type (``FILTER`` only).
 
 No SQL text is ever parsed or rewritten.
 """
@@ -42,7 +43,6 @@ from fabric_dw.models import SecurityPolicy, SecurityPredicate
 from fabric_dw.sql import SqlTarget, run_query
 
 __all__ = [
-    "VALID_PREDICATE_TYPES",
     "add_predicate",
     "create_security_policy",
     "drop_predicate",
@@ -50,15 +50,6 @@ __all__ = [
     "list_security_policies",
     "set_policy_state",
 ]
-
-# ---------------------------------------------------------------------------
-# Allowlists
-# ---------------------------------------------------------------------------
-
-#: Valid predicate type tokens (uppercase). BLOCK is intentionally absent
-#: (#966): Fabric Data Warehouse rejects it for both CREATE and ALTER
-#: SECURITY POLICY.
-VALID_PREDICATE_TYPES: frozenset[str] = frozenset({"FILTER"})
 
 # ---------------------------------------------------------------------------
 # SQL templates (read)
@@ -83,31 +74,6 @@ ORDER BY sp.name, pred.predicate_type_desc;
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
-
-
-def _validate_predicate_type(predicate_type: str) -> str:
-    """Validate and uppercase the predicate type.
-
-    Args:
-        predicate_type: Raw predicate type string (case-insensitive).
-
-    Returns:
-        The uppercase token -- currently only ``"FILTER"``.
-
-    Raises:
-        ValueError: If *predicate_type* is not ``FILTER``. In particular,
-            ``"BLOCK"`` is rejected here (#966): Fabric Data Warehouse
-            rejects BLOCK PREDICATE for both CREATE and ALTER SECURITY
-            POLICY, so it is never sent to the server.
-    """
-    upper = predicate_type.upper()
-    if upper not in VALID_PREDICATE_TYPES:
-        msg = (
-            f"Invalid predicate type {predicate_type!r}: "
-            f"must be one of {', '.join(sorted(VALID_PREDICATE_TYPES))}"
-        )
-        raise ValueError(msg)
-    return upper
 
 
 def _resolve_policy_ref(policy_name: str) -> str:
@@ -173,7 +139,6 @@ def _build_fn_call(
 
 
 def _build_predicate_clause(
-    predicate_type: str,
     fn_schema: str | None,
     fn_name: str,
     fn_args: list[str],
@@ -183,8 +148,6 @@ def _build_predicate_clause(
     """Build one ``ADD FILTER PREDICATE fn(...) ON table`` clause.
 
     Args:
-        predicate_type: ``"FILTER"`` (already validated; this is the only
-            token :data:`VALID_PREDICATE_TYPES` accepts).
         fn_schema: Schema of the predicate function (may be ``None``).
         fn_name: Name of the predicate function.
         fn_args: Column name arguments for the predicate function.
@@ -199,7 +162,7 @@ def _build_predicate_clause(
     validate_identifier(table_schema)
     validate_identifier(table_name)
     table_ref = f"{quote_identifier(table_schema)}.{quote_identifier(table_name)}"
-    return f"ADD {predicate_type} PREDICATE {fn_call} ON {table_ref}"
+    return f"ADD FILTER PREDICATE {fn_call} ON {table_ref}"
 
 
 # ---------------------------------------------------------------------------
@@ -273,14 +236,14 @@ async def create_security_policy(
     state: bool = True,
     mode: CredentialMode = CredentialMode.DEFAULT,
 ) -> None:
-    """Create a security policy with one or more predicates.
+    """Create a security policy with one or more FILTER predicates.
 
-    Executes ``CREATE SECURITY POLICY ... ADD FILTER PREDICATE ...``.
+    Executes ``CREATE SECURITY POLICY ... ADD FILTER PREDICATE ...``. There is
+    no predicate-type option (#966): Fabric Data Warehouse supports FILTER
+    predicates only, so every predicate built here is a FILTER predicate.
 
     Each element of *predicates* must be a dict with keys:
 
-    - ``predicate_type``: ``"FILTER"`` (the only supported value; see
-      :data:`VALID_PREDICATE_TYPES`)
     - ``fn_schema``: schema of the predicate function (``str`` or ``None``)
     - ``fn_name``: name of the predicate function
     - ``fn_args``: list of column name strings
@@ -308,13 +271,12 @@ async def create_security_policy(
 
     clauses: list[str] = []
     for i, spec in enumerate(predicates):
-        _required = {"predicate_type", "fn_name", "fn_args", "table_schema", "table_name"}
+        _required = {"fn_name", "fn_args", "table_schema", "table_name"}
         _missing = _required - spec.keys()
         if _missing:
             missing_list = ", ".join(sorted(_missing))
             msg = f"Predicate at index {i} is missing required key(s): {missing_list}"
             raise ValueError(msg)
-        ptype = _validate_predicate_type(str(spec["predicate_type"]))
         fn_schema_raw = spec.get("fn_schema")
         fn_schema = str(fn_schema_raw) if fn_schema_raw else None
         fn_name = str(spec["fn_name"])
@@ -322,7 +284,7 @@ async def create_security_policy(
         table_schema = str(spec["table_schema"])
         table_name = str(spec["table_name"])
         clauses.append(
-            _build_predicate_clause(ptype, fn_schema, fn_name, fn_args, table_schema, table_name)
+            _build_predicate_clause(fn_schema, fn_name, fn_args, table_schema, table_name)
         )
 
     predicate_sql = ",\n    ".join(clauses)
@@ -339,7 +301,6 @@ async def create_security_policy(
 async def add_predicate(
     target: SqlTarget,
     policy_name: str,
-    predicate_type: str,
     fn_schema: str | None,
     fn_name: str,
     fn_args: list[str],
@@ -348,15 +309,15 @@ async def add_predicate(
     *,
     mode: CredentialMode = CredentialMode.DEFAULT,
 ) -> None:
-    """Add a predicate to an existing security policy.
+    """Add a FILTER predicate to an existing security policy.
 
-    Executes ``ALTER SECURITY POLICY ... ADD FILTER PREDICATE ...``.
+    Executes ``ALTER SECURITY POLICY ... ADD FILTER PREDICATE ...``. There is
+    no predicate-type argument (#966): Fabric Data Warehouse supports FILTER
+    predicates only.
 
     Args:
         target: SQL connection target.
         policy_name: Security policy name (optionally schema-qualified).
-        predicate_type: ``"FILTER"`` (the only supported value; see
-            :data:`VALID_PREDICATE_TYPES`).
         fn_schema: Schema of the predicate function, or ``None``.
         fn_name: Name of the predicate function.
         fn_args: Column name arguments for the predicate function.
@@ -368,8 +329,7 @@ async def add_predicate(
         ValueError: If any identifier or argument is invalid.
     """
     policy_ref = _resolve_policy_ref(policy_name)
-    ptype = _validate_predicate_type(predicate_type)
-    clause = _build_predicate_clause(ptype, fn_schema, fn_name, fn_args, table_schema, table_name)
+    clause = _build_predicate_clause(fn_schema, fn_name, fn_args, table_schema, table_name)
     ddl = f"ALTER SECURITY POLICY {policy_ref}\n    {clause};"
 
     def _run() -> None:
@@ -381,15 +341,16 @@ async def add_predicate(
 async def drop_predicate(
     target: SqlTarget,
     policy_name: str,
-    predicate_type: str,
     table_schema: str,
     table_name: str,
     *,
     mode: CredentialMode = CredentialMode.DEFAULT,
 ) -> None:
-    """Drop a predicate from an existing security policy.
+    """Drop the FILTER predicate from an existing security policy.
 
     Executes ``ALTER SECURITY POLICY ... DROP FILTER PREDICATE ON ...``.
+    There is no predicate-type argument (#966): Fabric Data Warehouse
+    supports FILTER predicates only.
 
     The T-SQL ``DROP FILTER PREDICATE ON`` clause takes no operation
     qualifier -- the operation is not part of the drop syntax.
@@ -397,8 +358,6 @@ async def drop_predicate(
     Args:
         target: SQL connection target.
         policy_name: Security policy name (optionally schema-qualified).
-        predicate_type: ``"FILTER"`` (the only supported value; see
-            :data:`VALID_PREDICATE_TYPES`).
         table_schema: Schema of the target table.
         table_name: Name of the target table.
         mode: Credential mode for Entra authentication.
@@ -407,11 +366,10 @@ async def drop_predicate(
         ValueError: If any identifier is invalid.
     """
     policy_ref = _resolve_policy_ref(policy_name)
-    ptype = _validate_predicate_type(predicate_type)
     validate_identifier(table_schema)
     validate_identifier(table_name)
     table_ref = f"{quote_identifier(table_schema)}.{quote_identifier(table_name)}"
-    ddl = f"ALTER SECURITY POLICY {policy_ref}\n    DROP {ptype} PREDICATE ON {table_ref};"
+    ddl = f"ALTER SECURITY POLICY {policy_ref}\n    DROP FILTER PREDICATE ON {table_ref};"
 
     def _run() -> None:
         run_query(target, ddl, mode=mode, autocommit=True, fetch="none")

@@ -834,8 +834,7 @@ List all row-level security policies and their predicates from `sys.security_pol
 Create a row-level security policy with one or more FILTER predicates. Executes
 `CREATE SECURITY POLICY`.
 
-Fabric Data Warehouse currently supports FILTER predicates only (BLOCK is rejected by both
-`CREATE SECURITY POLICY` and `ALTER SECURITY POLICY`).
+There is no predicate-type option (#966): Fabric Data Warehouse supports FILTER predicates only.
 
 Blocked by `FABRIC_MCP_READONLY`. Does NOT require `FABRIC_MCP_ALLOW_DESTRUCTIVE`.
 
@@ -845,7 +844,6 @@ Blocked by `FABRIC_MCP_READONLY`. Does NOT require `FABRIC_MCP_ALLOW_DESTRUCTIVE
 - `item` (`str`): Warehouse or SQL endpoint name or GUID.
 - `policy_name` (`str`): qualified policy name (`"schema.name"` or `"name"`).
 - `predicates` (`list[dict]`): list of predicate definitions. Each entry must include:
-  - `predicate_type` (`str`): `"FILTER"` (the only supported value).
   - `fn_schema` (`str`, optional): schema of the predicate function. Omit when the function lives in the default schema.
   - `fn_name` (`str`): name of the predicate function.
   - `fn_args` (`list[str]`): column names to pass to the function.

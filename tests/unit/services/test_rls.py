@@ -33,37 +33,6 @@ _LIST_COLS = [
 
 
 # ---------------------------------------------------------------------------
-# _validate_predicate_type
-# ---------------------------------------------------------------------------
-
-
-class TestValidatePredicateType:
-    def test_filter_accepted(self) -> None:
-        from fabric_dw.services.rls import _validate_predicate_type  # noqa: PLC0415
-
-        assert _validate_predicate_type("FILTER") == "FILTER"
-
-    def test_case_insensitive(self) -> None:
-        from fabric_dw.services.rls import _validate_predicate_type  # noqa: PLC0415
-
-        assert _validate_predicate_type("filter") == "FILTER"
-
-    def test_invalid_raises(self) -> None:
-        from fabric_dw.services.rls import _validate_predicate_type  # noqa: PLC0415
-
-        with pytest.raises(ValueError, match="Invalid predicate type"):
-            _validate_predicate_type("SELECT")
-
-    def test_block_rejected(self) -> None:
-        """BLOCK is no longer a valid predicate type (#966): Fabric rejects BLOCK PREDICATE
-        for both CREATE and ALTER SECURITY POLICY."""
-        from fabric_dw.services.rls import _validate_predicate_type  # noqa: PLC0415
-
-        with pytest.raises(ValueError, match="Invalid predicate type"):
-            _validate_predicate_type("BLOCK")
-
-
-# ---------------------------------------------------------------------------
 # _resolve_policy_ref
 # ---------------------------------------------------------------------------
 
@@ -246,7 +215,6 @@ class TestCreateSecurityPolicy:
                 "rls.SalesFilter",
                 [
                     {
-                        "predicate_type": "FILTER",
                         "fn_schema": "rls",
                         "fn_name": "fn_filter",
                         "fn_args": ["SalesRep"],
@@ -276,7 +244,6 @@ class TestCreateSecurityPolicy:
                 "MyPolicy",
                 [
                     {
-                        "predicate_type": "FILTER",
                         "fn_schema": None,
                         "fn_name": "fn_filter",
                         "fn_args": ["col"],
@@ -289,23 +256,35 @@ class TestCreateSecurityPolicy:
 
         assert "STATE = OFF" in captured[0]
 
-    async def test_block_predicate_type_rejected(self) -> None:
-        """BLOCK is rejected before any SQL is built (#966)."""
-        with pytest.raises(ValueError, match="Invalid predicate type"):
+    async def test_predicate_type_key_has_no_effect(self) -> None:
+        """There is no predicate-type concept (#966): a stray "predicate_type": "BLOCK"
+        key in the spec dict is simply not read, and the built clause is FILTER
+        regardless -- there is no code path that could turn it into BLOCK."""
+        captured: list[str] = []
+
+        def _mock(_target: object, _sql: str, **_kw: object) -> tuple:
+            captured.append(_sql)
+            return [], []
+
+        with patch("fabric_dw.services.rls.run_query", side_effect=_mock):
             await rls_svc.create_security_policy(
                 _TARGET,
-                "rls.SalesBlock",
+                "rls.SalesFilter",
                 [
                     {
                         "predicate_type": "BLOCK",
                         "fn_schema": "rls",
-                        "fn_name": "fn_block",
+                        "fn_name": "fn_filter",
                         "fn_args": ["SalesRep"],
                         "table_schema": "dbo",
                         "table_name": "Sales",
                     }
                 ],
             )
+
+        stmt = captured[0]
+        assert "ADD FILTER PREDICATE" in stmt
+        assert "BLOCK" not in stmt
 
     async def test_multi_predicate_create(self) -> None:
         captured: list[str] = []
@@ -320,7 +299,6 @@ class TestCreateSecurityPolicy:
                 "rls.Combined",
                 [
                     {
-                        "predicate_type": "FILTER",
                         "fn_schema": "rls",
                         "fn_name": "fn_filter_a",
                         "fn_args": ["col_a"],
@@ -328,7 +306,6 @@ class TestCreateSecurityPolicy:
                         "table_name": "T",
                     },
                     {
-                        "predicate_type": "FILTER",
                         "fn_schema": "rls",
                         "fn_name": "fn_filter_b",
                         "fn_args": ["col_b"],
@@ -357,7 +334,6 @@ class TestCreateSecurityPolicy:
                 "bad; policy",
                 [
                     {
-                        "predicate_type": "FILTER",
                         "fn_schema": "rls",
                         "fn_name": "fn",
                         "fn_args": ["col"],
@@ -385,7 +361,6 @@ class TestAddPredicate:
             await rls_svc.add_predicate(
                 _TARGET,
                 "rls.SalesFilter",
-                "FILTER",
                 "rls",
                 "fn_filter",
                 ["SalesRep"],
@@ -398,26 +373,6 @@ class TestAddPredicate:
             "ALTER SECURITY POLICY [rls].[SalesFilter]\n"
             "    ADD FILTER PREDICATE [rls].[fn_filter]([SalesRep]) ON [dbo].[Sales];"
         )
-
-    async def test_block_predicate_type_rejected(self) -> None:
-        """BLOCK is rejected before any SQL is built (#966)."""
-        with pytest.raises(ValueError, match="Invalid predicate type"):
-            await rls_svc.add_predicate(
-                _TARGET,
-                "rls.SalesBlock",
-                "BLOCK",
-                "rls",
-                "fn_block",
-                ["SalesRep"],
-                "dbo",
-                "Sales",
-            )
-
-    async def test_invalid_predicate_type_raises(self) -> None:
-        with pytest.raises(ValueError, match="Invalid predicate type"):
-            await rls_svc.add_predicate(
-                _TARGET, "MyPolicy", "DENY", "rls", "fn", ["col"], "dbo", "T"
-            )
 
 
 # ---------------------------------------------------------------------------
@@ -437,7 +392,6 @@ class TestDropPredicate:
             await rls_svc.drop_predicate(
                 _TARGET,
                 "rls.SalesFilter",
-                "FILTER",
                 "dbo",
                 "Sales",
             )
@@ -446,17 +400,6 @@ class TestDropPredicate:
         assert stmt == (
             "ALTER SECURITY POLICY [rls].[SalesFilter]\n    DROP FILTER PREDICATE ON [dbo].[Sales];"
         )
-
-    async def test_block_predicate_type_rejected(self) -> None:
-        """BLOCK is rejected before any SQL is built (#966)."""
-        with pytest.raises(ValueError, match="Invalid predicate type"):
-            await rls_svc.drop_predicate(
-                _TARGET,
-                "rls.SalesBlock",
-                "BLOCK",
-                "dbo",
-                "Sales",
-            )
 
 
 # ---------------------------------------------------------------------------
@@ -546,7 +489,7 @@ class TestBuildPredicateClause:
     def test_filter_clause_exact_sql(self) -> None:
         from fabric_dw.services.rls import _build_predicate_clause  # noqa: PLC0415
 
-        result = _build_predicate_clause("FILTER", "rls", "fn", ["col"], "dbo", "T")
+        result = _build_predicate_clause("rls", "fn", ["col"], "dbo", "T")
         assert result == "ADD FILTER PREDICATE [rls].[fn]([col]) ON [dbo].[T]"
 
 
@@ -563,7 +506,6 @@ class TestCreateSecurityPolicyMissingKeys:
                 "rls.SalesFilter",
                 [
                     {
-                        "predicate_type": "FILTER",
                         # fn_name intentionally omitted
                         "fn_args": ["col"],
                         "table_schema": "dbo",
@@ -579,7 +521,6 @@ class TestCreateSecurityPolicyMissingKeys:
                 "rls.SalesFilter",
                 [
                     {
-                        "predicate_type": "FILTER",
                         "fn_name": "fn_filter",
                         "fn_args": ["col"],
                         # table_schema intentionally omitted

@@ -288,7 +288,11 @@ class TestRlsAddPredicate:
                 ],
             )
         assert result.exit_code == 0, result.output
-        assert mock_svc.call_args.args[2] == "FILTER"
+        # add_predicate(target, policy, fn_schema, fn_name, fn_args, table_schema, table_name,
+        # mode=...) -- no predicate_type argument exists (#966).
+        args = mock_svc.call_args.args
+        assert args[2] == "rls"  # fn_schema
+        assert args[3] == "fn_filter"  # fn_name
 
     def test_add_no_block_option(self, runner: CliRunner, cache_env: Path) -> None:
         """--block is not offered (#966): Fabric rejects BLOCK PREDICATE for ALTER."""
@@ -367,7 +371,11 @@ class TestRlsDropPredicate:
                 ],
             )
         assert result.exit_code == 0, result.output
-        assert mock_svc.call_args.args[2] == "FILTER"
+        # drop_predicate no longer takes a predicate_type argument (#966); confirm the
+        # positional args shifted accordingly -- table_schema, then table_name.
+        args = mock_svc.call_args.args
+        assert args[2] == "dbo"  # table_schema
+        assert args[3] == "Sales"  # table_name
 
     def test_drop_no_filter_or_block_option(self, runner: CliRunner, cache_env: Path) -> None:
         """Neither --filter nor --block is offered (#966): only FILTER predicates exist,

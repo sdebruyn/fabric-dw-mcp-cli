@@ -455,12 +455,11 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
     ) -> dict[str, Any]:
         """Create a row-level security policy.
 
-        Executes ``CREATE SECURITY POLICY`` with one or more filter
-        predicates. Fabric Data Warehouse currently supports FILTER
-        predicates only -- BLOCK is rejected by both CREATE and ALTER
-        SECURITY POLICY. Each entry in *predicates* must include:
+        Executes ``CREATE SECURITY POLICY`` with one or more FILTER
+        predicates. There is no predicate-type option (#966): Fabric Data
+        Warehouse supports FILTER predicates only. Each entry in *predicates*
+        must include:
 
-        - ``predicate_type``: ``"FILTER"`` (the only supported value)
         - ``fn_schema``: schema of the predicate function
         - ``fn_name``: name of the predicate function
         - ``fn_args``: list of column names to pass to the function
@@ -513,10 +512,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
     ) -> dict[str, Any]:
         """Add a FILTER predicate to an existing row-level security policy.
 
-        Executes ``ALTER SECURITY POLICY ... ADD FILTER PREDICATE``. Fabric
-        Data Warehouse currently supports FILTER predicates only -- BLOCK is
-        rejected by ALTER SECURITY POLICY, so no predicate-type or operation
-        parameter is offered.
+        Executes ``ALTER SECURITY POLICY ... ADD FILTER PREDICATE``. There is
+        no predicate-type or operation parameter (#966): Fabric Data
+        Warehouse supports FILTER predicates only.
 
         Args:
             workspace: Workspace name or GUID.
@@ -546,7 +544,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             await _rls_svc.add_predicate(
                 target,
                 policy_name,
-                "FILTER",
                 fn_schema,
                 fn_name,
                 fn_args,
@@ -575,8 +572,8 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
 
         Executes ``ALTER SECURITY POLICY ... DROP FILTER PREDICATE ON``. The
         T-SQL ``DROP PREDICATE ON`` syntax takes no operation qualifier.
-        Fabric Data Warehouse currently supports FILTER predicates only, so
-        no predicate-type parameter is offered.
+        There is no predicate-type parameter (#966): Fabric Data Warehouse
+        supports FILTER predicates only.
 
         Args:
             workspace: Workspace name or GUID.
@@ -602,7 +599,6 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             await _rls_svc.drop_predicate(
                 target,
                 policy_name,
-                "FILTER",
                 table_schema,
                 table_name,
                 mode=ctx.auth_mode,

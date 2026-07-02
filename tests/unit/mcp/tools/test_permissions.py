@@ -673,7 +673,6 @@ async def test_create_security_policy_calls_service_with_correct_args(mock_ctx, 
     mock_svc = AsyncMock(return_value=None)
     predicates = [
         {
-            "predicate_type": "FILTER",
             "fn_name": "fn_filter",
             "fn_args": ["SalesRep"],
             "table_schema": "dbo",
@@ -784,10 +783,10 @@ async def test_add_security_predicate_fn_schema_optional(mock_ctx, ctx_patch) ->
 
     assert result["added"] is True
     assert result["predicate_type"] == "FILTER"
-    # Verify "FILTER" and fn_schema=None were passed to the service positionally.
+    # add_predicate(target, policy_name, fn_schema, fn_name, ...) -- no predicate_type
+    # argument exists (#966). Verify fn_schema=None was passed positionally.
     args, _kwargs = mock_svc.call_args
-    assert args[2] == "FILTER"
-    assert args[3] is None
+    assert args[2] is None
 
 
 async def test_add_drop_security_predicate_schemas_omit_predicate_type() -> None:
@@ -808,7 +807,7 @@ async def test_add_drop_security_predicate_schemas_omit_predicate_type() -> None
 
 
 async def test_drop_security_predicate_dispatches_correct_args(mock_ctx, ctx_patch) -> None:
-    """drop_security_predicate calls drop_predicate with FILTER and no operation kwarg."""
+    """drop_security_predicate calls drop_predicate with no predicate_type/operation kwarg."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     item = make_item_entry()
@@ -837,9 +836,10 @@ async def test_drop_security_predicate_dispatches_correct_args(mock_ctx, ctx_pat
     assert result["policy_name"] == "rls.SalesFilter"
     assert result["predicate_type"] == "FILTER"
     mock_svc.assert_called_once()
-    # Verify "FILTER" was passed positionally and no 'operation' kwarg is forwarded.
+    # drop_predicate no longer takes a predicate_type argument (#966); confirm
+    # table_schema was passed positionally and no 'operation' kwarg is forwarded.
     args, kwargs = mock_svc.call_args
-    assert args[2] == "FILTER"
+    assert args[2] == "dbo"
     assert "operation" not in kwargs
 
 

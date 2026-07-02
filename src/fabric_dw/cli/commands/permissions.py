@@ -883,9 +883,8 @@ async def rls_create_cmd(
 ) -> None:
     """Create a security policy POLICY on ITEM with an initial FILTER predicate.
 
-    Fabric Data Warehouse currently supports FILTER predicates only -- BLOCK
-    predicates are rejected by both CREATE and ALTER SECURITY POLICY, so
-    --block is not offered.
+    Fabric Data Warehouse supports FILTER predicates only (#966): there is no
+    --block option and no predicate-type choice to make.
 
     Use 'permissions rls add-predicate' to add further predicates.
 
@@ -910,7 +909,6 @@ async def rls_create_cmd(
                 policy,
                 [
                     {
-                        "predicate_type": "FILTER",
                         "fn_schema": fn_schema,
                         "fn_name": fn_name,
                         "fn_args": fn_args,
@@ -954,9 +952,8 @@ async def rls_add_predicate_cmd(
 ) -> None:
     """Add a FILTER predicate to an existing security policy POLICY on ITEM.
 
-    Fabric Data Warehouse currently supports FILTER predicates only -- BLOCK
-    predicates are rejected by ALTER SECURITY POLICY, so --block is not
-    offered.
+    Fabric Data Warehouse supports FILTER predicates only (#966): there is no
+    --block option and no predicate-type choice to make.
 
     POLICY may be schema-qualified (e.g. rls.MySalesFilter) or bare (MySalesFilter).
     --on specifies the target table.
@@ -972,7 +969,6 @@ async def rls_add_predicate_cmd(
             await _rls_svc.add_predicate(
                 target,
                 policy,
-                "FILTER",
                 fn_schema,
                 fn_name,
                 fn_args,
@@ -1005,8 +1001,8 @@ async def rls_drop_predicate_cmd(
 ) -> None:
     """Drop the FILTER predicate from security policy POLICY on ITEM.
 
-    Fabric Data Warehouse currently supports FILTER predicates only, so this
-    always drops a FILTER predicate; --block is not offered.
+    Fabric Data Warehouse supports FILTER predicates only (#966): there is no
+    --block option and no predicate-type choice to make.
     --on specifies the target table.
     """
     ws = resolve_workspace(ctx)
@@ -1019,7 +1015,6 @@ async def rls_drop_predicate_cmd(
             await _rls_svc.drop_predicate(
                 target,
                 policy,
-                "FILTER",
                 table_schema,
                 table_name,
                 mode=ctx.auth,
