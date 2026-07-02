@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import sys
 import traceback
@@ -59,9 +60,20 @@ def _render_unexpected_error(exc: BaseException) -> None:
     ``fabric_dw`` logger is at ``DEBUG`` level — the existing ``-v`` /
     ``--verbose`` convention (see ``fabric_dw.cli._main.cli``) — never by
     default, since it may contain internal stack frames and driver internals.
+
+    This function must never itself raise: it is the last line of defense, so
+    a broken ``exc.__str__`` or a write failure on a closed/broken stderr must
+    not prevent the process from exiting with the correct non-zero code.
     """
-    message = str(exc).replace("\n", " ").strip() or type(exc).__name__
-    click.echo(f"Error: unexpected error: {message}", err=True)
+    try:
+        message = str(exc).replace("\r", " ").replace("\n", " ").strip() or type(exc).__name__
+    except Exception:
+        # exc.__str__ itself failed (e.g. a buggy custom exception) — fall back
+        # to the type name, which cannot raise.
+        message = type(exc).__name__
+    # Stderr write failures (e.g. a broken pipe) must not block the exit below.
+    with contextlib.suppress(Exception):
+        click.echo(f"Error: unexpected error: {message}", err=True)
     if logging.getLogger("fabric_dw").isEnabledFor(logging.DEBUG):
         traceback.print_exc()
     sys.exit(_UNEXPECTED_ERROR_EXIT_CODE)

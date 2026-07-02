@@ -357,6 +357,13 @@ def _wrap_connect_retry_exhausted(exc: BaseException) -> BaseException:
       so this loop could retry it — wrapped here in a
       :class:`~fabric_dw.exceptions.FabricError` so a raw driver traceback never
       reaches the CLI/MCP boundary once the retry window is spent (#972).
+
+    ``__cause__`` is set explicitly on the wrap branch (chains to the driver
+    exception) and left untouched on the pass-through branch (preserves the
+    FabricCliError's own original cause, if any).  Callers must raise the
+    return value **without** ``from exc`` — since the pass-through branch
+    returns ``exc`` itself, ``raise ... from exc`` would set
+    ``exc.__cause__ = exc`` (a self-reference) and discard the real cause.
     """
     if isinstance(exc, FabricCliError):
         return exc
@@ -436,7 +443,14 @@ def _with_connect_retry(
             if time.monotonic() >= deadline:
                 # Budget exhausted — surface the last retryable error, wrapped
                 # so a raw driver exception never escapes the connect path (#972).
-                raise _wrap_connect_retry_exhausted(exc) from exc
+                # No `from exc` here (deliberately, not an oversight):
+                # _wrap_connect_retry_exhausted() already sets __cause__ itself for
+                # the wrap branch, and the pass-through branch (exc is already a
+                # FabricCliError) must keep its ORIGINAL __cause__ unchanged --
+                # `raise ... from exc` unconditionally overwrites __cause__ at the
+                # raise site, which for the pass-through branch (same object) would
+                # self-reference (`exc.__cause__ = exc`) and clobber the real cause.
+                raise _wrap_connect_retry_exhausted(exc)  # noqa: B904
             # Back off before the next attempt.  _CONNECT_RETRY_DELAYS is
             # indexed from 0 (= delay before attempt 2); clamp to last value.
             delay = _CONNECT_RETRY_DELAYS[min(attempt, len(_CONNECT_RETRY_DELAYS) - 1)]

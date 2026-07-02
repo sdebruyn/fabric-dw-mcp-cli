@@ -2700,12 +2700,49 @@ class TestAuthFailedConnectRetry:
 
         # Must be a clean FabricError, not the raw driver exception type.
         assert not isinstance(exc_info.value, type(driver_exc))
-        assert isinstance(exc_info.value.__cause__, type(driver_exc))
+        # __cause__ must be the original driver exception itself (not a copy,
+        # and not the wrapper self-referencing — regression guard for the
+        # `raise ... from exc` self-cause bug found in review).
+        assert exc_info.value.__cause__ is driver_exc
+        assert exc_info.value.__cause__ is not exc_info.value
         msg = str(exc_info.value)
         assert "0x102" in msg
         assert "retry" in msg.lower()
         # Only one connect attempt — the deadline was already exceeded.
         assert mock_mssql.connect.call_count == 1
+
+    def test_connect_retry_exhausted_preserves_original_cause_of_pretyped_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Retry exhaustion on an already-typed FabricCliError must not self-cause.
+
+        When the connect exception is already a FabricCliError (pre-typed by
+        _translate_connect_error Step 1 — e.g. a retried AuthError), it is
+        returned unchanged by _wrap_connect_retry_exhausted().  It must keep
+        its ORIGINAL __cause__ (e.g. the underlying Azure exception it was
+        built from) rather than being overwritten to reference itself
+        (`raise exc from exc`), which would happen if the caller used
+        `raise ... from exc` unconditionally.
+        """
+        fake_time = self._fake_time_past_deadline()
+        monkeypatch.setattr(_sql_module, "time", fake_time)
+
+        underlying = ValueError("original Azure credential failure")
+        pretyped = AuthError("authentication failed for user ''")
+        pretyped.__cause__ = underlying
+
+        mock_mssql, _, _ = _make_mock_mssql()
+        mock_mssql.connect.side_effect = pretyped
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        with pytest.raises(AuthError) as exc_info:
+            run_query(_make_target(), "SELECT 1")
+
+        # Pass-through: the exact same AuthError instance, with its original
+        # cause intact — never re-pointed at itself.
+        assert exc_info.value is pretyped
+        assert exc_info.value.__cause__ is underlying
+        assert exc_info.value.__cause__ is not exc_info.value
 
     def test_auth_failed_on_execute_phase_not_retried(
         self, monkeypatch: pytest.MonkeyPatch
@@ -2900,6 +2937,52 @@ class _CommitInvalidatingConnection:
 
 class _ProgrammingError(Exception):
     """Minimal stand-in for mssql_python.exceptions.ProgrammingError."""
+
+
+class TestWrapConnectRetryExhausted:
+    """Unit tests for _wrap_connect_retry_exhausted() in isolation (#972 review follow-up).
+
+    Exercises the ``__cause__`` semantics directly, without going through the
+    full retry loop / fake clock machinery: the wrap branch must chain to the
+    original driver exception, and the pass-through branch must never
+    self-reference (``exc.__cause__ is exc``), which would silently discard a
+    pre-existing cause (e.g. an AuthError chained to the underlying Azure
+    exception).
+    """
+
+    def test_raw_driver_exception_is_wrapped_with_cause_set(self) -> None:
+        class _OperationalError(Exception):
+            """Stand-in for mssql_python.exceptions.OperationalError."""
+
+        driver_exc = _OperationalError("TCP Provider: Error code 0x102")
+
+        wrapped = _sql_module._wrap_connect_retry_exhausted(driver_exc)
+
+        assert isinstance(wrapped, FabricError)
+        assert not isinstance(wrapped, type(driver_exc))
+        assert wrapped.__cause__ is driver_exc
+        assert wrapped.__cause__ is not wrapped
+
+    def test_pretyped_fabric_cli_error_passes_through_unchanged(self) -> None:
+        underlying = ValueError("original Azure credential failure")
+        pretyped = AuthError("authentication failed for user ''")
+        pretyped.__cause__ = underlying
+
+        result = _sql_module._wrap_connect_retry_exhausted(pretyped)
+
+        # Same object, original cause preserved — never re-pointed at itself.
+        assert result is pretyped
+        assert result.__cause__ is underlying
+        assert result.__cause__ is not result
+
+    def test_pretyped_fabric_cli_error_with_no_cause_stays_none(self) -> None:
+        """A pre-typed error with no prior cause must not gain a self-reference."""
+        pretyped = AuthError("authentication failed for user ''")
+
+        result = _sql_module._wrap_connect_retry_exhausted(pretyped)
+
+        assert result is pretyped
+        assert result.__cause__ is None
 
 
 class TestFetchBeforeCommitOrdering:

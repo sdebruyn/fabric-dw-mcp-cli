@@ -180,17 +180,38 @@ class TestCliTopLevelErrorGuard:
 
         assert "Traceback (most recent call last)" in capsys.readouterr().err
 
-    def test_click_exception_from_real_command_is_unaffected(self) -> None:
-        """A ClickException raised inside an actual command still renders via Click.
+    def test_click_exception_from_real_command_is_unaffected(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A Click usage error from a real invocation still renders via Click itself.
 
-        Unaffected by the new top-level guard (no behaviour regression).
+        Goes through the actual guarded entry point (fabric_dw.cli.main()), not
+        CliRunner (which bypasses main() and never exercises the guard), so this
+        genuinely proves the new top-level guard does not interfere with Click's
+        own error rendering.
         """
-        runner = CliRunner()
-        result = runner.invoke(cli, ["not-a-real-command"])
-        assert result.exit_code != 0
-        assert "Traceback" not in result.output
+        monkeypatch.setattr(sys, "argv", ["fdw", "not-a-real-command"])
 
-    def test_keyboard_interrupt_is_not_swallowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            _cli_pkg.main()
+
+        # Click's own UsageError for an unknown command exits 2, unaffected by
+        # the guard's own exit code (_UNEXPECTED_ERROR_EXIT_CODE = 1).
+        assert exc_info.value.code == 2
+        captured = capsys.readouterr()
+        assert "No such command" in captured.err
+        assert "Traceback" not in captured.err
+        assert "unexpected error" not in captured.err
+
+    def test_keyboard_interrupt_is_not_swallowed(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A raw KeyboardInterrupt that reaches main() propagates untouched.
+
+        It must not be caught and rendered as "Error: unexpected error: ..." by
+        the new guard -- Ctrl+C exits silently (via Python's default handling),
+        exactly like the pre-#972 behaviour.
+        """
         monkeypatch.setattr(sys, "argv", ["fdw", "sql", "-q", "SELECT 1"])
 
         def _boom() -> None:
@@ -198,6 +219,10 @@ class TestCliTopLevelErrorGuard:
 
         with patch.object(_cli_pkg, "cli", _boom), pytest.raises(KeyboardInterrupt):
             _cli_pkg.main()
+
+        captured = capsys.readouterr()
+        assert captured.err == ""
+        assert captured.out == ""
 
     def test_system_exit_from_cli_propagates_unchanged(
         self, monkeypatch: pytest.MonkeyPatch
