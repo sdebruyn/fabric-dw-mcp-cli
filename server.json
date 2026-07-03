@@ -8,11 +8,11 @@
     "url": "https://github.com/sdebruyn/fabric-dw-mcp-cli",
     "source": "github"
   },
-  "version": "2026.6.0",
+  "version": "2026.7.0",
   "packages": [
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/sdebruyn/fabric-dw:2026.6.0",
+      "identifier": "ghcr.io/sdebruyn/fabric-dw:2026.7.0",
       "transport": {
         "type": "stdio"
       },
