@@ -51,8 +51,9 @@ jobs:
       - name: Log plugin.json version (informational)
         # Run only for tag/dispatch releases; skip for dev builds pushed to main.
         # Prerelease tags (aN/bN/rcN/.devN) are exempt - plugin.json tracks stable only.
-        # The sync-plugin-manifest job (below) auto-bumps plugin.json on main after publish;
-        # a mismatch here is expected when the maintainer tags without a prior release-prep PR.
+        # The sync-plugin-manifest job (below) auto-bumps the release manifests (plugin.json,
+        # its Copilot mirror, and server.json) on main after publish; a mismatch here is
+        # expected when the maintainer tags without a prior release-prep PR.
         # The context value is passed via env: to avoid ${{ }} script-injection into the run body.
         if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
         env:
