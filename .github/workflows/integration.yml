@@ -89,7 +89,7 @@ jobs:
           echo "Capacity did not reach Active state within 5 minutes" >&2
           exit 1
 
-      - uses: astral-sh/setup-uv@v8.2.0
+      - uses: astral-sh/setup-uv@v8.3.0
         with:
           enable-cache: true
 

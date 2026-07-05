@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@v8.2.0
+      - uses: astral-sh/setup-uv@v8.3.0
         with: { enable-cache: true }
       - name: Run bandit (SARIF + gate)
         # Single scan: exit code gates the job; SARIF is uploaded for the Security tab.
@@ -46,7 +46,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@v8.2.0
+      - uses: astral-sh/setup-uv@v8.3.0
         with: { enable-cache: true }
       - run: uv sync --frozen
       - run: uvx --quiet 'pip-audit==2.10.1' --strict
