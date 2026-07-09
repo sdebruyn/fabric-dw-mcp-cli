@@ -103,7 +103,21 @@ jobs:
         run: |
           uv build --wheel --out-dir /tmp/fabric-dw-wheel
           python -m venv /tmp/journey-venv
-          /tmp/journey-venv/bin/pip install --quiet /tmp/fabric-dw-wheel/*.whl
+
+          # Export only the runtime (non-dev) dependencies from the frozen lockfile
+          # so that the clean venv gets the exact same dependency tree that uv.lock
+          # has vetted, not a fresh PyPI resolve.  --no-emit-project omits the
+          # project itself (we install the wheel separately below); hashes are
+          # included by default so pip --require-hashes can verify them.
+          uv export --frozen --no-dev --no-emit-project -o /tmp/journey-reqs.txt
+
+          # Install the pinned dependencies first, then install the built wheel on
+          # top with --no-deps so pip does not perform a second live resolve that
+          # could pick up an unpinned transitive released after the lockfile was
+          # vetted.  This job runs after azure/login with live Fabric credentials,
+          # so keeping the dependency install fully lockfile-driven is important.
+          /tmp/journey-venv/bin/pip install --quiet --require-hashes -r /tmp/journey-reqs.txt
+          /tmp/journey-venv/bin/pip install --quiet --no-deps /tmp/fabric-dw-wheel/*.whl
           echo "FABRIC_DW_JOURNEY_BIN=/tmp/journey-venv/bin/fabric-dw" >> "$GITHUB_ENV"
 
       - name: Pre-test full workspace wipe

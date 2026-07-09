@@ -22,9 +22,11 @@ Journey steps, in order:
 
 Steps 4 and 9 are the #981 regression guard: they pass NAME without the optional
 leading ITEM positional, which was the form that triggered the bug.  Steps 4-5
-resolve the warehouse from FABRIC_DW_DEFAULT_WAREHOUSE (env var).  Steps 7-10
-resolve it from the config file written in step 6, validating both resolution
-paths.
+resolve the warehouse from FABRIC_DW_DEFAULT_WAREHOUSE (env var path).  Steps 6-10
+use env_post(), which pops both FABRIC_DW_DEFAULT_WORKSPACE and
+FABRIC_DW_DEFAULT_WAREHOUSE, so the workspace written in step 3 and the warehouse
+written in step 6 are the sole resolution sources -- the config-file path is
+genuinely exercised for both defaults in phase 2.
 
 IMPORTANT: steps 4 and 9 WILL FAIL on main until #981 is merged and this branch
 is rebased.  That is intentional -- the test exists to guard against regressions.
@@ -132,7 +134,9 @@ def _step(
 
 
 @pytest.mark.usefixtures("_require_journey_binary")
-async def test_config_defaults_journey(shared_warehouse: SharedWarehouseTarget) -> None:
+async def test_config_defaults_journey(  # noqa: PLR0915
+    shared_warehouse: SharedWarehouseTarget,
+) -> None:
     """Walk a realistic user journey using config defaults and short-form invocations.
 
     Steps 4 and 9 are the regression guard for issue #981: they invoke a command
@@ -163,19 +167,15 @@ async def test_config_defaults_journey(shared_warehouse: SharedWarehouseTarget) 
                 }
             )
 
-        # For steps 6-10 (after warehouse config is written): workspace still
-        # from env var (set above); warehouse from config file only.  The env
-        # var is explicitly removed so the config file is the sole source.
+        # For steps 6-10 (after both workspace and warehouse configs are written):
+        # both defaults are resolved from the config file only.  Both env vars
+        # are explicitly removed so the config file values written in steps 3 and
+        # 6 are the sole resolution source, genuinely exercising the config-file
+        # read path for workspace as well as warehouse.
         def env_post() -> dict[str, str]:
-            """Child env for steps 6-10: workspace from env var, warehouse from config."""
-            base = _child_env(
-                {
-                    "XDG_CONFIG_HOME": config_home,
-                    "FABRIC_DW_DEFAULT_WORKSPACE": workspace_id,
-                }
-            )
-            # Remove warehouse env var so the config file written in step 6
-            # is the only resolution path.
+            """Child env for steps 6-10: workspace + warehouse from config file only."""
+            base = _child_env({"XDG_CONFIG_HOME": config_home})
+            base.pop("FABRIC_DW_DEFAULT_WORKSPACE", None)
             base.pop("FABRIC_DW_DEFAULT_WAREHOUSE", None)
             return base
 
@@ -210,6 +210,11 @@ async def test_config_defaults_journey(shared_warehouse: SharedWarehouseTarget) 
             # The warehouse is OMITTED here; Click must NOT assign schema_name to
             # the optional ITEM slot and then complain that NAME is missing.
             # This step WILL FAIL on main until #981 is merged.
+            #
+            # Set the flag BEFORE calling _step so the finally-block cleanup runs
+            # even if _step raises on a forbidden stderr pattern after the schema
+            # was already created server-side.
+            schema_was_created = True
             _step(
                 "--json",
                 "schemas",
@@ -218,7 +223,6 @@ async def test_config_defaults_journey(shared_warehouse: SharedWarehouseTarget) 
                 env=env_pre(),
                 timeout=_SQL_SMOKE_SUBPROCESS_TIMEOUT_S,
             )
-            schema_was_created = True
 
             # Step 5: schemas list IN SHORT FORM -- assert schema is present
             r5 = _step(
