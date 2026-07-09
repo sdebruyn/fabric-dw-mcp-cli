@@ -30,6 +30,7 @@ from click.testing import CliRunner
 from fabric_dw.cli._main import (
     _COMMAND_MAP,
     _patch_command_for_global_options,
+    _wrap_parse_args_for_right_align,
     cli,
 )
 
@@ -70,7 +71,7 @@ def _leading_optional_count(pos_params: list[click.Argument]) -> int:
     return count
 
 
-def _test_value_for_type(param_type: click.ParamType) -> str:
+def _test_value_for_type(param_type: click.ParamType) -> str:  # noqa: PLR0911
     """Return a valid CLI string token for the given Click parameter type.
 
     The drift guard uses fake but type-compatible values so that Click can
@@ -81,7 +82,14 @@ def _test_value_for_type(param_type: click.ParamType) -> str:
     if isinstance(param_type, click.types.FloatParamType):
         return "1.0"
     if isinstance(param_type, click.Choice):
-        return str(param_type.choices[0])
+        first = str(param_type.choices[0])
+        if not param_type.case_sensitive:
+            # Return the case-swapped form so the drift guard can tell whether
+            # process_value was called.  A raw STRING bind preserves the
+            # swapped case; a properly converted value matches choices[0].
+            swapped = first.swapcase()
+            return swapped if swapped != first else first
+        return first
     if isinstance(param_type, click.types.UUIDParameterType):
         return "00000000-0000-0000-0000-000000000001"
     if isinstance(param_type, click.types.BoolParamType):
@@ -105,9 +113,12 @@ def _expected_python_value(param_type: click.ParamType, raw: str) -> Any:
         return uuid.UUID(raw)
     if isinstance(param_type, click.types.BoolParamType):
         return raw.lower() in ("1", "true", "t", "yes", "y", "on")
-    # Choice, STRING, Path, unrecognised: value is returned as a string.
-    # _test_value_for_type returns choices[0] verbatim, which matches exactly,
-    # so Choice.convert returns it unchanged (no case mutation needed here).
+    if isinstance(param_type, click.Choice):
+        # Click returns the matched entry from choices.  _test_value_for_type
+        # may supply a case-swapped form (for case-insensitive choices), so the
+        # expected result is always choices[0] -- the normalised form.
+        return str(param_type.choices[0])
+    # STRING, Path, unrecognised: returned as-is.
     return raw
 
 
@@ -274,6 +285,67 @@ class TestDriftGuard:
         """Zero args must raise MissingParameter or UsageError for missing required."""
         with _relaxed_options(cmd), pytest.raises((click.MissingParameter, click.UsageError)):
             _make_context(cmd, []).close()
+
+
+# ---------------------------------------------------------------------------
+# Shape-guard bail-out tests: synthetic commands outside [opt] req+ shape
+# ---------------------------------------------------------------------------
+
+
+class TestShapeGuardBailout:
+    """Shapes outside ``[opt] req+`` must delegate straight to native Click parsing.
+
+    Each test builds a throwaway ``click.Command`` with a shape the guard
+    rejects (two leading optionals, a variadic positional, or a trailing
+    optional after a required positional), applies ``_wrap_parse_args_for_right_align``
+    directly, and verifies that the native left-to-right behaviour is
+    preserved.  The observable difference: supplying one value fills the
+    optional slot (native), so the required slot stays empty and Click raises
+    ``MissingParameter``.  If the wrapper incorrectly fired it would move
+    the value to the required slot and return without error.
+    """
+
+    @staticmethod
+    def _cmd(*params: click.Argument) -> click.Command:
+        """Build a bare click.Command and attach the parse_args wrapper."""
+        cmd = click.Command("test", params=list(params), callback=lambda **_: None)
+        _wrap_parse_args_for_right_align(cmd)
+        return cmd
+
+    def test_two_leading_optionals_not_reordered(self) -> None:
+        """n_leading_optional == 2 must fall through to native parse."""
+        cmd = self._cmd(
+            click.Argument(["opt1"], required=False, default=None),
+            click.Argument(["opt2"], required=False, default=None),
+            click.Argument(["req"], required=True),
+        )
+        # Native: one value fills opt1, req remains missing -> MissingParameter.
+        # Right-align (incorrectly triggered) would put the value in req and
+        # return successfully.
+        with pytest.raises((click.MissingParameter, click.UsageError)):
+            _make_context(cmd, ["val"]).close()
+
+    def test_nargs_not_one_not_reordered(self) -> None:
+        """A positional with nargs != 1 must fall through to native parse."""
+        cmd = self._cmd(
+            click.Argument(["opt"], required=False, default=None),
+            click.Argument(["req"], required=True),
+            click.Argument(["rest"], nargs=-1, required=False),
+        )
+        # Native: one value fills opt, req remains missing -> MissingParameter.
+        with pytest.raises((click.MissingParameter, click.UsageError)):
+            _make_context(cmd, ["val"]).close()
+
+    def test_trailing_optional_not_reordered(self) -> None:
+        """A trailing optional after a required positional must fall through."""
+        cmd = self._cmd(
+            click.Argument(["opt"], required=False, default=None),
+            click.Argument(["req"], required=True),
+            click.Argument(["trailing"], required=False, default=None),
+        )
+        # Native: one value fills opt, req remains missing -> MissingParameter.
+        with pytest.raises((click.MissingParameter, click.UsageError)):
+            _make_context(cmd, ["val"]).close()
 
 
 # ---------------------------------------------------------------------------
@@ -667,38 +739,61 @@ class TestShellCompletion:
 
 
 class TestRequiredFlagNotMutated:
-    """The required flag on positional params must not be permanently changed."""
+    """The required, type and callback attributes must not be permanently changed.
 
-    def test_required_unchanged_after_failed_parse(self) -> None:
-        """After a zero-args MissingParameter, p.required is still as declared."""
+    The wrapper temporarily mutates all three on module-level singletons and
+    restores them unconditionally in a ``finally`` block.  These tests confirm
+    that all three are intact after both a failed and a successful parse.  A
+    regression that broke ``type`` restoration would leave every positional
+    permanently typed as ``click.STRING``, silently accepting values that
+    should be rejected and returning strings where callers expect ints.
+    """
+
+    def test_attributes_unchanged_after_failed_parse(self) -> None:
+        """After a zero-args MissingParameter, required, type and callback are intact."""
         group = _load_group("schemas")
         delete_cmd = group.commands["delete"]
         pos_params = [p for p in delete_cmd.params if isinstance(p, click.Argument)]
-        # Record original flags.
+        # Record originals before any parse.
         original_required = {p.name: p.required for p in pos_params}
+        original_types = {p.name: p.type for p in pos_params}
+        original_callbacks = {p.name: p.callback for p in pos_params}
 
         # Trigger a failed parse (zero args -> MissingParameter).
         with pytest.raises((click.MissingParameter, click.UsageError)):
             _make_context(delete_cmd, []).close()
 
-        # Flags must be exactly as before.
         for p in pos_params:
             assert p.required == original_required[p.name], (
-                f"required flag for {p.name!r} was mutated: "
-                f"expected {original_required[p.name]}, got {p.required}"
+                f"required for {p.name!r} was mutated after failed parse"
+            )
+            assert p.type is original_types[p.name], (
+                f"type for {p.name!r} was mutated after failed parse: "
+                f"expected {original_types[p.name]!r}, got {p.type!r}"
+            )
+            assert p.callback is original_callbacks[p.name], (
+                f"callback for {p.name!r} was mutated after failed parse"
             )
 
-    def test_required_unchanged_after_successful_parse(self) -> None:
-        """After a short-form parse, p.required is still as declared."""
+    def test_attributes_unchanged_after_successful_parse(self) -> None:
+        """After a short-form parse, required, type and callback are intact."""
         group = _load_group("schemas")
         delete_cmd = group.commands["delete"]
         pos_params = [p for p in delete_cmd.params if isinstance(p, click.Argument)]
         original_required = {p.name: p.required for p in pos_params}
+        original_types = {p.name: p.type for p in pos_params}
+        original_callbacks = {p.name: p.callback for p in pos_params}
 
         ctx = _make_context(delete_cmd, ["my_schema"])
         ctx.close()
 
         for p in pos_params:
             assert p.required == original_required[p.name], (
-                f"required flag for {p.name!r} was mutated after successful parse"
+                f"required for {p.name!r} was mutated after successful parse"
+            )
+            assert p.type is original_types[p.name], (
+                f"type for {p.name!r} was mutated after successful parse"
+            )
+            assert p.callback is original_callbacks[p.name], (
+                f"callback for {p.name!r} was mutated after successful parse"
             )

@@ -364,8 +364,8 @@ def _wrap_parse_args_for_right_align(cmd: click.Command) -> None:
     Shape requirements (all must hold, otherwise the original parse_args is
     called unmodified):
 
-    * Exactly one leading optional positional followed by one or more required
-      positionals (``[opt] req+``).
+    * Exactly one leading optional positional whose ``default`` is ``None``,
+      followed by one or more required positionals (``[opt] req+``).
     * All positionals have ``nargs == 1`` (no variadic arguments).
     * No trailing optional positional after the required ones.
 
@@ -380,8 +380,13 @@ def _wrap_parse_args_for_right_align(cmd: click.Command) -> None:
         if ctx.resilient_parsing:
             return original_parse_args(ctx, args)
 
-        # Help flags are eager: skip the relaxation window so that required
-        # positionals are not rendered as optional in the generated help text.
+        # Bail out immediately for help tokens so that the relaxation window
+        # below does not make required positionals appear optional in the
+        # generated help text.  The scan deliberately ignores ``--`` (the
+        # end-of-options marker): ``--help`` is not a plausible positional
+        # value (schema name, session id, etc.), so "fdw cmd -- --help"
+        # produces the same Click error it always would -- no silent
+        # mis-binding occurs.
         if any(a in _HELP_TOKENS for a in args):
             return original_parse_args(ctx, args)
 
@@ -404,6 +409,14 @@ def _wrap_parse_args_for_right_align(cmd: click.Command) -> None:
         if any(p.nargs != 1 for p in pos_params):
             return original_parse_args(ctx, args)
         if any(not p.required for p in pos_params[1:]):
+            return original_parse_args(ctx, args)
+
+        # Guard against a leading optional with a non-None default.  The reset
+        # below unconditionally stores None in that slot, which would silently
+        # discard any real default.  All current leading optionals declare
+        # ``default=None``; bailing out here protects against a future command
+        # that uses a different default without realising the impact.
+        if pos_params[0].default is not None:
             return original_parse_args(ctx, args)
 
         # Temporarily relax all positionals (required=False, type=STRING,
