@@ -46,7 +46,7 @@ Delete a user-defined restore point. System-created restore points cannot be del
 **Synopsis**
 
 ```
-fdw [-w WORKSPACE] restore-points delete WAREHOUSE RESTORE_POINT_ID
+fdw [-w WORKSPACE] restore-points delete [WAREHOUSE] RESTORE_POINT_ID
 ```
 
 **Example**
@@ -64,7 +64,7 @@ Get details for a single restore point by ID.
 **Synopsis**
 
 ```
-fdw [-w WORKSPACE] restore-points get WAREHOUSE RESTORE_POINT_ID
+fdw [-w WORKSPACE] restore-points get [WAREHOUSE] RESTORE_POINT_ID
 ```
 
 **Example**
@@ -106,7 +106,7 @@ Rename a restore point and optionally update its description.
 **Synopsis**
 
 ```
-fdw [-w WORKSPACE] restore-points rename [OPTIONS] WAREHOUSE RESTORE_POINT_ID NEW_NAME
+fdw [-w WORKSPACE] restore-points rename [OPTIONS] [WAREHOUSE] RESTORE_POINT_ID NEW_NAME
 ```
 
 | Option | Description |
@@ -128,7 +128,7 @@ Restore a warehouse in-place to a restore point. **This is a destructive operati
 **Synopsis**
 
 ```
-fdw [-w WORKSPACE] restore-points restore WAREHOUSE RESTORE_POINT_ID
+fdw [-w WORKSPACE] restore-points restore [WAREHOUSE] RESTORE_POINT_ID
 ```
 
 **Example**

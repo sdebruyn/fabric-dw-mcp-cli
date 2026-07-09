@@ -21,6 +21,20 @@ Resolution order for the workspace (see also [Selecting a workspace](../concepts
 
 The warehouse follows the same order using the optional `[WAREHOUSE]` / `[ITEM]` positional or `FABRIC_DW_DEFAULT_WAREHOUSE`.
 
+For example, once a default workspace and warehouse are stored, commands that show `[WAREHOUSE]` or `[ITEM]` in brackets can be invoked without repeating those values:
+
+```shell
+# Without defaults: every argument must be supplied explicitly.
+fdw schemas delete MyWarehouse my_old_schema
+
+# With defaults configured: omit the optional warehouse positional.
+fdw config set workspace MyWorkspace
+fdw config set warehouse MyWarehouse
+fdw schemas delete my_old_schema
+```
+
+The short form `fdw schemas delete my_old_schema` is equivalent: the stored warehouse is resolved automatically and `my_old_schema` is treated as the schema name, not the warehouse.
+
 ## HTTP retry budget
 
 The 429 retry budget (consecutive retries and combined wall-clock deadline) can also be configured. Resolution order:

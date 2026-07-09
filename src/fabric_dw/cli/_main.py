@@ -10,6 +10,7 @@ import time
 from typing import Any
 
 import click
+from click.core import ParameterSource
 
 from fabric_dw import __version__
 from fabric_dw.auth import CredentialMode
@@ -314,6 +315,15 @@ def _patch_command_for_global_options(cmd: click.Command) -> None:
 
     Recurses into sub-groups' already-registered commands so that nested
     command trees are fully covered when a sub-group is added to the root.
+
+    For leaf commands, also wraps ``parse_args`` to right-align positional
+    values onto declared slots.  This fixes commands that have one or more
+    leading optional positionals followed by one or more required positionals:
+    Click fills slots strictly left-to-right (ignoring ``required``), so the
+    first supplied value normally lands in the optional slot and the required
+    slot is reported missing.  The wrapper detects this shape and redistributes
+    the supplied values so trailing required slots are filled first, leaving the
+    leading optional slot empty when the user omits the warehouse / item.
     """
     if getattr(cmd, "_global_opts_patched", False):
         return
@@ -332,6 +342,143 @@ def _patch_command_for_global_options(cmd: click.Command) -> None:
     if isinstance(cmd, click.Group):
         for sub in cmd.commands.values():
             _patch_command_for_global_options(sub)
+    else:
+        # Right-align positional arguments for leaf commands that have one or
+        # more leading optional positionals followed by required positionals.
+        _wrap_parse_args_for_right_align(cmd)
+
+
+_HELP_TOKENS: frozenset[str] = frozenset(("-h", "--help"))
+
+
+def _wrap_parse_args_for_right_align(cmd: click.Command) -> None:
+    """Wrap ``cmd.parse_args`` to right-align supplied positional values.
+
+    When a command declares ``[opt] req1 req2`` and the user omits the
+    optional positional, Click fills the optional slot with the first supplied
+    value and leaves the required slot empty.  This wrapper detects that shape
+    and redistributes the values so required slots are filled first, then calls
+    ``Parameter.process_value`` on each relocated slot so that type conversion
+    (e.g. Choice case-normalisation, INT casting) is applied correctly.
+
+    Shape requirements (all must hold, otherwise the original parse_args is
+    called unmodified):
+
+    * Exactly one leading optional positional whose ``default`` is ``None``,
+      followed by one or more required positionals (``[opt] req+``).
+    * All positionals have ``nargs == 1`` (no variadic arguments).
+    * No trailing optional positional after the required ones.
+
+    Shell completion (``ctx.resilient_parsing=True``) and help-flag invocations
+    (``--help`` / ``-h``) bypass the wrapper so completion candidates and help
+    text are never perturbed.
+    """
+    original_parse_args = cmd.parse_args
+
+    def _wrapped_parse_args(ctx: click.Context, args: list[str]) -> list[str]:  # noqa: PLR0911,PLR0912
+        # Shell completion must not be perturbed.
+        if ctx.resilient_parsing:
+            return original_parse_args(ctx, args)
+
+        # Bail out immediately for help tokens so that the relaxation window
+        # below does not make required positionals appear optional in the
+        # generated help text.  The scan deliberately ignores ``--`` (the
+        # end-of-options marker): ``--help`` is not a plausible positional
+        # value (schema name, session id, etc.), so "fdw cmd -- --help"
+        # produces the same Click error it always would -- no silent
+        # mis-binding occurs.
+        if any(a in _HELP_TOKENS for a in args):
+            return original_parse_args(ctx, args)
+
+        pos_params = [p for p in cmd.params if isinstance(p, click.Argument)]
+
+        # Count consecutive leading optional positionals.
+        n_leading_optional = 0
+        for p in pos_params:
+            if not p.required:
+                n_leading_optional += 1
+            else:
+                break
+
+        n_required = sum(1 for p in pos_params if p.required)
+
+        # Shape guard: exactly one leading optional, all others required, no
+        # variadic arguments, no trailing optional after the required ones.
+        if n_leading_optional != 1 or n_required == 0:
+            return original_parse_args(ctx, args)
+        if any(p.nargs != 1 for p in pos_params):
+            return original_parse_args(ctx, args)
+        if any(not p.required for p in pos_params[1:]):
+            return original_parse_args(ctx, args)
+
+        # Guard against a leading optional with a non-None default.  The reset
+        # below unconditionally stores None in that slot, which would silently
+        # discard any real default.  All current leading optionals declare
+        # ``default=None``; bailing out here protects against a future command
+        # that uses a different default without realising the impact.
+        if pos_params[0].default is not None:
+            return original_parse_args(ctx, args)
+
+        # Temporarily relax all positionals (required=False, type=STRING,
+        # callback=None) so Click fills every slot with raw strings without
+        # raising MissingParameter or triggering callbacks.  The params are
+        # module-level singletons, so restoration must happen unconditionally
+        # even if parse_args raises (e.g. on over-supply).
+        saved_required = [p.required for p in pos_params]
+        saved_types = [p.type for p in pos_params]
+        saved_callbacks = [p.callback for p in pos_params]
+        for p in pos_params:
+            p.required = False
+            p.type = click.STRING
+            p.callback = None
+        try:
+            result = original_parse_args(ctx, args)
+        finally:
+            for p, req, typ, cb in zip(
+                pos_params, saved_required, saved_types, saved_callbacks, strict=False
+            ):
+                p.required = req
+                p.type = typ
+                p.callback = cb
+
+        # Collect raw strings Click assigned from the command line, in
+        # declaration order.  Because type=STRING was active, all COMMANDLINE
+        # values are plain strings regardless of the original param type.
+        cl_values = [
+            ctx.params[p.name]
+            for p in pos_params
+            if ctx.get_parameter_source(p.name) is ParameterSource.COMMANDLINE
+        ]
+        n_cl = len(cl_values)
+        n_pos = len(pos_params)
+        opt_param = pos_params[0]
+        req_params_list = pos_params[1:]  # all required (shape guard above)
+
+        if n_cl == n_pos:
+            # Full form: all slots were provided.  No relocation needed, but
+            # types were STRING during the delegated parse so we must call
+            # process_value on every slot to apply type conversion and callbacks.
+            for p in pos_params:
+                if ctx.get_parameter_source(p.name) is ParameterSource.COMMANDLINE:
+                    ctx.params[p.name] = p.process_value(ctx, ctx.params[p.name])
+            return result
+
+        # Short form: fewer values than slots.  Reset the optional slot and
+        # distribute the collected raw values to the required slots, applying
+        # type conversion and callbacks via process_value.
+        ctx.params[opt_param.name] = None
+        ctx.set_parameter_source(opt_param.name, ParameterSource.DEFAULT)
+
+        for idx, p in enumerate(req_params_list):
+            if idx < n_cl:
+                ctx.params[p.name] = p.process_value(ctx, cl_values[idx])
+                ctx.set_parameter_source(p.name, ParameterSource.COMMANDLINE)
+            else:
+                raise click.MissingParameter(ctx=ctx, param=p)
+
+        return result
+
+    cmd.parse_args = _wrapped_parse_args  # ty: ignore[invalid-assignment]
 
 
 # ---------------------------------------------------------------------------
