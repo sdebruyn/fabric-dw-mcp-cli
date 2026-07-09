@@ -81,7 +81,7 @@ def _test_value_for_type(param_type: click.ParamType) -> str:
     if isinstance(param_type, click.types.FloatParamType):
         return "1.0"
     if isinstance(param_type, click.Choice):
-        return param_type.choices[0]
+        return str(param_type.choices[0])
     if isinstance(param_type, click.types.UUIDParameterType):
         return "00000000-0000-0000-0000-000000000001"
     if isinstance(param_type, click.types.BoolParamType):
