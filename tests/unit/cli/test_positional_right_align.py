@@ -6,7 +6,9 @@ the optional is omitted, because Click fills slots left-to-right and the first
 supplied value lands in the optional slot.
 
 The fix wraps `parse_args` on every leaf command that has this shape so that
-supplied values are right-aligned onto the required slots first.
+supplied values are right-aligned onto the required slots first, and type
+conversion / normalisation is applied via ``process_value`` on every relocated
+slot.
 
 All tests are parse-only (no Fabric connection, no destructive ops).
 """
@@ -14,6 +16,7 @@ All tests are parse-only (no Fabric connection, no destructive ops).
 from __future__ import annotations
 
 import importlib
+import uuid
 from collections.abc import AsyncIterator, Generator
 from contextlib import asynccontextmanager, contextmanager
 from typing import Any
@@ -85,6 +88,27 @@ def _test_value_for_type(param_type: click.ParamType) -> str:
         return "true"
     # STRING, Path, unrecognised: use a safe generic string.
     return "val"
+
+
+def _expected_python_value(param_type: click.ParamType, raw: str) -> Any:
+    """Return the Python value expected after Click type conversion of *raw*.
+
+    Used by the drift guard to verify that ``process_value`` was called so
+    that type conversion (INT casting, Choice normalisation, UUID parsing)
+    is applied to relocated positional values.
+    """
+    if isinstance(param_type, click.types.IntParamType):
+        return int(raw)
+    if isinstance(param_type, click.types.FloatParamType):
+        return float(raw)
+    if isinstance(param_type, click.types.UUIDParameterType):
+        return uuid.UUID(raw)
+    if isinstance(param_type, click.types.BoolParamType):
+        return raw.lower() in ("1", "true", "t", "yes", "y", "on")
+    # Choice, STRING, Path, unrecognised: value is returned as a string.
+    # _test_value_for_type returns choices[0] verbatim, which matches exactly,
+    # so Choice.convert returns it unchanged (no case mutation needed here).
+    return raw
 
 
 @contextmanager
@@ -172,7 +196,12 @@ class TestDriftGuard:
         opt_params: list[click.Argument],
         req_params: list[click.Argument],
     ) -> None:
-        """Supplying only the required positionals leaves optional slots empty."""
+        """Supplying only the required positionals leaves optional slots empty.
+
+        Also verifies that type conversion was applied (e.g. INT args become
+        Python ints, Choice args are normalised) so that ``process_value`` is
+        confirmed to have been called on every relocated slot.
+        """
         args = [_test_value_for_type(p.type) for p in req_params]
 
         with _relaxed_options(cmd):
@@ -182,10 +211,19 @@ class TestDriftGuard:
                 assert ctx.params[p.name] is None, (
                     f"{dotted_name}: optional slot {p.name!r} should be None in short form"
                 )
-            for p in req_params:
-                # Check source rather than value; type conversion may alter representation.
+            for p, raw in zip(req_params, args, strict=False):
                 assert ctx.get_parameter_source(p.name) is ParameterSource.COMMANDLINE, (
                     f"{dotted_name}: required slot {p.name!r} must have COMMANDLINE source"
+                )
+                expected = _expected_python_value(p.type, raw)
+                assert ctx.params[p.name] == expected, (
+                    f"{dotted_name}: slot {p.name!r} value {ctx.params[p.name]!r} "
+                    f"should be {expected!r} after type conversion"
+                )
+                assert isinstance(ctx.params[p.name], type(expected)), (
+                    f"{dotted_name}: slot {p.name!r} has Python type "
+                    f"{type(ctx.params[p.name]).__name__!r}, "
+                    f"expected {type(expected).__name__!r}"
                 )
         finally:
             ctx.close()
@@ -197,21 +235,31 @@ class TestDriftGuard:
         opt_params: list[click.Argument],
         req_params: list[click.Argument],
     ) -> None:
-        """Supplying all positionals fills every slot in declaration order."""
-        all_args = [_test_value_for_type(p.type) for p in opt_params] + [
-            _test_value_for_type(p.type) for p in req_params
-        ]
+        """Supplying all positionals fills every slot in declaration order.
+
+        Also verifies that type conversion was applied to each slot so that
+        the full form does not regress when ``type=STRING`` is used during the
+        delegated parse.
+        """
+        all_params = opt_params + req_params
+        all_args = [_test_value_for_type(p.type) for p in all_params]
 
         with _relaxed_options(cmd):
             ctx = _make_context(cmd, all_args)
         try:
-            for p in opt_params:
+            for p, raw in zip(all_params, all_args, strict=False):
                 assert ctx.get_parameter_source(p.name) is ParameterSource.COMMANDLINE, (
-                    f"{dotted_name}: optional slot {p.name!r} must be COMMANDLINE when supplied"
+                    f"{dotted_name}: slot {p.name!r} must be COMMANDLINE when supplied"
                 )
-            for p in req_params:
-                assert ctx.get_parameter_source(p.name) is ParameterSource.COMMANDLINE, (
-                    f"{dotted_name}: required slot {p.name!r} must be COMMANDLINE when supplied"
+                expected = _expected_python_value(p.type, raw)
+                assert ctx.params[p.name] == expected, (
+                    f"{dotted_name}: slot {p.name!r} value {ctx.params[p.name]!r} "
+                    f"should be {expected!r} after type conversion"
+                )
+                assert isinstance(ctx.params[p.name], type(expected)), (
+                    f"{dotted_name}: slot {p.name!r} has Python type "
+                    f"{type(ctx.params[p.name]).__name__!r}, "
+                    f"expected {type(expected).__name__!r}"
                 )
         finally:
             ctx.close()
@@ -390,6 +438,95 @@ class TestWarehousesRename:
     def test_zero_args_raises_missing(self) -> None:
         with pytest.raises((click.MissingParameter, click.UsageError)):
             _make_context(self.cmd, []).close()
+
+
+# ---------------------------------------------------------------------------
+# Type-conversion regression: Choice normalisation and INT casting
+# ---------------------------------------------------------------------------
+
+
+class TestSettingsResultSetCachingTypeConversion:
+    """settings result-set-caching [item?, state:Choice(['on','off'])].
+
+    Verifies that Choice case-normalisation is applied after right-alignment so
+    that ``fdw settings result-set-caching ON`` stores ``'on'`` (not ``'ON'``).
+    The command body checks ``state == 'on'`` (line 93 of settings.py), so a
+    stale uppercase string would silently disable caching when the user said ON.
+    """
+
+    def setup_method(self) -> None:
+        group = _load_group("settings")
+        self.cmd = group.commands["result-set-caching"]
+
+    def test_short_form_uppercase_is_normalised(self) -> None:
+        """Short form with uppercase 'ON' must store lowercase 'on'."""
+        ctx = _make_context(self.cmd, ["ON"])
+        try:
+            assert ctx.params["item"] is None
+            assert ctx.params["state"] == "on", (
+                f"Expected 'on' after Choice normalisation, got {ctx.params['state']!r}"
+            )
+            assert ctx.get_parameter_source("state") is ParameterSource.COMMANDLINE
+        finally:
+            ctx.close()
+
+    def test_short_form_lowercase_is_unchanged(self) -> None:
+        ctx = _make_context(self.cmd, ["on"])
+        try:
+            assert ctx.params["item"] is None
+            assert ctx.params["state"] == "on"
+        finally:
+            ctx.close()
+
+    def test_full_form_uppercase_is_normalised(self) -> None:
+        """Full form with uppercase 'ON' must also store lowercase 'on'."""
+        ctx = _make_context(self.cmd, ["MyWH", "ON"])
+        try:
+            assert ctx.params["item"] == "MyWH"
+            assert ctx.params["state"] == "on", (
+                f"Expected 'on' after Choice normalisation, got {ctx.params['state']!r}"
+            )
+        finally:
+            ctx.close()
+
+    def test_invalid_state_raises(self) -> None:
+        with pytest.raises((click.BadParameter, click.UsageError, SystemExit)):
+            _make_context(self.cmd, ["INVALID"]).close()
+
+
+class TestQueriesKillTypeConversion:
+    """queries kill [item?, session_id:INT].
+
+    Verifies that INT casting is applied after right-alignment so that
+    ``fdw queries kill 12345`` stores the Python int ``12345``, not the
+    string ``'12345'``.
+    """
+
+    def setup_method(self) -> None:
+        group = _load_group("queries")
+        self.cmd = group.commands["kill"]
+
+    def test_short_form_session_id_is_int(self) -> None:
+        ctx = _make_context(self.cmd, ["12345"])
+        try:
+            assert ctx.params["item"] is None
+            assert ctx.params["session_id"] == 12345
+            assert isinstance(ctx.params["session_id"], int)
+        finally:
+            ctx.close()
+
+    def test_full_form_session_id_is_int(self) -> None:
+        ctx = _make_context(self.cmd, ["MyWH", "12345"])
+        try:
+            assert ctx.params["item"] == "MyWH"
+            assert ctx.params["session_id"] == 12345
+            assert isinstance(ctx.params["session_id"], int)
+        finally:
+            ctx.close()
+
+    def test_non_integer_raises(self) -> None:
+        with pytest.raises((click.BadParameter, click.UsageError, SystemExit)):
+            _make_context(self.cmd, ["not_an_int"]).close()
 
 
 # ---------------------------------------------------------------------------

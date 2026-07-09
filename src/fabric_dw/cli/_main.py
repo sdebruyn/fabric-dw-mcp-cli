@@ -348,26 +348,41 @@ def _patch_command_for_global_options(cmd: click.Command) -> None:
         _wrap_parse_args_for_right_align(cmd)
 
 
+_HELP_TOKENS: frozenset[str] = frozenset(("-h", "--help"))
+
+
 def _wrap_parse_args_for_right_align(cmd: click.Command) -> None:
     """Wrap ``cmd.parse_args`` to right-align supplied positional values.
 
-    When a command declares ``[opt?] req1 req2`` and the user omits the
+    When a command declares ``[opt] req1 req2`` and the user omits the
     optional positional, Click fills the optional slot with the first supplied
     value and leaves the required slot empty.  This wrapper detects that shape
-    and redistributes the values so required slots are filled first.
+    and redistributes the values so required slots are filled first, then calls
+    ``Parameter.process_value`` on each relocated slot so that type conversion
+    (e.g. Choice case-normalisation, INT casting) is applied correctly.
 
-    Only the leading consecutive optional positionals are right-aligned.  An
-    optional positional that follows a required one (unusual and not present in
-    this codebase) is left as-is.
+    Shape requirements (all must hold, otherwise the original parse_args is
+    called unmodified):
 
-    Shell completion (``ctx.resilient_parsing=True``) bypasses the wrapper so
-    completion candidates are never perturbed.
+    * Exactly one leading optional positional followed by one or more required
+      positionals (``[opt] req+``).
+    * All positionals have ``nargs == 1`` (no variadic arguments).
+    * No trailing optional positional after the required ones.
+
+    Shell completion (``ctx.resilient_parsing=True``) and help-flag invocations
+    (``--help`` / ``-h``) bypass the wrapper so completion candidates and help
+    text are never perturbed.
     """
     original_parse_args = cmd.parse_args
 
-    def _wrapped_parse_args(ctx: click.Context, args: list[str]) -> list[str]:  # noqa: PLR0912
+    def _wrapped_parse_args(ctx: click.Context, args: list[str]) -> list[str]:  # noqa: PLR0911,PLR0912
         # Shell completion must not be perturbed.
         if ctx.resilient_parsing:
+            return original_parse_args(ctx, args)
+
+        # Help flags are eager: skip the relaxation window so that required
+        # positionals are not rendered as optional in the generated help text.
+        if any(a in _HELP_TOKENS for a in args):
             return original_parse_args(ctx, args)
 
         pos_params = [p for p in cmd.params if isinstance(p, click.Argument)]
@@ -380,47 +395,70 @@ def _wrap_parse_args_for_right_align(cmd: click.Command) -> None:
             else:
                 break
 
-        # Count required positionals.
         n_required = sum(1 for p in pos_params if p.required)
 
-        # No right-align needed: either no leading optional or no required slot.
-        if n_leading_optional == 0 or n_required == 0:
+        # Shape guard: exactly one leading optional, all others required, no
+        # variadic arguments, no trailing optional after the required ones.
+        if n_leading_optional != 1 or n_required == 0:
+            return original_parse_args(ctx, args)
+        if any(p.nargs != 1 for p in pos_params):
+            return original_parse_args(ctx, args)
+        if any(not p.required for p in pos_params[1:]):
             return original_parse_args(ctx, args)
 
-        # Temporarily relax all positionals so Click does not raise
-        # MissingParameter internally before we can reorder.  The params are
-        # singletons on a module-level Command, so restoration must happen
-        # unconditionally even if parse_args raises (e.g. over-supply).
+        # Temporarily relax all positionals (required=False, type=STRING,
+        # callback=None) so Click fills every slot with raw strings without
+        # raising MissingParameter or triggering callbacks.  The params are
+        # module-level singletons, so restoration must happen unconditionally
+        # even if parse_args raises (e.g. on over-supply).
         saved_required = [p.required for p in pos_params]
+        saved_types = [p.type for p in pos_params]
+        saved_callbacks = [p.callback for p in pos_params]
         for p in pos_params:
             p.required = False
+            p.type = click.STRING
+            p.callback = None
         try:
             result = original_parse_args(ctx, args)
         finally:
-            for p, req in zip(pos_params, saved_required, strict=False):
+            for p, req, typ, cb in zip(
+                pos_params, saved_required, saved_types, saved_callbacks, strict=False
+            ):
                 p.required = req
+                p.type = typ
+                p.callback = cb
 
-        # Collect values Click assigned from the command line, in slot order.
+        # Collect raw strings Click assigned from the command line, in
+        # declaration order.  Because type=STRING was active, all COMMANDLINE
+        # values are plain strings regardless of the original param type.
         cl_values = [
             ctx.params[p.name]
             for p in pos_params
             if ctx.get_parameter_source(p.name) is ParameterSource.COMMANDLINE
         ]
+        n_cl = len(cl_values)
+        n_pos = len(pos_params)
+        opt_param = pos_params[0]
+        req_params_list = pos_params[1:]  # all required (shape guard above)
 
-        # All slots already filled: nothing to reorder.
-        if len(cl_values) == len(pos_params):
+        if n_cl == n_pos:
+            # Full form: all slots were provided.  No relocation needed, but
+            # types were STRING during the delegated parse so we must call
+            # process_value on every slot to apply type conversion and callbacks.
+            for p in pos_params:
+                if ctx.get_parameter_source(p.name) is ParameterSource.COMMANDLINE:
+                    ctx.params[p.name] = p.process_value(ctx, ctx.params[p.name])
             return result
 
-        # Reset the leading optional slots so they do not carry a stale value.
-        for p in pos_params[:n_leading_optional]:
-            ctx.params[p.name] = None
-            ctx.set_parameter_source(p.name, ParameterSource.DEFAULT)
+        # Short form: fewer values than slots.  Reset the optional slot and
+        # distribute the collected raw values to the required slots, applying
+        # type conversion and callbacks via process_value.
+        ctx.params[opt_param.name] = None
+        ctx.set_parameter_source(opt_param.name, ParameterSource.DEFAULT)
 
-        # Fill required slots left-to-right from the collected values.
-        required_params = [p for p in pos_params if p.required]
-        for idx, p in enumerate(required_params):
-            if idx < len(cl_values):
-                ctx.params[p.name] = cl_values[idx]
+        for idx, p in enumerate(req_params_list):
+            if idx < n_cl:
+                ctx.params[p.name] = p.process_value(ctx, cl_values[idx])
                 ctx.set_parameter_source(p.name, ParameterSource.COMMANDLINE)
             else:
                 raise click.MissingParameter(ctx=ctx, param=p)
