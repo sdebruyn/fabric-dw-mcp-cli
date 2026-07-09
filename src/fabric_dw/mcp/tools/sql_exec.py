@@ -37,6 +37,13 @@ def register(mcp: FastMCP) -> None:
         """Execute an arbitrary SQL statement or batch against a warehouse or SQL Analytics
         Endpoint.
 
+        Prefer dedicated tools for common operations: use read_table or read_view to
+        fetch rows, count_table_rows or count_view_rows to count, list_tables,
+        list_views, list_schemas to discover objects, get_table_columns or
+        get_view_columns to inspect schemas, and delete_table, rename_table, or
+        clear_table to mutate. Dedicated tools return structured, typed results with
+        no dialect pitfalls or batch-truncation surprises.
+
         WARNING: this tool executes arbitrary SQL against the target. DDL (DROP,
         ALTER, TRUNCATE) and DML (DELETE, UPDATE) are permitted unless
         ``FABRIC_MCP_READONLY=1`` is set. Use only when the user explicitly
