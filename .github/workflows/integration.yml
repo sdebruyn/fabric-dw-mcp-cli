@@ -99,6 +99,13 @@ jobs:
 
       - run: uv sync --frozen
 
+      - name: Build wheel and install for journey test
+        run: |
+          uv build --wheel --out-dir /tmp/fabric-dw-wheel
+          python -m venv /tmp/journey-venv
+          /tmp/journey-venv/bin/pip install --quiet /tmp/fabric-dw-wheel/*.whl
+          echo "FABRIC_DW_JOURNEY_BIN=/tmp/journey-venv/bin/fabric-dw" >> "$GITHUB_ENV"
+
       - name: Pre-test full workspace wipe
         env:
           FABRIC_TEST_WORKSPACE_ID: ${{ secrets.FABRIC_TEST_WORKSPACE_ID }}
