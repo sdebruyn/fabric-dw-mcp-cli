@@ -28,8 +28,9 @@ FABRIC_DW_DEFAULT_WAREHOUSE, so the workspace written in step 3 and the warehous
 written in step 6 are the sole resolution sources -- the config-file path is
 genuinely exercised for both defaults in phase 2.
 
-IMPORTANT: steps 4 and 9 WILL FAIL on main until #981 is merged and this branch
-is rebased.  That is intentional -- the test exists to guard against regressions.
+Steps 4 and 9 are the regression guard for the fix shipped in #981.  A future
+change that re-introduces the leading-optional-positional parse bug would drive
+these steps red through _step -> pytest.fail.
 """
 
 from __future__ import annotations
@@ -207,9 +208,9 @@ async def test_config_defaults_journey(  # noqa: PLR0915
             _step("config", "set", "workspace", workspace_id, env=env_pre())
 
             # Step 4: schemas create IN SHORT FORM -- #981 regression guard.
-            # The warehouse is OMITTED here; Click must NOT assign schema_name to
-            # the optional ITEM slot and then complain that NAME is missing.
-            # This step WILL FAIL on main until #981 is merged.
+            # The warehouse is OMITTED here; the right-align fix shipped in #981
+            # ensures Click binds item=None, name=schema_name instead of
+            # assigning schema_name to the optional ITEM slot.
             #
             # Set the flag BEFORE calling _step so the finally-block cleanup runs
             # even if _step raises on a forbidden stderr pattern after the schema
@@ -283,7 +284,7 @@ async def test_config_defaults_journey(  # noqa: PLR0915
             # Step 9: schemas delete IN SHORT FORM -- #981 regression guard.
             # NAME is supplied without the optional leading ITEM (warehouse).
             # --yes suppresses the interactive confirmation prompt.
-            # This step WILL FAIL on main until #981 is merged.
+            # The right-align fix (#981) ensures item=None, name=schema_name.
             _step(
                 "--yes",
                 "--json",
