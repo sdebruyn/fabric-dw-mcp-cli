@@ -111,6 +111,20 @@ Two optional environment variables tune the HTTP retry budget:
 | `FABRIC_DW_MAX_429_RETRIES` | Maximum consecutive 429 responses before raising `RateLimitedError` | 10 |
 | `FABRIC_DW_RETRY_DEADLINE_S` | Combined wall-clock deadline (seconds) for 429-loop + 5xx retries | 300.0 |
 
+### Server instructions and tool preference
+
+The server ships a compact instructions block that clients surface in the system prompt before the model takes its first action. It works as a capability map and states one preference rule:
+
+> Prefer dedicated tools over `execute_sql`. Use `execute_sql` only for arbitrary SQL that no dedicated tool can express.
+
+The preference rule exists because `execute_sql` is a general escape hatch that is easy to reach for, but the server exposes purpose-built tools for the common operations:
+
+- **Discover:** `list_schemas`, `list_tables`, `list_views`, `list_functions`, `list_procedures`
+- **Inspect:** `get_table_columns`, `get_view_columns`, `count_table_rows`, `get_table_health_metrics`
+- **Mutate:** `create_table`, `delete_table`, `rename_table`, `clear_table`, `delete_schema`, `transfer_table`
+
+Dedicated tools return typed, structured results and have no SQL dialect pitfalls. `execute_sql` returns only the last result set of a multi-statement batch and base64-encodes `varbinary` columns (with a `__base64` column-name suffix). Both caveats are also documented in `execute_sql`'s own description, so a model holding that tool in context is steered away from it for operations that have a cleaner alternative.
+
 ### Install from the MCP Registry
 
 `fabric-dw-mcp` is also published to the official [MCP Registry](https://registry.modelcontextprotocol.io) as `io.github.sdebruyn/fabric-dw-mcp` on every stable release. Registry-aware clients (VS Code `@mcp`, and others that support registry discovery) can find and install it by that name instead of hand-writing a client config.

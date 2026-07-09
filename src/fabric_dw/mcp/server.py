@@ -76,10 +76,34 @@ from fabric_dw.telemetry_commands import now_ms
 __all__ = ["mcp", "run"]
 
 # ---------------------------------------------------------------------------
+# Server instructions — surfaced to clients in the initialize response.
+# This text is permanently resident in every client's context, so it is a
+# token budget, not a manual: a capability map plus one preference rule.
+# Character budget: 600 chars (asserted in tests/unit/mcp/test_instructions.py).
+# ---------------------------------------------------------------------------
+
+_SERVER_INSTRUCTIONS: str = (
+    "Prefer dedicated tools over execute_sql.\n"
+    "Dedicated tools return typed, structured results and have no SQL dialect pitfalls; "
+    "execute_sql returns only the last result set of a batch and base64-encodes "
+    "varbinary columns.\n"
+    "Discover: list_schemas, list_tables, list_views, list_functions, list_procedures.\n"
+    "Inspect: get_table_columns, get_view_columns, count_table_rows, "
+    "get_table_health_metrics.\n"
+    "Mutate: create_table, delete_table, rename_table, clear_table, delete_schema, "
+    "transfer_table.\n"
+    "Use execute_sql ONLY for arbitrary SQL that no dedicated tool can express."
+)
+
+# ---------------------------------------------------------------------------
 # FastMCP server instance (instrumented subclass emits command_invoked events)
 # ---------------------------------------------------------------------------
 
-mcp: InstrumentedFastMCP = InstrumentedFastMCP("fabric-dw", lifespan=fabric_lifespan)
+mcp: InstrumentedFastMCP = InstrumentedFastMCP(
+    "fabric-dw",
+    lifespan=fabric_lifespan,
+    instructions=_SERVER_INSTRUCTIONS,
+)
 
 # ---------------------------------------------------------------------------
 # Register all domain tools
