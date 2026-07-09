@@ -10,6 +10,7 @@ import time
 from typing import Any
 
 import click
+from click.core import ParameterSource
 
 from fabric_dw import __version__
 from fabric_dw.auth import CredentialMode
@@ -314,6 +315,15 @@ def _patch_command_for_global_options(cmd: click.Command) -> None:
 
     Recurses into sub-groups' already-registered commands so that nested
     command trees are fully covered when a sub-group is added to the root.
+
+    For leaf commands, also wraps ``parse_args`` to right-align positional
+    values onto declared slots.  This fixes commands that have one or more
+    leading optional positionals followed by one or more required positionals:
+    Click fills slots strictly left-to-right (ignoring ``required``), so the
+    first supplied value normally lands in the optional slot and the required
+    slot is reported missing.  The wrapper detects this shape and redistributes
+    the supplied values so trailing required slots are filled first, leaving the
+    leading optional slot empty when the user omits the warehouse / item.
     """
     if getattr(cmd, "_global_opts_patched", False):
         return
@@ -332,6 +342,92 @@ def _patch_command_for_global_options(cmd: click.Command) -> None:
     if isinstance(cmd, click.Group):
         for sub in cmd.commands.values():
             _patch_command_for_global_options(sub)
+    else:
+        # Right-align positional arguments for leaf commands that have one or
+        # more leading optional positionals followed by required positionals.
+        _wrap_parse_args_for_right_align(cmd)
+
+
+def _wrap_parse_args_for_right_align(cmd: click.Command) -> None:
+    """Wrap ``cmd.parse_args`` to right-align supplied positional values.
+
+    When a command declares ``[opt?] req1 req2`` and the user omits the
+    optional positional, Click fills the optional slot with the first supplied
+    value and leaves the required slot empty.  This wrapper detects that shape
+    and redistributes the values so required slots are filled first.
+
+    Only the leading consecutive optional positionals are right-aligned.  An
+    optional positional that follows a required one (unusual and not present in
+    this codebase) is left as-is.
+
+    Shell completion (``ctx.resilient_parsing=True``) bypasses the wrapper so
+    completion candidates are never perturbed.
+    """
+    original_parse_args = cmd.parse_args
+
+    def _wrapped_parse_args(ctx: click.Context, args: list[str]) -> list[str]:  # noqa: PLR0912
+        # Shell completion must not be perturbed.
+        if ctx.resilient_parsing:
+            return original_parse_args(ctx, args)
+
+        pos_params = [p for p in cmd.params if isinstance(p, click.Argument)]
+
+        # Count consecutive leading optional positionals.
+        n_leading_optional = 0
+        for p in pos_params:
+            if not p.required:
+                n_leading_optional += 1
+            else:
+                break
+
+        # Count required positionals.
+        n_required = sum(1 for p in pos_params if p.required)
+
+        # No right-align needed: either no leading optional or no required slot.
+        if n_leading_optional == 0 or n_required == 0:
+            return original_parse_args(ctx, args)
+
+        # Temporarily relax all positionals so Click does not raise
+        # MissingParameter internally before we can reorder.  The params are
+        # singletons on a module-level Command, so restoration must happen
+        # unconditionally even if parse_args raises (e.g. over-supply).
+        saved_required = [p.required for p in pos_params]
+        for p in pos_params:
+            p.required = False
+        try:
+            result = original_parse_args(ctx, args)
+        finally:
+            for p, req in zip(pos_params, saved_required, strict=False):
+                p.required = req
+
+        # Collect values Click assigned from the command line, in slot order.
+        cl_values = [
+            ctx.params[p.name]
+            for p in pos_params
+            if ctx.get_parameter_source(p.name) is ParameterSource.COMMANDLINE
+        ]
+
+        # All slots already filled: nothing to reorder.
+        if len(cl_values) == len(pos_params):
+            return result
+
+        # Reset the leading optional slots so they do not carry a stale value.
+        for p in pos_params[:n_leading_optional]:
+            ctx.params[p.name] = None
+            ctx.set_parameter_source(p.name, ParameterSource.DEFAULT)
+
+        # Fill required slots left-to-right from the collected values.
+        required_params = [p for p in pos_params if p.required]
+        for idx, p in enumerate(required_params):
+            if idx < len(cl_values):
+                ctx.params[p.name] = cl_values[idx]
+                ctx.set_parameter_source(p.name, ParameterSource.COMMANDLINE)
+            else:
+                raise click.MissingParameter(ctx=ctx, param=p)
+
+        return result
+
+    cmd.parse_args = _wrapped_parse_args  # ty: ignore[invalid-assignment]
 
 
 # ---------------------------------------------------------------------------
