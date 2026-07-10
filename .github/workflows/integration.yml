@@ -97,7 +97,7 @@ jobs:
         with:
           python-version: "3.14"
 
-      - run: uv sync --frozen
+      - run: uv sync --locked
 
       - name: Build wheel and install for journey test
         run: |

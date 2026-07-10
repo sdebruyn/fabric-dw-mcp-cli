@@ -33,7 +33,7 @@ jobs:
         with:
           python-version: "3.14"
 
-      - run: uv sync --frozen --no-dev
+      - run: uv sync --locked --no-dev
 
       - name: Compute Docker tags and version
         id: docker_tags

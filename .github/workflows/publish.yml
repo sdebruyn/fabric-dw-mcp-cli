@@ -74,7 +74,7 @@ jobs:
             echo "plugin.json version '$plugin_version' already matches tag '$version'."
           fi
 
-      - run: uv sync --frozen --no-dev
+      - run: uv sync --locked --no-dev
 
       - run: uv build
 
