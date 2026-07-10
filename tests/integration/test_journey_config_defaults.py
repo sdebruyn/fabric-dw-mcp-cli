@@ -27,10 +27,6 @@ use env_post(), which pops both FABRIC_DW_DEFAULT_WORKSPACE and
 FABRIC_DW_DEFAULT_WAREHOUSE, so the workspace written in step 3 and the warehouse
 written in step 6 are the sole resolution sources -- the config-file path is
 genuinely exercised for both defaults in phase 2.
-
-Steps 4 and 9 are the regression guard for the fix shipped in #981.  A future
-change that re-introduces the leading-optional-positional parse bug would drive
-these steps red through _step -> pytest.fail.
 """
 
 from __future__ import annotations
