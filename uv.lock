@@ -712,7 +712,7 @@ requires-dist = [
     { name = "azure-monitor-opentelemetry", specifier = ">=1.6" },
     { name = "click", specifier = ">=8.2" },
     { name = "filelock", specifier = ">=3.16" },
-    { name = "httpx", extras = ["http2"], specifier = ">=0.27" },
+    { name = "httpx", extras = ["http2"], specifier = ">=0.27,<1" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.0,<2" },
     { name = "mssql-python", specifier = ">=1.9.0" },
     { name = "pyarrow", specifier = ">=17.0" },
