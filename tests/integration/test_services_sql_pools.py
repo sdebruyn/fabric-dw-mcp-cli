@@ -16,6 +16,8 @@ from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import SqlPool, SqlPoolsConfiguration
 from fabric_dw.services import sql_pools
 
+from .conftest import SharedWarehouseTarget
+
 # ``maxResourcePercentage`` is a single global budget per workspace (sum ≤ 100),
 # and every test here mutates the one shared ``FABRIC_TEST_WORKSPACE_ID`` config.
 # ``xdist_group`` pins the whole module onto a single xdist worker so these
@@ -121,6 +123,7 @@ async def _remove_stale_pytest_pools(
 async def _clean_stale_pools(
     http: FabricHttpClient,
     workspace_id: UUID,
+    shared_warehouse: SharedWarehouseTarget,  # noqa: ARG001
 ) -> AsyncGenerator[None, None]:
     """Autouse fixture: sweep stale pytest-prefixed pools before every test.
 
@@ -128,6 +131,14 @@ async def _clean_stale_pools(
     left behind by an interrupted prior run is removed before the workspace
     configuration is read or modified.  This protects every test regardless
     of run order.
+
+    The ``shared_warehouse`` parameter is requested for its side effect only:
+    the sql-pools configuration endpoint (GET .../sqlPoolsConfiguration) returns
+    HTTP 500 when the workspace contains no warehouse or SQL analytics endpoint.
+    Declaring this session-scoped fixture as a dependency guarantees that at
+    least one warehouse exists in the workspace before ``get_configuration`` is
+    called here or in any test in this module.
+    See: https://learn.microsoft.com/fabric/data-warehouse/custom-sql-pools#limitations?WT.mc_id=MVP_310840
     """
     await _remove_stale_pytest_pools(http, workspace_id)
     yield
