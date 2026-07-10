@@ -81,9 +81,9 @@ __all__ = ["mcp", "run"]
 # token budget, not a manual: a capability map plus one preference rule.
 # Character budget: 900 chars (asserted in tests/unit/mcp/test_instructions.py).
 # The original 700-char budget covered 18 named tools across 5 domains.
-# The domain index added in issue #992 names 15 additional tool domains,
-# bringing the total to 783 chars. 900 provides ~117 chars of headroom
-# for future minor additions without requiring another budget justification.
+# The domain index added in issue #992 brings the total to 795 chars.
+# 900 provides ~105 chars of headroom for future minor additions without
+# requiring another budget justification.
 # ---------------------------------------------------------------------------
 
 _SERVER_INSTRUCTIONS: str = (
@@ -91,12 +91,13 @@ _SERVER_INSTRUCTIONS: str = (
     "Dedicated tools return typed, structured results and have no SQL dialect pitfalls; "
     "execute_sql returns only the last result set of a batch and base64-encodes "
     "varbinary columns.\n"
-    "Discover: list_schemas, list_tables, list_views, list_functions, list_procedures.\n"
+    "Discover: list_schemas, list_tables, list_views, list_functions, list_procedures, "
+    "list_security_policies, list_masked_columns.\n"
     "Read: read_table, read_view, count_table_rows, count_view_rows.\n"
     "Inspect: get_table_columns, get_view_columns, get_table_health_metrics.\n"
     "Mutate: create_table, delete_table, rename_table, clear_table, delete_schema, "
     "transfer_table.\n"
-    "Also: permissions, security policies, column masks, audit, queries, snapshots, "
+    "Also: permissions, audit, queries, snapshots, "
     "restore points, sql pools, warehouses, workspaces, statistics, settings, "
     "sql endpoints, dbt, cache.\n"
     "Use execute_sql ONLY for arbitrary SQL that no dedicated tool can express."

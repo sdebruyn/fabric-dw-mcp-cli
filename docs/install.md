@@ -119,7 +119,7 @@ The server ships a compact instructions block that clients surface in the system
 
 The preference rule exists because `execute_sql` is a general escape hatch that is easy to reach for, but the server exposes purpose-built tools for the common operations:
 
-- **Discover:** `list_schemas`, `list_tables`, `list_views`, `list_functions`, `list_procedures`
+- **Discover:** `list_schemas`, `list_tables`, `list_views`, `list_functions`, `list_procedures`, `list_security_policies`, `list_masked_columns`
 - **Inspect:** `get_table_columns`, `get_view_columns`, `count_table_rows`, `get_table_health_metrics`
 - **Mutate:** `create_table`, `delete_table`, `rename_table`, `clear_table`, `delete_schema`, `transfer_table`
 
@@ -127,9 +127,7 @@ The instructions also include a domain index naming the remaining tool groups. A
 
 | Domain | Example operations |
 | --- | --- |
-| permissions | `grant_permission`, `deny_permission`, `revoke_permission`, `my_permissions` |
-| security policies | `list_security_policies`, `create_security_policy`, `set_security_policy_state` |
-| column masks | `list_masked_columns`, `set_column_mask`, `drop_column_mask` |
+| permissions | `grant_permission`, `deny_permission`, `revoke_permission`, `my_permissions`, and the security policy and column mask tools listed above |
 | audit | `get_audit_settings`, `enable_audit`, `set_audit_action_groups` |
 | queries | `list_running_queries`, `kill_session`, `list_connections` |
 | snapshots | `list_snapshots`, `create_snapshot`, `roll_snapshot_timestamp` |

@@ -9,9 +9,12 @@ Guards that prevent silent rot:
 3. execute_sql's description opens with a steer toward dedicated alternatives,
    every tool name in that steer is real, and the existing DDL/DML warning
    is still present.
-4. Every domain noun named in the 'Also:' line of the instructions corresponds
-   to at least one live tool, so a domain cannot be silently removed or renamed
-   without the instructions going red.
+4. Domain guard (existence): every domain noun in the 'Also:' line resolves to
+   a known domain via resolve_domain(), so a domain emptied of tools is caught
+   even when other domains' tool names happen to share the same text.
+5. Domain guard (completeness): every live tool domain is either named in the
+   'Also:' line or in the intentional allow-list, so a new domain cannot be
+   added silently without the instructions being updated.
 """
 
 from __future__ import annotations
@@ -21,14 +24,15 @@ import re
 import pytest
 
 from fabric_dw.mcp.server import _SERVER_INSTRUCTIONS, mcp
+from fabric_dw.telemetry_commands import resolve_domain
 
 # ---------------------------------------------------------------------------
 # Character budget for the server instructions block.
 # The text is permanently resident in every client's context, so it must stay
 # compact. The original 700-char budget (~175 tokens) covered 18 named tools
-# across 5 domains. Adding the domain index for 15 uncovered domains (issue
-# #992) brings the text to 783 chars. 900 chars (~225 tokens) provides ~117
-# chars of headroom for future additions without requiring a new justification.
+# across 5 domains. The domain index added in issue #992 brings the text to
+# 795 chars. 900 chars (~225 tokens) provides ~105 chars of headroom for
+# future additions without requiring a new justification.
 # The budget exists to stop the block growing into a manual.
 # ---------------------------------------------------------------------------
 
@@ -52,9 +56,10 @@ def _tool_names_in_text(text: str) -> set[str]:
 # ---------------------------------------------------------------------------
 # Domain index helpers.
 # The 'Also:' line in _SERVER_INSTRUCTIONS lists domain nouns with spaces (no
-# underscores) so the snake_case tool-name guard above ignores them. This
-# helper parses that line and the guard below checks each domain noun has at
-# least one corresponding live tool.
+# underscores) so the snake_case tool-name guard above ignores them entirely.
+# Two guards below check the domain index: one asserts every named domain is
+# live (existence), the other asserts every live domain is named (completeness).
+# Both use resolve_domain() from telemetry_commands - the authoritative mapping.
 # ---------------------------------------------------------------------------
 
 
@@ -72,22 +77,19 @@ def _extract_domain_nouns(text: str) -> list[str]:
     return []
 
 
-def _has_matching_tool(domain_noun: str, live_tools: frozenset[str]) -> bool:
-    """Return True when at least one live tool name corresponds to *domain_noun*.
-
-    Normalises the domain noun to snake_case (spaces -> underscores), then
-    checks whether the normalised key is a substring of any tool name.  Also
-    tries two singular forms to handle English pluralisation:
-    - strip a trailing 's' (e.g. 'column masks' -> 'column_mask')
-    - replace a trailing 'ies' with 'y' (e.g. 'security policies' -> 'security_policy')
-    """
-    key = domain_noun.replace(" ", "_")
-    return (
-        any(key in name for name in live_tools)
-        or (key.endswith("s") and any(key[:-1] in name for name in live_tools))
-        or (key.endswith("ies") and any((key[:-3] + "y") in name for name in live_tools))
-    )
-
+# Domains intentionally absent from the 'Also:' line, with the reason.
+# When a new tool domain is added and test_domain_index_completeness fails,
+# either add the domain to the 'Also:' line or add it here with an explanation.
+_DOMAINS_NAMED_BY_TOOLS: frozenset[str] = frozenset(
+    {
+        "schemas",  # list_schemas in Discover; delete_schema in Mutate
+        "tables",  # list_tables, read_table, etc. in Discover/Read/Inspect/Mutate
+        "views",  # list_views, read_view, etc. in Discover/Read/Inspect
+        "functions",  # list_functions in Discover
+        "procedures",  # list_procedures in Discover
+        "sql",  # execute_sql and get_query_plan; the block steers AWAY from this domain
+    }
+)
 
 # ---------------------------------------------------------------------------
 # Tests
@@ -145,27 +147,50 @@ async def test_instructions_tool_names_all_exist() -> None:
 
 @pytest.mark.asyncio
 async def test_domain_index_all_have_tools() -> None:
-    """Every domain noun in the 'Also:' line must match at least one live tool.
+    """Every domain noun in the 'Also:' line must resolve to a domain with live tools.
 
-    This is the domain-level analogue of test_instructions_tool_names_all_exist.
-    When a domain's tools are removed or the domain is renamed, the instructions
-    must go red rather than silently pointing at nothing.
-
-    Derivation: _extract_domain_nouns parses the 'Also:' line; _has_matching_tool
-    normalises each noun to snake_case and checks for a substring match in live
-    tool names (with singular-form fallbacks for English plurals).
+    Uses resolve_domain() from telemetry_commands - the authoritative mapping -
+    rather than substring heuristics. This means a domain emptied of all its tools
+    causes this test to fail even when other domains' tool names happen to contain
+    the same text (e.g. 'warehouses' would not be rescued by restore_warehouse_in_place
+    or get_warehouse_settings, which belong to different domains).
     """
-    live_tools = frozenset(tool.name for tool in await mcp.list_tools())
+    live_domains = frozenset(resolve_domain(t.name) for t in await mcp.list_tools())
     domain_nouns = _extract_domain_nouns(_SERVER_INSTRUCTIONS)
     assert domain_nouns, (
         "No domain nouns found in _SERVER_INSTRUCTIONS. "
         "Expected an 'Also:' line listing domain names."
     )
-    missing = [d for d in domain_nouns if not _has_matching_tool(d, live_tools)]
+    missing = [d for d in domain_nouns if d.replace(" ", "_") not in live_domains]
     assert not missing, (
         f"Domain(s) in the 'Also:' line have no corresponding live tools: {missing}. "
         "Update _SERVER_INSTRUCTIONS in src/fabric_dw/mcp/server.py to remove or "
         "rename the affected domain(s)."
+    )
+
+
+@pytest.mark.asyncio
+async def test_domain_index_completeness() -> None:
+    """Every live tool domain must be named in the instructions or in the allow-list.
+
+    Guards against a new domain of tools being added without updating the
+    instructions - the failure mode that issue #992 was opened to fix - so it
+    cannot recur silently.
+
+    The allow-list (_DOMAINS_NAMED_BY_TOOLS) covers domains that are already
+    represented by concrete tool names in Discover/Read/Inspect/Mutate, or that
+    the block deliberately steers away from (the sql domain).  Any new domain
+    that does not belong in either category must be added to the 'Also:' line.
+    """
+    live_domains = frozenset(resolve_domain(t.name) for t in await mcp.list_tools())
+    named_in_also = frozenset(
+        d.replace(" ", "_") for d in _extract_domain_nouns(_SERVER_INSTRUCTIONS)
+    )
+    unnamed = live_domains - named_in_also - _DOMAINS_NAMED_BY_TOOLS
+    assert not unnamed, (
+        f"Tool domain(s) are not represented in the server instructions: {sorted(unnamed)}. "
+        "Add them to the 'Also:' line in _SERVER_INSTRUCTIONS, or to "
+        "_DOMAINS_NAMED_BY_TOOLS if they are already covered by named tools."
     )
 
 
