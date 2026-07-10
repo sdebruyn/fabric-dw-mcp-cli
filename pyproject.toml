@@ -51,7 +51,13 @@ classifiers = [
 dependencies = [
     "azure-identity>=1.19",
     "pydantic>=2.9",
-    "httpx[http2]>=0.27",
+    # Upper bound <1: httpx 1.0.dev* removed both httpx.TransportError and the http2
+    # extra. httpx-sse (a transitive dep via mcp) subclasses TransportError, so any
+    # 1.x pre-release breaks the MCP transport layer at import time. No stable httpx
+    # 1.0 has shipped yet; all evidence from the dev releases points to TransportError
+    # being gone permanently. The MCP SDK itself adopted the same <1.0.0 ceiling.
+    # Remove or raise this bound only after httpx-sse ships explicit httpx 1.x support.
+    "httpx[http2]>=0.27,<1",
     "aiolimiter>=1.2",
     "tenacity>=9",
     "mssql-python>=1.9.0",

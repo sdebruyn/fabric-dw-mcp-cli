@@ -78,6 +78,18 @@ jobs:
 
       - run: uv build
 
+      - name: Pre-release resolver smoke test
+        # Install the just-built wheel in a fresh environment with --prerelease allow so the
+        # dependency resolver sees the same candidates a user running
+        #   uvx --prerelease allow --from fabric-dw@latest fdw --version
+        # would see.  This is intentionally NOT --require-hashes (that would pin the exact
+        # lockfile versions and defeat the purpose).  The test catches resolution-time breaks
+        # like the httpx 1.0.dev* failure in #995, where CI stays green (frozen lockfile)
+        # but the published build breaks for users on the --prerelease allow install path.
+        run: |
+          wheel=$(ls dist/*.whl | head -1)
+          uvx --prerelease allow --from "$wheel" fdw --version
+
       - name: Generate CycloneDX SBOM
         # Use `--from cyclonedx-bom` to invoke the real tool (not the unrelated `cyclonedx-py`
         # package on PyPI, which does not accept --outfile and would fail with exit 2).
