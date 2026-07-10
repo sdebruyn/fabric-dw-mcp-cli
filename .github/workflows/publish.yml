@@ -30,8 +30,53 @@ permissions:
   attestations: write
 
 jobs:
+  smoke-test:
+    name: Pre-release resolver smoke test
+    runs-on: ubuntu-latest
+    # Minimal permissions: this job builds the wheel and installs it under
+    # --prerelease allow to mirror the exact resolver path that users hit via
+    #   uvx --prerelease allow --from fabric-dw@latest fabric-dw-mcp
+    # It runs in a separate job so that pre-release dependency code never executes
+    # inside a context that holds id-token: write or attestations: write.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: astral-sh/setup-uv@v8.3.0
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - run: uv build --wheel
+      - name: Smoke test under --prerelease allow
+        # This step exercises the SAME unpinned resolver path that users hit when
+        # running the MCP server via .mcp.json (uvx --prerelease allow ...).
+        # CI installs from the frozen uv.lock (never sees 1.0.dev*); this step does not.
+        #
+        # The load-bearing check is the MCP server import, NOT fdw --version.
+        # fdw --version runs fabric_dw.cli:main, which never imports httpx_sse or
+        # fabric_dw.mcp.server, so it gives a false green when httpx 1.0.dev* is
+        # resolved (confirmed: exits 0 with httpx==1.0.dev3 force-installed).
+        # Importing fabric_dw.mcp.server triggers the full mcp -> httpx_sse ->
+        # httpx.TransportError chain and fails loudly on any broken httpx version.
+        #
+        # --prerelease allow is kept intentionally even though it widens the candidate
+        # set to ALL transitive pre-releases: removing it would stop reproducing the
+        # exact failure mode from #995. A broken upstream pre-release failing here means
+        # the published build would also be broken for users on that same path, so
+        # blocking publish is the correct outcome.
+        run: |
+          wheel=$(ls dist/*.whl | head -1)
+          uvx --prerelease allow --from "$wheel" python -c "import fabric_dw.mcp.server; print('MCP server importable')"
+          uvx --prerelease allow --from "$wheel" fdw --version
+
   publish:
     runs-on: ubuntu-latest
+    needs: smoke-test
     environment: pypi
     steps:
       # inputs.tag is only set for workflow_dispatch; on branch/tag pushes github.ref is used.
@@ -77,18 +122,6 @@ jobs:
       - run: uv sync --locked --no-dev
 
       - run: uv build
-
-      - name: Pre-release resolver smoke test
-        # Install the just-built wheel in a fresh environment with --prerelease allow so the
-        # dependency resolver sees the same candidates a user running
-        #   uvx --prerelease allow --from fabric-dw@latest fdw --version
-        # would see.  This is intentionally NOT --require-hashes (that would pin the exact
-        # lockfile versions and defeat the purpose).  The test catches resolution-time breaks
-        # like the httpx 1.0.dev* failure in #995, where CI stays green (frozen lockfile)
-        # but the published build breaks for users on the --prerelease allow install path.
-        run: |
-          wheel=$(ls dist/*.whl | head -1)
-          uvx --prerelease allow --from "$wheel" fdw --version
 
       - name: Generate CycloneDX SBOM
         # Use `--from cyclonedx-bom` to invoke the real tool (not the unrelated `cyclonedx-py`
