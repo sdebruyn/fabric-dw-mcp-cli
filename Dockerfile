@@ -17,10 +17,10 @@ ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_FABRIC_DW=${VERSION}
 
 COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY src/ src/
-# Build the wheel, then install all runtime deps from the frozen lock into a venv.
-# uv sync --frozen reads uv.lock and installs exactly the locked versions (no fresh resolution).
+# Build the wheel, then install all runtime deps from the locked lockfile into a venv.
+# uv sync --locked asserts uv.lock is up to date with pyproject.toml, then installs the pinned versions.
 RUN uv build --wheel && \
-    uv sync --frozen --no-dev --no-install-project && \
+    uv sync --locked --no-dev --no-install-project && \
     uv pip install --no-deps dist/*.whl
 
 # Runtime stage — copy the pre-built venv from the build stage (all deps already pinned by lock).
