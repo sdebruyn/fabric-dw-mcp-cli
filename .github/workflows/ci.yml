@@ -28,7 +28,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-      - run: uv sync --frozen
+      - run: uv lock --check
+      - run: uv sync --locked
       - run: uv run ruff check .
       - run: uv run ruff format --check .
 
@@ -45,7 +46,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-      - run: uv sync --frozen
+      - run: uv sync --locked
       - run: uv run ty check src tests
 
   unit:
@@ -68,7 +69,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-      - run: uv sync --frozen
+      - run: uv sync --locked
       - run: uv run pytest tests/unit --cov --cov-branch --cov-report=xml --cov-report=term --junitxml=junit.xml -o junit_family=legacy
       - name: Enforce coverage threshold
         run: uv run coverage report --fail-under=80
@@ -125,7 +126,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       # Install only runtime (production) dependencies — no dev group.
       # This mirrors what `uvx fabric-dw` / `pip install fabric-dw` produces.
-      - run: uv sync --frozen --no-dev
+      - run: uv sync --locked --no-dev
       # Smoke-test both entry points: a missing runtime dep in either import
       # chain will exit non-zero and fail the job.
       - run: uv run --no-dev fabric-dw --help
@@ -170,5 +171,5 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.14"
-      - run: uv sync --frozen
+      - run: uv sync --locked
       - run: uv run pytest tests/unit -m slow -v
