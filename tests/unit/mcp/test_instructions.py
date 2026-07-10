@@ -9,6 +9,9 @@ Guards that prevent silent rot:
 3. execute_sql's description opens with a steer toward dedicated alternatives,
    every tool name in that steer is real, and the existing DDL/DML warning
    is still present.
+4. Every domain noun named in the 'Also:' line of the instructions corresponds
+   to at least one live tool, so a domain cannot be silently removed or renamed
+   without the instructions going red.
 """
 
 from __future__ import annotations
@@ -22,12 +25,14 @@ from fabric_dw.mcp.server import _SERVER_INSTRUCTIONS, mcp
 # ---------------------------------------------------------------------------
 # Character budget for the server instructions block.
 # The text is permanently resident in every client's context, so it must stay
-# compact. 700 characters is roughly 175 tokens - a cheap price for closing
-# the most common misuse path (row reads via execute_sql instead of read_table
-# or read_view). The budget exists to stop the block growing into a manual.
+# compact. The original 700-char budget (~175 tokens) covered 18 named tools
+# across 5 domains. Adding the domain index for 15 uncovered domains (issue
+# #992) brings the text to 783 chars. 900 chars (~225 tokens) provides ~117
+# chars of headroom for future additions without requiring a new justification.
+# The budget exists to stop the block growing into a manual.
 # ---------------------------------------------------------------------------
 
-_INSTRUCTIONS_CHAR_BUDGET = 700
+_INSTRUCTIONS_CHAR_BUDGET = 900
 
 # ---------------------------------------------------------------------------
 # Extract all tool names mentioned in a string.
@@ -42,6 +47,46 @@ _TOOL_NAME_RE = re.compile(r"\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b")
 def _tool_names_in_text(text: str) -> set[str]:
     """Return the set of snake_case tokens in *text* that look like tool names."""
     return set(_TOOL_NAME_RE.findall(text))
+
+
+# ---------------------------------------------------------------------------
+# Domain index helpers.
+# The 'Also:' line in _SERVER_INSTRUCTIONS lists domain nouns with spaces (no
+# underscores) so the snake_case tool-name guard above ignores them. This
+# helper parses that line and the guard below checks each domain noun has at
+# least one corresponding live tool.
+# ---------------------------------------------------------------------------
+
+
+def _extract_domain_nouns(text: str) -> list[str]:
+    """Return the domain nouns listed in the 'Also:' line of the instructions.
+
+    The line has the form ``Also: noun one, noun two, ...``.  Items are
+    stripped of leading/trailing whitespace and trailing punctuation.
+    Returns an empty list when no 'Also:' line is present.
+    """
+    for line in text.splitlines():
+        if line.startswith("Also:"):
+            _, _, rest = line.partition(":")
+            return [item.strip().rstrip(".") for item in rest.split(",") if item.strip()]
+    return []
+
+
+def _has_matching_tool(domain_noun: str, live_tools: frozenset[str]) -> bool:
+    """Return True when at least one live tool name corresponds to *domain_noun*.
+
+    Normalises the domain noun to snake_case (spaces -> underscores), then
+    checks whether the normalised key is a substring of any tool name.  Also
+    tries two singular forms to handle English pluralisation:
+    - strip a trailing 's' (e.g. 'column masks' -> 'column_mask')
+    - replace a trailing 'ies' with 'y' (e.g. 'security policies' -> 'security_policy')
+    """
+    key = domain_noun.replace(" ", "_")
+    return (
+        any(key in name for name in live_tools)
+        or (key.endswith("s") and any(key[:-1] in name for name in live_tools))
+        or (key.endswith("ies") and any((key[:-3] + "y") in name for name in live_tools))
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +140,32 @@ async def test_instructions_tool_names_all_exist() -> None:
         f"The server instructions reference tool(s) that do not exist: {sorted(missing)}. "
         "Update _SERVER_INSTRUCTIONS in src/fabric_dw/mcp/server.py to match "
         "the current tool names."
+    )
+
+
+@pytest.mark.asyncio
+async def test_domain_index_all_have_tools() -> None:
+    """Every domain noun in the 'Also:' line must match at least one live tool.
+
+    This is the domain-level analogue of test_instructions_tool_names_all_exist.
+    When a domain's tools are removed or the domain is renamed, the instructions
+    must go red rather than silently pointing at nothing.
+
+    Derivation: _extract_domain_nouns parses the 'Also:' line; _has_matching_tool
+    normalises each noun to snake_case and checks for a substring match in live
+    tool names (with singular-form fallbacks for English plurals).
+    """
+    live_tools = frozenset(tool.name for tool in await mcp.list_tools())
+    domain_nouns = _extract_domain_nouns(_SERVER_INSTRUCTIONS)
+    assert domain_nouns, (
+        "No domain nouns found in _SERVER_INSTRUCTIONS. "
+        "Expected an 'Also:' line listing domain names."
+    )
+    missing = [d for d in domain_nouns if not _has_matching_tool(d, live_tools)]
+    assert not missing, (
+        f"Domain(s) in the 'Also:' line have no corresponding live tools: {missing}. "
+        "Update _SERVER_INSTRUCTIONS in src/fabric_dw/mcp/server.py to remove or "
+        "rename the affected domain(s)."
     )
 
 

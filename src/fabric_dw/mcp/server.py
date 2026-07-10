@@ -79,10 +79,11 @@ __all__ = ["mcp", "run"]
 # Server instructions: surfaced to clients in the initialize response.
 # This text is permanently resident in every client's context, so it is a
 # token budget, not a manual: a capability map plus one preference rule.
-# Character budget: 700 chars (asserted in tests/unit/mcp/test_instructions.py).
-# 700 is ~175 tokens of permanently-resident context, a cheap price for
-# closing the most common misuse path (row reads via execute_sql instead of
-# read_table / read_view).
+# Character budget: 900 chars (asserted in tests/unit/mcp/test_instructions.py).
+# The original 700-char budget covered 18 named tools across 5 domains.
+# The domain index added in issue #992 names 15 additional tool domains,
+# bringing the total to 783 chars. 900 provides ~117 chars of headroom
+# for future minor additions without requiring another budget justification.
 # ---------------------------------------------------------------------------
 
 _SERVER_INSTRUCTIONS: str = (
@@ -95,6 +96,9 @@ _SERVER_INSTRUCTIONS: str = (
     "Inspect: get_table_columns, get_view_columns, get_table_health_metrics.\n"
     "Mutate: create_table, delete_table, rename_table, clear_table, delete_schema, "
     "transfer_table.\n"
+    "Also: permissions, security policies, column masks, audit, queries, snapshots, "
+    "restore points, sql pools, warehouses, workspaces, statistics, settings, "
+    "sql endpoints, dbt, cache.\n"
     "Use execute_sql ONLY for arbitrary SQL that no dedicated tool can express."
 )
 

@@ -123,6 +123,26 @@ The preference rule exists because `execute_sql` is a general escape hatch that 
 - **Inspect:** `get_table_columns`, `get_view_columns`, `count_table_rows`, `get_table_health_metrics`
 - **Mutate:** `create_table`, `delete_table`, `rename_table`, `clear_table`, `delete_schema`, `transfer_table`
 
+The instructions also include a domain index naming the remaining tool groups. A model that needs to grant a permission, kill a running query, or roll a snapshot can search for tools in the right domain without falling back to `execute_sql`:
+
+| Domain | Example operations |
+| --- | --- |
+| permissions | `grant_permission`, `deny_permission`, `revoke_permission`, `my_permissions` |
+| security policies | `list_security_policies`, `create_security_policy`, `set_security_policy_state` |
+| column masks | `list_masked_columns`, `set_column_mask`, `drop_column_mask` |
+| audit | `get_audit_settings`, `enable_audit`, `set_audit_action_groups` |
+| queries | `list_running_queries`, `kill_session`, `list_connections` |
+| snapshots | `list_snapshots`, `create_snapshot`, `roll_snapshot_timestamp` |
+| restore points | `list_restore_points`, `create_restore_point`, `restore_warehouse_in_place` |
+| sql pools | `list_sql_pools`, `create_sql_pool`, `get_sql_pools_status` |
+| warehouses | `list_warehouses`, `create_warehouse`, `takeover_warehouse` |
+| workspaces | `list_workspaces`, `assign_workspace_to_capacity`, `list_capacities` |
+| statistics | `list_statistics`, `create_statistics`, `update_statistics` |
+| settings | `get_warehouse_settings`, `set_result_set_caching`, `set_time_travel_retention` |
+| sql endpoints | `list_sql_endpoints`, `get_sql_endpoint`, `refresh_sql_endpoint_metadata` |
+| dbt | `generate_dbt_profile` |
+| cache | `clear_cache` |
+
 Dedicated tools return typed, structured results and have no SQL dialect pitfalls. `execute_sql` returns only the last result set of a multi-statement batch and base64-encodes `varbinary` columns (with a `__base64` column-name suffix). Both caveats are also documented in `execute_sql`'s own description, so a model holding that tool in context is steered away from it for operations that have a cleaner alternative.
 
 ### Install from the MCP Registry
