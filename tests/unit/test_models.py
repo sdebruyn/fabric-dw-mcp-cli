@@ -194,7 +194,7 @@ class TestRestorePoint:
         payload = json.loads(RESTORE_POINT_PAYLOAD)
         obj = RestorePoint.from_api(payload)
         with pytest.raises(ValidationError):
-            obj.name = "changed"  # type: ignore[misc]  # ty: ignore[invalid-assignment]
+            obj.name = "changed"  # ty: ignore[invalid-assignment]
 
 
 class TestAuditSettings:
@@ -966,7 +966,7 @@ class TestSqlResult:
     def test_frozen(self) -> None:
         obj = SqlResult()
         with pytest.raises(ValidationError):
-            obj.rowcount = 42  # type: ignore[misc]  # ty: ignore[invalid-assignment]
+            obj.rowcount = 42  # ty: ignore[invalid-assignment]
 
 
 # ---------------------------------------------------------------------------
@@ -1061,7 +1061,7 @@ class TestExecRequestHistoryFieldParsing:
     def test_frozen(self) -> None:
         obj = ExecRequestHistory.model_validate(self._MINIMAL)
         with pytest.raises(ValidationError):
-            obj.row_count = 99  # type: ignore[misc]  # ty: ignore[invalid-assignment]
+            obj.row_count = 99  # ty: ignore[invalid-assignment]
 
 
 # ---------------------------------------------------------------------------
@@ -1144,7 +1144,7 @@ class TestExecSessionHistoryFieldParsing:
     def test_frozen(self) -> None:
         obj = ExecSessionHistory.model_validate(self._MINIMAL)
         with pytest.raises(ValidationError):
-            obj.status = "completed"  # type: ignore[misc]  # ty: ignore[invalid-assignment]
+            obj.status = "completed"  # ty: ignore[invalid-assignment]
 
 
 # ---------------------------------------------------------------------------
