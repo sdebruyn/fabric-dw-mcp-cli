@@ -80,7 +80,7 @@ class TestWorkspace:
         raw = json.loads(WORKSPACE_LIST_PAYLOAD)
         obj = Workspace.model_validate(raw["value"][0])
         with pytest.raises(ValidationError):
-            obj.name = "changed"
+            obj.name = "changed"  # ty: ignore[invalid-assignment]
 
 
 class TestWarehouse:
@@ -120,7 +120,7 @@ class TestWarehouse:
         payload = json.loads(WAREHOUSE_GET_PAYLOAD)
         obj = Warehouse.from_api(payload, kind=WarehouseKind.WAREHOUSE)
         with pytest.raises(ValidationError):
-            obj.name = "changed"
+            obj.name = "changed"  # ty: ignore[invalid-assignment]
 
     def test_workspace_id_field(self) -> None:
         payload = json.loads(WAREHOUSE_GET_PAYLOAD)
@@ -170,7 +170,7 @@ class TestWarehouseSnapshot:
         payload = json.loads(WAREHOUSE_SNAPSHOT_PAYLOAD)
         obj = WarehouseSnapshot.model_validate(payload)
         with pytest.raises(ValidationError):
-            obj.name = "changed"
+            obj.name = "changed"  # ty: ignore[invalid-assignment]
 
 
 class TestRestorePoint:
@@ -194,7 +194,7 @@ class TestRestorePoint:
         payload = json.loads(RESTORE_POINT_PAYLOAD)
         obj = RestorePoint.from_api(payload)
         with pytest.raises(ValidationError):
-            obj.name = "changed"  # type: ignore[misc]
+            obj.name = "changed"  # ty: ignore[invalid-assignment]
 
 
 class TestAuditSettings:
@@ -219,7 +219,7 @@ class TestAuditSettings:
         payload = json.loads(AUDIT_SETTINGS_PAYLOAD)
         obj = AuditSettings.model_validate(payload)
         with pytest.raises(ValidationError):
-            obj.state = "Disabled"
+            obj.state = "Disabled"  # ty: ignore[invalid-assignment]
 
     def test_partial_body_omits_retention_days_defaults_to_zero(self) -> None:
         """A GET body that omits retentionDays must deserialize without raising.
@@ -305,7 +305,7 @@ class TestRunningQuery:
         }
         obj = RunningQuery.model_validate(payload)
         with pytest.raises(ValidationError):
-            obj.status = "completed"
+            obj.status = "completed"  # ty: ignore[invalid-assignment]
 
     def test_request_id_int_coerced_to_str(self) -> None:
         """The mssql driver returns request_id as int (0) for sessions with no active request."""
@@ -966,7 +966,7 @@ class TestSqlResult:
     def test_frozen(self) -> None:
         obj = SqlResult()
         with pytest.raises(ValidationError):
-            obj.rowcount = 42  # type: ignore[misc]
+            obj.rowcount = 42  # ty: ignore[invalid-assignment]
 
 
 # ---------------------------------------------------------------------------
@@ -1061,7 +1061,7 @@ class TestExecRequestHistoryFieldParsing:
     def test_frozen(self) -> None:
         obj = ExecRequestHistory.model_validate(self._MINIMAL)
         with pytest.raises(ValidationError):
-            obj.row_count = 99  # type: ignore[misc]
+            obj.row_count = 99  # ty: ignore[invalid-assignment]
 
 
 # ---------------------------------------------------------------------------
@@ -1144,7 +1144,7 @@ class TestExecSessionHistoryFieldParsing:
     def test_frozen(self) -> None:
         obj = ExecSessionHistory.model_validate(self._MINIMAL)
         with pytest.raises(ValidationError):
-            obj.status = "completed"  # type: ignore[misc]
+            obj.status = "completed"  # ty: ignore[invalid-assignment]
 
 
 # ---------------------------------------------------------------------------
