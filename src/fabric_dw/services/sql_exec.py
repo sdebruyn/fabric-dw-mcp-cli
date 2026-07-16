@@ -194,7 +194,7 @@ async def execute(
     """
 
     def _run() -> SqlResult:
-        conn, _, _, _ = sql._with_connect_retry(target, mode, autocommit=False)
+        conn, _, _, _ = sql._with_connect_retry(target, mode, autocommit=True)
         with closing(conn):
             cursor = conn.cursor()
             with closing(cursor):
