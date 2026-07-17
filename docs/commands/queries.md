@@ -168,7 +168,7 @@ fdw -w MyWorkspace queries long-running SalesWH --ago 2d
 
 **Targets:** Data Warehouse / SQL Analytics Endpoint
 
-List all currently running queries on a warehouse or SQL Analytics Endpoint. Queries `sys.dm_exec_sessions` joined with `sys.dm_exec_requests`, and attempts to retrieve the full query text via [`sys.dm_exec_sql_text`](https://learn.microsoft.com/sql/relational-databases/system-dynamic-management-views/sys-dm-exec-sql-text-transact-sql?WT.mc_id=MVP_310840).
+List all currently running queries on a warehouse or SQL Analytics Endpoint. Queries `sys.dm_exec_sessions` joined with `sys.dm_exec_requests`. The `query_text` field is always `null` because `sys.dm_exec_sql_text` is not supported on Fabric DW - use `dist_statement_id` to look up the full query text in `queryinsights.exec_requests_history`.
 
 **Synopsis**
 
@@ -323,7 +323,7 @@ Return all currently-executing queries on a warehouse.
 - `workspace` (`str`): workspace name or GUID.
 - `warehouse` (`str`): warehouse name or GUID.
 
-**Returns:** `list[RunningQuery]`: array of query objects, each with `session_id`, `request_id`, `status`, `start_time`, `total_elapsed_time` (ms), `login_name`, `command`, `query_text` (from `sys.dm_exec_sql_text` - may be `null` if not supported), `dist_statement_id` (for cross-tool correlation with Capacity Metrics and queryinsights), `blocking_session_id`, `wait_type`, `wait_time` (ms), `cpu_time` (ms), `reads`, `writes`, `logical_reads`, `row_count`, and `open_transaction_count`.
+**Returns:** `list[RunningQuery]`: array of query objects, each with `session_id`, `request_id`, `status`, `start_time`, `total_elapsed_time` (ms), `login_name`, `command`, `query_text` (always `null` - use `dist_statement_id` to look up full query text in `queryinsights.exec_requests_history`), `dist_statement_id` (for cross-tool correlation with Capacity Metrics and queryinsights), `blocking_session_id`, `wait_type`, `wait_time` (ms), `cpu_time` (ms), `reads`, `writes`, `logical_reads`, `row_count`, and `open_transaction_count`.
 
 ### list_session_history
 

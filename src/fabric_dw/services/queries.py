@@ -22,10 +22,12 @@ __all__ = [
     "list_running",
 ]
 
-# NOTE: sys.dm_exec_sql_text is attempted via OUTER APPLY because Microsoft
-# Learn lists it as applicable to Fabric Synapse Analytics.  If Fabric does not
-# support it, the column will surface as NULL (the DMV simply omits the row
-# from the APPLY result, which the OUTER preserves as NULL).
+# NOTE: sys.dm_exec_sql_text is not supported on Fabric DW (Fabric Synapse
+# Analytics uses a different execution engine), so the OUTER APPLY for
+# query_text is omitted.  The query_text column is included in the SELECT as a
+# literal NULL so the RunningQuery model field is populated with None.
+# Use dist_statement_id to correlate with queryinsights.exec_requests_history
+# to look up the full query text for a specific request.
 #
 # The LEFT JOIN was changed to INNER JOIN: the feature intent is to return only
 # sessions that have an *active* request (status in running/runnable/suspended).
@@ -41,7 +43,7 @@ SELECT
     r.total_elapsed_time,
     s.login_name,
     r.command,
-    t.text AS query_text,
+    NULL AS query_text,
     r.dist_statement_id,
     r.blocking_session_id,
     r.wait_type,
@@ -54,7 +56,6 @@ SELECT
     r.open_transaction_count
 FROM sys.dm_exec_sessions s
 INNER JOIN sys.dm_exec_requests r ON r.session_id = s.session_id
-OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) AS t
 WHERE r.status IN ('running', 'runnable', 'suspended')
 ORDER BY r.total_elapsed_time DESC;
 """

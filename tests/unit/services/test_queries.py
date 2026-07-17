@@ -693,30 +693,6 @@ async def test_list_connections_most_recent_session_id_can_be_none() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_list_running_sql_references_dm_exec_sql_text() -> None:
-    target = _make_target()
-    conn = _make_conn([], _COLS)
-
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
-        await queries.list_running(target)
-
-    cursor = conn.cursor.return_value
-    call_sql: str = cursor.execute.call_args[0][0]
-    assert "sys.dm_exec_sql_text" in call_sql
-
-
-async def test_list_running_sql_uses_outer_apply() -> None:
-    target = _make_target()
-    conn = _make_conn([], _COLS)
-
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
-        await queries.list_running(target)
-
-    cursor = conn.cursor.return_value
-    call_sql: str = cursor.execute.call_args[0][0]
-    assert "OUTER APPLY" in call_sql.upper()
-
-
 async def test_list_running_sql_uses_inner_join() -> None:
     """The SQL must use INNER JOIN (not LEFT JOIN) so that the WHERE predicate
     on the right-side table is semantically correct rather than implied.
