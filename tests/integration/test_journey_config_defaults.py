@@ -42,13 +42,13 @@ import uuid
 import pytest
 
 from fabric_dw.services import schemas as _schemas_svc
+from tests._stderr_helpers import sanitize_stderr as _sanitize_stderr
 
 from .conftest import SharedWarehouseTarget
 from .test_cli_smoke import (
     _SQL_SMOKE_SUBPROCESS_TIMEOUT_S,
     _STDERR_FORBIDDEN,
     _child_env,
-    _sanitize_stderr,
 )
 
 _logger = logging.getLogger(__name__)

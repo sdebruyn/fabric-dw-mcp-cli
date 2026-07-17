@@ -36,7 +36,6 @@ import json
 import logging
 import math
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -46,6 +45,7 @@ import pytest
 import pytest_asyncio
 
 from fabric_dw.sql import _resolve_sql_retry_deadline_s
+from tests._stderr_helpers import sanitize_stderr as _sanitize_stderr
 
 from .conftest import SharedWarehouseTarget
 
@@ -92,29 +92,6 @@ _STDERR_FORBIDDEN = (
     "Error getting processor time",
     "_get_processor_time",
 )
-
-# ---------------------------------------------------------------------------
-# Benign Azure Identity IMDS noise stripping.
-# ---------------------------------------------------------------------------
-
-_IMDS_BLOCK_RE = re.compile(
-    r"Failed to receive Azure VM metadata: timed out\n"
-    r"Traceback \(most recent call last\):.*?TimeoutError: timed out\n",
-    re.DOTALL,
-)
-
-
-def _sanitize_stderr(stderr: str) -> str:
-    """Strip known-benign Azure Identity IMDS timeout tracebacks from stderr.
-
-    When the Azure Identity library probes the Instance Metadata Service (IMDS)
-    and the endpoint is unreachable (e.g. outside Azure), it logs a Python
-    traceback to stderr. This is harmless but causes the forbidden-pattern check
-    for 'Traceback (most recent call last)' to fire. Strip these blocks so that
-    real unexpected tracebacks are still caught.
-    """
-    return _IMDS_BLOCK_RE.sub("", stderr)
-
 
 # ---------------------------------------------------------------------------
 # Binary resolution — deferred so a missing binary skips tests, not errors.
