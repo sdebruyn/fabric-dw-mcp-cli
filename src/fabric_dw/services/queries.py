@@ -127,14 +127,29 @@ _LIST_LOCKS_SQL_TMPL = (
     "    l.resource_type,\n"
     "    l.request_mode,\n"
     "    l.request_status,\n"
-    "    OBJECT_SCHEMA_NAME(l.resource_associated_entity_id) AS schema_name,\n"
-    "    OBJECT_NAME(l.resource_associated_entity_id) AS object_name,\n"
+    # For OBJECT-type locks, resource_associated_entity_id IS the object_id.
+    # For KEY/PAGE/RID/EXTENT locks it is a hobt_id; resolve through sys.partitions.
+    "    OBJECT_SCHEMA_NAME(\n"
+    "        CASE WHEN l.resource_type = 'OBJECT'\n"
+    "             THEN l.resource_associated_entity_id\n"
+    "             ELSE p.object_id\n"
+    "        END\n"
+    "    ) AS schema_name,\n"
+    "    OBJECT_NAME(\n"
+    "        CASE WHEN l.resource_type = 'OBJECT'\n"
+    "             THEN l.resource_associated_entity_id\n"
+    "             ELSE p.object_id\n"
+    "        END\n"
+    "    ) AS object_name,\n"
     "    r.blocking_session_id,\n"
     "    r.wait_type,\n"
     "    r.wait_time,\n"
     "    r.command\n"
     "FROM sys.dm_tran_locks l\n"
     "LEFT JOIN sys.dm_exec_requests r ON r.session_id = l.session_id\n"
+    "LEFT JOIN sys.partitions p\n"
+    "    ON l.resource_associated_entity_id = p.hobt_id\n"
+    "    AND l.resource_type IN ('KEY', 'PAGE', 'RID', 'EXTENT')\n"
     "{where}\n"
     "ORDER BY l.session_id, l.resource_type\n"
 )
@@ -191,8 +206,10 @@ async def list_locks(
     Args:
         target: The warehouse or SQL Analytics Endpoint to query.
         limit: Maximum rows to return (1-10000, default 100).
-        waiting_only: When True, restrict to locks with request_status = 'WAIT'.
-        blocked_only: When True, restrict to sessions blocked by another session.
+        waiting_only: When True, restrict to locks with request_status IN ('WAIT', 'CONVERT').
+            CONVERT covers lock-upgrade waits (e.g. S upgrading to X).
+        blocked_only: When True, show only sessions that are blocked by another session
+            (victims). The blocker's session_id appears in blocking_session_id.
         include_database: When True, include DATABASE-scoped lock rows (excluded by default).
         mode: The credential mode for Entra authentication.
 
@@ -205,7 +222,8 @@ async def list_locks(
     if not include_database:
         conditions.append("l.resource_type <> 'DATABASE'")
     if waiting_only:
-        conditions.append("l.request_status = 'WAIT'")
+        # CONVERT = lock-upgrade wait (e.g. S upgrading to X); also genuinely blocked.
+        conditions.append("l.request_status IN ('WAIT', 'CONVERT')")
     if blocked_only:
         conditions.append("r.blocking_session_id IS NOT NULL AND r.blocking_session_id <> 0")
 

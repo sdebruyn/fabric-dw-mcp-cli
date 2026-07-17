@@ -119,13 +119,16 @@ async def kill_cmd(ctx: CliContext, item: str | None, session_id: int) -> None:
     "--waiting-only",
     is_flag=True,
     default=False,
-    help="Only show locks with request_status = WAIT.",
+    help="Only show locks with request_status = WAIT or CONVERT (includes lock-upgrade waits).",
 )
 @click.option(
     "--blocked-only",
     is_flag=True,
     default=False,
-    help="Only show sessions that are blocked by another session.",
+    help=(
+        "Only show sessions blocked by another session (victims). "
+        "The blocker appears in the blocking_session_id column."
+    ),
 )
 @click.option(
     "--include-database",

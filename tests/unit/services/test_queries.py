@@ -915,8 +915,7 @@ async def test_list_locks_default_excludes_database_rows() -> None:
 
     cursor = conn.cursor.return_value
     call_sql: str = cursor.execute.call_args[0][0]
-    assert "resource_type" in call_sql
-    assert "DATABASE" in call_sql
+    assert "<> 'DATABASE'" in call_sql
 
 
 async def test_list_locks_include_database_removes_filter() -> None:
@@ -928,7 +927,7 @@ async def test_list_locks_include_database_removes_filter() -> None:
 
     cursor = conn.cursor.return_value
     call_sql: str = cursor.execute.call_args[0][0]
-    assert "DATABASE" not in call_sql
+    assert "<> 'DATABASE'" not in call_sql
 
 
 async def test_list_locks_waiting_only_adds_where_clause() -> None:
@@ -940,8 +939,7 @@ async def test_list_locks_waiting_only_adds_where_clause() -> None:
 
     cursor = conn.cursor.return_value
     call_sql: str = cursor.execute.call_args[0][0]
-    assert "request_status" in call_sql
-    assert "WAIT" in call_sql
+    assert "IN ('WAIT', 'CONVERT')" in call_sql
 
 
 async def test_list_locks_blocked_only_adds_where_clause() -> None:
@@ -953,7 +951,8 @@ async def test_list_locks_blocked_only_adds_where_clause() -> None:
 
     cursor = conn.cursor.return_value
     call_sql: str = cursor.execute.call_args[0][0]
-    assert "blocking_session_id" in call_sql
+    # Verify the WHERE predicate specifically, not just the SELECT column name
+    assert "blocking_session_id IS NOT NULL" in call_sql
 
 
 async def test_list_locks_limit_clamped_to_minimum() -> None:

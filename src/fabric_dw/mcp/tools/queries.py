@@ -267,8 +267,9 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             workspace: Workspace name or GUID.
             item: Warehouse or SQL Analytics Endpoint name or GUID.
             limit: Maximum rows to return (1-10000, default 100).
-            waiting_only: When True, restrict to locks with request_status = 'WAIT'.
-            blocked_only: When True, restrict to sessions blocked by another session.
+            waiting_only: When True, restrict to locks with request_status WAIT or CONVERT.
+            blocked_only: When True, show only blocked sessions (victims).
+                The blocker's session_id appears in blocking_session_id.
             include_database: When True, include DATABASE-scoped lock rows (excluded by default).
         """
         ctx = get_context()
