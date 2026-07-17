@@ -123,7 +123,7 @@ async def list_connections(
 
 _LIST_LOCKS_SQL_TMPL = (
     "SELECT TOP ({limit})\n"
-    "    l.session_id,\n"
+    "    l.request_session_id AS session_id,\n"
     "    l.resource_type,\n"
     "    l.request_mode,\n"
     "    l.request_status,\n"
@@ -146,12 +146,12 @@ _LIST_LOCKS_SQL_TMPL = (
     "    r.wait_time,\n"
     "    r.command\n"
     "FROM sys.dm_tran_locks l\n"
-    "LEFT JOIN sys.dm_exec_requests r ON r.session_id = l.session_id\n"
+    "LEFT JOIN sys.dm_exec_requests r ON r.session_id = l.request_session_id\n"
     "LEFT JOIN sys.partitions p\n"
     "    ON l.resource_associated_entity_id = p.hobt_id\n"
     "    AND l.resource_type IN ('KEY', 'PAGE', 'RID', 'EXTENT')\n"
     "{where}\n"
-    "ORDER BY l.session_id, l.resource_type\n"
+    "ORDER BY l.request_session_id, l.resource_type\n"
 )
 
 
