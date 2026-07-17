@@ -12,12 +12,13 @@ from __future__ import annotations
 import asyncio
 
 from fabric_dw.auth import CredentialMode
-from fabric_dw.models import Connection, RunningQuery
+from fabric_dw.models import Connection, QueryLock, RunningQuery
 from fabric_dw.sql import SqlTarget, run_query
 
 __all__ = [
     "kill",
     "list_connections",
+    "list_locks",
     "list_running",
 ]
 
@@ -120,6 +121,40 @@ async def list_connections(
     return await asyncio.to_thread(_run)
 
 
+_LIST_LOCKS_SQL_TMPL = (
+    "SELECT TOP ({limit})\n"
+    "    l.session_id,\n"
+    "    l.resource_type,\n"
+    "    l.request_mode,\n"
+    "    l.request_status,\n"
+    # For OBJECT-type locks, resource_associated_entity_id IS the object_id.
+    # For KEY/PAGE/RID/EXTENT locks it is a hobt_id; resolve through sys.partitions.
+    "    OBJECT_SCHEMA_NAME(\n"
+    "        CASE WHEN l.resource_type = 'OBJECT'\n"
+    "             THEN l.resource_associated_entity_id\n"
+    "             ELSE p.object_id\n"
+    "        END\n"
+    "    ) AS schema_name,\n"
+    "    OBJECT_NAME(\n"
+    "        CASE WHEN l.resource_type = 'OBJECT'\n"
+    "             THEN l.resource_associated_entity_id\n"
+    "             ELSE p.object_id\n"
+    "        END\n"
+    "    ) AS object_name,\n"
+    "    r.blocking_session_id,\n"
+    "    r.wait_type,\n"
+    "    r.wait_time,\n"
+    "    r.command\n"
+    "FROM sys.dm_tran_locks l\n"
+    "LEFT JOIN sys.dm_exec_requests r ON r.session_id = l.session_id\n"
+    "LEFT JOIN sys.partitions p\n"
+    "    ON l.resource_associated_entity_id = p.hobt_id\n"
+    "    AND l.resource_type IN ('KEY', 'PAGE', 'RID', 'EXTENT')\n"
+    "{where}\n"
+    "ORDER BY l.session_id, l.resource_type\n"
+)
+
+
 async def kill(
     target: SqlTarget,
     session_id: int,
@@ -155,3 +190,53 @@ async def kill(
     # the ODBC driver opens the connection without BEGIN TRANSACTION, which is
     # required for KILL to succeed on Fabric DW.
     await asyncio.to_thread(run_query, target, kill_sql, mode=mode, fetch="none", autocommit=True)
+
+
+async def list_locks(
+    target: SqlTarget,
+    *,
+    limit: int = 100,
+    waiting_only: bool = False,
+    blocked_only: bool = False,
+    include_database: bool = False,
+    mode: CredentialMode = CredentialMode.DEFAULT,
+) -> list[QueryLock]:
+    """Return active lock rows from sys.dm_tran_locks joined with sys.dm_exec_requests.
+
+    Args:
+        target: The warehouse or SQL Analytics Endpoint to query.
+        limit: Maximum rows to return (1-10000, default 100).
+        waiting_only: When True, restrict to locks with request_status IN ('WAIT', 'CONVERT').
+            CONVERT covers lock-upgrade waits (e.g. S upgrading to X).
+        blocked_only: When True, show only sessions that are blocked by another session
+            (victims). The blocker's session_id appears in blocking_session_id.
+        include_database: When True, include DATABASE-scoped lock rows (excluded by default).
+        mode: The credential mode for Entra authentication.
+
+    Returns:
+        A (possibly empty) list of :class:`~fabric_dw.models.QueryLock` instances.
+    """
+    limit = max(1, min(limit, 10_000))
+
+    conditions: list[str] = []
+    if not include_database:
+        conditions.append("l.resource_type <> 'DATABASE'")
+    if waiting_only:
+        # CONVERT = lock-upgrade wait (e.g. S upgrading to X); also genuinely blocked.
+        conditions.append("l.request_status IN ('WAIT', 'CONVERT')")
+    if blocked_only:
+        conditions.append("r.blocking_session_id IS NOT NULL AND r.blocking_session_id <> 0")
+
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+    # Use str.format() rather than f-string to avoid the S608 / B608 SQL-injection
+    # lint rule, which triggers on any inline f-string containing SELECT.  The
+    # only dynamic values are the clamped integer `limit` and the WHERE clause
+    # built from a fixed allow-list of boolean flags — no user input is embedded.
+    sql = _LIST_LOCKS_SQL_TMPL.format(limit=limit, where=where)
+
+    def _run() -> list[QueryLock]:
+        cols, rows = run_query(target, sql, mode=mode)
+        return [QueryLock.model_validate(dict(zip(cols, r, strict=True))) for r in rows]
+
+    return await asyncio.to_thread(_run)

@@ -332,6 +332,21 @@ class Connection(_FabricBase):
     most_recent_session_id: int | None = None
 
 
+class QueryLock(_FabricBase):
+    """A lock row from sys.dm_tran_locks joined with sys.dm_exec_requests."""
+
+    session_id: int
+    resource_type: str
+    request_mode: str | None = None
+    request_status: str
+    schema_name: str | None = None
+    object_name: str | None = None
+    blocking_session_id: int | None = None
+    wait_type: str | None = None
+    wait_time_ms: int | None = Field(default=None, alias="wait_time")
+    command: str | None = None
+
+
 class ExecRequestHistory(_FabricBase):
     """A completed SQL request from ``queryinsights.exec_requests_history``.
 

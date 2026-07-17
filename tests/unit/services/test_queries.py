@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from fabric_dw.exceptions import AuthError, NotFoundError, PermissionDeniedError
-from fabric_dw.models import Connection, RunningQuery
+from fabric_dw.models import Connection, QueryLock, RunningQuery
 from fabric_dw.services import queries
 from tests.unit.services._helpers import _FakeRow, _make_conn, _make_target
 
@@ -768,3 +768,222 @@ async def test_list_running_run_query_output_is_real_tuples() -> None:
     assert type(captured_rows[0]) is tuple, (
         f"run_query must return real tuples, got {type(captured_rows[0])}"
     )
+
+
+# ---------------------------------------------------------------------------
+# list_locks
+# ---------------------------------------------------------------------------
+
+_LOCK_COLS = [
+    "session_id",
+    "resource_type",
+    "request_mode",
+    "request_status",
+    "schema_name",
+    "object_name",
+    "blocking_session_id",
+    "wait_type",
+    "wait_time",
+    "command",
+]
+
+_LOCK_ROW_1 = (
+    42,
+    "OBJECT",
+    "S",
+    "GRANT",
+    "dbo",
+    "sales",
+    None,
+    None,
+    None,
+    "SELECT",
+)
+
+_LOCK_ROW_2 = (
+    99,
+    "KEY",
+    "X",
+    "WAIT",
+    "dbo",
+    "orders",
+    42,
+    "LCK_M_X",
+    1500,
+    "INSERT",
+)
+
+
+async def test_list_locks_returns_empty_when_no_rows() -> None:
+    target = _make_target()
+    conn = _make_conn([], _LOCK_COLS)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await queries.list_locks(target)
+
+    assert result == []
+
+
+async def test_list_locks_returns_query_lock_instances() -> None:
+    target = _make_target()
+    conn = _make_conn([_LOCK_ROW_1], _LOCK_COLS)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await queries.list_locks(target)
+
+    assert len(result) == 1
+    assert isinstance(result[0], QueryLock)
+
+
+async def test_list_locks_parses_fields_correctly() -> None:
+    target = _make_target()
+    conn = _make_conn([_LOCK_ROW_1], _LOCK_COLS)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await queries.list_locks(target)
+
+    lock = result[0]
+    assert lock.session_id == 42
+    assert lock.resource_type == "OBJECT"
+    assert lock.request_mode == "S"
+    assert lock.request_status == "GRANT"
+    assert lock.schema_name == "dbo"
+    assert lock.object_name == "sales"
+    assert lock.blocking_session_id is None
+    assert lock.wait_type is None
+    assert lock.wait_time_ms is None
+    assert lock.command == "SELECT"
+
+
+async def test_list_locks_parses_blocking_fields() -> None:
+    target = _make_target()
+    conn = _make_conn([_LOCK_ROW_2], _LOCK_COLS)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await queries.list_locks(target)
+
+    lock = result[0]
+    assert lock.session_id == 99
+    assert lock.blocking_session_id == 42
+    assert lock.wait_type == "LCK_M_X"
+    assert lock.wait_time_ms == 1500
+
+
+async def test_list_locks_returns_all_rows() -> None:
+    target = _make_target()
+    conn = _make_conn([_LOCK_ROW_1, _LOCK_ROW_2], _LOCK_COLS)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await queries.list_locks(target)
+
+    assert len(result) == 2
+    assert result[0].session_id == 42
+    assert result[1].session_id == 99
+
+
+async def test_list_locks_sql_references_dm_tran_locks() -> None:
+    target = _make_target()
+    conn = _make_conn([], _LOCK_COLS)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await queries.list_locks(target)
+
+    cursor = conn.cursor.return_value
+    call_sql: str = cursor.execute.call_args[0][0]
+    assert "sys.dm_tran_locks" in call_sql
+
+
+async def test_list_locks_sql_uses_left_join_exec_requests() -> None:
+    target = _make_target()
+    conn = _make_conn([], _LOCK_COLS)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await queries.list_locks(target)
+
+    cursor = conn.cursor.return_value
+    call_sql: str = cursor.execute.call_args[0][0]
+    assert "LEFT JOIN" in call_sql.upper()
+    assert "sys.dm_exec_requests" in call_sql
+
+
+async def test_list_locks_default_excludes_database_rows() -> None:
+    target = _make_target()
+    conn = _make_conn([], _LOCK_COLS)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await queries.list_locks(target)
+
+    cursor = conn.cursor.return_value
+    call_sql: str = cursor.execute.call_args[0][0]
+    assert "<> 'DATABASE'" in call_sql
+
+
+async def test_list_locks_include_database_removes_filter() -> None:
+    target = _make_target()
+    conn = _make_conn([], _LOCK_COLS)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await queries.list_locks(target, include_database=True)
+
+    cursor = conn.cursor.return_value
+    call_sql: str = cursor.execute.call_args[0][0]
+    assert "<> 'DATABASE'" not in call_sql
+
+
+async def test_list_locks_waiting_only_adds_where_clause() -> None:
+    target = _make_target()
+    conn = _make_conn([], _LOCK_COLS)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await queries.list_locks(target, waiting_only=True)
+
+    cursor = conn.cursor.return_value
+    call_sql: str = cursor.execute.call_args[0][0]
+    assert "IN ('WAIT', 'CONVERT')" in call_sql
+
+
+async def test_list_locks_blocked_only_adds_where_clause() -> None:
+    target = _make_target()
+    conn = _make_conn([], _LOCK_COLS)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await queries.list_locks(target, blocked_only=True)
+
+    cursor = conn.cursor.return_value
+    call_sql: str = cursor.execute.call_args[0][0]
+    # Verify the WHERE predicate specifically, not just the SELECT column name
+    assert "blocking_session_id IS NOT NULL" in call_sql
+
+
+async def test_list_locks_limit_clamped_to_minimum() -> None:
+    target = _make_target()
+    conn = _make_conn([], _LOCK_COLS)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await queries.list_locks(target, limit=0)
+
+    cursor = conn.cursor.return_value
+    call_sql: str = cursor.execute.call_args[0][0]
+    assert "TOP (1)" in call_sql
+
+
+async def test_list_locks_limit_clamped_to_maximum() -> None:
+    target = _make_target()
+    conn = _make_conn([], _LOCK_COLS)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await queries.list_locks(target, limit=99999)
+
+    cursor = conn.cursor.return_value
+    call_sql: str = cursor.execute.call_args[0][0]
+    assert "TOP (10000)" in call_sql
+
+
+async def test_list_locks_closes_connection_after_success() -> None:
+    target = _make_target()
+    conn = _make_conn([_LOCK_ROW_1], _LOCK_COLS)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await queries.list_locks(target)
+
+    conn.close.assert_called_once()

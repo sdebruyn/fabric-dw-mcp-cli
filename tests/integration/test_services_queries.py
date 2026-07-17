@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from fabric_dw.models import Connection
+from fabric_dw.models import Connection, QueryLock
 from fabric_dw.services import queries
 from fabric_dw.sql import SqlTarget
 
@@ -74,3 +74,12 @@ async def test_list_connections_returns_connection_models(
             pytest.skip("dm_exec_connections returned no rows on this SQL analytics endpoint")
         for conn in connections:
             assert isinstance(conn, Connection)
+
+
+async def test_list_locks_returns_list(
+    read_target: SqlTarget,
+) -> None:
+    locks = await queries.list_locks(read_target)
+    assert isinstance(locks, list)
+    for lock in locks:
+        assert isinstance(lock, QueryLock)

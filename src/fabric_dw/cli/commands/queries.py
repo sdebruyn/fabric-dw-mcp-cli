@@ -102,6 +102,75 @@ async def kill_cmd(ctx: CliContext, item: str | None, session_id: int) -> None:
 
 
 # ---------------------------------------------------------------------------
+# locks
+# ---------------------------------------------------------------------------
+
+
+@queries_group.command("locks")
+@click.argument("item", required=False, default=None)
+@click.option(
+    "--limit",
+    type=click.IntRange(1, 10_000),
+    default=100,
+    show_default=True,
+    help="Maximum rows to return (1-10000).",
+)
+@click.option(
+    "--waiting-only",
+    is_flag=True,
+    default=False,
+    help="Only show locks with request_status = WAIT or CONVERT (includes lock-upgrade waits).",
+)
+@click.option(
+    "--blocked-only",
+    is_flag=True,
+    default=False,
+    help=(
+        "Only show sessions blocked by another session (victims). "
+        "The blocker appears in the blocking_session_id column."
+    ),
+)
+@click.option(
+    "--include-database",
+    is_flag=True,
+    default=False,
+    help="Include DATABASE-scoped lock rows (excluded by default).",
+)
+@click.pass_obj
+@coro
+async def locks_cmd(
+    ctx: CliContext,
+    item: str | None,
+    limit: int,
+    waiting_only: bool,
+    blocked_only: bool,
+    include_database: bool,
+) -> None:
+    """List active locks from sys.dm_tran_locks on ITEM."""
+    ws = resolve_workspace(ctx)
+    wh = resolve_warehouse_arg(ctx, item)
+    try:
+        async with build_http_client(ctx) as http:
+            target, _entry = await build_sql_target(http, ws, wh)
+            items = await _queries_svc.list_locks(
+                target,
+                limit=limit,
+                waiting_only=waiting_only,
+                blocked_only=blocked_only,
+                include_database=include_database,
+                mode=ctx.auth,
+            )
+            render(
+                [lock.model_dump(by_alias=True, mode="json") for lock in items],
+                json_output=ctx.json_output,
+                table_title="Active Locks",
+                prune_null_columns=True,
+            )
+    except (ValueError, FabricError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
 # history
 # ---------------------------------------------------------------------------
 

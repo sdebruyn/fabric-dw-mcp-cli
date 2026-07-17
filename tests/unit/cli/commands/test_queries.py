@@ -16,7 +16,7 @@ from click.testing import CliRunner
 from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._main import cli
 from fabric_dw.exceptions import FabricError, NotFoundError, PermissionDeniedError
-from fabric_dw.models import RunningQuery, WarehouseKind
+from fabric_dw.models import QueryLock, RunningQuery, WarehouseKind
 from fabric_dw.sql import SqlTarget
 
 WS_GUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
@@ -429,4 +429,188 @@ class TestQueriesLongRunning:
             ),
         ):
             result = runner.invoke(cli, ["-w", WS_GUID, "queries", "long-running", WH_GUID])
+        assert result.exit_code != 0
+
+
+class TestQueriesLocks:
+    """queries locks -- happy path, flags, JSON output, and FabricError."""
+
+    def test_locks_exits_zero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.queries.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.queries.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.queries.list_locks",
+                new=AsyncMock(return_value=[]),
+            ),
+        ):
+            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "locks", WH_GUID])
+        assert result.exit_code == 0
+
+    def test_locks_json_output(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        lock = QueryLock.model_validate(
+            {
+                "session_id": 42,
+                "resource_type": "OBJECT",
+                "request_mode": "S",
+                "request_status": "GRANT",
+                "schema_name": "dbo",
+                "object_name": "sales",
+                "blocking_session_id": None,
+                "wait_type": None,
+                "wait_time": None,
+                "command": "SELECT",
+            }
+        )
+        with (
+            patch(
+                "fabric_dw.cli.commands.queries.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.queries.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.queries.list_locks",
+                new=AsyncMock(return_value=[lock]),
+            ),
+        ):
+            result = runner.invoke(cli, ["--json", "-w", WS_GUID, "queries", "locks", WH_GUID])
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert isinstance(parsed, list)
+        assert parsed[0]["session_id"] == 42
+
+    def test_locks_waiting_only_flag_passes_through(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_list_locks = AsyncMock(return_value=[])
+        with (
+            patch(
+                "fabric_dw.cli.commands.queries.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.queries.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.queries.list_locks",
+                new=mock_list_locks,
+            ),
+        ):
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "queries", "locks", WH_GUID, "--waiting-only"]
+            )
+        assert result.exit_code == 0
+        call_kwargs = mock_list_locks.call_args
+        assert call_kwargs.kwargs.get("waiting_only") is True
+
+    def test_locks_blocked_only_flag_passes_through(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_list_locks = AsyncMock(return_value=[])
+        with (
+            patch(
+                "fabric_dw.cli.commands.queries.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.queries.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.queries.list_locks",
+                new=mock_list_locks,
+            ),
+        ):
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "queries", "locks", WH_GUID, "--blocked-only"]
+            )
+        assert result.exit_code == 0
+        call_kwargs = mock_list_locks.call_args
+        assert call_kwargs.kwargs.get("blocked_only") is True
+
+    def test_locks_include_database_flag_passes_through(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_list_locks = AsyncMock(return_value=[])
+        with (
+            patch(
+                "fabric_dw.cli.commands.queries.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.queries.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.queries.list_locks",
+                new=mock_list_locks,
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", WS_GUID, "queries", "locks", WH_GUID, "--include-database"],
+            )
+        assert result.exit_code == 0
+        call_kwargs = mock_list_locks.call_args
+        assert call_kwargs.kwargs.get("include_database") is True
+
+    def test_locks_limit_passes_through(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_list_locks = AsyncMock(return_value=[])
+        with (
+            patch(
+                "fabric_dw.cli.commands.queries.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.queries.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.queries.list_locks",
+                new=mock_list_locks,
+            ),
+        ):
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "queries", "locks", WH_GUID, "--limit", "50"]
+            )
+        assert result.exit_code == 0
+        call_kwargs = mock_list_locks.call_args
+        assert call_kwargs.kwargs.get("limit") == 50
+
+    def test_locks_fabric_error_exits_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.queries.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.queries.build_sql_target",
+                new=AsyncMock(side_effect=FabricError("server error")),
+            ),
+        ):
+            result = runner.invoke(cli, ["-w", WS_GUID, "queries", "locks", WH_GUID])
         assert result.exit_code != 0
