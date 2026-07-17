@@ -19,8 +19,12 @@ List all active SQL connections on a warehouse or SQL Analytics Endpoint. This q
 **Synopsis**
 
 ```
-fdw [-w WORKSPACE] queries connections [WAREHOUSE]
+fdw [-w WORKSPACE] queries connections [OPTIONS] [WAREHOUSE]
 ```
+
+| Option | Description |
+| --- | --- |
+| `--watch SECONDS` | Refresh the live view every positive number of seconds. Cannot be combined with `--json`. |
 
 **Example**
 
@@ -127,6 +131,7 @@ fdw [-w WORKSPACE] queries locks [OPTIONS] [ITEM]
 | `--waiting-only` | Only show locks with `request_status` in `WAIT` or `CONVERT` (includes lock-upgrade waits). | off |
 | `--blocked-only` | Only show sessions blocked by another session (victims). The blocker's ID appears in `blocking_session_id`. | off |
 | `--include-database` | Include DATABASE-scoped lock rows. | off |
+| `--watch SECONDS` | Refresh the live view every positive number of seconds. Cannot be combined with `--json`. | - |
 
 **Example**
 
@@ -173,8 +178,12 @@ List all currently running queries on a warehouse or SQL Analytics Endpoint. Que
 **Synopsis**
 
 ```
-fdw [-w WORKSPACE] queries running [WAREHOUSE]
+fdw [-w WORKSPACE] queries running [OPTIONS] [WAREHOUSE]
 ```
+
+| Option | Description |
+| --- | --- |
+| `--watch SECONDS` | Refresh the live view every positive number of seconds. Cannot be combined with `--json`. |
 
 **Example**
 

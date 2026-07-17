@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,6 +15,7 @@ from click.testing import CliRunner
 
 from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._main import cli
+from fabric_dw.cli.commands import queries as _queries_cmd
 from fabric_dw.exceptions import FabricError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import ExecRequestHistory, QueryLock, RunningQuery, WarehouseKind
 from fabric_dw.sql import SqlTarget
@@ -23,6 +24,10 @@ WS_GUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 WH_GUID = "d4e5f6a7-b8c9-0123-def0-123456789abc"
 WS_UUID = UUID(WS_GUID)
 WH_UUID = UUID(WH_GUID)
+
+
+class _StopWatchError(Exception):
+    """Terminate a watch-loop test after the requested number of sleeps."""
 
 
 def _make_http_cm(http: object) -> object:
@@ -139,6 +144,52 @@ class TestQueriesList:
         ):
             result = runner.invoke(cli, ["-w", WS_GUID, "queries", "running", WH_GUID])
         assert result.exit_code != 0
+
+    def test_watch_rejects_json_before_opening_client(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        with patch("fabric_dw.cli.commands.queries.build_http_client") as build_client:
+            result = runner.invoke(
+                cli,
+                ["--json", "-w", WS_GUID, "queries", "running", "--watch", "1", WH_GUID],
+            )
+        assert result.exit_code != 0
+        assert "--watch cannot be used with --json" in result.output
+        build_client.assert_not_called()
+
+    def test_watch_requires_positive_interval(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        result = runner.invoke(cli, ["-w", WS_GUID, "queries", "running", "--watch", "0", WH_GUID])
+        assert result.exit_code != 0
+        assert "x>=1" in result.output
+
+
+@pytest.mark.anyio
+async def test_watch_render_fetches_immediately_clears_and_repeats() -> None:
+    """Watch renders immediately, redraws the terminal, then repeats after sleeping."""
+    fetch = AsyncMock(return_value=[_make_running_query()])
+    sleep = AsyncMock(side_effect=[None, _StopWatchError()])
+    with (
+        patch("fabric_dw.cli.commands.queries.asyncio.sleep", new=sleep),
+        patch("fabric_dw.cli.commands.queries.click.clear") as clear,
+        patch("fabric_dw.cli.commands.queries.click.echo") as echo,
+        patch("fabric_dw.cli.commands.queries.render") as render,
+        pytest.raises(_StopWatchError),
+    ):
+        await _queries_cmd._watch_render(
+            interval=3,
+            command="fdw queries running SalesWarehouse",
+            title="Running Queries",
+            json_output=False,
+            fetch=fetch,
+        )
+
+    assert fetch.await_count == 2
+    assert sleep.await_args_list == [((3,),), ((3,),)]
+    assert clear.call_count == 2
+    assert render.call_count == 2
+    assert "Every 3s: fdw queries running SalesWarehouse" in echo.call_args_list[0].args[0]
 
 
 class TestQueriesKill:
@@ -293,6 +344,31 @@ class TestQueriesListConnections:
         ):
             result = runner.invoke(cli, ["-w", WS_GUID, "queries", "connections", WH_GUID])
         assert result.exit_code != 0
+
+    def test_connections_watch_uses_live_fetch(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        list_connections = AsyncMock(return_value=[])
+
+        async def _render_once(
+            *, fetch: Callable[[], Awaitable[object]], **_kwargs: object
+        ) -> None:
+            await fetch()
+
+        with (
+            patch("fabric_dw.cli.commands.queries.build_http_client", new=_make_http_cm(mock_http)),
+            patch(
+                "fabric_dw.cli.commands.queries.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch("fabric_dw.services.queries.list_connections", new=list_connections),
+            patch("fabric_dw.cli.commands.queries._watch_render", new=_render_once),
+        ):
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "queries", "connections", "--watch", "2", WH_GUID]
+            )
+        assert result.exit_code == 0
+        list_connections.assert_awaited_once()
 
 
 class TestQueriesRequestHistory:
@@ -651,6 +727,53 @@ class TestQueriesLocks:
         assert result.exit_code == 0
         call_kwargs = mock_list_locks.call_args
         assert call_kwargs.kwargs.get("waiting_only") is True
+
+    def test_locks_watch_forwards_filters(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        list_locks = AsyncMock(return_value=[])
+
+        async def _render_once(
+            *, fetch: Callable[[], Awaitable[object]], **_kwargs: object
+        ) -> None:
+            await fetch()
+
+        with (
+            patch("fabric_dw.cli.commands.queries.build_http_client", new=_make_http_cm(mock_http)),
+            patch(
+                "fabric_dw.cli.commands.queries.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch("fabric_dw.services.queries.list_locks", new=list_locks),
+            patch("fabric_dw.cli.commands.queries._watch_render", new=_render_once),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "queries",
+                    "locks",
+                    "--watch",
+                    "2",
+                    "--waiting-only",
+                    "--blocked-only",
+                    "--include-database",
+                    "--limit",
+                    "7",
+                    WH_GUID,
+                ],
+            )
+        assert result.exit_code == 0
+        assert list_locks.await_args is not None
+        call_kwargs = list_locks.await_args.kwargs
+        assert call_kwargs == {
+            "limit": 7,
+            "waiting_only": True,
+            "blocked_only": True,
+            "include_database": True,
+            "mode": call_kwargs["mode"],
+        }
 
     def test_locks_blocked_only_flag_passes_through(
         self, runner: CliRunner, cache_env: Path

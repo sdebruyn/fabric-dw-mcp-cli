@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Callable, Sequence
+from datetime import UTC, datetime
+from typing import Any, Protocol
+
 import click
 
 from fabric_dw.cli._context import CliContext
@@ -25,6 +30,43 @@ from fabric_dw.services import queries as _queries_svc
 from fabric_dw.services import query_insights as _qi_svc
 
 
+class _JsonModel(Protocol):
+    def model_dump(self, *, by_alias: bool, mode: str) -> dict[str, Any]: ...
+
+
+def _validate_watch(ctx: CliContext, watch: int | None) -> None:
+    """Reject streaming JSON before opening a network client."""
+    if watch is not None and ctx.json_output:
+        raise click.UsageError("--watch cannot be used with --json.")
+
+
+async def _watch_render(
+    *,
+    interval: int | None,
+    command: str,
+    title: str,
+    json_output: bool,
+    fetch: Callable[[], Awaitable[Sequence[_JsonModel]]],
+) -> None:
+    """Render once or continuously, in the familiar terminal-watch style."""
+    while True:
+        items = await fetch()
+        if interval is not None:
+            click.clear()
+            timestamp = datetime.now(UTC).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+            click.echo(f"Every {interval}s: {command}    {timestamp}")
+            click.echo()
+        render(
+            [item.model_dump(by_alias=True, mode="json") for item in items],
+            json_output=json_output,
+            table_title=title,
+            prune_null_columns=True,
+        )
+        if interval is None:
+            return
+        await asyncio.sleep(interval)
+
+
 @click.group("queries")
 def queries_group() -> None:
     """Inspect and manage running queries on Fabric warehouses and SQL Analytics Endpoints."""
@@ -32,21 +74,25 @@ def queries_group() -> None:
 
 @queries_group.command("running")
 @click.argument("item", required=False, default=None)
+@click.option(
+    "--watch", type=click.IntRange(min=1), metavar="SECONDS", help="Refresh every SECONDS."
+)
 @click.pass_obj
 @coro
-async def running_cmd(ctx: CliContext, item: str | None) -> None:
+async def running_cmd(ctx: CliContext, item: str | None, watch: int | None) -> None:
     """List currently running queries on ITEM (warehouse or endpoint)."""
+    _validate_watch(ctx, watch)
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
             target, _entry = await build_sql_target(http, ws, wh)
-            items = await _queries_svc.list_running(target, mode=ctx.auth)
-            render(
-                [q.model_dump(by_alias=True, mode="json") for q in items],
+            await _watch_render(
+                interval=watch,
+                command="fdw queries running",
+                title="Running Queries",
                 json_output=ctx.json_output,
-                table_title="Running Queries",
-                prune_null_columns=True,
+                fetch=lambda: _queries_svc.list_running(target, mode=ctx.auth),
             )
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -54,21 +100,25 @@ async def running_cmd(ctx: CliContext, item: str | None) -> None:
 
 @queries_group.command("connections")
 @click.argument("item", required=False, default=None)
+@click.option(
+    "--watch", type=click.IntRange(min=1), metavar="SECONDS", help="Refresh every SECONDS."
+)
 @click.pass_obj
 @coro
-async def connections_cmd(ctx: CliContext, item: str | None) -> None:
+async def connections_cmd(ctx: CliContext, item: str | None, watch: int | None) -> None:
     """List active SQL connections on ITEM (warehouse or endpoint)."""
+    _validate_watch(ctx, watch)
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
             target, _entry = await build_sql_target(http, ws, wh)
-            items = await _queries_svc.list_connections(target, mode=ctx.auth)
-            render(
-                [c.model_dump(by_alias=True, mode="json") for c in items],
+            await _watch_render(
+                interval=watch,
+                command="fdw queries connections",
+                title="SQL Connections",
                 json_output=ctx.json_output,
-                table_title="SQL Connections",
-                prune_null_columns=True,
+                fetch=lambda: _queries_svc.list_connections(target, mode=ctx.auth),
             )
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -136,6 +186,9 @@ async def kill_cmd(ctx: CliContext, item: str | None, session_id: int) -> None:
     default=False,
     help="Include DATABASE-scoped lock rows (excluded by default).",
 )
+@click.option(
+    "--watch", type=click.IntRange(min=1), metavar="SECONDS", help="Refresh every SECONDS."
+)
 @click.pass_obj
 @coro
 async def locks_cmd(
@@ -145,26 +198,28 @@ async def locks_cmd(
     waiting_only: bool,
     blocked_only: bool,
     include_database: bool,
+    watch: int | None,
 ) -> None:
     """List active locks from sys.dm_tran_locks on ITEM."""
+    _validate_watch(ctx, watch)
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
         async with build_http_client(ctx) as http:
             target, _entry = await build_sql_target(http, ws, wh)
-            items = await _queries_svc.list_locks(
-                target,
-                limit=limit,
-                waiting_only=waiting_only,
-                blocked_only=blocked_only,
-                include_database=include_database,
-                mode=ctx.auth,
-            )
-            render(
-                [lock.model_dump(by_alias=True, mode="json") for lock in items],
+            await _watch_render(
+                interval=watch,
+                command="fdw queries locks",
+                title="Active Locks",
                 json_output=ctx.json_output,
-                table_title="Active Locks",
-                prune_null_columns=True,
+                fetch=lambda: _queries_svc.list_locks(
+                    target,
+                    limit=limit,
+                    waiting_only=waiting_only,
+                    blocked_only=blocked_only,
+                    include_database=include_database,
+                    mode=ctx.auth,
+                ),
             )
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
