@@ -308,10 +308,20 @@ class RunningQuery(_FabricBase):
     login_name: str | None = None
     command: str | None = None
     query_text: str | None = None
+    dist_statement_id: str | None = None
+    blocking_session_id: int | None = None
+    wait_type: str | None = None
+    wait_time_ms: int | None = Field(default=None, alias="wait_time")
+    cpu_time_ms: int | None = Field(default=None, alias="cpu_time")
+    reads: int | None = None
+    writes: int | None = None
+    logical_reads: int | None = None
+    row_count: int | None = None
+    open_transaction_count: int | None = None
 
-    @field_validator("request_id", mode="before")
+    @field_validator("request_id", "dist_statement_id", mode="before")
     @classmethod
-    def _coerce_request_id(cls, v: object) -> str | None:
+    def _coerce_str_or_none(cls, v: object) -> str | None:
         if v is None:
             return None
         return str(v)

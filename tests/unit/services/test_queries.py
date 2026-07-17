@@ -27,6 +27,16 @@ _COLS = [
     "login_name",
     "command",
     "query_text",
+    "dist_statement_id",
+    "blocking_session_id",
+    "wait_type",
+    "wait_time",
+    "cpu_time",
+    "reads",
+    "writes",
+    "logical_reads",
+    "row_count",
+    "open_transaction_count",
 ]
 
 _ROW_1_TUPLE = (
@@ -37,7 +47,17 @@ _ROW_1_TUPLE = (
     1500,
     "user@example.com",
     "SELECT",
-    "SELECT TOP 10 * FROM dbo.sales",
+    None,
+    "A1B2C3D4-1234-5678-ABCD-EF0123456789",
+    None,
+    None,
+    None,
+    750,
+    100,
+    5,
+    1000,
+    50,
+    0,
 )
 
 _ROW_2_TUPLE = (
@@ -49,6 +69,16 @@ _ROW_2_TUPLE = (
     "admin@example.com",
     "UPDATE",
     None,
+    "B2C3D4E5-2345-6789-BCDE-F01234567890",
+    42,
+    "LCK_M_S",
+    500,
+    250,
+    50,
+    0,
+    500,
+    0,
+    1,
 )
 
 
@@ -93,7 +123,17 @@ async def test_list_running_parses_fields_correctly() -> None:
     assert q.total_elapsed_time_ms == 1500
     assert q.login_name == "user@example.com"
     assert q.command == "SELECT"
-    assert q.query_text == "SELECT TOP 10 * FROM dbo.sales"
+    assert q.query_text is None
+    assert q.dist_statement_id == "A1B2C3D4-1234-5678-ABCD-EF0123456789"
+    assert q.blocking_session_id is None
+    assert q.wait_type is None
+    assert q.wait_time_ms is None
+    assert q.cpu_time_ms == 750
+    assert q.reads == 100
+    assert q.writes == 5
+    assert q.logical_reads == 1000
+    assert q.row_count == 50
+    assert q.open_transaction_count == 0
 
 
 async def test_list_running_handles_null_query_text() -> None:
@@ -104,6 +144,20 @@ async def test_list_running_handles_null_query_text() -> None:
         result = await queries.list_running(target)
 
     assert result[0].query_text is None
+
+
+async def test_list_running_parses_blocking_and_wait_fields() -> None:
+    target = _make_target()
+    conn = _make_conn([_ROW_2_TUPLE], _COLS)
+
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await queries.list_running(target)
+
+    q = result[0]
+    assert q.blocking_session_id == 42
+    assert q.wait_type == "LCK_M_S"
+    assert q.wait_time_ms == 500
+    assert q.open_transaction_count == 1
 
 
 async def test_list_running_returns_all_rows() -> None:
