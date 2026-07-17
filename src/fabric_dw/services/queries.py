@@ -23,11 +23,9 @@ __all__ = [
 ]
 
 # NOTE: sys.dm_exec_sql_text is not supported on Fabric DW (Fabric Synapse
-# Analytics uses a different execution engine), so the OUTER APPLY for
-# query_text is omitted.  The query_text column is included in the SELECT as a
-# literal NULL so the RunningQuery model field is populated with None.
-# Use dist_statement_id to correlate with queryinsights.exec_requests_history
-# to look up the full query text for a specific request.
+# Analytics uses a different execution engine).  Use dist_statement_id to
+# correlate with queryinsights.exec_requests_history to look up the full query
+# text for a specific request (see query_insights.get_request_detail).
 #
 # The LEFT JOIN was changed to INNER JOIN: the feature intent is to return only
 # sessions that have an *active* request (status in running/runnable/suspended).
@@ -43,7 +41,6 @@ SELECT
     r.total_elapsed_time,
     s.login_name,
     r.command,
-    NULL AS query_text,
     r.dist_statement_id,
     NULLIF(r.blocking_session_id, 0) AS blocking_session_id,
     r.wait_type,

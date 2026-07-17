@@ -26,7 +26,7 @@ from uuid import UUID
 
 import pytest
 
-from fabric_dw.exceptions import FabricError
+from fabric_dw.exceptions import FabricError, PermissionDeniedError
 from fabric_dw.models import (
     Connection,
     ExecRequestHistory,
@@ -64,7 +64,6 @@ def _make_running_query() -> RunningQuery:
             "total_elapsed_time": 1000,
             "login_name": "user@example.com",
             "command": "SELECT 1",
-            "query_text": None,
         }
     )
 
@@ -1264,6 +1263,166 @@ async def test_list_locks_raw_driver_exc_raises_tool_error(mock_ctx, ctx_patch) 
         await mcp._tool_manager.call_tool(
             "list_locks",
             {"workspace": _WS_NAME, "item": _WH_NAME},
+        )
+
+    assert _FakeDriverError._INTERNAL_DETAIL not in str(exc_info.value), (
+        "raw driver exception detail must not appear in the ToolError message"
+    )
+
+
+# ---------------------------------------------------------------------------
+# get_request_detail
+# ---------------------------------------------------------------------------
+
+_DIST_STMT_ID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+
+def _make_exec_request_history_for_mcp() -> ExecRequestHistory:
+    return ExecRequestHistory.model_validate(
+        {
+            "distributed_statement_id": _DIST_STMT_ID,
+            "database_name": "SalesWarehouse",
+            "status": "Succeeded",
+            "session_id": 42,
+            "command": "SELECT TOP 10 * FROM dbo.sales",
+        }
+    )
+
+
+async def test_get_request_detail_happy_path_found(mock_ctx, ctx_patch) -> None:
+    """get_request_detail returns serialised dict when found."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    hist = _make_exec_request_history_for_mcp()
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.query_insights.get_request_detail",
+            new=AsyncMock(return_value=hist),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "get_request_detail",
+            {"workspace": _WS_NAME, "item": _WH_NAME, "dist_statement_id": _DIST_STMT_ID},
+        )
+
+    assert isinstance(result, dict)
+    assert result["status"] == "Succeeded"
+    assert result["database_name"] == "SalesWarehouse"
+
+
+async def test_get_request_detail_happy_path_not_found(mock_ctx, ctx_patch) -> None:
+    """get_request_detail returns None when no matching row exists."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.query_insights.get_request_detail",
+            new=AsyncMock(return_value=None),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "get_request_detail",
+            {"workspace": _WS_NAME, "item": _WH_NAME, "dist_statement_id": "nonexistent-id"},
+        )
+
+    assert result is None
+
+
+async def test_get_request_detail_fabric_error(mock_ctx, ctx_patch) -> None:
+    """get_request_detail wraps FabricError as ToolError."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.query_insights.get_request_detail",
+            new=AsyncMock(side_effect=FabricError("sql error")),
+        ),
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "get_request_detail",
+            {"workspace": _WS_NAME, "item": _WH_NAME, "dist_statement_id": _DIST_STMT_ID},
+        )
+
+
+async def test_get_request_detail_permission_denied(mock_ctx, ctx_patch) -> None:
+    """get_request_detail wraps PermissionDeniedError as ToolError."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.query_insights.get_request_detail",
+            new=AsyncMock(side_effect=PermissionDeniedError("no permission")),
+        ),
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "get_request_detail",
+            {"workspace": _WS_NAME, "item": _WH_NAME, "dist_statement_id": _DIST_STMT_ID},
+        )
+
+
+async def test_get_request_detail_workspace_not_allowed(ctx_patch) -> None:
+    """get_request_detail raises ToolError when workspace not in allowlist."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-ws"}),
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "get_request_detail",
+            {"workspace": _WS_NAME, "item": _WH_NAME, "dist_statement_id": _DIST_STMT_ID},
+        )
+
+
+async def test_get_request_detail_raw_driver_exc_raises_tool_error(mock_ctx, ctx_patch) -> None:
+    """A raw driver exception is converted to ToolError without leaking internal details."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.query_insights.get_request_detail",
+            new=AsyncMock(side_effect=_RAW_DRIVER_EXC),
+        ),
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "get_request_detail",
+            {"workspace": _WS_NAME, "item": _WH_NAME, "dist_statement_id": _DIST_STMT_ID},
         )
 
     assert _FakeDriverError._INTERNAL_DETAIL not in str(exc_info.value), (

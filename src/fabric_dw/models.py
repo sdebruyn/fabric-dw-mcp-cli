@@ -307,7 +307,6 @@ class RunningQuery(_FabricBase):
     total_elapsed_time_ms: int = Field(alias="total_elapsed_time")
     login_name: str | None = None
     command: str | None = None
-    query_text: str | None = None
     dist_statement_id: str | None = None
     blocking_session_id: int | None = None
     wait_type: str | None = None

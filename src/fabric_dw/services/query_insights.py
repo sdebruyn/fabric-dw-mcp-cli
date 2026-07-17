@@ -40,6 +40,7 @@ __all__ = [
     "FREQUENTLY_RUN_QUERIES_COLUMNS",
     "LONG_RUNNING_QUERIES_COLUMNS",
     "SQL_POOL_INSIGHTS_COLUMNS",
+    "get_request_detail",
     "list_frequent_queries",
     "list_long_running_queries",
     "list_request_history",
@@ -481,6 +482,47 @@ async def list_long_running_queries(
         until=until,
         mode=mode,
     )
+
+
+# Stored as a named variable (not an inline f-string) to avoid bandit B608 / ruff S608.
+# The only substituted value is the column list, which is a trusted module-level constant.
+_GET_REQUEST_DETAIL_SQL = (
+    "SELECT TOP (1)\n    "
+    + ",\n    ".join(EXEC_REQUESTS_HISTORY_COLUMNS)
+    + "\nFROM queryinsights.exec_requests_history\nWHERE distributed_statement_id = ?;\n"
+)
+
+
+async def get_request_detail(
+    target: SqlTarget,
+    dist_statement_id: str,
+    *,
+    mode: CredentialMode = CredentialMode.DEFAULT,
+) -> ExecRequestHistory | None:
+    """Return a single completed request from ``queryinsights.exec_requests_history``.
+
+    Looks up the row whose ``distributed_statement_id`` matches *dist_statement_id*.
+    The ``dist_statement_id`` returned by the running-queries DMV can be used here
+    to retrieve the full query text and execution metrics after the query completes.
+
+    Args:
+        target: The warehouse or SQL analytics endpoint to query.
+        dist_statement_id: The GUID identifying the distributed statement to look up.
+        mode: The credential mode for Entra authentication.
+
+    Returns:
+        An :class:`~fabric_dw.models.ExecRequestHistory` instance if found, or
+        ``None`` if no matching row exists.
+
+    Raises:
+        PermissionDeniedError: If the caller lacks Contributor or above permission.
+    """
+    rows = await asyncio.to_thread(
+        _execute_sql, target, _GET_REQUEST_DETAIL_SQL, mode, [dist_statement_id]
+    )
+    if not rows:
+        return None
+    return ExecRequestHistory.model_validate(rows[0])
 
 
 async def list_sql_pool_insights(
