@@ -45,7 +45,7 @@ SELECT
     r.command,
     NULL AS query_text,
     r.dist_statement_id,
-    r.blocking_session_id,
+    NULLIF(r.blocking_session_id, 0) AS blocking_session_id,
     r.wait_type,
     r.wait_time,
     r.cpu_time,

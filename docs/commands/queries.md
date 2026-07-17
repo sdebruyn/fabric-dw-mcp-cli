@@ -183,9 +183,9 @@ fdw -w MyWorkspace queries running SalesWH
 ```
 
 ```
- session_id  status   total_elapsed_time_ms  login_name    command  blocking_session_id  wait_type  query_text
- ----------  -------  ---------------------  ------------  -------  -------------------  ---------  --------------------
- 42          running  1500                   user@co.io    SELECT                                    SELECT * FROM sales
+ session_id  status   total_elapsed_time  login_name   command  dist_statement_id                     cpu_time  reads  logical_reads  row_count
+ ----------  -------  ------------------  -----------  -------  ------------------------------------  --------  -----  -------------  ---------
+ 42          running  1500                user@co.io   SELECT   A1B2C3D4-1234-5678-ABCD-EF012345678  750       100    1000           50
 ```
 
 ### queries sessions

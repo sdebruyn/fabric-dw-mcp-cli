@@ -350,8 +350,8 @@ class TestRunningQuery:
         obj = RunningQuery.model_validate(payload)
         assert obj.blocking_session_id == 10
         assert obj.wait_type == "LCK_M_S"
-        assert obj.wait_time == 500
-        assert obj.cpu_time == 750
+        assert obj.wait_time_ms == 500
+        assert obj.cpu_time_ms == 750
         assert obj.reads == 100
         assert obj.writes == 5
         assert obj.logical_reads == 1000
@@ -394,8 +394,8 @@ class TestRunningQuery:
         assert obj.dist_statement_id is None
         assert obj.blocking_session_id is None
         assert obj.wait_type is None
-        assert obj.wait_time is None
-        assert obj.cpu_time is None
+        assert obj.wait_time_ms is None
+        assert obj.cpu_time_ms is None
         assert obj.reads is None
         assert obj.writes is None
         assert obj.logical_reads is None
