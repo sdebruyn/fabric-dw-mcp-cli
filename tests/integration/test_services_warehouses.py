@@ -1,6 +1,7 @@
 import uuid
 
 import pytest
+import tenacity
 
 from fabric_dw.exceptions import NotFoundError
 from fabric_dw.http_client import FabricHttpClient
@@ -13,7 +14,18 @@ pytestmark = pytest.mark.integration
 async def test_ephemeral_warehouse_appears_in_list(
     http: FabricHttpClient, workspace_id: uuid.UUID, ephemeral_warehouse: Warehouse
 ) -> None:
-    items = await warehouses.list_warehouses(http, workspace_id)
+    # The Fabric REST API occasionally returns a transient 404 on the
+    # workspace warehouses endpoint; retry briefly to ride out the blip.
+    @tenacity.retry(
+        retry=tenacity.retry_if_exception_type(NotFoundError),
+        stop=tenacity.stop_after_attempt(4),
+        wait=tenacity.wait_exponential(multiplier=2, min=2, max=15),
+        reraise=True,
+    )
+    async def _list() -> list:
+        return await warehouses.list_warehouses(http, workspace_id)
+
+    items = await _list()
     assert ephemeral_warehouse.id in {w.id for w in items}
 
 
