@@ -67,7 +67,7 @@ fdw queries running
 fdw queries connections
 ```
 
-`queries running` (MCP [`list_running_queries`](../commands/queries.md#list_running_queries)) returns each in-flight query with its `session_id`, `start_time`, `total_elapsed_time`, `login_name`, and `query_text`: enough to spot a single session that is dominating the warehouse. `queries connections` (MCP [`list_connections`](../commands/queries.md#list_connections)) reads `sys.dm_exec_connections` and surfaces lower-level connection detail (including idle connections) that the running view omits.
+`queries running` (MCP [`list_running_queries`](../commands/queries.md#list_running_queries)) returns each in-flight query with its `session_id`, `start_time`, `total_elapsed_time`, `login_name`, and `dist_statement_id`: enough to spot a single session that is dominating the warehouse. Use `dist_statement_id` with `queries show` (MCP `get_request_detail`) after the query completes to retrieve the full query text and execution metrics. `queries connections` (MCP [`list_connections`](../commands/queries.md#list_connections)) reads `sys.dm_exec_connections` and surfaces lower-level connection detail (including idle connections) that the running view omits.
 
 If a live query is clearly runaway and you have Admin rights, jump straight to [Step 9 - Mitigate runaway queries](#step-9-mitigate-runaway-queries). Otherwise, move on to the history views to build a picture over time.
 

@@ -188,26 +188,6 @@ fdw -w MyWorkspace queries running SalesWH
  42          running  1500                user@co.io   SELECT   A1B2C3D4-1234-5678-ABCD-EF012345678  750       100    1000           50
 ```
 
-### queries show
-
-**Targets:** Data Warehouse / SQL Analytics Endpoint
-
-Look up a single completed query by its `distributed_statement_id` from `queryinsights.exec_requests_history`. Use the `dist_statement_id` returned by `queries running` to retrieve the full query text and execution metrics.
-
-See the [Fabric Query Insights documentation](https://learn.microsoft.com/fabric/data-warehouse/query-insights?WT.mc_id=MVP_310840) for more details.
-
-**Synopsis**
-
-```
-fdw [-w WORKSPACE] queries show [WAREHOUSE] DIST_STATEMENT_ID
-```
-
-**Example**
-
-```shell
-fdw -w MyWorkspace queries show SalesWH A1B2C3D4-1234-5678-ABCD-EF0123456789
-```
-
 ### queries sessions
 
 **Targets:** Data Warehouse / SQL Analytics Endpoint
@@ -234,6 +214,26 @@ fdw [-w WORKSPACE] queries sessions [OPTIONS] [WAREHOUSE]
 ```shell
 fdw -w MyWorkspace queries sessions SalesWH
 fdw -w MyWorkspace queries sessions SalesWH --ago 90m
+```
+
+### queries show
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Look up a single completed query by its `distributed_statement_id` from `queryinsights.exec_requests_history`. Use the `dist_statement_id` returned by `queries running` to retrieve the full query text and execution metrics.
+
+See the [Fabric Query Insights documentation](https://learn.microsoft.com/fabric/data-warehouse/query-insights?WT.mc_id=MVP_310840) for more details.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] queries show [WAREHOUSE] DIST_STATEMENT_ID
+```
+
+**Example**
+
+```shell
+fdw -w MyWorkspace queries show SalesWH A1B2C3D4-1234-5678-ABCD-EF0123456789
 ```
 
 ## MCP tools

@@ -520,6 +520,31 @@ class TestQueriesShow:
         assert result.exit_code == 0
         assert "No request found" in result.output
 
+    def test_show_json_output_when_not_found(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.queries.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.queries.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.query_insights.get_request_detail",
+                new=AsyncMock(return_value=None),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["--json", "-w", WS_GUID, "queries", "show", WH_GUID, "nonexistent-id"],
+            )
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed is None
+
     def test_show_fabric_error_exits_nonzero(self, runner: CliRunner, cache_env: Path) -> None:
         _ = cache_env
         mock_http = AsyncMock()
