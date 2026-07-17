@@ -48,6 +48,7 @@ from .test_cli_smoke import (
     _SQL_SMOKE_SUBPROCESS_TIMEOUT_S,
     _STDERR_FORBIDDEN,
     _child_env,
+    _sanitize_stderr,
 )
 
 _logger = logging.getLogger(__name__)
@@ -116,8 +117,9 @@ def _step(
             f"journey step {list(args)!r} exited {result.returncode}.\n"
             f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
         )
+    sanitized = _sanitize_stderr(result.stderr)
     for forbidden in _STDERR_FORBIDDEN:
-        if forbidden in result.stderr:
+        if forbidden in sanitized:
             pytest.fail(
                 f"journey step {list(args)!r} stderr contains forbidden pattern "
                 f"{forbidden!r}:\n{result.stderr}"

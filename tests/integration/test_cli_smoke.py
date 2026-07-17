@@ -36,6 +36,7 @@ import json
 import logging
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -91,6 +92,29 @@ _STDERR_FORBIDDEN = (
     "Error getting processor time",
     "_get_processor_time",
 )
+
+# ---------------------------------------------------------------------------
+# Benign Azure Identity IMDS noise stripping.
+# ---------------------------------------------------------------------------
+
+_IMDS_BLOCK_RE = re.compile(
+    r"Failed to receive Azure VM metadata: timed out\n"
+    r"Traceback \(most recent call last\):.*?TimeoutError: timed out\n",
+    re.DOTALL,
+)
+
+
+def _sanitize_stderr(stderr: str) -> str:
+    """Strip known-benign Azure Identity IMDS timeout tracebacks from stderr.
+
+    When the Azure Identity library probes the Instance Metadata Service (IMDS)
+    and the endpoint is unreachable (e.g. outside Azure), it logs a Python
+    traceback to stderr. This is harmless but causes the forbidden-pattern check
+    for 'Traceback (most recent call last)' to fire. Strip these blocks so that
+    real unexpected tracebacks are still caught.
+    """
+    return _IMDS_BLOCK_RE.sub("", stderr)
+
 
 # ---------------------------------------------------------------------------
 # Binary resolution — deferred so a missing binary skips tests, not errors.
@@ -332,8 +356,9 @@ def test_help_exits_zero_and_clean_stderr() -> None:
     result = _run("--help")
     assert result.returncode == 0, f"--help exited {result.returncode}; stderr:\n{result.stderr}"
     assert result.stdout.strip(), "--help produced no output"
+    sanitized = _sanitize_stderr(result.stderr)
     for forbidden in _STDERR_FORBIDDEN:
-        assert forbidden not in result.stderr, (
+        assert forbidden not in sanitized, (
             f"'--help' stderr contains forbidden pattern {forbidden!r}:\n{result.stderr}"
         )
 
@@ -350,8 +375,9 @@ def test_workspaces_list_clean_stderr_and_nonempty_stdout() -> None:
         f"workspaces list exited {result.returncode}; stderr:\n{result.stderr}"
     )
     assert result.stdout.strip(), "workspaces list produced no output"
+    sanitized = _sanitize_stderr(result.stderr)
     for forbidden in _STDERR_FORBIDDEN:
-        assert forbidden not in result.stderr, (
+        assert forbidden not in sanitized, (
             f"'workspaces list' stderr contains forbidden pattern {forbidden!r}:\n{result.stderr}"
         )
 
@@ -373,8 +399,9 @@ def test_workspaces_get_json_valid(
     parsed = json.loads(stdout)
     assert isinstance(parsed, dict), f"expected a JSON object, got: {type(parsed)}"
     assert "id" in parsed, f"expected 'id' key in workspace JSON; got keys: {list(parsed)}"
+    sanitized = _sanitize_stderr(result.stderr)
     for forbidden in _STDERR_FORBIDDEN:
-        assert forbidden not in result.stderr, (
+        assert forbidden not in sanitized, (
             f"'workspaces get --json' stderr contains forbidden pattern "
             f"{forbidden!r}:\n{result.stderr}"
         )
@@ -410,7 +437,8 @@ def test_sql_exec_select1_clean_stderr(
         f"sql exec exited {result.returncode}; stderr:\n{result.stderr}\nstdout:\n{result.stdout}"
     )
     assert result.stdout.strip(), "sql exec produced no output"
+    sanitized = _sanitize_stderr(result.stderr)
     for forbidden in _STDERR_FORBIDDEN:
-        assert forbidden not in result.stderr, (
+        assert forbidden not in sanitized, (
             f"'sql exec' stderr contains forbidden pattern {forbidden!r}:\n{result.stderr}"
         )
