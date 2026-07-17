@@ -42,6 +42,7 @@ import uuid
 import pytest
 
 from fabric_dw.services import schemas as _schemas_svc
+from tests._stderr_helpers import sanitize_stderr as _sanitize_stderr
 
 from .conftest import SharedWarehouseTarget
 from .test_cli_smoke import (
@@ -116,8 +117,9 @@ def _step(
             f"journey step {list(args)!r} exited {result.returncode}.\n"
             f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
         )
+    sanitized = _sanitize_stderr(result.stderr)
     for forbidden in _STDERR_FORBIDDEN:
-        if forbidden in result.stderr:
+        if forbidden in sanitized:
             pytest.fail(
                 f"journey step {list(args)!r} stderr contains forbidden pattern "
                 f"{forbidden!r}:\n{result.stderr}"

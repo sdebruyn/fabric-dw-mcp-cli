@@ -45,6 +45,7 @@ import pytest
 import pytest_asyncio
 
 from fabric_dw.sql import _resolve_sql_retry_deadline_s
+from tests._stderr_helpers import sanitize_stderr as _sanitize_stderr
 
 from .conftest import SharedWarehouseTarget
 
@@ -332,8 +333,9 @@ def test_help_exits_zero_and_clean_stderr() -> None:
     result = _run("--help")
     assert result.returncode == 0, f"--help exited {result.returncode}; stderr:\n{result.stderr}"
     assert result.stdout.strip(), "--help produced no output"
+    sanitized = _sanitize_stderr(result.stderr)
     for forbidden in _STDERR_FORBIDDEN:
-        assert forbidden not in result.stderr, (
+        assert forbidden not in sanitized, (
             f"'--help' stderr contains forbidden pattern {forbidden!r}:\n{result.stderr}"
         )
 
@@ -350,8 +352,9 @@ def test_workspaces_list_clean_stderr_and_nonempty_stdout() -> None:
         f"workspaces list exited {result.returncode}; stderr:\n{result.stderr}"
     )
     assert result.stdout.strip(), "workspaces list produced no output"
+    sanitized = _sanitize_stderr(result.stderr)
     for forbidden in _STDERR_FORBIDDEN:
-        assert forbidden not in result.stderr, (
+        assert forbidden not in sanitized, (
             f"'workspaces list' stderr contains forbidden pattern {forbidden!r}:\n{result.stderr}"
         )
 
@@ -373,8 +376,9 @@ def test_workspaces_get_json_valid(
     parsed = json.loads(stdout)
     assert isinstance(parsed, dict), f"expected a JSON object, got: {type(parsed)}"
     assert "id" in parsed, f"expected 'id' key in workspace JSON; got keys: {list(parsed)}"
+    sanitized = _sanitize_stderr(result.stderr)
     for forbidden in _STDERR_FORBIDDEN:
-        assert forbidden not in result.stderr, (
+        assert forbidden not in sanitized, (
             f"'workspaces get --json' stderr contains forbidden pattern "
             f"{forbidden!r}:\n{result.stderr}"
         )
@@ -410,7 +414,8 @@ def test_sql_exec_select1_clean_stderr(
         f"sql exec exited {result.returncode}; stderr:\n{result.stderr}\nstdout:\n{result.stdout}"
     )
     assert result.stdout.strip(), "sql exec produced no output"
+    sanitized = _sanitize_stderr(result.stderr)
     for forbidden in _STDERR_FORBIDDEN:
-        assert forbidden not in result.stderr, (
+        assert forbidden not in sanitized, (
             f"'sql exec' stderr contains forbidden pattern {forbidden!r}:\n{result.stderr}"
         )

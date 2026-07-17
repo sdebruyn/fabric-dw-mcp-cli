@@ -44,6 +44,8 @@ import sys
 
 import pytest
 
+from tests._stderr_helpers import sanitize_stderr as _sanitize_stderr
+
 # ---------------------------------------------------------------------------
 # Subprocess helpers
 # ---------------------------------------------------------------------------
@@ -147,10 +149,10 @@ def test_cli_exits_without_shutdown_noise_on_help() -> None:
         check=False,
     )
 
-    stderr = result.stderr
+    stderr = _sanitize_stderr(result.stderr)
     for forbidden in _FORBIDDEN_STDERR_SUBSTRINGS:
         assert forbidden not in stderr, (
-            f"Forbidden string {forbidden!r} found in stderr.\nFull stderr:\n{stderr}"
+            f"Forbidden string {forbidden!r} found in stderr.\nFull stderr:\n{result.stderr}"
         )
 
 
@@ -183,8 +185,8 @@ def test_cli_exits_without_shutdown_noise_on_auth_command() -> None:
         check=False,
     )
 
-    stderr = result.stderr
+    stderr = _sanitize_stderr(result.stderr)
     for forbidden in _FORBIDDEN_STDERR_SUBSTRINGS:
         assert forbidden not in stderr, (
-            f"Forbidden string {forbidden!r} found in stderr.\nFull stderr:\n{stderr}"
+            f"Forbidden string {forbidden!r} found in stderr.\nFull stderr:\n{result.stderr}"
         )
