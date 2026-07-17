@@ -485,9 +485,10 @@ async def list_long_running_queries(
 
 
 # Stored as a named variable (not an inline f-string) to avoid bandit B608 / ruff S608.
-# The only substituted value is the column list, which is a trusted module-level constant.
+# The only substituted value is the column list, which is a trusted module-level constant;
+# the WHERE clause uses a ? parameter placeholder — no user input is embedded in the string.
 _GET_REQUEST_DETAIL_SQL = (
-    "SELECT TOP (1)\n    "
+    "SELECT TOP (1)\n    "  # nosec B608 -- columns from trusted constant; WHERE uses ?
     + ",\n    ".join(EXEC_REQUESTS_HISTORY_COLUMNS)
     + "\nFROM queryinsights.exec_requests_history\nWHERE distributed_statement_id = ?;\n"
 )
