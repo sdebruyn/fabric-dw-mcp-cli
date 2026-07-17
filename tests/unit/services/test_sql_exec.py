@@ -610,49 +610,6 @@ async def test_execute_row_limit_rowcount_not_capped_when_driver_provides_it() -
 
 
 # ---------------------------------------------------------------------------
-# T02: pool-discard on error
-# ---------------------------------------------------------------------------
-
-
-async def test_execute_does_not_mark_discard_on_error() -> None:
-    """sql_exec.execute does NOT call mark_discard() after a cursor failure.
-
-    This is a known gap: unlike run_query (which marks connections tainted on
-    failure so they are not returned to the pool), sql_exec.execute uses
-    closing() which only calls .close() without marking _discard=True.
-    This test documents the current behaviour so that a future fix that adds
-    mark_discard() to sql_exec.execute would be visible here.
-    """
-    from fabric_dw.sql import _PooledConnection  # noqa: PLC0415
-
-    target = _make_target()
-    underlying = MagicMock()
-    key = ("ws-id-sentinel", "test-db", "default")
-    pooled = _PooledConnection(underlying, key)
-
-    cursor = MagicMock()
-    cursor.execute.side_effect = Exception("boom")
-    underlying.cursor.return_value = cursor
-
-    with (
-        patch("fabric_dw.sql._with_connect_retry", return_value=(pooled, 0, 1, None)),
-        pytest.raises(Exception, match="boom"),
-    ):
-        await sql_exec.execute(target, "SELECT 1")
-
-    # The connection was closed via closing() but _discard was NOT set by execute.
-    # This means if pool is enabled the connection would be returned to the pool.
-    # Document: _discard must remain False (current behaviour).
-    assert pooled._closed is True  # closing() did call close()
-    # TODO: remove/invert this assertion once sql_exec.execute() is fixed to call
-    #       mark_discard() on error (same pattern as run_query).  This assertion
-    #       intentionally documents the *gap*, not the desired invariant — a future
-    #       fix that adds mark_discard() will break this line, which is the signal
-    #       that the gap has been closed and this test should be updated.
-    assert pooled._discard is False  # execute does NOT mark tainted (known gap)
-
-
-# ---------------------------------------------------------------------------
 # T03: transient login-failed (18456) retry on connect via _with_connect_retry
 #
 # sql_exec.execute now delegates to sql._with_connect_retry so that transient
@@ -696,9 +653,7 @@ class TestExecuteLoginRetry:
 
     @pytest.fixture(autouse=True)
     def _setup(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Disable pooling and replace time.sleep so retries are instant."""
-        monkeypatch.setenv("FABRIC_CONN_POOLING", "0")
-        _sql_module.reset_pool()
+        """Replace time.sleep so retries are instant."""
         # Default: real monotonic clock (deadline never fires in fast tests).
         monkeypatch.setattr(_sql_module, "time", _make_fake_time())
 
@@ -925,42 +880,6 @@ async def test_get_plan_off_called_even_on_query_error() -> None:
     assert "SET SHOWPLAN_XML OFF" in calls
 
 
-async def test_get_plan_pool_safety_marks_discard_when_off_fails() -> None:
-    """When SET SHOWPLAN_XML OFF raises, the connection must be marked for discard.
-
-    This is the critical pool-safety invariant: a connection that may still have
-    SHOWPLAN_XML ON must never be returned to the pool.
-    """
-    from fabric_dw.sql import _PooledConnection  # noqa: PLC0415
-
-    target = _make_target()
-    underlying = MagicMock()
-    key = ("ws-id-sentinel", "test-db", "default")
-    pooled = _PooledConnection(underlying, key)
-
-    cursor = MagicMock()
-    off_error = Exception("SET SHOWPLAN_XML OFF failed")
-    # Calls: SET ON → query → fetchall → SET OFF (raises)
-    cursor.execute.side_effect = [None, None, None]
-    cursor.fetchall.return_value = [(_PLAN_XML,)]
-
-    def _execute_side_effect(sql: str) -> None:
-        if "OFF" in sql:
-            raise off_error
-
-    cursor.execute.side_effect = _execute_side_effect
-    underlying.cursor.return_value = cursor
-
-    with (
-        patch("fabric_dw.sql._with_connect_retry", return_value=(pooled, 0, 1, None)),
-        pytest.raises(Exception, match="SET SHOWPLAN_XML OFF failed"),
-    ):
-        await sql_exec.get_plan(target, "SELECT 1")
-
-    # Connection must be marked for discard — pool-safety guarantee
-    assert pooled._discard is True
-
-
 async def test_get_plan_permission_denied_raises_permission_denied() -> None:
     """Permission denial during get_plan is raised as PermissionDeniedError."""
     target = _make_target()
@@ -1004,47 +923,6 @@ async def test_get_plan_empty_result_raises_fabric_error() -> None:
         pytest.raises(FabricError, match="No execution plan was returned"),
     ):
         await sql_exec.get_plan(target, "SET NOCOUNT ON")
-
-
-async def test_get_plan_original_error_preserved_when_off_also_fails() -> None:
-    """When the query fails AND SET SHOWPLAN_XML OFF also fails, the original
-    query error must propagate and the connection must be marked for discard.
-
-    This is the double-failure path that the _exc_in_flight flag was designed to
-    protect: the OFF exception must be suppressed so the caller sees the original
-    query error, and mark_discard() must still be called so the poisoned connection
-    never re-enters the pool.
-    """
-    from fabric_dw.sql import _PooledConnection  # noqa: PLC0415
-
-    target = _make_target()
-    underlying = MagicMock()
-    pooled = _PooledConnection(underlying, ("ws", "db", "default"))
-
-    cursor = MagicMock()
-    query_error = Exception("syntax error")
-    off_error = Exception("SET SHOWPLAN_XML OFF failed")
-
-    def _execute_side_effect(sql_stmt: str) -> None:
-        if "OFF" in sql_stmt:
-            raise off_error
-        if sql_stmt != "SET SHOWPLAN_XML ON":
-            # The user query — raise the original error
-            raise query_error
-
-    cursor.execute.side_effect = _execute_side_effect
-    underlying.cursor.return_value = cursor
-
-    with (
-        patch("fabric_dw.sql._with_connect_retry", return_value=(pooled, 0, 1, None)),
-        # The ORIGINAL query error must propagate, not the OFF error.
-        pytest.raises(Exception, match="syntax error"),
-    ):
-        await sql_exec.get_plan(target, "INVALID SQL")
-
-    # Pool-safety: the connection must be marked for discard even though
-    # _exc_in_flight was set (double-failure path).
-    assert pooled._discard is True
 
 
 # ---------------------------------------------------------------------------

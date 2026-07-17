@@ -12,7 +12,6 @@ config set max-429-retries           — persist the max consecutive 429 retry c
 config set retry-deadline            — persist the combined 429+5xx wall-clock deadline
 config set sql-retry-deadline        — persist the SQL/TDS connect+execute retry budget
 config set sql-retry-executes        — persist whether fetch="none" statements are retried
-config set conn-pooling              — persist whether SQL connection pooling is enabled
 config set auth-mode                 — persist the MCP server credential mode
 config set telemetry disabled        — opt in/out of telemetry via config
 config set logging level             — set the MCP server log level
@@ -23,7 +22,6 @@ config unset max-429-retries         — clear the max consecutive 429 retry cou
 config unset retry-deadline          — clear the HTTP deadline default
 config unset sql-retry-deadline      — clear the SQL retry deadline default
 config unset sql-retry-executes      — clear the SQL execute-retry flag
-config unset conn-pooling            — clear the conn_pooling flag
 config unset auth-mode               — clear the credential mode (revert to built-in default)
 config unset telemetry disabled      — clear the telemetry opt-out (revert to default-on)
 config unset logging level           — clear the logging level (revert to built-in INFO)
@@ -69,7 +67,6 @@ def show_cmd(ctx: CliContext) -> None:
             "retry_deadline_s": cfg.defaults.retry_deadline_s,
             "sql_retry_deadline_s": cfg.defaults.sql_retry_deadline_s,
             "sql_retry_executes": cfg.defaults.sql_retry_executes,
-            "conn_pooling": cfg.defaults.conn_pooling,
             "auth_mode": cfg.defaults.auth_mode,
         },
         "telemetry": {
@@ -147,20 +144,6 @@ def set_sql_retry_executes_cmd(value: str) -> None:
     """
     set_default("sql_retry_executes", value.lower())
     click.echo(f"Default sql_retry_executes set to {value.lower()}.")
-
-
-@set_group.command("conn-pooling")
-@click.argument("value", type=click.Choice(["true", "false"], case_sensitive=False))
-def set_conn_pooling_cmd(value: str) -> None:
-    """Enable or disable SQL connection pooling.
-
-    When set to false, every query opens a fresh TDS connection and closes it
-    immediately after use.  Disable pooling only when diagnosing connection
-    issues or when running in an environment where persistent connections are
-    not supported.
-    """
-    set_default("conn_pooling", value.lower())
-    click.echo(f"Default conn_pooling set to {value.lower()}.")
 
 
 _AUTH_MODE_CHOICES = click.Choice(sorted(VALID_AUTH_MODES), case_sensitive=False)
@@ -311,13 +294,6 @@ def unset_sql_retry_executes_cmd() -> None:
     """Clear the sql_retry_executes default (revert to built-in false)."""
     set_default("sql_retry_executes", None)
     click.echo("Default sql_retry_executes cleared.")
-
-
-@unset_group.command("conn-pooling")
-def unset_conn_pooling_cmd() -> None:
-    """Clear the conn_pooling default (revert to built-in true)."""
-    set_default("conn_pooling", None)
-    click.echo("Default conn_pooling cleared.")
 
 
 @unset_group.command("auth-mode")

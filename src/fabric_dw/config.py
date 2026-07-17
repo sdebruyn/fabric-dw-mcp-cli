@@ -111,7 +111,6 @@ class Defaults:
     retry_deadline_s: int | None = None
     sql_retry_deadline_s: int | None = None
     sql_retry_executes: bool | None = None
-    conn_pooling: bool | None = None
     auth_mode: str | None = None
 
 
@@ -197,7 +196,6 @@ def _parse_defaults_section(data: dict[str, object]) -> Defaults:
     raw_deadline = raw.get("retry_deadline_s")
     raw_sql_deadline = raw.get("sql_retry_deadline_s")
     raw_sql_executes = raw.get("sql_retry_executes")
-    raw_conn_pooling = raw.get("conn_pooling")
     raw_auth_mode = raw.get("auth_mode")
     auth_mode: str | None = None
     if isinstance(raw_auth_mode, str):
@@ -222,7 +220,6 @@ def _parse_defaults_section(data: dict[str, object]) -> Defaults:
         if isinstance(raw_sql_deadline, (int, float)) and math.isfinite(raw_sql_deadline)
         else None,
         sql_retry_executes=raw_sql_executes if isinstance(raw_sql_executes, bool) else None,
-        conn_pooling=raw_conn_pooling if isinstance(raw_conn_pooling, bool) else None,
         auth_mode=auth_mode,
     )
 
@@ -394,8 +391,6 @@ def _defaults_to_dict(d: Defaults) -> dict[str, object]:
         out["sql_retry_deadline_s"] = d.sql_retry_deadline_s
     if d.sql_retry_executes is not None:
         out["sql_retry_executes"] = d.sql_retry_executes
-    if d.conn_pooling is not None:
-        out["conn_pooling"] = d.conn_pooling
     if d.auth_mode is not None:
         out["auth_mode"] = d.auth_mode
     return out
@@ -518,7 +513,7 @@ def _coerce_defaults_key(key: str, value: str | None) -> tuple[int | None, bool 
                 ) from exc
             if coerced_int < _MIN_RETRY_DEADLINE_S:
                 raise ValueError(f"{key} must be >= {_MIN_RETRY_DEADLINE_S}, got {coerced_int}")
-        elif key in {"sql_retry_executes", "conn_pooling"}:
+        elif key == "sql_retry_executes":
             if value.lower() in {"true", "1", "yes", "on"}:
                 coerced_bool = True
             elif value.lower() in {"false", "0", "no", "off"}:
@@ -572,7 +567,6 @@ def _make_defaults_setter(
             sql_retry_executes=coerced_bool
             if key == "sql_retry_executes"
             else current.defaults.sql_retry_executes,
-            conn_pooling=coerced_bool if key == "conn_pooling" else current.defaults.conn_pooling,
             auth_mode=auth_mode_value,
         )
         return UserConfig(
@@ -705,7 +699,6 @@ _SET_CONFIG_DISPATCH: dict[
     ("defaults", "retry_deadline_s"): _make_defaults_setter("retry_deadline_s"),
     ("defaults", "sql_retry_deadline_s"): _make_defaults_setter("sql_retry_deadline_s"),
     ("defaults", "sql_retry_executes"): _make_defaults_setter("sql_retry_executes"),
-    ("defaults", "conn_pooling"): _make_defaults_setter("conn_pooling"),
     ("defaults", "auth_mode"): _make_defaults_setter("auth_mode"),
     ("telemetry", "disabled"): _set_telemetry_disabled,
     ("mcp", "workspace_allowlist"): _set_mcp_workspace_allowlist,
@@ -783,7 +776,7 @@ def set_default(key: str, value: str | None, path: Path | None = None) -> None:
     Args:
         key: One of ``"workspace"``, ``"warehouse"``, ``"max_429_retries"``,
              ``"retry_deadline_s"``, ``"sql_retry_deadline_s"``,
-             ``"sql_retry_executes"``, or ``"conn_pooling"``.
+             or ``"sql_retry_executes"``.
         value: The new value (as a string for numeric keys it is coerced), or
                *None* to clear (unset) the key.
         path: Optional override for the config file path.
@@ -803,7 +796,6 @@ def set_default(key: str, value: str | None, path: Path | None = None) -> None:
         "retry_deadline_s",
         "sql_retry_deadline_s",
         "sql_retry_executes",
-        "conn_pooling",
         "auth_mode",
     }
     if key not in allowed:

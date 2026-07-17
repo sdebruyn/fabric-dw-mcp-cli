@@ -10,9 +10,6 @@ from fabric_dw.exceptions import AuthError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import Schema, WarehouseKind
 from fabric_dw.services import schemas
 from fabric_dw.services.schemas import validate_identifier
-from fabric_dw.sql import (
-    _PooledConnection,  # type: ignore[attr-defined]
-)
 from tests.unit.services._helpers import _make_conn, _make_conn_for_ddl, _make_target
 
 # ---------------------------------------------------------------------------
@@ -508,15 +505,12 @@ class TestDeleteSchemaCascade:
         We verify this by making the second statement raise; the commit must NOT
         have been called (confirming no partial commit occurred).
 
-        The connection is a _PooledConnection spec-mock so that the isinstance()
-        guard in run_statements recognises it and calls mark_discard() on failure.
+        The raw connection is closed after the failure.
         """
         target = _make_target()
         # Schema has one table (produces DROP TABLE + DROP SCHEMA = 2 statements)
         list_conn = _make_conn([("orders", "U")], _OBJ_COLS)
-        # Use spec=_PooledConnection so isinstance(conn, _PooledConnection) is True
-        # inside run_statements, which is required for mark_discard() to be called.
-        combined_conn = MagicMock(spec=_PooledConnection)
+        combined_conn = MagicMock()
         cursor = MagicMock()
         cursor.description = None
         cursor.fetchall.return_value = []
@@ -538,9 +532,7 @@ class TestDeleteSchemaCascade:
 
         # commit must NOT have been called — the transaction was never committed.
         combined_conn.commit.assert_not_called()
-        # mark_discard must have been called — it's the only thing preventing the
-        # half-executed connection from returning to the pool dirty.
-        combined_conn.mark_discard.assert_called_once()
+        combined_conn.close.assert_called_once()
 
 
 # ===========================================================================

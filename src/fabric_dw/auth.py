@@ -319,7 +319,7 @@ def _get_sql_oidc_credential() -> SyncClientAssertionCredential:
     """Return (creating once) the sync OIDC credential used for SQL token injection.
 
     Uses double-checked locking so concurrent callers never race to initialise
-    the module-level singleton — mirroring the ``_pool_lock`` pattern in sql.py.
+    the module-level singleton — mirroring the ``_sql_config_lock`` pattern in sql_pool.py.
     """
     global _sql_oidc_credential  # noqa: PLW0603
     if _sql_oidc_credential is None:
