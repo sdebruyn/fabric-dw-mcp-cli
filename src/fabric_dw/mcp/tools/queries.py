@@ -298,6 +298,50 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             raise ToolError("Listing locks failed due to a driver or network error.") from exc
         return [lock.model_dump(by_alias=True, mode="json") for lock in result]
 
+    @mcp.tool(name="get_request_detail")
+    async def get_request_detail(
+        workspace: str,
+        item: str,
+        dist_statement_id: str,
+    ) -> dict[str, Any] | None:
+        """Look up a completed query from queryinsights.exec_requests_history.
+
+        Uses distributed_statement_id to retrieve full query text and execution
+        metrics after the query completes.
+
+        Args:
+            workspace: Workspace name or GUID.
+            item: Warehouse or SQL Analytics Endpoint name or GUID.
+            dist_statement_id: The GUID identifying the distributed statement to look up.
+        """
+        ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
+        try:
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
+            _log.debug(
+                "get_request_detail ws=%s item=%s dist_statement_id=%s",
+                ws_id,
+                entry.id,
+                dist_statement_id,
+            )
+            target = make_sql_target(ws_id, entry, item)
+            result = await _qi_svc.get_request_detail(target, dist_statement_id, mode=ctx.auth_mode)
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        except Exception as exc:
+            if isinstance(exc, ToolError):
+                raise
+            _log.debug("get_request_detail: unhandled driver exception (suppressed)", exc_info=True)
+            raise ToolError(
+                "Request detail lookup failed due to a driver or network error."
+            ) from exc
+        if result is None:
+            return None
+        return result.model_dump(by_alias=True, mode="json")
+
     @mcp.tool(name="list_long_running_queries")
     async def list_long_running_queries(
         workspace: str,

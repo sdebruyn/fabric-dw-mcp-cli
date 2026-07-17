@@ -255,7 +255,6 @@ class TestRunningQuery:
             "total_elapsed_time": 5432,
             "login_name": "user@example.com",
             "command": "SELECT",
-            "query_text": "SELECT * FROM sales.orders",
         }
         obj = RunningQuery.model_validate(payload)
         dumped = obj.model_dump(by_alias=True, mode="json", exclude_none=True)
@@ -270,12 +269,10 @@ class TestRunningQuery:
             "total_elapsed_time": 100,
             "login_name": None,
             "command": None,
-            "query_text": None,
         }
         obj = RunningQuery.model_validate(payload)
         assert obj.login_name is None
         assert obj.command is None
-        assert obj.query_text is None
 
     def test_extra_fields_ignored(self) -> None:
         payload = {
@@ -286,7 +283,6 @@ class TestRunningQuery:
             "total_elapsed_time": 200,
             "login_name": "admin",
             "command": "SELECT",
-            "query_text": "SELECT 1",
             "unknownColumn": "noise",
         }
         obj = RunningQuery.model_validate(payload)
@@ -301,7 +297,6 @@ class TestRunningQuery:
             "total_elapsed_time": 200,
             "login_name": None,
             "command": None,
-            "query_text": None,
         }
         obj = RunningQuery.model_validate(payload)
         with pytest.raises(ValidationError):

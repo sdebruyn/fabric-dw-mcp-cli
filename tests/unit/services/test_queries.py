@@ -26,7 +26,6 @@ _COLS = [
     "total_elapsed_time",
     "login_name",
     "command",
-    "query_text",
     "dist_statement_id",
     "blocking_session_id",
     "wait_type",
@@ -47,7 +46,6 @@ _ROW_1_TUPLE = (
     1500,
     "user@example.com",
     "SELECT",
-    None,
     "A1B2C3D4-1234-5678-ABCD-EF0123456789",
     None,
     None,
@@ -68,7 +66,6 @@ _ROW_2_TUPLE = (
     3000,
     "admin@example.com",
     "UPDATE",
-    None,
     "B2C3D4E5-2345-6789-BCDE-F01234567890",
     42,
     "LCK_M_S",
@@ -123,7 +120,6 @@ async def test_list_running_parses_fields_correctly() -> None:
     assert q.total_elapsed_time_ms == 1500
     assert q.login_name == "user@example.com"
     assert q.command == "SELECT"
-    assert q.query_text is None
     assert q.dist_statement_id == "A1B2C3D4-1234-5678-ABCD-EF0123456789"
     assert q.blocking_session_id is None
     assert q.wait_type is None
@@ -134,16 +130,6 @@ async def test_list_running_parses_fields_correctly() -> None:
     assert q.logical_reads == 1000
     assert q.row_count == 50
     assert q.open_transaction_count == 0
-
-
-async def test_list_running_handles_null_query_text() -> None:
-    target = _make_target()
-    conn = _make_conn([_ROW_2_TUPLE], _COLS)
-
-    with patch("fabric_dw.sql.open_connection", return_value=conn):
-        result = await queries.list_running(target)
-
-    assert result[0].query_text is None
 
 
 async def test_list_running_parses_blocking_and_wait_fields() -> None:

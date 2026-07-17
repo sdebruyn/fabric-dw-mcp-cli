@@ -171,6 +171,42 @@ async def locks_cmd(
 
 
 # ---------------------------------------------------------------------------
+# show
+# ---------------------------------------------------------------------------
+
+
+@queries_group.command("show")
+@click.argument("item", required=False, default=None)
+@click.argument("dist_statement_id")
+@click.pass_obj
+@coro
+async def show_cmd(ctx: CliContext, item: str | None, dist_statement_id: str) -> None:
+    """Look up a completed query by DIST_STATEMENT_ID from queryinsights.exec_requests_history."""
+    ws = resolve_workspace(ctx)
+    wh = resolve_warehouse_arg(ctx, item)
+    try:
+        async with build_http_client(ctx) as http:
+            target, _ = await build_sql_target(http, ws, wh)
+            result = await _qi_svc.get_request_detail(target, dist_statement_id, mode=ctx.auth)
+            if result is None:
+                if ctx.json_output:
+                    render(None, json_output=True)
+                else:
+                    click.echo(
+                        f"No request found with distributed_statement_id {dist_statement_id!r}."
+                    )
+                return
+            render(
+                result.model_dump(by_alias=True, mode="json"),
+                json_output=ctx.json_output,
+                table_title="Request Detail",
+                prune_null_columns=True,
+            )
+    except (ValueError, FabricError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
 # history
 # ---------------------------------------------------------------------------
 

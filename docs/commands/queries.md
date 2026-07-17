@@ -168,7 +168,7 @@ fdw -w MyWorkspace queries long-running SalesWH --ago 2d
 
 **Targets:** Data Warehouse / SQL Analytics Endpoint
 
-List all currently running queries on a warehouse or SQL Analytics Endpoint. Queries `sys.dm_exec_sessions` joined with `sys.dm_exec_requests`. The `query_text` field is always `null` because `sys.dm_exec_sql_text` is not supported on Fabric DW - use `dist_statement_id` to look up the full query text in `queryinsights.exec_requests_history`.
+List all currently running queries on a warehouse or SQL Analytics Endpoint. Queries `sys.dm_exec_sessions` joined with `sys.dm_exec_requests`. Use `dist_statement_id` with `queries show` to retrieve the full query text and execution metrics after the query completes.
 
 **Synopsis**
 
@@ -216,9 +216,45 @@ fdw -w MyWorkspace queries sessions SalesWH
 fdw -w MyWorkspace queries sessions SalesWH --ago 90m
 ```
 
+### queries show
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Look up a single completed query by its `distributed_statement_id` from `queryinsights.exec_requests_history`. Use the `dist_statement_id` returned by `queries running` to retrieve the full query text and execution metrics.
+
+See the [Fabric Query Insights documentation](https://learn.microsoft.com/fabric/data-warehouse/query-insights?WT.mc_id=MVP_310840) for more details.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] queries show [WAREHOUSE] DIST_STATEMENT_ID
+```
+
+**Example**
+
+```shell
+fdw -w MyWorkspace queries show SalesWH A1B2C3D4-1234-5678-ABCD-EF0123456789
+```
+
 ## MCP tools
 
 The tools below cover running queries, active connections, locks, and queryinsights history. History tools share the same parameter shape: `workspace`, `warehouse`, optional `limit`, optional `since`, and optional `until`.
+
+### get_request_detail
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Look up a single completed query from `queryinsights.exec_requests_history` by its `distributed_statement_id`. Use the `dist_statement_id` returned by `list_running_queries` to retrieve full query text and execution metrics after the query completes.
+
+See the [Fabric Query Insights documentation](https://learn.microsoft.com/fabric/data-warehouse/query-insights?WT.mc_id=MVP_310840) for details on the queryinsights schema and required permissions.
+
+**Parameters:**
+
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL Analytics Endpoint name or GUID.
+- `dist_statement_id` (`str`): the `distributed_statement_id` GUID to look up.
+
+**Returns:** `dict | null`: the matching request-history row as a dict (same schema as `list_request_history` rows), or `null` if no matching row exists.
 
 ### kill_session
 
@@ -323,7 +359,7 @@ Return all currently-executing queries on a warehouse.
 - `workspace` (`str`): workspace name or GUID.
 - `warehouse` (`str`): warehouse name or GUID.
 
-**Returns:** `list[RunningQuery]`: array of query objects, each with `session_id`, `request_id`, `status`, `start_time`, `total_elapsed_time` (ms), `login_name`, `command`, `query_text` (always `null` - use `dist_statement_id` to look up full query text in `queryinsights.exec_requests_history`), `dist_statement_id` (for cross-tool correlation with Capacity Metrics and queryinsights), `blocking_session_id`, `wait_type`, `wait_time` (ms), `cpu_time` (ms), `reads`, `writes`, `logical_reads`, `row_count`, and `open_transaction_count`.
+**Returns:** `list[RunningQuery]`: array of query objects, each with `session_id`, `request_id`, `status`, `start_time`, `total_elapsed_time` (ms), `login_name`, `command`, `dist_statement_id` (for cross-tool correlation with Capacity Metrics and queryinsights - use with `get_request_detail` to retrieve full query text), `blocking_session_id`, `wait_type`, `wait_time` (ms), `cpu_time` (ms), `reads`, `writes`, `logical_reads`, `row_count`, and `open_transaction_count`.
 
 ### list_session_history
 

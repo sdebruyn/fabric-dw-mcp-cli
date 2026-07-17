@@ -179,7 +179,6 @@ def _make_running_query() -> RunningQuery:
             "total_elapsed_time": 1000,
             "login_name": "user@example.com",
             "command": "SELECT 1",
-            "query_text": None,
         }
     )
 

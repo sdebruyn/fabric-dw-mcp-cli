@@ -22,6 +22,7 @@ from fabric_dw.services.query_insights import (
     FREQUENTLY_RUN_QUERIES_COLUMNS,
     LONG_RUNNING_QUERIES_COLUMNS,
     SQL_POOL_INSIGHTS_COLUMNS,
+    get_request_detail,
 )
 from tests.unit.services._helpers import _FakeRow, _make_conn, _make_target
 
@@ -838,6 +839,84 @@ async def test_list_request_history_both_bounds_passed_as_params() -> None:
 # Regression: Row→tuple normalisation (#719)
 # ---------------------------------------------------------------------------
 # _FakeRow is imported from tests.unit.services._helpers (shared definition).
+
+
+# ---------------------------------------------------------------------------
+# get_request_detail
+# ---------------------------------------------------------------------------
+
+_DIST_STMT_ID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+
+async def test_get_request_detail_returns_model_when_found() -> None:
+    target = _make_target()
+    conn = _make_conn([_REQ_HIST_ROW], _REQ_HIST_COLS)
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await get_request_detail(target, _DIST_STMT_ID)
+    assert isinstance(result, ExecRequestHistory)
+    assert result.database_name == "MyWarehouse"
+    assert result.status == "Succeeded"
+
+
+async def test_get_request_detail_returns_none_when_not_found() -> None:
+    target = _make_target()
+    conn = _make_conn([], _REQ_HIST_COLS)
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        result = await get_request_detail(target, _DIST_STMT_ID)
+    assert result is None
+
+
+async def test_get_request_detail_sql_references_exec_requests_history() -> None:
+    target = _make_target()
+    conn = _make_conn([], _REQ_HIST_COLS)
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await get_request_detail(target, _DIST_STMT_ID)
+    cursor = conn.cursor.return_value
+    call_sql: str = cursor.execute.call_args[0][0]
+    assert "queryinsights.exec_requests_history" in call_sql
+
+
+async def test_get_request_detail_sql_uses_where_clause() -> None:
+    target = _make_target()
+    conn = _make_conn([], _REQ_HIST_COLS)
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await get_request_detail(target, _DIST_STMT_ID)
+    cursor = conn.cursor.return_value
+    call_sql: str = cursor.execute.call_args[0][0]
+    assert "WHERE distributed_statement_id = ?" in call_sql
+
+
+async def test_get_request_detail_passes_id_as_param() -> None:
+    target = _make_target()
+    conn = _make_conn([], _REQ_HIST_COLS)
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await get_request_detail(target, _DIST_STMT_ID)
+    cursor = conn.cursor.return_value
+    call_params = cursor.execute.call_args[0][1]
+    assert _DIST_STMT_ID in call_params
+
+
+async def test_get_request_detail_maps_permission_denied() -> None:
+    target = _make_target()
+    conn = MagicMock()
+    cursor = MagicMock()
+    cursor.execute.side_effect = Exception("permission was denied on object X")
+    conn.cursor.return_value = cursor
+    with (
+        patch("fabric_dw.sql.open_connection", return_value=conn),
+        pytest.raises(PermissionDeniedError),
+    ):
+        await get_request_detail(target, _DIST_STMT_ID)
+
+
+async def test_get_request_detail_sql_uses_top_1() -> None:
+    target = _make_target()
+    conn = _make_conn([], _REQ_HIST_COLS)
+    with patch("fabric_dw.sql.open_connection", return_value=conn):
+        await get_request_detail(target, _DIST_STMT_ID)
+    cursor = conn.cursor.return_value
+    call_sql: str = cursor.execute.call_args[0][0]
+    assert "TOP (1)" in call_sql
 
 
 async def test_execute_sql_row_objects_produce_correct_dicts() -> None:
